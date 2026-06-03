@@ -2,7 +2,8 @@ import logging
 from typing import List, Dict, Any
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, PointStruct
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -38,9 +39,10 @@ class RAGService:
         logger.error(f"Failed to initialize local Qdrant client: {local_err}")
         self.client = None
 
+    self.client_ai = None
     # Configure Gemini SDK
     if settings.gemini_api_key:
-      genai.configure(api_key=settings.gemini_api_key)
+      self.client_ai = genai.Client(api_key=settings.gemini_api_key)
 
   def _ensure_collection_exists(self, vector_size: int):
     if not self.client:
@@ -60,14 +62,16 @@ class RAGService:
   def _get_embedding(self, text: str) -> List[float]:
     """Generates embedding. Uses Gemini models/text-embedding-004 (768d) if online, otherwise falls back to local encoders."""
     # 1. Try Gemini text-embedding-004 first
-    if settings.gemini_api_key:
+    if self.client_ai:
       try:
-        response = genai.embed_content(
-          model="models/text-embedding-004",
-          content=text,
-          task_type="retrieval_document"
+        response = self.client_ai.models.embed_content(
+          model="text-embedding-004",
+          contents=text,
+          config=types.EmbedContentConfig(
+            task_type="RETRIEVAL_DOCUMENT"
+          )
         )
-        return response["embedding"]
+        return response.embeddings[0].values
       except Exception as e:
         logger.warning(f"Failed to generate embedding with Gemini: {e}. Trying local fallback.")
 

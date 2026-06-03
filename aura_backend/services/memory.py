@@ -1,7 +1,8 @@
 import json
 import logging
 from typing import List, Dict, Any
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from config import settings
 from qdrant_client.http import models
 from services.rag import rag_service
@@ -10,7 +11,9 @@ logger = logging.getLogger(__name__)
 
 class MemoryService:
     def __init__(self):
-        pass
+        self.client_ai = None
+        if settings.gemini_api_key:
+            self.client_ai = genai.Client(api_key=settings.gemini_api_key)
 
     @property
     def collection_name(self) -> str:
@@ -23,7 +26,7 @@ class MemoryService:
 
     def extract_memories(self, messages: List[Dict[str, str]]) -> List[str]:
         """Analyzes a message segment to extract long-term user facts and preferences."""
-        if not settings.gemini_api_key:
+        if not self.client_ai:
             return []
 
         # Format conversation history
@@ -51,10 +54,12 @@ class MemoryService:
         """
 
         try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(
-                prompt,
-                generation_config={"response_mime_type": "application/json"}
+            response = self.client_ai.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                )
             )
             data = json.loads(response.text)
             facts = data.get("extracted_facts", [])

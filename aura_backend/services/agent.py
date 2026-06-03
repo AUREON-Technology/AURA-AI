@@ -1,7 +1,8 @@
 import json
 import logging
 from typing import List, Dict, Any, AsyncGenerator
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from config import settings
 from services.memory import memory_service
 from services.rag import rag_service
@@ -36,6 +37,11 @@ Here is your text response.
 """
 
 class AgentOrchestrator:
+    def __init__(self):
+        self.client = None
+        if settings.gemini_api_key:
+            self.client = genai.Client(api_key=settings.gemini_api_key)
+
     def classify_intent(self, user_message: str) -> str:
         """Classifies user intent to route message to the appropriate specialized agent."""
         prompt = f"""
@@ -55,10 +61,12 @@ class AgentOrchestrator:
         """
 
         # 1. Try Gemini
-        if settings.gemini_api_key:
+        if self.client:
             try:
-                model = genai.GenerativeModel("gemini-1.5-flash")
-                response = model.generate_content(prompt)
+                response = self.client.models.generate_content(
+                    model="gemini-1.5-flash",
+                    contents=prompt
+                )
                 intent = response.text.strip().lower()
                 if intent in DEFAULT_INSTRUCTIONS:
                     return intent
@@ -165,28 +173,33 @@ class AgentOrchestrator:
             if rag_context:
                 final_system_instruction += f"{rag_context}\n"
 
-        # 4. Stream response using Gemini if key is set
-        if settings.gemini_api_key:
+        # 4. Stream response using Gemini if client is initialized
+        if self.client:
             try:
                 # Map input messages to Gemini ContentDict format
                 gemini_history = []
                 for msg in messages[:-1]:
                     role = "model" if msg["role"] == "assistant" or msg["role"] == "model" else "user"
-                    gemini_history.append({
-                        "role": role,
-                        "parts": [msg["content"]]
-                    })
+                    gemini_history.append(
+                        types.Content(
+                            role=role,
+                            parts=[types.Part.from_text(text=msg["content"])]
+                        )
+                    )
 
                 current_prompt = messages[-1]["content"]
 
-                model = genai.GenerativeModel(
-                    "gemini-1.5-flash",
-                    system_instruction=final_system_instruction
+                # Create chat with system instruction config
+                chat = self.client.chats.create(
+                    model="gemini-1.5-flash",
+                    history=gemini_history,
+                    config=types.GenerateContentConfig(
+                        system_instruction=final_system_instruction
+                    )
                 )
-                chat = model.start_chat(history=gemini_history)
 
                 # Stream response
-                response = chat.send_message(current_prompt, stream=True)
+                response = chat.send_message_stream(current_prompt)
                 for chunk in response:
                     if chunk.text:
                         yield chunk.text

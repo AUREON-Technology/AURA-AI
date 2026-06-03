@@ -8,6 +8,8 @@ class TestMultiAgentIntelligence(unittest.TestCase):
     def setUp(self):
         # Ensure a clean state
         settings.gemini_api_key = "" # Run in mock mode for unit tests
+        agent_orchestrator.client = None
+        memory_service.client_ai = None
 
     def test_intent_classification_fallback(self):
         """Verify fallback classification works in mock mode (no API key)."""

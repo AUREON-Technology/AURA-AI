@@ -1,6 +1,7 @@
 import logging
 from typing import AsyncGenerator, List, Dict, Any
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from config import settings
 from services.rag import rag_service
 
@@ -8,9 +9,10 @@ logger = logging.getLogger(__name__)
 
 class AIService:
   def __init__(self):
+    self.client = None
     if settings.gemini_api_key:
-      genai.configure(api_key=settings.gemini_api_key)
-      logger.info("Gemini API initialized successfully.")
+      self.client = genai.Client(api_key=settings.gemini_api_key)
+      logger.info("Gemini API client initialized successfully.")
     else:
       logger.warning("GEMINI_API_KEY is missing. AI calls will fail.")
 
@@ -51,8 +53,8 @@ class AIService:
           break
 
     # If Gemini API key is missing, fallback immediately to Ollama
-    if not settings.gemini_api_key:
-      logger.info("GEMINI_API_KEY is missing. Falling back to local Ollama.")
+    if not self.client:
+      logger.info("Gemini client is not initialized. Falling back to local Ollama.")
       yield "[Running in Local Offline Mode - Powered by Ollama]\n"
       try:
         from services.ollama import ollama_service
@@ -67,19 +69,18 @@ class AIService:
       gemini_history = []
       for msg in modified_messages[:-1]:
         role = "model" if msg["role"] == "assistant" or msg["role"] == "model" else "user"
-        gemini_history.append({
-          "role": role,
-          "parts": [msg["content"]]
-        })
+        gemini_history.append(
+          types.Content(
+            role=role,
+            parts=[types.Part.from_text(text=msg["content"])]
+          )
+        )
 
       current_prompt = modified_messages[-1]["content"]
 
-      # Create chat model
-      model = genai.GenerativeModel("gemini-1.5-flash")
-      chat = model.start_chat(history=gemini_history)
-
-      # Stream the content
-      response = chat.send_message(current_prompt, stream=True)
+      # Create chat model and stream
+      chat = self.client.chats.create(model="gemini-1.5-flash", history=gemini_history)
+      response = chat.send_message_stream(current_prompt)
       for chunk in response:
         if chunk.text:
           yield chunk.text

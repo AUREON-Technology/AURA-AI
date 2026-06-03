@@ -1,11 +1,17 @@
 import json
 import logging
 from datetime import datetime
-import google.generativeai as genai
+from google import genai
+from google.genai import types
+from config import settings
 
 logger = logging.getLogger(__name__)
 
 class AutomationService:
+    def __init__(self):
+        self.client = None
+        if settings.gemini_api_key:
+            self.client = genai.Client(api_key=settings.gemini_api_key)
     def analyze_email(self, subject: str, sender: str, body: str) -> dict:
         """Analyzes email subject and body using Gemini to return structured JSON data."""
         prompt = f"""
@@ -30,11 +36,26 @@ class AutomationService:
         - "event_end": String or null. End datetime in format YYYY-MM-DDTHH:MM:SS (local time).
         """
         
+        if not self.client:
+            logger.error("Gemini client not initialized for email analysis.")
+            return {
+                "category": "General",
+                "summary": "Failed to parse email content due to missing API configuration.",
+                "urgency": "low",
+                "action_items": [],
+                "should_create_event": False,
+                "event_title": None,
+                "event_start": None,
+                "event_end": None
+            }
+
         try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(
-                prompt,
-                generation_config={"response_mime_type": "application/json"}
+            response = self.client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                )
             )
             data = json.loads(response.text)
             return data
@@ -66,11 +87,22 @@ class AutomationService:
         - "suggested_priority": String. "low", "medium", or "high".
         """
 
+        if not self.client:
+            logger.error("Gemini client not initialized for issue analysis.")
+            return {
+                "summary": "Failed to parse GitHub issue content due to missing API configuration.",
+                "subtasks": [],
+                "complexity": "medium",
+                "suggested_priority": "medium"
+            }
+
         try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(
-                prompt,
-                generation_config={"response_mime_type": "application/json"}
+            response = self.client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                )
             )
             data = json.loads(response.text)
             return data
