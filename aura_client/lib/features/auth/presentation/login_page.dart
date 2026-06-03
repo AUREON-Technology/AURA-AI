@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:local_auth/local_auth.dart';
 import 'auth_provider.dart';
 import '../../../core/theme/theme.dart';
 
@@ -14,6 +15,48 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _nameController = TextEditingController(text: 'Anas Ibrahim');
   final _emailController = TextEditingController(text: 'anas.ibrahim.gnedy@gmail.com');
   bool _showDeveloperPanel = false;
+  
+  final LocalAuthentication _localAuth = LocalAuthentication();
+  bool _canCheckBiometrics = false;
+  bool _hasCachedCredentials = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkBiometricStatus();
+  }
+
+  void _checkBiometricStatus() async {
+    try {
+      final canCheck = await _localAuth.canCheckBiometrics;
+      final hasCache = await ref.read(authProvider.notifier).hasCachedCredentials();
+      setState(() {
+        _canCheckBiometrics = canCheck;
+        _hasCachedCredentials = hasCache;
+      });
+      // Auto trigger if biometric is active and credentials exist
+      if (canCheck && hasCache) {
+        _authenticateBiometrically();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _authenticateBiometrically() async {
+    try {
+      final authenticated = await _localAuth.authenticate(
+        localizedReason: 'Authenticate to unlock your AURA AI profile',
+        options: const AuthenticationOptions(
+          stickyAuth: true,
+          biometricOnly: true,
+        ),
+      );
+      if (authenticated) {
+        await ref.read(authProvider.notifier).signInCached();
+      }
+    } catch (e) {
+      debugPrint("Biometric auth failed: $e");
+    }
+  }
 
   @override
   void dispose() {
@@ -120,7 +163,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                           )
                         else ...[
                           // Google Sign-In Button
-                          ElevatedButton.icon(
+                           ElevatedButton.icon(
                             onPressed: () {
                               ref.read(authProvider.notifier).signInWithGoogle();
                             },
@@ -141,6 +184,20 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                             ),
                           ),
                           const SizedBox(height: 16),
+
+                          if (_canCheckBiometrics && _hasCachedCredentials) ...[
+                            ElevatedButton.icon(
+                              onPressed: _authenticateBiometrically,
+                              icon: const Icon(Icons.fingerprint, color: Colors.white),
+                              label: const Text('Unlock with Biometrics'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AuraTheme.accentIndigo,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                          ],
 
                           // Developer Bypass Options Toggle
                           TextButton(

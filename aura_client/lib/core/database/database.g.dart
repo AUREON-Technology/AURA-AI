@@ -17,30 +17,28 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, Task> {
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _titleMeta = const VerificationMeta('title');
   @override
-  late final GeneratedColumn<String> title = GeneratedColumn<String>(
-    'title',
-    aliasedName,
-    false,
-    additionalChecks: GeneratedColumn.checkTextLength(
-      minTextLength: 1,
-      maxTextLength: 200,
-    ),
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _descriptionMeta = const VerificationMeta(
-    'description',
-  );
+  late final GeneratedColumnWithTypeConverter<String, String> title =
+      GeneratedColumn<String>(
+        'title',
+        aliasedName,
+        false,
+        additionalChecks: GeneratedColumn.checkTextLength(
+          minTextLength: 1,
+          maxTextLength: 200,
+        ),
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+      ).withConverter<String>($TasksTable.$convertertitle);
   @override
-  late final GeneratedColumn<String> description = GeneratedColumn<String>(
-    'description',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
+  late final GeneratedColumnWithTypeConverter<String?, String> description =
+      GeneratedColumn<String>(
+        'description',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      ).withConverter<String?>($TasksTable.$converterdescriptionn);
   static const VerificationMeta _priorityMeta = const VerificationMeta(
     'priority',
   );
@@ -167,23 +165,6 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, Task> {
     } else if (isInserting) {
       context.missing(_idMeta);
     }
-    if (data.containsKey('title')) {
-      context.handle(
-        _titleMeta,
-        title.isAcceptableOrUnknown(data['title']!, _titleMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_titleMeta);
-    }
-    if (data.containsKey('description')) {
-      context.handle(
-        _descriptionMeta,
-        description.isAcceptableOrUnknown(
-          data['description']!,
-          _descriptionMeta,
-        ),
-      );
-    }
     if (data.containsKey('priority')) {
       context.handle(
         _priorityMeta,
@@ -259,13 +240,17 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, Task> {
         DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
-      title: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}title'],
-      )!,
-      description: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}description'],
+      title: $TasksTable.$convertertitle.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}title'],
+        )!,
+      ),
+      description: $TasksTable.$converterdescriptionn.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}description'],
+        ),
       ),
       priority: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
@@ -306,6 +291,13 @@ class $TasksTable extends Tasks with TableInfo<$TasksTable, Task> {
   $TasksTable createAlias(String alias) {
     return $TasksTable(attachedDatabase, alias);
   }
+
+  static TypeConverter<String, String> $convertertitle =
+      const EncryptedTextConverter();
+  static TypeConverter<String, String> $converterdescription =
+      const EncryptedTextConverter();
+  static TypeConverter<String?, String?> $converterdescriptionn =
+      NullAwareTypeConverter.wrap($converterdescription);
 }
 
 class Task extends DataClass implements Insertable<Task> {
@@ -337,9 +329,13 @@ class Task extends DataClass implements Insertable<Task> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     map['id'] = Variable<String>(id);
-    map['title'] = Variable<String>(title);
+    {
+      map['title'] = Variable<String>($TasksTable.$convertertitle.toSql(title));
+    }
     if (!nullToAbsent || description != null) {
-      map['description'] = Variable<String>(description);
+      map['description'] = Variable<String>(
+        $TasksTable.$converterdescriptionn.toSql(description),
+      );
     }
     map['priority'] = Variable<String>(priority);
     if (!nullToAbsent || dueDate != null) {
@@ -628,10 +624,14 @@ class TasksCompanion extends UpdateCompanion<Task> {
       map['id'] = Variable<String>(id.value);
     }
     if (title.present) {
-      map['title'] = Variable<String>(title.value);
+      map['title'] = Variable<String>(
+        $TasksTable.$convertertitle.toSql(title.value),
+      );
     }
     if (description.present) {
-      map['description'] = Variable<String>(description.value);
+      map['description'] = Variable<String>(
+        $TasksTable.$converterdescriptionn.toSql(description.value),
+      );
     }
     if (priority.present) {
       map['priority'] = Variable<String>(priority.value);
@@ -698,26 +698,24 @@ class $CalendarEventsTable extends CalendarEvents
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _titleMeta = const VerificationMeta('title');
   @override
-  late final GeneratedColumn<String> title = GeneratedColumn<String>(
-    'title',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _descriptionMeta = const VerificationMeta(
-    'description',
-  );
+  late final GeneratedColumnWithTypeConverter<String, String> title =
+      GeneratedColumn<String>(
+        'title',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+      ).withConverter<String>($CalendarEventsTable.$convertertitle);
   @override
-  late final GeneratedColumn<String> description = GeneratedColumn<String>(
-    'description',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
+  late final GeneratedColumnWithTypeConverter<String?, String> description =
+      GeneratedColumn<String>(
+        'description',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      ).withConverter<String?>($CalendarEventsTable.$converterdescriptionn);
   static const VerificationMeta _startTimeMeta = const VerificationMeta(
     'startTime',
   );
@@ -832,23 +830,6 @@ class $CalendarEventsTable extends CalendarEvents
     } else if (isInserting) {
       context.missing(_idMeta);
     }
-    if (data.containsKey('title')) {
-      context.handle(
-        _titleMeta,
-        title.isAcceptableOrUnknown(data['title']!, _titleMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_titleMeta);
-    }
-    if (data.containsKey('description')) {
-      context.handle(
-        _descriptionMeta,
-        description.isAcceptableOrUnknown(
-          data['description']!,
-          _descriptionMeta,
-        ),
-      );
-    }
     if (data.containsKey('start_time')) {
       context.handle(
         _startTimeMeta,
@@ -915,13 +896,17 @@ class $CalendarEventsTable extends CalendarEvents
         DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
-      title: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}title'],
-      )!,
-      description: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}description'],
+      title: $CalendarEventsTable.$convertertitle.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}title'],
+        )!,
+      ),
+      description: $CalendarEventsTable.$converterdescriptionn.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}description'],
+        ),
       ),
       startTime: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
@@ -958,6 +943,13 @@ class $CalendarEventsTable extends CalendarEvents
   $CalendarEventsTable createAlias(String alias) {
     return $CalendarEventsTable(attachedDatabase, alias);
   }
+
+  static TypeConverter<String, String> $convertertitle =
+      const EncryptedTextConverter();
+  static TypeConverter<String, String> $converterdescription =
+      const EncryptedTextConverter();
+  static TypeConverter<String?, String?> $converterdescriptionn =
+      NullAwareTypeConverter.wrap($converterdescription);
 }
 
 class CalendarEvent extends DataClass implements Insertable<CalendarEvent> {
@@ -987,9 +979,15 @@ class CalendarEvent extends DataClass implements Insertable<CalendarEvent> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     map['id'] = Variable<String>(id);
-    map['title'] = Variable<String>(title);
+    {
+      map['title'] = Variable<String>(
+        $CalendarEventsTable.$convertertitle.toSql(title),
+      );
+    }
     if (!nullToAbsent || description != null) {
-      map['description'] = Variable<String>(description);
+      map['description'] = Variable<String>(
+        $CalendarEventsTable.$converterdescriptionn.toSql(description),
+      );
     }
     map['start_time'] = Variable<DateTime>(startTime);
     map['end_time'] = Variable<DateTime>(endTime);
@@ -1257,10 +1255,14 @@ class CalendarEventsCompanion extends UpdateCompanion<CalendarEvent> {
       map['id'] = Variable<String>(id.value);
     }
     if (title.present) {
-      map['title'] = Variable<String>(title.value);
+      map['title'] = Variable<String>(
+        $CalendarEventsTable.$convertertitle.toSql(title.value),
+      );
     }
     if (description.present) {
-      map['description'] = Variable<String>(description.value);
+      map['description'] = Variable<String>(
+        $CalendarEventsTable.$converterdescriptionn.toSql(description.value),
+      );
     }
     if (startTime.present) {
       map['start_time'] = Variable<DateTime>(startTime.value);
@@ -1352,17 +1354,15 @@ class $FinanceRecordsTable extends FinanceRecords
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _descriptionMeta = const VerificationMeta(
-    'description',
-  );
   @override
-  late final GeneratedColumn<String> description = GeneratedColumn<String>(
-    'description',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
+  late final GeneratedColumnWithTypeConverter<String?, String> description =
+      GeneratedColumn<String>(
+        'description',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      ).withConverter<String?>($FinanceRecordsTable.$converterdescriptionn);
   static const VerificationMeta _dateMeta = const VerificationMeta('date');
   @override
   late final GeneratedColumn<DateTime> date = GeneratedColumn<DateTime>(
@@ -1462,15 +1462,6 @@ class $FinanceRecordsTable extends FinanceRecords
     } else if (isInserting) {
       context.missing(_categoryMeta);
     }
-    if (data.containsKey('description')) {
-      context.handle(
-        _descriptionMeta,
-        description.isAcceptableOrUnknown(
-          data['description']!,
-          _descriptionMeta,
-        ),
-      );
-    }
     if (data.containsKey('date')) {
       context.handle(
         _dateMeta,
@@ -1524,9 +1515,11 @@ class $FinanceRecordsTable extends FinanceRecords
         DriftSqlType.string,
         data['${effectivePrefix}category'],
       )!,
-      description: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}description'],
+      description: $FinanceRecordsTable.$converterdescriptionn.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}description'],
+        ),
       ),
       date: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
@@ -1551,6 +1544,11 @@ class $FinanceRecordsTable extends FinanceRecords
   $FinanceRecordsTable createAlias(String alias) {
     return $FinanceRecordsTable(attachedDatabase, alias);
   }
+
+  static TypeConverter<String, String> $converterdescription =
+      const EncryptedTextConverter();
+  static TypeConverter<String?, String?> $converterdescriptionn =
+      NullAwareTypeConverter.wrap($converterdescription);
 }
 
 class FinanceRecord extends DataClass implements Insertable<FinanceRecord> {
@@ -1582,7 +1580,9 @@ class FinanceRecord extends DataClass implements Insertable<FinanceRecord> {
     map['amount'] = Variable<double>(amount);
     map['category'] = Variable<String>(category);
     if (!nullToAbsent || description != null) {
-      map['description'] = Variable<String>(description);
+      map['description'] = Variable<String>(
+        $FinanceRecordsTable.$converterdescriptionn.toSql(description),
+      );
     }
     map['date'] = Variable<DateTime>(date);
     map['created_at'] = Variable<DateTime>(createdAt);
@@ -1832,7 +1832,9 @@ class FinanceRecordsCompanion extends UpdateCompanion<FinanceRecord> {
       map['category'] = Variable<String>(category.value);
     }
     if (description.present) {
-      map['description'] = Variable<String>(description.value);
+      map['description'] = Variable<String>(
+        $FinanceRecordsTable.$converterdescriptionn.toSql(description.value),
+      );
     }
     if (date.present) {
       map['date'] = Variable<DateTime>(date.value);
@@ -3262,15 +3264,15 @@ class $UserMemoriesTable extends UserMemories
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _factMeta = const VerificationMeta('fact');
   @override
-  late final GeneratedColumn<String> fact = GeneratedColumn<String>(
-    'fact',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
+  late final GeneratedColumnWithTypeConverter<String, String> fact =
+      GeneratedColumn<String>(
+        'fact',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+      ).withConverter<String>($UserMemoriesTable.$converterfact);
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -3301,14 +3303,6 @@ class $UserMemoriesTable extends UserMemories
     } else if (isInserting) {
       context.missing(_idMeta);
     }
-    if (data.containsKey('fact')) {
-      context.handle(
-        _factMeta,
-        fact.isAcceptableOrUnknown(data['fact']!, _factMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_factMeta);
-    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -3330,10 +3324,12 @@ class $UserMemoriesTable extends UserMemories
         DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
-      fact: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}fact'],
-      )!,
+      fact: $UserMemoriesTable.$converterfact.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}fact'],
+        )!,
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -3345,6 +3341,9 @@ class $UserMemoriesTable extends UserMemories
   $UserMemoriesTable createAlias(String alias) {
     return $UserMemoriesTable(attachedDatabase, alias);
   }
+
+  static TypeConverter<String, String> $converterfact =
+      const EncryptedTextConverter();
 }
 
 class UserMemory extends DataClass implements Insertable<UserMemory> {
@@ -3360,7 +3359,11 @@ class UserMemory extends DataClass implements Insertable<UserMemory> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     map['id'] = Variable<String>(id);
-    map['fact'] = Variable<String>(fact);
+    {
+      map['fact'] = Variable<String>(
+        $UserMemoriesTable.$converterfact.toSql(fact),
+      );
+    }
     map['created_at'] = Variable<DateTime>(createdAt);
     return map;
   }
@@ -3483,7 +3486,9 @@ class UserMemoriesCompanion extends UpdateCompanion<UserMemory> {
       map['id'] = Variable<String>(id.value);
     }
     if (fact.present) {
-      map['fact'] = Variable<String>(fact.value);
+      map['fact'] = Variable<String>(
+        $UserMemoriesTable.$converterfact.toSql(fact.value),
+      );
     }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
@@ -3852,15 +3857,17 @@ class $$TasksTableFilterComposer extends Composer<_$AppDatabase, $TasksTable> {
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<String> get title => $composableBuilder(
-    column: $table.title,
-    builder: (column) => ColumnFilters(column),
-  );
+  ColumnWithTypeConverterFilters<String, String, String> get title =>
+      $composableBuilder(
+        column: $table.title,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
 
-  ColumnFilters<String> get description => $composableBuilder(
-    column: $table.description,
-    builder: (column) => ColumnFilters(column),
-  );
+  ColumnWithTypeConverterFilters<String?, String, String> get description =>
+      $composableBuilder(
+        column: $table.description,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
 
   ColumnFilters<String> get priority => $composableBuilder(
     column: $table.priority,
@@ -3980,13 +3987,14 @@ class $$TasksTableAnnotationComposer
   GeneratedColumn<String> get id =>
       $composableBuilder(column: $table.id, builder: (column) => column);
 
-  GeneratedColumn<String> get title =>
+  GeneratedColumnWithTypeConverter<String, String> get title =>
       $composableBuilder(column: $table.title, builder: (column) => column);
 
-  GeneratedColumn<String> get description => $composableBuilder(
-    column: $table.description,
-    builder: (column) => column,
-  );
+  GeneratedColumnWithTypeConverter<String?, String> get description =>
+      $composableBuilder(
+        column: $table.description,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<String> get priority =>
       $composableBuilder(column: $table.priority, builder: (column) => column);
@@ -4164,15 +4172,17 @@ class $$CalendarEventsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<String> get title => $composableBuilder(
-    column: $table.title,
-    builder: (column) => ColumnFilters(column),
-  );
+  ColumnWithTypeConverterFilters<String, String, String> get title =>
+      $composableBuilder(
+        column: $table.title,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
 
-  ColumnFilters<String> get description => $composableBuilder(
-    column: $table.description,
-    builder: (column) => ColumnFilters(column),
-  );
+  ColumnWithTypeConverterFilters<String?, String, String> get description =>
+      $composableBuilder(
+        column: $table.description,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
 
   ColumnFilters<DateTime> get startTime => $composableBuilder(
     column: $table.startTime,
@@ -4282,13 +4292,14 @@ class $$CalendarEventsTableAnnotationComposer
   GeneratedColumn<String> get id =>
       $composableBuilder(column: $table.id, builder: (column) => column);
 
-  GeneratedColumn<String> get title =>
+  GeneratedColumnWithTypeConverter<String, String> get title =>
       $composableBuilder(column: $table.title, builder: (column) => column);
 
-  GeneratedColumn<String> get description => $composableBuilder(
-    column: $table.description,
-    builder: (column) => column,
-  );
+  GeneratedColumnWithTypeConverter<String?, String> get description =>
+      $composableBuilder(
+        column: $table.description,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<DateTime> get startTime =>
       $composableBuilder(column: $table.startTime, builder: (column) => column);
@@ -4478,10 +4489,11 @@ class $$FinanceRecordsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<String> get description => $composableBuilder(
-    column: $table.description,
-    builder: (column) => ColumnFilters(column),
-  );
+  ColumnWithTypeConverterFilters<String?, String, String> get description =>
+      $composableBuilder(
+        column: $table.description,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
 
   ColumnFilters<DateTime> get date => $composableBuilder(
     column: $table.date,
@@ -4580,10 +4592,11 @@ class $$FinanceRecordsTableAnnotationComposer
   GeneratedColumn<String> get category =>
       $composableBuilder(column: $table.category, builder: (column) => column);
 
-  GeneratedColumn<String> get description => $composableBuilder(
-    column: $table.description,
-    builder: (column) => column,
-  );
+  GeneratedColumnWithTypeConverter<String?, String> get description =>
+      $composableBuilder(
+        column: $table.description,
+        builder: (column) => column,
+      );
 
   GeneratedColumn<DateTime> get date =>
       $composableBuilder(column: $table.date, builder: (column) => column);
@@ -5452,10 +5465,11 @@ class $$UserMemoriesTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<String> get fact => $composableBuilder(
-    column: $table.fact,
-    builder: (column) => ColumnFilters(column),
-  );
+  ColumnWithTypeConverterFilters<String, String, String> get fact =>
+      $composableBuilder(
+        column: $table.fact,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
 
   ColumnFilters<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
@@ -5500,7 +5514,7 @@ class $$UserMemoriesTableAnnotationComposer
   GeneratedColumn<String> get id =>
       $composableBuilder(column: $table.id, builder: (column) => column);
 
-  GeneratedColumn<String> get fact =>
+  GeneratedColumnWithTypeConverter<String, String> get fact =>
       $composableBuilder(column: $table.fact, builder: (column) => column);
 
   GeneratedColumn<DateTime> get createdAt =>

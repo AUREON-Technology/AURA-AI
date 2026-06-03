@@ -13,7 +13,9 @@ DEFAULT_INSTRUCTIONS = {
     "task_planner": "You are AURA's Task Planner. Help the user prioritize tasks, outline subtask checklists, and manage schedules. Suggest tasks whenever appropriate.",
     "finance_advisor": "You are AURA's Finance Advisor. Analyze expenses, suggest budgets, and provide smart financial recommendations. Focus on helping the user stay within their means.",
     "health_companion": "You are AURA's Health Companion. Help track water, sleep, calories, weight, and exercise. Offer encouraging, evidence-based wellness tips.",
-    "academic_coach": "You are AURA's Academic Coach. Assist with software engineering specifications, coding structures, learning topics, study guides, and flashcards."
+    "academic_coach": "You are AURA's Academic Coach. Assist with software engineering specifications, coding structures, learning topics, study guides, and flashcards.",
+    "research_agent": "You are AURA's Research Agent. Help the user gather facts, summarize articles or documents, analyze web contents, and perform structured knowledge synthesis. Focus on objective, logical, and well-cited information retrieval.",
+    "decision_agent": "You are AURA's Decision Agent. Help the user evaluate multiple options, perform risk assessments, structure cost-benefit analyses, and make logical choices. Outline trade-offs clearly for any decision."
 }
 
 ACTION_INSTRUCTIONS = """
@@ -45,6 +47,8 @@ class AgentOrchestrator:
         - "finance_advisor": For expenses, income, budgeting, and financial planning.
         - "health_companion": For sleeping habits, water logging, workout sessions, calories, and physical stats.
         - "academic_coach": For studies, university, software development spec drafting, coding concepts, or research.
+        - "research_agent": For web search, gathering facts, summarizing documents, synthesising information.
+        - "decision_agent": For choices, cost-benefit analysis, options evaluation, trade-offs, and risk analysis.
         - "orchestrator": For general conversation, greeting, settings, or if it doesn't fit the above.
 
         Respond with ONLY the category string. Do not add explanation or markdown.
@@ -84,12 +88,16 @@ class AgentOrchestrator:
         msg_lower = user_message.lower()
         if any(k in msg_lower for k in ["task", "todo", "schedule", "remind"]):
             return "task_planner"
-        elif any(k in msg_lower for k in ["expense", "income", "money", "spent", "cost"]):
+        elif any(k in msg_lower for k in ["expense", "income", "money", "spent", "budget"]):
             return "finance_advisor"
         elif any(k in msg_lower for k in ["water", "sleep", "calorie", "workout", "weight"]):
             return "health_companion"
         elif any(k in msg_lower for k in ["study", "course", "exam", "code", "lecture"]):
             return "academic_coach"
+        elif any(k in msg_lower for k in ["search", "google", "summarize", "find facts", "research"]):
+            return "research_agent"
+        elif any(k in msg_lower for k in ["decide", "decision", "choose", "compare", "risk", "trade-off", "cost-benefit"]):
+            return "decision_agent"
         return "orchestrator"
 
     async def execute_agent_stream(
@@ -214,6 +222,10 @@ class AgentOrchestrator:
             yield "I am your Health Companion. I've classified your intent and proposed updating your health logs.\n[ACTIONS]\n[{\"type\": \"log_health\", \"params\": {\"waterIntakeMl\": 250, \"sleepMinutes\": 480}}]"
         elif active_agent == "academic_coach":
             yield "I am your Academic Coach. I've classified your intent and proposed creating a study milestone task.\n[ACTIONS]\n[{\"type\": \"add_task\", \"params\": {\"title\": \"Review Computer Architecture Notes\", \"priority\": \"high\", \"category\": \"academic\"}}]"
+        elif active_agent == "research_agent":
+            yield "I am your Research Agent. I've classified your intent and summarized the request. Let me know what facts you'd like me to fetch."
+        elif active_agent == "decision_agent":
+            yield "I am your Decision Agent. I've classified your intent and am ready to weigh options, compare trade-offs, and perform risk analysis."
         else:
             yield "I am AURA, your personal assistant. How can I assist you with your day today?"
 

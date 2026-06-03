@@ -1,8 +1,10 @@
 import logging
 import uvicorn
-from fastapi import FastAPI, HTTPException
+import time
+from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 
@@ -20,12 +22,79 @@ logging.basicConfig(
 )
 logger = logging.getLogger("aura_backend")
 
+# ----------------------------------------------------
+# Security Middlewares
+# ----------------------------------------------------
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    # Class-level history to allow test suites to clear/reset rate limiting state
+    request_history: Dict[str, List[float]] = {}
+
+    def __init__(self, app, requests_per_minute: int = 100):
+        super().__init__(app)
+        self.requests_per_minute = requests_per_minute
+
+    async def dispatch(self, request: Request, call_next):
+        # Exempt health check from rate limiting
+        if request.url.path == "/health":
+            return await call_next(request)
+        
+        client_ip = request.client.host if request.client else "unknown"
+        now = time.time()
+        
+        if client_ip not in RateLimitMiddleware.request_history:
+            RateLimitMiddleware.request_history[client_ip] = []
+            
+        # Keep only timestamps within the last 60 seconds
+        RateLimitMiddleware.request_history[client_ip] = [
+            ts for ts in RateLimitMiddleware.request_history[client_ip] if now - ts < 60
+        ]
+        
+        if len(RateLimitMiddleware.request_history[client_ip]) >= self.requests_per_minute:
+            return Response(
+                content="Rate limit exceeded. Maximum 100 requests per minute.",
+                status_code=429
+            )
+            
+        RateLimitMiddleware.request_history[client_ip].append(now)
+        return await call_next(request)
+
+
+class PayloadSizeLimitMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, max_bytes: int = 5 * 1024 * 1024): # 5MB limit
+        super().__init__(app)
+        self.max_bytes = max_bytes
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method in ("POST", "PUT", "PATCH"):
+            content_length = request.headers.get("content-length")
+            if content_length:
+                try:
+                    size = int(content_length)
+                    if size > self.max_bytes:
+                        return Response(
+                            content="Payload Too Large. Maximum size is 5MB.",
+                            status_code=413
+                        )
+                except ValueError:
+                    return Response(
+                        content="Invalid Content-Length header.",
+                        status_code=400
+                    )
+        return await call_next(request)
+
+
 app = FastAPI(title="AURA AI OS Backend", version="1.0")
 
-# CORS Middleware for client connectivity
+# Register Security Middlewares (Executed in reverse order of registration)
+app.add_middleware(PayloadSizeLimitMiddleware, max_bytes=5 * 1024 * 1024)
+app.add_middleware(RateLimitMiddleware, requests_per_minute=100)
+
+# Configure CORS origins
+origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

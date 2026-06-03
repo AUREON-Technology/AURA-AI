@@ -6,18 +6,138 @@ import '../../auth/presentation/auth_provider.dart';
 import '../../../core/theme/theme.dart';
 import '../../../core/database/database.dart';
 
-class TasksPage extends ConsumerWidget {
+class TasksPage extends ConsumerStatefulWidget {
   const TasksPage({super.key});
 
-  void _showAddTaskDialog(BuildContext context, WidgetRef ref) {
+  @override
+  ConsumerState<TasksPage> createState() => _TasksPageState();
+}
+
+class _TasksPageState extends ConsumerState<TasksPage> {
+  bool _isSyncing = false;
+  List<String> _syncLogs = [];
+
+  void _showAddTaskDialog() {
     showDialog(
       context: context,
       builder: (context) => const AddTaskDialog(),
     );
   }
 
+  Future<void> _syncTasks() async {
+    setState(() {
+      _isSyncing = true;
+      _syncLogs = ["Starting synchronization..."];
+    });
+
+    final auth = ref.read(authProvider).value;
+    final isMock = auth?.id == 'mock_user_123' || auth == null;
+
+    final logs = await ref.read(taskRepositoryProvider).syncGoogleTasks(isMock: isMock);
+
+    if (mounted) {
+      setState(() {
+        _syncLogs = logs;
+        _isSyncing = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            logs.any((l) => l.contains("error")) 
+                ? "Tasks sync encountered errors." 
+                : "Google Tasks sync completed successfully!",
+          ),
+          backgroundColor: logs.any((l) => l.contains("error")) 
+              ? Colors.redAccent 
+              : AuraTheme.accentTeal,
+        ),
+      );
+    }
+  }
+
+  void _showSyncLogs() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF0F0C1B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: AuraTheme.cardBg,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            border: Border.all(color: const Color(0x1F94A3B8)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text("Tasks Sync Activity Log", style: Theme.of(context).textTheme.titleLarge),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const Divider(color: Color(0x1F94A3B8), height: 24),
+              Expanded(
+                child: _syncLogs.isEmpty
+                    ? const Center(
+                        child: Text(
+                          "No logs recorded yet. Press sync to begin.",
+                          style: TextStyle(color: AuraTheme.textSecondary),
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: _syncLogs.length,
+                        itemBuilder: (context, index) {
+                          final log = _syncLogs[index];
+                          IconData logIcon = Icons.info_outline;
+                          Color logColor = AuraTheme.textSecondary;
+
+                          if (log.toLowerCase().contains("error") || log.toLowerCase().contains("failed")) {
+                            logIcon = Icons.error_outline;
+                            logColor = Colors.redAccent;
+                          } else if (log.toLowerCase().contains("success")) {
+                            logIcon = Icons.check_circle_outline;
+                            logColor = AuraTheme.accentTeal;
+                          } else if (log.toLowerCase().contains("import") || log.toLowerCase().contains("upload")) {
+                            logIcon = Icons.cloud_sync_outlined;
+                            logColor = AuraTheme.accentIndigo;
+                          }
+
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 6.0),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(logIcon, color: logColor, size: 18),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    log,
+                                    style: TextStyle(color: logColor, fontSize: 13, fontFamily: 'Courier'),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
     final tasksAsync = ref.watch(tasksStreamProvider);
     final currentFilter = ref.watch(taskCategoryFilterProvider);
@@ -100,6 +220,7 @@ class TasksPage extends ConsumerWidget {
                           style: Theme.of(context).textTheme.displayLarge?.copyWith(
                                 fontSize: 28,
                                 fontWeight: FontWeight.w900,
+                                // Keep exact height or spacing if needed
                               ),
                         ),
                         const SizedBox(height: 4),
@@ -109,13 +230,55 @@ class TasksPage extends ConsumerWidget {
                         ),
                       ],
                     ),
-                    ElevatedButton.icon(
-                      onPressed: () => _showAddTaskDialog(context, ref),
-                      icon: const Icon(Icons.add, size: 20),
-                      label: const Text('Add Task'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                      ),
+                    Row(
+                      children: [
+                        if (_syncLogs.isNotEmpty)
+                          IconButton(
+                            icon: const Icon(Icons.receipt_long, color: AuraTheme.textSecondary),
+                            tooltip: "View Sync Logs",
+                            onPressed: _showSyncLogs,
+                          ),
+                        const SizedBox(width: 8),
+                        _isSyncing
+                            ? Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                decoration: BoxDecoration(
+                                  color: AuraTheme.cardBg,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: const Color(0x1F94A3B8)),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                    ),
+                                    SizedBox(width: 12),
+                                    Text("Syncing...", style: TextStyle(fontSize: 14)),
+                                  ],
+                                ),
+                              )
+                            : ElevatedButton.icon(
+                                onPressed: _syncTasks,
+                                icon: const Icon(Icons.sync),
+                                label: const Text("Sync Tasks"),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AuraTheme.accentIndigo,
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                ),
+                              ),
+                        const SizedBox(width: 12),
+                        ElevatedButton.icon(
+                          onPressed: _showAddTaskDialog,
+                          icon: const Icon(Icons.add, size: 20),
+                          label: const Text('Add Task'),
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),

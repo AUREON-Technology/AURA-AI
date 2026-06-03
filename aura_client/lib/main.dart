@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'core/theme/theme.dart';
 import 'core/routing/router.dart';
+import 'core/security/encryption_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await EncryptionService.init();
   
   // Gracefully initialize Firebase for mobile/web,
   // falling back if not configured/supported on current platform

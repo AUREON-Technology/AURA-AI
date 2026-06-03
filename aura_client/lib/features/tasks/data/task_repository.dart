@@ -1,6 +1,9 @@
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:googleapis/tasks/v1.dart' as tasks_api;
+import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import '../../../core/database/database.dart';
 import '../../../core/database/database_provider.dart';
 
@@ -86,6 +89,211 @@ class TaskRepository {
       updatedAt: Value(DateTime.now()),
     );
     await _db.update(_db.tasks).replace(updated);
+  }
+
+  // Bidirectional Google Tasks Sync
+  Future<List<String>> syncGoogleTasks({required bool isMock}) async {
+    final logs = <String>[];
+    logs.add("Initializing Tasks sync process...");
+
+    if (isMock) {
+      await Future.delayed(const Duration(milliseconds: 1500));
+      logs.add("Connected to local offline tasks provider.");
+      
+      // Seed some mock remote tasks to simulate sync
+      final sampleTasks = [
+        TasksCompanion.insert(
+          id: _uuid.v4(),
+          title: "Complete AURA RAG implementation",
+          description: const Value("Verify document chunks, embeddings, and Qdrant retrieval"),
+          priority: "high",
+          dueDate: Value(DateTime.now().add(const Duration(days: 2))),
+          category: "project",
+          isCompleted: false,
+          createdAt: DateTime.now(),
+          googleTaskId: const Value("mock_g_task_1"),
+        ),
+        TasksCompanion.insert(
+          id: _uuid.v4(),
+          title: "Review flutter layout optimization guidelines",
+          description: const Value("Avoid unnecessary rebuilds, use const constructors"),
+          priority: "medium",
+          dueDate: Value(DateTime.now().add(const Duration(days: 4))),
+          category: "personal",
+          isCompleted: true,
+          createdAt: DateTime.now(),
+          googleTaskId: const Value("mock_g_task_2"),
+        ),
+      ];
+
+      for (final task in sampleTasks) {
+        final existing = await (_db.select(_db.tasks)
+              ..where((t) => t.googleTaskId.equals(task.googleTaskId.value!)))
+            .getSingleOrNull();
+
+        if (existing == null) {
+          await _db.into(_db.tasks).insert(task);
+          logs.add("Imported mock task: ${task.title.value}");
+        }
+      }
+      logs.add("Sync simulated successfully.");
+      return logs;
+    }
+
+    try {
+      final googleSignIn = GoogleSignIn.instance;
+      final scopes = ['https://www.googleapis.com/auth/tasks'];
+
+      logs.add("Requesting Google Tasks authorization...");
+      final GoogleSignInClientAuthorization authorization =
+          await googleSignIn.authorizationClient.authorizeScopes(scopes);
+
+      final client = authorization.authClient(scopes: scopes);
+      final tasksApi = tasks_api.TasksApi(client);
+      logs.add("Established connection with Google Tasks API.");
+
+      // 1. Get AURA Tasks list or create one if not existing
+      final taskLists = await tasksApi.tasklists.list();
+      String? listId;
+      
+      final lists = taskLists.items ?? [];
+      for (final l in lists) {
+        if (l.title == "AURA Tasks") {
+          listId = l.id;
+          break;
+        }
+      }
+
+      if (listId == null) {
+        logs.add("Creating a new 'AURA Tasks' task list on Google...");
+        final newList = await tasksApi.tasklists.insert(tasks_api.TaskList()..title = "AURA Tasks");
+        listId = newList.id;
+        logs.add("Created 'AURA Tasks' task list.");
+      } else {
+        logs.add("Found existing 'AURA Tasks' list.");
+      }
+
+      if (listId == null) throw Exception("Failed to resolve Google Task List.");
+
+      // 2. Fetch Tasks from Google List
+      final gTasksList = await tasksApi.tasks.list(listId, showCompleted: true, showHidden: true);
+      final remoteTasks = gTasksList.items ?? [];
+      logs.add("Retrieved ${remoteTasks.length} tasks from Google Cloud Tasks.");
+
+      // 3. Process remote tasks and sync locally (LWW)
+      for (final gt in remoteTasks) {
+        if (gt.id == null || gt.title == null) continue;
+
+        final isCompleted = gt.status == 'completed';
+        final isDeleted = gt.deleted == true || gt.hidden == true;
+        
+        DateTime? due;
+        if (gt.due != null) {
+          due = DateTime.tryParse(gt.due!);
+        }
+
+        final existing = await (_db.select(_db.tasks)
+              ..where((t) => t.googleTaskId.equals(gt.id!)))
+            .getSingleOrNull();
+
+        if (isDeleted) {
+          if (existing != null) {
+            await (_db.delete(_db.tasks)..where((t) => t.id.equals(existing.id))).go();
+            logs.add("Removed deleted task locally: ${gt.title}");
+          }
+          continue;
+        }
+
+        final remoteUpdatedAt = gt.updated != null ? DateTime.tryParse(gt.updated!) : null;
+
+        final companion = TasksCompanion(
+          id: existing != null ? Value(existing.id) : Value(_uuid.v4()),
+          title: Value(gt.title!),
+          description: Value(gt.notes),
+          priority: Value(existing?.priority ?? 'medium'),
+          dueDate: Value(due),
+          category: Value(existing?.category ?? 'personal'),
+          isCompleted: Value(isCompleted),
+          createdAt: Value(existing?.createdAt ?? DateTime.now()),
+          googleTaskId: Value(gt.id),
+          isSynced: const Value(true),
+          updatedAt: Value(remoteUpdatedAt ?? DateTime.now()),
+        );
+
+        if (existing != null) {
+          // LWW Conflict Resolution
+          final localUpdatedAt = existing.updatedAt;
+          if (remoteUpdatedAt != null && (localUpdatedAt == null || remoteUpdatedAt.isAfter(localUpdatedAt))) {
+            await (_db.update(_db.tasks)..where((t) => t.id.equals(existing.id))).write(companion);
+          }
+        } else {
+          await _db.into(_db.tasks).insert(companion);
+          logs.add("Imported task: ${gt.title}");
+        }
+      }
+
+      // 4. Upload new local tasks (lacking googleTaskId)
+      final unsyncedTasks = await (_db.select(_db.tasks)..where((t) => t.googleTaskId.isNull())).get();
+      if (unsyncedTasks.isNotEmpty) {
+        logs.add("Uploading ${unsyncedTasks.length} new local tasks...");
+        for (final lt in unsyncedTasks) {
+          final newTask = tasks_api.Task()
+            ..title = lt.title
+            ..notes = lt.description
+            ..status = lt.isCompleted ? 'completed' : 'needsAction';
+          
+          if (lt.dueDate != null) {
+            newTask.due = lt.dueDate!.toUtc().toIso8601String();
+          }
+
+          try {
+            final createdTask = await tasksApi.tasks.insert(newTask, listId);
+            if (createdTask.id != null) {
+              await (_db.update(_db.tasks)..where((t) => t.id.equals(lt.id))).write(
+                TasksCompanion(
+                  googleTaskId: Value(createdTask.id),
+                  isSynced: const Value(true),
+                ),
+              );
+              logs.add("Uploaded task: ${lt.title}");
+            }
+          } catch (uploadError) {
+            logs.add("Failed uploading '${lt.title}': $uploadError");
+          }
+        }
+      }
+
+      // 5. Sync updates to already synced tasks (where local isSynced is false and googleTaskId is not null)
+      final modifiedTasks = await (_db.select(_db.tasks)..where((t) => t.googleTaskId.isNotNull() & t.isSynced.equals(false))).get();
+      if (modifiedTasks.isNotEmpty) {
+        logs.add("Syncing ${modifiedTasks.length} modified tasks...");
+        for (final mt in modifiedTasks) {
+          final updatedTask = tasks_api.Task()
+            ..title = mt.title
+            ..notes = mt.description
+            ..status = mt.isCompleted ? 'completed' : 'needsAction';
+
+          if (mt.dueDate != null) {
+            updatedTask.due = mt.dueDate!.toUtc().toIso8601String();
+          }
+
+          try {
+            await tasksApi.tasks.update(updatedTask, listId, mt.googleTaskId!);
+            await (_db.update(_db.tasks)..where((t) => t.id.equals(mt.id))).write(
+              const TasksCompanion(isSynced: Value(true)),
+            );
+          } catch (updateError) {
+            logs.add("Failed updating task '${mt.title}': $updateError");
+          }
+        }
+      }
+
+      logs.add("Google Tasks sync completed successfully!");
+    } catch (e) {
+      logs.add("Sync error occurred: $e");
+    }
+
+    return logs;
   }
 }
 

@@ -4,7 +4,27 @@ import 'package:drift/native.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:aura_client/core/security/encryption_service.dart';
+
 part 'database.g.dart';
+
+// ----------------------------------------------------
+// Type Converters
+// ----------------------------------------------------
+
+class EncryptedTextConverter extends TypeConverter<String, String> {
+  const EncryptedTextConverter();
+
+  @override
+  String fromSql(String fromDb) {
+    return EncryptionService.decryptText(fromDb);
+  }
+
+  @override
+  String toSql(String value) {
+    return EncryptionService.encryptText(value);
+  }
+}
 
 // ----------------------------------------------------
 // DB Tables
@@ -12,8 +32,8 @@ part 'database.g.dart';
 
 class Tasks extends Table {
   TextColumn get id => text()();
-  TextColumn get title => text().withLength(min: 1, max: 200)();
-  TextColumn get description => text().nullable()();
+  TextColumn get title => text().withLength(min: 1, max: 200).map(const EncryptedTextConverter())();
+  TextColumn get description => text().map(const EncryptedTextConverter()).nullable()();
   TextColumn get priority => text()(); // low, medium, high
   DateTimeColumn get dueDate => dateTime().nullable()();
   BoolColumn get isCompleted => boolean()();
@@ -29,8 +49,8 @@ class Tasks extends Table {
 
 class CalendarEvents extends Table {
   TextColumn get id => text()();
-  TextColumn get title => text()();
-  TextColumn get description => text().nullable()();
+  TextColumn get title => text().map(const EncryptedTextConverter())();
+  TextColumn get description => text().map(const EncryptedTextConverter()).nullable()();
   DateTimeColumn get startTime => dateTime()();
   DateTimeColumn get endTime => dateTime()();
   TextColumn get googleEventId => text().nullable()();
@@ -48,7 +68,7 @@ class FinanceRecords extends Table {
   TextColumn get type => text()(); // income, expense
   RealColumn get amount => real()();
   TextColumn get category => text()(); // e.g. food, studies, freelance, etc.
-  TextColumn get description => text().nullable()();
+  TextColumn get description => text().map(const EncryptedTextConverter()).nullable()();
   DateTimeColumn get date => dateTime()();
   DateTimeColumn get createdAt => dateTime()();
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
@@ -98,7 +118,7 @@ class AgentConfigurations extends Table {
 
 class UserMemories extends Table {
   TextColumn get id => text()();
-  TextColumn get fact => text()();
+  TextColumn get fact => text().map(const EncryptedTextConverter())();
   DateTimeColumn get createdAt => dateTime()();
 
   @override

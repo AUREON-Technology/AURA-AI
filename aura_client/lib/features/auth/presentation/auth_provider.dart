@@ -51,21 +51,35 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       // Ignore if initialization fails (e.g. running on unsupported platform)
     }
 
-    // Try loading persisted credentials
-    final cachedId = await _storage.read(key: 'user_id');
-    final cachedEmail = await _storage.read(key: 'user_email');
-    final cachedName = await _storage.read(key: 'user_name');
-    final cachedPhoto = await _storage.read(key: 'user_photo');
+    return null; // Require biometric/google sign-in explicitly at launch
+  }
 
-    if (cachedId != null && cachedEmail != null && cachedName != null) {
-      return UserProfile(
-        id: cachedId,
-        email: cachedEmail,
-        displayName: cachedName,
-        photoUrl: cachedPhoto,
-      );
+  Future<bool> hasCachedCredentials() async {
+    final cachedId = await _storage.read(key: 'user_id');
+    return cachedId != null;
+  }
+
+  Future<void> signInCached() async {
+    state = const AsyncValue.loading();
+    try {
+      final cachedId = await _storage.read(key: 'user_id');
+      final cachedEmail = await _storage.read(key: 'user_email');
+      final cachedName = await _storage.read(key: 'user_name');
+      final cachedPhoto = await _storage.read(key: 'user_photo');
+
+      if (cachedId != null && cachedEmail != null && cachedName != null) {
+        state = AsyncValue.data(UserProfile(
+          id: cachedId,
+          email: cachedEmail,
+          displayName: cachedName,
+          photoUrl: cachedPhoto,
+        ));
+      } else {
+        state = const AsyncValue.data(null);
+      }
+    } catch (err, stack) {
+      state = AsyncValue.error(err, stack);
     }
-    return null;
   }
 
   Future<void> signInWithGoogle() async {

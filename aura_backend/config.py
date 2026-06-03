@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "llama3"
     local_embedding_model: str = "all-MiniLM-L6-v2"
+    allowed_origins: str = "http://localhost,http://127.0.0.1"
 
     class Config:
         env_file = ".env"
