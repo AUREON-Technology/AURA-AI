@@ -52,6 +52,8 @@ class HealthRepository {
       caloriesConsumed: 0,
       exerciseMinutes: 0,
       createdAt: DateTime.now(),
+      isSynced: false,
+      updatedAt: DateTime.now(),
     );
 
     await _db.into(_db.healthRecords).insert(newRecord);
@@ -64,6 +66,8 @@ class HealthRepository {
     await (_db.update(_db.healthRecords)..where((t) => t.id.equals(record.id))).write(
       HealthRecordsCompanion(
         waterIntakeMl: Value(record.waterIntakeMl + ml),
+        isSynced: const Value(false),
+        updatedAt: Value(DateTime.now()),
       ),
     );
   }
@@ -74,6 +78,8 @@ class HealthRepository {
     await (_db.update(_db.healthRecords)..where((t) => t.id.equals(record.id))).write(
       HealthRecordsCompanion(
         sleepMinutes: Value(record.sleepMinutes + minutes),
+        isSynced: const Value(false),
+        updatedAt: Value(DateTime.now()),
       ),
     );
   }
@@ -84,6 +90,8 @@ class HealthRepository {
     await (_db.update(_db.healthRecords)..where((t) => t.id.equals(record.id))).write(
       HealthRecordsCompanion(
         exerciseMinutes: Value(record.exerciseMinutes + minutes),
+        isSynced: const Value(false),
+        updatedAt: Value(DateTime.now()),
       ),
     );
   }
@@ -94,6 +102,8 @@ class HealthRepository {
     await (_db.update(_db.healthRecords)..where((t) => t.id.equals(record.id))).write(
       HealthRecordsCompanion(
         caloriesConsumed: Value(record.caloriesConsumed + kcal),
+        isSynced: const Value(false),
+        updatedAt: Value(DateTime.now()),
       ),
     );
   }
@@ -104,6 +114,8 @@ class HealthRepository {
     await (_db.update(_db.healthRecords)..where((t) => t.id.equals(record.id))).write(
       HealthRecordsCompanion(
         weight: Value(weight),
+        isSynced: const Value(false),
+        updatedAt: Value(DateTime.now()),
       ),
     );
   }

@@ -3,8 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:intl/intl.dart';
 import '../data/chat_repository.dart';
+import '../data/agent_config_repository.dart';
+import '../data/memory_repository.dart';
+import '../../tasks/data/task_repository.dart';
+import '../../calendar/data/calendar_repository.dart';
+import '../../finance/data/finance_repository.dart';
+import '../../health/data/health_repository.dart';
 import '../../../core/theme/theme.dart';
 import '../../../core/database/database.dart';
+import '../../sync/sync_engine.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
   const ChatPage({super.key});
@@ -232,11 +239,146 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             ],
                           ),
                         ),
+                        // Agent Selector Dropdown
+                        const Text(
+                          'Agent: ',
+                          style: TextStyle(fontSize: 12, color: AuraTheme.textSecondary),
+                        ),
+                        const SizedBox(width: 4),
+                        DropdownButton<String>(
+                          value: ref.watch(activeAgentIdProvider),
+                          dropdownColor: const Color(0xFF0F0C1B),
+                          style: const TextStyle(color: Colors.white, fontSize: 13),
+                          underline: const SizedBox(),
+                          items: const [
+                            DropdownMenuItem(value: 'orchestrator', child: Text('Auto-Orchestrator')),
+                            DropdownMenuItem(value: 'task_planner', child: Text('Task Planner')),
+                            DropdownMenuItem(value: 'finance_advisor', child: Text('Finance Advisor')),
+                            DropdownMenuItem(value: 'health_companion', child: Text('Health Companion')),
+                            DropdownMenuItem(value: 'academic_coach', child: Text('Academic Coach')),
+                          ],
+                          onChanged: (val) {
+                            if (val != null) {
+                              ref.read(activeAgentIdProvider.notifier).setAgent(val);
+                            }
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        // Memory Bank Button
+                        IconButton(
+                          icon: const Icon(Icons.psychology_outlined, color: AuraTheme.accentAmber, size: 20),
+                          tooltip: 'Memory Bank',
+                          onPressed: _showMemoryBankDialog,
+                        ),
+                        // Agent Config Button
+                        IconButton(
+                          icon: const Icon(Icons.settings_suggest, color: AuraTheme.accentIndigo, size: 20),
+                          tooltip: 'Agent Prompt Settings',
+                          onPressed: _showAgentSettingsDialog,
+                        ),
+                        const SizedBox(width: 12),
+                        // Sync Status Indicator & Manual Sync Button
+                        Consumer(
+                          builder: (context, ref, child) {
+                            final syncState = ref.watch(syncEngineProvider);
+                            
+                            Color indicatorColor;
+                            String statusText;
+                            IconData syncIcon;
+                            Color iconColor;
+                            bool isSyncing = syncState == SyncState.syncing;
+                            
+                            switch (syncState) {
+                              case SyncState.synced:
+                                indicatorColor = AuraTheme.accentTeal;
+                                statusText = 'Cloud Synced';
+                                syncIcon = Icons.sync;
+                                iconColor = AuraTheme.accentTeal;
+                                break;
+                              case SyncState.syncing:
+                                indicatorColor = AuraTheme.accentAmber;
+                                statusText = 'Syncing...';
+                                syncIcon = Icons.sync;
+                                iconColor = AuraTheme.accentAmber;
+                                break;
+                              case SyncState.offline:
+                                indicatorColor = Colors.grey;
+                                statusText = 'Offline Mode';
+                                syncIcon = Icons.sync_disabled;
+                                iconColor = Colors.grey;
+                                break;
+                              case SyncState.error:
+                                indicatorColor = Colors.redAccent;
+                                statusText = 'Sync Error';
+                                syncIcon = Icons.sync_problem;
+                                iconColor = Colors.redAccent;
+                                break;
+                            }
+                            
+                            return Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withAlpha(8),
+                                border: Border.all(color: Colors.white.withAlpha(20)),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 8,
+                                    height: 8,
+                                    decoration: BoxDecoration(
+                                      color: indicatorColor,
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: indicatorColor.withAlpha(128),
+                                          blurRadius: 6,
+                                          spreadRadius: 2,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    statusText,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.white.withAlpha(178),
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  isSyncing
+                                      ? const SizedBox(
+                                          width: 14,
+                                          height: 14,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 1.5,
+                                            valueColor: AlwaysStoppedAnimation<Color>(AuraTheme.accentAmber),
+                                          ),
+                                        )
+                                      : IconButton(
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
+                                          icon: Icon(syncIcon, color: iconColor, size: 14),
+                                          tooltip: 'Sync Now',
+                                          onPressed: syncState == SyncState.offline
+                                              ? null
+                                              : () => ref.read(syncEngineProvider.notifier).synchronize(),
+                                        ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                        const SizedBox(width: 12),
                         // RAG Toggler
                         Row(
                           children: [
                             const Text(
-                              'Retrieve RAG Context',
+                              'RAG',
                               style: TextStyle(fontSize: 12, color: AuraTheme.textSecondary),
                             ),
                             Switch(
@@ -285,6 +427,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     ),
                   ),
 
+                  // Pending Actions Confirmation Panel
+                  _buildPendingActionsCard(),
+
                   // Input Bar
                   Container(
                     padding: const EdgeInsets.all(24.0),
@@ -325,6 +470,469 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildPendingActionsCard() {
+    final actions = ref.watch(pendingActionsProvider);
+    if (actions.isEmpty) return const SizedBox();
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+      color: AuraTheme.cardBg,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.auto_awesome, color: AuraTheme.accentTeal, size: 20),
+                SizedBox(width: 8),
+                Text(
+                  "AURA Proposes Actions",
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...actions.map((act) {
+              final type = act['type'] ?? '';
+              final params = act['params'] ?? {};
+              String label = "";
+              IconData icon = Icons.check_circle_outline;
+              Color color = AuraTheme.accentIndigo;
+
+              if (type == 'add_task') {
+                label = "Create Task: ${params['title']} (${params['priority']} priority, ${params['category']})";
+                icon = Icons.playlist_add;
+                color = AuraTheme.accentTeal;
+              } else if (type == 'add_event') {
+                label = "Schedule Event: ${params['title']} at ${params['startTime']}";
+                icon = Icons.event;
+                color = AuraTheme.accentIndigo;
+              } else if (type == 'add_expense') {
+                label = "Log Expense: \$${params['amount']} for ${params['category']}";
+                icon = Icons.remove_circle_outline;
+                color = Colors.redAccent;
+              } else if (type == 'add_income') {
+                label = "Log Income: \$${params['amount']} for ${params['category']}";
+                icon = Icons.add_circle_outline;
+                color = AuraTheme.accentTeal;
+              } else if (type == 'log_health') {
+                final metrics = [];
+                if (params['waterIntakeMl'] != null) metrics.add("${params['waterIntakeMl']}ml water");
+                if (params['sleepMinutes'] != null) metrics.add("${params['sleepMinutes']}m sleep");
+                if (params['caloriesConsumed'] != null) metrics.add("${params['caloriesConsumed']}kcal");
+                if (params['exerciseMinutes'] != null) metrics.add("${params['exerciseMinutes']}m exercise");
+                if (params['weight'] != null) metrics.add("${params['weight']}kg");
+                label = "Log Health: ${metrics.join(', ')}";
+                icon = Icons.favorite_outline;
+                color = Colors.pinkAccent;
+              } else {
+                label = "Unknown Action: $type";
+              }
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8.0),
+                child: Row(
+                  children: [
+                    Icon(icon, size: 16, color: color),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(label, style: const TextStyle(fontSize: 13, color: AuraTheme.textSecondary)),
+                    ),
+                  ],
+                ),
+              );
+            }),
+            const Divider(color: Color(0x1F94A3B8), height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () {
+                    ref.read(pendingActionsProvider.notifier).clear();
+                  },
+                  child: const Text("Reject", style: TextStyle(color: AuraTheme.textSecondary)),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () async {
+                    final messenger = ScaffoldMessenger.of(context);
+                    for (final act in actions) {
+                      final type = act['type'] ?? '';
+                      final params = act['params'] ?? {};
+
+                      try {
+                        if (type == 'add_task') {
+                          DateTime? due;
+                          if (params['dueDate'] != null) due = DateTime.tryParse(params['dueDate']);
+                          await ref.read(taskRepositoryProvider).addTask(
+                            title: params['title'] ?? 'Task',
+                            priority: params['priority'] ?? 'medium',
+                            category: params['category'] ?? 'personal',
+                            dueDate: due,
+                          );
+                        } else if (type == 'add_event') {
+                          final start = DateTime.tryParse(params['startTime']) ?? DateTime.now();
+                          final end = params['endTime'] != null ? DateTime.tryParse(params['endTime']) : start.add(const Duration(hours: 1));
+                          await ref.read(calendarRepositoryProvider).addEvent(
+                            title: params['title'] ?? 'Event',
+                            description: params['description'],
+                            startTime: start,
+                            endTime: end ?? start.add(const Duration(hours: 1)),
+                          );
+                        } else if (type == 'add_expense') {
+                          await ref.read(financeRepositoryProvider).addTransaction(
+                            type: 'expense',
+                            amount: (params['amount'] as num).toDouble(),
+                            category: params['category'] ?? 'Other',
+                            description: params['description'],
+                            date: DateTime.now(),
+                          );
+                        } else if (type == 'add_income') {
+                          await ref.read(financeRepositoryProvider).addTransaction(
+                            type: 'income',
+                            amount: (params['amount'] as num).toDouble(),
+                            category: params['category'] ?? 'Other',
+                            description: params['description'],
+                            date: DateTime.now(),
+                          );
+                        } else if (type == 'log_health') {
+                          final now = DateTime.now();
+                          final repo = ref.read(healthRepositoryProvider);
+                          if (params['waterIntakeMl'] != null) {
+                            await repo.logWater(now, params['waterIntakeMl'] as int);
+                          }
+                          if (params['sleepMinutes'] != null) {
+                            await repo.logSleep(now, params['sleepMinutes'] as int);
+                          }
+                          if (params['caloriesConsumed'] != null) {
+                            await repo.logCalories(now, params['caloriesConsumed'] as int);
+                          }
+                          if (params['exerciseMinutes'] != null) {
+                            await repo.logExercise(now, params['exerciseMinutes'] as int);
+                          }
+                          if (params['weight'] != null) {
+                            await repo.logWeight(now, (params['weight'] as num).toDouble());
+                          }
+                        }
+                      } catch (e) {
+                        debugPrint("Action execution failed: $e");
+                      }
+                    }
+
+                    // Clear actions and show confirmation
+                    ref.read(pendingActionsProvider.notifier).clear();
+                    messenger.showSnackBar(
+                      const SnackBar(content: Text("Proposed actions successfully executed!"), backgroundColor: AuraTheme.accentTeal),
+                    );
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AuraTheme.accentTeal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  ),
+                  child: const Text("Approve Actions", style: TextStyle(fontSize: 13)),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showMemoryBankDialog() {
+    final factController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Consumer(
+          builder: (context, ref, child) {
+            final memoriesAsync = ref.watch(localMemoriesStreamProvider);
+
+            return Dialog(
+              backgroundColor: const Color(0xFF0F0C1B),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: Color(0x1F94A3B8)),
+              ),
+              child: Container(
+                width: 500,
+                height: 500,
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.psychology, color: AuraTheme.accentAmber),
+                            SizedBox(width: 8),
+                            Text(
+                              "User Memory Bank",
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                            ),
+                          ],
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white30),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      "These are facts and preferences AURA has learned about you. They are injected as system prompts to personalize reasoning.",
+                      style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12),
+                    ),
+                    const Divider(color: Color(0x1F94A3B8), height: 24),
+                    
+                    // Add Fact input
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: factController,
+                            decoration: const InputDecoration(
+                              hintText: "Add a custom fact manually...",
+                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            ),
+                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: () async {
+                            final fact = factController.text.trim();
+                            if (fact.isNotEmpty) {
+                              await ref.read(memoryRepositoryProvider).saveMemory(fact);
+                              factController.clear();
+                            }
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AuraTheme.accentIndigo,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          ),
+                          child: const Text("Add", style: TextStyle(fontSize: 13)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Memories List
+                    Expanded(
+                      child: memoriesAsync.when(
+                        data: (memories) {
+                          if (memories.isEmpty) {
+                            return const Center(
+                              child: Text(
+                                "No memories stored yet. AURA extracts them automatically from conversations, or you can add one above.",
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12),
+                              ),
+                            );
+                          }
+                          return ListView.builder(
+                            itemCount: memories.length,
+                            itemBuilder: (context, index) {
+                              final mem = memories[index];
+                              return Card(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                color: const Color(0x0CFFFFFF),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          mem.fact,
+                                          style: const TextStyle(fontSize: 13, color: Colors.white),
+                                        ),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete, size: 16, color: Colors.redAccent),
+                                        onPressed: () {
+                                          ref.read(memoryRepositoryProvider).deleteMemory(mem.id);
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          );
+                        },
+                        loading: () => const Center(child: CircularProgressIndicator()),
+                        error: (e, _) => Center(child: Text("Error: $e", style: const TextStyle(color: Colors.redAccent))),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showAgentSettingsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Consumer(
+          builder: (context, ref, child) {
+            final instructionsAsync = ref.watch(allAgentInstructionsProvider);
+
+            return Dialog(
+              backgroundColor: const Color(0xFF0F0C1B),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: Color(0x1F94A3B8)),
+              ),
+              child: Container(
+                width: 600,
+                height: 550,
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.settings_suggest, color: AuraTheme.accentIndigo),
+                            SizedBox(width: 8),
+                            Text(
+                              "Agent System Prompt Configurations",
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                            ),
+                          ],
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white30),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      "Customize the core system prompt guidelines for each of AURA's cognitive agent personas.",
+                      style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12),
+                    ),
+                    const Divider(color: Color(0x1F94A3B8), height: 24),
+                    
+                    Expanded(
+                      child: instructionsAsync.when(
+                        data: (instructionsMap) {
+                          final agents = [
+                            {"id": "orchestrator", "name": "Auto-Orchestrator / Classifier"},
+                            {"id": "task_planner", "name": "Task Planner"},
+                            {"id": "finance_advisor", "name": "Finance Advisor"},
+                            {"id": "health_companion", "name": "Health Companion"},
+                            {"id": "academic_coach", "name": "Academic Coach"},
+                          ];
+
+                          return ListView.builder(
+                            itemCount: agents.length,
+                            itemBuilder: (context, index) {
+                              final agent = agents[index];
+                              final agentId = agent['id']!;
+                              final name = agent['name']!;
+
+                              final defaultPrompts = {
+                                "orchestrator": "You are AURA, a premium Personal AI Operating System...",
+                                "task_planner": "You are AURA's Task Planner. Help prioritize tasks...",
+                                "finance_advisor": "You are AURA's Finance Advisor. Analyze expenses...",
+                                "health_companion": "You are AURA's Health Companion. Track health...",
+                                "academic_coach": "You are AURA's Academic Coach. Assist with engineering spec development..."
+                              };
+
+                              final initialText = instructionsMap[agentId] ?? defaultPrompts[agentId] ?? "";
+                              final controller = TextEditingController(text: initialText);
+
+                              return Card(
+                                margin: const EdgeInsets.only(bottom: 16),
+                                color: const Color(0x0CFFFFFF),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16.0),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: [
+                                      Text(
+                                        name,
+                                        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      TextField(
+                                        controller: controller,
+                                        maxLines: 3,
+                                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                                        decoration: const InputDecoration(
+                                          border: OutlineInputBorder(),
+                                          contentPadding: EdgeInsets.all(8),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.end,
+                                        children: [
+                                          TextButton(
+                                            onPressed: () async {
+                                              final messenger = ScaffoldMessenger.of(context);
+                                              await ref.read(agentConfigRepositoryProvider).deleteInstruction(agentId);
+                                              ref.invalidate(allAgentInstructionsProvider);
+                                              messenger.showSnackBar(
+                                                SnackBar(content: Text("Reset $name to default prompt.")),
+                                              );
+                                            },
+                                            child: const Text("Reset Default", style: TextStyle(color: AuraTheme.accentAmber, fontSize: 12)),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          ElevatedButton(
+                                            onPressed: () async {
+                                              final text = controller.text.trim();
+                                              if (text.isNotEmpty) {
+                                                final messenger = ScaffoldMessenger.of(context);
+                                                await ref.read(agentConfigRepositoryProvider).saveInstruction(agentId, text);
+                                                ref.invalidate(allAgentInstructionsProvider);
+                                                messenger.showSnackBar(
+                                                  SnackBar(content: Text("Saved custom instructions for $name.")),
+                                                );
+                                              }
+                                            },
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: AuraTheme.accentTeal,
+                                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                            ),
+                                            child: const Text("Save Custom", style: TextStyle(fontSize: 12)),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          );
+                        },
+                        loading: () => const Center(child: CircularProgressIndicator()),
+                        error: (e, _) => Center(child: Text("Error loading configurations: $e")),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

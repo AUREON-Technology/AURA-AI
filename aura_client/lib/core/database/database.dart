@@ -20,6 +20,8 @@ class Tasks extends Table {
   TextColumn get googleTaskId => text().nullable()();
   TextColumn get category => text()(); // personal, academic, client, project
   DateTimeColumn get createdAt => dateTime()();
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get updatedAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -34,6 +36,8 @@ class CalendarEvents extends Table {
   TextColumn get googleEventId => text().nullable()();
   BoolColumn get isAllDay => boolean()();
   DateTimeColumn get createdAt => dateTime()();
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get updatedAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -47,6 +51,8 @@ class FinanceRecords extends Table {
   TextColumn get description => text().nullable()();
   DateTimeColumn get date => dateTime()();
   DateTimeColumn get createdAt => dateTime()();
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get updatedAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -61,6 +67,8 @@ class HealthRecords extends Table {
   IntColumn get caloriesConsumed => integer()();
   IntColumn get exerciseMinutes => integer()();
   DateTimeColumn get createdAt => dateTime()();
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get updatedAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -79,16 +87,71 @@ class Messages extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+class AgentConfigurations extends Table {
+  TextColumn get agentId => text()(); // orchestrator, task_planner, finance_advisor, health_companion, academic_coach
+  TextColumn get systemInstruction => text()();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {agentId};
+}
+
+class UserMemories extends Table {
+  TextColumn get id => text()();
+  TextColumn get fact => text()();
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+class PendingDeletes extends Table {
+  TextColumn get recordId => text()();
+  TextColumn get targetTable => text()();
+  DateTimeColumn get deletedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {recordId, targetTable};
+}
+
 // ----------------------------------------------------
 // Database Connection & Class
 // ----------------------------------------------------
 
-@DriftDatabase(tables: [Tasks, CalendarEvents, FinanceRecords, HealthRecords, Messages])
+@DriftDatabase(tables: [Tasks, CalendarEvents, FinanceRecords, HealthRecords, Messages, AgentConfigurations, UserMemories, PendingDeletes])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 3;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (m) async {
+          await m.createAll();
+        },
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            await m.createTable(agentConfigurations);
+            await m.createTable(userMemories);
+          }
+          if (from < 3) {
+            await m.addColumn(tasks, tasks.isSynced);
+            await m.addColumn(tasks, tasks.updatedAt);
+            
+            await m.addColumn(calendarEvents, calendarEvents.isSynced);
+            await m.addColumn(calendarEvents, calendarEvents.updatedAt);
+            
+            await m.addColumn(financeRecords, financeRecords.isSynced);
+            await m.addColumn(financeRecords, financeRecords.updatedAt);
+            
+            await m.addColumn(healthRecords, healthRecords.isSynced);
+            await m.addColumn(healthRecords, healthRecords.updatedAt);
+            
+            await m.createTable(pendingDeletes);
+          }
+        },
+      );
 }
 
 LazyDatabase _openConnection() {

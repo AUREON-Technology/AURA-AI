@@ -19,47 +19,60 @@ class AIService:
     messages: List[Dict[str, str]], 
     use_rag: bool = True
   ) -> AsyncGenerator[str, None]:
-    """Streams responses from Gemini 1.5 Flash, injecting RAG context if enabled."""
+    """Streams responses from Gemini 1.5 Flash, injecting RAG context, and falls back to Ollama if offline."""
+    # Extract last user message to query the RAG knowledge base
+    last_user_message = next(
+      (m["content"] for m in reversed(messages) if m["role"] == "user"), 
+      ""
+    )
+
+    rag_context = ""
+    if use_rag and last_user_message:
+      # Search Qdrant
+      search_results = rag_service.query_knowledge(last_user_message, limit=3)
+      if search_results:
+        rag_context = "\n\nRelevant Context from Knowledge Base:\n"
+        for idx, res in enumerate(search_results):
+          rag_context += f"--- Context Chunk [{idx + 1}] (Score: {res['score']:.2f}):\n{res['content']}\n"
+        logger.info("RAG context successfully injected into prompt.")
+
+    # Create a copy of the messages and modify the last user message with RAG context
+    modified_messages = [dict(m) for m in messages]
+    if rag_context and modified_messages:
+      # Find the last user message and inject context
+      for i in range(len(modified_messages) - 1, -1, -1):
+        if modified_messages[i]["role"] == "user":
+          modified_messages[i]["content"] = (
+            f"Instructions: Use the following retrieved context to help answer the user prompt. "
+            f"If the context is irrelevant, you may ignore it.\n"
+            f"{rag_context}\n"
+            f"User Prompt: {modified_messages[i]['content']}"
+          )
+          break
+
+    # If Gemini API key is missing, fallback immediately to Ollama
     if not settings.gemini_api_key:
-      yield "[Backend Alert: GEMINI_API_KEY is not set. Please configure it in your backend .env file.]"
+      logger.info("GEMINI_API_KEY is missing. Falling back to local Ollama.")
+      yield "[Running in Local Offline Mode - Powered by Ollama]\n"
+      try:
+        from services.ollama import ollama_service
+        async for chunk in ollama_service.generate_chat_stream(modified_messages):
+          yield chunk
+      except Exception as fallback_error:
+        yield f"\n[Offline Fallback Error: Failed to run Ollama: {fallback_error}]"
       return
 
     try:
-      # Extract last user message to query the RAG knowledge base
-      last_user_message = next(
-        (m["content"] for m in reversed(messages) if m["role"] == "user"), 
-        ""
-      )
-
-      rag_context = ""
-      if use_rag and last_user_message:
-        # Search Qdrant
-        search_results = rag_service.query_knowledge(last_user_message, limit=3)
-        if search_results:
-          rag_context = "\n\nRelevant Context from Knowledge Base:\n"
-          for idx, res in enumerate(search_results):
-            rag_context += f"--- Context Chunk [{idx + 1}] (Score: {res['score']:.2f}):\n{res['content']}\n"
-          logger.info("RAG context successfully injected into prompt.")
-
       # Parse input messages into Gemini's format:
-      # List of ContentDict with role ('user' or 'model') and parts
       gemini_history = []
-      for msg in messages[:-1]:
-        role = "model" if msg["role"] == "assistant" else "user"
+      for msg in modified_messages[:-1]:
+        role = "model" if msg["role"] == "assistant" or msg["role"] == "model" else "user"
         gemini_history.append({
           "role": role,
           "parts": [msg["content"]]
         })
 
-      # The current/last prompt is injected with RAG context
-      current_prompt = messages[-1]["content"]
-      if rag_context:
-        current_prompt = (
-          f"Instructions: Use the following retrieved context to help answer the user prompt. "
-          f"If the context is irrelevant, you may ignore it.\n"
-          f"{rag_context}\n"
-          f"User Prompt: {current_prompt}"
-        )
+      current_prompt = modified_messages[-1]["content"]
 
       # Create chat model
       model = genai.GenerativeModel("gemini-1.5-flash")
@@ -72,7 +85,13 @@ class AIService:
           yield chunk.text
 
     except Exception as e:
-      logger.error(f"Error in Gemini streaming generation: {e}")
-      yield f"\n[Backend Error: Failed to generate response from Gemini: {e}]"
+      logger.error(f"Error in Gemini streaming generation: {e}. Falling back to Ollama.")
+      yield f"\n[Gemini connection failed. Falling back to local Ollama assistant...]\n"
+      try:
+        from services.ollama import ollama_service
+        async for chunk in ollama_service.generate_chat_stream(modified_messages):
+          yield chunk
+      except Exception as fallback_error:
+        yield f"\n[Offline Fallback Error: Failed to run Ollama: {fallback_error}]"
 
 ai_service = AIService()

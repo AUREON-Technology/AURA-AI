@@ -10,6 +10,8 @@ from config import settings
 from services.ai import ai_service
 from services.rag import rag_service
 from services.automation import automation_service
+from services.agent import agent_orchestrator
+from services.memory import memory_service
 
 # Logging Setup
 logging.basicConfig(
@@ -58,6 +60,18 @@ class EmailAnalyzeRequest(BaseModel):
 class IssueAnalyzeRequest(BaseModel):
     title: str
     body: str
+
+class AgentChatRequest(BaseModel):
+    agent_id: str
+    messages: List[MessageSchema]
+    custom_instructions: Optional[Dict[str, str]] = None
+    use_rag: Optional[bool] = True
+
+class MemoryExtractRequest(BaseModel):
+    messages: List[MessageSchema]
+
+class MemorySaveRequest(BaseModel):
+    fact: str
 
 # ----------------------------------------------------
 # Endpoints
@@ -124,6 +138,57 @@ async def analyze_issue(request: IssueAnalyzeRequest):
         body=request.body
     )
     return result
+
+@app.post("/api/chat/agent")
+async def agent_chat(request: AgentChatRequest):
+    """Streams responses from a classified/selected specialized agent persona."""
+    formatted_messages = [{"role": m.role, "content": m.content} for m in request.messages]
+    
+    if not formatted_messages:
+        raise HTTPException(status_code=400, detail="Messages list cannot be empty")
+
+    async def event_generator():
+        async for chunk in agent_orchestrator.execute_agent_stream(
+            agent_id=request.agent_id,
+            messages=formatted_messages,
+            custom_instructions=request.custom_instructions,
+            use_rag=request.use_rag
+        ):
+            yield chunk
+
+    return StreamingResponse(event_generator(), media_type="text/plain")
+
+@app.post("/api/memory/extract")
+async def extract_memory(request: MemoryExtractRequest):
+    """Extracts long-term user facts from recent messages and saves them."""
+    formatted_messages = [{"role": m.role, "content": m.content} for m in request.messages]
+    facts = memory_service.extract_memories(formatted_messages)
+    saved_facts = []
+    for fact in facts:
+        if memory_service.save_memory(fact):
+            saved_facts.append(fact)
+    return {"status": "success", "extracted_facts": saved_facts}
+
+@app.post("/api/memory/save")
+async def save_memory(request: MemorySaveRequest):
+    """Manually saves a user memory fact."""
+    success = memory_service.save_memory(request.fact)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save memory point")
+    return {"status": "success"}
+
+@app.get("/api/memory/list")
+async def list_memories():
+    """Lists all user memories stored in Qdrant Cloud."""
+    return memory_service.list_all_memories()
+
+@app.delete("/api/memory/delete/{point_id}")
+async def delete_memory(point_id: int):
+    """Deletes a user memory by Qdrant point ID."""
+    success = memory_service.delete_memory(point_id)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to delete memory point")
+    return {"status": "success"}
 
 # ----------------------------------------------------
 # Server Start

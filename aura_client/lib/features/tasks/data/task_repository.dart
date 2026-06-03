@@ -49,6 +49,8 @@ class TaskRepository {
       category: category.toLowerCase(),
       isCompleted: false,
       createdAt: DateTime.now(),
+      isSynced: const Value(false),
+      updatedAt: Value(DateTime.now()),
     );
     await _db.into(_db.tasks).insert(task);
   }
@@ -58,18 +60,32 @@ class TaskRepository {
     await (_db.update(_db.tasks)..where((t) => t.id.equals(id))).write(
       TasksCompanion(
         isCompleted: Value(!isCompleted),
+        isSynced: const Value(false),
+        updatedAt: Value(DateTime.now()),
       ),
     );
   }
 
   // Delete a task
   Future<void> deleteTask(String id) async {
+    // Log pending deletion first
+    await _db.into(_db.pendingDeletes).insert(
+      PendingDeletesCompanion.insert(
+        recordId: id,
+        targetTable: 'tasks',
+        deletedAt: DateTime.now(),
+      ),
+    );
     await (_db.delete(_db.tasks)..where((t) => t.id.equals(id))).go();
   }
 
   // Update a task fully
   Future<void> updateTask(Task task) async {
-    await _db.update(_db.tasks).replace(task);
+    final updated = task.copyWith(
+      isSynced: false,
+      updatedAt: Value(DateTime.now()),
+    );
+    await _db.update(_db.tasks).replace(updated);
   }
 }
 

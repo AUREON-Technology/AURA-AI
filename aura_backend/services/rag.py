@@ -11,6 +11,7 @@ class RAGService:
   def __init__(self):
     self.collection_name = "aura_knowledge"
     self.client = None
+    self._is_local = False
 
     # Try connecting to Qdrant Cloud
     if settings.qdrant_host:
@@ -19,104 +20,145 @@ class RAGService:
           url=settings.qdrant_host,
           api_key=settings.qdrant_api_key or None,
         )
-        self._ensure_collection_exists()
+        # Verify connectivity
+        self.client.get_collections()
         logger.info("Connected to Qdrant Cloud successfully.")
       except Exception as e:
-        logger.error(f"Failed to connect to Qdrant Cloud: {e}. Falling back to mock client.")
+        logger.error(f"Failed to connect to Qdrant Cloud: {e}. Falling back to local disk storage.")
         self.client = None
-    else:
-      logger.warning("QDRANT_HOST not provided. RAG functionality will run in fallback/mock mode.")
+
+    if not self.client:
+      # Fallback to offline local Qdrant (disk-backed via sqlite in-process)
+      try:
+        self.client = QdrantClient(path="local_qdrant_storage")
+        self.collection_name = "aura_knowledge_local"
+        self._is_local = True
+        logger.info("Connected to local offline Qdrant client (SQLite-backed).")
+      except Exception as local_err:
+        logger.error(f"Failed to initialize local Qdrant client: {local_err}")
+        self.client = None
 
     # Configure Gemini SDK
     if settings.gemini_api_key:
       genai.configure(api_key=settings.gemini_api_key)
 
-  def _ensure_collection_exists(self):
+  def _ensure_collection_exists(self, vector_size: int):
     if not self.client:
       return
     try:
       collections = self.client.get_collections()
       existing = [c.name for c in collections.collections]
       if self.collection_name not in existing:
-        logger.info(f"Creating Qdrant collection: {self.collection_name} with 768 dimensions")
+        logger.info(f"Creating Qdrant collection: {self.collection_name} with {vector_size} dimensions")
         self.client.create_collection(
           collection_name=self.collection_name,
-          vectors_config=VectorParams(size=768, distance=Distance.COSINE),
+          vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
         )
     except Exception as e:
       logger.error(f"Error checking/creating Qdrant collection: {e}")
 
   def _get_embedding(self, text: str) -> List[float]:
-    """Generates 768-dim embeddings using Gemini's text-embedding-004 model."""
-    if not settings.gemini_api_key:
-      # Return mock mock embedding of size 768
-      return [0.0] * 768
+    """Generates embedding. Uses Gemini models/text-embedding-004 (768d) if online, otherwise falls back to local encoders."""
+    # 1. Try Gemini text-embedding-004 first
+    if settings.gemini_api_key:
+      try:
+        response = genai.embed_content(
+          model="models/text-embedding-004",
+          content=text,
+          task_type="retrieval_document"
+        )
+        return response["embedding"]
+      except Exception as e:
+        logger.warning(f"Failed to generate embedding with Gemini: {e}. Trying local fallback.")
+
+    # 2. Try Local sentence-transformers (lightweight MiniLM)
     try:
-      response = genai.embed_content(
-        model="models/text-embedding-004",
-        content=text,
-        task_type="retrieval_document"
-      )
-      return response["embedding"]
-    except Exception as e:
-      logger.error(f"Error generating embedding: {e}")
-      return [0.0] * 768
+      if not hasattr(self, '_local_encoder'):
+        from sentence_transformers import SentenceTransformer
+        logger.info(f"Loading local sentence-transformers model '{settings.local_embedding_model}'...")
+        self._local_encoder = SentenceTransformer(settings.local_embedding_model)
+      
+      embeddings = self._local_encoder.encode([text])
+      return embeddings[0].tolist()
+    except Exception as sent_err:
+      logger.warning(f"Local sentence-transformers embedding failed: {sent_err}. Trying Ollama local embedding.")
+
+    # 3. Try Ollama local model embedding fallback
+    try:
+      from services.ollama import ollama_service
+      emb = ollama_service.generate_embeddings(text)
+      if emb:
+        return emb
+    except Exception as ollama_err:
+      logger.warning(f"Ollama local embedding failed: {ollama_err}")
+
+    # 4. Final mock zero-vector fallback (default 384 for sentence-transformers, 768 for Gemini)
+    default_dim = 384 if self._is_local else 768
+    return [0.0] * default_dim
 
   def ingest_document(self, doc_id: str, content: str, metadata: Dict[str, Any]) -> bool:
-    """Chunks and uploads a document to Qdrant Cloud."""
+    """Chunks and uploads a document to local/cloud Qdrant."""
     if not self.client:
       logger.warning("Cannot ingest document: Qdrant client not initialized.")
       return False
 
     try:
-      # Simple recursive chunking logic
       chunks = self._chunk_text(content, max_chars=1000, overlap=100)
       points = []
 
-      for idx, chunk in enumerate(chunks):
-        embedding = self._get_embedding(chunk)
-        point_id = f"{doc_id}_{idx}"
-        
-        # Build payload
-        payload = {
-          "chunk_index": idx,
-          "content": chunk,
-          "doc_id": doc_id,
-          **metadata
-        }
-        
-        points.append(PointStruct(
-          id=hash(point_id) & 0xFFFFFFFFFFFFFFFF, # Native 64-bit int hash ID
-          vector=embedding,
-          payload=payload
-        ))
+      # Generate first embedding to determine dimension dynamically and ensure collection
+      if chunks:
+        first_emb = self._get_embedding(chunks[0])
+        self._ensure_collection_exists(len(first_emb))
 
-      self.client.upsert(
-        collection_name=self.collection_name,
-        points=points
-      )
-      logger.info(f"Ingested document {doc_id} successfully, uploaded {len(points)} chunks.")
-      return True
+        for idx, chunk in enumerate(chunks):
+          # Skip embedding generation for first chunk since we already did it
+          embedding = first_emb if idx == 0 else self._get_embedding(chunk)
+          point_id = f"{doc_id}_{idx}"
+          
+          # Build payload
+          payload = {
+            "chunk_index": idx,
+            "content": chunk,
+            "doc_id": doc_id,
+            **metadata
+          }
+          
+          points.append(PointStruct(
+            id=hash(point_id) & 0xFFFFFFFFFFFFFFFF, # Native 64-bit int hash ID
+            vector=embedding,
+            payload=payload
+          ))
+
+        self.client.upsert(
+          collection_name=self.collection_name,
+          points=points
+        )
+        logger.info(f"Ingested document {doc_id} successfully, uploaded {len(points)} chunks.")
+        return True
+      return False
     except Exception as e:
       logger.error(f"Failed to ingest document {doc_id}: {e}")
       return False
 
   def query_knowledge(self, query: str, limit: int = 4) -> List[Dict[str, Any]]:
-    """Queries Qdrant for relevant text chunks."""
+    """Queries Qdrant local/cloud for relevant text chunks."""
     if not self.client:
       logger.warning("Cannot query Qdrant: Client not initialized.")
       return []
 
     try:
       query_vector = self._get_embedding(query)
-      search_results = self.client.search(
+      self._ensure_collection_exists(len(query_vector))
+      
+      search_results = self.client.query_points(
         collection_name=self.collection_name,
-        query_vector=query_vector,
+        query=query_vector,
         limit=limit
       )
       
       results = []
-      for result in search_results:
+      for result in search_results.points:
         results.append({
           "score": result.score,
           "content": result.payload.get("content", ""),

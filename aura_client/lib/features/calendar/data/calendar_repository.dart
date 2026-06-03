@@ -38,17 +38,31 @@ class CalendarRepository {
       endTime: endTime,
       isAllDay: isAllDay,
       createdAt: DateTime.now(),
+      isSynced: const Value(false),
+      updatedAt: Value(DateTime.now()),
     );
     await _db.into(_db.calendarEvents).insert(event);
   }
 
   // Update calendar event
   Future<void> updateEvent(CalendarEvent event) async {
-    await _db.update(_db.calendarEvents).replace(event);
+    final updated = event.copyWith(
+      isSynced: false,
+      updatedAt: Value(DateTime.now()),
+    );
+    await _db.update(_db.calendarEvents).replace(updated);
   }
 
   // Delete calendar event
   Future<void> deleteEvent(String id) async {
+    // Log pending deletion first
+    await _db.into(_db.pendingDeletes).insert(
+      PendingDeletesCompanion.insert(
+        recordId: id,
+        targetTable: 'calendar_events',
+        deletedAt: DateTime.now(),
+      ),
+    );
     await (_db.delete(_db.calendarEvents)..where((t) => t.id.equals(id))).go();
   }
 

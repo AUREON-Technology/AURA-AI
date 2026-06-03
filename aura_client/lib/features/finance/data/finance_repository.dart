@@ -50,12 +50,22 @@ class FinanceRepository {
       description: Value(description),
       date: date,
       createdAt: DateTime.now(),
+      isSynced: const Value(false),
+      updatedAt: Value(DateTime.now()),
     );
     await _db.into(_db.financeRecords).insert(record);
   }
 
   // Delete a transaction
   Future<void> deleteTransaction(String id) async {
+    // Log pending deletion first
+    await _db.into(_db.pendingDeletes).insert(
+      PendingDeletesCompanion.insert(
+        recordId: id,
+        targetTable: 'finance_records',
+        deletedAt: DateTime.now(),
+      ),
+    );
     await (_db.delete(_db.financeRecords)..where((t) => t.id.equals(id))).go();
   }
 }
