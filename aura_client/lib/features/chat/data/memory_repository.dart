@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import '../../../core/database/database.dart';
 import '../../../core/database/database_provider.dart';
+import '../../../core/config/config.dart';
 
 class MemoryItem {
   final String id;
@@ -15,7 +16,7 @@ class MemoryItem {
 
 class MemoryRepository {
   final AppDatabase _db;
-  static const String _backendUrl = "https://fair-bananas-wear.loca.lt/api/memory";
+  static const String _backendUrl = "${AppConfig.backendUrl}/api/memory";
 
   MemoryRepository(this._db);
 

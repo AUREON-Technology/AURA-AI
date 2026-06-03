@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import 'package:google_generative_ai/google_generative_ai.dart' as google_ai;
 import '../../../core/database/database.dart';
 import '../../../core/database/database_provider.dart';
+import '../../../core/config/config.dart';
 import 'agent_config_repository.dart';
 import 'memory_repository.dart';
 
@@ -27,7 +28,7 @@ class ChatRepository {
   final AppDatabase _db;
   final Ref _ref;
   final _uuid = const Uuid();
-  static const String _backendUrl = "https://fair-bananas-wear.loca.lt/api/chat/agent";
+  static const String _backendUrl = "${AppConfig.backendUrl}/api/chat/agent";
 
   ChatRepository(this._db, this._ref);
 

@@ -30,7 +30,10 @@ Since local disk storage (`local_qdrant_storage`) is ephemeral on free-tier cont
 
 You can choose either **Render** or **Railway**. Both will build your backend automatically using the provided `Dockerfile`.
 
-### Option A: Deploying on Render (Free Web Service)
+### Option A: Deploying on Render (Free Web Service - No Credit Card Required)
+
+> [!TIP]
+> Render's Free tier does **not** require any credit card details to sign up or host your FastAPI web service.
 
 1. Push your project to a GitHub repository (it can be private).
 2. Sign in to the [Render Dashboard](https://dashboard.render.com/) with GitHub.
@@ -44,7 +47,7 @@ You can choose either **Render** or **Railway**. Both will build your backend au
    - **Language**: `Docker` *(Render will auto-detect the Dockerfile)*
    - **Instance Type**: `Free`
 6. Click **Advanced** and add the following **Environment Variables**:
-   - `GEMINI_API_KEY`: *Your Google AI Studio Gemini API Key*
+   - `GEMINI_API_KEY`: *Your Google AI Studio Gemini API Key (Get it for free from [Google AI Studio](https://aistudio.google.com/))*
    - `QDRANT_HOST`: *Your Qdrant Cloud URL (from Step 1)*
    - `QDRANT_API_KEY`: *Your Qdrant Cloud API Key (from Step 1)*
    - `ALLOWED_ORIGINS`: `https://your-frontend-domain.vercel.app,http://localhost:8080` *(Update with your actual Vercel/Netlify domain later to allow browser access)*

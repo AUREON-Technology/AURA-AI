@@ -46,6 +46,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     try {
       await _googleSignIn.initialize(
         clientId: '87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com',
+        serverClientId: '87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com',
       );
     } catch (e) {
       // Ignore if initialization fails (e.g. running on unsupported platform)

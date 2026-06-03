@@ -49,13 +49,13 @@ class EncryptionService {
         if (fallbackKey != null) {
           _cryptKey = encrypt.Key.fromBase64(fallbackKey);
         } else {
-          final newKey = encrypt.Key.fromSecureRandom(32);
+          final newKey = encrypt.Key.fromUtf8('aura_ai_secure_db_encryption_key');
           await _writeFallbackKey(newKey.base64);
           _cryptKey = newKey;
         }
       } catch (fileErr) {
-        print("EncryptionService: Fallback file error: $fileErr. Falling back to in-memory key.");
-        _cryptKey = encrypt.Key.fromSecureRandom(32);
+        print("EncryptionService: Fallback file error: $fileErr. Falling back to stable in-memory key.");
+        _cryptKey = encrypt.Key.fromUtf8('aura_ai_secure_db_encryption_key');
       }
     }
   }
@@ -87,10 +87,7 @@ class EncryptionService {
   /// Encrypts plain text using AES-256 (CBC mode with PKCS7 padding)
   /// Prepend the IV (base64) to the ciphertext to allow decryption.
   static String encryptText(String plainText) {
-    final key = _cryptKey;
-    if (key == null) {
-      return plainText;
-    }
+    final key = _cryptKey ?? encrypt.Key.fromUtf8('aura_ai_secure_db_encryption_key');
     try {
       final iv = encrypt.IV.fromSecureRandom(16);
       final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.cbc));
@@ -105,21 +102,29 @@ class EncryptionService {
   /// Decrypts text encrypted using [encryptText].
   /// Gracefully falls back to the original text if decryption fails or format is invalid.
   static String decryptText(String cipherText) {
-    final key = _cryptKey;
-    if (key == null) {
-      return cipherText;
-    }
     // Check if it's formatted as iv:ciphertext
     final parts = cipherText.split(':');
     if (parts.length != 2) {
       return cipherText;
     }
+
+    final key = _cryptKey;
+    if (key != null) {
+      try {
+        final iv = encrypt.IV.fromBase64(parts[0]);
+        final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.cbc));
+        return encrypter.decrypt(encrypt.Encrypted.fromBase64(parts[1]), iv: iv);
+      } catch (e) {
+        // Fall through to try decrypting with the stable fallback key
+      }
+    }
+
     try {
+      final stableKey = encrypt.Key.fromUtf8('aura_ai_secure_db_encryption_key');
       final iv = encrypt.IV.fromBase64(parts[0]);
-      final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.cbc));
+      final encrypter = encrypt.Encrypter(encrypt.AES(stableKey, mode: encrypt.AESMode.cbc));
       return encrypter.decrypt(encrypt.Encrypted.fromBase64(parts[1]), iv: iv);
-    } catch (e) {
-      // Graceful fallback for pre-existing unencrypted rows
+    } catch (stableErr) {
       return cipherText;
     }
   }

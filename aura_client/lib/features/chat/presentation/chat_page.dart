@@ -62,120 +62,309 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
   }
 
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
+
+  Widget _buildSidebar(BuildContext context, String activeSessionId, AsyncValue<List<String>> sessionsAsync) {
+    final isMobile = MediaQuery.of(context).size.width < 768;
+
+    return Container(
+      width: 260,
+      color: const Color(0xFF0C0917),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // New Chat Button
+          ElevatedButton.icon(
+            onPressed: () {
+              final newId = "session_${DateTime.now().millisecondsSinceEpoch}";
+              ref.read(activeConversationIdProvider.notifier).setSession(newId);
+              if (isMobile) {
+                Navigator.pop(context); // Close drawer
+              }
+            },
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('New Session'),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            'CHATS SESSIONS',
+            style: TextStyle(
+              color: AuraTheme.textSecondary,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Sessions List
+          Expanded(
+            child: sessionsAsync.when(
+              data: (sessions) {
+                final allSessions = sessions.contains('default_session')
+                    ? sessions
+                    : ['default_session', ...sessions];
+
+                return ListView.builder(
+                  itemCount: allSessions.length,
+                  itemBuilder: (context, index) {
+                    final session = allSessions[index];
+                    final isActive = session == activeSessionId;
+                    final label = session == 'default_session'
+                        ? 'Default Workspace'
+                        : 'Session ${session.split('_').last.substring(0, 5)}';
+
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6.0),
+                      child: ListTile(
+                        dense: true,
+                        selected: isActive,
+                        selectedTileColor: AuraTheme.accentIndigo.withValues(alpha: 0.15),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        title: Text(
+                          label,
+                          style: TextStyle(
+                            color: isActive ? Colors.white : AuraTheme.textSecondary,
+                            fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                          ),
+                        ),
+                        trailing: isActive && session != 'default_session'
+                            ? IconButton(
+                                icon: const Icon(Icons.delete_outline, size: 16, color: Colors.white30),
+                                onPressed: () {
+                                  ref.read(chatRepositoryProvider).clearConversation(session);
+                                  ref.read(activeConversationIdProvider.notifier).setSession('default_session');
+                                },
+                              )
+                            : null,
+                        onTap: () {
+                          ref.read(activeConversationIdProvider.notifier).setSession(session);
+                          if (isMobile) {
+                            Navigator.pop(context); // Close drawer
+                          }
+                        },
+                      ),
+                    );
+                  },
+                );
+              },
+              loading: () => const Center(
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              error: (err, _) => Text('Error: $err', style: const TextStyle(color: Colors.red)),
+            ),
+          ),
+          
+          // Mobile specific settings in drawer to avoid header overflow
+          if (isMobile) ...[
+            const Divider(color: Color(0x1F94A3B8), height: 32),
+            const Text(
+              'AGENT CONFIGURATIONS',
+              style: TextStyle(
+                color: AuraTheme.textSecondary,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.2,
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Agent Selector Dropdown
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Active Agent:', style: TextStyle(fontSize: 12, color: Colors.white70)),
+                DropdownButton<String>(
+                  value: ref.watch(activeAgentIdProvider),
+                  dropdownColor: const Color(0xFF0F0C1B),
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  underline: const SizedBox(),
+                  items: const [
+                    DropdownMenuItem(value: 'orchestrator', child: Text('Orchestrator')),
+                    DropdownMenuItem(value: 'task_planner', child: Text('Task Planner')),
+                    DropdownMenuItem(value: 'finance_advisor', child: Text('Finance Advisor')),
+                    DropdownMenuItem(value: 'health_companion', child: Text('Health Companion')),
+                    DropdownMenuItem(value: 'academic_coach', child: Text('Academic Coach')),
+                  ],
+                  onChanged: (val) {
+                    if (val != null) {
+                      ref.read(activeAgentIdProvider.notifier).setAgent(val);
+                    }
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // RAG Toggler
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Use Knowledge (RAG):', style: TextStyle(fontSize: 12, color: Colors.white70)),
+                Switch(
+                  value: _useRag,
+                  activeTrackColor: AuraTheme.accentIndigo,
+                  onChanged: (val) {
+                    setState(() {
+                      _useRag = val;
+                    });
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // Agent Prompt Settings button
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(context); // Close drawer
+                _showAgentSettingsDialog();
+              },
+              icon: const Icon(Icons.settings_suggest, size: 16),
+              label: const Text('Prompt Settings', style: TextStyle(fontSize: 12)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0x0DFFFFFF),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+              ),
+            ),
+          ],
+          
+          const Divider(color: Color(0x1F94A3B8), height: 32),
+          
+          // Fallback Key Inputs
+          TextField(
+            onChanged: (val) => setState(() => _geminiApiKey = val),
+            obscureText: true,
+            decoration: const InputDecoration(
+              labelText: 'Local Gemini API Key',
+              hintText: 'Enter API Key (Optional)',
+              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+            style: const TextStyle(color: Colors.white, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSyncIndicator(bool isMobile) {
+    final syncState = ref.watch(syncEngineProvider);
+    
+    Color indicatorColor;
+    String statusText;
+    IconData syncIcon;
+    Color iconColor;
+    bool isSyncing = syncState == SyncState.syncing;
+    
+    switch (syncState) {
+      case SyncState.synced:
+        indicatorColor = AuraTheme.accentTeal;
+        statusText = 'Synced';
+        syncIcon = Icons.sync;
+        iconColor = AuraTheme.accentTeal;
+        break;
+      case SyncState.syncing:
+        indicatorColor = AuraTheme.accentAmber;
+        statusText = 'Syncing';
+        syncIcon = Icons.sync;
+        iconColor = AuraTheme.accentAmber;
+        break;
+      case SyncState.offline:
+        indicatorColor = Colors.grey;
+        statusText = 'Offline';
+        syncIcon = Icons.sync_disabled;
+        iconColor = Colors.grey;
+        break;
+      case SyncState.error:
+        indicatorColor = Colors.redAccent;
+        statusText = 'Error';
+        syncIcon = Icons.sync_problem;
+        iconColor = Colors.redAccent;
+        break;
+    }
+    
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withAlpha(8),
+        border: Border.all(color: Colors.white.withAlpha(20)),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: indicatorColor,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: indicatorColor.withAlpha(128),
+                  blurRadius: 6,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+          ),
+          if (!isMobile) ...[
+            const SizedBox(width: 8),
+            Text(
+              statusText,
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.white.withAlpha(178),
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+          const SizedBox(width: 4),
+          isSyncing
+              ? const SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5,
+                    valueColor: AlwaysStoppedAnimation<Color>(AuraTheme.accentAmber),
+                  ),
+                )
+              : IconButton(
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  icon: Icon(syncIcon, color: iconColor, size: 12),
+                  tooltip: 'Sync Now',
+                  onPressed: syncState == SyncState.offline
+                      ? null
+                      : () => ref.read(syncEngineProvider.notifier).synchronize(),
+                ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final activeSessionId = ref.watch(activeConversationIdProvider);
     final messagesAsync = ref.watch(chatMessagesStreamProvider(activeSessionId));
     final sessionsAsync = ref.watch(conversationsStreamProvider);
+    final isMobile = MediaQuery.of(context).size.width < 768;
 
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: AuraTheme.background,
+      drawer: isMobile
+          ? Drawer(
+              child: _buildSidebar(context, activeSessionId, sessionsAsync),
+            )
+          : null,
       body: Row(
         children: [
-          // Sidebar: Conversations List
-          Container(
-            width: 260,
-            color: const Color(0xFF0C0917),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // New Chat Button
-                ElevatedButton.icon(
-                  onPressed: () {
-                    final newId = "session_${DateTime.now().millisecondsSinceEpoch}";
-                    ref.read(activeConversationIdProvider.notifier).setSession(newId);
-                  },
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('New Session'),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                const Text(
-                  'CHATS SESSIONS',
-                  style: TextStyle(
-                    color: AuraTheme.textSecondary,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.2,
-                  ),
-                ),
-                const SizedBox(height: 12),
-
-                // Sessions List
-                Expanded(
-                  child: sessionsAsync.when(
-                    data: (sessions) {
-                      final allSessions = sessions.contains('default_session')
-                          ? sessions
-                          : ['default_session', ...sessions];
-
-                      return ListView.builder(
-                        itemCount: allSessions.length,
-                        itemBuilder: (context, index) {
-                          final session = allSessions[index];
-                          final isActive = session == activeSessionId;
-                          final label = session == 'default_session'
-                              ? 'Default Workspace'
-                              : 'Session ${session.split('_').last.substring(0, 5)}';
-
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 6.0),
-                            child: ListTile(
-                              dense: true,
-                              selected: isActive,
-                              selectedTileColor: AuraTheme.accentIndigo.withValues(alpha: 0.15),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              title: Text(
-                                label,
-                                style: TextStyle(
-                                  color: isActive ? Colors.white : AuraTheme.textSecondary,
-                                  fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-                                ),
-                              ),
-                              trailing: isActive && session != 'default_session'
-                                  ? IconButton(
-                                      icon: const Icon(Icons.delete_outline, size: 16, color: Colors.white30),
-                                      onPressed: () {
-                                        ref.read(chatRepositoryProvider).clearConversation(session);
-                                        ref.read(activeConversationIdProvider.notifier).setSession('default_session');
-                                      },
-                                    )
-                                  : null,
-                              onTap: () {
-                                ref.read(activeConversationIdProvider.notifier).setSession(session);
-                              },
-                            ),
-                          );
-                        },
-                      );
-                    },
-                    loading: () => const Center(
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    error: (err, _) => Text('Error: $err', style: const TextStyle(color: Colors.red)),
-                  ),
-                ),
-                const Divider(color: Color(0x1F94A3B8), height: 32),
-                
-                // Fallback Key Inputs
-                TextField(
-                  onChanged: (val) => setState(() => _geminiApiKey = val),
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Local Gemini API Key',
-                    hintText: 'Enter API Key (Optional)',
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  ),
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                ),
-              ],
-            ),
-          ),
+          // Sidebar: Conversations List (only visible directly on desktop)
+          if (!isMobile) _buildSidebar(context, activeSessionId, sessionsAsync),
 
           // Main Chat Area
           Expanded(
@@ -202,6 +391,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     ),
                     child: Row(
                       children: [
+                        if (isMobile) ...[
+                          IconButton(
+                            icon: const Icon(Icons.menu, color: Colors.white),
+                            onPressed: () {
+                              _scaffoldKey.currentState?.openDrawer();
+                            },
+                          ),
+                          const SizedBox(width: 8),
+                        ],
                         Container(
                           width: 32,
                           height: 32,
@@ -247,9 +445,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                     ),
                                   ),
                                   const SizedBox(width: 6),
-                                  const Text(
-                                    'Hybrid OS Active • Gemini 1.5 Flash',
-                                    style: TextStyle(
+                                  Text(
+                                    isMobile ? 'Active' : 'Hybrid OS Active • Gemini 1.5 Flash',
+                                    style: const TextStyle(
                                       fontSize: 11,
                                       color: AuraTheme.textSecondary,
                                     ),
@@ -259,159 +457,70 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             ],
                           ),
                         ),
-                        // Agent Selector Dropdown
-                        const Text(
-                          'Agent: ',
-                          style: TextStyle(fontSize: 12, color: AuraTheme.textSecondary),
-                        ),
-                        const SizedBox(width: 4),
-                        DropdownButton<String>(
-                          value: ref.watch(activeAgentIdProvider),
-                          dropdownColor: const Color(0xFF0F0C1B),
-                          style: const TextStyle(color: Colors.white, fontSize: 13),
-                          underline: const SizedBox(),
-                          items: const [
-                            DropdownMenuItem(value: 'orchestrator', child: Text('Auto-Orchestrator')),
-                            DropdownMenuItem(value: 'task_planner', child: Text('Task Planner')),
-                            DropdownMenuItem(value: 'finance_advisor', child: Text('Finance Advisor')),
-                            DropdownMenuItem(value: 'health_companion', child: Text('Health Companion')),
-                            DropdownMenuItem(value: 'academic_coach', child: Text('Academic Coach')),
-                          ],
-                          onChanged: (val) {
-                            if (val != null) {
-                              ref.read(activeAgentIdProvider.notifier).setAgent(val);
-                            }
-                          },
-                        ),
-                        const SizedBox(width: 8),
                         // Memory Bank Button
                         IconButton(
                           icon: const Icon(Icons.psychology_outlined, color: AuraTheme.accentAmber, size: 20),
                           tooltip: 'Memory Bank',
                           onPressed: _showMemoryBankDialog,
                         ),
-                        // Agent Config Button
-                        IconButton(
-                          icon: const Icon(Icons.settings_suggest, color: AuraTheme.accentIndigo, size: 20),
-                          tooltip: 'Agent Prompt Settings',
-                          onPressed: _showAgentSettingsDialog,
-                        ),
-                        const SizedBox(width: 12),
+                        
+                        // Desktop Only Settings Buttons
+                        if (!isMobile) ...[
+                          const SizedBox(width: 8),
+                          // Agent Selector Dropdown
+                          const Text(
+                            'Agent: ',
+                            style: TextStyle(fontSize: 12, color: AuraTheme.textSecondary),
+                          ),
+                          const SizedBox(width: 4),
+                          DropdownButton<String>(
+                            value: ref.watch(activeAgentIdProvider),
+                            dropdownColor: const Color(0xFF0F0C1B),
+                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                            underline: const SizedBox(),
+                            items: const [
+                              DropdownMenuItem(value: 'orchestrator', child: Text('Auto-Orchestrator')),
+                              DropdownMenuItem(value: 'task_planner', child: Text('Task Planner')),
+                              DropdownMenuItem(value: 'finance_advisor', child: Text('Finance Advisor')),
+                              DropdownMenuItem(value: 'health_companion', child: Text('Health Companion')),
+                              DropdownMenuItem(value: 'academic_coach', child: Text('Academic Coach')),
+                            ],
+                            onChanged: (val) {
+                              if (val != null) {
+                                ref.read(activeAgentIdProvider.notifier).setAgent(val);
+                              }
+                            },
+                          ),
+                          const SizedBox(width: 8),
+                          // Agent Config Button
+                          IconButton(
+                            icon: const Icon(Icons.settings_suggest, color: AuraTheme.accentIndigo, size: 20),
+                            tooltip: 'Agent Prompt Settings',
+                            onPressed: _showAgentSettingsDialog,
+                          ),
+                          const SizedBox(width: 12),
+                          // RAG Toggler
+                          Row(
+                            children: [
+                              const Text(
+                                'RAG',
+                                style: TextStyle(fontSize: 12, color: AuraTheme.textSecondary),
+                              ),
+                              Switch(
+                                value: _useRag,
+                                activeTrackColor: AuraTheme.accentIndigo,
+                                onChanged: (val) {
+                                  setState(() {
+                                    _useRag = val;
+                                  });
+                                },
+                              ),
+                            ],
+                          ),
+                        ],
+                        const SizedBox(width: 8),
                         // Sync Status Indicator & Manual Sync Button
-                        Consumer(
-                          builder: (context, ref, child) {
-                            final syncState = ref.watch(syncEngineProvider);
-                            
-                            Color indicatorColor;
-                            String statusText;
-                            IconData syncIcon;
-                            Color iconColor;
-                            bool isSyncing = syncState == SyncState.syncing;
-                            
-                            switch (syncState) {
-                              case SyncState.synced:
-                                indicatorColor = AuraTheme.accentTeal;
-                                statusText = 'Cloud Synced';
-                                syncIcon = Icons.sync;
-                                iconColor = AuraTheme.accentTeal;
-                                break;
-                              case SyncState.syncing:
-                                indicatorColor = AuraTheme.accentAmber;
-                                statusText = 'Syncing...';
-                                syncIcon = Icons.sync;
-                                iconColor = AuraTheme.accentAmber;
-                                break;
-                              case SyncState.offline:
-                                indicatorColor = Colors.grey;
-                                statusText = 'Offline Mode';
-                                syncIcon = Icons.sync_disabled;
-                                iconColor = Colors.grey;
-                                break;
-                              case SyncState.error:
-                                indicatorColor = Colors.redAccent;
-                                statusText = 'Sync Error';
-                                syncIcon = Icons.sync_problem;
-                                iconColor = Colors.redAccent;
-                                break;
-                            }
-                            
-                            return Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withAlpha(8),
-                                border: Border.all(color: Colors.white.withAlpha(20)),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Container(
-                                    width: 8,
-                                    height: 8,
-                                    decoration: BoxDecoration(
-                                      color: indicatorColor,
-                                      shape: BoxShape.circle,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: indicatorColor.withAlpha(128),
-                                          blurRadius: 6,
-                                          spreadRadius: 2,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    statusText,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.white.withAlpha(178),
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  isSyncing
-                                      ? const SizedBox(
-                                          width: 14,
-                                          height: 14,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 1.5,
-                                            valueColor: AlwaysStoppedAnimation<Color>(AuraTheme.accentAmber),
-                                          ),
-                                        )
-                                      : IconButton(
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(),
-                                          icon: Icon(syncIcon, color: iconColor, size: 14),
-                                          tooltip: 'Sync Now',
-                                          onPressed: syncState == SyncState.offline
-                                              ? null
-                                              : () => ref.read(syncEngineProvider.notifier).synchronize(),
-                                        ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                        const SizedBox(width: 12),
-                        // RAG Toggler
-                        Row(
-                          children: [
-                            const Text(
-                              'RAG',
-                              style: TextStyle(fontSize: 12, color: AuraTheme.textSecondary),
-                            ),
-                            Switch(
-                              value: _useRag,
-                              activeTrackColor: AuraTheme.accentIndigo,
-                              onChanged: (val) {
-                                setState(() {
-                                  _useRag = val;
-                                });
-                              },
-                            ),
-                          ],
-                        ),
+                        _buildSyncIndicator(isMobile),
                       ],
                     ),
                   ),
@@ -467,8 +576,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                         Expanded(
                           child: TextField(
                             controller: _messageController,
-                            decoration: const InputDecoration(
-                              hintText: 'Ask Aura anything... (e.g. Explain how to set up Riverpod)',
+                            decoration: InputDecoration(
+                              hintText: isMobile ? 'Ask Aura...' : 'Ask Aura anything... (e.g. Explain how to set up Riverpod)',
                             ),
                             style: const TextStyle(color: Colors.white),
                             onSubmitted: (_) => _sendMessage(activeSessionId),
@@ -978,7 +1087,7 @@ class MessageBubble extends StatelessWidget {
       child: Container(
         margin: const EdgeInsets.only(bottom: 16),
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.55,
+          maxWidth: MediaQuery.of(context).size.width * (MediaQuery.of(context).size.width < 768 ? 0.75 : 0.55),
         ),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -1088,10 +1197,10 @@ class EmptyStateChat extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: 500),
               child: GridView.count(
                 shrinkWrap: true,
-                crossAxisCount: 2,
+                crossAxisCount: MediaQuery.of(context).size.width < 500 ? 1 : 2,
                 crossAxisSpacing: 12,
                 mainAxisSpacing: 12,
-                childAspectRatio: 2.2,
+                childAspectRatio: MediaQuery.of(context).size.width < 500 ? 3.8 : 2.2,
                 physics: const NeverScrollableScrollPhysics(),
                 children: [
                   _buildSuggestionCard(

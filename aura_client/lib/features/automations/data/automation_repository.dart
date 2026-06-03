@@ -6,6 +6,7 @@ import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:http/http.dart' as http;
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
+import '../../../core/config/config.dart';
 
 // ----------------------------------------------------
 // Models
@@ -136,7 +137,7 @@ class GitHubIssueItem {
 
 class AutomationRepository {
   final _storage = const FlutterSecureStorage();
-  final String _backendUrl = "https://fair-bananas-wear.loca.lt"; // Local FastAPI backend fallback
+  final String _backendUrl = AppConfig.backendUrl; // Local FastAPI backend fallback
 
   // Secure token storage for GitHub PAT
   Future<String?> getGitHubToken() async {
