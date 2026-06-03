@@ -11,3 +11,7 @@
 
 # Keep native Google services/Sign In if any
 -keep class com.google.android.gms.** { *; }
+
+# Ignore warnings from Google Play Core (split install/deferred components)
+-dontwarn com.google.android.play.core.**
+-keep class com.google.android.play.core.** { *; }

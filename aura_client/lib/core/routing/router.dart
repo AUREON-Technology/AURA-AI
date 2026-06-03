@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../theme/theme.dart';
 import '../../features/auth/presentation/login_page.dart';
 import '../../features/auth/presentation/auth_provider.dart';
 import '../../features/tasks/presentation/tasks_page.dart';
@@ -62,6 +63,43 @@ class ShellLayout extends StatelessWidget {
             unselectedIconTheme: const IconThemeData(color: Color(0xFF94A3B8)),
             selectedLabelTextStyle: const TextStyle(color: Color(0xFF6366F1)),
             unselectedLabelTextStyle: const TextStyle(color: Color(0xFF94A3B8)),
+            leading: Column(
+              children: [
+                const SizedBox(height: 16),
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF6366F1).withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.asset(
+                      'assets/app_icon.png',
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'AURA AI',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                    letterSpacing: 1.0,
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+            ),
             destinations: const [
               NavigationRailDestination(
                 icon: Icon(Icons.check_circle_outline),

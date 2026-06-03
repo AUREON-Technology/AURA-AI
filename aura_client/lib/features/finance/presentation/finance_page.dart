@@ -158,11 +158,14 @@ class _FinancePageState extends ConsumerState<FinancePage> {
                               ],
                             );
                           } else {
+                            final isVerticalCharts = constraints.maxWidth < 600;
                             return ListView(
                               children: [
                                 summaryWidget,
                                 const SizedBox(height: 24),
-                                SizedBox(height: 380, child: chartSection),
+                                isVerticalCharts
+                                    ? chartSection
+                                    : SizedBox(height: 380, child: chartSection),
                                 const SizedBox(height: 24),
                                 formWidget,
                                 const SizedBox(height: 24),
@@ -201,35 +204,50 @@ class _FinancePageState extends ConsumerState<FinancePage> {
   }
 
   Widget _buildSummaryCards(FinanceStats stats) {
-    return Row(
-      children: [
-        Expanded(
-          child: _buildSummaryCard(
-            title: "Balance",
-            amount: stats.balance,
-            color: stats.balance >= 0 ? AuraTheme.accentTeal : Colors.redAccent,
-            icon: Icons.account_balance_wallet,
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: _buildSummaryCard(
-            title: "Income",
-            amount: stats.totalIncome,
-            color: AuraTheme.accentTeal,
-            icon: Icons.arrow_upward,
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: _buildSummaryCard(
-            title: "Expenses",
-            amount: stats.totalExpense,
-            color: Colors.redAccent,
-            icon: Icons.arrow_downward,
-          ),
-        ),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isNarrow = constraints.maxWidth < 600;
+        final balanceCard = _buildSummaryCard(
+          title: "Balance",
+          amount: stats.balance,
+          color: stats.balance >= 0 ? AuraTheme.accentTeal : Colors.redAccent,
+          icon: Icons.account_balance_wallet,
+        );
+        final incomeCard = _buildSummaryCard(
+          title: "Income",
+          amount: stats.totalIncome,
+          color: AuraTheme.accentTeal,
+          icon: Icons.arrow_upward,
+        );
+        final expenseCard = _buildSummaryCard(
+          title: "Expenses",
+          amount: stats.totalExpense,
+          color: Colors.redAccent,
+          icon: Icons.arrow_downward,
+        );
+
+        if (isNarrow) {
+          return Column(
+            children: [
+              balanceCard,
+              const SizedBox(height: 12),
+              incomeCard,
+              const SizedBox(height: 12),
+              expenseCard,
+            ],
+          );
+        } else {
+          return Row(
+            children: [
+              Expanded(child: balanceCard),
+              const SizedBox(width: 16),
+              Expanded(child: incomeCard),
+              const SizedBox(width: 16),
+              Expanded(child: expenseCard),
+            ],
+          );
+        }
+      },
     );
   }
 
@@ -261,6 +279,8 @@ class _FinancePageState extends ConsumerState<FinancePage> {
                 children: [
                   Text(
                     title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 13),
                   ),
                   const SizedBox(height: 4),
@@ -285,23 +305,21 @@ class _FinancePageState extends ConsumerState<FinancePage> {
   }
 
   Widget _buildTelemetryCharts(FinanceStats stats) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isNarrow = constraints.maxWidth < 600;
+
+        final pieChartSection = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Expense Pie Chart
-            Expanded(
-              flex: 3,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    "Expenses by Category",
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                  ),
-                  const SizedBox(height: 16),
-                  Expanded(
+            const Text(
+              "Expenses by Category",
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            ),
+            const SizedBox(height: 16),
+            isNarrow
+                ? SizedBox(
+                    height: 200,
                     child: stats.totalExpense == 0
                         ? Center(
                             child: Text(
@@ -309,32 +327,84 @@ class _FinancePageState extends ConsumerState<FinancePage> {
                               style: TextStyle(color: AuraTheme.textSecondary.withValues(alpha: 0.6)),
                             ),
                           )
-                        : _buildPieChart(stats),
+                        : Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: _buildPieChart(stats),
+                          ),
+                  )
+                : Expanded(
+                    child: stats.totalExpense == 0
+                        ? Center(
+                            child: Text(
+                              "No expenses logged",
+                              style: TextStyle(color: AuraTheme.textSecondary.withValues(alpha: 0.6)),
+                            ),
+                          )
+                        : Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: _buildPieChart(stats),
+                          ),
                   ),
-                ],
-              ),
+          ],
+        );
+
+        final barChartSection = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              "Income vs Expense",
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
             ),
-            const VerticalDivider(color: Color(0x1F94A3B8), width: 32),
-            // Comparison Bar Chart
-            Expanded(
-              flex: 2,
+            const SizedBox(height: 16),
+            isNarrow
+                ? SizedBox(
+                    height: 180,
+                    child: _buildBarChart(stats),
+                  )
+                : Expanded(
+                    child: _buildBarChart(stats),
+                  ),
+          ],
+        );
+
+        if (isNarrow) {
+          return Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text(
-                    "Income vs Expense",
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                  ),
-                  const SizedBox(height: 16),
+                  pieChartSection,
+                  const SizedBox(height: 24),
+                  const Divider(color: Color(0x1F94A3B8), height: 1),
+                  const SizedBox(height: 24),
+                  barChartSection,
+                ],
+              ),
+            ),
+          );
+        } else {
+          return Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Expanded(
-                    child: _buildBarChart(stats),
+                    flex: 3,
+                    child: pieChartSection,
+                  ),
+                  const VerticalDivider(color: Color(0x1F94A3B8), width: 32),
+                  Expanded(
+                    flex: 2,
+                    child: barChartSection,
                   ),
                 ],
               ),
             ),
-          ],
-        ),
-      ),
+          );
+        }
+      },
     );
   }
 

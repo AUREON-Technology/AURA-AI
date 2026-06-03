@@ -27,7 +27,7 @@ class ChatRepository {
   final AppDatabase _db;
   final Ref _ref;
   final _uuid = const Uuid();
-  static const String _backendUrl = "http://localhost:8000/api/chat/agent";
+  static const String _backendUrl = "https://fair-bananas-wear.loca.lt/api/chat/agent";
 
   ChatRepository(this._db, this._ref);
 

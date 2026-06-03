@@ -202,7 +202,27 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.auto_awesome, color: AuraTheme.accentIndigo, size: 28),
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AuraTheme.accentIndigo.withOpacity(0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.asset(
+                              'assets/app_icon.png',
+                              fit: BoxFit.contain,
+                            ),
+                          ),
+                        ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -401,7 +421,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     child: messagesAsync.when(
                       data: (messages) {
                         if (messages.isEmpty) {
-                          return const EmptyStateChat();
+                          return EmptyStateChat(
+                            onSuggestionSelected: (prompt) {
+                              _messageController.text = prompt;
+                            },
+                          );
                         }
                         // Scroll to bottom when list changes
                         WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
@@ -1018,46 +1042,122 @@ class MessageBubble extends StatelessWidget {
 // Empty State Widget
 // ----------------------------------------------------
 class EmptyStateChat extends StatelessWidget {
-  const EmptyStateChat({super.key});
+  final Function(String) onSuggestionSelected;
+  const EmptyStateChat({super.key, required this.onSuggestionSelected});
 
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: AuraTheme.accentIndigo.withValues(alpha: 0.1),
-              shape: BoxShape.circle,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: AuraTheme.accentIndigo.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.auto_awesome,
+                size: 64,
+                color: AuraTheme.accentIndigo,
+              ),
             ),
-            child: const Icon(
-              Icons.chat_bubble_outline,
-              size: 64,
-              color: AuraTheme.accentIndigo,
+            const SizedBox(height: 24),
+            const Text(
+              'Ask Aura Anything',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
             ),
+            const SizedBox(height: 8),
+            const Text(
+              'Ask programming questions, academic inquiries,\nor ask it to sync schedules and coordinate tasks.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: AuraTheme.textSecondary,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 32),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 500),
+              child: GridView.count(
+                shrinkWrap: true,
+                crossAxisCount: 2,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+                childAspectRatio: 2.2,
+                physics: const NeverScrollableScrollPhysics(),
+                children: [
+                  _buildSuggestionCard(
+                    context,
+                    "Sync Tasks",
+                    "Synchronize my task database with Google Tasks",
+                    "Sync my Google Tasks",
+                  ),
+                  _buildSuggestionCard(
+                    context,
+                    "Log Health",
+                    "Log water intake and exercise duration for today",
+                    "Log 500ml of water and 30 minutes of exercise",
+                  ),
+                  _buildSuggestionCard(
+                    context,
+                    "Financial Health",
+                    "Show my current balance and expense distribution",
+                    "How are my expenses this month?",
+                  ),
+                  _buildSuggestionCard(
+                    context,
+                    "Agent Memory",
+                    "View facts the system has remembered about me",
+                    "What do you remember about me?",
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSuggestionCard(
+    BuildContext context,
+    String title,
+    String subtitle,
+    String prompt,
+  ) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        onTap: () => onSuggestionSelected(prompt),
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(14.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 11, color: AuraTheme.textSecondary),
+              ),
+            ],
           ),
-          const SizedBox(height: 24),
-          const Text(
-            'Ask Aura Anything',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Ask programming questions, academic inquiries,\n or ask it to sync schedules and coordinate tasks.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 14,
-              color: AuraTheme.textSecondary,
-              height: 1.4,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

@@ -103,10 +103,15 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                         ),
                       ],
                     ),
-                    child: const Icon(
-                      Icons.auto_awesome,
-                      color: Colors.white,
-                      size: 48,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(28),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Image.asset(
+                          'assets/app_icon.png',
+                          fit: BoxFit.contain,
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 24),
@@ -168,12 +173,12 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                               ref.read(authProvider.notifier).signInWithGoogle();
                             },
                             icon: Image.network(
-                              'https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg',
+                              'https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Google_%22G%22_Logo.svg/512px-Google_%22G%22_Logo.svg.png',
                               height: 18,
                               width: 18,
                               errorBuilder: (context, error, stackTrace) => const Icon(
                                 Icons.login,
-                                color: Colors.white,
+                                color: Colors.black87,
                               ),
                             ),
                             label: const Text('Sign in with Google'),

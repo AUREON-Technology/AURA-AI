@@ -136,7 +136,7 @@ class GitHubIssueItem {
 
 class AutomationRepository {
   final _storage = const FlutterSecureStorage();
-  final String _backendUrl = "http://127.0.0.1:8000"; // Local FastAPI backend fallback
+  final String _backendUrl = "https://fair-bananas-wear.loca.lt"; // Local FastAPI backend fallback
 
   // Secure token storage for GitHub PAT
   Future<String?> getGitHubToken() async {

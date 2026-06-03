@@ -178,27 +178,33 @@ class _HealthPageState extends ConsumerState<HealthPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        "Daily Goals Progress",
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
-                      ),
-                      if (weight != null)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: AuraTheme.accentIndigo.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: AuraTheme.accentIndigo.withValues(alpha: 0.3)),
-                          ),
-                          child: Text(
-                            "Weight: ${weight.toStringAsFixed(1)} kg",
-                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
-                          ),
+                  SizedBox(
+                    width: double.infinity,
+                    child: Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 12,
+                      runSpacing: 8,
+                      children: [
+                        const Text(
+                          "Daily Goals Progress",
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
                         ),
-                    ],
+                        if (weight != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: AuraTheme.accentIndigo.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(color: AuraTheme.accentIndigo.withValues(alpha: 0.3)),
+                            ),
+                            child: Text(
+                              "Weight: ${weight.toStringAsFixed(1)} kg",
+                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 20),
                   _buildProgressBar(
@@ -400,19 +406,31 @@ class _HealthPageState extends ConsumerState<HealthPage> {
             Icon(icon, color: color, size: 18),
             const SizedBox(width: 8),
             Expanded(
+              flex: 3,
               child: Text(
                 title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
               ),
             ),
-            Text(
-              customSubtitle ?? "$current / $target $unit",
-              style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 12),
-            ),
             const SizedBox(width: 8),
-            Text(
-              "$pctText%",
-              style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 13),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    customSubtitle ?? "$current / $target $unit",
+                    style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 12),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    "$pctText%",
+                    style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 13),
+                  ),
+                ],
+              ),
             ),
           ],
         ),

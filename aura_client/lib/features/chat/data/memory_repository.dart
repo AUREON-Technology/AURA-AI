@@ -15,7 +15,7 @@ class MemoryItem {
 
 class MemoryRepository {
   final AppDatabase _db;
-  static const String _backendUrl = "http://localhost:8000/api/memory";
+  static const String _backendUrl = "https://fair-bananas-wear.loca.lt/api/memory";
 
   MemoryRepository(this._db);
 
