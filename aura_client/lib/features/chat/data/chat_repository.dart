@@ -1,0 +1,187 @@
+import 'dart:convert';
+import 'dart:async';
+import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
+import 'package:uuid/uuid.dart';
+import 'package:google_generative_ai/google_generative_ai.dart' as google_ai;
+import '../../../core/database/database.dart';
+import '../../../core/database/database_provider.dart';
+
+class ChatRepository {
+  final AppDatabase _db;
+  final _uuid = const Uuid();
+  static const String _backendUrl = "http://localhost:8000/api/chat/stream";
+
+  ChatRepository(this._db);
+
+  // Watch messages for a specific conversation session
+  Stream<List<Message>> watchMessages(String conversationId) {
+    return (_db.select(_db.messages)
+          ..where((m) => m.conversationId.equals(conversationId))
+          ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
+        .watch();
+  }
+
+  // Watch all active conversations (grouped by conversationId, ordering by latest)
+  Stream<List<String>> watchConversations() {
+    // Select unique conversationIds
+    final query = _db.selectOnly(_db.messages)
+      ..addColumns([_db.messages.conversationId])
+      ..groupBy([_db.messages.conversationId]);
+    
+    return query.map((row) => row.read(_db.messages.conversationId)!).watch();
+  }
+
+  // Sends message and streams response, saving to Drift DB in real-time
+  Future<void> sendChatMessage({
+    required String conversationId,
+    required String userContent,
+    bool useRag = true,
+    String? localApiKey, // Optional fallback API key
+  }) async {
+    // 1. Save User Message
+    final userMsgId = _uuid.v4();
+    await _db.into(_db.messages).insert(
+      MessagesCompanion.insert(
+        id: userMsgId,
+        conversationId: conversationId,
+        role: "user",
+        content: userContent,
+        createdAt: DateTime.now(),
+      ),
+    );
+
+    // 2. Load Conversation History
+    final historyMessages = await (_db.select(_db.messages)
+          ..where((m) => m.conversationId.equals(conversationId))
+          ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
+        .get();
+
+    // 3. Save Placeholder Assistant Message
+    final assistantMsgId = _uuid.v4();
+    await _db.into(_db.messages).insert(
+      MessagesCompanion.insert(
+        id: assistantMsgId,
+        conversationId: conversationId,
+        role: "assistant",
+        content: "",
+        modelUsed: const Value("gemini-1.5-flash"),
+        createdAt: DateTime.now(),
+      ),
+    );
+
+    // 4. Try streaming from Hosted FastAPI Backend
+    bool backendSuccess = false;
+    String fullResponseText = "";
+
+    try {
+      final client = http.Client();
+      final request = http.Request('POST', Uri.parse(_backendUrl));
+      request.headers['Content-Type'] = 'application/json';
+      
+      final historyPayload = historyMessages.map((m) => {
+        "role": m.role,
+        "content": m.content,
+      }).toList();
+      // Add current user prompt
+      historyPayload.add({
+        "role": "user",
+        "content": userContent,
+      });
+
+      request.body = jsonEncode({
+        "messages": historyPayload,
+        "use_rag": useRag,
+      });
+
+      final response = await client.send(request).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        backendSuccess = true;
+        await for (final chunk in response.stream.transform(utf8.decoder)) {
+          fullResponseText += chunk;
+          await _updateMessageText(assistantMsgId, fullResponseText);
+        }
+      }
+    } catch (e) {
+      debugPrint("FastAPI Backend stream failed: $e. Attempting local Gemini client fallback.");
+    }
+
+    // 5. Fallback: Direct client call to Gemini API using Generative AI SDK
+    if (!backendSuccess && localApiKey != null && localApiKey.isNotEmpty) {
+      try {
+        final model = google_ai.GenerativeModel(
+          model: 'gemini-1.5-flash',
+          apiKey: localApiKey,
+        );
+
+        final geminiHistory = historyMessages.map((m) {
+          final role = m.role == "assistant" ? "model" : "user";
+          return google_ai.Content(role, [google_ai.TextPart(m.content)]);
+        }).toList();
+
+        final chat = model.startChat(history: geminiHistory);
+        final contentStream = chat.sendMessageStream(google_ai.Content.text(userContent));
+
+        await for (final chunk in contentStream) {
+          if (chunk.text != null) {
+            fullResponseText += chunk.text!;
+            await _updateMessageText(assistantMsgId, fullResponseText);
+          }
+        }
+        backendSuccess = true;
+      } catch (fallbackError) {
+        debugPrint("Direct Gemini API fallback also failed: $fallbackError");
+        fullResponseText = "Connection Error: Backend server is offline, and no valid Gemini API key was configured for local fallback.";
+        await _updateMessageText(assistantMsgId, fullResponseText);
+      }
+    } else if (!backendSuccess) {
+      fullResponseText = "Connection Error: AURA AI server is offline. Please start your backend or supply an API key in settings for offline use.";
+      await _updateMessageText(assistantMsgId, fullResponseText);
+    }
+  }
+
+  // Updates message content in Drift database
+  Future<void> _updateMessageText(String messageId, String text) async {
+    await (_db.update(_db.messages)..where((m) => m.id.equals(messageId))).write(
+      MessagesCompanion(
+        content: Value(text),
+      ),
+    );
+  }
+
+  // Delete Conversation session history
+  Future<void> clearConversation(String conversationId) async {
+    await (_db.delete(_db.messages)..where((m) => m.conversationId.equals(conversationId))).go();
+  }
+}
+
+final chatRepositoryProvider = Provider<ChatRepository>((ref) {
+  final db = ref.watch(databaseProvider);
+  return ChatRepository(db);
+});
+
+// Active Conversation session ID
+class ActiveConversation extends Notifier<String> {
+  @override
+  String build() => 'default_session';
+  void setSession(String id) => state = id;
+}
+
+final activeConversationIdProvider = NotifierProvider<ActiveConversation, String>(() {
+  return ActiveConversation();
+});
+
+// Messages List stream provider
+final chatMessagesStreamProvider = StreamProvider.family.autoDispose<List<Message>, String>((ref, conversationId) {
+  final repository = ref.watch(chatRepositoryProvider);
+  return repository.watchMessages(conversationId);
+});
+
+// Conversations list stream provider
+final conversationsStreamProvider = StreamProvider.autoDispose<List<String>>((ref) {
+  final repository = ref.watch(chatRepositoryProvider);
+  return repository.watchConversations();
+});
