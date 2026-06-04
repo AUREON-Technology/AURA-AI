@@ -7,4 +7,3 @@ __pycache__/
 .git
 .gitignore
 local_qdrant_storage/
-credentials.json
