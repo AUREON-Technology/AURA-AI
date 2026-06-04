@@ -39,6 +39,7 @@ class UserProfile {
 class AuthNotifier extends AsyncNotifier<UserProfile?> {
   final _storage = const FlutterSecureStorage();
   late final GoogleSignIn _googleSignIn;
+  GoogleSignInAccount? _currentAccount;
 
   @override
   FutureOr<UserProfile?> build() async {
@@ -49,6 +50,18 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         clientId: kIsWeb ? '87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com' : null,
         serverClientId: '87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com',
       );
+      
+      // Track the current user account via stream events (new in google_sign_in 7.x)
+      _googleSignIn.authenticationEvents.listen((event) {
+        if (event is GoogleSignInAuthenticationEventSignIn) {
+          _currentAccount = event.user;
+        } else if (event is GoogleSignInAuthenticationEventSignOut) {
+          _currentAccount = null;
+        }
+      });
+
+      // Attempt silently restoring session
+      await _googleSignIn.attemptLightweightAuthentication();
     } catch (e) {
       // Ignore if initialization fails (e.g. running on unsupported platform)
     }
@@ -88,6 +101,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     state = const AsyncValue.loading();
     try {
       final googleUser = await _googleSignIn.authenticate();
+      _currentAccount = googleUser;
       final idToken = googleUser.authentication.idToken;
       
       final profile = UserProfile(
@@ -142,7 +156,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     try {
       await _googleSignIn.signOut();
     } catch (_) {} // Might fail if never logged into google
-    
+    _currentAccount = null;
     await _storage.deleteAll();
     state = const AsyncValue.data(null);
   }
@@ -150,9 +164,9 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
   Future<String?> getIdToken() async {
     try {
       // If we are signed in with Google, refresh the token to prevent expiration
-      final currentUser = _googleSignIn.currentUser;
-      if (currentUser != null) {
-        final auth = await currentUser.authentication;
+      final currentAccount = _currentAccount;
+      if (currentAccount != null) {
+        final auth = currentAccount.authentication;
         if (auth.idToken != null) {
           await _storage.write(key: 'auth_token', value: auth.idToken!);
           return auth.idToken;
