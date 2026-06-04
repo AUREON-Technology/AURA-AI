@@ -44,6 +44,9 @@ class RAGService:
     if settings.gemini_api_key:
       self.client_ai = genai.Client(api_key=settings.gemini_api_key)
 
+    # Initialize collection and indexes at startup
+    self._ensure_collection_exists(384 if self._is_local else 768)
+
   def _ensure_collection_exists(self, vector_size: int):
     if not self.client:
       return

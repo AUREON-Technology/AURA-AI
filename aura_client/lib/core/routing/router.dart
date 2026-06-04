@@ -53,6 +53,57 @@ class ShellLayout extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final selectedIndex = _calculateSelectedIndex(context);
+    final isMobile = MediaQuery.of(context).size.width < 768;
+
+    if (isMobile) {
+      return Scaffold(
+        body: SafeArea(child: child),
+        bottomNavigationBar: BottomNavigationBar(
+          backgroundColor: const Color(0xFF0F0C1B),
+          selectedItemColor: const Color(0xFF6366F1),
+          unselectedItemColor: const Color(0xFF94A3B8),
+          currentIndex: selectedIndex,
+          type: BottomNavigationBarType.fixed,
+          selectedFontSize: 11,
+          unselectedFontSize: 11,
+          selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600),
+          unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.normal),
+          onTap: (index) => _onDestinationSelected(context, index),
+          items: const [
+            BottomNavigationBarItem(
+              icon: Icon(Icons.check_circle_outline),
+              activeIcon: Icon(Icons.check_circle),
+              label: 'Tasks',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.calendar_month_outlined),
+              activeIcon: Icon(Icons.calendar_month),
+              label: 'Calendar',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.monetization_on_outlined),
+              activeIcon: Icon(Icons.monetization_on),
+              label: 'Finance',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.favorite_outline),
+              activeIcon: Icon(Icons.favorite),
+              label: 'Health',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.settings_suggest_outlined),
+              activeIcon: Icon(Icons.settings_suggest),
+              label: 'Automs',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.chat_bubble_outline),
+              activeIcon: Icon(Icons.chat_bubble),
+              label: 'Chat',
+            ),
+          ],
+        ),
+      );
+    }
 
     return Scaffold(
       body: Row(

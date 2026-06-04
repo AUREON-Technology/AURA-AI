@@ -428,6 +428,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             children: [
                               const Text(
                                 'Aura Assistant',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
@@ -445,11 +447,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                     ),
                                   ),
                                   const SizedBox(width: 6),
-                                  Text(
-                                    isMobile ? 'Active' : 'Hybrid OS Active • Gemini 1.5 Flash',
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      color: AuraTheme.textSecondary,
+                                  Expanded(
+                                    child: Text(
+                                      isMobile ? 'Active' : 'Hybrid OS Active • Gemini 1.5 Flash',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: AuraTheme.textSecondary,
+                                      ),
                                     ),
                                   ),
                                 ],
