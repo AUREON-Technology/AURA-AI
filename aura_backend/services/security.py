@@ -99,7 +99,7 @@ async def verify_token(
             "picture": id_info.get("picture")
         }
     except Exception as google_err:
-        logger.debug(f"Token is not a valid Google ID token: {google_err}. Trying Firebase...")
+        logger.warning(f"Token is not a valid Google ID token: {google_err}. Trying Firebase...")
 
     # 3. Try verifying as Firebase ID Token (if configured)
     if firebase_app:

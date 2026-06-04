@@ -149,9 +149,22 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
 
   Future<String?> getIdToken() async {
     try {
+      // If we are signed in with Google, refresh the token to prevent expiration
+      final currentUser = _googleSignIn.currentUser;
+      if (currentUser != null) {
+        final auth = await currentUser.authentication;
+        if (auth.idToken != null) {
+          await _storage.write(key: 'auth_token', value: auth.idToken!);
+          return auth.idToken;
+        }
+      }
       return await _storage.read(key: 'auth_token');
     } catch (e) {
-      debugPrint("[AuthNotifier] Error reading ID Token from storage: $e");
+      debugPrint("[AuthNotifier] Error refreshing or reading ID Token: $e");
+      // Fallback to reading cached token directly
+      try {
+        return await _storage.read(key: 'auth_token');
+      } catch (_) {}
     }
     return null;
   }
