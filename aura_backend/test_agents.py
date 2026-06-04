@@ -8,6 +8,7 @@ class TestMultiAgentIntelligence(unittest.TestCase):
     def setUp(self):
         # Ensure a clean state
         settings.gemini_api_key = "" # Run in mock mode for unit tests
+        settings.debug_mode = True   # Enable debug mode to test local fallbacks
         agent_orchestrator.client = None
         memory_service.client_ai = None
 

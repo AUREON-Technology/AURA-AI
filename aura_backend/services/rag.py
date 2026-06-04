@@ -95,17 +95,20 @@ class RAGService:
       except Exception as e:
         logger.warning(f"Failed to generate embedding with Gemini: {e}. Trying local fallback.")
 
-    # 2. Try Local sentence-transformers (lightweight MiniLM)
-    try:
-      if not hasattr(self, '_local_encoder'):
-        from sentence_transformers import SentenceTransformer
-        logger.info(f"Loading local sentence-transformers model '{settings.local_embedding_model}'...")
-        self._local_encoder = SentenceTransformer(settings.local_embedding_model)
-      
-      embeddings = self._local_encoder.encode([text])
-      return embeddings[0].tolist()
-    except Exception as sent_err:
-      logger.warning(f"Local sentence-transformers embedding failed: {sent_err}. Trying Ollama local embedding.")
+    # 2. Try Local sentence-transformers (lightweight MiniLM) in debug mode only
+    if settings.debug_mode:
+      try:
+        if not hasattr(self, '_local_encoder'):
+          from sentence_transformers import SentenceTransformer
+          logger.info(f"Loading local sentence-transformers model '{settings.local_embedding_model}'...")
+          self._local_encoder = SentenceTransformer(settings.local_embedding_model)
+        
+        embeddings = self._local_encoder.encode([text])
+        return embeddings[0].tolist()
+      except Exception as sent_err:
+        logger.warning(f"Local sentence-transformers embedding failed: {sent_err}. Trying Ollama local embedding.")
+    else:
+      logger.warning("Skipping local sentence-transformers embedding fallback in production (non-debug) to prevent OOM crash.")
 
     # 3. Try Ollama local model embedding fallback
     try:
