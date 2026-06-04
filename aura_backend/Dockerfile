@@ -40,5 +40,5 @@ RUN mkdir -p local_qdrant_storage
 
 EXPOSE 8000
 
-# Run optimized uvicorn server in production
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--log-level", "info"]
+# Run optimized uvicorn server in production, binding to the environment PORT if set
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 4 --log-level info"]
