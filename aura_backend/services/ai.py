@@ -19,7 +19,8 @@ class AIService:
   async def generate_chat_response_stream(
     self, 
     messages: List[Dict[str, str]], 
-    use_rag: bool = True
+    use_rag: bool = True,
+    user_id: str = None
   ) -> AsyncGenerator[str, None]:
     """Streams responses from Gemini 1.5 Flash, injecting RAG context, and falls back to Ollama if offline."""
     # Extract last user message to query the RAG knowledge base
@@ -31,7 +32,7 @@ class AIService:
     rag_context = ""
     if use_rag and last_user_message:
       # Search Qdrant
-      search_results = rag_service.query_knowledge(last_user_message, limit=3)
+      search_results = rag_service.query_knowledge(last_user_message, limit=3, user_id=user_id)
       if search_results:
         rag_context = "\n\nRelevant Context from Knowledge Base:\n"
         for idx, res in enumerate(search_results):

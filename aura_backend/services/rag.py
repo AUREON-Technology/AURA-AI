@@ -145,7 +145,7 @@ class RAGService:
       logger.error(f"Failed to ingest document {doc_id}: {e}")
       return False
 
-  def query_knowledge(self, query: str, limit: int = 4) -> List[Dict[str, Any]]:
+  def query_knowledge(self, query: str, limit: int = 4, user_id: str = None) -> List[Dict[str, Any]]:
     """Queries Qdrant local/cloud for relevant text chunks."""
     if not self.client:
       logger.warning("Cannot query Qdrant: Client not initialized.")
@@ -155,9 +155,27 @@ class RAGService:
       query_vector = self._get_embedding(query)
       self._ensure_collection_exists(len(query_vector))
       
+      # Security partition: filter documents by user_id
+      query_filter = None
+      if user_id:
+        from qdrant_client.http import models as q_models
+        query_filter = q_models.Filter(
+          should=[
+            q_models.FieldCondition(
+              key="user_id",
+              match=q_models.MatchValue(value=user_id)
+            ),
+            q_models.FieldCondition(
+              key="user_id",
+              match=q_models.MatchValue(value="global")
+            )
+          ]
+        )
+      
       search_results = self.client.query_points(
         collection_name=self.collection_name,
         query=query_vector,
+        query_filter=query_filter,
         limit=limit
       )
       

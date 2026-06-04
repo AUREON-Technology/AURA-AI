@@ -113,7 +113,8 @@ class AgentOrchestrator:
         agent_id: str,
         messages: List[Dict[str, str]],
         custom_instructions: Dict[str, str] = None,
-        use_rag: bool = True
+        use_rag: bool = True,
+        user_id: str = None
     ) -> AsyncGenerator[str, None]:
         """Streams response for selected agent. If Gemini is offline, falls back to Ollama; if Ollama is also offline, uses mocks."""
         last_user_message = next(
@@ -143,7 +144,7 @@ class AgentOrchestrator:
         if last_user_message:
             # Personal Memory retrieval
             try:
-                memories = memory_service.retrieve_relevant_memories(last_user_message, limit=3)
+                memories = memory_service.retrieve_relevant_memories(last_user_message, limit=3, user_id=user_id)
                 if memories:
                     memory_context = "\n- " + "\n- ".join([m["content"] for m in memories])
                     logger.info(f"Retrieved {len(memories)} memory contexts.")
@@ -153,7 +154,7 @@ class AgentOrchestrator:
             # Standard doc RAG retrieval (exclude memories from normal RAG if tagged, Qdrant client handles this via type tag filters)
             if use_rag:
                 try:
-                    search_results = rag_service.query_knowledge(last_user_message, limit=2)
+                    search_results = rag_service.query_knowledge(last_user_message, limit=2, user_id=user_id)
                     if search_results:
                         rag_context = "\nRelevant Knowledge Base Chunks:\n"
                         for idx, res in enumerate(search_results):

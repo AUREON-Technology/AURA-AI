@@ -68,7 +68,7 @@ class MemoryService:
             logger.error(f"Error extracting memories: {e}")
             return []
 
-    def save_memory(self, fact: str) -> bool:
+    def save_memory(self, fact: str, user_id: str = "global") -> bool:
         """Saves a fact to Qdrant Cloud as a memory point."""
         if not self.client:
             logger.warning("Qdrant client not initialized. Cannot save memory.")
@@ -82,7 +82,8 @@ class MemoryService:
             
             payload = {
                 "content": fact,
-                "type": "user_memory"
+                "type": "user_memory",
+                "user_id": user_id
             }
 
             self.client.upsert(
@@ -95,13 +96,13 @@ class MemoryService:
                     )
                 ]
             )
-            logger.info(f"Memory saved successfully: {fact}")
+            logger.info(f"Memory saved successfully for {user_id}: {fact}")
             return True
         except Exception as e:
             logger.error(f"Error saving memory fact: {e}")
             return False
 
-    def retrieve_relevant_memories(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def retrieve_relevant_memories(self, query: str, limit: int = 5, user_id: str = None) -> List[Dict[str, Any]]:
         """Retrieves user memories semantically relevant to the user query."""
         if not self.client:
             return []
@@ -109,15 +110,21 @@ class MemoryService:
         try:
             query_vector = rag_service._get_embedding(query)
             
-            # Filter for user_memory type
-            memory_filter = models.Filter(
-                must=[
+            # Filter for user_memory type and user_id
+            must_conditions = [
+                models.FieldCondition(
+                    key="type",
+                    match=models.MatchValue(value="user_memory")
+                )
+            ]
+            if user_id:
+                must_conditions.append(
                     models.FieldCondition(
-                        key="type",
-                        match=models.MatchValue(value="user_memory")
+                        key="user_id",
+                        match=models.MatchValue(value=user_id)
                     )
-                ]
-            )
+                )
+            memory_filter = models.Filter(must=must_conditions)
 
             search_results = self.client.query_points(
                 collection_name=self.collection_name,
@@ -138,21 +145,27 @@ class MemoryService:
             logger.error(f"Error retrieving memories: {e}")
             return []
 
-    def list_all_memories(self) -> List[Dict[str, Any]]:
+    def list_all_memories(self, user_id: str = None) -> List[Dict[str, Any]]:
         """Retrieves all stored user memories from Qdrant Cloud."""
         if not self.client:
             return []
 
         try:
-            # Filter for user_memory type
-            memory_filter = models.Filter(
-                must=[
+            # Filter for user_memory type and user_id
+            must_conditions = [
+                models.FieldCondition(
+                    key="type",
+                    match=models.MatchValue(value="user_memory")
+                )
+            ]
+            if user_id:
+                must_conditions.append(
                     models.FieldCondition(
-                        key="type",
-                        match=models.MatchValue(value="user_memory")
+                        key="user_id",
+                        match=models.MatchValue(value=user_id)
                     )
-                ]
-            )
+                )
+            memory_filter = models.Filter(must=must_conditions)
 
             scroll_result = self.client.scroll(
                 collection_name=self.collection_name,

@@ -69,6 +69,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
 
+    ref.listen(authProvider, (previous, next) {
+      if (next.hasError) {
+        setState(() {
+          _showDeveloperPanel = true;
+        });
+      }
+    });
+
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
@@ -261,10 +269,28 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                         // Error message
                         if (authState.hasError) ...[
                           const SizedBox(height: 16),
-                          Text(
-                            'Error: ${authState.error}',
-                            style: const TextStyle(color: Colors.redAccent, fontSize: 13),
-                            textAlign: TextAlign.center,
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.redAccent.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+                            ),
+                            child: Column(
+                              children: [
+                                Text(
+                                  'Error: ${authState.error}',
+                                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Tip: Google Sign-In failed. To test locally without registering SHA-1 fingerprints in the Google Console, use the "Access Developer Environment" bypass option above.',
+                                  style: TextStyle(color: AuraTheme.textSecondary, fontSize: 11),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ],

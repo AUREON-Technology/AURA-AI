@@ -1,7 +1,7 @@
 import logging
 import uvicorn
 import time
-from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -14,6 +14,7 @@ from services.rag import rag_service
 from services.automation import automation_service
 from services.agent import agent_orchestrator
 from services.memory import memory_service
+from services.security import verify_token
 
 # Logging Setup
 logging.basicConfig(
@@ -155,7 +156,7 @@ async def health_check():
     }
 
 @app.post("/api/chat/stream")
-async def stream_chat(request: ChatRequest):
+async def stream_chat(request: ChatRequest, user_info: dict = Depends(verify_token)):
     """Streams responses from Gemini 1.5 Flash."""
     formatted_messages = [{"role": m.role, "content": m.content} for m in request.messages]
     
@@ -163,53 +164,82 @@ async def stream_chat(request: ChatRequest):
         raise HTTPException(status_code=400, detail="Messages list cannot be empty")
 
     async def event_generator():
-        async for chunk in ai_service.generate_chat_response_stream(
-            messages=formatted_messages, 
-            use_rag=request.use_rag
-        ):
-            yield chunk
+        try:
+            async for chunk in ai_service.generate_chat_response_stream(
+                messages=formatted_messages, 
+                use_rag=request.use_rag,
+                user_id=user_info["uid"]
+            ):
+                yield chunk
+        except Exception as e:
+            logger.error(f"Error in stream_chat event generation for user {user_info.get('email')}: {e}")
+            yield f"\n[Internal Server Error during stream: {e}]"
 
     return StreamingResponse(event_generator(), media_type="text/plain")
 
 @app.post("/api/rag/ingest")
-async def ingest_document(request: IngestRequest):
+async def ingest_document(request: IngestRequest, user_info: dict = Depends(verify_token)):
     """Ingests text content into Qdrant Cloud."""
-    success = rag_service.ingest_document(
-        doc_id=request.doc_id,
-        content=request.content,
-        metadata=request.metadata or {}
-    )
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to ingest document to Qdrant")
-    return {"status": "success", "message": f"Document {request.doc_id} ingested."}
+    metadata = request.metadata or {}
+    metadata["user_id"] = user_info["uid"]
+    try:
+        success = rag_service.ingest_document(
+            doc_id=request.doc_id,
+            content=request.content,
+            metadata=metadata
+        )
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to ingest document to Qdrant")
+        return {"status": "success", "message": f"Document {request.doc_id} ingested."}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Error in ingest_document for user {user_info.get('email')}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/rag/query")
-async def query_document(request: QueryRequest):
+async def query_document(request: QueryRequest, user_info: dict = Depends(verify_token)):
     """Queries Qdrant vector store directly."""
-    results = rag_service.query_knowledge(query=request.query, limit=request.limit)
-    return {"results": results}
+    try:
+        results = rag_service.query_knowledge(
+            query=request.query, 
+            limit=request.limit, 
+            user_id=user_info["uid"]
+        )
+        return {"results": results}
+    except Exception as e:
+        logger.error(f"Error in query_document for user {user_info.get('email')}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/automation/analyze-email")
-async def analyze_email(request: EmailAnalyzeRequest):
+async def analyze_email(request: EmailAnalyzeRequest, user_info: dict = Depends(verify_token)):
     """Analyzes email content and returns structured JSON details."""
-    result = automation_service.analyze_email(
-        subject=request.subject,
-        sender=request.sender,
-        body=request.body
-    )
-    return result
+    try:
+        result = automation_service.analyze_email(
+            subject=request.subject,
+            sender=request.sender,
+            body=request.body
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error in analyze_email for user {user_info.get('email')}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/automation/analyze-issue")
-async def analyze_issue(request: IssueAnalyzeRequest):
+async def analyze_issue(request: IssueAnalyzeRequest, user_info: dict = Depends(verify_token)):
     """Analyzes GitHub issue content and returns structured checklist details."""
-    result = automation_service.analyze_github_issue(
-        title=request.title,
-        body=request.body
-    )
-    return result
+    try:
+        result = automation_service.analyze_github_issue(
+            title=request.title,
+            body=request.body
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error in analyze_issue for user {user_info.get('email')}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat/agent")
-async def agent_chat(request: AgentChatRequest):
+async def agent_chat(request: AgentChatRequest, user_info: dict = Depends(verify_token)):
     """Streams responses from a classified/selected specialized agent persona."""
     formatted_messages = [{"role": m.role, "content": m.content} for m in request.messages]
     
@@ -217,47 +247,70 @@ async def agent_chat(request: AgentChatRequest):
         raise HTTPException(status_code=400, detail="Messages list cannot be empty")
 
     async def event_generator():
-        async for chunk in agent_orchestrator.execute_agent_stream(
-            agent_id=request.agent_id,
-            messages=formatted_messages,
-            custom_instructions=request.custom_instructions,
-            use_rag=request.use_rag
-        ):
-            yield chunk
+        try:
+            async for chunk in agent_orchestrator.execute_agent_stream(
+                agent_id=request.agent_id,
+                messages=formatted_messages,
+                custom_instructions=request.custom_instructions,
+                use_rag=request.use_rag,
+                user_id=user_info["uid"]
+            ):
+                yield chunk
+        except Exception as e:
+            logger.error(f"Error in agent_chat stream generation for user {user_info.get('email')}: {e}")
+            yield f"\n[Internal Server Agent Error during stream: {e}]"
 
     return StreamingResponse(event_generator(), media_type="text/plain")
 
 @app.post("/api/memory/extract")
-async def extract_memory(request: MemoryExtractRequest):
+async def extract_memory(request: MemoryExtractRequest, user_info: dict = Depends(verify_token)):
     """Extracts long-term user facts from recent messages and saves them."""
-    formatted_messages = [{"role": m.role, "content": m.content} for m in request.messages]
-    facts = memory_service.extract_memories(formatted_messages)
-    saved_facts = []
-    for fact in facts:
-        if memory_service.save_memory(fact):
-            saved_facts.append(fact)
-    return {"status": "success", "extracted_facts": saved_facts}
+    try:
+        formatted_messages = [{"role": m.role, "content": m.content} for m in request.messages]
+        facts = memory_service.extract_memories(formatted_messages)
+        saved_facts = []
+        for fact in facts:
+            if memory_service.save_memory(fact, user_id=user_info["uid"]):
+                saved_facts.append(fact)
+        return {"status": "success", "extracted_facts": saved_facts}
+    except Exception as e:
+        logger.error(f"Error in extract_memory for user {user_info.get('email')}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/memory/save")
-async def save_memory(request: MemorySaveRequest):
+async def save_memory(request: MemorySaveRequest, user_info: dict = Depends(verify_token)):
     """Manually saves a user memory fact."""
-    success = memory_service.save_memory(request.fact)
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to save memory point")
-    return {"status": "success"}
+    try:
+        success = memory_service.save_memory(request.fact, user_id=user_info["uid"])
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to save memory point")
+        return {"status": "success"}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Error in save_memory for user {user_info.get('email')}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/memory/list")
-async def list_memories():
+async def list_memories(user_info: dict = Depends(verify_token)):
     """Lists all user memories stored in Qdrant Cloud."""
-    return memory_service.list_all_memories()
+    try:
+        return memory_service.list_all_memories(user_id=user_info["uid"])
+    except Exception as e:
+        logger.error(f"Error in list_memories for user {user_info.get('email')}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/memory/delete/{point_id}")
-async def delete_memory(point_id: int):
+async def delete_memory(point_id: int, user_info: dict = Depends(verify_token)):
     """Deletes a user memory by Qdrant point ID."""
-    success = memory_service.delete_memory(point_id)
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to delete memory point")
-    return {"status": "success"}
+    try:
+        success = memory_service.delete_memory(point_id)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to delete memory point")
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Error in delete_memory for user {user_info.get('email')}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ----------------------------------------------------
 # Server Start

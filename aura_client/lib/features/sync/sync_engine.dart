@@ -3,6 +3,7 @@ import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
 import '../../core/database/database.dart';
 import '../../core/database/database_provider.dart';
 
@@ -15,27 +16,38 @@ enum SyncState {
 
 class SyncEngine extends Notifier<SyncState> {
   late AppDatabase _db;
-  late FirebaseFirestore _firestore;
+  FirebaseFirestore? _firestore;
   Timer? _syncTimer;
 
   @override
   SyncState build() {
     _db = ref.watch(databaseProvider);
-    _firestore = FirebaseFirestore.instance;
+    
+    if (Firebase.apps.isNotEmpty) {
+      try {
+        _firestore = FirebaseFirestore.instance;
+        
+        // Start periodic background sync every 60 seconds
+        _syncTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+          synchronize();
+        });
 
-    // Start periodic background sync every 60 seconds
-    _syncTimer = Timer.periodic(const Duration(seconds: 60), (_) {
-      synchronize();
-    });
+        ref.onDispose(() {
+          _syncTimer?.cancel();
+        });
 
-    ref.onDispose(() {
-      _syncTimer?.cancel();
-    });
+        // Run initial sync
+        Future.microtask(() => synchronize());
+        
+        return SyncState.synced;
+      } catch (e) {
+        debugPrint("[SyncEngine] Failed to initialize Firestore: $e");
+      }
+    } else {
+      debugPrint("[SyncEngine] Firebase is not initialized. Sync running in offline mode.");
+    }
 
-    // Run initial sync
-    Future.microtask(() => synchronize());
-
-    return SyncState.synced;
+    return SyncState.offline;
   }
 
   Future<void> synchronize() async {
@@ -71,9 +83,10 @@ class SyncEngine extends Notifier<SyncState> {
   }
 
   Future<bool> _checkConnectivity() async {
+    if (_firestore == null) return false;
     try {
       // Small timeout connection test to Firestore
-      await _firestore.collection('tasks').limit(1).get().timeout(const Duration(seconds: 4));
+      await _firestore!.collection('tasks').limit(1).get().timeout(const Duration(seconds: 4));
       return true;
     } catch (e) {
       return false;
@@ -87,7 +100,7 @@ class SyncEngine extends Notifier<SyncState> {
     debugPrint("[SyncEngine] Syncing ${pendingDeletes.length} pending deletions...");
     for (final del in pendingDeletes) {
       try {
-        await _firestore.collection(del.targetTable).doc(del.recordId).delete();
+        await _firestore!.collection(del.targetTable).doc(del.recordId).delete();
         // Remove delete log locally
         await (_db.delete(_db.pendingDeletes)
               ..where((t) => t.recordId.equals(del.recordId) & t.targetTable.equals(del.targetTable)))
@@ -106,7 +119,7 @@ class SyncEngine extends Notifier<SyncState> {
     final localMap = {for (var t in localTasks) t.id: t};
 
     // Fetch remote tasks
-    final remoteSnapshot = await _firestore.collection('tasks').get();
+    final remoteSnapshot = await _firestore!.collection('tasks').get();
     final remoteMap = <String, Map<String, dynamic>>{};
     for (var doc in remoteSnapshot.docs) {
       remoteMap[doc.id] = doc.data();
@@ -119,7 +132,7 @@ class SyncEngine extends Notifier<SyncState> {
       if (remote == null) {
         if (!local.isSynced) {
           // Upload local insert
-          await _firestore.collection('tasks').doc(local.id).set(local.toJson());
+          await _firestore!.collection('tasks').doc(local.id).set(local.toJson());
           await _markTaskSynced(local.id);
         }
       } else {
@@ -131,7 +144,7 @@ class SyncEngine extends Notifier<SyncState> {
 
           if (localUpdatedAt != null && (remoteUpdatedAt == null || localUpdatedAt.isAfter(remoteUpdatedAt))) {
             // Local is newer: upload
-            await _firestore.collection('tasks').doc(local.id).set(local.toJson());
+            await _firestore!.collection('tasks').doc(local.id).set(local.toJson());
             await _markTaskSynced(local.id);
           } else {
             // Remote is newer or equal: download
@@ -185,7 +198,7 @@ class SyncEngine extends Notifier<SyncState> {
     final localEvents = await _db.select(_db.calendarEvents).get();
     final localMap = {for (var e in localEvents) e.id: e};
 
-    final remoteSnapshot = await _firestore.collection('calendar_events').get();
+    final remoteSnapshot = await _firestore!.collection('calendar_events').get();
     final remoteMap = <String, Map<String, dynamic>>{};
     for (var doc in remoteSnapshot.docs) {
       remoteMap[doc.id] = doc.data();
@@ -196,7 +209,7 @@ class SyncEngine extends Notifier<SyncState> {
 
       if (remote == null) {
         if (!local.isSynced) {
-          await _firestore.collection('calendar_events').doc(local.id).set(local.toJson());
+          await _firestore!.collection('calendar_events').doc(local.id).set(local.toJson());
           await _markEventSynced(local.id);
         }
       } else {
@@ -206,7 +219,7 @@ class SyncEngine extends Notifier<SyncState> {
           final localUpdatedAt = local.updatedAt;
 
           if (localUpdatedAt != null && (remoteUpdatedAt == null || localUpdatedAt.isAfter(remoteUpdatedAt))) {
-            await _firestore.collection('calendar_events').doc(local.id).set(local.toJson());
+            await _firestore!.collection('calendar_events').doc(local.id).set(local.toJson());
             await _markEventSynced(local.id);
           } else {
             final remoteEvent = CalendarEvent.fromJson(remote);
@@ -253,7 +266,7 @@ class SyncEngine extends Notifier<SyncState> {
     final localRecords = await _db.select(_db.financeRecords).get();
     final localMap = {for (var r in localRecords) r.id: r};
 
-    final remoteSnapshot = await _firestore.collection('finance_records').get();
+    final remoteSnapshot = await _firestore!.collection('finance_records').get();
     final remoteMap = <String, Map<String, dynamic>>{};
     for (var doc in remoteSnapshot.docs) {
       remoteMap[doc.id] = doc.data();
@@ -264,7 +277,7 @@ class SyncEngine extends Notifier<SyncState> {
 
       if (remote == null) {
         if (!local.isSynced) {
-          await _firestore.collection('finance_records').doc(local.id).set(local.toJson());
+          await _firestore!.collection('finance_records').doc(local.id).set(local.toJson());
           await _markFinanceSynced(local.id);
         }
       } else {
@@ -274,7 +287,7 @@ class SyncEngine extends Notifier<SyncState> {
           final localUpdatedAt = local.updatedAt;
 
           if (localUpdatedAt != null && (remoteUpdatedAt == null || localUpdatedAt.isAfter(remoteUpdatedAt))) {
-            await _firestore.collection('finance_records').doc(local.id).set(local.toJson());
+            await _firestore!.collection('finance_records').doc(local.id).set(local.toJson());
             await _markFinanceSynced(local.id);
           } else {
             final remoteRecord = FinanceRecord.fromJson(remote);
@@ -321,7 +334,7 @@ class SyncEngine extends Notifier<SyncState> {
     final localRecords = await _db.select(_db.healthRecords).get();
     final localMap = {for (var r in localRecords) r.id: r};
 
-    final remoteSnapshot = await _firestore.collection('health_records').get();
+    final remoteSnapshot = await _firestore!.collection('health_records').get();
     final remoteMap = <String, Map<String, dynamic>>{};
     for (var doc in remoteSnapshot.docs) {
       remoteMap[doc.id] = doc.data();
@@ -332,7 +345,7 @@ class SyncEngine extends Notifier<SyncState> {
 
       if (remote == null) {
         if (!local.isSynced) {
-          await _firestore.collection('health_records').doc(local.id).set(local.toJson());
+          await _firestore!.collection('health_records').doc(local.id).set(local.toJson());
           await _markHealthSynced(local.id);
         }
       } else {
@@ -342,7 +355,7 @@ class SyncEngine extends Notifier<SyncState> {
           final localUpdatedAt = local.updatedAt;
 
           if (localUpdatedAt != null && (remoteUpdatedAt == null || localUpdatedAt.isAfter(remoteUpdatedAt))) {
-            await _firestore.collection('health_records').doc(local.id).set(local.toJson());
+            await _firestore!.collection('health_records').doc(local.id).set(local.toJson());
             await _markHealthSynced(local.id);
           } else {
             final remoteRecord = HealthRecord.fromJson(remote);
