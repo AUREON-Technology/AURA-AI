@@ -11,6 +11,7 @@ import '../../../core/database/database_provider.dart';
 import '../../../core/config/config.dart';
 import 'agent_config_repository.dart';
 import 'memory_repository.dart';
+import '../../auth/presentation/auth_provider.dart';
 
 class PendingActions extends Notifier<List<dynamic>> {
   @override
@@ -99,9 +100,13 @@ class ChatRepository {
     String fullResponseText = "";
 
     try {
+      final token = await _ref.read(authProvider.notifier).getIdToken();
       final client = http.Client();
       final request = http.Request('POST', Uri.parse(_backendUrl));
       request.headers['Content-Type'] = 'application/json';
+      if (token != null) {
+        request.headers['Authorization'] = 'Bearer $token';
+      }
       
       final historyPayload = historyMessages.map((m) => {
         "role": m.role,

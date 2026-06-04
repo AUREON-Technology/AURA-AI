@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../../../core/database/database.dart';
 import '../../../core/database/database_provider.dart';
 import '../../../core/config/config.dart';
+import '../../auth/presentation/auth_provider.dart';
 
 class MemoryItem {
   final String id;
@@ -16,9 +17,10 @@ class MemoryItem {
 
 class MemoryRepository {
   final AppDatabase _db;
+  final Ref _ref;
   static const String _backendUrl = "${AppConfig.backendUrl}/api/memory";
 
-  MemoryRepository(this._db);
+  MemoryRepository(this._db, this._ref);
 
   // Watch local cache of memories
   Stream<List<UserMemory>> watchLocalMemories() {
@@ -30,7 +32,12 @@ class MemoryRepository {
   // Fetch all memories from backend and sync to local Drift database
   Future<List<MemoryItem>> syncMemories() async {
     try {
-      final response = await http.get(Uri.parse("$_backendUrl/list"));
+      final token = await _ref.read(authProvider.notifier).getIdToken();
+      final headers = <String, String>{};
+      if (token != null) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+      final response = await http.get(Uri.parse("$_backendUrl/list"), headers: headers);
       if (response.statusCode == 200) {
         final List list = jsonDecode(response.body);
         final items = list.map((item) {
@@ -70,14 +77,20 @@ class MemoryRepository {
     if (recentMessages.isEmpty) return;
 
     try {
+      final token = await _ref.read(authProvider.notifier).getIdToken();
       final payload = recentMessages.map((m) => {
         "role": m.role,
         "content": m.content,
       }).toList();
 
+      final headers = {"Content-Type": "application/json"};
+      if (token != null) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+
       final response = await http.post(
         Uri.parse("$_backendUrl/extract"),
-        headers: {"Content-Type": "application/json"},
+        headers: headers,
         body: jsonEncode({"messages": payload}),
       );
 
@@ -98,9 +111,14 @@ class MemoryRepository {
 
     // 2. Delete remotely
     try {
+      final token = await _ref.read(authProvider.notifier).getIdToken();
+      final headers = <String, String>{};
+      if (token != null) {
+        headers['Authorization'] = 'Bearer $token';
+      }
       final pointId = int.tryParse(memoryId);
       if (pointId != null) {
-        final response = await http.delete(Uri.parse("$_backendUrl/delete/$pointId"));
+        final response = await http.delete(Uri.parse("$_backendUrl/delete/$pointId"), headers: headers);
         if (response.statusCode != 200) {
           debugPrint("Failed to delete remote memory point $pointId: ${response.body}");
         }
@@ -124,9 +142,14 @@ class MemoryRepository {
 
     // Save remotely
     try {
+      final token = await _ref.read(authProvider.notifier).getIdToken();
+      final headers = {"Content-Type": "application/json"};
+      if (token != null) {
+        headers['Authorization'] = 'Bearer $token';
+      }
       final response = await http.post(
         Uri.parse("$_backendUrl/save"),
-        headers: {"Content-Type": "application/json"},
+        headers: headers,
         body: jsonEncode({"fact": fact}),
       );
       if (response.statusCode != 200) {
@@ -140,7 +163,7 @@ class MemoryRepository {
 
 final memoryRepositoryProvider = Provider<MemoryRepository>((ref) {
   final db = ref.watch(databaseProvider);
-  return MemoryRepository(db);
+  return MemoryRepository(db, ref);
 });
 
 // Watch local database memories stream

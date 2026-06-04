@@ -8,5 +8,7 @@ pydantic>=2.6.4
 pydantic-settings>=2.2.1
 python-multipart>=0.0.9
 sentence-transformers>=2.5.0
+celery>=5.3.0
+redis>=5.0.0
 
 

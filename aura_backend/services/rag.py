@@ -56,6 +56,23 @@ class RAGService:
           collection_name=self.collection_name,
           vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
         )
+        
+      # Create payload indexes for fast filtered query access (runs on new or existing collections, safe fallback)
+      try:
+        from qdrant_client.http import models as q_models
+        self.client.create_payload_index(
+          collection_name=self.collection_name,
+          field_name="type",
+          field_schema=q_models.PayloadSchemaType.KEYWORD,
+        )
+        self.client.create_payload_index(
+          collection_name=self.collection_name,
+          field_name="user_id",
+          field_schema=q_models.PayloadSchemaType.KEYWORD,
+        )
+      except Exception as idx_err:
+        # Silently bypass if indexes already exist
+        logger.debug(f"Payload index setup check completed: {idx_err}")
     except Exception as e:
       logger.error(f"Error checking/creating Qdrant collection: {e}")
 

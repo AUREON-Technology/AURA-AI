@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  # 1. FastAPI Main Backend Service
+  backend:
+    build:
+      context: ./aura_backend
+      dockerfile: Dockerfile
+    container_name: aura_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - QDRANT_HOST=http://qdrant:6333
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    env_file:
+      - ./aura_backend/.env
+    depends_on:
+      - qdrant
+      - redis
+
+  # 2. Local Qdrant Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: aura_qdrant
+    restart: always
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__ENABLE_STATIC_CONTENT_SHARE=true
+
+  # 3. Redis Message Broker
+  redis:
+    image: redis:7-alpine
+    container_name: aura_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # 4. Celery Background Task Worker
+  celery_worker:
+    build:
+      context: ./aura_backend
+      dockerfile: Dockerfile
+    container_name: aura_celery_worker
+    restart: always
+    command: celery -A tasks worker --loglevel=info
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - QDRANT_HOST=http://qdrant:6333
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    env_file:
+      - ./aura_backend/.env
+    depends_on:
+      - redis
+      - qdrant
+
+volumes:
+  qdrant_storage:
+  redis_data:

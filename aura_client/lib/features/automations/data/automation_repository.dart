@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import '../../../core/config/config.dart';
+import '../../auth/presentation/auth_provider.dart';
 
 // ----------------------------------------------------
 // Models
@@ -137,7 +138,10 @@ class GitHubIssueItem {
 
 class AutomationRepository {
   final _storage = const FlutterSecureStorage();
+  final Ref _ref;
   final String _backendUrl = AppConfig.backendUrl; // Local FastAPI backend fallback
+
+  AutomationRepository(this._ref);
 
   // Secure token storage for GitHub PAT
   Future<String?> getGitHubToken() async {
@@ -212,10 +216,15 @@ class AutomationRepository {
 
   // Communicate with FastAPI backend to analyze email
   Future<EmailAnalysisResult> analyzeEmail(GmailMessageHeader email) async {
+    final token = await _ref.read(authProvider.notifier).getIdToken();
     final url = Uri.parse("$_backendUrl/api/automation/analyze-email");
+    final headers = {"Content-Type": "application/json"};
+    if (token != null) {
+      headers['Authorization'] = 'Bearer $token';
+    }
     final response = await http.post(
       url,
-      headers: {"Content-Type": "application/json"},
+      headers: headers,
       body: jsonEncode({
         "subject": email.subject,
         "sender": email.sender,
@@ -257,10 +266,15 @@ class AutomationRepository {
 
   // Call backend to analyze github issue
   Future<GitHubIssueResult> analyzeGitHubIssue(GitHubIssueItem issue) async {
+    final token = await _ref.read(authProvider.notifier).getIdToken();
     final url = Uri.parse("$_backendUrl/api/automation/analyze-issue");
+    final headers = {"Content-Type": "application/json"};
+    if (token != null) {
+      headers['Authorization'] = 'Bearer $token';
+    }
     final response = await http.post(
       url,
-      headers: {"Content-Type": "application/json"},
+      headers: headers,
       body: jsonEncode({
         "title": issue.title,
         "body": issue.body,
@@ -342,5 +356,5 @@ $description
 }
 
 final automationRepositoryProvider = Provider<AutomationRepository>((ref) {
-  return AutomationRepository();
+  return AutomationRepository(ref);
 });

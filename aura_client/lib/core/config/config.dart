@@ -1,4 +1,7 @@
 class AppConfig {
-  // Update this URL to point to your actual deployed Railway backend URL
-  static const String backendUrl = "https://aura-ai-production.up.railway.app";
+  // Configured via compile-time environment injection (e.g. --dart-define=BACKEND_URL=...)
+  static const String backendUrl = String.fromEnvironment(
+    'BACKEND_URL',
+    defaultValue: "https://aura-ai-production.up.railway.app",
+  );
 }

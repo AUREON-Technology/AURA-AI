@@ -88,6 +88,8 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     state = const AsyncValue.loading();
     try {
       final googleUser = await _googleSignIn.authenticate();
+      final idToken = googleUser.authentication.idToken;
+      
       final profile = UserProfile(
         id: googleUser.id,
         email: googleUser.email,
@@ -101,6 +103,9 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       await _storage.write(key: 'user_name', value: profile.displayName);
       if (profile.photoUrl != null) {
         await _storage.write(key: 'user_photo', value: profile.photoUrl);
+      }
+      if (idToken != null) {
+        await _storage.write(key: 'auth_token', value: idToken);
       }
 
       state = AsyncValue.data(profile);
@@ -124,6 +129,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       await _storage.write(key: 'user_email', value: profile.email);
       await _storage.write(key: 'user_name', value: profile.displayName);
       await _storage.write(key: 'user_photo', value: profile.photoUrl);
+      await _storage.write(key: 'auth_token', value: 'mock_token');
 
       state = AsyncValue.data(profile);
     } catch (err, stack) {
@@ -139,6 +145,15 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     
     await _storage.deleteAll();
     state = const AsyncValue.data(null);
+  }
+
+  Future<String?> getIdToken() async {
+    try {
+      return await _storage.read(key: 'auth_token');
+    } catch (e) {
+      debugPrint("[AuthNotifier] Error reading ID Token from storage: $e");
+    }
+    return null;
   }
 }
 
