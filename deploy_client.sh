@@ -2,7 +2,7 @@
 # AURA AI Flutter Client Production Build Script (Bash version)
 # Run from the `aura_client` directory.
 
-BACKEND_URL="https://aura-ai-production.up.railway.app"
+BACKEND_URL="https://aura-ai-production-a31f.up.railway.app"
 
 echo "=========================================================="
 echo "🚀 Building AURA AI Client for Production"

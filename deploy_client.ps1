@@ -1,7 +1,7 @@
 # AURA AI Flutter Client Production Build Script
 # Run this script from the `aura_client` directory.
 
-$BACKEND_URL = "https://aura-ai-production.up.railway.app"
+$BACKEND_URL = "https://aura-ai-production-a31f.up.railway.app"
 
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "🚀 Building AURA AI Client for Production" -ForegroundColor Cyan
