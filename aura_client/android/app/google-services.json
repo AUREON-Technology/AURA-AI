@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "87789110323-as7erf305vtvmn5ltgr5k3ccrpo583h2.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.auraai.aura_client",
+            "certificate_hash": "f75b4c5a01c2df39ee5e652e9cf745d3ecd7365a"
+          }
+        },
+        {
           "client_id": "87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com",
           "client_type": 3
         }

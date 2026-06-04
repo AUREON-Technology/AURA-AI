@@ -80,7 +80,7 @@ class AIService:
       current_prompt = modified_messages[-1]["content"]
 
       # Create chat model and stream
-      chat = self.client.chats.create(model="gemini-1.5-flash", history=gemini_history)
+      chat = self.client.chats.create(model="gemini-2.5-flash", history=gemini_history)
       response = chat.send_message_stream(current_prompt)
       for chunk in response:
         if chunk.text:

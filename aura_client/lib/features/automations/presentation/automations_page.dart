@@ -124,13 +124,37 @@ class _AutomationsPageState extends ConsumerState<AutomationsPage> {
   // ----------------------------------------------------
   Future<void> _fetchGitHub() async {
     final token = _githubPatController.text.trim();
-    final repo = _githubRepoController.text.trim();
+    var repo = _githubRepoController.text.trim();
     if (token.isEmpty || repo.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Please provide both GitHub PAT and Repository Path.")),
       );
       return;
     }
+
+    // Clean up leading/trailing slashes
+    while (repo.startsWith('/')) {
+      repo = repo.substring(1);
+    }
+    while (repo.endsWith('/')) {
+      repo = repo.substring(0, repo.length - 1);
+    }
+
+    // Validate format (must contain owner and repo separated by a single slash)
+    final parts = repo.split('/');
+    if (parts.length != 2 || parts[0].isEmpty || parts[1].isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Repository Path must be in 'owner/repo' format (e.g., owner/AURA-AI)."),
+          backgroundColor: Colors.orangeAccent,
+        ),
+      );
+      return;
+    }
+
+    // Update text field to show sanitized value
+    _githubRepoController.text = repo;
+
 
     setState(() {
       _loadingGitHub = true;

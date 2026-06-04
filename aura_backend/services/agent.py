@@ -64,7 +64,7 @@ class AgentOrchestrator:
         if self.client:
             try:
                 response = self.client.models.generate_content(
-                    model="gemini-1.5-flash",
+                    model="gemini-2.5-flash",
                     contents=prompt
                 )
                 intent = response.text.strip().lower()
@@ -192,7 +192,7 @@ class AgentOrchestrator:
 
                 # Create chat with system instruction config
                 chat = self.client.chats.create(
-                    model="gemini-1.5-flash",
+                    model="gemini-2.5-flash",
                     history=gemini_history,
                     config=types.GenerateContentConfig(
                         system_instruction=final_system_instruction

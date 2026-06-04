@@ -45,7 +45,7 @@ class RAGService:
       self.client_ai = genai.Client(api_key=settings.gemini_api_key)
 
     # Initialize collection and indexes at startup
-    self._ensure_collection_exists(384 if self._is_local else 768)
+    self._ensure_collection_exists(768 if self.client_ai else 384)
 
   def _ensure_collection_exists(self, vector_size: int):
     if not self.client:
@@ -53,6 +53,22 @@ class RAGService:
     try:
       collections = self.client.get_collections()
       existing = [c.name for c in collections.collections]
+      if self.collection_name in existing:
+        try:
+          coll_info = self.client.get_collection(self.collection_name)
+          current_size = None
+          if hasattr(coll_info.config.params.vectors, 'size'):
+            current_size = coll_info.config.params.vectors.size
+          elif isinstance(coll_info.config.params.vectors, dict) and 'size' in coll_info.config.params.vectors:
+            current_size = coll_info.config.params.vectors['size']
+            
+          if current_size and current_size != vector_size:
+            logger.warning(f"Dimension mismatch for collection {self.collection_name}: expected {vector_size}, found {current_size}. Recreating collection...")
+            self.client.delete_collection(self.collection_name)
+            existing.remove(self.collection_name)
+        except Exception as check_err:
+          logger.error(f"Error checking Qdrant collection dimensions: {check_err}")
+
       if self.collection_name not in existing:
         logger.info(f"Creating Qdrant collection: {self.collection_name} with {vector_size} dimensions")
         self.client.create_collection(
@@ -80,15 +96,16 @@ class RAGService:
       logger.error(f"Error checking/creating Qdrant collection: {e}")
 
   def _get_embedding(self, text: str) -> List[float]:
-    """Generates embedding. Uses Gemini models/text-embedding-004 (768d) if online, otherwise falls back to local encoders."""
-    # 1. Try Gemini text-embedding-004 first
+    """Generates embedding. Uses Gemini gemini-embedding-001 (768d) if online, otherwise falls back to local encoders."""
+    # 1. Try Gemini gemini-embedding-001 first
     if self.client_ai:
       try:
         response = self.client_ai.models.embed_content(
-          model="text-embedding-004",
+          model="gemini-embedding-001",
           contents=text,
           config=types.EmbedContentConfig(
-            task_type="RETRIEVAL_DOCUMENT"
+            task_type="RETRIEVAL_DOCUMENT",
+            output_dimensionality=768
           )
         )
         return response.embeddings[0].values
