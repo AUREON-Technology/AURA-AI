@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import '../../config/config.dart';
 import '../../../features/auth/presentation/auth_provider.dart';
+import '../../security/device_validation_service.dart';
 
 class KnowledgeCenter {
   final Ref _ref;
@@ -23,6 +24,7 @@ class KnowledgeCenter {
       if (token != null) {
         headers['Authorization'] = 'Bearer $token';
       }
+      headers.addAll(DeviceValidationService.getAttestationHeaders());
 
       final response = await http.post(
         Uri.parse("$_backendUrl/ingest"),
@@ -49,6 +51,7 @@ class KnowledgeCenter {
       if (token != null) {
         headers['Authorization'] = 'Bearer $token';
       }
+      headers.addAll(DeviceValidationService.getAttestationHeaders());
 
       final response = await http.post(
         Uri.parse("$_backendUrl/query"),

@@ -8,6 +8,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import '../../../core/config/config.dart';
 import '../../auth/presentation/auth_provider.dart';
+import '../../../core/security/device_validation_service.dart';
 
 // ----------------------------------------------------
 // Models
@@ -222,6 +223,7 @@ class AutomationRepository {
     if (token != null) {
       headers['Authorization'] = 'Bearer $token';
     }
+    headers.addAll(DeviceValidationService.getAttestationHeaders());
     final response = await http.post(
       url,
       headers: headers,
@@ -272,6 +274,7 @@ class AutomationRepository {
     if (token != null) {
       headers['Authorization'] = 'Bearer $token';
     }
+    headers.addAll(DeviceValidationService.getAttestationHeaders());
     final response = await http.post(
       url,
       headers: headers,

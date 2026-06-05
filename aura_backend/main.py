@@ -423,6 +423,73 @@ async def evaluate_dataset(user_info: dict = Depends(verify_token)):
         raise HTTPException(status_code=500, detail=str(e))
 
 # ----------------------------------------------------
+# Ollama Proxy Endpoints (Required for Production Spaces)
+# ----------------------------------------------------
+import httpx
+
+@app.get("/api/tags")
+async def proxy_ollama_tags():
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{settings.ollama_host.rstrip('/')}/api/tags", timeout=5.0)
+            return Response(content=response.content, status_code=response.status_code, media_type="application/json")
+    except Exception as e:
+        logger.warning(f"Ollama proxy unavailable: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Ollama service unavailable", "details": str(e)}
+        )
+
+@app.post("/api/chat")
+async def proxy_ollama_chat(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    async def stream_generator():
+        try:
+            async with httpx.AsyncClient() as client:
+                async with client.stream("POST", f"{settings.ollama_host.rstrip('/')}/api/chat", json=body, timeout=60.0) as r:
+                    async for chunk in r.iter_bytes():
+                        yield chunk
+        except Exception as e:
+            yield f"\n[Ollama proxy stream error: {e}]".encode("utf-8")
+    return StreamingResponse(stream_generator(), media_type="application/json")
+
+@app.post("/api/pull")
+async def proxy_ollama_pull(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    async def stream_generator():
+        try:
+            async with httpx.AsyncClient() as client:
+                async with client.stream("POST", f"{settings.ollama_host.rstrip('/')}/api/pull", json=body, timeout=600.0) as r:
+                    async for chunk in r.iter_bytes():
+                        yield chunk
+        except Exception as e:
+            yield f"\n[Ollama proxy pull error: {e}]".encode("utf-8")
+    return StreamingResponse(stream_generator(), media_type="application/json")
+
+@app.post("/api/delete")
+async def proxy_ollama_delete(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(f"{settings.ollama_host.rstrip('/')}/api/delete", json=body, timeout=10.0)
+            return Response(content=response.content, status_code=response.status_code, media_type="application/json")
+    except Exception as e:
+        logger.warning(f"Ollama delete proxy failed: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Ollama service unavailable", "details": str(e)}
+        )
+
+# ----------------------------------------------------
 # Server Start
 # ----------------------------------------------------
 

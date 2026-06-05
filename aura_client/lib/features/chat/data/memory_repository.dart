@@ -7,6 +7,7 @@ import '../../../core/database/database.dart';
 import '../../../core/database/database_provider.dart';
 import '../../../core/config/config.dart';
 import '../../auth/presentation/auth_provider.dart';
+import '../../../core/security/device_validation_service.dart';
 
 class MemoryItem {
   final String id;
@@ -37,6 +38,7 @@ class MemoryRepository {
       if (token != null) {
         headers['Authorization'] = 'Bearer $token';
       }
+      headers.addAll(DeviceValidationService.getAttestationHeaders());
       final response = await http.get(Uri.parse("$_backendUrl/list"), headers: headers);
       if (response.statusCode == 200) {
         final List list = jsonDecode(response.body);
@@ -87,6 +89,7 @@ class MemoryRepository {
       if (token != null) {
         headers['Authorization'] = 'Bearer $token';
       }
+      headers.addAll(DeviceValidationService.getAttestationHeaders());
 
       final response = await http.post(
         Uri.parse("$_backendUrl/extract"),
@@ -116,6 +119,7 @@ class MemoryRepository {
       if (token != null) {
         headers['Authorization'] = 'Bearer $token';
       }
+      headers.addAll(DeviceValidationService.getAttestationHeaders());
       final pointId = int.tryParse(memoryId);
       if (pointId != null) {
         final response = await http.delete(Uri.parse("$_backendUrl/delete/$pointId"), headers: headers);
@@ -147,6 +151,7 @@ class MemoryRepository {
       if (token != null) {
         headers['Authorization'] = 'Bearer $token';
       }
+      headers.addAll(DeviceValidationService.getAttestationHeaders());
       final response = await http.post(
         Uri.parse("$_backendUrl/save"),
         headers: headers,

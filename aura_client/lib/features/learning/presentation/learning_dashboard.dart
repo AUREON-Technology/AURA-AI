@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../../../core/config/config.dart';
 import '../../../core/theme/theme.dart';
 import '../../auth/presentation/auth_provider.dart';
+import '../../../core/security/device_validation_service.dart';
 
 final learningStatsProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
   final token = await ref.read(authProvider.notifier).getIdToken();
@@ -12,6 +13,7 @@ final learningStatsProvider = FutureProvider.autoDispose<Map<String, dynamic>>((
   if (token != null) {
     headers['Authorization'] = 'Bearer $token';
   }
+  headers.addAll(DeviceValidationService.getAttestationHeaders());
   
   final url = Uri.parse("${AppConfig.backendUrl}/api/learning/evaluate");
   final response = await http.get(url, headers: headers).timeout(const Duration(seconds: 10));
@@ -47,6 +49,7 @@ class _LearningDashboardState extends ConsumerState<LearningDashboard> {
       if (token != null) {
         headers['Authorization'] = 'Bearer $token';
       }
+      headers.addAll(DeviceValidationService.getAttestationHeaders());
 
       final url = Uri.parse("${AppConfig.backendUrl}/api/learning/build_dataset");
       final response = await http.post(url, headers: headers).timeout(const Duration(seconds: 15));
@@ -80,6 +83,7 @@ class _LearningDashboardState extends ConsumerState<LearningDashboard> {
       if (token != null) {
         headers['Authorization'] = 'Bearer $token';
       }
+      headers.addAll(DeviceValidationService.getAttestationHeaders());
 
       final url = Uri.parse("${AppConfig.backendUrl}/api/learning/export?format=$_selectedFormat");
       final response = await http.get(url, headers: headers).timeout(const Duration(seconds: 15));

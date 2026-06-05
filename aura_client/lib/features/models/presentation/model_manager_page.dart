@@ -156,56 +156,51 @@ class ModelManagerPage extends ConsumerWidget {
   }
 
   Widget _buildOllamaStatusCard(WidgetRef ref, String host) {
-    return FutureBuilder<bool>(
-      future: ref.read(activeInferenceProvider).checkHealth(),
-      builder: (context, snapshot) {
-        final connected = snapshot.data ?? false;
-        final color = connected ? AuraTheme.accentTeal : Colors.redAccent;
-        final statusText = connected ? "Ollama Connected" : "Ollama Not Connected";
+    final healthAsync = ref.watch(ollamaHealthProvider);
+    final connected = healthAsync.value ?? false;
+    final color = connected ? AuraTheme.accentTeal : Colors.redAccent;
+    final statusText = connected ? "Ollama Connected" : "Ollama Not Connected";
 
-        return Card(
-          color: AuraTheme.cardBg,
-          child: Padding(
-            padding: const EdgeInsets.all(18.0),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  backgroundColor: color.withOpacity(0.1),
-                  child: Icon(connected ? Icons.cloud_done : Icons.cloud_off, color: color),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        statusText,
-                        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 15),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        "Ollama Daemon: $host",
-                        style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-                ElevatedButton.icon(
-                  onPressed: () {
-                    // Refresh health check
-                    (context as Element).markNeedsBuild();
-                  },
-                  icon: const Icon(Icons.refresh, size: 16),
-                  label: const Text("Ping"),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  ),
-                )
-              ],
+    return Card(
+      color: AuraTheme.cardBg,
+      child: Padding(
+        padding: const EdgeInsets.all(18.0),
+        child: Row(
+          children: [
+            CircleAvatar(
+              backgroundColor: color.withOpacity(0.1),
+              child: Icon(connected ? Icons.cloud_done : Icons.cloud_off, color: color),
             ),
-          ),
-        );
-      },
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    statusText,
+                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 15),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    "Ollama Daemon: $host",
+                    style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            ElevatedButton.icon(
+              onPressed: () {
+                ref.refresh(ollamaHealthProvider);
+              },
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text("Ping"),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              ),
+            )
+          ],
+        ),
+      ),
     );
   }
 

@@ -20,7 +20,7 @@ class HomePage extends ConsumerWidget {
     final calendarAsync = ref.watch(calendarEventsStreamProvider);
     final financeAsync = ref.watch(financeTransactionsStreamProvider);
     final healthAsync = ref.watch(dailyHealthStreamProvider(DateTime.now()));
-    final inference = ref.watch(activeInferenceProvider);
+    final ollamaHealthAsync = ref.watch(ollamaHealthProvider);
 
     final isMobile = MediaQuery.of(context).size.width < 768;
 
@@ -82,7 +82,7 @@ class HomePage extends ConsumerWidget {
                         const SizedBox(height: 20),
                         _buildHealthOverviewCard(context, healthAsync),
                         const SizedBox(height: 20),
-                        _buildAISystemHealthCard(ref, inference),
+                        _buildAISystemHealthCard(ref, ollamaHealthAsync),
                       ],
                     )
                   : GridView.count(
@@ -96,7 +96,7 @@ class HomePage extends ConsumerWidget {
                         _buildTasksOverviewCard(context, tasksAsync),
                         _buildEventsOverviewCard(context, calendarAsync),
                         _buildHealthOverviewCard(context, healthAsync),
-                        _buildAISystemHealthCard(ref, inference),
+                        _buildAISystemHealthCard(ref, ollamaHealthAsync),
                       ],
                     ),
               const SizedBox(height: 24),
@@ -391,7 +391,7 @@ class HomePage extends ConsumerWidget {
     );
   }
 
-  Widget _buildAISystemHealthCard(WidgetRef ref, InferenceProvider inference) {
+  Widget _buildAISystemHealthCard(WidgetRef ref, AsyncValue<bool> healthAsync) {
     return Card(
       color: AuraTheme.cardBg,
       child: Padding(
@@ -404,17 +404,18 @@ class HomePage extends ConsumerWidget {
               children: [
                 const Text("AI System Health", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
                 TextButton(
-                  onPressed: () => ref.refresh(telemetryLogsFutureProvider),
+                  onPressed: () {
+                    ref.refresh(telemetryLogsFutureProvider);
+                    ref.refresh(ollamaHealthProvider);
+                  },
                   child: const Text("Telemetry", style: TextStyle(color: AuraTheme.accentIndigo, fontSize: 12)),
                 )
               ],
             ),
             const SizedBox(height: 10),
             Expanded(
-              child: FutureBuilder<bool>(
-                future: inference.checkHealth(),
-                builder: (context, snapshot) {
-                  final active = snapshot.data ?? false;
+              child: healthAsync.when(
+                data: (active) {
                   return Column(
                     children: [
                       Row(
@@ -463,6 +464,8 @@ class HomePage extends ConsumerWidget {
                     ],
                   );
                 },
+                loading: () => const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+                error: (err, _) => const Center(child: Text("Offline", style: TextStyle(color: Colors.redAccent, fontSize: 12))),
               ),
             )
           ],

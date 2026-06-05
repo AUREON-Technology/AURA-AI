@@ -5,7 +5,7 @@ import 'inference_provider.dart';
 
 class OllamaHostNotifier extends Notifier<String> {
   @override
-  String build() => "http://localhost:11434";
+  String build() => "https://anas-ibrahim-mahmoud-aura-ai-backend.hf.space";
   void setHost(String host) => state = host;
 }
 
@@ -101,6 +101,11 @@ class OllamaInferenceProvider implements InferenceProvider {
 /// Dynamic active inference provider, allowing swapping local providers
 final activeInferenceProvider = Provider<InferenceProvider>((ref) {
   return OllamaInferenceProvider(ref);
+});
+
+final ollamaHealthProvider = FutureProvider<bool>((ref) async {
+  final inference = ref.watch(activeInferenceProvider);
+  return inference.checkHealth();
 });
 
 class OfflineAgentManager {
