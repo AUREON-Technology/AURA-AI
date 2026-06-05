@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'core/theme/theme.dart';
 import 'core/routing/router.dart';
 import 'core/security/encryption_service.dart';
+import 'core/ai/offline_agents/local_model_seeder.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,9 +18,15 @@ void main() async {
     debugPrint("Firebase initialization skipped/failed: $e. Running in local/developer mode.");
   }
 
+  final container = ProviderContainer();
+  
+  // Seed and extract the pre-bundled Qwen-2 1.5B model in the background
+  LocalModelSeeder.seedAndExtractIfNeeded(container);
+
   runApp(
-    const ProviderScope(
-      child: AuraApp(),
+    UncontrolledProviderScope(
+      container: container,
+      child: const AuraApp(),
     ),
   );
 }

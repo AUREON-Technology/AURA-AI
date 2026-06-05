@@ -78,10 +78,10 @@ class NativeLlamaInferenceProvider implements InferenceProvider {
         final config = LlamaConfig(
           modelPath: modelFile.path,
           nThreads: 4,
-          nGpuLayers: -1, // Load as many layers to GPU as possible
+          nGpuLayers: 0, // Run on CPU for max stability on mobile
           contextSize: 2048,
           batchSize: 512,
-          useGpu: true,
+          useGpu: false, // Avoid GPU/Vulkan driver crashes
         );
         final success = await llama.loadModel(config);
         if (!success) {
@@ -98,6 +98,7 @@ class NativeLlamaInferenceProvider implements InferenceProvider {
 
     // Format chat history with Llama 3 Instruct / ChatML template
     final prompt = _formatPrompt(
+      model: activeModel.modelName,
       messages: messages,
       systemInstruction: systemInstruction,
     );
@@ -119,24 +120,38 @@ class NativeLlamaInferenceProvider implements InferenceProvider {
   }
 
   String _formatPrompt({
+    required String model,
     required List<Map<String, String>> messages,
     required String systemInstruction,
   }) {
+    final isQwen = model.toLowerCase().contains("qwen");
     final buffer = StringBuffer();
     
-    // Llama 3 Instruct Format
-    buffer.write("<|begin_of_text|>");
-    if (systemInstruction.isNotEmpty) {
-      buffer.write("<|start_header_id|>system<|end_header_id|>\n$systemInstruction<|eot_id|>");
+    if (isQwen) {
+      // ChatML Format for Qwen models
+      if (systemInstruction.isNotEmpty) {
+        buffer.write("<|im_start|>system\n$systemInstruction<|im_end|>\n");
+      }
+      for (final m in messages) {
+        final role = m["role"] == "assistant" || m["role"] == "model" ? "assistant" : "user";
+        final content = m["content"] ?? "";
+        buffer.write("<|im_start|>$role\n$content<|im_end|>\n");
+      }
+      buffer.write("<|im_start|>assistant\n");
+    } else {
+      // Llama 3 Instruct Format
+      buffer.write("<|begin_of_text|>");
+      if (systemInstruction.isNotEmpty) {
+        buffer.write("<|start_header_id|>system<|end_header_id|>\n$systemInstruction<|eot_id|>");
+      }
+      for (final m in messages) {
+        final role = m["role"] == "assistant" || m["role"] == "model" ? "assistant" : "user";
+        final content = m["content"] ?? "";
+        buffer.write("<|start_header_id|>$role<|end_header_id|>\n$content<|eot_id|>");
+      }
+      buffer.write("<|start_header_id|>assistant<|end_header_id|>\n");
     }
     
-    for (final m in messages) {
-      final role = m["role"] == "assistant" || m["role"] == "model" ? "assistant" : "user";
-      final content = m["content"] ?? "";
-      buffer.write("<|start_header_id|>$role<|end_header_id|>\n$content<|eot_id|>");
-    }
-    
-    buffer.write("<|start_header_id|>assistant<|end_header_id|>\n");
     return buffer.toString();
   }
 }

@@ -66,6 +66,7 @@ This document summarizes the upgrades made to transform AURA AI into a productio
 - **Model Manager UI Adaptations**: Updated [model_manager_page.dart](file:///e:/AURA%20AI/aura_client/lib/features/models/presentation/model_manager_page.dart) to display on-device loading status and added native `File.delete` capability to clear model weights from the local disk when deleted.
 - **Android SDK Configuration**: Resolved CMake dependencies by installing CMake version `3.18.1` inside the Android SDK using command-line `sdkmanager` hooks.
 - **Local Model Routing Match Fix**: Resolved the mismatch between simplified model names returned by the router (e.g. `"phi3"`) and actual downloaded model IDs (e.g. `"phi3:latest"`). Refactored `NativeLlamaInferenceProvider.generateStream` in [native_llama_provider.dart](file:///e:/AURA%20AI/aura_client/lib/core/ai/offline_agents/native_llama_provider.dart) to query the currently active model from the local SQLite `offlineModelWeights` table and dynamically resolve the GGUF file path.
+- **CPU-only Execution Fallback**: Switched native llama inference parameters in `LlamaConfig` to CPU-only execution (`useGpu: false`, `nGpuLayers: 0`). This prevents native Vulkan memory allocation issues and driver crashes on Android devices, resolving the "AURA AI keeps stopping" application crashes during local inference initialization.
 
 ---
 
