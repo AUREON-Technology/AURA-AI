@@ -4,12 +4,19 @@ import 'package:go_router/go_router.dart';
 import '../theme/theme.dart';
 import '../../features/auth/presentation/login_page.dart';
 import '../../features/auth/presentation/auth_provider.dart';
+import '../../features/home/presentation/home_page.dart';
 import '../../features/tasks/presentation/tasks_page.dart';
 import '../../features/calendar/presentation/calendar_page.dart';
 import '../../features/finance/presentation/finance_page.dart';
 import '../../features/health/presentation/health_page.dart';
 import '../../features/automations/presentation/automations_page.dart';
 import '../../features/chat/presentation/chat_page.dart';
+import '../../features/settings/presentation/settings_page.dart';
+import '../../features/auth/presentation/profile_page.dart';
+import '../../features/knowledge/presentation/knowledge_center_page.dart';
+import '../../features/analytics/presentation/analytics_page.dart';
+import '../../features/models/presentation/model_manager_page.dart';
+import '../../features/learning/presentation/learning_dashboard.dart';
 
 // Navigation Shell synchronized with GoRouter paths
 class ShellLayout extends StatelessWidget {
@@ -18,11 +25,11 @@ class ShellLayout extends StatelessWidget {
 
   int _calculateSelectedIndex(BuildContext context) {
     final location = GoRouterState.of(context).uri.toString();
-    if (location.startsWith('/tasks')) return 0;
-    if (location.startsWith('/calendar')) return 1;
-    if (location.startsWith('/finance')) return 2;
-    if (location.startsWith('/health')) return 3;
-    if (location.startsWith('/automations')) return 4;
+    if (location.startsWith('/home')) return 0;
+    if (location.startsWith('/tasks')) return 1;
+    if (location.startsWith('/calendar')) return 2;
+    if (location.startsWith('/finance')) return 3;
+    if (location.startsWith('/health')) return 4;
     if (location.startsWith('/chat')) return 5;
     return 0;
   }
@@ -30,19 +37,19 @@ class ShellLayout extends StatelessWidget {
   void _onDestinationSelected(BuildContext context, int index) {
     switch (index) {
       case 0:
-        context.go('/tasks');
+        context.go('/home');
         break;
       case 1:
-        context.go('/calendar');
+        context.go('/tasks');
         break;
       case 2:
-        context.go('/finance');
+        context.go('/calendar');
         break;
       case 3:
-        context.go('/health');
+        context.go('/finance');
         break;
       case 4:
-        context.go('/automations');
+        context.go('/health');
         break;
       case 5:
         context.go('/chat');
@@ -71,6 +78,11 @@ class ShellLayout extends StatelessWidget {
           onTap: (index) => _onDestinationSelected(context, index),
           items: const [
             BottomNavigationBarItem(
+              icon: Icon(Icons.home_outlined),
+              activeIcon: Icon(Icons.home),
+              label: 'Home',
+            ),
+            BottomNavigationBarItem(
               icon: Icon(Icons.check_circle_outline),
               activeIcon: Icon(Icons.check_circle),
               label: 'Tasks',
@@ -89,11 +101,6 @@ class ShellLayout extends StatelessWidget {
               icon: Icon(Icons.favorite_outline),
               activeIcon: Icon(Icons.favorite),
               label: 'Health',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.settings_suggest_outlined),
-              activeIcon: Icon(Icons.settings_suggest),
-              label: 'Automs',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.chat_bubble_outline),
@@ -153,6 +160,11 @@ class ShellLayout extends StatelessWidget {
             ),
             destinations: const [
               NavigationRailDestination(
+                icon: Icon(Icons.home_outlined),
+                selectedIcon: Icon(Icons.home),
+                label: Text('Home'),
+              ),
+              NavigationRailDestination(
                 icon: Icon(Icons.check_circle_outline),
                 selectedIcon: Icon(Icons.check_circle),
                 label: Text('Tasks'),
@@ -171,11 +183,6 @@ class ShellLayout extends StatelessWidget {
                 icon: Icon(Icons.favorite_outline),
                 selectedIcon: Icon(Icons.favorite),
                 label: Text('Health'),
-              ),
-              NavigationRailDestination(
-                icon: Icon(Icons.settings_suggest_outlined),
-                selectedIcon: Icon(Icons.settings_suggest),
-                label: Text('Automations'),
               ),
               NavigationRailDestination(
                 icon: Icon(Icons.chat_bubble_outline),
@@ -199,7 +206,7 @@ final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(authProvider);
 
   return GoRouter(
-    initialLocation: '/tasks',
+    initialLocation: '/home',
     redirect: (context, state) {
       final isLoggedIn = authState.value != null;
       final isLoggingIn = state.matchedLocation == '/login';
@@ -208,7 +215,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         return '/login';
       }
       if (isLoggedIn && isLoggingIn) {
-        return '/tasks';
+        return '/home';
       }
       return null;
     },
@@ -220,6 +227,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       ShellRoute(
         builder: (context, state, child) => ShellLayout(child: child),
         routes: [
+          GoRoute(
+            path: '/home',
+            builder: (context, state) => const HomePage(),
+          ),
           GoRoute(
             path: '/tasks',
             builder: (context, state) => const TasksPage(),
@@ -243,6 +254,30 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/chat',
             builder: (context, state) => const ChatPage(),
+          ),
+          GoRoute(
+            path: '/settings',
+            builder: (context, state) => const SettingsPage(),
+          ),
+          GoRoute(
+            path: '/profile',
+            builder: (context, state) => const ProfilePage(),
+          ),
+          GoRoute(
+            path: '/knowledge',
+            builder: (context, state) => const KnowledgeCenterPage(),
+          ),
+          GoRoute(
+            path: '/analytics',
+            builder: (context, state) => const AnalyticsPage(),
+          ),
+          GoRoute(
+            path: '/models',
+            builder: (context, state) => const ModelManagerPage(),
+          ),
+          GoRoute(
+            path: '/learning',
+            builder: (context, state) => const LearningDashboard(),
           ),
         ],
       ),

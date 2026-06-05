@@ -16,6 +16,8 @@ from services.agent import agent_orchestrator
 from services.memory import memory_service
 from services.security import verify_token
 from services.drive import check_google_drive_configuration
+from services.learning_pipeline import learning_pipeline
+import os
 
 # Logging Setup
 logging.basicConfig(
@@ -162,6 +164,26 @@ class MemoryExtractRequest(BaseModel):
 
 class MemorySaveRequest(BaseModel):
     fact: str
+
+class LearningLogSchema(BaseModel):
+    id: str
+    prompt: str
+    response: str
+    rating: int
+    correction: Optional[str] = None
+    model: Optional[str] = None
+    timestamp: str
+
+class TelemetryLogSchema(BaseModel):
+    id: str
+    event_type: str
+    latency_ms: float
+    agent_used: str
+    model_used: str
+    is_offline: bool
+    error_message: Optional[str] = None
+    feedback_rating: Optional[int] = None
+    timestamp: str
 
 # ----------------------------------------------------
 # Endpoints
@@ -335,6 +357,69 @@ async def delete_memory(point_id: int, user_info: dict = Depends(verify_token)):
         return {"status": "success"}
     except Exception as e:
         logger.error(f"Error in delete_memory for user {user_info.get('email')}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ----------------------------------------------------
+# Telemetry & Learning Pipeline Endpoints
+# ----------------------------------------------------
+
+@app.post("/api/telemetry/log")
+async def log_telemetry(request: TelemetryLogSchema, user_info: dict = Depends(verify_token)):
+    """Logs telemetry metadata on the backend."""
+    try:
+        telemetry_file = "telemetry_logs.json"
+        if not os.path.exists(telemetry_file):
+            with open(telemetry_file, "w", encoding="utf-8") as f:
+                json.dump([], f)
+        with open(telemetry_file, "r+", encoding="utf-8") as f:
+            data = json.load(f)
+            data.append(request.dict())
+            f.seek(0)
+            f.truncate()
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Failed to save telemetry: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/learning/log")
+async def log_learning_record(request: LearningLogSchema, user_info: dict = Depends(verify_token)):
+    """Logs a learning record on the backend."""
+    success = learning_pipeline.log_feedback_record(request.dict())
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to log learning record")
+    return {"status": "success"}
+
+@app.get("/api/learning/export")
+async def export_learning_dataset(format: str = "alpaca", user_info: dict = Depends(verify_token)):
+    """Exports learning dataset in selected format (alpaca, chatml, openai)."""
+    try:
+        dataset = learning_pipeline.build_lora_dataset(format)
+        return dataset
+    except Exception as e:
+        logger.error(f"Export dataset failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/learning/build_dataset")
+async def build_dataset(user_info: dict = Depends(verify_token)):
+    """Processes learning logs and compiles local lora training datasets."""
+    try:
+        dataset = learning_pipeline.build_lora_dataset("alpaca")
+        with open("train_lora.json", "w", encoding="utf-8") as f:
+            json.dump(dataset, f, indent=2, ensure_ascii=False)
+        return {"status": "success", "total_records": len(dataset), "file_saved": "train_lora.json"}
+    except Exception as e:
+        logger.error(f"Build dataset failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/learning/evaluate")
+async def evaluate_dataset(user_info: dict = Depends(verify_token)):
+    """Retrieves telemetry evaluation statistics regarding learning loops."""
+    try:
+        metrics = learning_pipeline.evaluate_metrics()
+        return metrics
+    except Exception as e:
+        logger.error(f"Evaluate learning logs failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ----------------------------------------------------

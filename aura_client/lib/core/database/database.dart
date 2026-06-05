@@ -134,16 +134,60 @@ class PendingDeletes extends Table {
   Set<Column> get primaryKey => {recordId, targetTable};
 }
 
+class LearningLogs extends Table {
+  TextColumn get id => text()();
+  TextColumn get prompt => text()();
+  TextColumn get response => text()();
+  IntColumn get rating => integer()(); // e.g. 1 to 5, or thumbs up/down
+  TextColumn get correction => text().nullable()();
+  TextColumn get modelUsed => text().nullable()();
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+class OfflineModelWeights extends Table {
+  TextColumn get id => text()(); // e.g. phi-3, qwen-7b, llama-8b
+  TextColumn get modelName => text()();
+  TextColumn get sizeBytes => text()();
+  TextColumn get localPath => text().nullable()();
+  BoolColumn get isDownloaded => boolean().withDefault(const Constant(false))();
+  BoolColumn get isActive => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+class TelemetryLogs extends Table {
+  TextColumn get id => text()();
+  TextColumn get eventType => text()(); // request, failover, error, rating
+  RealColumn get latencyMs => real()();
+  TextColumn get agentUsed => text()();
+  TextColumn get modelUsed => text()();
+  BoolColumn get isOffline => boolean()();
+  TextColumn get errorMessage => text().nullable()();
+  IntColumn get feedbackRating => integer().nullable()();
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 // ----------------------------------------------------
 // Database Connection & Class
 // ----------------------------------------------------
 
-@DriftDatabase(tables: [Tasks, CalendarEvents, FinanceRecords, HealthRecords, Messages, AgentConfigurations, UserMemories, PendingDeletes])
+@DriftDatabase(tables: [Tasks, CalendarEvents, FinanceRecords, HealthRecords, Messages, AgentConfigurations, UserMemories, PendingDeletes, LearningLogs, OfflineModelWeights, TelemetryLogs])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 5;
+
+  Future<List<TelemetryLog>> getTelemetry() => select(telemetryLogs).get();
+  Future<void> insertTelemetry(TelemetryLogsCompanion log) => into(telemetryLogs).insert(log);
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -169,6 +213,13 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(healthRecords, healthRecords.updatedAt);
             
             await m.createTable(pendingDeletes);
+          }
+          if (from < 4) {
+            await m.createTable(learningLogs);
+            await m.createTable(offlineModelWeights);
+          }
+          if (from < 5) {
+            await m.createTable(telemetryLogs);
           }
         },
       );

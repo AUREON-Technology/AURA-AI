@@ -3785,6 +3785,1520 @@ class PendingDeletesCompanion extends UpdateCompanion<PendingDelete> {
   }
 }
 
+class $LearningLogsTable extends LearningLogs
+    with TableInfo<$LearningLogsTable, LearningLog> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LearningLogsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _promptMeta = const VerificationMeta('prompt');
+  @override
+  late final GeneratedColumn<String> prompt = GeneratedColumn<String>(
+    'prompt',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _responseMeta = const VerificationMeta(
+    'response',
+  );
+  @override
+  late final GeneratedColumn<String> response = GeneratedColumn<String>(
+    'response',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _ratingMeta = const VerificationMeta('rating');
+  @override
+  late final GeneratedColumn<int> rating = GeneratedColumn<int>(
+    'rating',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _correctionMeta = const VerificationMeta(
+    'correction',
+  );
+  @override
+  late final GeneratedColumn<String> correction = GeneratedColumn<String>(
+    'correction',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _modelUsedMeta = const VerificationMeta(
+    'modelUsed',
+  );
+  @override
+  late final GeneratedColumn<String> modelUsed = GeneratedColumn<String>(
+    'model_used',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    prompt,
+    response,
+    rating,
+    correction,
+    modelUsed,
+    createdAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'learning_logs';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<LearningLog> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('prompt')) {
+      context.handle(
+        _promptMeta,
+        prompt.isAcceptableOrUnknown(data['prompt']!, _promptMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_promptMeta);
+    }
+    if (data.containsKey('response')) {
+      context.handle(
+        _responseMeta,
+        response.isAcceptableOrUnknown(data['response']!, _responseMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_responseMeta);
+    }
+    if (data.containsKey('rating')) {
+      context.handle(
+        _ratingMeta,
+        rating.isAcceptableOrUnknown(data['rating']!, _ratingMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_ratingMeta);
+    }
+    if (data.containsKey('correction')) {
+      context.handle(
+        _correctionMeta,
+        correction.isAcceptableOrUnknown(data['correction']!, _correctionMeta),
+      );
+    }
+    if (data.containsKey('model_used')) {
+      context.handle(
+        _modelUsedMeta,
+        modelUsed.isAcceptableOrUnknown(data['model_used']!, _modelUsedMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  LearningLog map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LearningLog(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      prompt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}prompt'],
+      )!,
+      response: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}response'],
+      )!,
+      rating: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}rating'],
+      )!,
+      correction: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}correction'],
+      ),
+      modelUsed: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}model_used'],
+      ),
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+    );
+  }
+
+  @override
+  $LearningLogsTable createAlias(String alias) {
+    return $LearningLogsTable(attachedDatabase, alias);
+  }
+}
+
+class LearningLog extends DataClass implements Insertable<LearningLog> {
+  final String id;
+  final String prompt;
+  final String response;
+  final int rating;
+  final String? correction;
+  final String? modelUsed;
+  final DateTime createdAt;
+  const LearningLog({
+    required this.id,
+    required this.prompt,
+    required this.response,
+    required this.rating,
+    this.correction,
+    this.modelUsed,
+    required this.createdAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['prompt'] = Variable<String>(prompt);
+    map['response'] = Variable<String>(response);
+    map['rating'] = Variable<int>(rating);
+    if (!nullToAbsent || correction != null) {
+      map['correction'] = Variable<String>(correction);
+    }
+    if (!nullToAbsent || modelUsed != null) {
+      map['model_used'] = Variable<String>(modelUsed);
+    }
+    map['created_at'] = Variable<DateTime>(createdAt);
+    return map;
+  }
+
+  LearningLogsCompanion toCompanion(bool nullToAbsent) {
+    return LearningLogsCompanion(
+      id: Value(id),
+      prompt: Value(prompt),
+      response: Value(response),
+      rating: Value(rating),
+      correction: correction == null && nullToAbsent
+          ? const Value.absent()
+          : Value(correction),
+      modelUsed: modelUsed == null && nullToAbsent
+          ? const Value.absent()
+          : Value(modelUsed),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory LearningLog.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LearningLog(
+      id: serializer.fromJson<String>(json['id']),
+      prompt: serializer.fromJson<String>(json['prompt']),
+      response: serializer.fromJson<String>(json['response']),
+      rating: serializer.fromJson<int>(json['rating']),
+      correction: serializer.fromJson<String?>(json['correction']),
+      modelUsed: serializer.fromJson<String?>(json['modelUsed']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'prompt': serializer.toJson<String>(prompt),
+      'response': serializer.toJson<String>(response),
+      'rating': serializer.toJson<int>(rating),
+      'correction': serializer.toJson<String?>(correction),
+      'modelUsed': serializer.toJson<String?>(modelUsed),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+    };
+  }
+
+  LearningLog copyWith({
+    String? id,
+    String? prompt,
+    String? response,
+    int? rating,
+    Value<String?> correction = const Value.absent(),
+    Value<String?> modelUsed = const Value.absent(),
+    DateTime? createdAt,
+  }) => LearningLog(
+    id: id ?? this.id,
+    prompt: prompt ?? this.prompt,
+    response: response ?? this.response,
+    rating: rating ?? this.rating,
+    correction: correction.present ? correction.value : this.correction,
+    modelUsed: modelUsed.present ? modelUsed.value : this.modelUsed,
+    createdAt: createdAt ?? this.createdAt,
+  );
+  LearningLog copyWithCompanion(LearningLogsCompanion data) {
+    return LearningLog(
+      id: data.id.present ? data.id.value : this.id,
+      prompt: data.prompt.present ? data.prompt.value : this.prompt,
+      response: data.response.present ? data.response.value : this.response,
+      rating: data.rating.present ? data.rating.value : this.rating,
+      correction: data.correction.present
+          ? data.correction.value
+          : this.correction,
+      modelUsed: data.modelUsed.present ? data.modelUsed.value : this.modelUsed,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LearningLog(')
+          ..write('id: $id, ')
+          ..write('prompt: $prompt, ')
+          ..write('response: $response, ')
+          ..write('rating: $rating, ')
+          ..write('correction: $correction, ')
+          ..write('modelUsed: $modelUsed, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    prompt,
+    response,
+    rating,
+    correction,
+    modelUsed,
+    createdAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LearningLog &&
+          other.id == this.id &&
+          other.prompt == this.prompt &&
+          other.response == this.response &&
+          other.rating == this.rating &&
+          other.correction == this.correction &&
+          other.modelUsed == this.modelUsed &&
+          other.createdAt == this.createdAt);
+}
+
+class LearningLogsCompanion extends UpdateCompanion<LearningLog> {
+  final Value<String> id;
+  final Value<String> prompt;
+  final Value<String> response;
+  final Value<int> rating;
+  final Value<String?> correction;
+  final Value<String?> modelUsed;
+  final Value<DateTime> createdAt;
+  final Value<int> rowid;
+  const LearningLogsCompanion({
+    this.id = const Value.absent(),
+    this.prompt = const Value.absent(),
+    this.response = const Value.absent(),
+    this.rating = const Value.absent(),
+    this.correction = const Value.absent(),
+    this.modelUsed = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LearningLogsCompanion.insert({
+    required String id,
+    required String prompt,
+    required String response,
+    required int rating,
+    this.correction = const Value.absent(),
+    this.modelUsed = const Value.absent(),
+    required DateTime createdAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       prompt = Value(prompt),
+       response = Value(response),
+       rating = Value(rating),
+       createdAt = Value(createdAt);
+  static Insertable<LearningLog> custom({
+    Expression<String>? id,
+    Expression<String>? prompt,
+    Expression<String>? response,
+    Expression<int>? rating,
+    Expression<String>? correction,
+    Expression<String>? modelUsed,
+    Expression<DateTime>? createdAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (prompt != null) 'prompt': prompt,
+      if (response != null) 'response': response,
+      if (rating != null) 'rating': rating,
+      if (correction != null) 'correction': correction,
+      if (modelUsed != null) 'model_used': modelUsed,
+      if (createdAt != null) 'created_at': createdAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LearningLogsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? prompt,
+    Value<String>? response,
+    Value<int>? rating,
+    Value<String?>? correction,
+    Value<String?>? modelUsed,
+    Value<DateTime>? createdAt,
+    Value<int>? rowid,
+  }) {
+    return LearningLogsCompanion(
+      id: id ?? this.id,
+      prompt: prompt ?? this.prompt,
+      response: response ?? this.response,
+      rating: rating ?? this.rating,
+      correction: correction ?? this.correction,
+      modelUsed: modelUsed ?? this.modelUsed,
+      createdAt: createdAt ?? this.createdAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (prompt.present) {
+      map['prompt'] = Variable<String>(prompt.value);
+    }
+    if (response.present) {
+      map['response'] = Variable<String>(response.value);
+    }
+    if (rating.present) {
+      map['rating'] = Variable<int>(rating.value);
+    }
+    if (correction.present) {
+      map['correction'] = Variable<String>(correction.value);
+    }
+    if (modelUsed.present) {
+      map['model_used'] = Variable<String>(modelUsed.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LearningLogsCompanion(')
+          ..write('id: $id, ')
+          ..write('prompt: $prompt, ')
+          ..write('response: $response, ')
+          ..write('rating: $rating, ')
+          ..write('correction: $correction, ')
+          ..write('modelUsed: $modelUsed, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $OfflineModelWeightsTable extends OfflineModelWeights
+    with TableInfo<$OfflineModelWeightsTable, OfflineModelWeight> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $OfflineModelWeightsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _modelNameMeta = const VerificationMeta(
+    'modelName',
+  );
+  @override
+  late final GeneratedColumn<String> modelName = GeneratedColumn<String>(
+    'model_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sizeBytesMeta = const VerificationMeta(
+    'sizeBytes',
+  );
+  @override
+  late final GeneratedColumn<String> sizeBytes = GeneratedColumn<String>(
+    'size_bytes',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _localPathMeta = const VerificationMeta(
+    'localPath',
+  );
+  @override
+  late final GeneratedColumn<String> localPath = GeneratedColumn<String>(
+    'local_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _isDownloadedMeta = const VerificationMeta(
+    'isDownloaded',
+  );
+  @override
+  late final GeneratedColumn<bool> isDownloaded = GeneratedColumn<bool>(
+    'is_downloaded',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_downloaded" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _isActiveMeta = const VerificationMeta(
+    'isActive',
+  );
+  @override
+  late final GeneratedColumn<bool> isActive = GeneratedColumn<bool>(
+    'is_active',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_active" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    modelName,
+    sizeBytes,
+    localPath,
+    isDownloaded,
+    isActive,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'offline_model_weights';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<OfflineModelWeight> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('model_name')) {
+      context.handle(
+        _modelNameMeta,
+        modelName.isAcceptableOrUnknown(data['model_name']!, _modelNameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_modelNameMeta);
+    }
+    if (data.containsKey('size_bytes')) {
+      context.handle(
+        _sizeBytesMeta,
+        sizeBytes.isAcceptableOrUnknown(data['size_bytes']!, _sizeBytesMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_sizeBytesMeta);
+    }
+    if (data.containsKey('local_path')) {
+      context.handle(
+        _localPathMeta,
+        localPath.isAcceptableOrUnknown(data['local_path']!, _localPathMeta),
+      );
+    }
+    if (data.containsKey('is_downloaded')) {
+      context.handle(
+        _isDownloadedMeta,
+        isDownloaded.isAcceptableOrUnknown(
+          data['is_downloaded']!,
+          _isDownloadedMeta,
+        ),
+      );
+    }
+    if (data.containsKey('is_active')) {
+      context.handle(
+        _isActiveMeta,
+        isActive.isAcceptableOrUnknown(data['is_active']!, _isActiveMeta),
+      );
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  OfflineModelWeight map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return OfflineModelWeight(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      modelName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}model_name'],
+      )!,
+      sizeBytes: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}size_bytes'],
+      )!,
+      localPath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}local_path'],
+      ),
+      isDownloaded: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_downloaded'],
+      )!,
+      isActive: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_active'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $OfflineModelWeightsTable createAlias(String alias) {
+    return $OfflineModelWeightsTable(attachedDatabase, alias);
+  }
+}
+
+class OfflineModelWeight extends DataClass
+    implements Insertable<OfflineModelWeight> {
+  final String id;
+  final String modelName;
+  final String sizeBytes;
+  final String? localPath;
+  final bool isDownloaded;
+  final bool isActive;
+  final DateTime updatedAt;
+  const OfflineModelWeight({
+    required this.id,
+    required this.modelName,
+    required this.sizeBytes,
+    this.localPath,
+    required this.isDownloaded,
+    required this.isActive,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['model_name'] = Variable<String>(modelName);
+    map['size_bytes'] = Variable<String>(sizeBytes);
+    if (!nullToAbsent || localPath != null) {
+      map['local_path'] = Variable<String>(localPath);
+    }
+    map['is_downloaded'] = Variable<bool>(isDownloaded);
+    map['is_active'] = Variable<bool>(isActive);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  OfflineModelWeightsCompanion toCompanion(bool nullToAbsent) {
+    return OfflineModelWeightsCompanion(
+      id: Value(id),
+      modelName: Value(modelName),
+      sizeBytes: Value(sizeBytes),
+      localPath: localPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(localPath),
+      isDownloaded: Value(isDownloaded),
+      isActive: Value(isActive),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory OfflineModelWeight.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return OfflineModelWeight(
+      id: serializer.fromJson<String>(json['id']),
+      modelName: serializer.fromJson<String>(json['modelName']),
+      sizeBytes: serializer.fromJson<String>(json['sizeBytes']),
+      localPath: serializer.fromJson<String?>(json['localPath']),
+      isDownloaded: serializer.fromJson<bool>(json['isDownloaded']),
+      isActive: serializer.fromJson<bool>(json['isActive']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'modelName': serializer.toJson<String>(modelName),
+      'sizeBytes': serializer.toJson<String>(sizeBytes),
+      'localPath': serializer.toJson<String?>(localPath),
+      'isDownloaded': serializer.toJson<bool>(isDownloaded),
+      'isActive': serializer.toJson<bool>(isActive),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  OfflineModelWeight copyWith({
+    String? id,
+    String? modelName,
+    String? sizeBytes,
+    Value<String?> localPath = const Value.absent(),
+    bool? isDownloaded,
+    bool? isActive,
+    DateTime? updatedAt,
+  }) => OfflineModelWeight(
+    id: id ?? this.id,
+    modelName: modelName ?? this.modelName,
+    sizeBytes: sizeBytes ?? this.sizeBytes,
+    localPath: localPath.present ? localPath.value : this.localPath,
+    isDownloaded: isDownloaded ?? this.isDownloaded,
+    isActive: isActive ?? this.isActive,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  OfflineModelWeight copyWithCompanion(OfflineModelWeightsCompanion data) {
+    return OfflineModelWeight(
+      id: data.id.present ? data.id.value : this.id,
+      modelName: data.modelName.present ? data.modelName.value : this.modelName,
+      sizeBytes: data.sizeBytes.present ? data.sizeBytes.value : this.sizeBytes,
+      localPath: data.localPath.present ? data.localPath.value : this.localPath,
+      isDownloaded: data.isDownloaded.present
+          ? data.isDownloaded.value
+          : this.isDownloaded,
+      isActive: data.isActive.present ? data.isActive.value : this.isActive,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('OfflineModelWeight(')
+          ..write('id: $id, ')
+          ..write('modelName: $modelName, ')
+          ..write('sizeBytes: $sizeBytes, ')
+          ..write('localPath: $localPath, ')
+          ..write('isDownloaded: $isDownloaded, ')
+          ..write('isActive: $isActive, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    modelName,
+    sizeBytes,
+    localPath,
+    isDownloaded,
+    isActive,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is OfflineModelWeight &&
+          other.id == this.id &&
+          other.modelName == this.modelName &&
+          other.sizeBytes == this.sizeBytes &&
+          other.localPath == this.localPath &&
+          other.isDownloaded == this.isDownloaded &&
+          other.isActive == this.isActive &&
+          other.updatedAt == this.updatedAt);
+}
+
+class OfflineModelWeightsCompanion extends UpdateCompanion<OfflineModelWeight> {
+  final Value<String> id;
+  final Value<String> modelName;
+  final Value<String> sizeBytes;
+  final Value<String?> localPath;
+  final Value<bool> isDownloaded;
+  final Value<bool> isActive;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const OfflineModelWeightsCompanion({
+    this.id = const Value.absent(),
+    this.modelName = const Value.absent(),
+    this.sizeBytes = const Value.absent(),
+    this.localPath = const Value.absent(),
+    this.isDownloaded = const Value.absent(),
+    this.isActive = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  OfflineModelWeightsCompanion.insert({
+    required String id,
+    required String modelName,
+    required String sizeBytes,
+    this.localPath = const Value.absent(),
+    this.isDownloaded = const Value.absent(),
+    this.isActive = const Value.absent(),
+    required DateTime updatedAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       modelName = Value(modelName),
+       sizeBytes = Value(sizeBytes),
+       updatedAt = Value(updatedAt);
+  static Insertable<OfflineModelWeight> custom({
+    Expression<String>? id,
+    Expression<String>? modelName,
+    Expression<String>? sizeBytes,
+    Expression<String>? localPath,
+    Expression<bool>? isDownloaded,
+    Expression<bool>? isActive,
+    Expression<DateTime>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (modelName != null) 'model_name': modelName,
+      if (sizeBytes != null) 'size_bytes': sizeBytes,
+      if (localPath != null) 'local_path': localPath,
+      if (isDownloaded != null) 'is_downloaded': isDownloaded,
+      if (isActive != null) 'is_active': isActive,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  OfflineModelWeightsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? modelName,
+    Value<String>? sizeBytes,
+    Value<String?>? localPath,
+    Value<bool>? isDownloaded,
+    Value<bool>? isActive,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return OfflineModelWeightsCompanion(
+      id: id ?? this.id,
+      modelName: modelName ?? this.modelName,
+      sizeBytes: sizeBytes ?? this.sizeBytes,
+      localPath: localPath ?? this.localPath,
+      isDownloaded: isDownloaded ?? this.isDownloaded,
+      isActive: isActive ?? this.isActive,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (modelName.present) {
+      map['model_name'] = Variable<String>(modelName.value);
+    }
+    if (sizeBytes.present) {
+      map['size_bytes'] = Variable<String>(sizeBytes.value);
+    }
+    if (localPath.present) {
+      map['local_path'] = Variable<String>(localPath.value);
+    }
+    if (isDownloaded.present) {
+      map['is_downloaded'] = Variable<bool>(isDownloaded.value);
+    }
+    if (isActive.present) {
+      map['is_active'] = Variable<bool>(isActive.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('OfflineModelWeightsCompanion(')
+          ..write('id: $id, ')
+          ..write('modelName: $modelName, ')
+          ..write('sizeBytes: $sizeBytes, ')
+          ..write('localPath: $localPath, ')
+          ..write('isDownloaded: $isDownloaded, ')
+          ..write('isActive: $isActive, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $TelemetryLogsTable extends TelemetryLogs
+    with TableInfo<$TelemetryLogsTable, TelemetryLog> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $TelemetryLogsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _eventTypeMeta = const VerificationMeta(
+    'eventType',
+  );
+  @override
+  late final GeneratedColumn<String> eventType = GeneratedColumn<String>(
+    'event_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _latencyMsMeta = const VerificationMeta(
+    'latencyMs',
+  );
+  @override
+  late final GeneratedColumn<double> latencyMs = GeneratedColumn<double>(
+    'latency_ms',
+    aliasedName,
+    false,
+    type: DriftSqlType.double,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _agentUsedMeta = const VerificationMeta(
+    'agentUsed',
+  );
+  @override
+  late final GeneratedColumn<String> agentUsed = GeneratedColumn<String>(
+    'agent_used',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _modelUsedMeta = const VerificationMeta(
+    'modelUsed',
+  );
+  @override
+  late final GeneratedColumn<String> modelUsed = GeneratedColumn<String>(
+    'model_used',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _isOfflineMeta = const VerificationMeta(
+    'isOffline',
+  );
+  @override
+  late final GeneratedColumn<bool> isOffline = GeneratedColumn<bool>(
+    'is_offline',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_offline" IN (0, 1))',
+    ),
+  );
+  static const VerificationMeta _errorMessageMeta = const VerificationMeta(
+    'errorMessage',
+  );
+  @override
+  late final GeneratedColumn<String> errorMessage = GeneratedColumn<String>(
+    'error_message',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _feedbackRatingMeta = const VerificationMeta(
+    'feedbackRating',
+  );
+  @override
+  late final GeneratedColumn<int> feedbackRating = GeneratedColumn<int>(
+    'feedback_rating',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    eventType,
+    latencyMs,
+    agentUsed,
+    modelUsed,
+    isOffline,
+    errorMessage,
+    feedbackRating,
+    createdAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'telemetry_logs';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<TelemetryLog> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('event_type')) {
+      context.handle(
+        _eventTypeMeta,
+        eventType.isAcceptableOrUnknown(data['event_type']!, _eventTypeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_eventTypeMeta);
+    }
+    if (data.containsKey('latency_ms')) {
+      context.handle(
+        _latencyMsMeta,
+        latencyMs.isAcceptableOrUnknown(data['latency_ms']!, _latencyMsMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_latencyMsMeta);
+    }
+    if (data.containsKey('agent_used')) {
+      context.handle(
+        _agentUsedMeta,
+        agentUsed.isAcceptableOrUnknown(data['agent_used']!, _agentUsedMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_agentUsedMeta);
+    }
+    if (data.containsKey('model_used')) {
+      context.handle(
+        _modelUsedMeta,
+        modelUsed.isAcceptableOrUnknown(data['model_used']!, _modelUsedMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_modelUsedMeta);
+    }
+    if (data.containsKey('is_offline')) {
+      context.handle(
+        _isOfflineMeta,
+        isOffline.isAcceptableOrUnknown(data['is_offline']!, _isOfflineMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_isOfflineMeta);
+    }
+    if (data.containsKey('error_message')) {
+      context.handle(
+        _errorMessageMeta,
+        errorMessage.isAcceptableOrUnknown(
+          data['error_message']!,
+          _errorMessageMeta,
+        ),
+      );
+    }
+    if (data.containsKey('feedback_rating')) {
+      context.handle(
+        _feedbackRatingMeta,
+        feedbackRating.isAcceptableOrUnknown(
+          data['feedback_rating']!,
+          _feedbackRatingMeta,
+        ),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  TelemetryLog map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return TelemetryLog(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      eventType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}event_type'],
+      )!,
+      latencyMs: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}latency_ms'],
+      )!,
+      agentUsed: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}agent_used'],
+      )!,
+      modelUsed: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}model_used'],
+      )!,
+      isOffline: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_offline'],
+      )!,
+      errorMessage: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}error_message'],
+      ),
+      feedbackRating: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}feedback_rating'],
+      ),
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+    );
+  }
+
+  @override
+  $TelemetryLogsTable createAlias(String alias) {
+    return $TelemetryLogsTable(attachedDatabase, alias);
+  }
+}
+
+class TelemetryLog extends DataClass implements Insertable<TelemetryLog> {
+  final String id;
+  final String eventType;
+  final double latencyMs;
+  final String agentUsed;
+  final String modelUsed;
+  final bool isOffline;
+  final String? errorMessage;
+  final int? feedbackRating;
+  final DateTime createdAt;
+  const TelemetryLog({
+    required this.id,
+    required this.eventType,
+    required this.latencyMs,
+    required this.agentUsed,
+    required this.modelUsed,
+    required this.isOffline,
+    this.errorMessage,
+    this.feedbackRating,
+    required this.createdAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['event_type'] = Variable<String>(eventType);
+    map['latency_ms'] = Variable<double>(latencyMs);
+    map['agent_used'] = Variable<String>(agentUsed);
+    map['model_used'] = Variable<String>(modelUsed);
+    map['is_offline'] = Variable<bool>(isOffline);
+    if (!nullToAbsent || errorMessage != null) {
+      map['error_message'] = Variable<String>(errorMessage);
+    }
+    if (!nullToAbsent || feedbackRating != null) {
+      map['feedback_rating'] = Variable<int>(feedbackRating);
+    }
+    map['created_at'] = Variable<DateTime>(createdAt);
+    return map;
+  }
+
+  TelemetryLogsCompanion toCompanion(bool nullToAbsent) {
+    return TelemetryLogsCompanion(
+      id: Value(id),
+      eventType: Value(eventType),
+      latencyMs: Value(latencyMs),
+      agentUsed: Value(agentUsed),
+      modelUsed: Value(modelUsed),
+      isOffline: Value(isOffline),
+      errorMessage: errorMessage == null && nullToAbsent
+          ? const Value.absent()
+          : Value(errorMessage),
+      feedbackRating: feedbackRating == null && nullToAbsent
+          ? const Value.absent()
+          : Value(feedbackRating),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory TelemetryLog.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return TelemetryLog(
+      id: serializer.fromJson<String>(json['id']),
+      eventType: serializer.fromJson<String>(json['eventType']),
+      latencyMs: serializer.fromJson<double>(json['latencyMs']),
+      agentUsed: serializer.fromJson<String>(json['agentUsed']),
+      modelUsed: serializer.fromJson<String>(json['modelUsed']),
+      isOffline: serializer.fromJson<bool>(json['isOffline']),
+      errorMessage: serializer.fromJson<String?>(json['errorMessage']),
+      feedbackRating: serializer.fromJson<int?>(json['feedbackRating']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'eventType': serializer.toJson<String>(eventType),
+      'latencyMs': serializer.toJson<double>(latencyMs),
+      'agentUsed': serializer.toJson<String>(agentUsed),
+      'modelUsed': serializer.toJson<String>(modelUsed),
+      'isOffline': serializer.toJson<bool>(isOffline),
+      'errorMessage': serializer.toJson<String?>(errorMessage),
+      'feedbackRating': serializer.toJson<int?>(feedbackRating),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+    };
+  }
+
+  TelemetryLog copyWith({
+    String? id,
+    String? eventType,
+    double? latencyMs,
+    String? agentUsed,
+    String? modelUsed,
+    bool? isOffline,
+    Value<String?> errorMessage = const Value.absent(),
+    Value<int?> feedbackRating = const Value.absent(),
+    DateTime? createdAt,
+  }) => TelemetryLog(
+    id: id ?? this.id,
+    eventType: eventType ?? this.eventType,
+    latencyMs: latencyMs ?? this.latencyMs,
+    agentUsed: agentUsed ?? this.agentUsed,
+    modelUsed: modelUsed ?? this.modelUsed,
+    isOffline: isOffline ?? this.isOffline,
+    errorMessage: errorMessage.present ? errorMessage.value : this.errorMessage,
+    feedbackRating: feedbackRating.present
+        ? feedbackRating.value
+        : this.feedbackRating,
+    createdAt: createdAt ?? this.createdAt,
+  );
+  TelemetryLog copyWithCompanion(TelemetryLogsCompanion data) {
+    return TelemetryLog(
+      id: data.id.present ? data.id.value : this.id,
+      eventType: data.eventType.present ? data.eventType.value : this.eventType,
+      latencyMs: data.latencyMs.present ? data.latencyMs.value : this.latencyMs,
+      agentUsed: data.agentUsed.present ? data.agentUsed.value : this.agentUsed,
+      modelUsed: data.modelUsed.present ? data.modelUsed.value : this.modelUsed,
+      isOffline: data.isOffline.present ? data.isOffline.value : this.isOffline,
+      errorMessage: data.errorMessage.present
+          ? data.errorMessage.value
+          : this.errorMessage,
+      feedbackRating: data.feedbackRating.present
+          ? data.feedbackRating.value
+          : this.feedbackRating,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TelemetryLog(')
+          ..write('id: $id, ')
+          ..write('eventType: $eventType, ')
+          ..write('latencyMs: $latencyMs, ')
+          ..write('agentUsed: $agentUsed, ')
+          ..write('modelUsed: $modelUsed, ')
+          ..write('isOffline: $isOffline, ')
+          ..write('errorMessage: $errorMessage, ')
+          ..write('feedbackRating: $feedbackRating, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    eventType,
+    latencyMs,
+    agentUsed,
+    modelUsed,
+    isOffline,
+    errorMessage,
+    feedbackRating,
+    createdAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is TelemetryLog &&
+          other.id == this.id &&
+          other.eventType == this.eventType &&
+          other.latencyMs == this.latencyMs &&
+          other.agentUsed == this.agentUsed &&
+          other.modelUsed == this.modelUsed &&
+          other.isOffline == this.isOffline &&
+          other.errorMessage == this.errorMessage &&
+          other.feedbackRating == this.feedbackRating &&
+          other.createdAt == this.createdAt);
+}
+
+class TelemetryLogsCompanion extends UpdateCompanion<TelemetryLog> {
+  final Value<String> id;
+  final Value<String> eventType;
+  final Value<double> latencyMs;
+  final Value<String> agentUsed;
+  final Value<String> modelUsed;
+  final Value<bool> isOffline;
+  final Value<String?> errorMessage;
+  final Value<int?> feedbackRating;
+  final Value<DateTime> createdAt;
+  final Value<int> rowid;
+  const TelemetryLogsCompanion({
+    this.id = const Value.absent(),
+    this.eventType = const Value.absent(),
+    this.latencyMs = const Value.absent(),
+    this.agentUsed = const Value.absent(),
+    this.modelUsed = const Value.absent(),
+    this.isOffline = const Value.absent(),
+    this.errorMessage = const Value.absent(),
+    this.feedbackRating = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  TelemetryLogsCompanion.insert({
+    required String id,
+    required String eventType,
+    required double latencyMs,
+    required String agentUsed,
+    required String modelUsed,
+    required bool isOffline,
+    this.errorMessage = const Value.absent(),
+    this.feedbackRating = const Value.absent(),
+    required DateTime createdAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       eventType = Value(eventType),
+       latencyMs = Value(latencyMs),
+       agentUsed = Value(agentUsed),
+       modelUsed = Value(modelUsed),
+       isOffline = Value(isOffline),
+       createdAt = Value(createdAt);
+  static Insertable<TelemetryLog> custom({
+    Expression<String>? id,
+    Expression<String>? eventType,
+    Expression<double>? latencyMs,
+    Expression<String>? agentUsed,
+    Expression<String>? modelUsed,
+    Expression<bool>? isOffline,
+    Expression<String>? errorMessage,
+    Expression<int>? feedbackRating,
+    Expression<DateTime>? createdAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (eventType != null) 'event_type': eventType,
+      if (latencyMs != null) 'latency_ms': latencyMs,
+      if (agentUsed != null) 'agent_used': agentUsed,
+      if (modelUsed != null) 'model_used': modelUsed,
+      if (isOffline != null) 'is_offline': isOffline,
+      if (errorMessage != null) 'error_message': errorMessage,
+      if (feedbackRating != null) 'feedback_rating': feedbackRating,
+      if (createdAt != null) 'created_at': createdAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  TelemetryLogsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? eventType,
+    Value<double>? latencyMs,
+    Value<String>? agentUsed,
+    Value<String>? modelUsed,
+    Value<bool>? isOffline,
+    Value<String?>? errorMessage,
+    Value<int?>? feedbackRating,
+    Value<DateTime>? createdAt,
+    Value<int>? rowid,
+  }) {
+    return TelemetryLogsCompanion(
+      id: id ?? this.id,
+      eventType: eventType ?? this.eventType,
+      latencyMs: latencyMs ?? this.latencyMs,
+      agentUsed: agentUsed ?? this.agentUsed,
+      modelUsed: modelUsed ?? this.modelUsed,
+      isOffline: isOffline ?? this.isOffline,
+      errorMessage: errorMessage ?? this.errorMessage,
+      feedbackRating: feedbackRating ?? this.feedbackRating,
+      createdAt: createdAt ?? this.createdAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (eventType.present) {
+      map['event_type'] = Variable<String>(eventType.value);
+    }
+    if (latencyMs.present) {
+      map['latency_ms'] = Variable<double>(latencyMs.value);
+    }
+    if (agentUsed.present) {
+      map['agent_used'] = Variable<String>(agentUsed.value);
+    }
+    if (modelUsed.present) {
+      map['model_used'] = Variable<String>(modelUsed.value);
+    }
+    if (isOffline.present) {
+      map['is_offline'] = Variable<bool>(isOffline.value);
+    }
+    if (errorMessage.present) {
+      map['error_message'] = Variable<String>(errorMessage.value);
+    }
+    if (feedbackRating.present) {
+      map['feedback_rating'] = Variable<int>(feedbackRating.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('TelemetryLogsCompanion(')
+          ..write('id: $id, ')
+          ..write('eventType: $eventType, ')
+          ..write('latencyMs: $latencyMs, ')
+          ..write('agentUsed: $agentUsed, ')
+          ..write('modelUsed: $modelUsed, ')
+          ..write('isOffline: $isOffline, ')
+          ..write('errorMessage: $errorMessage, ')
+          ..write('feedbackRating: $feedbackRating, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -3797,6 +5311,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $AgentConfigurationsTable(this);
   late final $UserMemoriesTable userMemories = $UserMemoriesTable(this);
   late final $PendingDeletesTable pendingDeletes = $PendingDeletesTable(this);
+  late final $LearningLogsTable learningLogs = $LearningLogsTable(this);
+  late final $OfflineModelWeightsTable offlineModelWeights =
+      $OfflineModelWeightsTable(this);
+  late final $TelemetryLogsTable telemetryLogs = $TelemetryLogsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -3810,6 +5328,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     agentConfigurations,
     userMemories,
     pendingDeletes,
+    learningLogs,
+    offlineModelWeights,
+    telemetryLogs,
   ];
 }
 
@@ -5765,6 +7286,782 @@ typedef $$PendingDeletesTableProcessedTableManager =
       PendingDelete,
       PrefetchHooks Function()
     >;
+typedef $$LearningLogsTableCreateCompanionBuilder =
+    LearningLogsCompanion Function({
+      required String id,
+      required String prompt,
+      required String response,
+      required int rating,
+      Value<String?> correction,
+      Value<String?> modelUsed,
+      required DateTime createdAt,
+      Value<int> rowid,
+    });
+typedef $$LearningLogsTableUpdateCompanionBuilder =
+    LearningLogsCompanion Function({
+      Value<String> id,
+      Value<String> prompt,
+      Value<String> response,
+      Value<int> rating,
+      Value<String?> correction,
+      Value<String?> modelUsed,
+      Value<DateTime> createdAt,
+      Value<int> rowid,
+    });
+
+class $$LearningLogsTableFilterComposer
+    extends Composer<_$AppDatabase, $LearningLogsTable> {
+  $$LearningLogsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get prompt => $composableBuilder(
+    column: $table.prompt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get response => $composableBuilder(
+    column: $table.response,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get rating => $composableBuilder(
+    column: $table.rating,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get correction => $composableBuilder(
+    column: $table.correction,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get modelUsed => $composableBuilder(
+    column: $table.modelUsed,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$LearningLogsTableOrderingComposer
+    extends Composer<_$AppDatabase, $LearningLogsTable> {
+  $$LearningLogsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get prompt => $composableBuilder(
+    column: $table.prompt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get response => $composableBuilder(
+    column: $table.response,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get rating => $composableBuilder(
+    column: $table.rating,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get correction => $composableBuilder(
+    column: $table.correction,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get modelUsed => $composableBuilder(
+    column: $table.modelUsed,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$LearningLogsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $LearningLogsTable> {
+  $$LearningLogsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get prompt =>
+      $composableBuilder(column: $table.prompt, builder: (column) => column);
+
+  GeneratedColumn<String> get response =>
+      $composableBuilder(column: $table.response, builder: (column) => column);
+
+  GeneratedColumn<int> get rating =>
+      $composableBuilder(column: $table.rating, builder: (column) => column);
+
+  GeneratedColumn<String> get correction => $composableBuilder(
+    column: $table.correction,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get modelUsed =>
+      $composableBuilder(column: $table.modelUsed, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+}
+
+class $$LearningLogsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $LearningLogsTable,
+          LearningLog,
+          $$LearningLogsTableFilterComposer,
+          $$LearningLogsTableOrderingComposer,
+          $$LearningLogsTableAnnotationComposer,
+          $$LearningLogsTableCreateCompanionBuilder,
+          $$LearningLogsTableUpdateCompanionBuilder,
+          (
+            LearningLog,
+            BaseReferences<_$AppDatabase, $LearningLogsTable, LearningLog>,
+          ),
+          LearningLog,
+          PrefetchHooks Function()
+        > {
+  $$LearningLogsTableTableManager(_$AppDatabase db, $LearningLogsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LearningLogsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LearningLogsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LearningLogsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> prompt = const Value.absent(),
+                Value<String> response = const Value.absent(),
+                Value<int> rating = const Value.absent(),
+                Value<String?> correction = const Value.absent(),
+                Value<String?> modelUsed = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => LearningLogsCompanion(
+                id: id,
+                prompt: prompt,
+                response: response,
+                rating: rating,
+                correction: correction,
+                modelUsed: modelUsed,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String prompt,
+                required String response,
+                required int rating,
+                Value<String?> correction = const Value.absent(),
+                Value<String?> modelUsed = const Value.absent(),
+                required DateTime createdAt,
+                Value<int> rowid = const Value.absent(),
+              }) => LearningLogsCompanion.insert(
+                id: id,
+                prompt: prompt,
+                response: response,
+                rating: rating,
+                correction: correction,
+                modelUsed: modelUsed,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$LearningLogsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $LearningLogsTable,
+      LearningLog,
+      $$LearningLogsTableFilterComposer,
+      $$LearningLogsTableOrderingComposer,
+      $$LearningLogsTableAnnotationComposer,
+      $$LearningLogsTableCreateCompanionBuilder,
+      $$LearningLogsTableUpdateCompanionBuilder,
+      (
+        LearningLog,
+        BaseReferences<_$AppDatabase, $LearningLogsTable, LearningLog>,
+      ),
+      LearningLog,
+      PrefetchHooks Function()
+    >;
+typedef $$OfflineModelWeightsTableCreateCompanionBuilder =
+    OfflineModelWeightsCompanion Function({
+      required String id,
+      required String modelName,
+      required String sizeBytes,
+      Value<String?> localPath,
+      Value<bool> isDownloaded,
+      Value<bool> isActive,
+      required DateTime updatedAt,
+      Value<int> rowid,
+    });
+typedef $$OfflineModelWeightsTableUpdateCompanionBuilder =
+    OfflineModelWeightsCompanion Function({
+      Value<String> id,
+      Value<String> modelName,
+      Value<String> sizeBytes,
+      Value<String?> localPath,
+      Value<bool> isDownloaded,
+      Value<bool> isActive,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$OfflineModelWeightsTableFilterComposer
+    extends Composer<_$AppDatabase, $OfflineModelWeightsTable> {
+  $$OfflineModelWeightsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get modelName => $composableBuilder(
+    column: $table.modelName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get sizeBytes => $composableBuilder(
+    column: $table.sizeBytes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get localPath => $composableBuilder(
+    column: $table.localPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isDownloaded => $composableBuilder(
+    column: $table.isDownloaded,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isActive => $composableBuilder(
+    column: $table.isActive,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$OfflineModelWeightsTableOrderingComposer
+    extends Composer<_$AppDatabase, $OfflineModelWeightsTable> {
+  $$OfflineModelWeightsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get modelName => $composableBuilder(
+    column: $table.modelName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get sizeBytes => $composableBuilder(
+    column: $table.sizeBytes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get localPath => $composableBuilder(
+    column: $table.localPath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get isDownloaded => $composableBuilder(
+    column: $table.isDownloaded,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get isActive => $composableBuilder(
+    column: $table.isActive,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$OfflineModelWeightsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $OfflineModelWeightsTable> {
+  $$OfflineModelWeightsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get modelName =>
+      $composableBuilder(column: $table.modelName, builder: (column) => column);
+
+  GeneratedColumn<String> get sizeBytes =>
+      $composableBuilder(column: $table.sizeBytes, builder: (column) => column);
+
+  GeneratedColumn<String> get localPath =>
+      $composableBuilder(column: $table.localPath, builder: (column) => column);
+
+  GeneratedColumn<bool> get isDownloaded => $composableBuilder(
+    column: $table.isDownloaded,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get isActive =>
+      $composableBuilder(column: $table.isActive, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$OfflineModelWeightsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $OfflineModelWeightsTable,
+          OfflineModelWeight,
+          $$OfflineModelWeightsTableFilterComposer,
+          $$OfflineModelWeightsTableOrderingComposer,
+          $$OfflineModelWeightsTableAnnotationComposer,
+          $$OfflineModelWeightsTableCreateCompanionBuilder,
+          $$OfflineModelWeightsTableUpdateCompanionBuilder,
+          (
+            OfflineModelWeight,
+            BaseReferences<
+              _$AppDatabase,
+              $OfflineModelWeightsTable,
+              OfflineModelWeight
+            >,
+          ),
+          OfflineModelWeight,
+          PrefetchHooks Function()
+        > {
+  $$OfflineModelWeightsTableTableManager(
+    _$AppDatabase db,
+    $OfflineModelWeightsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$OfflineModelWeightsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$OfflineModelWeightsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$OfflineModelWeightsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> modelName = const Value.absent(),
+                Value<String> sizeBytes = const Value.absent(),
+                Value<String?> localPath = const Value.absent(),
+                Value<bool> isDownloaded = const Value.absent(),
+                Value<bool> isActive = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => OfflineModelWeightsCompanion(
+                id: id,
+                modelName: modelName,
+                sizeBytes: sizeBytes,
+                localPath: localPath,
+                isDownloaded: isDownloaded,
+                isActive: isActive,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String modelName,
+                required String sizeBytes,
+                Value<String?> localPath = const Value.absent(),
+                Value<bool> isDownloaded = const Value.absent(),
+                Value<bool> isActive = const Value.absent(),
+                required DateTime updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => OfflineModelWeightsCompanion.insert(
+                id: id,
+                modelName: modelName,
+                sizeBytes: sizeBytes,
+                localPath: localPath,
+                isDownloaded: isDownloaded,
+                isActive: isActive,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$OfflineModelWeightsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $OfflineModelWeightsTable,
+      OfflineModelWeight,
+      $$OfflineModelWeightsTableFilterComposer,
+      $$OfflineModelWeightsTableOrderingComposer,
+      $$OfflineModelWeightsTableAnnotationComposer,
+      $$OfflineModelWeightsTableCreateCompanionBuilder,
+      $$OfflineModelWeightsTableUpdateCompanionBuilder,
+      (
+        OfflineModelWeight,
+        BaseReferences<
+          _$AppDatabase,
+          $OfflineModelWeightsTable,
+          OfflineModelWeight
+        >,
+      ),
+      OfflineModelWeight,
+      PrefetchHooks Function()
+    >;
+typedef $$TelemetryLogsTableCreateCompanionBuilder =
+    TelemetryLogsCompanion Function({
+      required String id,
+      required String eventType,
+      required double latencyMs,
+      required String agentUsed,
+      required String modelUsed,
+      required bool isOffline,
+      Value<String?> errorMessage,
+      Value<int?> feedbackRating,
+      required DateTime createdAt,
+      Value<int> rowid,
+    });
+typedef $$TelemetryLogsTableUpdateCompanionBuilder =
+    TelemetryLogsCompanion Function({
+      Value<String> id,
+      Value<String> eventType,
+      Value<double> latencyMs,
+      Value<String> agentUsed,
+      Value<String> modelUsed,
+      Value<bool> isOffline,
+      Value<String?> errorMessage,
+      Value<int?> feedbackRating,
+      Value<DateTime> createdAt,
+      Value<int> rowid,
+    });
+
+class $$TelemetryLogsTableFilterComposer
+    extends Composer<_$AppDatabase, $TelemetryLogsTable> {
+  $$TelemetryLogsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get eventType => $composableBuilder(
+    column: $table.eventType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get latencyMs => $composableBuilder(
+    column: $table.latencyMs,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get agentUsed => $composableBuilder(
+    column: $table.agentUsed,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get modelUsed => $composableBuilder(
+    column: $table.modelUsed,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isOffline => $composableBuilder(
+    column: $table.isOffline,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get errorMessage => $composableBuilder(
+    column: $table.errorMessage,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get feedbackRating => $composableBuilder(
+    column: $table.feedbackRating,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$TelemetryLogsTableOrderingComposer
+    extends Composer<_$AppDatabase, $TelemetryLogsTable> {
+  $$TelemetryLogsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get eventType => $composableBuilder(
+    column: $table.eventType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get latencyMs => $composableBuilder(
+    column: $table.latencyMs,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get agentUsed => $composableBuilder(
+    column: $table.agentUsed,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get modelUsed => $composableBuilder(
+    column: $table.modelUsed,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get isOffline => $composableBuilder(
+    column: $table.isOffline,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get errorMessage => $composableBuilder(
+    column: $table.errorMessage,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get feedbackRating => $composableBuilder(
+    column: $table.feedbackRating,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$TelemetryLogsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $TelemetryLogsTable> {
+  $$TelemetryLogsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get eventType =>
+      $composableBuilder(column: $table.eventType, builder: (column) => column);
+
+  GeneratedColumn<double> get latencyMs =>
+      $composableBuilder(column: $table.latencyMs, builder: (column) => column);
+
+  GeneratedColumn<String> get agentUsed =>
+      $composableBuilder(column: $table.agentUsed, builder: (column) => column);
+
+  GeneratedColumn<String> get modelUsed =>
+      $composableBuilder(column: $table.modelUsed, builder: (column) => column);
+
+  GeneratedColumn<bool> get isOffline =>
+      $composableBuilder(column: $table.isOffline, builder: (column) => column);
+
+  GeneratedColumn<String> get errorMessage => $composableBuilder(
+    column: $table.errorMessage,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get feedbackRating => $composableBuilder(
+    column: $table.feedbackRating,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+}
+
+class $$TelemetryLogsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $TelemetryLogsTable,
+          TelemetryLog,
+          $$TelemetryLogsTableFilterComposer,
+          $$TelemetryLogsTableOrderingComposer,
+          $$TelemetryLogsTableAnnotationComposer,
+          $$TelemetryLogsTableCreateCompanionBuilder,
+          $$TelemetryLogsTableUpdateCompanionBuilder,
+          (
+            TelemetryLog,
+            BaseReferences<_$AppDatabase, $TelemetryLogsTable, TelemetryLog>,
+          ),
+          TelemetryLog,
+          PrefetchHooks Function()
+        > {
+  $$TelemetryLogsTableTableManager(_$AppDatabase db, $TelemetryLogsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$TelemetryLogsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$TelemetryLogsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$TelemetryLogsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> eventType = const Value.absent(),
+                Value<double> latencyMs = const Value.absent(),
+                Value<String> agentUsed = const Value.absent(),
+                Value<String> modelUsed = const Value.absent(),
+                Value<bool> isOffline = const Value.absent(),
+                Value<String?> errorMessage = const Value.absent(),
+                Value<int?> feedbackRating = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => TelemetryLogsCompanion(
+                id: id,
+                eventType: eventType,
+                latencyMs: latencyMs,
+                agentUsed: agentUsed,
+                modelUsed: modelUsed,
+                isOffline: isOffline,
+                errorMessage: errorMessage,
+                feedbackRating: feedbackRating,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String eventType,
+                required double latencyMs,
+                required String agentUsed,
+                required String modelUsed,
+                required bool isOffline,
+                Value<String?> errorMessage = const Value.absent(),
+                Value<int?> feedbackRating = const Value.absent(),
+                required DateTime createdAt,
+                Value<int> rowid = const Value.absent(),
+              }) => TelemetryLogsCompanion.insert(
+                id: id,
+                eventType: eventType,
+                latencyMs: latencyMs,
+                agentUsed: agentUsed,
+                modelUsed: modelUsed,
+                isOffline: isOffline,
+                errorMessage: errorMessage,
+                feedbackRating: feedbackRating,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$TelemetryLogsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $TelemetryLogsTable,
+      TelemetryLog,
+      $$TelemetryLogsTableFilterComposer,
+      $$TelemetryLogsTableOrderingComposer,
+      $$TelemetryLogsTableAnnotationComposer,
+      $$TelemetryLogsTableCreateCompanionBuilder,
+      $$TelemetryLogsTableUpdateCompanionBuilder,
+      (
+        TelemetryLog,
+        BaseReferences<_$AppDatabase, $TelemetryLogsTable, TelemetryLog>,
+      ),
+      TelemetryLog,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -5785,4 +8082,10 @@ class $AppDatabaseManager {
       $$UserMemoriesTableTableManager(_db, _db.userMemories);
   $$PendingDeletesTableTableManager get pendingDeletes =>
       $$PendingDeletesTableTableManager(_db, _db.pendingDeletes);
+  $$LearningLogsTableTableManager get learningLogs =>
+      $$LearningLogsTableTableManager(_db, _db.learningLogs);
+  $$OfflineModelWeightsTableTableManager get offlineModelWeights =>
+      $$OfflineModelWeightsTableTableManager(_db, _db.offlineModelWeights);
+  $$TelemetryLogsTableTableManager get telemetryLogs =>
+      $$TelemetryLogsTableTableManager(_db, _db.telemetryLogs);
 }

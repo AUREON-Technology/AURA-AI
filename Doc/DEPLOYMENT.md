@@ -127,4 +127,4 @@ Once both are deployed:
 
 ## Build the APK
 
-run "flutter build apk --release --obfuscate --split-debug-info=build/app/outputs/symbols --split-per-abi --dart-define=BACKEND_URL=https://aura-ai-production-a31f.up.railway.app" in aura_client directory
+run "flutter build apk --release --obfuscate --split-debug-info=build/app/outputs/symbols --split-per-abi --dart-define=BACKEND_URL=https://anas-ibrahim-mahmoud-aura-ai-backend.hf.space" in aura_client directory

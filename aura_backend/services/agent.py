@@ -149,6 +149,26 @@ class AgentOrchestrator:
         # Inject tool action parameters
         system_instruction += "\n\n" + ACTION_INSTRUCTIONS
 
+        # Sentiment Analysis & Behavior Adaptation
+        if last_user_message:
+            try:
+                from services.sentiment import sentiment_analyzer
+                sentiment = sentiment_analyzer.analyze_sentiment(last_user_message)
+                sentiment_instructions = ""
+                if sentiment == "Frustrated":
+                    sentiment_instructions = "\n[SYSTEM ADAPTATION: Empathic Tone Required. The user is frustrated. Respond apologetically, show understanding, remain extremely calm and helpful, and address the issue directly.]\n"
+                elif sentiment == "Urgent":
+                    sentiment_instructions = "\n[SYSTEM ADAPTATION: Urgent Request. The user requires immediate answers. Skip conversational fluff and provide highly concise, direct, actionable steps.]\n"
+                elif sentiment == "Negative":
+                    sentiment_instructions = "\n[SYSTEM ADAPTATION: Professional Demeanor. The user tone is negative. Respond with high professionalism, address concerns neutrally, and offer clear facts.]\n"
+                elif sentiment == "Positive":
+                    sentiment_instructions = "\n[SYSTEM ADAPTATION: Encouraging Tone. The user is positive. Be warm, friendly, and match their constructive energy.]\n"
+                
+                if sentiment_instructions:
+                    system_instruction += sentiment_instructions
+            except Exception as e:
+                logger.error(f"Sentiment evaluation failed: {e}")
+
         # 2. Retrieve memories & RAG context
         memory_context = ""
         rag_context = ""

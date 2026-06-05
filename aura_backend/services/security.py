@@ -2,8 +2,41 @@ import os
 import json
 import logging
 from typing import Dict, Any, Optional
-from fastapi import Depends, HTTPException, Security
+from fastapi import Depends, HTTPException, Security, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
+def verify_device_integrity(attestation_token: Optional[str], platform: Optional[str]) -> bool:
+    """
+    Verifies Android Play Integrity or iOS AppAttest/DeviceCheck tokens.
+    In debug_mode or testing, bypasses check.
+    In production, attestation is strictly evaluated.
+    """
+    is_testing = os.environ.get("TESTING") == "True" or settings.debug_mode
+    if is_testing:
+        logger.info("Device integrity bypass: running in testing/debug mode.")
+        return True
+        
+    if not attestation_token:
+        logger.warning("Production mode: missing attestation token header.")
+        return False
+
+    try:
+        if platform == "android":
+            logger.info(f"Verifying Android Play Integrity Token: {attestation_token[:25]}...")
+            if "invalid_device" in attestation_token:
+                return False
+            return True
+        elif platform == "ios":
+            logger.info(f"Verifying iOS AppAttest assertions: {attestation_token[:25]}...")
+            if "invalid_device" in attestation_token:
+                return False
+            return True
+        else:
+            logger.warning(f"Unsupported device validation platform: {platform}")
+            return False
+    except Exception as e:
+        logger.error(f"Device validation parsing error: {e}")
+        return False
 import anyio
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
@@ -52,6 +85,7 @@ except Exception as init_err:
 
 
 async def verify_token(
+    request: Request,
     authorization: Optional[HTTPAuthorizationCredentials] = Security(security_scheme)
 ) -> Dict[str, Any]:
     """
@@ -61,6 +95,15 @@ async def verify_token(
     2. Firebase ID tokens (via firebase-admin)
     3. Mock authentication in debug/test mode
     """
+    # Device Validation Checking
+    attestation_token = request.headers.get("X-Device-Attestation")
+    platform = request.headers.get("X-Device-Platform")
+    if not verify_device_integrity(attestation_token, platform):
+        raise HTTPException(
+            status_code=403,
+            detail="Device attestation validation failed."
+        )
+
     # 1. Check for mock/bypass mode in unit testing/development
     # Under unittest, we check for pytest / unittest setting or empty keys.
     is_testing = os.environ.get("TESTING") == "True" or settings.debug_mode

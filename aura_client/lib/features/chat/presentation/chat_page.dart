@@ -12,6 +12,8 @@ import '../../health/data/health_repository.dart';
 import '../../../core/theme/theme.dart';
 import '../../../core/database/database.dart';
 import '../../sync/sync_engine.dart';
+import '../../../core/ai/ai_router/aura_ai_router.dart';
+import '../../../core/ai/online_agents/online_agent_manager.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
   const ChatPage({super.key});
@@ -233,10 +235,47 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           ],
           
           const Divider(color: Color(0x1F94A3B8), height: 32),
-          
+          const Text(
+            'AI ROUTING CONFIG',
+            style: TextStyle(
+              color: AuraTheme.textSecondary,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('AI Provider:', style: TextStyle(fontSize: 12, color: Colors.white70)),
+              DropdownButton<AIProvider>(
+                value: ref.watch(aiProviderSettingProvider),
+                dropdownColor: const Color(0xFF0F0C1B),
+                style: const TextStyle(color: Colors.white, fontSize: 12),
+                underline: const SizedBox(),
+                items: const [
+                  DropdownMenuItem(value: AIProvider.auto, child: Text('Auto (Failover)')),
+                  DropdownMenuItem(value: AIProvider.gemini, child: Text('Force Gemini')),
+                  DropdownMenuItem(value: AIProvider.offlineFast, child: Text('Offline Fast')),
+                  DropdownMenuItem(value: AIProvider.offlineReasoning, child: Text('Reasoning')),
+                  DropdownMenuItem(value: AIProvider.offlinePremium, child: Text('Premium')),
+                ],
+                onChanged: (val) {
+                  if (val != null) {
+                    ref.read(aiProviderSettingProvider.notifier).state = val;
+                  }
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           // Fallback Key Inputs
           TextField(
-            onChanged: (val) => setState(() => _geminiApiKey = val),
+            onChanged: (val) {
+              ref.read(localApiKeyProvider.notifier).state = val;
+              setState(() => _geminiApiKey = val);
+            },
             obscureText: true,
             decoration: const InputDecoration(
               labelText: 'Local Gemini API Key',
@@ -441,15 +480,19 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                   Container(
                                     width: 8,
                                     height: 8,
-                                    decoration: const BoxDecoration(
-                                      color: AuraTheme.accentTeal,
+                                    decoration: BoxDecoration(
+                                      color: ref.watch(aiRouterStatusProvider).isOffline 
+                                          ? AuraTheme.accentAmber 
+                                          : AuraTheme.accentTeal,
                                       shape: BoxShape.circle,
                                     ),
                                   ),
                                   const SizedBox(width: 6),
                                   Expanded(
                                     child: Text(
-                                      isMobile ? 'Active' : 'Hybrid OS Active • Gemini 1.5 Flash',
+                                      isMobile 
+                                          ? 'Active • ${ref.watch(aiRouterStatusProvider).activeModel}' 
+                                          : 'Hybrid OS Active • ${ref.watch(aiRouterStatusProvider).activeModel} (${ref.watch(aiRouterStatusProvider).status}) • Latency: ${ref.watch(aiRouterStatusProvider).latencyMs.toStringAsFixed(0)}ms',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
