@@ -185,6 +185,28 @@ class RAGService:
       logger.error(f"Failed to ingest document {doc_id}: {e}")
       return False
 
+  def ingest_pdf(self, doc_id: str, pdf_bytes: bytes, metadata: Dict[str, Any]) -> bool:
+    """Extracts text from PDF bytes and ingests it into Qdrant."""
+    try:
+      import io
+      from pypdf import PdfReader
+      
+      reader = PdfReader(io.BytesIO(pdf_bytes))
+      text = ""
+      for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+          text += page_text + "\n"
+          
+      if not text.strip():
+        logger.warning(f"No text extracted from PDF {doc_id}.")
+        return False
+        
+      return self.ingest_document(doc_id=doc_id, content=text, metadata=metadata)
+    except Exception as e:
+      logger.error(f"Failed to parse and ingest PDF {doc_id}: {e}")
+      return False
+
   def query_knowledge(self, query: str, limit: int = 4, user_id: str = None) -> List[Dict[str, Any]]:
     """Queries Qdrant local/cloud for relevant text chunks."""
     if not self.client:

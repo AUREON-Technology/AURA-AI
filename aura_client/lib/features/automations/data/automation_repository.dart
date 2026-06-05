@@ -297,7 +297,10 @@ class AutomationRepository {
     final logs = <String>[];
     logs.add("Requesting Drive storage permissions...");
 
-    final driveScopes = ['https://www.googleapis.com/auth/drive.file'];
+    final driveScopes = [
+      'https://www.googleapis.com/auth/drive.readonly',
+      'https://www.googleapis.com/auth/drive.file'
+    ];
     
     // Acquire OAuth token and client
     final GoogleSignInClientAuthorization authorization =

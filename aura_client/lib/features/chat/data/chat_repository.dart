@@ -118,11 +118,24 @@ class ChatRepository {
         "content": userContent,
       });
 
+      // Retrieve Google Access Token if logged in via Google Sign-In
+      String? googleAccessToken;
+      try {
+        final googleUser = GoogleSignIn.instance.currentUser;
+        if (googleUser != null) {
+          final auth = await googleUser.authentication;
+          googleAccessToken = auth.accessToken;
+        }
+      } catch (e) {
+        debugPrint("Failed to fetch Google access token: $e");
+      }
+
       request.body = jsonEncode({
         "agent_id": activeAgentId,
         "messages": historyPayload,
         "custom_instructions": customInstructions,
         "use_rag": useRag,
+        "google_access_token": googleAccessToken,
       });
 
       final response = await client.send(request).timeout(const Duration(seconds: 15));

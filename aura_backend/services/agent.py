@@ -1,5 +1,6 @@
 import json
 import logging
+import asyncio
 from typing import List, Dict, Any, AsyncGenerator
 from google import genai
 from google.genai import types
@@ -62,16 +63,23 @@ class AgentOrchestrator:
 
         # 1. Try Gemini
         if self.client:
-            try:
-                response = self.client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=prompt
-                )
-                intent = response.text.strip().lower()
-                if intent in DEFAULT_INSTRUCTIONS:
-                    return intent
-            except Exception as e:
-                logger.error(f"Intent classification via Gemini failed: {e}")
+            import time
+            for attempt in range(3):
+                try:
+                    response = self.client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=prompt
+                    )
+                    intent = response.text.strip().lower()
+                    if intent in DEFAULT_INSTRUCTIONS:
+                        return intent
+                    break
+                except Exception as e:
+                    logger.warning(f"Intent classification attempt {attempt + 1} failed: {e}")
+                    if attempt < 2:
+                        time.sleep(2 ** (attempt + 1))
+                    else:
+                        logger.error(f"Intent classification via Gemini failed: {e}")
 
         # 2. Try local Ollama
         try:
@@ -114,9 +122,56 @@ class AgentOrchestrator:
         messages: List[Dict[str, str]],
         custom_instructions: Dict[str, str] = None,
         use_rag: bool = True,
-        user_id: str = None
+        user_id: str = None,
+        google_access_token: str = None
     ) -> AsyncGenerator[str, None]:
         """Streams response for selected agent. If Gemini is offline, falls back to Ollama; if Ollama is also offline, uses mocks."""
+        # Define inline tools to capture google_access_token and user_id via closure
+        def search_google_drive(query: str) -> dict:
+            """Search for PDF files in the user's Google Drive by file name.
+            
+            Args:
+                query: A search string/keyword to filter file names.
+            """
+            if not google_access_token:
+                return {"error": "Google Drive access token is missing. Please log in with Google."}
+            from services.drive import search_drive_pdfs
+            files = search_drive_pdfs(google_access_token, query)
+            return {"files": files}
+
+        def ingest_google_drive_pdf(file_id: str, file_name: str) -> dict:
+            """Download a PDF file from Google Drive and ingest its text content into AURA's Knowledge Base (RAG) for searching.
+            
+            Args:
+                file_id: The unique Google Drive file ID.
+                file_name: The display name of the file.
+            """
+            if not google_access_token:
+                return {"error": "Google Drive access token is missing. Please log in with Google."}
+            from services.drive import download_drive_file
+            pdf_bytes = download_drive_file(google_access_token, file_id)
+            if not pdf_bytes:
+                return {"error": f"Failed to download file '{file_name}' from Google Drive."}
+            
+            from services.rag import rag_service
+            metadata = {"source": "google_drive", "file_name": file_name, "file_id": file_id}
+            if user_id:
+                metadata["user_id"] = user_id
+            success = rag_service.ingest_pdf(doc_id=file_id, pdf_bytes=pdf_bytes, metadata=metadata)
+            if success:
+                return {"status": "success", "message": f"Successfully parsed and ingested '{file_name}' into AURA Knowledge Base."}
+            else:
+                return {"error": f"Failed to parse or index PDF content of '{file_name}'."}
+
+        def query_knowledge_base(query: str) -> dict:
+            """Query AURA's local Knowledge Base (RAG) for matching text passages or facts.
+            
+            Args:
+                query: Search terms, IDs, or question keywords.
+            """
+            from services.rag import rag_service
+            results = rag_service.query_knowledge(query, limit=5, user_id=user_id)
+            return {"results": results}
         last_user_message = next(
             (m["content"] for m in reversed(messages) if m["role"] == "user"), 
             ""
@@ -190,21 +245,70 @@ class AgentOrchestrator:
 
                 current_prompt = messages[-1]["content"]
 
-                # Create chat with system instruction config
-                chat = self.client.chats.create(
-                    model="gemini-2.5-flash",
-                    history=gemini_history,
-                    config=types.GenerateContentConfig(
-                        system_instruction=final_system_instruction
-                    )
-                )
+                # Create chat with system instruction config and stream response with retries
+                attempt = 0
+                max_attempts = 3
+                while attempt < max_attempts:
+                    try:
+                        # Register Drive and RAG tools if OAuth token is available
+                        tools_list = []
+                        if google_access_token:
+                            tools_list = [search_google_drive, ingest_google_drive_pdf, query_knowledge_base]
 
-                # Stream response
-                response = chat.send_message_stream(current_prompt)
-                for chunk in response:
-                    if chunk.text:
-                        yield chunk.text
-                return
+                        chat = self.client.chats.create(
+                            model="gemini-2.5-flash",
+                            history=gemini_history,
+                            config=types.GenerateContentConfig(
+                                system_instruction=final_system_instruction,
+                                tools=tools_list if tools_list else None
+                            )
+                        )
+                        
+                        current_prompt_or_part = current_prompt
+                        while True:
+                            response = chat.send_message_stream(current_prompt_or_part)
+                            has_function_call = False
+                            function_calls = []
+                            for chunk in response:
+                                if chunk.function_calls:
+                                    has_function_call = True
+                                    function_calls.extend(chunk.function_calls)
+                                elif chunk.text:
+                                    yield chunk.text
+                            
+                            if has_function_call:
+                                for f in function_calls:
+                                    name = f.name
+                                    args = f.args
+                                    logger.info(f"Gemini requested tool call: {name} with args {args}")
+                                    
+                                    # Execute corresponding closure function
+                                    if name == "search_google_drive":
+                                        result = search_google_drive(**args)
+                                    elif name == "ingest_google_drive_pdf":
+                                        result = ingest_google_drive_pdf(**args)
+                                    elif name == "query_knowledge_base":
+                                        result = query_knowledge_base(**args)
+                                    else:
+                                        result = {"error": f"Tool '{name}' is not supported."}
+                                    
+                                    # Print tool execution logs in stream
+                                    yield f"\n*[AURA is running tool: {name.replace('_', ' ').title()}...]*\n"
+                                    
+                                    current_prompt_or_part = types.Part.from_function_response(
+                                        name=name,
+                                        response=result
+                                    )
+                                continue
+                            else:
+                                break
+                        return
+                    except Exception as stream_err:
+                        attempt += 1
+                        if attempt >= max_attempts:
+                            raise stream_err
+                        logger.warning(f"Gemini streaming attempt {attempt} failed: {stream_err}. Retrying...")
+                        await asyncio.sleep(2 ** attempt)
             except Exception as e:
                 logger.error(f"Error executing Gemini agent stream: {e}. Falling back to Ollama.")
                 yield f"\n[Gemini connection failed. Falling back to local Ollama agent...]\n"
@@ -227,6 +331,10 @@ class AgentOrchestrator:
             logger.info("Ollama is not running. Falling back to Developer Mocks.")
 
         # 6. Final Mock Fallback for local testing/offline validation
+        if not settings.debug_mode:
+            yield f"\n[Error: AURA AI service is currently unavailable. Gemini and local Ollama interfaces are offline. Please check your connection and try again later.]\n"
+            return
+
         yield f"[Mock Mode - {active_agent.replace('_', ' ').title()}]\n"
         if active_agent == "task_planner":
             yield "I am your Task Planner. I've classified your intent and proposed creating a task for you.\n[ACTIONS]\n[{\"type\": \"add_task\", \"params\": {\"title\": \"Study Session\", \"priority\": \"medium\", \"category\": \"academic\"}}]"

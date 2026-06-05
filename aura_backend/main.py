@@ -136,6 +136,7 @@ class AgentChatRequest(BaseModel):
     messages: List[MessageSchema]
     custom_instructions: Optional[Dict[str, str]] = None
     use_rag: Optional[bool] = True
+    google_access_token: Optional[str] = None
 
 class MemoryExtractRequest(BaseModel):
     messages: List[MessageSchema]
@@ -253,7 +254,8 @@ async def agent_chat(request: AgentChatRequest, user_info: dict = Depends(verify
                 messages=formatted_messages,
                 custom_instructions=request.custom_instructions,
                 use_rag=request.use_rag,
-                user_id=user_info["uid"]
+                user_id=user_info["uid"],
+                google_access_token=request.google_access_token
             ):
                 yield chunk
         except Exception as e:
