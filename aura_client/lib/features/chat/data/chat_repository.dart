@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import 'package:google_generative_ai/google_generative_ai.dart' as google_ai;
+import 'package:google_sign_in/google_sign_in.dart';
 import '../../../core/database/database.dart';
 import '../../../core/database/database_provider.dart';
 import '../../../core/config/config.dart';
@@ -121,11 +122,9 @@ class ChatRepository {
       // Retrieve Google Access Token if logged in via Google Sign-In
       String? googleAccessToken;
       try {
-        final googleUser = GoogleSignIn.instance.currentUser;
-        if (googleUser != null) {
-          final auth = await googleUser.authentication;
-          googleAccessToken = auth.accessToken;
-        }
+        final scopes = ['https://www.googleapis.com/auth/drive.readonly'];
+        final authorization = await GoogleSignIn.instance.authorizationClient.authorizeScopes(scopes);
+        googleAccessToken = authorization.accessToken;
       } catch (e) {
         debugPrint("Failed to fetch Google access token: $e");
       }
