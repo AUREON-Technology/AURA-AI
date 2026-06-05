@@ -50,6 +50,9 @@ class AutomationService:
             }
 
         try:
+            from services.budget import increment_and_check_gemini_budget, GeminiBudgetExceededException
+            increment_and_check_gemini_budget()
+
             response = self.client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt,
@@ -59,6 +62,8 @@ class AutomationService:
             )
             data = json.loads(response.text)
             return data
+        except GeminiBudgetExceededException:
+            raise
         except Exception as e:
             logger.error(f"Error in Gemini email analysis: {e}")
             return {
@@ -97,6 +102,9 @@ class AutomationService:
             }
 
         try:
+            from services.budget import increment_and_check_gemini_budget, GeminiBudgetExceededException
+            increment_and_check_gemini_budget()
+
             response = self.client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt,
@@ -106,6 +114,8 @@ class AutomationService:
             )
             data = json.loads(response.text)
             return data
+        except GeminiBudgetExceededException:
+            raise
         except Exception as e:
             logger.error(f"Error in Gemini issue analysis: {e}")
             return {

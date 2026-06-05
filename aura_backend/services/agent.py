@@ -16,7 +16,7 @@ DEFAULT_INSTRUCTIONS = {
     "finance_advisor": "You are AURA's Finance Advisor. Analyze expenses, suggest budgets, and provide smart financial recommendations. Focus on helping the user stay within their means.",
     "health_companion": "You are AURA's Health Companion. Help track water, sleep, calories, weight, and exercise. Offer encouraging, evidence-based wellness tips.",
     "academic_coach": "You are AURA's Academic Coach. Assist with software engineering specifications, coding structures, learning topics, study guides, and flashcards.",
-    "research_agent": "You are AURA's Research Agent. Help the user gather facts, summarize articles or documents, analyze web contents, and perform structured knowledge synthesis. Focus on objective, logical, and well-cited information retrieval.",
+    "research_agent": "You are AURA's Research Agent. Help the user gather facts, summarize articles or documents, analyze web contents, and perform structured knowledge synthesis. Focus on objective, logical, and well-cited information retrieval. If the user asks to find, search, or extract information from a file in their Google Drive (such as a PDF), you MUST autonomously use the tools: first call search_google_drive to find matching files, then call ingest_google_drive_pdf to ingest the file, and then call query_knowledge_base to search for the requested information. Do NOT ask the user for confirmation or permission before calling these tools; execute them immediately in sequence.",
     "decision_agent": "You are AURA's Decision Agent. Help the user evaluate multiple options, perform risk assessments, structure cost-benefit analyses, and make logical choices. Outline trade-offs clearly for any decision."
 }
 
@@ -44,76 +44,33 @@ class AgentOrchestrator:
             self.client = genai.Client(api_key=settings.gemini_api_key)
 
     def classify_intent(self, user_message: str) -> str:
-        """Classifies user intent to route message to the appropriate specialized agent."""
-        prompt = f"""
-        Classify the following user message to determine if it should be handled by a specialized assistant or the general orchestrator.
-        Message: "{user_message}"
-
-        Choose exactly one of these categories:
-        - "task_planner": For managing tasks, to-dos, checklists, and scheduling.
-        - "finance_advisor": For expenses, income, budgeting, and financial planning.
-        - "health_companion": For sleeping habits, water logging, workout sessions, calories, and physical stats.
-        - "academic_coach": For studies, university, software development spec drafting, coding concepts, or research.
-        - "research_agent": For web search, gathering facts, summarizing documents, synthesising information.
-        - "decision_agent": For choices, cost-benefit analysis, options evaluation, trade-offs, and risk analysis.
-        - "orchestrator": For general conversation, greeting, settings, or if it doesn't fit the above.
-
-        Respond with ONLY the category string. Do not add explanation or markdown.
-        """
-
-        # 1. Try Gemini
-        if self.client:
-            import time
-            for attempt in range(3):
-                try:
-                    response = self.client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=prompt
-                    )
-                    intent = response.text.strip().lower()
-                    if intent in DEFAULT_INSTRUCTIONS:
-                        return intent
-                    break
-                except Exception as e:
-                    logger.warning(f"Intent classification attempt {attempt + 1} failed: {e}")
-                    if attempt < 2:
-                        time.sleep(2 ** (attempt + 1))
-                    else:
-                        logger.error(f"Intent classification via Gemini failed: {e}")
-
-        # 2. Try local Ollama
-        try:
-            import httpx
-            payload = {
-                "model": settings.ollama_model,
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-                "options": {"temperature": 0.0}
-            }
-            response = httpx.post(f"{settings.ollama_host.rstrip('/')}/api/chat", json=payload, timeout=2.5)
-            if response.status_code == 200:
-                intent = response.json().get("message", {}).get("content", "").strip().lower()
-                intent = intent.replace('"', '').replace("'", "").strip()
-                for key in DEFAULT_INSTRUCTIONS:
-                    if key in intent:
-                        return key
-        except Exception as e:
-            logger.error(f"Intent classification via Ollama failed: {e}")
-
-        # 3. Heuristic Fallback
+        """Classifies user intent to route message to the appropriate specialized agent locally without calling Gemini."""
         msg_lower = user_message.lower()
-        if any(k in msg_lower for k in ["task", "todo", "schedule", "remind"]):
+        
+        # 1. Task Planner
+        if any(k in msg_lower for k in ["task", "todo", "to-do", "schedule", "remind", "reminder", "checklist", "deadline", "calendar", "event", "appointment"]):
             return "task_planner"
-        elif any(k in msg_lower for k in ["expense", "income", "money", "spent", "budget"]):
+            
+        # 2. Finance Advisor
+        if any(k in msg_lower for k in ["expense", "income", "money", "spent", "budget", "cost", "price", "dollars", "usd", "transaction", "financial", "finance"]):
             return "finance_advisor"
-        elif any(k in msg_lower for k in ["water", "sleep", "calorie", "workout", "weight"]):
+            
+        # 3. Health Companion
+        if any(k in msg_lower for k in ["water", "sleep", "calorie", "workout", "weight", "health", "fitness", "calories", "exercise", "run", "gym"]):
             return "health_companion"
-        elif any(k in msg_lower for k in ["study", "course", "exam", "code", "lecture"]):
+            
+        # 4. Academic Coach
+        if any(k in msg_lower for k in ["study", "course", "exam", "code", "lecture", "university", "assignment", "class", "learn", "homework", "programming", "develop"]):
             return "academic_coach"
-        elif any(k in msg_lower for k in ["search", "google", "summarize", "find facts", "research"]):
+            
+        # 5. Research Agent
+        if any(k in msg_lower for k in ["search", "google", "summarize", "find facts", "research", "drive", "pdf", "file", "document", "extract"]):
             return "research_agent"
-        elif any(k in msg_lower for k in ["decide", "decision", "choose", "compare", "risk", "trade-off", "cost-benefit"]):
+            
+        # 6. Decision Agent
+        if any(k in msg_lower for k in ["decide", "decision", "choose", "compare", "risk", "trade-off", "cost-benefit", "eval", "evaluate", "pros and cons"]):
             return "decision_agent"
+            
         return "orchestrator"
 
     async def execute_agent_stream(
@@ -266,6 +223,9 @@ class AgentOrchestrator:
                         
                         current_prompt_or_part = current_prompt
                         while True:
+                            from services.budget import increment_and_check_gemini_budget, GeminiBudgetExceededException
+                            increment_and_check_gemini_budget()
+
                             response = chat.send_message_stream(current_prompt_or_part)
                             has_function_call = False
                             function_calls = []
@@ -303,36 +263,52 @@ class AgentOrchestrator:
                             else:
                                 break
                         return
+                    except GeminiBudgetExceededException:
+                        raise
                     except Exception as stream_err:
                         attempt += 1
                         if attempt >= max_attempts:
                             raise stream_err
                         logger.warning(f"Gemini streaming attempt {attempt} failed: {stream_err}. Retrying...")
                         await asyncio.sleep(2 ** attempt)
+            except GeminiBudgetExceededException as budget_exc:
+                yield f"\n[Error: {budget_exc.message}. Please retry after {budget_exc.retry_after} seconds.]\n"
+                return
             except Exception as e:
                 logger.error(f"Error executing Gemini agent stream: {e}. Falling back to Ollama.")
-                yield f"\n[Gemini connection failed. Falling back to local Ollama agent...]\n"
+                yield f"\n[Gemini connection failed. Falling back to local Ollama assistant...]\n"
 
         # 5. Try local Ollama execution fallback
-        from services.ollama import ollama_service
-        if await ollama_service.check_health():
-            try:
-                yield f"[Local Agent Mode - {active_agent.replace('_', ' ').title()}]\n"
-                async for chunk in ollama_service.generate_chat_stream(
-                    messages=messages,
-                    system_instruction=final_system_instruction
-                ):
-                    yield chunk
-                return
-            except Exception as ollama_err:
-                logger.error(f"Local Ollama execution failed: {ollama_err}")
-                yield f"\n[Local Ollama agent error: {ollama_err}. Falling back to developer mocks...]\n"
+        import os
+        is_cloud = os.getenv("DEPLOYMENT_MODE") == "cloud"
+        if not is_cloud:
+            from services.ollama import ollama_service
+            if await ollama_service.check_health():
+                try:
+                    yield f"[Local Agent Mode - {active_agent.replace('_', ' ').title()}]\n"
+                    async for chunk in ollama_service.generate_chat_stream(
+                        messages=messages,
+                        system_instruction=final_system_instruction
+                    ):
+                        yield chunk
+                    return
+                except Exception as ollama_err:
+                    logger.error(f"Local Ollama execution failed: {ollama_err}")
+                    if settings.debug_mode:
+                        yield f"\n[Local Ollama agent error: {ollama_err}. Falling back to developer mocks...]\n"
+            else:
+                logger.info("Ollama is not running or not healthy.")
         else:
-            logger.info("Ollama is not running. Falling back to Developer Mocks.")
+            logger.info("Cloud deployment detected. Ollama fallback disabled.")
 
         # 6. Final Mock Fallback for local testing/offline validation
         if not settings.debug_mode:
-            yield f"\n[Error: AURA AI service is currently unavailable. Gemini and local Ollama interfaces are offline. Please check your connection and try again later.]\n"
+            import json
+            yield json.dumps({
+                "success": False,
+                "error": "AURA AI service is currently unavailable. Gemini and local Ollama interfaces are offline.",
+                "retry_after": 60
+            })
             return
 
         yield f"[Mock Mode - {active_agent.replace('_', ' ').title()}]\n"

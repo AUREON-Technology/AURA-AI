@@ -18,12 +18,12 @@ class TestMultiAgentIntelligence(unittest.TestCase):
         self.assertEqual(intent, "task_planner")
 
     def test_memory_extraction_fallback(self):
-        """Verify memory extraction returns empty list when API key is missing."""
+        """Verify memory extraction runs locally and extracts facts without calling Gemini."""
         facts = memory_service.extract_memories([
             {"role": "user", "content": "I am studying CS"},
             {"role": "assistant", "content": "That is neat!"}
         ])
-        self.assertEqual(facts, [])
+        self.assertEqual(facts, ["The user is studying CS."])
 
     def test_agent_orchestration_mock_routing(self):
         """Verify that streaming mock responses classify intents and output tool actions."""

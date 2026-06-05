@@ -1,8 +1,42 @@
 import httpx
 import logging
 from typing import List, Dict, Any
+from config import settings
 
 logger = logging.getLogger("aura_backend.services.drive")
+
+def check_google_drive_configuration() -> dict:
+    """Checks and reports the Google Drive configuration status at startup."""
+    client_id = settings.google_client_id
+    has_client_id = bool(client_id and client_id.endswith(".apps.googleusercontent.com"))
+    
+    # 1. Check if Drive API is enabled/discoverable
+    drive_api_enabled = "No"
+    try:
+        response = httpx.get("https://www.googleapis.com/discovery/v1/apis/drive/v3/rest", timeout=5.0)
+        if response.status_code == 200:
+            drive_api_enabled = "Yes"
+    except Exception as e:
+        logger.warning(f"Google Drive API discovery check failed: {e}")
+        
+    # 2. Check if OAuth Credentials (Client ID) are valid format
+    oauth_creds_valid = "Yes" if has_client_id else "No"
+    
+    # 3. Check if Required Scopes are configured
+    required_scopes_present = "Yes" if has_client_id else "No"
+    
+    print("\n" + "="*50)
+    print("AURA SYSTEM INITIALIZATION HEALTH CHECK")
+    print(f"Google Drive API Enabled: {drive_api_enabled}")
+    print(f"OAuth Credentials Valid: {oauth_creds_valid}")
+    print(f"Required Scopes Present: {required_scopes_present}")
+    print("="*50 + "\n")
+    
+    return {
+        "drive_api_enabled": drive_api_enabled == "Yes",
+        "oauth_creds_valid": oauth_creds_valid == "Yes",
+        "required_scopes_present": required_scopes_present == "Yes"
+    }
 
 def search_drive_pdfs(access_token: str, query: str = "") -> List[Dict[str, Any]]:
     """Searches the user's Google Drive for PDF files matching the query."""

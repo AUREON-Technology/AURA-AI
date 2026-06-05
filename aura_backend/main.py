@@ -15,6 +15,7 @@ from services.automation import automation_service
 from services.agent import agent_orchestrator
 from services.memory import memory_service
 from services.security import verify_token
+from services.drive import check_google_drive_configuration
 
 # Logging Setup
 logging.basicConfig(
@@ -86,6 +87,24 @@ class PayloadSizeLimitMiddleware(BaseHTTPMiddleware):
 
 
 app = FastAPI(title="AURA AI OS Backend", version="1.0")
+
+from services.budget import GeminiBudgetExceededException
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(GeminiBudgetExceededException)
+async def gemini_budget_exception_handler(request: Request, exc: GeminiBudgetExceededException):
+    return JSONResponse(
+        status_code=429,
+        content={
+            "success": False,
+            "error": exc.message,
+            "retry_after": exc.retry_after
+        }
+    )
+
+@app.on_event("startup")
+def startup_event():
+    check_google_drive_configuration()
 
 # Register Security Middlewares (Executed in reverse order of registration)
 app.add_middleware(PayloadSizeLimitMiddleware, max_bytes=5 * 1024 * 1024)
@@ -222,6 +241,8 @@ async def analyze_email(request: EmailAnalyzeRequest, user_info: dict = Depends(
             body=request.body
         )
         return result
+    except GeminiBudgetExceededException as ge:
+        raise ge
     except Exception as e:
         logger.error(f"Error in analyze_email for user {user_info.get('email')}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -235,6 +256,8 @@ async def analyze_issue(request: IssueAnalyzeRequest, user_info: dict = Depends(
             body=request.body
         )
         return result
+    except GeminiBudgetExceededException as ge:
+        raise ge
     except Exception as e:
         logger.error(f"Error in analyze_issue for user {user_info.get('email')}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

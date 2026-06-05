@@ -14,6 +14,7 @@ class MemoryService:
         self.client_ai = None
         if settings.gemini_api_key:
             self.client_ai = genai.Client(api_key=settings.gemini_api_key)
+        self._memory_cache = {}
 
     @property
     def collection_name(self) -> str:
@@ -25,48 +26,53 @@ class MemoryService:
 
 
     def extract_memories(self, messages: List[Dict[str, str]]) -> List[str]:
-        """Analyzes a message segment to extract long-term user facts and preferences."""
-        if not self.client_ai:
+        """Analyzes a message segment to extract long-term user facts and preferences using deterministic local rules."""
+        user_msgs = [m["content"] for m in messages if m["role"] == "user"]
+        if not user_msgs:
             return []
-
-        # Format conversation history
-        history_str = ""
-        for msg in messages:
-            role = "User" if msg["role"] == "user" else "Assistant"
-            history_str += f"{role}: {msg['content']}\n"
-
-        prompt = f"""
-        Review the following conversation between the User and the Assistant.
-        Extract any new, significant, long-term personal facts, goals, or preferences about the User.
-        Ignore transient conversation details, greetings, or short-term topics.
-        Examples of valid facts to extract:
-        - "The user's name is Anas."
-        - "The user is studying computer engineering."
-        - "The user likes to study in the morning."
-        - "The user wants to sleep 8 hours a day."
-        - "The user is working on a mobile app project."
-
-        Respond ONLY with a JSON object containing a list of strings under the key "extracted_facts".
-        If no long-term facts are mentioned, return an empty list.
-
-        Conversation History:
-        {history_str}
-        """
-
-        try:
-            response = self.client_ai.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                )
-            )
-            data = json.loads(response.text)
-            facts = data.get("extracted_facts", [])
-            return [str(f) for f in facts]
-        except Exception as e:
-            logger.error(f"Error extracting memories: {e}")
-            return []
+        
+        last_msg = user_msgs[-1].strip()
+        facts = []
+        import re
+        
+        # Pattern 1: My name is X
+        m = re.search(r"\bmy name is ([a-zA-Z\s]+)", last_msg, re.IGNORECASE)
+        if m:
+            name = m.group(1).strip(". ")
+            if len(name.split()) <= 3:
+                facts.append(f"The user's name is {name}.")
+                
+        # Pattern 2: I am studying X / I study X
+        m = re.search(r"\bi (?:am studying|study) ([a-zA-Z\s]+)", last_msg, re.IGNORECASE)
+        if m:
+            subject = m.group(1).strip(". ")
+            facts.append(f"The user is studying {subject}.")
+            
+        # Pattern 3: I like X / I love X
+        m = re.search(r"\bi (?:like|love|prefer) ([a-zA-Z\s]+)", last_msg, re.IGNORECASE)
+        if m:
+            preference = m.group(1).strip(". ")
+            facts.append(f"The user likes {preference}.")
+            
+        # Pattern 4: I want to X / My goal is X
+        m = re.search(r"\bi want to ([a-zA-Z\s]+)", last_msg, re.IGNORECASE)
+        if m:
+            goal = m.group(1).strip(". ")
+            facts.append(f"The user wants to {goal}.")
+            
+        # Pattern 5: I am working on X
+        m = re.search(r"\bi (?:am working on|'m working on) ([a-zA-Z0-9\s]+)", last_msg, re.IGNORECASE)
+        if m:
+            project = m.group(1).strip(". ")
+            facts.append(f"The user is working on {project}.")
+            
+        # Pattern 6: I live in X
+        m = re.search(r"\bi live in ([a-zA-Z\s]+)", last_msg, re.IGNORECASE)
+        if m:
+            location = m.group(1).strip(". ")
+            facts.append(f"The user lives in {location}.")
+            
+        return facts
 
     def save_memory(self, fact: str, user_id: str = "global") -> bool:
         """Saves a fact to Qdrant Cloud as a memory point."""
@@ -75,6 +81,7 @@ class MemoryService:
             return False
 
         try:
+            self._memory_cache.clear()
             embedding = rag_service._get_embedding(fact)
             rag_service._ensure_collection_exists(len(embedding))
             # Use hash of the fact string as a stable ID
@@ -106,6 +113,14 @@ class MemoryService:
         """Retrieves user memories semantically relevant to the user query."""
         if not self.client:
             return []
+
+        import time
+        cache_key = (query, limit, user_id)
+        if cache_key in self._memory_cache:
+            timestamp, cached_results = self._memory_cache[cache_key]
+            if time.time() - timestamp < 15 * 60:
+                logger.info(f"Memory cache hit for query: '{query}'")
+                return cached_results
 
         try:
             query_vector = rag_service._get_embedding(query)
@@ -140,6 +155,7 @@ class MemoryService:
                     "content": result.payload.get("content", ""),
                     "score": result.score
                 })
+            self._memory_cache[cache_key] = (time.time(), results)
             return results
         except Exception as e:
             logger.error(f"Error retrieving memories: {e}")
@@ -193,6 +209,7 @@ class MemoryService:
             return False
 
         try:
+            self._memory_cache.clear()
             self.client.delete(
                 collection_name=self.collection_name,
                 points_selector=models.PointIdsList(

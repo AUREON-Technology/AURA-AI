@@ -13,6 +13,8 @@ class RAGService:
     self.collection_name = "aura_knowledge"
     self.client = None
     self._is_local = False
+    self._embedding_cache = {}
+    self._verified_collections = set()
 
     # Try connecting to Qdrant Cloud
     if settings.qdrant_host:
@@ -49,6 +51,8 @@ class RAGService:
 
   def _ensure_collection_exists(self, vector_size: int):
     if not self.client:
+      return
+    if self.collection_name in self._verified_collections:
       return
     try:
       collections = self.client.get_collections()
@@ -92,11 +96,20 @@ class RAGService:
       except Exception as idx_err:
         # Silently bypass if indexes already exist
         logger.debug(f"Payload index setup check completed: {idx_err}")
+      
+      self._verified_collections.add(self.collection_name)
     except Exception as e:
       logger.error(f"Error checking/creating Qdrant collection: {e}")
 
   def _get_embedding(self, text: str) -> List[float]:
     """Generates embedding. Uses Gemini gemini-embedding-001 (768d) if online, otherwise falls back to local encoders."""
+    import hashlib
+    text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    if text_hash in self._embedding_cache:
+      logger.info("Embedding cache hit.")
+      return self._embedding_cache[text_hash]
+
+    res_embedding = None
     # 1. Try Gemini gemini-embedding-001 first
     if self.client_ai:
       try:
@@ -108,12 +121,12 @@ class RAGService:
             output_dimensionality=768
           )
         )
-        return response.embeddings[0].values
+        res_embedding = response.embeddings[0].values
       except Exception as e:
         logger.warning(f"Failed to generate embedding with Gemini: {e}. Trying local fallback.")
 
     # 2. Try Local sentence-transformers (lightweight MiniLM) in debug mode only
-    if settings.debug_mode:
+    if not res_embedding and settings.debug_mode:
       try:
         if not hasattr(self, '_local_encoder'):
           from sentence_transformers import SentenceTransformer
@@ -121,24 +134,29 @@ class RAGService:
           self._local_encoder = SentenceTransformer(settings.local_embedding_model)
         
         embeddings = self._local_encoder.encode([text])
-        return embeddings[0].tolist()
+        res_embedding = embeddings[0].tolist()
       except Exception as sent_err:
         logger.warning(f"Local sentence-transformers embedding failed: {sent_err}. Trying Ollama local embedding.")
-    else:
+    elif not res_embedding and not settings.debug_mode:
       logger.warning("Skipping local sentence-transformers embedding fallback in production (non-debug) to prevent OOM crash.")
 
     # 3. Try Ollama local model embedding fallback
-    try:
-      from services.ollama import ollama_service
-      emb = ollama_service.generate_embeddings(text)
-      if emb:
-        return emb
-    except Exception as ollama_err:
-      logger.warning(f"Ollama local embedding failed: {ollama_err}")
+    if not res_embedding:
+      try:
+        from services.ollama import ollama_service
+        emb = ollama_service.generate_embeddings(text)
+        if emb:
+          res_embedding = emb
+      except Exception as ollama_err:
+        logger.warning(f"Ollama local embedding failed: {ollama_err}")
 
     # 4. Final mock zero-vector fallback (default 384 for sentence-transformers, 768 for Gemini)
-    default_dim = 384 if self._is_local else 768
-    return [0.0] * default_dim
+    if not res_embedding:
+      default_dim = 384 if self._is_local else 768
+      res_embedding = [0.0] * default_dim
+
+    self._embedding_cache[text_hash] = res_embedding
+    return res_embedding
 
   def ingest_document(self, doc_id: str, content: str, metadata: Dict[str, Any]) -> bool:
     """Chunks and uploads a document to local/cloud Qdrant."""

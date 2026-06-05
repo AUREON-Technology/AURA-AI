@@ -65,6 +65,14 @@ class AIService:
         yield f"\n[Offline Fallback Error: Failed to run Ollama: {fallback_error}]"
       return
 
+    # Check Gemini Request Budget
+    from services.budget import increment_and_check_gemini_budget, GeminiBudgetExceededException
+    try:
+      increment_and_check_gemini_budget()
+    except GeminiBudgetExceededException as budget_exc:
+      yield f"\n[Error: {budget_exc.message}. Please retry after {budget_exc.retry_after} seconds.]\n"
+      return
+
     try:
       # Parse input messages into Gemini's format:
       gemini_history = []
