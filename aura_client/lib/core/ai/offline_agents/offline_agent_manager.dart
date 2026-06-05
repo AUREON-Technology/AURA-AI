@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'inference_provider.dart';
+import 'native_llama_provider.dart';
 
 class OllamaHostNotifier extends Notifier<String> {
   @override
@@ -77,15 +78,24 @@ class OllamaInferenceProvider implements InferenceProvider {
         await for (final chunk in response.stream.transform(utf8.decoder)) {
           final lines = chunk.split('\n');
           for (final line in lines) {
-            if (line.trim().isEmpty) continue;
+            final trimmed = line.trim();
+            if (trimmed.isEmpty) continue;
             try {
-              final parsed = jsonDecode(line);
-              final content = parsed["message"]?["content"] as String?;
-              if (content != null) {
-                yield content;
+              final parsed = jsonDecode(trimmed);
+              if (parsed is Map && parsed.containsKey("error")) {
+                yield "\n[Error: ${parsed["error"]}]";
+              } else {
+                final content = parsed["message"]?["content"] as String?;
+                if (content != null) {
+                  yield content;
+                }
               }
             } catch (_) {
-              // Ignore split JSON chunks errors
+              if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+                yield '\n$trimmed';
+              } else if (trimmed.contains('Ollama proxy')) {
+                yield '\n[$trimmed]';
+              }
             }
           }
         }
@@ -100,7 +110,7 @@ class OllamaInferenceProvider implements InferenceProvider {
 
 /// Dynamic active inference provider, allowing swapping local providers
 final activeInferenceProvider = Provider<InferenceProvider>((ref) {
-  return OllamaInferenceProvider(ref);
+  return NativeLlamaInferenceProvider(ref);
 });
 
 final ollamaHealthProvider = FutureProvider<bool>((ref) async {

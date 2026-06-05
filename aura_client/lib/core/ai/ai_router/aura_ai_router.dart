@@ -143,16 +143,24 @@ class AuraAIRouter {
     ));
 
     if (provider == AIProvider.gemini) {
+      bool hasErrors = false;
       try {
         final onlineAgent = _ref.read(onlineAgentManagerProvider);
-        yield* onlineAgent.streamResponse(
+        final stream = onlineAgent.streamResponse(
           agentId: agentId,
           messages: messages,
           customInstructions: customInstructions,
           useRag: useRag,
         );
+        await for (final chunk in stream) {
+          yield chunk;
+        }
       } catch (e) {
         debugPrint("Gemini stream failed, triggering auto failover: $e");
+        hasErrors = true;
+      }
+
+      if (hasErrors) {
         // Update state to failover
         _ref.read(aiRouterStatusProvider.notifier).updateStatus(AIRouterStatus(
           activeModel: "phi3",

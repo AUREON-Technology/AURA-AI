@@ -40,10 +40,32 @@ This document summarizes the upgrades made to transform AURA AI into a productio
   * [knowledge_center_page.dart](file:///e:/AURA%20AI/aura_client/lib/features/knowledge/presentation/knowledge_center_page.dart): Ingest documents and query vector database context.
   * [router.dart](file:///e:/AURA%20AI/aura_client/lib/core/routing/router.dart): Registered all new routes.
 
-### 1.7 Security Hardening
+### 1.7 Security Hardening & Device Attestation
 - **Files created**: [firestore.rules](file:///e:/AURA%20AI/firestore.rules) and [storage.rules](file:///e:/AURA%20AI/storage.rules).
 - **Automation**: Setup [deploy_rules.ps1](file:///e:/AURA%20AI/deploy_rules.ps1) automation script.
 - **Attestation**: Setup [device_validation_service.dart](file:///e:/AURA%20AI/aura_client/lib/core/security/device_validation_service.dart) generating hardware security attestation headers.
+
+### 1.8 Finalization & Secure Production Alignment (v2.0.0 Release Patch)
+- **Attestation Header Injection**: Updated all outbound HTTP requests calling secure backend endpoints to include device attestation headers.
+  * *Modified repositories:* [memory_repository.dart](file:///e:/AURA%20AI/aura_client/lib/features/chat/data/memory_repository.dart), [knowledge_center.dart](file:///e:/AURA%20AI/aura_client/lib/core/ai/knowledge/knowledge_center.dart), [automation_repository.dart](file:///e:/AURA%20AI/aura_client/lib/features/automations/data/automation_repository.dart), and [learning_dashboard.dart](file:///e:/AURA%20AI/aura_client/lib/features/learning/presentation/learning_dashboard.dart).
+- **Health Check Optimization**: Replaced inline `FutureBuilder` checks that triggered duplicate ping requests during widget rebuilds with a cached Riverpod `ollamaHealthProvider` inside [offline_agent_manager.dart](file:///e:/AURA%20AI/aura_client/lib/core/ai/offline_agents/offline_agent_manager.dart). Swapped references inside [home_page.dart](file:///e:/AURA%20AI/aura_client/lib/features/home/presentation/home_page.dart) and [model_manager_page.dart](file:///e:/AURA%20AI/aura_client/lib/features/models/presentation/model_manager_page.dart).
+- **Mobile Layout Fix**: Removed invalid `Expanded` widgets wrapping scrollable or multi-row card components inside [home_page.dart](file:///e:/AURA%20AI/aura_client/lib/features/home/presentation/home_page.dart), resolving the unbounded height layout crashes on mobile devices and restoring card visuals.
+- **Provider Caching & Loop Cure**: Changed `ollamaHealthProvider` to a standard non-auto-dispose `FutureProvider`. This preserves the cached status across widget rebuild cycles and eliminates infinite HTTP loop storms to the backend `/api/tags` endpoint during layout exception recoveries.
+- **Proxy Error Hardening**: Updated FastAPI proxy endpoints `/api/tags` and `/api/delete` in backend [main.py](file:///e:/AURA%20AI/aura_backend/main.py) to catch connection exceptions cleanly and return a `503 Service Unavailable` JSON response instead of spawning `500 Internal Server Error` exceptions. Committed and deployed the changes to the Hugging Face production Space.
+- **Dataset Compiler Import Fix**: Fixed a runtime crash on `/api/learning/build_dataset` by importing the missing `json` library at the top of backend [main.py](file:///e:/AURA%20AI/aura_backend/main.py). Committed and deployed the fix to the Hugging Face production Space.
+
+### 1.9 Stream Error Handling & Failover Optimization
+- **Offline Proxy Stream Parser Fix**: Updated `OllamaInferenceProvider` in [offline_agent_manager.dart](file:///e:/AURA%20AI/aura_client/lib/core/ai/offline_agents/offline_agent_manager.dart) to capture raw string formatting errors (like connection refused proxy messages) inside the stream `catch` block and yield them to the user instead of silently swallowing the exception and hanging.
+- **Online Agent Response Parsing**: Refactored `OnlineAgentManager` in [online_agent_manager.dart](file:///e:/AURA%20AI/aura_client/lib/core/ai/online_agents/online_agent_manager.dart) to detect JSON errors within the stream and parse non-200 HTTP response bodies (like Gemini 429 quota exhaustion or backend fallbacks) to output clean error messages in the chat interface.
+- **Asynchronous Exception Routing**: Replaced the bypassing `yield*` statement with an `await for` loop inside the Gemini route of `AuraAIRouter` in [aura_ai_router.dart](file:///e:/AURA%20AI/aura_client/lib/core/ai/ai_router/aura_ai_router.dart). This ensures that stream exceptions are intercepted by the router's try-catch block and correctly trigger failover to the local `phi3` offline model.
+
+### 1.10 On-Device Native Inference Integration (llama.cpp)
+- **Native Dependency**: Added `flutter_llama` dependency to [pubspec.yaml](file:///e:/AURA%20AI/pubspec.yaml) to enable hardware-accelerated local inference using C++ libraries natively on mobile devices via Dart FFI.
+- **Native LLM Provider**: Created [native_llama_provider.dart](file:///e:/AURA%20AI/aura_client/lib/core/ai/offline_agents/native_llama_provider.dart) implementing `InferenceProvider`. Designed a formatter utilizing the Llama 3 Instruct chat template to format the prompt string, and streamed tokens directly using `generateStream`.
+- **Direct GGUF Downloader**: Modified [model_download_manager.dart](file:///e:/AURA%20AI/aura_client/lib/core/ai/offline_agents/model_download_manager.dart) to direct download `.gguf` weights from Hugging Face repositories straight into the app's local documents storage, bypassing the PC proxy.
+- **Model Manager UI Adaptations**: Updated [model_manager_page.dart](file:///e:/AURA%20AI/aura_client/lib/features/models/presentation/model_manager_page.dart) to display on-device loading status and added native `File.delete` capability to clear model weights from the local disk when deleted.
+- **Android SDK Configuration**: Resolved CMake dependencies by installing CMake version `3.18.1` inside the Android SDK using command-line `sdkmanager` hooks.
+- **Local Model Routing Match Fix**: Resolved the mismatch between simplified model names returned by the router (e.g. `"phi3"`) and actual downloaded model IDs (e.g. `"phi3:latest"`). Refactored `NativeLlamaInferenceProvider.generateStream` in [native_llama_provider.dart](file:///e:/AURA%20AI/aura_client/lib/core/ai/offline_agents/native_llama_provider.dart) to query the currently active model from the local SQLite `offlineModelWeights` table and dynamically resolve the GGUF file path.
 
 ---
 
@@ -61,7 +83,17 @@ Run flutter tests:
 ```bash
 flutter test
 ```
-* **Status:** Passed.
+* **Status:** Passed (all tests passed successfully, including FFI-mocked routing and provider verification).
+
+### 2.3 Production Compilation
+Run production build:
+```bash
+flutter build apk --release --obfuscate --split-debug-info=build/app/outputs/symbols --split-per-abi --dart-define=BACKEND_URL=https://anas-ibrahim-mahmoud-aura-ai-backend.hf.space
+```
+* **Status:** Built release APKs successfully in `aura_client/build/app/outputs/flutter-apk/`:
+  * `app-armeabi-v7a-release.apk` (21.3 MB)
+  * `app-arm64-v8a-release.apk` (28.0 MB) (Contains native compiled C++ `.so` libraries for hardware acceleration)
+  * `app-x86_64-release.apk` (24.9 MB)
 
 ---
 

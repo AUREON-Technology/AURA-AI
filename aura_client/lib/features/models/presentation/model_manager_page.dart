@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart' hide Column;
+import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import '../../../core/database/database.dart';
 import '../../../core/database/database_provider.dart';
@@ -63,15 +65,16 @@ class ModelManagerPage extends ConsumerWidget {
     final db = ref.read(databaseProvider);
     await (db.delete(db.offlineModelWeights)..where((t) => t.id.equals(modelId))).go();
     
-    // Request local Ollama daemon to delete model
-    final host = ref.read(ollamaHostProvider);
+    // Delete local GGUF weight file
     try {
-      await http.post(
-        Uri.parse("$host/api/delete"),
-        body: jsonEncode({"name": modelId}),
-      ).timeout(const Duration(seconds: 5));
+      final appDir = await getApplicationDocumentsDirectory();
+      final file = File("${appDir.path}/models/$modelId");
+      if (await file.exists()) {
+        await file.delete();
+        debugPrint("Deleted local model file: ${file.path}");
+      }
     } catch (e) {
-      debugPrint("Ollama delete model API request failed: $e");
+      debugPrint("Failed to delete local model file: $e");
     }
   }
 
@@ -158,8 +161,9 @@ class ModelManagerPage extends ConsumerWidget {
   Widget _buildOllamaStatusCard(WidgetRef ref, String host) {
     final healthAsync = ref.watch(ollamaHealthProvider);
     final connected = healthAsync.value ?? false;
-    final color = connected ? AuraTheme.accentTeal : Colors.redAccent;
-    final statusText = connected ? "Ollama Connected" : "Ollama Not Connected";
+    final color = connected ? AuraTheme.accentTeal : AuraTheme.textSecondary;
+    final statusText = connected ? "On-Device Engine Ready" : "No Active Local Model";
+    final descText = connected ? "Active local model loaded in memory" : "Download a model and toggle it Active";
 
     return Card(
       color: AuraTheme.cardBg,
@@ -169,7 +173,7 @@ class ModelManagerPage extends ConsumerWidget {
           children: [
             CircleAvatar(
               backgroundColor: color.withOpacity(0.1),
-              child: Icon(connected ? Icons.cloud_done : Icons.cloud_off, color: color),
+              child: Icon(connected ? Icons.memory : Icons.no_sim_outlined, color: color),
             ),
             const SizedBox(width: 16),
             Expanded(
@@ -182,7 +186,7 @@ class ModelManagerPage extends ConsumerWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    "Ollama Daemon: $host",
+                    descText,
                     style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 12),
                   ),
                 ],
@@ -193,7 +197,7 @@ class ModelManagerPage extends ConsumerWidget {
                 ref.refresh(ollamaHealthProvider);
               },
               icon: const Icon(Icons.refresh, size: 16),
-              label: const Text("Ping"),
+              label: const Text("Refresh"),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               ),

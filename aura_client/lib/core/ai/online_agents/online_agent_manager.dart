@@ -68,8 +68,28 @@ class OnlineAgentManager {
       if (response.statusCode == 200) {
         backendSuccess = true;
         await for (final chunk in response.stream.transform(utf8.decoder)) {
+          final trimmed = chunk.trim();
+          if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+            try {
+              final parsed = jsonDecode(trimmed);
+              if (parsed is Map && parsed.containsKey("error")) {
+                yield "\n[Error: ${parsed["error"]}]";
+                continue;
+              }
+            } catch (_) {}
+          }
           yield chunk;
         }
+      } else {
+        try {
+          final bodyBytes = await response.stream.toBytes();
+          final bodyString = utf8.decode(bodyBytes);
+          final parsed = jsonDecode(bodyString);
+          if (parsed is Map && parsed.containsKey("error")) {
+            yield "\n[Error: ${parsed["error"]}]";
+            backendSuccess = true;
+          }
+        } catch (_) {}
       }
     } catch (e) {
       debugPrint("Hosted FastAPI stream failed: $e. Attemping client-side SDK fallback.");
