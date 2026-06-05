@@ -230,38 +230,49 @@ class HomePage extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 10),
-            Expanded(
-              child: tasksAsync.when(
-                data: (tasks) {
-                  final active = tasks.where((t) => !t.isCompleted).take(3).toList();
-                  if (active.isEmpty) {
-                    return const Center(child: Text("No active tasks!", style: TextStyle(color: Colors.white24, fontSize: 12)));
-                  }
-                  return ListView.builder(
-                    itemCount: active.length,
-                    itemBuilder: (context, index) {
-                      final task = active[index];
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4.0),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.circle_outlined, size: 14, color: AuraTheme.accentIndigo),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                task.title,
-                                style: const TextStyle(color: Colors.white, fontSize: 13),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
+            tasksAsync.when(
+              data: (tasks) {
+                final active = tasks.where((t) => !t.isCompleted).take(3).toList();
+                if (active.isEmpty) {
+                  return const SizedBox(
+                    height: 60,
+                    child: Center(
+                      child: Text("No active tasks!", style: TextStyle(color: Colors.white24, fontSize: 12)),
+                    ),
                   );
-                },
-                loading: () => const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
-                error: (e, _) => const Text("Error loading tasks", style: TextStyle(color: Colors.redAccent, fontSize: 12)),
+                }
+                return ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: active.length,
+                  itemBuilder: (context, index) {
+                    final task = active[index];
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4.0),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.circle_outlined, size: 14, color: AuraTheme.accentIndigo),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              task.title,
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+              loading: () => const SizedBox(
+                height: 60,
+                child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+              ),
+              error: (e, _) => const SizedBox(
+                height: 60,
+                child: Center(child: Text("Error loading tasks", style: TextStyle(color: Colors.redAccent, fontSize: 12))),
               ),
             )
           ],
@@ -289,39 +300,50 @@ class HomePage extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 10),
-            Expanded(
-              child: calendarAsync.when(
-                data: (events) {
-                  final upcoming = events.take(3).toList();
-                  if (upcoming.isEmpty) {
-                    return const Center(child: Text("No events scheduled", style: TextStyle(color: Colors.white24, fontSize: 12)));
-                  }
-                  return ListView.builder(
-                    itemCount: upcoming.length,
-                    itemBuilder: (context, index) {
-                      final event = upcoming[index];
-                      final timeStr = DateFormat('hh:mm a').format(event.startTime);
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4.0),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.calendar_today_outlined, size: 12, color: AuraTheme.accentAmber),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                "${event.title} ($timeStr)",
-                                style: const TextStyle(color: Colors.white, fontSize: 13),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
+            calendarAsync.when(
+              data: (events) {
+                final upcoming = events.take(3).toList();
+                if (upcoming.isEmpty) {
+                  return const SizedBox(
+                    height: 60,
+                    child: Center(
+                      child: Text("No events scheduled", style: TextStyle(color: Colors.white24, fontSize: 12)),
+                    ),
                   );
-                },
-                loading: () => const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
-                error: (e, _) => const Text("Error loading calendar", style: TextStyle(color: Colors.redAccent, fontSize: 12)),
+                }
+                return ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: upcoming.length,
+                  itemBuilder: (context, index) {
+                    final event = upcoming[index];
+                    final timeStr = DateFormat('hh:mm a').format(event.startTime);
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4.0),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.calendar_today_outlined, size: 12, color: AuraTheme.accentAmber),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              "${event.title} ($timeStr)",
+                              style: const TextStyle(color: Colors.white, fontSize: 13),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+              loading: () => const SizedBox(
+                height: 60,
+                child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+              ),
+              error: (e, _) => const SizedBox(
+                height: 60,
+                child: Center(child: Text("Error loading calendar", style: TextStyle(color: Colors.redAccent, fontSize: 12))),
               ),
             )
           ],
@@ -349,24 +371,33 @@ class HomePage extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 10),
-            Expanded(
-              child: healthAsync.when(
-                data: (record) {
-                  if (record == null) {
-                    return const Center(child: Text("No health records today", style: TextStyle(color: Colors.white24, fontSize: 12)));
-                  }
-                  return Column(
-                    children: [
-                      _buildHealthMetricRow("Water", "${record.waterIntakeMl} mL", Icons.water_drop, Colors.blueAccent),
-                      const SizedBox(height: 6),
-                      _buildHealthMetricRow("Sleep", "${(record.sleepMinutes / 60).toStringAsFixed(1)} hrs", Icons.bedtime, Colors.purpleAccent),
-                      const SizedBox(height: 6),
-                      _buildHealthMetricRow("Exercise", "${record.exerciseMinutes} mins", Icons.fitness_center, AuraTheme.accentTeal),
-                    ],
+            healthAsync.when(
+              data: (record) {
+                if (record == null) {
+                  return const SizedBox(
+                    height: 60,
+                    child: Center(
+                      child: Text("No health records today", style: TextStyle(color: Colors.white24, fontSize: 12)),
+                    ),
                   );
-                },
-                loading: () => const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
-                error: (e, _) => const Text("Error loading health statistics", style: TextStyle(color: Colors.redAccent, fontSize: 12)),
+                }
+                return Column(
+                  children: [
+                    _buildHealthMetricRow("Water", "${record.waterIntakeMl} mL", Icons.water_drop, Colors.blueAccent),
+                    const SizedBox(height: 6),
+                    _buildHealthMetricRow("Sleep", "${(record.sleepMinutes / 60).toStringAsFixed(1)} hrs", Icons.bedtime, Colors.purpleAccent),
+                    const SizedBox(height: 6),
+                    _buildHealthMetricRow("Exercise", "${record.exerciseMinutes} mins", Icons.fitness_center, AuraTheme.accentTeal),
+                  ],
+                );
+              },
+              loading: () => const SizedBox(
+                height: 60,
+                child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+              ),
+              error: (e, _) => const SizedBox(
+                height: 60,
+                child: Center(child: Text("Error loading health statistics", style: TextStyle(color: Colors.redAccent, fontSize: 12))),
               ),
             )
           ],
@@ -413,59 +444,63 @@ class HomePage extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 10),
-            Expanded(
-              child: healthAsync.when(
-                data: (active) {
-                  return Column(
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text("Local Inference Provider", style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12)),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: active ? AuraTheme.accentTeal.withOpacity(0.15) : Colors.redAccent.withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(4),
+            healthAsync.when(
+              data: (active) {
+                return Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Local Inference Provider", style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12)),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: active ? AuraTheme.accentTeal.withOpacity(0.15) : Colors.redAccent.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            active ? "Operational" : "Offline",
+                            style: TextStyle(
+                              color: active ? AuraTheme.accentTeal : Colors.redAccent,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 10,
                             ),
-                            child: Text(
-                              active ? "Operational" : "Offline",
-                              style: TextStyle(
-                                color: active ? AuraTheme.accentTeal : Colors.redAccent,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 10,
-                              ),
-                            ),
-                          )
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text("Failover Middleware", style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12)),
-                          const Text(
-                            "Active (Auto)",
-                            style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 11),
-                          )
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text("Privacy Mode", style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12)),
-                          const Text(
-                            "Encrypted Local SQLite",
-                            style: TextStyle(color: AuraTheme.accentAmber, fontWeight: FontWeight.bold, fontSize: 11),
-                          )
-                        ],
-                      ),
-                    ],
-                  );
-                },
-                loading: () => const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
-                error: (err, _) => const Center(child: Text("Offline", style: TextStyle(color: Colors.redAccent, fontSize: 12))),
+                          ),
+                        )
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Failover Middleware", style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12)),
+                        const Text(
+                          "Active (Auto)",
+                          style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 11),
+                        )
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Privacy Mode", style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12)),
+                        const Text(
+                          "Encrypted Local SQLite",
+                          style: TextStyle(color: AuraTheme.accentAmber, fontWeight: FontWeight.bold, fontSize: 11),
+                        )
+                      ],
+                    ),
+                  ],
+                );
+              },
+              loading: () => const SizedBox(
+                height: 60,
+                child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+              ),
+              error: (err, _) => const SizedBox(
+                height: 60,
+                child: Center(child: Text("Offline", style: TextStyle(color: Colors.redAccent, fontSize: 12))),
               ),
             )
           ],
