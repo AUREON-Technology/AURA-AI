@@ -35,8 +35,24 @@ class LocalModelSeeder {
     // The path on Android matches modelsDir.path/modelName
     final destFile = File("${modelsDir.path}/${modelName.replaceAll(':', '_')}");
 
+    const expectedSize = 986045824;
+    bool isSeededCorrectly = false;
+    if (await destFile.exists()) {
+      final actualSize = await destFile.length();
+      if (actualSize == expectedSize) {
+        isSeededCorrectly = true;
+      } else {
+        if (kDebugMode) {
+          print("[LocalModelSeeder] Corrupted/truncated model found: $actualSize bytes (expected $expectedSize). Deleting...");
+        }
+        try {
+          await destFile.delete();
+        } catch (_) {}
+      }
+    }
+
     // If it's already copied and registered, we are done
-    if (existingModel != null && existingModel.isDownloaded && await destFile.exists()) {
+    if (existingModel != null && existingModel.isDownloaded && isSeededCorrectly) {
       if (kDebugMode) {
         print("[LocalModelSeeder] Qwen-2 model is already seeded and present.");
       }

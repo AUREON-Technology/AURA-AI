@@ -109,6 +109,9 @@ class NativeLlamaInferenceProvider implements InferenceProvider {
         prompt: prompt,
         temperature: 0.7,
         maxTokens: 512,
+        topP: 0.95,
+        topK: 40,
+        repeatPenalty: 1.1,
       );
 
       await for (final token in llama.generateStream(params)) {

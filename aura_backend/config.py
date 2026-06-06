@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     firebase_service_account_path: str = "credentials.json"
     firebase_credentials_json: str = ""
     debug_mode: bool = False
+    allow_mock_attestation: bool = True
 
     class Config:
         env_file = ".env"

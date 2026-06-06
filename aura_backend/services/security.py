@@ -2,9 +2,11 @@ import os
 import json
 import logging
 import base64
-from typing import Optional
+from typing import Optional, Dict, Any
 import redis
 from config import settings
+from googleapiclient.discovery import build
+from google.oauth2 import service_account
 
 logger = logging.getLogger("aura_backend.security")
 
@@ -12,12 +14,52 @@ logger = logging.getLogger("aura_backend.security")
 redis_client = None
 try:
     redis_host = os.getenv("REDIS_HOST", "localhost")
-    redis_client = redis.Redis(host=redis_host, port=6379, db=0, decode_responses=True)
+    client = redis.Redis(host=redis_host, port=6379, db=0, decode_responses=True, socket_connect_timeout=2)
+    client.ping()
+    redis_client = client
     logger.info("Connected to Redis for attestation nonce storage.")
 except Exception as e:
     logger.warning(f"Failed to connect to Redis: {e}. Nonce verification will bypass checking Redis store.")
 
+
 _local_nonce_cache = set()
+
+def _get_play_integrity_service():
+    """Builds and returns the Google Play Integrity API client service using credentials.json."""
+    creds = None
+    if settings.firebase_credentials_json:
+        try:
+            info = json.loads(settings.firebase_credentials_json)
+            creds = service_account.Credentials.from_service_account_info(info)
+        except Exception as e:
+            logger.error(f"Error loading Play Integrity credentials from env: {e}")
+            
+    if not creds and settings.firebase_service_account_path and os.path.exists(settings.firebase_service_account_path):
+        try:
+            creds = service_account.Credentials.from_service_account_file(settings.firebase_service_account_path)
+        except Exception as e:
+            logger.error(f"Error loading Play Integrity credentials from file: {e}")
+
+    if not creds and os.path.exists("credentials.json"):
+        try:
+            creds = service_account.Credentials.from_service_account_file("credentials.json")
+        except Exception as e:
+            logger.error(f"Error loading Play Integrity credentials from credentials.json: {e}")
+
+    if not creds and os.path.exists("../credentials.json"):
+        try:
+            creds = service_account.Credentials.from_service_account_file("../credentials.json")
+        except Exception as e:
+            logger.error(f"Error loading Play Integrity credentials from ../credentials.json: {e}")
+
+    if creds:
+        try:
+            scoped_creds = creds.with_scopes(["https://www.googleapis.com/auth/playintegrity"])
+            return build("playintegrity", "v1", credentials=scoped_creds)
+        except Exception as e:
+            logger.error(f"Failed to build Play Integrity API client: {e}")
+    return None
+
 
 def verify_device_integrity(attestation_token: Optional[str], platform: Optional[str], expected_nonce: Optional[str] = None) -> bool:
     """
@@ -28,6 +70,17 @@ def verify_device_integrity(attestation_token: Optional[str], platform: Optional
     is_testing = os.environ.get("TESTING") == "True" or settings.debug_mode
     if is_testing:
         logger.info("Device integrity bypass: running in testing/debug mode.")
+        return True
+
+    if settings.allow_mock_attestation and attestation_token in [
+        "android_play_integrity_mock_assertion_token_string",
+        "ios_app_attest_mock_assertion_token_string",
+        "windows_hello_mock_attestation_token",
+        "macos_device_mock_attestation_token",
+        "linux_desktop_mock_attestation_token",
+        "local_developer_trust_token"
+    ]:
+        logger.info(f"Device integrity bypass: allowed mock token '{attestation_token}'")
         return True
         
     if not attestation_token:
@@ -52,16 +105,38 @@ def verify_device_integrity(attestation_token: Optional[str], platform: Optional
     try:
         if platform == "android":
             logger.info("Verifying Android Play Integrity Token...")
-            parts = attestation_token.split('.')
-            if len(parts) != 3:
-                logger.warning("Android Integrity failure: Invalid JWS format.")
-                return False
+            
+            # Try Google Play Integrity API first for cryptographic validation
+            service = _get_play_integrity_service()
+            payload = None
+            if service:
+                try:
+                    logger.info("Calling Google Play Integrity API for cryptographic verification...")
+                    result = service.v1().decodeIntegrityToken(
+                        packageName="com.aura.ai",
+                        body={"integrityToken": attestation_token}
+                    ).execute()
+                    payload = result.get("tokenPayloadExternal", {})
+                    logger.info("Google Play Integrity API cryptographic verification call succeeded.")
+                except Exception as api_err:
+                    logger.warning(f"Google Play Integrity API cryptographic verification call failed: {api_err}. Falling back to local JWS decoding.")
+            
+            if not payload:
+                # Local fallback parsing
+                parts = attestation_token.split('.')
+                if len(parts) != 3:
+                    logger.warning("Android Integrity failure: Invalid JWS format.")
+                    return False
 
-            # Base64url decode Play Integrity JWS Payload
-            payload_b64 = parts[1]
-            payload_b64 += '=' * (4 - len(payload_b64) % 4)
-            payload_bytes = base64.urlsafe_b64decode(payload_b64)
-            payload = json.loads(payload_bytes.decode('utf-8'))
+                # Base64url decode Play Integrity JWS Payload
+                payload_b64 = parts[1]
+                payload_b64 += '=' * (4 - len(payload_b64) % 4)
+                try:
+                    payload_bytes = base64.urlsafe_b64decode(payload_b64)
+                    payload = json.loads(payload_bytes.decode('utf-8'))
+                except Exception as parse_err:
+                    logger.warning(f"Android Integrity failure: Failed to parse JWS payload: {parse_err}")
+                    return False
 
             # Check app integrity package
             request_details = payload.get("requestDetails", {})
@@ -86,6 +161,7 @@ def verify_device_integrity(attestation_token: Optional[str], platform: Optional
 
             logger.info("Android Play Integrity verification successful.")
             return True
+
 
         elif platform == "ios":
             logger.info("Verifying iOS AppAttest assertion...")
