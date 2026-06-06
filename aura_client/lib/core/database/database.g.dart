@@ -2537,17 +2537,15 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _contentMeta = const VerificationMeta(
-    'content',
-  );
   @override
-  late final GeneratedColumn<String> content = GeneratedColumn<String>(
-    'content',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
+  late final GeneratedColumnWithTypeConverter<String, String> content =
+      GeneratedColumn<String>(
+        'content',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+      ).withConverter<String>($MessagesTable.$convertercontent);
   static const VerificationMeta _modelUsedMeta = const VerificationMeta(
     'modelUsed',
   );
@@ -2627,14 +2625,6 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
     } else if (isInserting) {
       context.missing(_roleMeta);
     }
-    if (data.containsKey('content')) {
-      context.handle(
-        _contentMeta,
-        content.isAcceptableOrUnknown(data['content']!, _contentMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_contentMeta);
-    }
     if (data.containsKey('model_used')) {
       context.handle(
         _modelUsedMeta,
@@ -2676,10 +2666,12 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
         DriftSqlType.string,
         data['${effectivePrefix}role'],
       )!,
-      content: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}content'],
-      )!,
+      content: $MessagesTable.$convertercontent.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}content'],
+        )!,
+      ),
       modelUsed: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}model_used'],
@@ -2699,6 +2691,9 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
   $MessagesTable createAlias(String alias) {
     return $MessagesTable(attachedDatabase, alias);
   }
+
+  static TypeConverter<String, String> $convertercontent =
+      const EncryptedTextConverter();
 }
 
 class Message extends DataClass implements Insertable<Message> {
@@ -2724,7 +2719,11 @@ class Message extends DataClass implements Insertable<Message> {
     map['id'] = Variable<String>(id);
     map['conversation_id'] = Variable<String>(conversationId);
     map['role'] = Variable<String>(role);
-    map['content'] = Variable<String>(content);
+    {
+      map['content'] = Variable<String>(
+        $MessagesTable.$convertercontent.toSql(content),
+      );
+    }
     if (!nullToAbsent || modelUsed != null) {
       map['model_used'] = Variable<String>(modelUsed);
     }
@@ -2940,7 +2939,9 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       map['role'] = Variable<String>(role.value);
     }
     if (content.present) {
-      map['content'] = Variable<String>(content.value);
+      map['content'] = Variable<String>(
+        $MessagesTable.$convertercontent.toSql(content.value),
+      );
     }
     if (modelUsed.present) {
       map['model_used'] = Variable<String>(modelUsed.value);
@@ -3284,8 +3285,40 @@ class $UserMemoriesTable extends UserMemories
     type: DriftSqlType.dateTime,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _isSyncedMeta = const VerificationMeta(
+    'isSynced',
+  );
   @override
-  List<GeneratedColumn> get $columns => [id, fact, createdAt];
+  late final GeneratedColumn<bool> isSynced = GeneratedColumn<bool>(
+    'is_synced',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_synced" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    fact,
+    createdAt,
+    isSynced,
+    updatedAt,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -3311,6 +3344,18 @@ class $UserMemoriesTable extends UserMemories
     } else if (isInserting) {
       context.missing(_createdAtMeta);
     }
+    if (data.containsKey('is_synced')) {
+      context.handle(
+        _isSyncedMeta,
+        isSynced.isAcceptableOrUnknown(data['is_synced']!, _isSyncedMeta),
+      );
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    }
     return context;
   }
 
@@ -3334,6 +3379,14 @@ class $UserMemoriesTable extends UserMemories
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
       )!,
+      isSynced: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_synced'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      ),
     );
   }
 
@@ -3350,10 +3403,14 @@ class UserMemory extends DataClass implements Insertable<UserMemory> {
   final String id;
   final String fact;
   final DateTime createdAt;
+  final bool isSynced;
+  final DateTime? updatedAt;
   const UserMemory({
     required this.id,
     required this.fact,
     required this.createdAt,
+    required this.isSynced,
+    this.updatedAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -3365,6 +3422,10 @@ class UserMemory extends DataClass implements Insertable<UserMemory> {
       );
     }
     map['created_at'] = Variable<DateTime>(createdAt);
+    map['is_synced'] = Variable<bool>(isSynced);
+    if (!nullToAbsent || updatedAt != null) {
+      map['updated_at'] = Variable<DateTime>(updatedAt);
+    }
     return map;
   }
 
@@ -3373,6 +3434,10 @@ class UserMemory extends DataClass implements Insertable<UserMemory> {
       id: Value(id),
       fact: Value(fact),
       createdAt: Value(createdAt),
+      isSynced: Value(isSynced),
+      updatedAt: updatedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(updatedAt),
     );
   }
 
@@ -3385,6 +3450,8 @@ class UserMemory extends DataClass implements Insertable<UserMemory> {
       id: serializer.fromJson<String>(json['id']),
       fact: serializer.fromJson<String>(json['fact']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      isSynced: serializer.fromJson<bool>(json['isSynced']),
+      updatedAt: serializer.fromJson<DateTime?>(json['updatedAt']),
     );
   }
   @override
@@ -3394,20 +3461,31 @@ class UserMemory extends DataClass implements Insertable<UserMemory> {
       'id': serializer.toJson<String>(id),
       'fact': serializer.toJson<String>(fact),
       'createdAt': serializer.toJson<DateTime>(createdAt),
+      'isSynced': serializer.toJson<bool>(isSynced),
+      'updatedAt': serializer.toJson<DateTime?>(updatedAt),
     };
   }
 
-  UserMemory copyWith({String? id, String? fact, DateTime? createdAt}) =>
-      UserMemory(
-        id: id ?? this.id,
-        fact: fact ?? this.fact,
-        createdAt: createdAt ?? this.createdAt,
-      );
+  UserMemory copyWith({
+    String? id,
+    String? fact,
+    DateTime? createdAt,
+    bool? isSynced,
+    Value<DateTime?> updatedAt = const Value.absent(),
+  }) => UserMemory(
+    id: id ?? this.id,
+    fact: fact ?? this.fact,
+    createdAt: createdAt ?? this.createdAt,
+    isSynced: isSynced ?? this.isSynced,
+    updatedAt: updatedAt.present ? updatedAt.value : this.updatedAt,
+  );
   UserMemory copyWithCompanion(UserMemoriesCompanion data) {
     return UserMemory(
       id: data.id.present ? data.id.value : this.id,
       fact: data.fact.present ? data.fact.value : this.fact,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
   }
 
@@ -3416,37 +3494,47 @@ class UserMemory extends DataClass implements Insertable<UserMemory> {
     return (StringBuffer('UserMemory(')
           ..write('id: $id, ')
           ..write('fact: $fact, ')
-          ..write('createdAt: $createdAt')
+          ..write('createdAt: $createdAt, ')
+          ..write('isSynced: $isSynced, ')
+          ..write('updatedAt: $updatedAt')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, fact, createdAt);
+  int get hashCode => Object.hash(id, fact, createdAt, isSynced, updatedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       (other is UserMemory &&
           other.id == this.id &&
           other.fact == this.fact &&
-          other.createdAt == this.createdAt);
+          other.createdAt == this.createdAt &&
+          other.isSynced == this.isSynced &&
+          other.updatedAt == this.updatedAt);
 }
 
 class UserMemoriesCompanion extends UpdateCompanion<UserMemory> {
   final Value<String> id;
   final Value<String> fact;
   final Value<DateTime> createdAt;
+  final Value<bool> isSynced;
+  final Value<DateTime?> updatedAt;
   final Value<int> rowid;
   const UserMemoriesCompanion({
     this.id = const Value.absent(),
     this.fact = const Value.absent(),
     this.createdAt = const Value.absent(),
+    this.isSynced = const Value.absent(),
+    this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   UserMemoriesCompanion.insert({
     required String id,
     required String fact,
     required DateTime createdAt,
+    this.isSynced = const Value.absent(),
+    this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        fact = Value(fact),
@@ -3455,12 +3543,16 @@ class UserMemoriesCompanion extends UpdateCompanion<UserMemory> {
     Expression<String>? id,
     Expression<String>? fact,
     Expression<DateTime>? createdAt,
+    Expression<bool>? isSynced,
+    Expression<DateTime>? updatedAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
       if (fact != null) 'fact': fact,
       if (createdAt != null) 'created_at': createdAt,
+      if (isSynced != null) 'is_synced': isSynced,
+      if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -3469,12 +3561,16 @@ class UserMemoriesCompanion extends UpdateCompanion<UserMemory> {
     Value<String>? id,
     Value<String>? fact,
     Value<DateTime>? createdAt,
+    Value<bool>? isSynced,
+    Value<DateTime?>? updatedAt,
     Value<int>? rowid,
   }) {
     return UserMemoriesCompanion(
       id: id ?? this.id,
       fact: fact ?? this.fact,
       createdAt: createdAt ?? this.createdAt,
+      isSynced: isSynced ?? this.isSynced,
+      updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -3493,6 +3589,12 @@ class UserMemoriesCompanion extends UpdateCompanion<UserMemory> {
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
+    if (isSynced.present) {
+      map['is_synced'] = Variable<bool>(isSynced.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -3505,6 +3607,8 @@ class UserMemoriesCompanion extends UpdateCompanion<UserMemory> {
           ..write('id: $id, ')
           ..write('fact: $fact, ')
           ..write('createdAt: $createdAt, ')
+          ..write('isSynced: $isSynced, ')
+          ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -3800,26 +3904,24 @@ class $LearningLogsTable extends LearningLogs
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _promptMeta = const VerificationMeta('prompt');
   @override
-  late final GeneratedColumn<String> prompt = GeneratedColumn<String>(
-    'prompt',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _responseMeta = const VerificationMeta(
-    'response',
-  );
+  late final GeneratedColumnWithTypeConverter<String, String> prompt =
+      GeneratedColumn<String>(
+        'prompt',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+      ).withConverter<String>($LearningLogsTable.$converterprompt);
   @override
-  late final GeneratedColumn<String> response = GeneratedColumn<String>(
-    'response',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
+  late final GeneratedColumnWithTypeConverter<String, String> response =
+      GeneratedColumn<String>(
+        'response',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+      ).withConverter<String>($LearningLogsTable.$converterresponse);
   static const VerificationMeta _ratingMeta = const VerificationMeta('rating');
   @override
   late final GeneratedColumn<int> rating = GeneratedColumn<int>(
@@ -3889,22 +3991,6 @@ class $LearningLogsTable extends LearningLogs
     } else if (isInserting) {
       context.missing(_idMeta);
     }
-    if (data.containsKey('prompt')) {
-      context.handle(
-        _promptMeta,
-        prompt.isAcceptableOrUnknown(data['prompt']!, _promptMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_promptMeta);
-    }
-    if (data.containsKey('response')) {
-      context.handle(
-        _responseMeta,
-        response.isAcceptableOrUnknown(data['response']!, _responseMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_responseMeta);
-    }
     if (data.containsKey('rating')) {
       context.handle(
         _ratingMeta,
@@ -3946,14 +4032,18 @@ class $LearningLogsTable extends LearningLogs
         DriftSqlType.string,
         data['${effectivePrefix}id'],
       )!,
-      prompt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}prompt'],
-      )!,
-      response: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}response'],
-      )!,
+      prompt: $LearningLogsTable.$converterprompt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}prompt'],
+        )!,
+      ),
+      response: $LearningLogsTable.$converterresponse.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}response'],
+        )!,
+      ),
       rating: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}rating'],
@@ -3977,6 +4067,11 @@ class $LearningLogsTable extends LearningLogs
   $LearningLogsTable createAlias(String alias) {
     return $LearningLogsTable(attachedDatabase, alias);
   }
+
+  static TypeConverter<String, String> $converterprompt =
+      const EncryptedTextConverter();
+  static TypeConverter<String, String> $converterresponse =
+      const EncryptedTextConverter();
 }
 
 class LearningLog extends DataClass implements Insertable<LearningLog> {
@@ -4000,8 +4095,16 @@ class LearningLog extends DataClass implements Insertable<LearningLog> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     map['id'] = Variable<String>(id);
-    map['prompt'] = Variable<String>(prompt);
-    map['response'] = Variable<String>(response);
+    {
+      map['prompt'] = Variable<String>(
+        $LearningLogsTable.$converterprompt.toSql(prompt),
+      );
+    }
+    {
+      map['response'] = Variable<String>(
+        $LearningLogsTable.$converterresponse.toSql(response),
+      );
+    }
     map['rating'] = Variable<int>(rating);
     if (!nullToAbsent || correction != null) {
       map['correction'] = Variable<String>(correction);
@@ -4210,10 +4313,14 @@ class LearningLogsCompanion extends UpdateCompanion<LearningLog> {
       map['id'] = Variable<String>(id.value);
     }
     if (prompt.present) {
-      map['prompt'] = Variable<String>(prompt.value);
+      map['prompt'] = Variable<String>(
+        $LearningLogsTable.$converterprompt.toSql(prompt.value),
+      );
     }
     if (response.present) {
-      map['response'] = Variable<String>(response.value);
+      map['response'] = Variable<String>(
+        $LearningLogsTable.$converterresponse.toSql(response.value),
+      );
     }
     if (rating.present) {
       map['rating'] = Variable<int>(rating.value);
@@ -6588,10 +6695,11 @@ class $$MessagesTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<String> get content => $composableBuilder(
-    column: $table.content,
-    builder: (column) => ColumnFilters(column),
-  );
+  ColumnWithTypeConverterFilters<String, String, String> get content =>
+      $composableBuilder(
+        column: $table.content,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
 
   ColumnFilters<String> get modelUsed => $composableBuilder(
     column: $table.modelUsed,
@@ -6674,7 +6782,7 @@ class $$MessagesTableAnnotationComposer
   GeneratedColumn<String> get role =>
       $composableBuilder(column: $table.role, builder: (column) => column);
 
-  GeneratedColumn<String> get content =>
+  GeneratedColumnWithTypeConverter<String, String> get content =>
       $composableBuilder(column: $table.content, builder: (column) => column);
 
   GeneratedColumn<String> get modelUsed =>
@@ -6962,6 +7070,8 @@ typedef $$UserMemoriesTableCreateCompanionBuilder =
       required String id,
       required String fact,
       required DateTime createdAt,
+      Value<bool> isSynced,
+      Value<DateTime?> updatedAt,
       Value<int> rowid,
     });
 typedef $$UserMemoriesTableUpdateCompanionBuilder =
@@ -6969,6 +7079,8 @@ typedef $$UserMemoriesTableUpdateCompanionBuilder =
       Value<String> id,
       Value<String> fact,
       Value<DateTime> createdAt,
+      Value<bool> isSynced,
+      Value<DateTime?> updatedAt,
       Value<int> rowid,
     });
 
@@ -6996,6 +7108,16 @@ class $$UserMemoriesTableFilterComposer
     column: $table.createdAt,
     builder: (column) => ColumnFilters(column),
   );
+
+  ColumnFilters<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 }
 
 class $$UserMemoriesTableOrderingComposer
@@ -7021,6 +7143,16 @@ class $$UserMemoriesTableOrderingComposer
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$UserMemoriesTableAnnotationComposer
@@ -7040,6 +7172,12 @@ class $$UserMemoriesTableAnnotationComposer
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get isSynced =>
+      $composableBuilder(column: $table.isSynced, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
 }
 
 class $$UserMemoriesTableTableManager
@@ -7076,11 +7214,15 @@ class $$UserMemoriesTableTableManager
                 Value<String> id = const Value.absent(),
                 Value<String> fact = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
+                Value<bool> isSynced = const Value.absent(),
+                Value<DateTime?> updatedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => UserMemoriesCompanion(
                 id: id,
                 fact: fact,
                 createdAt: createdAt,
+                isSynced: isSynced,
+                updatedAt: updatedAt,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -7088,11 +7230,15 @@ class $$UserMemoriesTableTableManager
                 required String id,
                 required String fact,
                 required DateTime createdAt,
+                Value<bool> isSynced = const Value.absent(),
+                Value<DateTime?> updatedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => UserMemoriesCompanion.insert(
                 id: id,
                 fact: fact,
                 createdAt: createdAt,
+                isSynced: isSynced,
+                updatedAt: updatedAt,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -7323,15 +7469,17 @@ class $$LearningLogsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<String> get prompt => $composableBuilder(
-    column: $table.prompt,
-    builder: (column) => ColumnFilters(column),
-  );
+  ColumnWithTypeConverterFilters<String, String, String> get prompt =>
+      $composableBuilder(
+        column: $table.prompt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
 
-  ColumnFilters<String> get response => $composableBuilder(
-    column: $table.response,
-    builder: (column) => ColumnFilters(column),
-  );
+  ColumnWithTypeConverterFilters<String, String, String> get response =>
+      $composableBuilder(
+        column: $table.response,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
 
   ColumnFilters<int> get rating => $composableBuilder(
     column: $table.rating,
@@ -7411,10 +7559,10 @@ class $$LearningLogsTableAnnotationComposer
   GeneratedColumn<String> get id =>
       $composableBuilder(column: $table.id, builder: (column) => column);
 
-  GeneratedColumn<String> get prompt =>
+  GeneratedColumnWithTypeConverter<String, String> get prompt =>
       $composableBuilder(column: $table.prompt, builder: (column) => column);
 
-  GeneratedColumn<String> get response =>
+  GeneratedColumnWithTypeConverter<String, String> get response =>
       $composableBuilder(column: $table.response, builder: (column) => column);
 
   GeneratedColumn<int> get rating =>

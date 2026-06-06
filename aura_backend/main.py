@@ -16,6 +16,7 @@ from services.automation import automation_service
 from services.agent import agent_orchestrator
 from services.memory import memory_service
 from services.security import verify_token
+from services.rbac import require_role
 from services.drive import check_google_drive_configuration
 from services.learning_pipeline import learning_pipeline
 import os
@@ -222,22 +223,19 @@ async def stream_chat(request: ChatRequest, user_info: dict = Depends(verify_tok
 
 @app.post("/api/rag/ingest")
 async def ingest_document(request: IngestRequest, user_info: dict = Depends(verify_token)):
-    """Ingests text content into Qdrant Cloud."""
+    """Ingests text content into Qdrant Cloud via background task."""
     metadata = request.metadata or {}
     metadata["user_id"] = user_info["uid"]
     try:
-        success = rag_service.ingest_document(
-            doc_id=request.doc_id,
-            content=request.content,
-            metadata=metadata
-        )
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to ingest document to Qdrant")
-        return {"status": "success", "message": f"Document {request.doc_id} ingested."}
-    except HTTPException as he:
-        raise he
+        from tasks import ingest_document_task
+        task = ingest_document_task.delay(request.doc_id, request.content, metadata)
+        return {
+            "status": "success", 
+            "message": f"Document {request.doc_id} ingestion queued in background.", 
+            "task_id": task.id
+        }
     except Exception as e:
-        logger.error(f"Error in ingest_document for user {user_info.get('email')}: {e}")
+        logger.error(f"Error queuing ingest_document for user {user_info.get('email')}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/rag/query")
@@ -366,18 +364,11 @@ async def delete_memory(point_id: int, user_info: dict = Depends(verify_token)):
 
 @app.post("/api/telemetry/log")
 async def log_telemetry(request: TelemetryLogSchema, user_info: dict = Depends(verify_token)):
-    """Logs telemetry metadata on the backend."""
+    """Logs telemetry metadata in append-only JSONL format."""
     try:
-        telemetry_file = "telemetry_logs.json"
-        if not os.path.exists(telemetry_file):
-            with open(telemetry_file, "w", encoding="utf-8") as f:
-                json.dump([], f)
-        with open(telemetry_file, "r+", encoding="utf-8") as f:
-            data = json.load(f)
-            data.append(request.dict())
-            f.seek(0)
-            f.truncate()
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        telemetry_file = "telemetry_logs.jsonl"
+        with open(telemetry_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(request.dict(), ensure_ascii=False) + "\n")
         return {"status": "success"}
     except Exception as e:
         logger.error(f"Failed to save telemetry: {e}")
@@ -392,7 +383,7 @@ async def log_learning_record(request: LearningLogSchema, user_info: dict = Depe
     return {"status": "success"}
 
 @app.get("/api/learning/export")
-async def export_learning_dataset(format: str = "alpaca", user_info: dict = Depends(verify_token)):
+async def export_learning_dataset(format: str = "alpaca", user_info: dict = Depends(require_role("Admin"))):
     """Exports learning dataset in selected format (alpaca, chatml, openai)."""
     try:
         dataset = learning_pipeline.build_lora_dataset(format)
@@ -402,19 +393,22 @@ async def export_learning_dataset(format: str = "alpaca", user_info: dict = Depe
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/learning/build_dataset")
-async def build_dataset(user_info: dict = Depends(verify_token)):
-    """Processes learning logs and compiles local lora training datasets."""
+async def build_dataset(user_info: dict = Depends(require_role("Admin"))):
+    """Processes learning logs and compiles local lora training datasets in the background."""
     try:
-        dataset = learning_pipeline.build_lora_dataset("alpaca")
-        with open("train_lora.json", "w", encoding="utf-8") as f:
-            json.dump(dataset, f, indent=2, ensure_ascii=False)
-        return {"status": "success", "total_records": len(dataset), "file_saved": "train_lora.json"}
+        from tasks import build_lora_dataset_task
+        task = build_lora_dataset_task.delay(user_info["uid"])
+        return {
+            "status": "success", 
+            "message": "LoRA dataset build queued in background.", 
+            "task_id": task.id
+        }
     except Exception as e:
-        logger.error(f"Build dataset failed: {e}")
+        logger.error(f"Build dataset failed to queue: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/learning/evaluate")
-async def evaluate_dataset(user_info: dict = Depends(verify_token)):
+async def evaluate_dataset(user_info: dict = Depends(require_role("Developer"))):
     """Retrieves telemetry evaluation statistics regarding learning loops."""
     try:
         metrics = learning_pipeline.evaluate_metrics()

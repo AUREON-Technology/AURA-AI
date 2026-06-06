@@ -33,7 +33,7 @@ class LocalModelSeeder {
     }
     
     // The path on Android matches modelsDir.path/modelName
-    final destFile = File("${modelsDir.path}/$modelName");
+    final destFile = File("${modelsDir.path}/${modelName.replaceAll(':', '_')}");
 
     // If it's already copied and registered, we are done
     if (existingModel != null && existingModel.isDownloaded && await destFile.exists()) {

@@ -13,9 +13,10 @@ void main() {
       expect(cipherText, isNot(equals(plainText)));
       expect(cipherText.contains("Hello AURA"), isFalse);
       
-      // The output should be formatted as base64IV:base64Ciphertext
+      // The output should be formatted as gcm:base64IV:base64Ciphertext
       final parts = cipherText.split(':');
-      expect(parts.length, equals(2));
+      expect(parts.length, equals(3));
+      expect(parts[0], equals('gcm'));
       
       // Decrypt the text
       final decryptedText = EncryptionService.decryptText(cipherText);

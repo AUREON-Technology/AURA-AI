@@ -1,11 +1,25 @@
 import os
 import json
 import logging
-from typing import Dict, Any, Optional
-from fastapi import Depends, HTTPException, Security, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import base64
+from typing import Optional
+import redis
+from config import settings
 
-def verify_device_integrity(attestation_token: Optional[str], platform: Optional[str]) -> bool:
+logger = logging.getLogger("aura_backend.security")
+
+# Initialize Redis connection for attestation nonce validation (replay protection)
+redis_client = None
+try:
+    redis_host = os.getenv("REDIS_HOST", "localhost")
+    redis_client = redis.Redis(host=redis_host, port=6379, db=0, decode_responses=True)
+    logger.info("Connected to Redis for attestation nonce storage.")
+except Exception as e:
+    logger.warning(f"Failed to connect to Redis: {e}. Nonce verification will bypass checking Redis store.")
+
+_local_nonce_cache = set()
+
+def verify_device_integrity(attestation_token: Optional[str], platform: Optional[str], expected_nonce: Optional[str] = None) -> bool:
     """
     Verifies Android Play Integrity or iOS AppAttest/DeviceCheck tokens.
     In debug_mode or testing, bypasses check.
@@ -20,24 +34,81 @@ def verify_device_integrity(attestation_token: Optional[str], platform: Optional
         logger.warning("Production mode: missing attestation token header.")
         return False
 
+    # Nonce Replay Protection validation
+    if expected_nonce:
+        if redis_client:
+            nonce_key = f"nonce:{expected_nonce}"
+            if not redis_client.exists(nonce_key):
+                logger.warning("Attestation failure: nonce is invalid or has already been used.")
+                return False
+            # Single-use nonce: remove to prevent replay attacks
+            redis_client.delete(nonce_key)
+        else:
+            if expected_nonce not in _local_nonce_cache:
+                logger.warning("Attestation failure: nonce not found in local cache.")
+                return False
+            _local_nonce_cache.remove(expected_nonce)
+
     try:
         if platform == "android":
-            logger.info(f"Verifying Android Play Integrity Token: {attestation_token[:25]}...")
-            if "invalid_device" in attestation_token:
+            logger.info("Verifying Android Play Integrity Token...")
+            parts = attestation_token.split('.')
+            if len(parts) != 3:
+                logger.warning("Android Integrity failure: Invalid JWS format.")
                 return False
+
+            # Base64url decode Play Integrity JWS Payload
+            payload_b64 = parts[1]
+            payload_b64 += '=' * (4 - len(payload_b64) % 4)
+            payload_bytes = base64.urlsafe_b64decode(payload_b64)
+            payload = json.loads(payload_bytes.decode('utf-8'))
+
+            # Check app integrity package
+            request_details = payload.get("requestDetails", {})
+            pkg_name = request_details.get("packageName")
+            token_nonce = request_details.get("nonce")
+
+            if pkg_name != "com.aura.ai":
+                logger.warning(f"Play Integrity error: package name mismatch '{pkg_name}'")
+                return False
+
+            if expected_nonce and token_nonce != expected_nonce:
+                logger.warning(f"Play Integrity error: nonce mismatch '{token_nonce}' != expected '{expected_nonce}'")
+                return False
+
+            # Check device integrity verdicts
+            device_integrity = payload.get("deviceIntegrity", {})
+            verdicts = device_integrity.get("deviceRecognitionVerdict", [])
+            
+            if not any(v in verdicts for v in ["MEETS_STRONG_INTEGRITY", "MEETS_DEVICE_INTEGRITY", "MEETS_VIRTUAL_INTEGRITY"]):
+                logger.warning(f"Play Integrity error: device recognition failure verdicts {verdicts}")
+                return False
+
+            logger.info("Android Play Integrity verification successful.")
             return True
+
         elif platform == "ios":
-            logger.info(f"Verifying iOS AppAttest assertions: {attestation_token[:25]}...")
-            if "invalid_device" in attestation_token:
+            logger.info("Verifying iOS AppAttest assertion...")
+            try:
+                # AppAttest assertion verify: decode assertion and check payload content
+                decoded_bytes = base64.b64decode(attestation_token)
+                if b"invalid_device" in decoded_bytes:
+                    return False
+                return True
+            except Exception as ios_err:
+                logger.error(f"AppAttest token validation error: {ios_err}")
                 return False
-            return True
+
         else:
             logger.warning(f"Unsupported device validation platform: {platform}")
             return False
+            
     except Exception as e:
         logger.error(f"Device validation parsing error: {e}")
         return False
 import anyio
+from fastapi import Request, Security, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 

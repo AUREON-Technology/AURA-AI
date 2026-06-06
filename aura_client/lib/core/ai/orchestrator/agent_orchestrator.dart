@@ -21,9 +21,14 @@ class ClientAgentOrchestrator {
       orElse: () => <String, String>{},
     )["content"] ?? "";
 
-    // 1. Fetch relevant user memories
+    // Check if the selected route is online (Gemini) or offline
+    final route = await _ref.read(aiRouter).selectRoute();
+    final provider = route["provider"] as AIProvider;
+    final isOnline = provider == AIProvider.gemini;
+
+    // 1. Fetch relevant user memories (OFFLINE ONLY - Backend handles online)
     String memoryContext = "";
-    if (lastUserMsg.isNotEmpty) {
+    if (!isOnline && lastUserMsg.isNotEmpty) {
       try {
         final auraMemory = _ref.read(auraMemoryProvider);
         final memories = await auraMemory.semantic.queryMemories(lastUserMsg);
@@ -36,9 +41,9 @@ class ClientAgentOrchestrator {
       }
     }
 
-    // 2. Fetch relevant RAG chunks
+    // 2. Fetch relevant RAG chunks (OFFLINE ONLY - Backend handles online)
     String ragContext = "";
-    if (useRag && lastUserMsg.isNotEmpty) {
+    if (!isOnline && useRag && lastUserMsg.isNotEmpty) {
       try {
         final knowledge = _ref.read(knowledgeCenterProvider);
         final chunks = await knowledge.queryKnowledge(lastUserMsg);

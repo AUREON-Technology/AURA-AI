@@ -202,12 +202,24 @@ class ShellLayout extends StatelessWidget {
   }
 }
 
+class RouterTransitionNotifier extends ChangeNotifier {
+  final Ref _ref;
+
+  RouterTransitionNotifier(this._ref) {
+    _ref.listen(authProvider, (previous, next) {
+      notifyListeners();
+    });
+  }
+}
+
 final routerProvider = Provider<GoRouter>((ref) {
-  final authState = ref.watch(authProvider);
+  final notifier = RouterTransitionNotifier(ref);
 
   return GoRouter(
     initialLocation: '/home',
+    refreshListenable: notifier,
     redirect: (context, state) {
+      final authState = ref.read(authProvider);
       final isLoggedIn = authState.value != null;
       final isLoggingIn = state.matchedLocation == '/login';
 

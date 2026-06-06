@@ -98,7 +98,7 @@ class Messages extends Table {
   TextColumn get id => text()();
   TextColumn get conversationId => text()();
   TextColumn get role => text()(); // user, assistant, system
-  TextColumn get content => text()();
+  TextColumn get content => text().map(const EncryptedTextConverter())();
   TextColumn get modelUsed => text().nullable()();
   IntColumn get tokensUsed => integer().nullable()();
   DateTimeColumn get createdAt => dateTime()();
@@ -120,6 +120,8 @@ class UserMemories extends Table {
   TextColumn get id => text()();
   TextColumn get fact => text().map(const EncryptedTextConverter())();
   DateTimeColumn get createdAt => dateTime()();
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get updatedAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -136,8 +138,8 @@ class PendingDeletes extends Table {
 
 class LearningLogs extends Table {
   TextColumn get id => text()();
-  TextColumn get prompt => text()();
-  TextColumn get response => text()();
+  TextColumn get prompt => text().map(const EncryptedTextConverter())();
+  TextColumn get response => text().map(const EncryptedTextConverter())();
   IntColumn get rating => integer()(); // e.g. 1 to 5, or thumbs up/down
   TextColumn get correction => text().nullable()();
   TextColumn get modelUsed => text().nullable()();
@@ -184,7 +186,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   Future<List<TelemetryLog>> getTelemetry() => select(telemetryLogs).get();
   Future<void> insertTelemetry(TelemetryLogsCompanion log) => into(telemetryLogs).insert(log);
@@ -220,6 +222,27 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 5) {
             await m.createTable(telemetryLogs);
+          }
+          if (from < 6) {
+            await m.addColumn(userMemories, userMemories.isSynced);
+            await m.addColumn(userMemories, userMemories.updatedAt);
+          }
+        },
+        beforeOpen: (details) async {
+          if (details.versionBefore != null && details.versionBefore! < 6) {
+            // Re-encrypt existing cleartext rows transparently
+            try {
+              final allMessages = await select(messages).get();
+              for (final msg in allMessages) {
+                await update(messages).replace(msg);
+              }
+              final allLogs = await select(learningLogs).get();
+              for (final log in allLogs) {
+                await update(learningLogs).replace(log);
+              }
+            } catch (e) {
+              print("[DatabaseMigration] Error encrypting existing tables: $e");
+            }
           }
         },
       );

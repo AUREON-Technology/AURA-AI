@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../database/database.dart';
 import '../../database/database_provider.dart';
 import '../../../features/chat/data/memory_repository.dart';
+import 'package:aura_client/core/security/deterministic_id.dart';
 
 class ShortTermMemory {
   final List<Map<String, String>> _messages = [];
@@ -17,6 +18,7 @@ class ShortTermMemory {
   void clear() => _messages.clear();
 }
 
+
 class LongTermMemory {
   final AppDatabase _db;
   LongTermMemory(this._db);
@@ -26,7 +28,7 @@ class LongTermMemory {
   }
 
   Future<void> saveFact(String fact) async {
-    final id = (fact.hashCode & 0xFFFFFFFFFFFFFFFF).toString();
+    final id = getDeterministicId(fact);
     await _db.into(_db.userMemories).insertOnConflictUpdate(
       UserMemoriesCompanion.insert(
         id: id,
@@ -41,9 +43,9 @@ class SemanticMemory {
   final MemoryRepository _repo;
   SemanticMemory(this._repo);
 
-  /// Performs a semantic/keyword search on the memories sync bank
+  /// Performs a semantic/keyword search on the memories cache locally
   Future<List<MemoryItem>> queryMemories(String prompt) async {
-    final all = await _repo.syncMemories();
+    final all = await _repo.loadLocalMemories();
     final query = prompt.toLowerCase();
     
     // Fallback search criteria matching keywords client-side

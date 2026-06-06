@@ -44,8 +44,27 @@ class AgentOrchestrator:
             self.client = genai.Client(api_key=settings.gemini_api_key)
 
     def classify_intent(self, user_message: str) -> str:
-        """Classifies user intent to route message to the appropriate specialized agent locally without calling Gemini."""
+        """Classifies user intent to route message to the appropriate specialized agent using semantic router, falling back to keywords."""
         msg_lower = user_message.lower()
+        try:
+            from services.agent_router import agent_router
+            intent = agent_router.route_intent(user_message)
+            logger.info(f"Semantic Agent Router routed intent: {intent}")
+            
+            intent_mapping = {
+                "chat_agent": "orchestrator",
+                "memory_agent": "orchestrator",
+                "rag_agent": "research_agent",
+                "automation_agent": "task_planner",
+                "knowledge_agent": "research_agent",
+                "coding_agent": "academic_coach",
+                "planning_agent": "decision_agent" if any(k in msg_lower for k in ["decide", "decision", "choose", "compare", "risk", "trade-off", "cost-benefit", "eval", "evaluate", "pros and cons"]) else "task_planner"
+            }
+            mapped_agent = intent_mapping.get(intent, "orchestrator")
+            if mapped_agent != "orchestrator":
+                return mapped_agent
+        except Exception as router_err:
+            logger.warning(f"Semantic routing failed, falling back to keywords: {router_err}")
         
         # 1. Task Planner
         if any(k in msg_lower for k in ["task", "todo", "to-do", "schedule", "remind", "reminder", "checklist", "deadline", "calendar", "event", "appointment"]):
@@ -97,7 +116,7 @@ class AgentOrchestrator:
             return {"files": files}
 
         def ingest_google_drive_pdf(file_id: str, file_name: str) -> dict:
-            """Download a PDF file from Google Drive and ingest its text content into AURA's Knowledge Base (RAG) for searching.
+            """Download a PDF file from Google Drive and ingest its text content into AURA's Knowledge Base (RAG) in the background.
             
             Args:
                 file_id: The unique Google Drive file ID.
@@ -105,20 +124,13 @@ class AgentOrchestrator:
             """
             if not google_access_token:
                 return {"error": "Google Drive access token is missing. Please log in with Google."}
-            from services.drive import download_drive_file
-            pdf_bytes = download_drive_file(google_access_token, file_id)
-            if not pdf_bytes:
-                return {"error": f"Failed to download file '{file_name}' from Google Drive."}
             
-            from services.rag import rag_service
-            metadata = {"source": "google_drive", "file_name": file_name, "file_id": file_id}
-            if user_id:
-                metadata["user_id"] = user_id
-            success = rag_service.ingest_pdf(doc_id=file_id, pdf_bytes=pdf_bytes, metadata=metadata)
-            if success:
-                return {"status": "success", "message": f"Successfully parsed and ingested '{file_name}' into AURA Knowledge Base."}
-            else:
-                return {"error": f"Failed to parse or index PDF content of '{file_name}'."}
+            from tasks import ingest_pdf_task
+            task = ingest_pdf_task.delay(file_id, file_name, google_access_token, user_id or "global")
+            return {
+                "status": "queued",
+                "message": f"Successfully queued download and background ingestion of PDF '{file_name}'. Task ID: {task.id}"
+            }
 
         def query_knowledge_base(query: str) -> dict:
             """Query AURA's local Knowledge Base (RAG) for matching text passages or facts.
@@ -232,7 +244,7 @@ class AgentOrchestrator:
                         if google_access_token:
                             tools_list = [search_google_drive, ingest_google_drive_pdf, query_knowledge_base]
 
-                        chat = self.client.chats.create(
+                        chat = await self.client.aio.chats.create(
                             model="gemini-2.5-flash",
                             history=gemini_history,
                             config=types.GenerateContentConfig(
@@ -246,10 +258,10 @@ class AgentOrchestrator:
                             from services.budget import increment_and_check_gemini_budget, GeminiBudgetExceededException
                             increment_and_check_gemini_budget()
 
-                            response = chat.send_message_stream(current_prompt_or_part)
+                            response = await chat.send_message_stream(current_prompt_or_part)
                             has_function_call = False
                             function_calls = []
-                            for chunk in response:
+                            async for chunk in response:
                                 if chunk.function_calls:
                                     has_function_call = True
                                     function_calls.extend(chunk.function_calls)

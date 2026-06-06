@@ -28,7 +28,7 @@ class NativeLlamaInferenceProvider implements InferenceProvider {
       if (activeModel == null) return false;
 
       final appDir = await getApplicationDocumentsDirectory();
-      final modelFile = File("${appDir.path}/models/${activeModel.modelName}");
+      final modelFile = File("${appDir.path}/models/${activeModel.modelName.replaceAll(':', '_')}");
       return await modelFile.exists();
     } catch (_) {
       return false;
@@ -60,7 +60,7 @@ class NativeLlamaInferenceProvider implements InferenceProvider {
       return;
     }
 
-    final modelFile = File("${modelsDir.path}/${activeModel.modelName}");
+    final modelFile = File("${modelsDir.path}/${activeModel.modelName.replaceAll(':', '_')}");
 
     if (!await modelFile.exists()) {
       yield "\n[Offline Inference Error: Model file '${activeModel.modelName}' not found on-device. Please download it in the Model Manager first.]";

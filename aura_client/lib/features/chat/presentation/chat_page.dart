@@ -9,11 +9,13 @@ import '../../tasks/data/task_repository.dart';
 import '../../calendar/data/calendar_repository.dart';
 import '../../finance/data/finance_repository.dart';
 import '../../health/data/health_repository.dart';
-import '../../../core/theme/theme.dart';
-import '../../../core/database/database.dart';
+import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/database/database.dart';
+import 'package:aura_client/core/database/database_provider.dart';
+import 'package:drift/drift.dart' hide Column, Table;
 import '../../sync/sync_engine.dart';
-import '../../../core/ai/ai_router/aura_ai_router.dart';
-import '../../../core/ai/online_agents/online_agent_manager.dart';
+import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
+import 'package:aura_client/core/ai/online_agents/online_agent_manager.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
   const ChatPage({super.key});
@@ -73,8 +75,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       width: 260,
       color: const Color(0xFF0C0917),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: ListView(
+        padding: EdgeInsets.zero,
         children: [
           // New Chat Button
           ElevatedButton.icon(
@@ -104,62 +106,68 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           const SizedBox(height: 12),
 
           // Sessions List
-          Expanded(
-            child: sessionsAsync.when(
-              data: (sessions) {
-                final allSessions = sessions.contains('default_session')
-                    ? sessions
-                    : ['default_session', ...sessions];
+          sessionsAsync.when(
+            data: (sessions) {
+              final allSessions = sessions.contains('default_session')
+                  ? sessions
+                  : ['default_session', ...sessions];
 
-                return ListView.builder(
-                  itemCount: allSessions.length,
-                  itemBuilder: (context, index) {
-                    final session = allSessions[index];
-                    final isActive = session == activeSessionId;
-                    final label = session == 'default_session'
-                        ? 'Default Workspace'
-                        : 'Session ${session.split('_').last.substring(0, 5)}';
+              return ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: allSessions.length,
+                itemBuilder: (context, index) {
+                  final session = allSessions[index];
+                  final isActive = session == activeSessionId;
+                  final label = session == 'default_session'
+                      ? 'Default Workspace'
+                      : 'Session ${session.split('_').last.substring(0, 5)}';
 
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 6.0),
-                      child: ListTile(
-                        dense: true,
-                        selected: isActive,
-                        selectedTileColor: AuraTheme.accentIndigo.withValues(alpha: 0.15),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        title: Text(
-                          label,
-                          style: TextStyle(
-                            color: isActive ? Colors.white : AuraTheme.textSecondary,
-                            fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-                          ),
-                        ),
-                        trailing: isActive && session != 'default_session'
-                            ? IconButton(
-                                icon: const Icon(Icons.delete_outline, size: 16, color: Colors.white30),
-                                onPressed: () {
-                                  ref.read(chatRepositoryProvider).clearConversation(session);
-                                  ref.read(activeConversationIdProvider.notifier).setSession('default_session');
-                                },
-                              )
-                            : null,
-                        onTap: () {
-                          ref.read(activeConversationIdProvider.notifier).setSession(session);
-                          if (isMobile) {
-                            Navigator.pop(context); // Close drawer
-                          }
-                        },
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 6.0),
+                    child: ListTile(
+                      dense: true,
+                      selected: isActive,
+                      selectedTileColor: AuraTheme.accentIndigo.withAlpha(38),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                    );
-                  },
-                );
-              },
-              loading: () => const Center(
+                      title: Text(
+                        label,
+                        style: TextStyle(
+                          color: isActive ? Colors.white : AuraTheme.textSecondary,
+                          fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                      trailing: isActive && session != 'default_session'
+                          ? IconButton(
+                              icon: const Icon(Icons.delete_outline, size: 16, color: Colors.white30),
+                              onPressed: () {
+                                ref.read(chatRepositoryProvider).clearConversation(session);
+                                ref.read(activeConversationIdProvider.notifier).setSession('default_session');
+                              },
+                            )
+                          : null,
+                      onTap: () {
+                        ref.read(activeConversationIdProvider.notifier).setSession(session);
+                        if (isMobile) {
+                          Navigator.pop(context); // Close drawer
+                        }
+                      },
+                    ),
+                  );
+                },
+              );
+            },
+            loading: () => const Center(
+              child: Padding(
+                padding: EdgeInsets.all(8.0),
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
-              error: (err, _) => Text('Error: $err', style: const TextStyle(color: Colors.red)),
+            ),
+            error: (err, _) => Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Text('Error: $err', style: const TextStyle(color: Colors.red)),
             ),
           ),
           
@@ -1122,14 +1130,142 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 // ----------------------------------------------------
 // Message Bubble Widget
 // ----------------------------------------------------
-class MessageBubble extends StatelessWidget {
+class MessageBubble extends ConsumerWidget {
   final Message message;
   final bool isUser;
   const MessageBubble({super.key, required this.message, required this.isUser});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final formattedTime = DateFormat('jm').format(message.createdAt);
+
+    if (!isUser && message.content.startsWith("Connection Error")) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 16),
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * (MediaQuery.of(context).size.width < 768 ? 0.85 : 0.65),
+          ),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF2D1616),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.redAccent.withOpacity(0.5), width: 1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.cloud_off, color: Colors.redAccent, size: 20),
+                  SizedBox(width: 8),
+                  Text(
+                    "Cloud AI is currently unavailable",
+                    style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                "AURA could not connect to the cloud assistant. You can retry, switch to a local offline model, or report this issue.",
+                style: TextStyle(color: AuraTheme.textSecondary, fontSize: 13, height: 1.4),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      final db = ref.read(databaseProvider);
+                      final activeSessionId = ref.read(activeConversationIdProvider);
+                      final messages = await (db.select(db.messages)
+                            ..where((m) => m.conversationId.equals(activeSessionId))
+                            ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
+                          .get();
+                      
+                      final userMessages = messages.where((m) => m.role == "user").toList();
+                      if (userMessages.isNotEmpty) {
+                        final lastUserMsg = userMessages.last;
+                        // Delete the failed assistant message
+                        await (db.delete(db.messages)..where((m) => m.id.equals(message.id))).go();
+                        // Delete the last user message so sendChatMessage can recreate it cleanly
+                        await (db.delete(db.messages)..where((m) => m.id.equals(lastUserMsg.id))).go();
+                        
+                        // Resend
+                        await ref.read(chatRepositoryProvider).sendChatMessage(
+                          conversationId: activeSessionId,
+                          userContent: lastUserMsg.content,
+                          useRag: true,
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.refresh, size: 14),
+                    label: const Text("Retry"),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AuraTheme.accentIndigo,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      // Switch to local offline model
+                      ref.read(aiProviderSettingProvider.notifier).setProvider(AIProvider.offlineFast);
+                      
+                      final db = ref.read(databaseProvider);
+                      final activeSessionId = ref.read(activeConversationIdProvider);
+                      final messages = await (db.select(db.messages)
+                            ..where((m) => m.conversationId.equals(activeSessionId))
+                            ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
+                          .get();
+                      
+                      final userMessages = messages.where((m) => m.role == "user").toList();
+                      if (userMessages.isNotEmpty) {
+                        final lastUserMsg = userMessages.last;
+                        // Delete the failed assistant message
+                        await (db.delete(db.messages)..where((m) => m.id.equals(message.id))).go();
+                        // Delete the last user message so sendChatMessage can recreate it cleanly
+                        await (db.delete(db.messages)..where((m) => m.id.equals(lastUserMsg.id))).go();
+                        
+                        // Resend using local model
+                        await ref.read(chatRepositoryProvider).sendChatMessage(
+                          conversationId: activeSessionId,
+                          userContent: lastUserMsg.content,
+                          useRag: true,
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.cloud_off, size: 14),
+                    label: const Text("Use Local AI"),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AuraTheme.accentTeal,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text("Issue reported successfully to developers."),
+                          backgroundColor: AuraTheme.accentTeal,
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.bug_report_outlined, size: 14, color: Colors.white70),
+                    label: const Text("Report Issue", style: TextStyle(color: Colors.white70)),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.white24),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,

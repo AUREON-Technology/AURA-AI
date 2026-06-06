@@ -108,7 +108,7 @@ class ModelDownloadNotifier extends Notifier<Map<String, DownloadProgress>> {
         await modelsDir.create(recursive: true);
       }
       
-      final file = File("${modelsDir.path}/$modelName");
+      final file = File("${modelsDir.path}/${modelName.replaceAll(':', '_')}");
       sink = file.openWrite();
 
       int lastCompleted = 0;

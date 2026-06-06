@@ -63,7 +63,23 @@ class SentimentAnalyzer:
         if self._initialized:
             return
         
-        logger.info("Initializing sentiment classifier centroids...")
+        import os
+        import json
+        
+        # Load precomputed centroids if available
+        centroid_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sentiment_centroids.json")
+        if os.path.exists(centroid_file):
+            try:
+                with open(centroid_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self._centroids = {k: np.array(v) for k, v in data.items()}
+                self._initialized = True
+                logger.info("Sentiment classifier centroids loaded successfully from precomputed JSON.")
+                return
+            except Exception as e:
+                logger.error(f"Failed to load sentiment_centroids.json: {e}. Falling back to live calculation.")
+
+        logger.info("Initializing sentiment classifier centroids live...")
         for sentiment, phrases in SENTIMENT_REPRESENTATIVES.items():
             embeddings = []
             for phrase in phrases:
@@ -71,6 +87,14 @@ class SentimentAnalyzer:
                 embeddings.append(emb)
             # Calculate the centroid vector
             self._centroids[sentiment] = np.mean(embeddings, axis=0)
+            
+        # Cache to disk for next boot
+        try:
+            with open(centroid_file, "w", encoding="utf-8") as f:
+                json.dump({k: v.tolist() for k, v in self._centroids.items()}, f, indent=2)
+            logger.info("Saved computed sentiment centroids to cache file.")
+        except Exception as cache_err:
+            logger.error(f"Failed to save computed centroids cache: {cache_err}")
         
         self._initialized = True
         logger.info("Sentiment classifier centroids initialized successfully.")

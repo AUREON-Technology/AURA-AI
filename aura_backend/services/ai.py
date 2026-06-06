@@ -87,10 +87,10 @@ class AIService:
 
       current_prompt = modified_messages[-1]["content"]
 
-      # Create chat model and stream
-      chat = self.client.chats.create(model="gemini-2.5-flash", history=gemini_history)
-      response = chat.send_message_stream(current_prompt)
-      for chunk in response:
+      # Create chat model and stream asynchronously
+      chat = await self.client.aio.chats.create(model="gemini-2.5-flash", history=gemini_history)
+      response = await chat.send_message_stream(current_prompt)
+      async for chunk in response:
         if chunk.text:
           yield chunk.text
 

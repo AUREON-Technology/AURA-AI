@@ -8,6 +8,7 @@ import '../../../core/database/database_provider.dart';
 import '../../../core/config/config.dart';
 import '../../auth/presentation/auth_provider.dart';
 import '../../../core/security/device_validation_service.dart';
+import '../../../core/security/deterministic_id.dart';
 
 class MemoryItem {
   final String id;
@@ -28,6 +29,12 @@ class MemoryRepository {
     return (_db.select(_db.userMemories)
           ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.desc)]))
         .watch();
+  }
+
+  // Load local memories from SQLite cache directly
+  Future<List<MemoryItem>> loadLocalMemories() async {
+    final cached = await _db.select(_db.userMemories).get();
+    return cached.map((c) => MemoryItem(id: c.id, content: c.fact)).toList();
   }
 
   // Fetch all memories from backend and sync to local Drift database
@@ -135,7 +142,7 @@ class MemoryRepository {
   // Manually add memory fact to server and local Drift cache
   Future<void> saveMemory(String fact) async {
     // Save locally first
-    final id = (fact.hashCode & 0xFFFFFFFFFFFFFFFF).toString();
+    final id = getDeterministicId(fact);
     await _db.into(_db.userMemories).insertOnConflictUpdate(
       UserMemoriesCompanion.insert(
         id: id,

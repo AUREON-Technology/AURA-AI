@@ -186,8 +186,9 @@ class RAGService:
             **metadata
           }
           
+          from services.deterministic_id import get_deterministic_id
           points.append(PointStruct(
-            id=hash(point_id) & 0xFFFFFFFFFFFFFFFF, # Native 64-bit int hash ID
+            id=get_deterministic_id(point_id),
             vector=embedding,
             payload=payload
           ))
