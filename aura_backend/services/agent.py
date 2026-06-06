@@ -246,7 +246,7 @@ class AgentOrchestrator:
                         if google_access_token:
                             tools_list = [search_google_drive, ingest_google_drive_pdf, query_knowledge_base]
 
-                        chat = await self.client.aio.chats.create(
+                        chat = self.client.aio.chats.create(
                             model="gemini-2.5-flash",
                             history=gemini_history,
                             config=types.GenerateContentConfig(
@@ -254,6 +254,7 @@ class AgentOrchestrator:
                                 tools=tools_list if tools_list else None
                             )
                         )
+
                         
                         current_prompt_or_part = current_prompt
                         while True:
