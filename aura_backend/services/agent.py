@@ -7,6 +7,8 @@ from google.genai import types
 from config import settings
 from services.memory import memory_service
 from services.rag import rag_service
+from services.budget import increment_and_check_gemini_budget, GeminiBudgetExceededException
+
 
 logger = logging.getLogger(__name__)
 
@@ -255,8 +257,8 @@ class AgentOrchestrator:
                         
                         current_prompt_or_part = current_prompt
                         while True:
-                            from services.budget import increment_and_check_gemini_budget, GeminiBudgetExceededException
                             increment_and_check_gemini_budget()
+
 
                             response = await chat.send_message_stream(current_prompt_or_part)
                             has_function_call = False
