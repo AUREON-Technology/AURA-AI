@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import json
 from celery_app import celery_app
@@ -52,4 +53,43 @@ def build_lora_dataset_task(user_id: str) -> dict:
         return {"status": "success", "total_records": len(dataset), "file_saved": filename}
     except Exception as e:
         logger.error(f"Failed to build LoRA dataset in task: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+async def _generate_insights_for_all_users() -> int:
+    from sqlalchemy import select
+    from infrastructure.db.base import get_session_factory, is_configured
+    from infrastructure.db.models import User
+    from services.insights import generate_insights_for_user
+
+    if not is_configured():
+        logger.info("Skipping insights generation: DATABASE_URL not configured.")
+        return 0
+
+    session_factory = get_session_factory()
+    count = 0
+    async with session_factory() as db:
+        users = (await db.execute(select(User))).scalars().all()
+        for user in users:
+            try:
+                await generate_insights_for_user(db, user.id)
+                count += 1
+            except Exception as e:
+                logger.error(f"Insight generation failed for user {user.id}: {e}")
+        await db.commit()
+    return count
+
+
+@celery_app.task(name="tasks.generate_insights_for_all_users_task")
+def generate_insights_for_all_users_task() -> dict:
+    """Beat-scheduled wrapper bridging Celery's sync task execution into
+    the async SQLAlchemy service (services/insights.py) — each run gets
+    its own event loop, same pattern as any sync-context-calls-async-code
+    integration."""
+    logger.info("Celery task: Generating insights for all users...")
+    try:
+        count = asyncio.run(_generate_insights_for_all_users())
+        return {"status": "success", "users_processed": count}
+    except Exception as e:
+        logger.error(f"Failed to generate insights for all users: {e}")
         return {"status": "error", "message": str(e)}

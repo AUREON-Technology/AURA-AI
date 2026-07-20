@@ -2,566 +2,488 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
-import '../../../core/theme/theme.dart';
+import '../../../core/design_system/design_system.dart';
+import '../../../core/insights/insights_client.dart';
+import '../../../l10n/generated/app_localizations.dart';
+import '../../notifications/notification_center.dart';
 import '../../../core/ai/offline_agents/offline_agent_manager.dart';
-import '../../../core/ai/offline_agents/inference_provider.dart';
 import '../../tasks/data/task_repository.dart';
 import '../../calendar/data/calendar_repository.dart';
 import '../../finance/data/finance_repository.dart';
 import '../../health/data/health_repository.dart';
-import '../../analytics/presentation/analytics_page.dart';
 
+/// V2 flagship screen — "Today". Replaces the V1 dashboard-of-shortcuts
+/// (a grid of 4 unrelated domain cards) with the IA described in
+/// Doc/V2_BLUEPRINT.md §3: a single AI-curated view answering "what does
+/// AURA think I should know right now", with a persistent capture bar
+/// (Copilot is one tap away, not buried at nav position 6 as in V1) and a
+/// unified "due today" list merging tasks + calendar instead of two
+/// separate siloed cards — the same cross-domain unification the future
+/// Life Hub screen (Phase 1/2) will generalize.
+///
+/// Locally scoped to [AuraThemeV2] via the [Theme] wrapper below rather
+/// than flipping the app-wide theme, since ~20 other V1 screens still read
+/// hardcoded colors directly and aren't migrated yet (see blueprint §13
+/// Phase 2). This keeps the new design language real and testable without
+/// risking a global visual regression.
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    return Theme(
+      data: AuraThemeV2.dark,
+      child: Builder(builder: (context) => _TodayScaffold(ref: ref)),
+    );
+  }
+}
+
+class _TodayScaffold extends StatelessWidget {
+  final WidgetRef ref;
+  const _TodayScaffold({required this.ref});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
     final tasksAsync = ref.watch(tasksStreamProvider);
     final calendarAsync = ref.watch(calendarEventsStreamProvider);
     final financeAsync = ref.watch(financeTransactionsStreamProvider);
     final healthAsync = ref.watch(dailyHealthStreamProvider(DateTime.now()));
     final ollamaHealthAsync = ref.watch(ollamaHealthProvider);
 
-    final isMobile = MediaQuery.of(context).size.width < 768;
-
     return Scaffold(
-      backgroundColor: AuraTheme.background,
+      backgroundColor: palette.background,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: Row(
-          children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                gradient: AuraTheme.primaryGradient,
-              ),
-              child: const Icon(Icons.blur_on, color: Colors.white, size: 20),
-            ),
-            const SizedBox(width: 12),
-            const Text(
-              "AURA AI Dashboard",
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
-            ),
-          ],
-        ),
+        title: Text(_greeting(context), style: Theme.of(context).textTheme.headlineMedium),
         actions: [
+          const NotificationBellIcon(),
           IconButton(
-            icon: const Icon(Icons.settings, color: Colors.white70),
+            tooltip: AppLocalizations.of(context)!.settingsTooltip,
+            icon: Icon(Icons.settings_outlined, color: palette.textSecondary),
             onPressed: () => context.go('/settings'),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: AuraSpacing.sm),
         ],
       ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _buildWelcomeSection(context),
-              const SizedBox(height: 24),
-              // Quick status widgets
-              _buildQuickStatusRow(
-                isMobile,
-                tasksAsync,
-                financeAsync,
-                healthAsync,
-                calendarAsync,
-              ),
-              const SizedBox(height: 24),
-              // Dynamic details layout
-              isMobile
-                  ? Column(
-                      children: [
-                        _buildTasksOverviewCard(context, tasksAsync),
-                        const SizedBox(height: 20),
-                        _buildEventsOverviewCard(context, calendarAsync),
-                        const SizedBox(height: 20),
-                        _buildHealthOverviewCard(context, healthAsync),
-                        const SizedBox(height: 20),
-                        _buildAISystemHealthCard(ref, ollamaHealthAsync),
-                      ],
-                    )
-                  : GridView.count(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      crossAxisCount: 2,
-                      crossAxisSpacing: 20,
-                      mainAxisSpacing: 20,
-                      childAspectRatio: 1.55,
-                      children: [
-                        _buildTasksOverviewCard(context, tasksAsync),
-                        _buildEventsOverviewCard(context, calendarAsync),
-                        _buildHealthOverviewCard(context, healthAsync),
-                        _buildAISystemHealthCard(ref, ollamaHealthAsync),
-                      ],
-                    ),
-              const SizedBox(height: 24),
-              _buildQuickChatCard(context),
-            ],
-          ),
+      body: RefreshIndicator(
+        onRefresh: () async {
+          ref.invalidate(ollamaHealthProvider);
+        },
+        child: ListView(
+          padding: const EdgeInsets.all(AuraSpacing.lg),
+          children: [
+            Text(
+              DateFormat('EEEE, MMMM d').format(DateTime.now()),
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: AuraSpacing.xl),
+            _CaptureBar(),
+            const SizedBox(height: AuraSpacing.xl),
+            const _InsightsSection(),
+            _DueTodayCard(tasksAsync: tasksAsync, calendarAsync: calendarAsync),
+            const SizedBox(height: AuraSpacing.lg),
+            _QuickStatsRow(tasksAsync: tasksAsync, financeAsync: financeAsync, healthAsync: healthAsync),
+            const SizedBox(height: AuraSpacing.lg),
+            _SystemHealthCard(ollamaHealthAsync: ollamaHealthAsync, ref: ref),
+            const SizedBox(height: AuraSpacing.xxl),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildWelcomeSection(BuildContext context) {
-    final now = DateTime.now();
-    final formatter = DateFormat('EEEE, MMMM d, yyyy');
+  String _greeting(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final hour = DateTime.now().hour;
+    if (hour < 12) return l10n.greetingMorning;
+    if (hour < 18) return l10n.greetingAfternoon;
+    return l10n.greetingEvening;
+  }
+}
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          "Welcome back,",
-          style: TextStyle(color: AuraTheme.textSecondary, fontSize: 16),
-        ),
-        const SizedBox(height: 4),
-        const Text(
-          "AURA User",
-          style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          formatter.format(now),
-          style: const TextStyle(color: AuraTheme.accentAmber, fontSize: 13, fontWeight: FontWeight.w500),
-        ),
-      ],
+/// The always-available AI entry point — IA priority #2 (Copilot), surfaced
+/// here instead of requiring a nav-bar hop, per blueprint §3/§1.
+class _CaptureBar extends ConsumerStatefulWidget {
+  @override
+  ConsumerState<_CaptureBar> createState() => _CaptureBarState();
+}
+
+class _CaptureBarState extends ConsumerState<_CaptureBar> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final query = _controller.text.trim();
+    if (query.isEmpty) return;
+    context.go('/chat', extra: query);
+    _controller.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    return AuraCard(
+      glass: true,
+      semanticLabel: 'Ask AURA anything',
+      child: Row(
+        children: [
+          Icon(Icons.auto_awesome, color: palette.brandOnSurfaceText, size: 20),
+          const SizedBox(width: AuraSpacing.md),
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              onSubmitted: (_) => _submit(),
+              style: Theme.of(context).textTheme.bodyLarge,
+              decoration: InputDecoration(
+                border: InputBorder.none,
+                hintText: AppLocalizations.of(context)!.captureBarHint,
+                isDense: true,
+              ),
+            ),
+          ),
+          const SizedBox(width: AuraSpacing.sm),
+          Semantics(
+            button: true,
+            label: 'Send to AURA',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(AuraRadius.pill),
+              onTap: _submit,
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(color: palette.brand, shape: BoxShape.circle),
+                child: const Icon(Icons.arrow_upward_rounded, color: Colors.white, size: 20),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Proactive AI Insights (Doc/V2_BLUEPRINT.md §8) — the first feature that
+/// actually needs the backend to own user data (§6's Postgres migration).
+/// Renders nothing at all (not even a skeleton/empty state) when there are
+/// none, since an empty "Insights" section isn't informative the way an
+/// empty "Due today" list is — it degrades silently on deployments that
+/// haven't configured Postgres yet.
+class _InsightsSection extends ConsumerWidget {
+  const _InsightsSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final insightsAsync = ref.watch(insightsProvider);
+
+    return insightsAsync.when(
+      data: (insights) {
+        if (insights.isEmpty) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(bottom: AuraSpacing.lg),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final insight in insights) ...[
+                _InsightCard(insight: insight),
+                const SizedBox(height: AuraSpacing.sm),
+              ],
+            ],
+          ),
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
+    );
+  }
+}
+
+class _InsightCard extends ConsumerWidget {
+  final AppInsight insight;
+  const _InsightCard({required this.insight});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final palette = AuraPalette.of(context);
+    return AuraCard(
+      glass: true,
+      padding: const EdgeInsets.all(AuraSpacing.md),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.tips_and_updates_outlined, size: 18, color: palette.warning),
+          const SizedBox(width: AuraSpacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  insight.message,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: palette.textPrimary, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                Text(insight.explanation, style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+          ),
+          Semantics(
+            button: true,
+            label: 'Dismiss insight',
+            child: InkWell(
+              onTap: () async {
+                await ref.read(insightsClientProvider).dismiss(insight.id);
+                ref.invalidate(insightsProvider);
+              },
+              borderRadius: BorderRadius.circular(AuraRadius.pill),
+              child: Padding(
+                padding: const EdgeInsets.all(AuraSpacing.xs),
+                child: Icon(Icons.close, size: 16, color: palette.textDisabled),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum _DueItemKind { task, event }
+
+class _DueItem {
+  final _DueItemKind kind;
+  final String title;
+  final DateTime? time;
+  final bool overdue;
+  const _DueItem({required this.kind, required this.title, this.time, this.overdue = false});
+}
+
+/// Unified "what's due" list — merges tasks + calendar events into one
+/// chronological view instead of two separate cards (V1 had
+/// `_buildTasksOverviewCard` and `_buildEventsOverviewCard` as unrelated
+/// siblings). This is the Today-screen expression of the Life Hub
+/// unification principle in blueprint §3.
+class _DueTodayCard extends StatelessWidget {
+  final AsyncValue<List<dynamic>> tasksAsync;
+  final AsyncValue<List<dynamic>> calendarAsync;
+  const _DueTodayCard({required this.tasksAsync, required this.calendarAsync});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    final loading = tasksAsync.isLoading || calendarAsync.isLoading;
+    final hasError = tasksAsync.hasError || calendarAsync.hasError;
+
+    final l10n = AppLocalizations.of(context)!;
+    return AuraCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AuraSectionHeader(
+            title: l10n.dueToday,
+            actionLabel: l10n.viewAll,
+            onAction: () => context.go('/tasks'),
+          ),
+          const SizedBox(height: AuraSpacing.md),
+          if (loading)
+            const Column(children: [AuraSkeleton(height: 18), SizedBox(height: 10), AuraSkeleton(height: 18), SizedBox(height: 10), AuraSkeleton(height: 18)])
+          else if (hasError)
+            AuraEmptyState(icon: Icons.error_outline, title: l10n.couldNotLoadDueToday)
+          else
+            _buildList(context, palette),
+        ],
+      ),
     );
   }
 
-  Widget _buildQuickStatusRow(
-    bool isMobile,
-    AsyncValue<List<dynamic>> tasks,
-    AsyncValue<List<dynamic>> finance,
-    AsyncValue<dynamic> health,
-    AsyncValue<List<dynamic>> calendar,
-  ) {
-    // Computations from states
-    final activeTasksCount = tasks.value?.where((t) => !t.isCompleted).length ?? 0;
-    
-    double totalExpenses = 0.0;
-    if (finance.value != null) {
-      for (final record in finance.value!) {
-        if (record.type == 'expense') {
-          totalExpenses += record.amount;
-        }
-      }
-    }
+  Widget _buildList(BuildContext context, AuraPalette palette) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
 
-    final waterMl = health.value?.waterIntakeMl ?? 0;
-    final nextEventTitle = calendar.value != null && calendar.value!.isNotEmpty
-        ? calendar.value!.first.title
-        : "None";
+    final tasks = tasksAsync.value ?? [];
+    final events = calendarAsync.value ?? [];
 
-    final cards = [
-      _buildQuickStatCard("Active Tasks", activeTasksCount.toString(), Icons.playlist_add_check, AuraTheme.accentIndigo),
-      _buildQuickStatCard("Today's Water", "$waterMl mL", Icons.water_drop, Colors.blueAccent),
-      _buildQuickStatCard("Expenses", "\$${totalExpenses.toStringAsFixed(0)}", Icons.monetization_on, AuraTheme.accentAmber),
-      _buildQuickStatCard("Next Event", nextEventTitle, Icons.event_note, AuraTheme.accentTeal),
-    ];
+    final items = <_DueItem>[
+      for (final t in tasks)
+        if (!t.isCompleted)
+          _DueItem(
+            kind: _DueItemKind.task,
+            title: t.title as String,
+            time: t.dueDate as DateTime?,
+            overdue: t.dueDate != null && (t.dueDate as DateTime).isBefore(today),
+          ),
+      for (final e in events)
+        if ((e.startTime as DateTime).isAfter(today) && (e.startTime as DateTime).isBefore(today.add(const Duration(days: 1))))
+          _DueItem(kind: _DueItemKind.event, title: e.title as String, time: e.startTime as DateTime),
+    ]..sort((a, b) {
+        if (a.time == null) return 1;
+        if (b.time == null) return -1;
+        return a.time!.compareTo(b.time!);
+      });
 
-    if (isMobile) {
-      return GridView.count(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        crossAxisCount: 2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 1.6,
-        children: cards,
+    final visible = items.take(5).toList();
+
+    if (visible.isEmpty) {
+      final l10n = AppLocalizations.of(context)!;
+      return AuraEmptyState(
+        icon: Icons.check_circle_outline,
+        title: l10n.nothingDueToday,
+        message: l10n.allCaughtUp,
       );
     }
 
-    return Row(
-      children: cards.map((c) => Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 4), child: c))).toList(),
-    );
-  }
-
-  Widget _buildQuickStatCard(String title, String value, IconData icon, Color color) {
-    return Card(
-      color: AuraTheme.cardBg,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Row(
-          children: [
-            CircleAvatar(
-              backgroundColor: color.withOpacity(0.1),
-              radius: 18,
-              child: Icon(icon, color: color, size: 18),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(title, style: const TextStyle(fontSize: 11, color: AuraTheme.textSecondary), overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 4),
-                  Text(value, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white), overflow: TextOverflow.ellipsis),
-                ],
-              ),
-            )
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTasksOverviewCard(BuildContext context, AsyncValue<List<dynamic>> tasksAsync) {
-    return Card(
-      color: AuraTheme.cardBg,
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text("Task Focus List", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
-                TextButton(
-                  onPressed: () => context.go('/tasks'),
-                  child: const Text("View All", style: TextStyle(color: AuraTheme.accentIndigo, fontSize: 12)),
-                )
-              ],
-            ),
-            const SizedBox(height: 10),
-            tasksAsync.when(
-              data: (tasks) {
-                final active = tasks.where((t) => !t.isCompleted).take(3).toList();
-                if (active.isEmpty) {
-                  return const SizedBox(
-                    height: 60,
-                    child: Center(
-                      child: Text("No active tasks!", style: TextStyle(color: Colors.white24, fontSize: 12)),
-                    ),
-                  );
-                }
-                return ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: active.length,
-                  itemBuilder: (context, index) {
-                    final task = active[index];
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4.0),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.circle_outlined, size: 14, color: AuraTheme.accentIndigo),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              task.title,
-                              style: const TextStyle(color: Colors.white, fontSize: 13),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                );
-              },
-              loading: () => const SizedBox(
-                height: 60,
-                child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
-              ),
-              error: (e, _) => const SizedBox(
-                height: 60,
-                child: Center(child: Text("Error loading tasks", style: TextStyle(color: Colors.redAccent, fontSize: 12))),
-              ),
-            )
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEventsOverviewCard(BuildContext context, AsyncValue<List<dynamic>> calendarAsync) {
-    return Card(
-      color: AuraTheme.cardBg,
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text("Upcoming Events", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
-                TextButton(
-                  onPressed: () => context.go('/calendar'),
-                  child: const Text("Calendar", style: TextStyle(color: AuraTheme.accentIndigo, fontSize: 12)),
-                )
-              ],
-            ),
-            const SizedBox(height: 10),
-            calendarAsync.when(
-              data: (events) {
-                final upcoming = events.take(3).toList();
-                if (upcoming.isEmpty) {
-                  return const SizedBox(
-                    height: 60,
-                    child: Center(
-                      child: Text("No events scheduled", style: TextStyle(color: Colors.white24, fontSize: 12)),
-                    ),
-                  );
-                }
-                return ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: upcoming.length,
-                  itemBuilder: (context, index) {
-                    final event = upcoming[index];
-                    final timeStr = DateFormat('hh:mm a').format(event.startTime);
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4.0),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.calendar_today_outlined, size: 12, color: AuraTheme.accentAmber),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              "${event.title} ($timeStr)",
-                              style: const TextStyle(color: Colors.white, fontSize: 13),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                );
-              },
-              loading: () => const SizedBox(
-                height: 60,
-                child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
-              ),
-              error: (e, _) => const SizedBox(
-                height: 60,
-                child: Center(child: Text("Error loading calendar", style: TextStyle(color: Colors.redAccent, fontSize: 12))),
-              ),
-            )
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHealthOverviewCard(BuildContext context, AsyncValue<dynamic> healthAsync) {
-    return Card(
-      color: AuraTheme.cardBg,
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text("Health & Fitness", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
-                TextButton(
-                  onPressed: () => context.go('/health'),
-                  child: const Text("Track Health", style: TextStyle(color: AuraTheme.accentIndigo, fontSize: 12)),
-                )
-              ],
-            ),
-            const SizedBox(height: 10),
-            healthAsync.when(
-              data: (record) {
-                if (record == null) {
-                  return const SizedBox(
-                    height: 60,
-                    child: Center(
-                      child: Text("No health records today", style: TextStyle(color: Colors.white24, fontSize: 12)),
-                    ),
-                  );
-                }
-                return Column(
-                  children: [
-                    _buildHealthMetricRow("Water", "${record.waterIntakeMl} mL", Icons.water_drop, Colors.blueAccent),
-                    const SizedBox(height: 6),
-                    _buildHealthMetricRow("Sleep", "${(record.sleepMinutes / 60).toStringAsFixed(1)} hrs", Icons.bedtime, Colors.purpleAccent),
-                    const SizedBox(height: 6),
-                    _buildHealthMetricRow("Exercise", "${record.exerciseMinutes} mins", Icons.fitness_center, AuraTheme.accentTeal),
-                  ],
-                );
-              },
-              loading: () => const SizedBox(
-                height: 60,
-                child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
-              ),
-              error: (e, _) => const SizedBox(
-                height: 60,
-                child: Center(child: Text("Error loading health statistics", style: TextStyle(color: Colors.redAccent, fontSize: 12))),
-              ),
-            )
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHealthMetricRow(String label, String val, IconData icon, Color color) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return Column(
       children: [
-        Row(
-          children: [
-            Icon(icon, size: 14, color: color),
-            const SizedBox(width: 8),
-            Text(label, style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 12)),
-          ],
-        ),
-        Text(val, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+        for (final item in visible) ...[
+          _DueRow(item: item),
+          if (item != visible.last) const SizedBox(height: AuraSpacing.sm),
+        ],
       ],
     );
   }
+}
 
-  Widget _buildAISystemHealthCard(WidgetRef ref, AsyncValue<bool> healthAsync) {
-    return Card(
-      color: AuraTheme.cardBg,
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text("AI System Health", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
-                TextButton(
-                  onPressed: () {
-                    ref.refresh(telemetryLogsFutureProvider);
-                    ref.refresh(ollamaHealthProvider);
-                  },
-                  child: const Text("Telemetry", style: TextStyle(color: AuraTheme.accentIndigo, fontSize: 12)),
-                )
-              ],
+class _DueRow extends StatelessWidget {
+  final _DueItem item;
+  const _DueRow({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    final icon = item.kind == _DueItemKind.task ? Icons.circle_outlined : Icons.event_outlined;
+    final color = item.overdue ? palette.danger : (item.kind == _DueItemKind.task ? palette.brandOnSurfaceText : palette.warning);
+
+    return Semantics(
+      label: '${item.kind == _DueItemKind.task ? "Task" : "Event"}: ${item.title}${item.overdue ? ", overdue" : ""}',
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: AuraSpacing.sm),
+          Expanded(
+            child: Text(item.title, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: palette.textPrimary), overflow: TextOverflow.ellipsis),
+          ),
+          if (item.time != null)
+            Text(
+              DateFormat('h:mm a').format(item.time!),
+              style: TextStyle(color: item.overdue ? palette.danger : palette.textSecondary, fontSize: 12, fontWeight: item.overdue ? FontWeight.w600 : FontWeight.w400),
             ),
-            const SizedBox(height: 10),
-            healthAsync.when(
-              data: (active) {
-                return Column(
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text("Local Inference Provider", style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12)),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: active ? AuraTheme.accentTeal.withOpacity(0.15) : Colors.redAccent.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            active ? "Operational" : "Offline",
-                            style: TextStyle(
-                              color: active ? AuraTheme.accentTeal : Colors.redAccent,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 10,
-                            ),
-                          ),
-                        )
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text("Failover Middleware", style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12)),
-                        const Text(
-                          "Active (Auto)",
-                          style: TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 11),
-                        )
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text("Privacy Mode", style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12)),
-                        const Text(
-                          "Encrypted Local SQLite",
-                          style: TextStyle(color: AuraTheme.accentAmber, fontWeight: FontWeight.bold, fontSize: 11),
-                        )
-                      ],
-                    ),
-                  ],
-                );
-              },
-              loading: () => const SizedBox(
-                height: 60,
-                child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
-              ),
-              error: (err, _) => const SizedBox(
-                height: 60,
-                child: Center(child: Text("Offline", style: TextStyle(color: Colors.redAccent, fontSize: 12))),
-              ),
-            )
-          ],
-        ),
+        ],
       ),
     );
   }
+}
 
-  Widget _buildQuickChatCard(BuildContext context) {
-    final textController = TextEditingController();
+class _QuickStatsRow extends StatelessWidget {
+  final AsyncValue<List<dynamic>> tasksAsync;
+  final AsyncValue<List<dynamic>> financeAsync;
+  final AsyncValue<dynamic> healthAsync;
+  const _QuickStatsRow({required this.tasksAsync, required this.financeAsync, required this.healthAsync});
 
-    return Card(
-      color: AuraTheme.cardBg,
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              "Quick AI Assistance",
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              "Ask AURA anything, schedule tasks, log finance entries, or query memory facts.",
-              style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: textController,
-                    decoration: InputDecoration(
-                      hintText: "Type your query...",
-                      filled: true,
-                      fillColor: Colors.black26,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    ),
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                ElevatedButton(
-                  onPressed: () {
-                    final query = textController.text.trim();
-                    if (query.isNotEmpty) {
-                      context.go('/chat', extra: query);
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AuraTheme.accentIndigo,
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                  ),
-                  child: const Icon(Icons.send, size: 16),
-                )
-              ],
-            )
-          ],
-        ),
+  @override
+  Widget build(BuildContext context) {
+    final activeTasks = tasksAsync.value?.where((t) => !t.isCompleted).length ?? 0;
+
+    double expenses = 0;
+    for (final r in financeAsync.value ?? []) {
+      if (r.type == 'expense') expenses += r.amount as double;
+    }
+    final waterMl = healthAsync.value?.waterIntakeMl ?? 0;
+    final l10n = AppLocalizations.of(context)!;
+
+    final stats = [
+      (Icons.playlist_add_check, l10n.activeTasks, '$activeTasks'),
+      (Icons.water_drop_outlined, l10n.waterToday, '$waterMl mL'),
+      (Icons.monetization_on_outlined, l10n.spentThisPeriod, '\$${expenses.toStringAsFixed(0)}'),
+    ];
+
+    return Row(
+      children: [
+        for (final s in stats) ...[
+          Expanded(child: _StatTile(icon: s.$1, label: s.$2, value: s.$3)),
+          if (s != stats.last) const SizedBox(width: AuraSpacing.md),
+        ],
+      ],
+    );
+  }
+}
+
+class _StatTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _StatTile({required this.icon, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    return AuraCard(
+      semanticLabel: '$label: $value',
+      padding: const EdgeInsets.all(AuraSpacing.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: palette.brandOnSurfaceText),
+          const SizedBox(height: AuraSpacing.sm),
+          Text(value, style: Theme.of(context).textTheme.titleMedium, overflow: TextOverflow.ellipsis),
+          Text(label, style: Theme.of(context).textTheme.labelSmall, overflow: TextOverflow.ellipsis),
+        ],
       ),
+    );
+  }
+}
+
+class _SystemHealthCard extends StatelessWidget {
+  final AsyncValue<bool> ollamaHealthAsync;
+  final WidgetRef ref;
+  const _SystemHealthCard({required this.ollamaHealthAsync, required this.ref});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    final l10n = AppLocalizations.of(context)!;
+    return AuraCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AuraSectionHeader(title: l10n.aiSystemStatus),
+          const SizedBox(height: AuraSpacing.md),
+          ollamaHealthAsync.when(
+            data: (active) => _StatusRow(
+              label: l10n.onDeviceInference,
+              value: active ? l10n.statusReady : l10n.statusUnavailable,
+              color: active ? palette.success : palette.danger,
+            ),
+            loading: () => const AuraSkeleton(height: 16, width: 140),
+            error: (_, _) => _StatusRow(label: l10n.onDeviceInference, value: l10n.statusUnavailable, color: palette.danger),
+          ),
+          const SizedBox(height: AuraSpacing.sm),
+          _StatusRow(label: l10n.localData, value: l10n.encryptedAesGcm, color: palette.textSecondary),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+  const _StatusRow({required this.label, required this.value, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: TextStyle(color: palette.textSecondary, fontSize: 12)),
+        Text(value, style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12)),
+      ],
     );
   }
 }

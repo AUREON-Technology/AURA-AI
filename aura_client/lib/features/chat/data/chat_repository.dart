@@ -11,6 +11,8 @@ import '../../../core/database/database.dart';
 import '../../../core/database/database_provider.dart';
 import '../../../core/config/config.dart';
 import '../../../core/ai/orchestrator/agent_orchestrator.dart';
+import '../../../core/ai/ai_router/aura_ai_router.dart';
+import '../../../core/ai/online_agents/sse_agent_client.dart';
 import 'agent_config_repository.dart';
 import 'memory_repository.dart';
 import '../../auth/presentation/auth_provider.dart';
@@ -107,14 +109,119 @@ class ChatRepository {
       "content": userContent,
     });
 
-    // 6. Execute streaming via ClientAgentOrchestrator
+    // 6. Execute streaming. When the router is online, try the v2 SSE
+    // protocol first (Doc/V2_BLUEPRINT.md §7) — structured token/tool_calls
+    // events instead of string-splitting a "[ACTIONS]" marker out of the
+    // stream. Falls back to the existing ClientAgentOrchestrator path
+    // (which already handles offline routing/failover) on any SSE error,
+    // so a backend that hasn't deployed /api/v2/chat yet still works.
+    final route = await _ref.read(aiRouter).selectRoute();
+    final isOnline = route["provider"] == AIProvider.gemini;
+
+    bool sseSucceeded = false;
+    if (isOnline) {
+      sseSucceeded = await _sendViaSse(
+        agentId: activeAgentId,
+        historyPayload: historyPayload,
+        customInstructions: customInstructions,
+        useRag: useRag,
+        assistantMsgId: assistantMsgId,
+      );
+    }
+
+    if (!sseSucceeded) {
+      await _sendViaOrchestrator(
+        agentId: activeAgentId,
+        historyPayload: historyPayload,
+        customInstructions: customInstructions,
+        useRag: useRag,
+        assistantMsgId: assistantMsgId,
+      );
+    }
+
+    // Asynchronously trigger memory extraction regardless of which path served the response
+    unawaited(_ref.read(memoryRepositoryProvider).triggerMemoryExtraction(historyMessages));
+  }
+
+  /// Returns true if the SSE stream completed successfully (even if the
+  /// model's reply was itself an error frame) — false signals the caller
+  /// to fall back to [_sendViaOrchestrator].
+  Future<bool> _sendViaSse({
+    required String agentId,
+    required List<Map<String, String>> historyPayload,
+    required Map<String, String> customInstructions,
+    required bool useRag,
+    required String assistantMsgId,
+  }) async {
+    final stopwatch = Stopwatch()..start();
+    String displayText = "";
+    DateTime lastDbUpdate = DateTime.now();
+
+    try {
+      final client = _ref.read(sseAgentClientProvider);
+      final stream = client.streamAgentEvents(
+        agentId: agentId,
+        messages: historyPayload,
+        customInstructions: customInstructions,
+        useRag: useRag,
+      );
+
+      await for (final event in stream) {
+        switch (event.kind) {
+          case SseEventKind.token:
+            displayText += event.text ?? "";
+            final now = DateTime.now();
+            if (now.difference(lastDbUpdate).inMilliseconds > 500) {
+              await _updateMessageText(assistantMsgId, displayText);
+              lastDbUpdate = now;
+            }
+            break;
+          case SseEventKind.toolCalls:
+            _ref.read(pendingActionsProvider.notifier).setActions(event.actions ?? []);
+            break;
+          case SseEventKind.error:
+            displayText = displayText.isEmpty ? "Error: ${event.message}" : displayText;
+            debugPrint("[ChatRepository] SSE stream error event: ${event.message}");
+            break;
+          case SseEventKind.done:
+            break;
+        }
+      }
+
+      await _updateMessageText(assistantMsgId, displayText);
+      await _logTelemetry(eventType: "request", isOffline: false, latencyMs: stopwatch.elapsedMilliseconds.toDouble(), modelUsed: "gemini-2.5-flash-sse");
+      return true;
+    } catch (e) {
+      debugPrint("[ChatRepository] SSE path failed, falling back: $e");
+      await _logTelemetry(
+        eventType: "failover",
+        isOffline: false,
+        latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
+        modelUsed: "gemini-2.5-flash-sse",
+        errorMessage: e.toString(),
+      );
+      return false;
+    }
+  }
+
+  /// V1-era path: ClientAgentOrchestrator → AuraAIRouter, which itself
+  /// picks online/offline and handles failover, still parsing a trailing
+  /// "[ACTIONS]" marker out of the raw text stream. Kept as the fallback
+  /// for offline mode and for when /api/v2/chat is unavailable.
+  Future<void> _sendViaOrchestrator({
+    required String agentId,
+    required List<Map<String, String>> historyPayload,
+    required Map<String, String> customInstructions,
+    required bool useRag,
+    required String assistantMsgId,
+  }) async {
     String fullResponseText = "";
     DateTime lastDbUpdate = DateTime.now();
 
     try {
       final orchestrator = _ref.read(clientAgentOrchestratorProvider);
       final stream = orchestrator.executeAgentStream(
-        agentId: activeAgentId,
+        agentId: agentId,
         messages: historyPayload,
         customInstructions: customInstructions,
         useRag: useRag,
@@ -153,13 +260,33 @@ class ChatRepository {
           debugPrint("Actions JSON parse failed: $e");
         }
       }
-
-      // Asynchronously trigger memory extraction
-      unawaited(_ref.read(memoryRepositoryProvider).triggerMemoryExtraction(historyMessages));
     } catch (e) {
       debugPrint("ClientAgentOrchestrator stream execution failed: $e");
       fullResponseText = "Connection Error: Failed to retrieve response from active AI agent.";
       await _updateMessageText(assistantMsgId, fullResponseText);
+    }
+  }
+
+  Future<void> _logTelemetry({
+    required String eventType,
+    required bool isOffline,
+    required double latencyMs,
+    required String modelUsed,
+    String? errorMessage,
+  }) async {
+    try {
+      await _db.insertTelemetry(TelemetryLogsCompanion.insert(
+        id: _uuid.v4(),
+        eventType: eventType,
+        latencyMs: latencyMs,
+        agentUsed: "chat_repository",
+        modelUsed: modelUsed,
+        isOffline: isOffline,
+        errorMessage: Value(errorMessage),
+        createdAt: DateTime.now(),
+      ));
+    } catch (e) {
+      debugPrint("[ChatRepository] Failed to log telemetry: $e");
     }
   }
 

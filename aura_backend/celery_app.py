@@ -17,3 +17,15 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
 )
+
+# AURA Insights (Doc/V2_BLUEPRINT.md §8): periodic background refresh, on
+# top of the on-demand POST /api/v2/insights/generate endpoint (which
+# works without a beat scheduler at all). Requires a separate
+# `celery -A celery_app beat` process — see docker-compose.yml's
+# celery_beat service.
+celery_app.conf.beat_schedule = {
+    "generate-insights-hourly": {
+        "task": "tasks.generate_insights_for_all_users_task",
+        "schedule": 3600.0,
+    },
+}
