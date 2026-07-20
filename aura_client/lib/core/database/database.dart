@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
@@ -162,6 +163,37 @@ class OfflineModelWeights extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+/// V2 generalized mutation queue (Doc/V2_BLUEPRINT.md §5). Replaces the
+/// per-table `isSynced` boolean + `PendingDeletes` combo: every create/
+/// update/delete of a syncable record enqueues one row here, encoding the
+/// full mutation (table, op, id, JSON payload matching the backend's
+/// Postgres column names, and the client's clock at mutation time for LWW).
+/// `SyncClient.push()` drains this table in one batched call to
+/// `POST /api/v2/sync` instead of five bespoke per-table HTTP loops.
+class OutboxEntries extends Table {
+  TextColumn get id => text()();
+  TextColumn get targetTable => text()();
+  TextColumn get recordId => text()();
+  TextColumn get operation => text()(); // "upsert" | "delete"
+  TextColumn get payloadJson => text().nullable()();
+  DateTimeColumn get clientUpdatedAt => dateTime()();
+  DateTimeColumn get createdAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// Small key/value store for sync bookkeeping — currently just the last
+/// server cursor returned by `GET /api/v2/sync`, so the next pull only
+/// requests what changed since then.
+class SyncMetadata extends Table {
+  TextColumn get key => text()();
+  TextColumn get value => text()();
+
+  @override
+  Set<Column> get primaryKey => {key};
+}
+
 class TelemetryLogs extends Table {
   TextColumn get id => text()();
   TextColumn get eventType => text()(); // request, failover, error, rating
@@ -181,15 +213,69 @@ class TelemetryLogs extends Table {
 // Database Connection & Class
 // ----------------------------------------------------
 
-@DriftDatabase(tables: [Tasks, CalendarEvents, FinanceRecords, HealthRecords, Messages, AgentConfigurations, UserMemories, PendingDeletes, LearningLogs, OfflineModelWeights, TelemetryLogs])
+@DriftDatabase(tables: [Tasks, CalendarEvents, FinanceRecords, HealthRecords, Messages, AgentConfigurations, UserMemories, PendingDeletes, LearningLogs, OfflineModelWeights, TelemetryLogs, OutboxEntries, SyncMetadata])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   Future<List<TelemetryLog>> getTelemetry() => select(telemetryLogs).get();
   Future<void> insertTelemetry(TelemetryLogsCompanion log) => into(telemetryLogs).insert(log);
+  Stream<List<TelemetryLog>> watchTelemetry() => (select(telemetryLogs)
+        ..orderBy([(t) => OrderingTerm(expression: t.createdAt, mode: OrderingMode.desc)])
+        ..limit(50))
+      .watch();
+
+  /// Enqueues one mutation for the next `SyncClient.push()`. [payload] must
+  /// use the backend's Postgres column names (see
+  /// infrastructure/db/models.py) — callers are responsible for encrypting
+  /// any sensitive field with [EncryptionService.encryptText] before
+  /// putting it in the map, since the server only ever stores ciphertext.
+  Future<void> enqueueOutbox({
+    required String table,
+    required String recordId,
+    required String operation,
+    Map<String, dynamic>? payload,
+  }) async {
+    final now = DateTime.now();
+    await into(outboxEntries).insert(
+      OutboxEntriesCompanion.insert(
+        id: '${table}_${recordId}_${now.microsecondsSinceEpoch}',
+        targetTable: table,
+        recordId: recordId,
+        operation: operation,
+        payloadJson: Value(payload != null ? jsonEncode(payload) : null),
+        clientUpdatedAt: now,
+        createdAt: now,
+      ),
+    );
+  }
+
+  Future<String?> getSyncCursor() async {
+    final row = await (select(syncMetadata)..where((t) => t.key.equals('cursor'))).getSingleOrNull();
+    return row?.value;
+  }
+
+  Future<void> setSyncCursor(String cursor) async {
+    await into(syncMetadata).insertOnConflictUpdate(
+      SyncMetadataCompanion.insert(key: 'cursor', value: cursor),
+    );
+  }
+
+  /// Watermark for the Notification Center's unread badge — reuses the
+  /// same key/value table as the sync cursor rather than adding a
+  /// dedicated table for one timestamp.
+  Future<DateTime?> getNotificationsLastRead() async {
+    final row = await (select(syncMetadata)..where((t) => t.key.equals('notifications_last_read'))).getSingleOrNull();
+    return row != null ? DateTime.tryParse(row.value) : null;
+  }
+
+  Future<void> setNotificationsLastRead(DateTime time) async {
+    await into(syncMetadata).insertOnConflictUpdate(
+      SyncMetadataCompanion.insert(key: 'notifications_last_read', value: time.toIso8601String()),
+    );
+  }
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -227,8 +313,68 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(userMemories, userMemories.isSynced);
             await m.addColumn(userMemories, userMemories.updatedAt);
           }
+          if (from < 7) {
+            await m.createTable(outboxEntries);
+            await m.createTable(syncMetadata);
+          }
         },
         beforeOpen: (details) async {
+          // Perform a decryption integrity check (detect key mismatch/loss from backup restore)
+          bool needsReset = false;
+          try {
+            // Check if we can decrypt the messages
+            final allMessages = await (select(messages)..limit(5)).get();
+            for (final msg in allMessages) {
+              if (msg.content.startsWith('gcm:')) {
+                needsReset = true;
+                break;
+              }
+            }
+            
+            // Check if we can decrypt tasks
+            if (!needsReset) {
+              final allTasks = await (select(tasks)..limit(5)).get();
+              for (final t in allTasks) {
+                if (t.title.startsWith('gcm:')) {
+                  needsReset = true;
+                  break;
+                }
+              }
+            }
+
+            // Check if we can decrypt learning logs
+            if (!needsReset) {
+              final allLogs = await (select(learningLogs)..limit(5)).get();
+              for (final l in allLogs) {
+                if (l.prompt.startsWith('gcm:')) {
+                  needsReset = true;
+                  break;
+                }
+              }
+            }
+          } catch (e) {
+            print("[Database] Integrity check encountered error: $e");
+          }
+
+          if (needsReset) {
+            print("[Database] Decryption key mismatch or key loss detected (e.g. after reinstall backup restore). Wiping local corrupted data to prevent sync pollution.");
+            await transaction(() async {
+              await delete(tasks).go();
+              await delete(calendarEvents).go();
+              await delete(financeRecords).go();
+              await delete(healthRecords).go();
+              await delete(messages).go();
+              await delete(agentConfigurations).go();
+              await delete(userMemories).go();
+              await delete(pendingDeletes).go();
+              await delete(learningLogs).go();
+              await delete(offlineModelWeights).go();
+              await delete(telemetryLogs).go();
+              await delete(outboxEntries).go();
+            });
+            print("[Database] Database wipe completed. Fresh sync will be triggered.");
+          }
+
           if (details.versionBefore != null && details.versionBefore! < 6) {
             // Re-encrypt existing cleartext rows transparently
             try {

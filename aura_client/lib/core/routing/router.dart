@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../theme/theme.dart';
+import '../../features/command_palette/command_palette.dart';
 import '../../features/auth/presentation/login_page.dart';
 import '../../features/auth/presentation/auth_provider.dart';
 import '../../features/home/presentation/home_page.dart';
@@ -19,7 +21,7 @@ import '../../features/models/presentation/model_manager_page.dart';
 import '../../features/learning/presentation/learning_dashboard.dart';
 
 // Navigation Shell synchronized with GoRouter paths
-class ShellLayout extends StatelessWidget {
+class ShellLayout extends ConsumerWidget {
   final Widget child;
   const ShellLayout({super.key, required this.child});
 
@@ -57,13 +59,35 @@ class ShellLayout extends StatelessWidget {
     }
   }
 
+  // Global command palette FAB, reachable from every screen inside this
+  // shell (Doc/V2_BLUEPRINT.md §3) — see command_palette.dart's doc comment
+  // for why it isn't a 7th bottom-nav tab.
+  Widget _buildPaletteFab(BuildContext context, WidgetRef ref) {
+    return FloatingActionButton.small(
+      heroTag: 'command_palette_fab',
+      tooltip: 'Search / Command palette (Ctrl+K)',
+      onPressed: () => showCommandPalette(context, ref),
+      child: const Icon(Icons.search),
+    );
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final selectedIndex = _calculateSelectedIndex(context);
     final isMobile = MediaQuery.of(context).size.width < 768;
 
+    final shortcuts = <ShortcutActivator, VoidCallback>{
+      const SingleActivator(LogicalKeyboardKey.keyK, control: true): () => showCommandPalette(context, ref),
+      const SingleActivator(LogicalKeyboardKey.keyK, meta: true): () => showCommandPalette(context, ref),
+    };
+
     if (isMobile) {
-      return Scaffold(
+      return CallbackShortcuts(
+        bindings: shortcuts,
+        child: Focus(
+          autofocus: true,
+          child: Scaffold(
+        floatingActionButton: _buildPaletteFab(context, ref),
         body: SafeArea(child: child),
         bottomNavigationBar: BottomNavigationBar(
           backgroundColor: const Color(0xFF0F0C1B),
@@ -109,10 +133,17 @@ class ShellLayout extends StatelessWidget {
             ),
           ],
         ),
+          ),
+        ),
       );
     }
 
-    return Scaffold(
+    return CallbackShortcuts(
+      bindings: shortcuts,
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+      floatingActionButton: _buildPaletteFab(context, ref),
       body: Row(
         children: [
           NavigationRail(
@@ -197,6 +228,8 @@ class ShellLayout extends StatelessWidget {
           const VerticalDivider(thickness: 1, width: 1, color: Color(0x1F94A3B8)),
           Expanded(child: child),
         ],
+      ),
+        ),
       ),
     );
   }
