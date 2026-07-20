@@ -1,0 +1,57 @@
+# ==========================================
+# Secrets / credentials — never commit
+# ==========================================
+credentials.json
+**/credentials.json
+*.env
+.env
+.env.*
+!.env.example
+Deployment_info.txt
+**/Deployment_info.txt
+google_client_id.txt
+*.pem
+*.key
+*.p12
+service-account*.json
+roles.json
+
+# ==========================================
+# Python (aura_backend)
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+*.egg-info/
+local_qdrant_storage/
+test_local_db/
+learning_logs.json
+routing_centroids.json
+sentiment_centroids.json
+telemetry_logs.jsonl
+train_lora.json
+aura_backend/scratch/
+
+# ==========================================
+# Flutter / Dart (aura_client)
+# ==========================================
+aura_client/build/
+aura_client/.dart_tool/
+aura_client/.flutter-plugins
+aura_client/.flutter-plugins-dependencies
+aura_client/android/.gradle/
+aura_client/android/.kotlin/
+aura_client/android/local.properties
+aura_client/ios/Pods/
+aura_client/scratch_test_*.tmp
+
+# ==========================================
+# IDE / OS
+# ==========================================
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

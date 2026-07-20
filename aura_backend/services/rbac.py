@@ -1,7 +1,5 @@
 import os
 import json
-from functools import wraps
-from typing import Dict, Any, List
 from fastapi import HTTPException, Depends
 from services.security import verify_token
 
@@ -66,42 +64,3 @@ def require_role(required_role: str):
             )
         return user_info
     return dependency
-
-
-def require_role_decorator(required_role: str):
-    """Python decorator to enforce role authorization on route handlers.
-    
-    Usage:
-        @app.get("/admin")
-        @require_role_decorator("Admin")
-        async def admin_route(user_info: dict = Depends(verify_token)):
-            ...
-    """
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            # Locate user_info parameter
-            user_info = kwargs.get("user_info")
-            if not user_info:
-                for arg in args:
-                    if isinstance(arg, dict) and "uid" in arg:
-                        user_info = arg
-                        break
-            
-            if not user_info:
-                raise HTTPException(
-                    status_code=401,
-                    detail="Authentication credentials not found or invalid."
-                )
-
-            user_role = get_user_role(user_info)
-            user_info["role"] = user_role
-
-            if ROLE_HIERARCHY.get(user_role, 0) < ROLE_HIERARCHY.get(required_role, 0):
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Access forbidden: requires at least {required_role} role."
-                )
-            return await func(*args, **kwargs)
-        return wrapper
-    return decorator

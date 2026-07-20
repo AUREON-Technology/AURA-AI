@@ -1,7 +1,11 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
+import '../../database/database.dart';
+import '../../database/database_provider.dart';
 import '../offline_agents/offline_agent_manager.dart';
 import '../online_agents/online_agent_manager.dart';
 
@@ -142,6 +146,11 @@ class AuraAIRouter {
       isOffline: provider != AIProvider.gemini,
     ));
 
+    String finalModel = modelName;
+    bool finalIsOffline = provider != AIProvider.gemini;
+    String? errorMessage;
+    String eventType = "request";
+
     if (provider == AIProvider.gemini) {
       bool hasErrors = false;
       try {
@@ -158,6 +167,7 @@ class AuraAIRouter {
       } catch (e) {
         debugPrint("Gemini stream failed, triggering auto failover: $e");
         hasErrors = true;
+        errorMessage = e.toString();
       }
 
       if (hasErrors) {
@@ -168,6 +178,9 @@ class AuraAIRouter {
           status: "Failover Triggered",
           isOffline: true,
         ));
+        finalModel = "phi3";
+        finalIsOffline = true;
+        eventType = "failover";
         // Fall back to offline fast model
         final offlineAgent = _ref.read(offlineAgentManagerProvider);
         yield* offlineAgent.streamResponse(
@@ -184,13 +197,47 @@ class AuraAIRouter {
         systemInstruction: customInstructions?[agentId] ?? "",
       );
     }
-    
+
     stopwatch.stop();
     _ref.read(aiRouterStatusProvider.notifier).updateStatus(
       _ref.read(aiRouterStatusProvider).copyWith(
         latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
       ),
     );
+
+    await _logTelemetry(
+      eventType: eventType,
+      latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
+      agentUsed: agentId,
+      modelUsed: finalModel,
+      isOffline: finalIsOffline,
+      errorMessage: errorMessage,
+    );
+  }
+
+  Future<void> _logTelemetry({
+    required String eventType,
+    required double latencyMs,
+    required String agentUsed,
+    required String modelUsed,
+    required bool isOffline,
+    String? errorMessage,
+  }) async {
+    try {
+      final db = _ref.read(databaseProvider);
+      await db.insertTelemetry(TelemetryLogsCompanion.insert(
+        id: const Uuid().v4(),
+        eventType: eventType,
+        latencyMs: latencyMs,
+        agentUsed: agentUsed,
+        modelUsed: modelUsed,
+        isOffline: isOffline,
+        errorMessage: Value(errorMessage),
+        createdAt: DateTime.now(),
+      ));
+    } catch (e) {
+      debugPrint("[AuraAIRouter] Failed to log telemetry: $e");
+    }
   }
 }
 

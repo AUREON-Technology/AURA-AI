@@ -53,7 +53,7 @@ class FeedbackCollector {
 
   /// Deletes a specific learning feedback log
   Future<void> deleteLog(String logId) async {
-    await (_db.delete(_db.db.learningLogs)..where((l) => l.id.equals(logId))).go();
+    await (_db.delete(_db.learningLogs)..where((l) => l.id.equals(logId))).go();
   }
 }
 
