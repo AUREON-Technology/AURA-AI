@@ -1,0 +1,156 @@
+"""V2 relational schema (Doc/V2_BLUEPRINT.md §6).
+
+Every syncable table shares the same (user_id, updated_at, deleted_at)
+pattern — that pair is the entire cursor-sync protocol implemented in
+api/v2/sync.py: `WHERE user_id = ? AND updated_at > ?`. This single
+generic query replaces V1's five hand-written per-table Firestore
+listeners/LWW comparators.
+
+Text fields suffixed `_enc` store client-encrypted ciphertext as-is (the
+same AES-256-GCM `gcm:<iv>:<ciphertext>` format the Flutter client already
+produces) — the backend never sees plaintext, only stores/returns blobs.
+"""
+import uuid
+from datetime import datetime
+
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .base import Base
+
+
+def _uuid_pk() -> Mapped[uuid.UUID]:
+    return mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    # The Google "sub" / Firebase uid claim from verify_token() — the stable
+    # external identity. Kept distinct from `id` so the internal primary key
+    # never has to change if a user's auth provider/claim format changes.
+    auth_subject: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(200), default="")
+    photo_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    role: Mapped[str] = mapped_column(String(32), default="User")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SyncableMixin:
+    """Adds the (user_id, updated_at, deleted_at) triple every table needs
+    to participate in cursor-based sync. `deleted_at` is a soft delete —
+    tombstones are returned to clients on the next pull instead of a
+    separate pending-deletes table, unlike V1's Drift `PendingDeletes`."""
+
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Task(Base, SyncableMixin):
+    __tablename__ = "tasks"
+    __table_args__ = (Index("ix_tasks_user_updated", "user_id", "updated_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    # The Flutter client already encrypts task titles (see aura_client's
+    # `EncryptedTextConverter` on Tasks.title) — title_enc matches that
+    # reality rather than assuming only descriptions are sensitive.
+    title_enc: Mapped[str] = mapped_column(Text)
+    description_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    priority: Mapped[str] = mapped_column(String(16), default="medium")
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    google_task_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+
+class CalendarEvent(Base, SyncableMixin):
+    __tablename__ = "calendar_events"
+    __table_args__ = (Index("ix_calendar_events_user_updated", "user_id", "updated_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    title_enc: Mapped[str] = mapped_column(Text)
+    description_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    all_day: Mapped[bool] = mapped_column(Boolean, default=False)
+    google_event_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+
+class FinanceRecord(Base, SyncableMixin):
+    __tablename__ = "finance_records"
+    __table_args__ = (Index("ix_finance_records_user_updated", "user_id", "updated_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    type: Mapped[str] = mapped_column(String(16))  # "income" | "expense"
+    amount: Mapped[float] = mapped_column(Float)
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    description_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class HealthRecord(Base, SyncableMixin):
+    __tablename__ = "health_records"
+    __table_args__ = (
+        Index("ix_health_records_user_updated", "user_id", "updated_at"),
+        UniqueConstraint("user_id", "record_date", name="uq_health_records_user_date"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    record_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    weight: Mapped[float | None] = mapped_column(Float, nullable=True)
+    water_ml: Mapped[int] = mapped_column(Integer, default=0)
+    sleep_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    calories: Mapped[int] = mapped_column(Integer, default=0)
+    exercise_minutes: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class Memory(Base, SyncableMixin):
+    __tablename__ = "memories"
+    __table_args__ = (Index("ix_memories_user_updated", "user_id", "updated_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    fact_enc: Mapped[str] = mapped_column(Text)
+    # References the corresponding embedding point in Qdrant (§6 — vectors
+    # stay in Qdrant, only metadata + ciphertext live in Postgres).
+    qdrant_point_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class Insight(Base):
+    """AURA Insights feed (blueprint §8) — not part of the Phase 0 sync
+    protocol (insights are generated server-side, not user-editable), but
+    the schema is defined now so Phase 3's Celery Beat job has a home."""
+
+    __tablename__ = "insights"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(64))
+    payload_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    surfaced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+SYNCABLE_MODELS: dict[str, type[Base]] = {
+    "tasks": Task,
+    "calendar_events": CalendarEvent,
+    "finance_records": FinanceRecord,
+    "health_records": HealthRecord,
+    "memories": Memory,
+}
