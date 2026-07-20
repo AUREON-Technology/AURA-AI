@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../../core/database/database.dart';
 import '../../../core/database/database_provider.dart';
+import '../../../core/sync/sync_payloads.dart';
 
 class FinanceStats {
   final double totalIncome;
@@ -24,6 +25,12 @@ class FinanceRepository {
 
   FinanceRepository(this._db);
 
+  Future<void> _enqueueUpsert(String id) async {
+    final row = await (_db.select(_db.financeRecords)..where((t) => t.id.equals(id))).getSingleOrNull();
+    if (row == null) return;
+    await _db.enqueueOutbox(table: 'finance_records', recordId: id, operation: 'upsert', payload: SyncPayloads.financeRecord(row));
+  }
+
   // Watch transactions ordered by date descending
   Stream<List<FinanceRecord>> watchTransactions() {
     return (_db.select(_db.financeRecords)
@@ -42,8 +49,9 @@ class FinanceRepository {
     String? description,
     required DateTime date,
   }) async {
+    final id = _uuid.v4();
     final record = FinanceRecordsCompanion.insert(
-      id: _uuid.v4(),
+      id: id,
       type: type.toLowerCase(),
       amount: amount,
       category: category.trim(),
@@ -54,19 +62,14 @@ class FinanceRepository {
       updatedAt: Value(DateTime.now()),
     );
     await _db.into(_db.financeRecords).insert(record);
+    await _enqueueUpsert(id);
   }
 
-  // Delete a transaction
+  // Delete a transaction. See TaskRepository.deleteTask for why this no
+  // longer writes to PendingDeletes.
   Future<void> deleteTransaction(String id) async {
-    // Log pending deletion first
-    await _db.into(_db.pendingDeletes).insert(
-      PendingDeletesCompanion.insert(
-        recordId: id,
-        targetTable: 'finance_records',
-        deletedAt: DateTime.now(),
-      ),
-    );
     await (_db.delete(_db.financeRecords)..where((t) => t.id.equals(id))).go();
+    await _db.enqueueOutbox(table: 'finance_records', recordId: id, operation: 'delete');
   }
 }
 

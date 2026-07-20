@@ -6,12 +6,19 @@ import 'package:googleapis/calendar/v3.dart' as calendar_api;
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import '../../../core/database/database.dart';
 import '../../../core/database/database_provider.dart';
+import '../../../core/sync/sync_payloads.dart';
 
 class CalendarRepository {
   final AppDatabase _db;
   final _uuid = const Uuid();
 
   CalendarRepository(this._db);
+
+  Future<void> _enqueueUpsert(String id) async {
+    final row = await (_db.select(_db.calendarEvents)..where((t) => t.id.equals(id))).getSingleOrNull();
+    if (row == null) return;
+    await _db.enqueueOutbox(table: 'calendar_events', recordId: id, operation: 'upsert', payload: SyncPayloads.calendarEvent(row));
+  }
 
   // Watch all events sorted by startTime
   Stream<List<CalendarEvent>> watchEvents() {
@@ -30,8 +37,9 @@ class CalendarRepository {
     required DateTime endTime,
     bool isAllDay = false,
   }) async {
+    final id = _uuid.v4();
     final event = CalendarEventsCompanion.insert(
-      id: _uuid.v4(),
+      id: id,
       title: title,
       description: Value(description),
       startTime: startTime,
@@ -42,6 +50,7 @@ class CalendarRepository {
       updatedAt: Value(DateTime.now()),
     );
     await _db.into(_db.calendarEvents).insert(event);
+    await _enqueueUpsert(id);
   }
 
   // Update calendar event
@@ -51,19 +60,14 @@ class CalendarRepository {
       updatedAt: Value(DateTime.now()),
     );
     await _db.update(_db.calendarEvents).replace(updated);
+    await _enqueueUpsert(event.id);
   }
 
-  // Delete calendar event
+  // Delete calendar event. See TaskRepository.deleteTask for why this no
+  // longer writes to PendingDeletes.
   Future<void> deleteEvent(String id) async {
-    // Log pending deletion first
-    await _db.into(_db.pendingDeletes).insert(
-      PendingDeletesCompanion.insert(
-        recordId: id,
-        targetTable: 'calendar_events',
-        deletedAt: DateTime.now(),
-      ),
-    );
     await (_db.delete(_db.calendarEvents)..where((t) => t.id.equals(id))).go();
+    await _db.enqueueOutbox(table: 'calendar_events', recordId: id, operation: 'delete');
   }
 
   // Bidirectional Google Calendar Sync

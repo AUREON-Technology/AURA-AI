@@ -3,12 +3,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../../core/database/database.dart';
 import '../../../core/database/database_provider.dart';
+import '../../../core/sync/sync_payloads.dart';
 
 class HealthRepository {
   final AppDatabase _db;
   final _uuid = const Uuid();
 
   HealthRepository(this._db);
+
+  Future<void> _enqueueUpsert(String id) async {
+    final row = await (_db.select(_db.healthRecords)..where((t) => t.id.equals(id))).getSingleOrNull();
+    if (row == null) return;
+    await _db.enqueueOutbox(table: 'health_records', recordId: id, operation: 'upsert', payload: SyncPayloads.healthRecord(row));
+  }
 
   // Normalize date to starting second of the day
   DateTime _normalizeDate(DateTime date) {
@@ -70,6 +77,7 @@ class HealthRepository {
         updatedAt: Value(DateTime.now()),
       ),
     );
+    await _enqueueUpsert(record.id);
   }
 
   // Log sleep (minutes)
@@ -82,6 +90,7 @@ class HealthRepository {
         updatedAt: Value(DateTime.now()),
       ),
     );
+    await _enqueueUpsert(record.id);
   }
 
   // Log exercise duration (minutes)
@@ -94,6 +103,7 @@ class HealthRepository {
         updatedAt: Value(DateTime.now()),
       ),
     );
+    await _enqueueUpsert(record.id);
   }
 
   // Log calories consumed (kcal)
@@ -106,6 +116,7 @@ class HealthRepository {
         updatedAt: Value(DateTime.now()),
       ),
     );
+    await _enqueueUpsert(record.id);
   }
 
   // Log weight update (kg / lbs)
@@ -118,6 +129,7 @@ class HealthRepository {
         updatedAt: Value(DateTime.now()),
       ),
     );
+    await _enqueueUpsert(record.id);
   }
 }
 

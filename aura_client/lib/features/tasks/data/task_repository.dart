@@ -6,12 +6,23 @@ import 'package:googleapis/tasks/v1.dart' as tasks_api;
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import '../../../core/database/database.dart';
 import '../../../core/database/database_provider.dart';
+import '../../../core/sync/sync_payloads.dart';
 
 class TaskRepository {
   final AppDatabase _db;
   final _uuid = const Uuid();
 
   TaskRepository(this._db);
+
+  /// Reads the row back and enqueues it for the next SyncClient.push() —
+  /// see Doc/V2_BLUEPRINT.md §5. Reading back (rather than constructing the
+  /// payload inline at each call site) guarantees the outbox always
+  /// reflects exactly what's in Drift.
+  Future<void> _enqueueUpsert(String id) async {
+    final row = await (_db.select(_db.tasks)..where((t) => t.id.equals(id))).getSingleOrNull();
+    if (row == null) return;
+    await _db.enqueueOutbox(table: 'tasks', recordId: id, operation: 'upsert', payload: SyncPayloads.task(row));
+  }
 
   // Watch tasks filtered by category or all tasks if null/all
   Stream<List<Task>> watchTasks({String? categoryFilter}) {
@@ -43,8 +54,9 @@ class TaskRepository {
     DateTime? dueDate,
     required String category,
   }) async {
+    final id = _uuid.v4();
     final task = TasksCompanion.insert(
-      id: _uuid.v4(),
+      id: id,
       title: title,
       description: Value(description),
       priority: priority.toLowerCase(),
@@ -56,6 +68,7 @@ class TaskRepository {
       updatedAt: Value(DateTime.now()),
     );
     await _db.into(_db.tasks).insert(task);
+    await _enqueueUpsert(id);
   }
 
   // Toggle task complete status
@@ -67,19 +80,17 @@ class TaskRepository {
         updatedAt: Value(DateTime.now()),
       ),
     );
+    await _enqueueUpsert(id);
   }
 
-  // Delete a task
+  // Delete a task. The outbox 'delete' op (soft-deleted server-side, see
+  // api/v2/sync.py) fully supersedes the old PendingDeletes-tombstone
+  // approach: deleted rows are still returned on subsequent pulls with
+  // `deleted_at` set, so every device (including this one) converges
+  // without needing a separate local "was this deleted" table.
   Future<void> deleteTask(String id) async {
-    // Log pending deletion first
-    await _db.into(_db.pendingDeletes).insert(
-      PendingDeletesCompanion.insert(
-        recordId: id,
-        targetTable: 'tasks',
-        deletedAt: DateTime.now(),
-      ),
-    );
     await (_db.delete(_db.tasks)..where((t) => t.id.equals(id))).go();
+    await _db.enqueueOutbox(table: 'tasks', recordId: id, operation: 'delete');
   }
 
   // Update a task fully
@@ -89,6 +100,7 @@ class TaskRepository {
       updatedAt: Value(DateTime.now()),
     );
     await _db.update(_db.tasks).replace(updated);
+    await _enqueueUpsert(task.id);
   }
 
   // Bidirectional Google Tasks Sync
