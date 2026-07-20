@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import '../../../core/auth/token_manager.dart';
 
 class UserProfile {
   final String id;
@@ -158,6 +159,11 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     } catch (_) {} // Might fail if never logged into google
     _currentAccount = null;
     await _storage.deleteAll();
+    // Clears TokenManager's in-memory access/refresh token cache — without
+    // this, a still-valid (up to 15min) cached v2 access token from the
+    // outgoing session could authenticate v2 API calls as the wrong user
+    // if a different account signs in before the app restarts.
+    await ref.read(tokenManagerProvider).clear();
     state = const AsyncValue.data(null);
   }
 

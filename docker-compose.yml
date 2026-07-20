@@ -15,14 +15,22 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
       - QDRANT_HOST=http://qdrant:6333
+      - REDIS_HOST=redis
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://aura:${POSTGRES_PASSWORD:-aura_dev_password}@postgres:5432/aura
+      # REQUIRED in any real deployment: without this, JWT sessions
+      # (Doc/V2_BLUEPRINT.md §9) reset on every restart (see
+      # services/jwt_auth.py's dev-mode fallback warning). Set a stable
+      # random value via .env or a real secrets manager — never commit one.
+      - JWT_SECRET=${JWT_SECRET:-}
     env_file:
       - ./aura_backend/.env
     depends_on:
       - qdrant
       - redis
+      - postgres
 
   # 2. Local Qdrant Vector Database
   qdrant:
@@ -47,7 +55,27 @@ services:
     volumes:
       - redis_data:/data
 
-  # 4. Celery Background Task Worker
+  # 4. Postgres — V2 relational source of truth for tasks/calendar/finance/
+  # health/memories (Doc/V2_BLUEPRINT.md §6). Migrations: `alembic upgrade head`.
+  postgres:
+    image: postgres:16-alpine
+    container_name: aura_postgres
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=aura
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-aura_dev_password}
+      - POSTGRES_DB=aura
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aura -d aura"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # 5. Celery Background Task Worker
   celery_worker:
     build:
       context: ./aura_backend
@@ -59,15 +87,43 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
       - QDRANT_HOST=http://qdrant:6333
+      - REDIS_HOST=redis
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://aura:${POSTGRES_PASSWORD:-aura_dev_password}@postgres:5432/aura
     env_file:
       - ./aura_backend/.env
     depends_on:
       - redis
       - qdrant
+      - postgres
+
+  # 6. Celery Beat — periodic scheduler for AURA Insights generation
+  # (Doc/V2_BLUEPRINT.md §8). Additive: the on-demand
+  # POST /api/v2/insights/generate endpoint works without this running.
+  celery_beat:
+    build:
+      context: ./aura_backend
+      dockerfile: Dockerfile
+    container_name: aura_celery_beat
+    restart: always
+    command: celery -A celery_app beat --loglevel=info
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - REDIS_HOST=redis
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgresql+asyncpg://aura:${POSTGRES_PASSWORD:-aura_dev_password}@postgres:5432/aura
+    env_file:
+      - ./aura_backend/.env
+    depends_on:
+      - redis
+      - postgres
 
 volumes:
   qdrant_storage:
   redis_data:
+  postgres_data:

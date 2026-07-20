@@ -3,24 +3,16 @@ import json
 import logging
 import base64
 from typing import Optional, Dict, Any
-import redis
 from config import settings
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
+from infrastructure.redis_client import get_redis_client
 
 logger = logging.getLogger("aura_backend.security")
 
-# Initialize Redis connection for attestation nonce validation (replay protection)
-redis_client = None
-try:
-    redis_host = os.getenv("REDIS_HOST", "localhost")
-    client = redis.Redis(host=redis_host, port=6379, db=0, decode_responses=True, socket_connect_timeout=2)
-    client.ping()
-    redis_client = client
-    logger.info("Connected to Redis for attestation nonce storage.")
-except Exception as e:
-    logger.warning(f"Failed to connect to Redis: {e}. Nonce verification will bypass checking Redis store.")
-
+# Shared connection (infrastructure/redis_client.py) used for attestation
+# nonce replay-protection storage.
+redis_client = get_redis_client()
 
 _local_nonce_cache = set()
 
