@@ -1,0 +1,69 @@
+{
+  "@@locale": "en",
+
+  "greetingMorning": "Good morning",
+  "@greetingMorning": {"description": "Today screen header, shown before noon"},
+
+  "greetingAfternoon": "Good afternoon",
+  "@greetingAfternoon": {"description": "Today screen header, shown 12pm-6pm"},
+
+  "greetingEvening": "Good evening",
+  "@greetingEvening": {"description": "Today screen header, shown after 6pm"},
+
+  "captureBarHint": "Ask AURA anything, or capture a task…",
+  "@captureBarHint": {"description": "Placeholder text in the Today screen's AI capture bar"},
+
+  "dueToday": "Due today",
+  "@dueToday": {"description": "Section header for the unified tasks+events list"},
+
+  "viewAll": "View all",
+  "@viewAll": {"description": "Link to see the full task list"},
+
+  "nothingDueToday": "Nothing due today",
+  "@nothingDueToday": {"description": "Empty state title for the due-today list"},
+
+  "allCaughtUp": "You're all caught up.",
+  "@allCaughtUp": {"description": "Empty state subtitle for the due-today list"},
+
+  "couldNotLoadDueToday": "Couldn't load today's items",
+  "@couldNotLoadDueToday": {"description": "Error state for the due-today list"},
+
+  "activeTasks": "Active tasks",
+  "@activeTasks": {"description": "Stat tile label"},
+
+  "waterToday": "Water today",
+  "@waterToday": {"description": "Stat tile label"},
+
+  "spentThisPeriod": "Spent this period",
+  "@spentThisPeriod": {"description": "Stat tile label"},
+
+  "aiSystemStatus": "AI system status",
+  "@aiSystemStatus": {"description": "Section header for the system status card"},
+
+  "onDeviceInference": "On-device inference",
+  "@onDeviceInference": {"description": "Status row label"},
+
+  "statusReady": "Ready",
+  "@statusReady": {"description": "Status value when the on-device model is loaded and available"},
+
+  "statusUnavailable": "Unavailable",
+  "@statusUnavailable": {"description": "Status value when the on-device model failed to load"},
+
+  "localData": "Local data",
+  "@localData": {"description": "Status row label"},
+
+  "encryptedAesGcm": "Encrypted (AES-256-GCM)",
+  "@encryptedAesGcm": {"description": "Status row value describing local storage encryption"},
+
+  "settingsTooltip": "Settings",
+  "@settingsTooltip": {"description": "Icon button tooltip"},
+
+  "notificationsTooltip": "Notifications",
+  "@notificationsTooltip": {"description": "Bell icon tooltip when there are no unread items"},
+
+  "unreadNotifications": "{count} unread notifications",
+  "@unreadNotifications": {
+    "description": "Bell icon tooltip/semantic label when there are unread items",
+    "placeholders": {"count": {"type": "int"}}
+  }
+}

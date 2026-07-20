@@ -1,0 +1,70 @@
+name: Backend CI
+
+# Doc/V2_BLUEPRINT.md §10 — gate every PR touching aura_backend on syntax,
+# unit tests (including the SQLite-free ORM/marker-splitter/JWT/encryption-
+# boundary tests added across Phases 3-4), and a Docker build, before
+# merge is allowed. Written but never triggered in the sandbox that
+# produced it (no CI runner, no Docker) — validated only by YAML/schema
+# checks; treat the first real run on GitHub Actions as this workflow's
+# actual test.
+
+on:
+  pull_request:
+    paths:
+      - "aura_backend/**"
+      - ".github/workflows/backend-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "aura_backend/**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aura_backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: aura_backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Syntax check (full tree)
+        run: |
+          python -c "
+          import ast, os
+          for root, _, files in os.walk('.'):
+              if any(seg in root for seg in ('venv', '__pycache__', '.git')):
+                  continue
+              for f in files:
+                  if f.endswith('.py'):
+                      p = os.path.join(root, f)
+                      ast.parse(open(p, encoding='utf-8').read(), p)
+          print('Syntax OK')
+          "
+
+      - name: Run unit tests
+        env:
+          TESTING: "True"
+        run: python -m unittest discover -p "test_*.py"
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image (no push — build-only gate)
+        uses: docker/build-push-action@v5
+        with:
+          context: aura_backend
+          push: false
+          tags: aura-backend:ci

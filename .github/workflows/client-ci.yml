@@ -1,0 +1,76 @@
+name: Client CI
+
+# Doc/V2_BLUEPRINT.md §10/§11 — gate every PR touching aura_client on
+# `flutter analyze` and the full test suite (32 tests as of Phase 4: design
+# system contrast, SSE/marker parsing, encryption, AI routing, inference,
+# widget smoke test). Android build is a release-config smoke test, not a
+# store-ready build (no signing config wired in CI).
+
+on:
+  pull_request:
+    paths:
+      - "aura_client/**"
+      - ".github/workflows/client-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "aura_client/**"
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aura_client
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.35.0"
+          channel: stable
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Regenerate Drift codegen
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      # Errors-only gate, matching this repo's actual current state: 61
+      # pre-existing info/warning-level lints remain in screens not yet
+      # migrated to the V2 design system (tracked as ongoing Phase 2
+      # rollout, Doc/V2_BLUEPRINT.md §13). Tighten to --fatal-infos once
+      # that backlog is cleared, so this gate doesn't start red.
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+  build-android:
+    runs-on: ubuntu-latest
+    needs: analyze-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.35.0"
+          channel: stable
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Install dependencies
+        working-directory: aura_client
+        run: flutter pub get
+
+      - name: Regenerate Drift codegen
+        working-directory: aura_client
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Build release APK (unsigned — build-only gate, not a publishable artifact)
+        working-directory: aura_client
+        run: flutter build apk --release --dart-define=BACKEND_URL=https://staging.placeholder.invalid

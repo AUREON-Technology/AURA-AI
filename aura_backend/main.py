@@ -19,50 +19,85 @@ from services.security import verify_token
 from services.rbac import require_role
 from services.drive import check_google_drive_configuration
 from services.learning_pipeline import learning_pipeline
-import os
+from api.v2.sync import router as sync_v2_router
+from api.v2.insights import router as insights_v2_router
+from api.v2.chat import router as chat_v2_router
+from api.v2.auth import router as auth_v2_router
+from infrastructure.observability import configure_logging, configure_sentry, configure_tracing
 
-# Logging Setup
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+# Logging setup (Doc/V2_BLUEPRINT.md §10) — text by default, structured
+# JSON when LOG_FORMAT=json (set this on any real deployment target).
+configure_logging()
+configure_sentry()
 logger = logging.getLogger("aura_backend")
 
 # ----------------------------------------------------
 # Security Middlewares
 # ----------------------------------------------------
 
+# Rate limiting is Redis-backed so counts are shared across the Dockerfile's
+# 4 uvicorn workers (and across horizontal replicas). Falls back to an
+# in-process dict if Redis is unreachable. Shared connection —
+# infrastructure/redis_client.py — same one used by the attestation nonce
+# store and the refresh-token store (services/jwt_auth.py).
+from infrastructure.redis_client import get_redis_client
+_rate_limit_redis = get_redis_client()
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    # Class-level history to allow test suites to clear/reset rate limiting state
+    # In-process fallback history; also what test suites clear/reset between tests.
     request_history: Dict[str, List[float]] = {}
 
     def __init__(self, app, requests_per_minute: int = 100):
         super().__init__(app)
         self.requests_per_minute = requests_per_minute
 
-    async def dispatch(self, request: Request, call_next):
-        # Exempt health check from rate limiting
-        if request.url.path == "/health":
-            return await call_next(request)
-        
-        client_ip = request.client.host if request.client else "unknown"
+    def _is_rate_limited_redis(self, client_ip: str) -> bool:
+        window = int(time.time() // 60)
+        key = f"ratelimit:{client_ip}:{window}"
+        count = _rate_limit_redis.incr(key)
+        if count == 1:
+            _rate_limit_redis.expire(key, 60)
+        return count > self.requests_per_minute
+
+    def _is_rate_limited_local(self, client_ip: str) -> bool:
         now = time.time()
-        
         if client_ip not in RateLimitMiddleware.request_history:
             RateLimitMiddleware.request_history[client_ip] = []
-            
+
         # Keep only timestamps within the last 60 seconds
         RateLimitMiddleware.request_history[client_ip] = [
             ts for ts in RateLimitMiddleware.request_history[client_ip] if now - ts < 60
         ]
-        
+
         if len(RateLimitMiddleware.request_history[client_ip]) >= self.requests_per_minute:
+            return True
+
+        RateLimitMiddleware.request_history[client_ip].append(now)
+        return False
+
+    async def dispatch(self, request: Request, call_next):
+        # Exempt health check from rate limiting
+        if request.url.path == "/health":
+            return await call_next(request)
+
+        client_ip = request.client.host if request.client else "unknown"
+
+        if _rate_limit_redis is not None:
+            try:
+                limited = self._is_rate_limited_redis(client_ip)
+            except Exception as e:
+                logger.warning(f"Redis rate limit check failed, falling back to in-process: {e}")
+                limited = self._is_rate_limited_local(client_ip)
+        else:
+            limited = self._is_rate_limited_local(client_ip)
+
+        if limited:
             return Response(
                 content="Rate limit exceeded. Maximum 100 requests per minute.",
                 status_code=429
             )
-            
-        RateLimitMiddleware.request_history[client_ip].append(now)
+
         return await call_next(request)
 
 
@@ -91,6 +126,7 @@ class PayloadSizeLimitMiddleware(BaseHTTPMiddleware):
 
 
 app = FastAPI(title="AURA AI OS Backend", version="1.0")
+configure_tracing(app)
 
 from services.budget import GeminiBudgetExceededException
 from fastapi.responses import JSONResponse
@@ -123,6 +159,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# V2 cursor-sync + insights APIs (Doc/V2_BLUEPRINT.md §7/§8). Both return a
+# clean 503 on every route if DATABASE_URL isn't configured, so this is
+# safe to mount unconditionally without breaking v1 deployments that don't
+# run Postgres yet.
+app.include_router(sync_v2_router)
+app.include_router(insights_v2_router)
+app.include_router(chat_v2_router)
+app.include_router(auth_v2_router)
 
 # ----------------------------------------------------
 # Request / Response Schemas
@@ -435,21 +480,46 @@ async def proxy_ollama_tags():
             content={"error": "Ollama service unavailable", "details": str(e)}
         )
 
+async def _proxy_ollama_stream(path: str, body: dict, timeout: float):
+    """Opens the upstream Ollama connection before returning a response, so a
+    connection failure can produce a clean 503 instead of leaking a raw
+    exception into an already-started 200 stream body."""
+    client = httpx.AsyncClient(timeout=timeout)
+    try:
+        req = client.build_request(
+            "POST", f"{settings.ollama_host.rstrip('/')}/{path}", json=body
+        )
+        upstream = await client.send(req, stream=True)
+    except Exception as e:
+        await client.aclose()
+        logger.warning(f"Ollama {path} proxy unavailable: {e}")
+        return None, None, e
+
+    async def stream_generator():
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        except Exception as e:
+            logger.warning(f"Ollama {path} proxy stream interrupted: {e}")
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    return upstream, stream_generator, None
+
 @app.post("/api/chat")
 async def proxy_ollama_chat(request: Request):
     try:
         body = await request.json()
     except Exception:
         body = {}
-    async def stream_generator():
-        try:
-            async with httpx.AsyncClient() as client:
-                async with client.stream("POST", f"{settings.ollama_host.rstrip('/')}/api/chat", json=body, timeout=60.0) as r:
-                    async for chunk in r.iter_bytes():
-                        yield chunk
-        except Exception as e:
-            yield f"\n[Ollama proxy stream error: {e}]".encode("utf-8")
-    return StreamingResponse(stream_generator(), media_type="application/json")
+    upstream, stream_generator, error = await _proxy_ollama_stream("api/chat", body, 60.0)
+    if error is not None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Ollama service unavailable", "details": str(error)}
+        )
+    return StreamingResponse(stream_generator(), status_code=upstream.status_code, media_type="application/json")
 
 @app.post("/api/pull")
 async def proxy_ollama_pull(request: Request):
@@ -457,15 +527,13 @@ async def proxy_ollama_pull(request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    async def stream_generator():
-        try:
-            async with httpx.AsyncClient() as client:
-                async with client.stream("POST", f"{settings.ollama_host.rstrip('/')}/api/pull", json=body, timeout=600.0) as r:
-                    async for chunk in r.iter_bytes():
-                        yield chunk
-        except Exception as e:
-            yield f"\n[Ollama proxy pull error: {e}]".encode("utf-8")
-    return StreamingResponse(stream_generator(), media_type="application/json")
+    upstream, stream_generator, error = await _proxy_ollama_stream("api/pull", body, 600.0)
+    if error is not None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Ollama service unavailable", "details": str(error)}
+        )
+    return StreamingResponse(stream_generator(), status_code=upstream.status_code, media_type="application/json")
 
 @app.post("/api/delete")
 async def proxy_ollama_delete(request: Request):

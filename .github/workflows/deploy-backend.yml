@@ -1,0 +1,55 @@
+name: Deploy Backend (Cloud Run)
+
+# Doc/V2_BLUEPRINT.md §10 — replaces the manual "commit and redeploy on
+# Hugging Face Spaces" workflow (V1's actual deployment path, confirmed via
+# aura_backend/README.md's HF Spaces YAML front-matter) with an automatic
+# deploy gated on backend-ci.yml passing.
+#
+# Uses Workload Identity Federation, not a downloaded service-account JSON
+# key — the repo never holds a long-lived GCP credential. Requires one-time
+# setup in the target GCP project (not part of this workflow, since it
+# needs real `gcloud` access this sandbox doesn't have):
+#   gcloud iam workload-identity-pools create ... (see infra/terraform/README.md)
+# and these repo variables/secrets:
+#   vars.GCP_PROJECT_ID, vars.GCP_REGION, vars.GCP_WORKLOAD_IDENTITY_PROVIDER,
+#   vars.GCP_SERVICE_ACCOUNT
+
+on:
+  workflow_run:
+    workflows: ["Backend CI"]
+    branches: [main]
+    types: [completed]
+
+permissions:
+  contents: read
+  id-token: write # required for keyless Workload Identity Federation auth
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy aura-backend \
+            --project="${{ vars.GCP_PROJECT_ID }}" \
+            --region="${{ vars.GCP_REGION }}" \
+            --source=aura_backend \
+            --allow-unauthenticated \
+            --set-secrets="DATABASE_URL=aura-database-url:latest,JWT_SECRET=aura-jwt-secret:latest,GEMINI_API_KEY=aura-gemini-api-key:latest,QDRANT_API_KEY=aura-qdrant-api-key:latest,FIREBASE_CREDENTIALS_JSON=aura-firebase-credentials:latest" \
+            --set-env-vars="REDIS_HOST=${{ vars.GCP_REDIS_HOST }},QDRANT_HOST=${{ vars.GCP_QDRANT_HOST }},ALLOWED_ORIGINS=${{ vars.ALLOWED_ORIGINS }}" \
+            --vpc-connector="${{ vars.GCP_VPC_CONNECTOR }}" \
+            --min-instances=0 \
+            --max-instances=10
