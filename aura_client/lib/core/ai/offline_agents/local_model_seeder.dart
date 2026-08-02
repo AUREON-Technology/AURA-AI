@@ -1,10 +1,10 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:drift/drift.dart' hide Column;
 import 'package:path_provider/path_provider.dart';
-import 'package:flutter_llama/flutter_llama.dart';
 import '../../database/database.dart';
 import '../../database/database_provider.dart';
 
@@ -90,15 +90,13 @@ class LocalModelSeeder {
           print("[LocalModelSeeder] Extracting Qwen-2 model asset to ${destFile.path}...");
         }
         
-        final llama = FlutterLlama.instance;
-        final success = await llama.copyAssetToFile(
-          assetName: assetName,
-          destPath: destFile.path,
+        // flutter_llama has no built-in asset-extraction helper (only
+        // loadModel/generate/etc.) -- copy the bundled GGUF asset to a real
+        // filesystem path ourselves via rootBundle.
+        final byteData = await rootBundle.load(assetName);
+        await destFile.writeAsBytes(
+          byteData.buffer.asUint8List(byteData.offsetInBytes, byteData.lengthInBytes),
         );
-
-        if (!success) {
-          throw Exception("Native copyAssetToFile returned false");
-        }
       }
 
       container.read(extractionProgressProvider.notifier).state = 1.0; // Completed
