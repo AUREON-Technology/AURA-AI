@@ -463,94 +463,32 @@ async def evaluate_dataset(user_info: dict = Depends(require_role("Developer")))
         raise HTTPException(status_code=500, detail=str(e))
 
 # ----------------------------------------------------
-# Ollama Proxy Endpoints (Required for Production Spaces)
+# Removed: unauthenticated Ollama proxy (SEC-01)
 # ----------------------------------------------------
-import httpx
-
-@app.get("/api/tags")
-async def proxy_ollama_tags():
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"{settings.ollama_host.rstrip('/')}/api/tags", timeout=5.0)
-            return Response(content=response.content, status_code=response.status_code, media_type="application/json")
-    except Exception as e:
-        logger.warning(f"Ollama proxy unavailable: {e}")
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Ollama service unavailable", "details": str(e)}
-        )
-
-async def _proxy_ollama_stream(path: str, body: dict, timeout: float):
-    """Opens the upstream Ollama connection before returning a response, so a
-    connection failure can produce a clean 503 instead of leaking a raw
-    exception into an already-started 200 stream body."""
-    client = httpx.AsyncClient(timeout=timeout)
-    try:
-        req = client.build_request(
-            "POST", f"{settings.ollama_host.rstrip('/')}/{path}", json=body
-        )
-        upstream = await client.send(req, stream=True)
-    except Exception as e:
-        await client.aclose()
-        logger.warning(f"Ollama {path} proxy unavailable: {e}")
-        return None, None, e
-
-    async def stream_generator():
-        try:
-            async for chunk in upstream.aiter_bytes():
-                yield chunk
-        except Exception as e:
-            logger.warning(f"Ollama {path} proxy stream interrupted: {e}")
-        finally:
-            await upstream.aclose()
-            await client.aclose()
-
-    return upstream, stream_generator, None
-
-@app.post("/api/chat")
-async def proxy_ollama_chat(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    upstream, stream_generator, error = await _proxy_ollama_stream("api/chat", body, 60.0)
-    if error is not None:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Ollama service unavailable", "details": str(error)}
-        )
-    return StreamingResponse(stream_generator(), status_code=upstream.status_code, media_type="application/json")
-
-@app.post("/api/pull")
-async def proxy_ollama_pull(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    upstream, stream_generator, error = await _proxy_ollama_stream("api/pull", body, 600.0)
-    if error is not None:
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Ollama service unavailable", "details": str(error)}
-        )
-    return StreamingResponse(stream_generator(), status_code=upstream.status_code, media_type="application/json")
-
-@app.post("/api/delete")
-async def proxy_ollama_delete(request: Request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(f"{settings.ollama_host.rstrip('/')}/api/delete", json=body, timeout=10.0)
-            return Response(content=response.content, status_code=response.status_code, media_type="application/json")
-    except Exception as e:
-        logger.warning(f"Ollama delete proxy failed: {e}")
-        return JSONResponse(
-            status_code=503,
-            content={"error": "Ollama service unavailable", "details": str(e)}
-        )
+#
+# `/api/tags`, `/api/chat`, `/api/pull`, and `/api/delete` previously forwarded to the
+# configured Ollama host with **no authentication dependency** -- the only four routes in this
+# module without one. Any internet caller could:
+#
+#   * POST /api/pull   -> make the server download arbitrary multi-gigabyte model weights
+#                         (disk exhaustion, and a supply-chain vector: weights are executable
+#                         artefacts fetched from a third-party registry),
+#   * POST /api/chat   -> run unmetered inference on the operator's hardware,
+#   * POST /api/delete -> delete the deployed model and take offline inference down.
+#
+# The only mitigation was a 100 req/min per-IP rate limit, which permits 100 model pulls a
+# minute. See docs/analysis/06-security-report.md SEC-01.
+#
+# These were deleted rather than deprecated: a deprecation window for an open door is not a
+# trade-off worth making. Their replacements:
+#
+#   inference       -> POST /api/v3/chat (authenticated, routed, budgeted, guarded)
+#   model listing   -> GET  /api/v3/admin/status
+#   pull / delete   -> admin-only, allowlisted, and audited via the Ollama adapter's
+#                      model-lifecycle methods (aura_core/llm/providers/ollama.py)
+#
+# The Flutter client's local-model management moves to those endpoints; see
+# docs/guides/migration-guide.md.
 
 # ----------------------------------------------------
 # Server Start
