@@ -284,8 +284,16 @@ class TimeSeriesSpec(ModuleSpec):
     n_layers: int = 2
     backbone: str = "lstm"  # lstm | tcn | transformer
 
+    _BACKBONES = ("lstm", "tcn", "transformer")
+
     def __post_init__(self) -> None:
         ModuleSpec.__post_init__(self)
+        if self.backbone not in self._BACKBONES:
+            # Without this, `parameter_count` falls through to the transformer branch, so a
+            # typo'd backbone silently trains and sizes as a different architecture entirely.
+            raise ValidationError(
+                f"backbone must be one of {list(self._BACKBONES)}, got {self.backbone!r}"
+            )
         if self.horizon < 1 or self.context_length < 1:
             raise ValidationError("context_length and horizon must be positive")
         if self.horizon > self.context_length:

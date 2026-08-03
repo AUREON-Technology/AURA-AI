@@ -13,6 +13,7 @@ is well known to be poorly calibrated and trivially gamed by prompt injection.
 from __future__ import annotations
 
 import enum
+import re
 import statistics
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -26,7 +27,25 @@ __all__ = [
     "Verification",
     "ConfidenceAssessment",
     "ReasoningTrace",
+    "normalise_answer",
 ]
+
+
+def normalise_answer(text: str) -> str:
+    """Normalise an answer for equality comparison across samples.
+
+    Prefers a numeric answer when one is present: for the arithmetic questions that trigger
+    self-consistency, two answers agreeing on the number while differing in prose are agreement,
+    and comparing full text would score them as disagreement.
+
+    Lives in the domain so the vote and the agreement metric cannot drift apart -- when they
+    used different rules, confidence was understated on exactly the questions the strategy was
+    selected for.
+    """
+    numbers = re.findall(r"-?\d+(?:\.\d+)?", text)
+    if numbers:
+        return numbers[-1]
+    return " ".join(text.lower().split())[:200]
 
 
 class ReasoningStrategy(str, enum.Enum):
@@ -222,12 +241,17 @@ class ReasoningTrace:
     def agreement(self) -> float | None:
         """Self-consistency: the fraction of sampled candidates matching the modal answer.
 
-        Compares normalised text. This is a coarse proxy -- two differently-worded correct
-        answers count as disagreement -- so it is one input to confidence, never the sole one.
+        Uses the same normalisation the vote itself used (:func:`normalise_answer`). Scoring
+        agreement differently from selection would understate confidence on exactly the
+        questions self-consistency is chosen for: three samples agreeing on a number while
+        differing in prose are unanimous, not one-in-three.
+
+        Still a coarse proxy for prose answers -- two differently-worded correct answers count
+        as disagreement -- so it is one input to confidence, never the sole one.
         """
         if len(self.candidates) < 2:
             return None
-        normalised = [" ".join(c.lower().split()) for c in self.candidates]
+        normalised = [normalise_answer(c) for c in self.candidates]
         try:
             modal = statistics.mode(normalised)
         except statistics.StatisticsError:  # no unique mode

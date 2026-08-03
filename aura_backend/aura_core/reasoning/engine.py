@@ -38,6 +38,7 @@ from ..domain.reasoning import (
     ThoughtNode,
     Verification,
     VerificationOutcome,
+    normalise_answer,
 )
 from ..observability.logging import get_logger
 
@@ -487,17 +488,9 @@ def _path_to(nodes: Sequence[ThoughtNode], node: ThoughtNode) -> list[ThoughtNod
     return list(reversed(path))
 
 
-def _normalise_answer(text: str) -> str:
-    """Normalise for majority voting.
-
-    Prefers a numeric answer when one is present: for the arithmetic questions that trigger
-    self-consistency, two answers agreeing on the number while differing in prose are agreement,
-    and comparing full text would score them as disagreement.
-    """
-    numbers = re.findall(r"-?\d+(?:\.\d+)?", text)
-    if numbers:
-        return numbers[-1]
-    return " ".join(text.lower().split())[:200]
+# The vote and ``ReasoningTrace.agreement`` must use the same notion of sameness, so the
+# normalisation lives in the domain and both call it.
+_normalise_answer = normalise_answer
 
 
 def _parse_json_object(text: str) -> dict[str, Any]:

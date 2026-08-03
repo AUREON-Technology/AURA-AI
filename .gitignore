@@ -55,3 +55,9 @@ aura_client/scratch_test_*.tmp
 *.iml
 .DS_Store
 Thumbs.db
+
+# Coverage and pytest artefacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
