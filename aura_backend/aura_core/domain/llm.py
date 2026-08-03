@@ -209,7 +209,10 @@ class CompletionRequest:
     tools: tuple[Mapping[str, Any], ...] = ()
     tool_choice: ToolChoice = ToolChoice.AUTO
     response_schema: Mapping[str, Any] | None = None
-    policy: RoutingPolicy = RoutingPolicy.BALANCED
+    # None means "use the router's configured default". A concrete value here is an
+    # explicit per-request override -- defaulting to BALANCED would silently mask whatever
+    # the operator configured, making AURA_LLM_ROUTING_POLICY dead configuration.
+    policy: RoutingPolicy | None = None
     min_quality_tier: int = 1
     require_local: bool = False
     timeout_s: float = 60.0
