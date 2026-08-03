@@ -251,12 +251,10 @@ class KnowledgeRefreshPipeline:
             if digest in seen_hashes:
                 duplicate += 1
                 continue
-            simhash = _simhash(document.content)
-            if any(_hamming(simhash, other) <= 3 for other in budget.simhashes):
+            if _is_near_duplicate(document.content, budget):
                 duplicate += 1
                 continue
             seen_hashes.add(digest)
-            budget.simhashes.append(simhash)
 
             # Steps 4-6: clean, guard, embed, index, graph -- all inside the knowledge engine,
             # which is the same path a user upload takes. One ingestion path means the nightly
@@ -377,11 +375,12 @@ class KnowledgeRefreshPipeline:
 class _DocumentBudget:
     """Global ceiling across all sources in one run, plus the SimHash corpus for dedup."""
 
-    __slots__ = ("_remaining", "simhashes")
+    __slots__ = ("_remaining", "simhashes", "shingles")
 
     def __init__(self, limit: int) -> None:
         self._remaining = limit
         self.simhashes: list[int] = []
+        self.shingles: list[set[str]] = []
 
     def take(self) -> bool:
         if self._remaining <= 0:
@@ -412,11 +411,11 @@ def _validate(document: FetchedDocument, source: KnowledgeSource) -> str | None:
 
 
 def _simhash(text: str, *, bits: int = 64) -> int:
-    """64-bit SimHash over word shingles, for near-duplicate detection.
+    """64-bit SimHash over word shingles.
 
-    Chosen over pairwise similarity because it is O(1) to compare: a nightly run over thousands
-    of documents cannot afford an O(n^2) comparison, and exact hashing misses the common case
-    where a source re-publishes a page with a changed timestamp.
+    Used for *long* documents, where an O(1) comparison is the only affordable option across a
+    corpus of thousands. See :func:`_is_near_duplicate` for why short texts take a different
+    path.
     """
     tokens = text.lower().split()
     if not tokens:
@@ -438,6 +437,51 @@ def _simhash(text: str, *, bits: int = 64) -> int:
 
 def _hamming(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
+
+
+def _shingles(text: str, size: int = 3) -> set[str]:
+    tokens = text.lower().split()
+    if len(tokens) < size:
+        return {" ".join(tokens)}
+    return {" ".join(tokens[i : i + size]) for i in range(len(tokens) - size + 1)}
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+#: Below this token count SimHash is unreliable: the signature is dominated by a handful of
+#: shingles, so appending one sentence to a short document flips ~10 of 64 bits -- well past
+#: any threshold that would still be meaningful on long text. Exact Jaccard is cheap at this
+#: size, so short documents take the accurate path and long ones take the fast one.
+_SIMHASH_MIN_TOKENS = 200
+_SIMHASH_MAX_DISTANCE = 6
+_JACCARD_THRESHOLD = 0.75
+
+
+def _is_near_duplicate(text: str, seen: "_DocumentBudget") -> bool:
+    """Length-aware near-duplicate check.
+
+    Long documents are compared by SimHash distance (O(1) per comparison). Short ones are
+    compared by exact shingle Jaccard, which is affordable at that size and does not suffer
+    SimHash's small-document instability.
+    """
+    token_count = len(text.split())
+
+    if token_count >= _SIMHASH_MIN_TOKENS:
+        signature = _simhash(text)
+        if any(_hamming(signature, other) <= _SIMHASH_MAX_DISTANCE for other in seen.simhashes):
+            return True
+        seen.simhashes.append(signature)
+        return False
+
+    shingles = _shingles(text)
+    if any(_jaccard(shingles, other) >= _JACCARD_THRESHOLD for other in seen.shingles):
+        return True
+    seen.shingles.append(shingles)
+    return False
 
 
 def default_source(uri: str, *, source_id: str, type: SourceType = SourceType.WEB) -> KnowledgeSource:

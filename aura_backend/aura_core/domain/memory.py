@@ -66,10 +66,16 @@ class MemoryPolicy:
     max_records_per_owner: int = 10_000
 
     def recency_factor(self, age: timedelta) -> float:
-        """Exponential decay with the configured half-life; 1.0 at age zero."""
+        """Exponential decay with the configured half-life; 1.0 at age zero.
+
+        A negative age is clamped to zero. Clock skew between replicas, and an injected clock
+        running behind wall time, both produce one -- and an un-clamped negative exponent grows
+        the factor above 1, which would *increase* confidence through the decay path.
+        """
         if self.half_life.total_seconds() <= 0:
             return 1.0
-        return math.pow(0.5, age.total_seconds() / self.half_life.total_seconds())
+        seconds = max(0.0, age.total_seconds())
+        return math.pow(0.5, seconds / self.half_life.total_seconds())
 
 
 MEMORY_POLICIES: Mapping[MemoryKind, MemoryPolicy] = {
@@ -225,7 +231,9 @@ class MemoryRecord:
         # Blend toward the decayed value rather than replacing it: a high-confidence fact
         # should not become worthless purely through disuse.
         new_confidence = self.confidence * (0.5 + 0.5 * factor)
-        return replace(self, confidence=round(new_confidence, 6))
+        # Clamped rather than trusted: confidence is a validated field, and a decay step must
+        # never be able to produce a value the entity would reject.
+        return replace(self, confidence=round(min(1.0, max(0.0, new_confidence)), 6))
 
     def retrieval_score(self, similarity: float, *, now: datetime | None = None) -> float:
         """Blend similarity, recency, and reinforcement using this kind's weights."""

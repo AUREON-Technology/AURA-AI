@@ -146,7 +146,9 @@ class EchoProvider(BaseProvider):
             usage=usage,
             tool_calls=tool_calls,
             latency_ms=turn.delay_ms,
-            cost_usd=0.0,
+            # Derived from declared capabilities rather than hard-coded to zero, so a test can
+            # give this provider a price and exercise cost budgeting for real.
+            cost_usd=self._cost(usage),
         )
 
     async def stream(self, request: CompletionRequest) -> AsyncIterator[StreamChunk]:

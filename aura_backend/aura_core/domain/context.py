@@ -215,7 +215,10 @@ class ContextBundle:
                     parts.append(item.content)
                 else:
                     source = item.provenance or "unattributed"
-                    safe = item.content.replace("<<<", "<​<​<")
+                    # Neutralise any fence-like sequence in untrusted content. A visible
+                    # replacement, not zero-width padding: EncodingGuard strips zero-width
+                    # characters, so that escape would be undone by our own sanitiser.
+                    safe = item.content.replace("<<<", "(fence)").replace(">>>", "(/fence)")
                     parts.append(
                         f'<<<AURA-DATA:{self.fence_nonce} source="{source}">>>\n'
                         f"{safe}\n"

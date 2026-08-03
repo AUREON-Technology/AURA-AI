@@ -145,6 +145,10 @@ class MemoryEngine:
                 document_ref=document_ref,
             ),
             expires_at=(now + policy.ttl) if policy.ttl else None,
+            # From the injected clock, not wall time: a record's age must be measured against
+            # the same source that later decays and ranks it.
+            created_at=now,
+            last_accessed_at=now,
             metadata=dict(metadata or {}),
         )
 
