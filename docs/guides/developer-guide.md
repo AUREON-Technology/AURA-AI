@@ -11,7 +11,7 @@ the test suite enforces.
 cd aura_backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
-pytest                      # ~230 tests, ~2 seconds
+pytest                      # 1010 tests, ~7 seconds
 ```
 
 The suite needs **no Docker, no network, no API key, and no model**. That is a design property,
@@ -31,7 +31,7 @@ adapters/  api/          vendor SDKs, lazily imported
 container.py             the only place concrete meets abstract
 ```
 
-The arrow never reverses. Four fitness functions in `tests/architecture/` enforce this and fail
+The arrow never reverses. Fitness functions in `tests/architecture/` enforce this and fail
 the build:
 
 | Test | Rule |
@@ -192,9 +192,16 @@ and circuit-breaker timing are testable without sleeping), `handbook`, `poisoned
 catches context-assembly regressions a canned response would hide. `ScriptedTurn` queues
 specific responses, tool calls, delays, or errors.
 
-Three real defects were found by writing these tests: confidence exceeding its valid range
-under clock skew, SimHash being unusable on short documents, and `EchoProvider` ignoring its
-declared pricing. That is what the suite is for.
+Six real defects were found by writing these tests: confidence exceeding its valid range under
+clock skew, SimHash being unusable on short documents, `EchoProvider` ignoring its declared
+pricing, self-consistency scoring agreement by a different rule than the vote it reported,
+`TimeSeriesSpec` silently sizing a typo'd backbone as a transformer, and a benchmark suite that
+was never collected because `python_files` did not match its filename. That is what the suite is
+for.
+
+Coverage is 90% of `aura_core`, measured with `pytest --cov=aura_core`. The uncovered remainder
+is mostly defensive branches (`pragma: no cover`) and the torch-dependent `ml/nn.build`, which a
+deployment that never trains does not install.
 
 ---
 
