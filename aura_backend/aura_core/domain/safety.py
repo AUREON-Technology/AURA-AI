@@ -187,11 +187,11 @@ def redact_spans(text: str, spans: Sequence[Span], *, placeholder: str = "[REDAC
     for span in ordered:
         if merged and span.start <= merged[-1].end:
             previous = merged[-1]
-            merged[-1] = Span(
-                previous.start,
-                max(previous.end, span.end),
-                previous.label if previous.label == span.label else "mixed",
-            )
+            # When two guards match overlapping regions (a card number also matches the phone
+            # pattern), keep the label of the longer match -- it is the more specific detection,
+            # and a placeholder reading "[REDACTED:card]" is more useful to a reader than "mixed".
+            label = previous.label if previous.length >= span.length else span.label
+            merged[-1] = Span(previous.start, max(previous.end, span.end), label)
         else:
             merged.append(span)
 
