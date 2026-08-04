@@ -1,7 +1,9 @@
+import asyncio
 import logging
 import uvicorn
 import time
 import json
+from sqlalchemy import text as sa_text
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -23,6 +25,7 @@ from api.v2.sync import router as sync_v2_router
 from api.v2.insights import router as insights_v2_router
 from api.v2.chat import router as chat_v2_router
 from api.v2.auth import router as auth_v2_router
+from infrastructure.db.base import get_session_factory, is_configured as is_db_configured
 from infrastructure.observability import configure_logging, configure_sentry, configure_tracing
 
 # Logging setup (Doc/V2_BLUEPRINT.md §10) — text by default, structured
@@ -150,12 +153,31 @@ def startup_event():
 app.add_middleware(PayloadSizeLimitMiddleware, max_bytes=5 * 1024 * 1024)
 app.add_middleware(RateLimitMiddleware, requests_per_minute=100)
 
-# Configure CORS origins
+# Configure CORS origins.
+#
+# `allow_origins=["*"]` together with `allow_credentials=True` is not the
+# permissive-but-harmless combination it looks like: Starlette cannot send a
+# literal `Access-Control-Allow-Origin: *` alongside credentials (browsers
+# reject that pair), so it instead *reflects the caller's own Origin header*
+# back with `Allow-Credentials: true`. The practical effect is the opposite of
+# the intent — every origin on the internet becomes individually trusted for
+# credentialed cross-origin requests.
+#
+# This API authenticates with Bearer tokens, not cookies, and Bearer auth does
+# not need `allow_credentials`. So when a wildcard is configured we keep the
+# wildcard and drop credentials (the spec-compliant reading) rather than
+# silently shipping origin reflection.
 origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
+_allow_all_origins = "*" in origins
+if _allow_all_origins:
+    logger.warning(
+        "ALLOWED_ORIGINS contains '*' — disabling allow_credentials to avoid "
+        "reflecting arbitrary origins. Set an explicit origin list in production."
+    )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,
+    allow_credentials=not _allow_all_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -236,13 +258,93 @@ class TelemetryLogSchema(BaseModel):
 # Endpoints
 # ----------------------------------------------------
 
+# Dependency probes are cached briefly so that a load balancer or uptime
+# monitor polling /health every few seconds doesn't turn into a synchronous
+# round-trip against Qdrant/Postgres/Redis on every single hit.
+_HEALTH_CACHE_TTL_SECONDS = 10
+_health_cache: Dict[str, Any] = {"checked_at": 0.0, "payload": None}
+
+
+async def _probe_dependencies() -> Dict[str, Any]:
+    """Actually contacts each dependency rather than asserting a config
+    string is non-empty.
+
+    The previous version reported `qdrant_configured: bool(settings.qdrant_host)`
+    and called the service healthy on that basis — which stayed green through a
+    total Qdrant outage (the cloud cluster 404ing) because the *setting* was
+    still populated. A check that cannot fail cannot detect anything.
+    """
+    deps: Dict[str, Any] = {}
+
+    # Qdrant — get_collections() is the cheapest real round-trip available.
+    if not settings.qdrant_host:
+        deps["qdrant"] = {"configured": False, "reachable": False}
+    else:
+        try:
+            await asyncio.to_thread(rag_service.client.get_collections)
+            deps["qdrant"] = {"configured": True, "reachable": True}
+        except Exception as e:
+            deps["qdrant"] = {"configured": True, "reachable": False, "error": str(e)[:200]}
+
+    # Postgres — SELECT 1 through the same async engine the app uses.
+    if not is_db_configured():
+        deps["postgres"] = {"configured": False, "reachable": False}
+    else:
+        try:
+            async with get_session_factory()() as session:
+                await session.execute(sa_text("SELECT 1"))
+            deps["postgres"] = {"configured": True, "reachable": True}
+        except Exception as e:
+            deps["postgres"] = {"configured": True, "reachable": False, "error": str(e)[:200]}
+
+    # Redis — degraded rather than fatal; callers fall back in-process.
+    redis_client = get_redis_client()
+    if redis_client is None:
+        deps["redis"] = {"configured": True, "reachable": False}
+    else:
+        try:
+            await asyncio.to_thread(redis_client.ping)
+            deps["redis"] = {"configured": True, "reachable": True}
+        except Exception as e:
+            deps["redis"] = {"configured": True, "reachable": False, "error": str(e)[:200]}
+
+    # Gemini is deliberately NOT probed: the only way to verify it is to spend
+    # a real generation/embedding call, and doing that on every health poll
+    # would burn quota (and money) to answer a monitoring question.
+    deps["gemini"] = {"configured": bool(settings.gemini_api_key), "probed": False}
+
+    return deps
+
+
 @app.get("/health")
 async def health_check():
-    return {
-        "status": "healthy",
-        "gemini_configured": bool(settings.gemini_api_key),
-        "qdrant_configured": bool(settings.qdrant_host)
+    """Liveness + dependency readiness.
+
+    Returns 200 even when a dependency is down, by design: this endpoint is
+    what nginx and the container runtime use to decide the process is alive,
+    and flapping it to 5xx during a Qdrant outage would pull the entire API —
+    including the many routes that never touch Qdrant — out of service.
+    Degradation is reported in the body for monitoring to alert on.
+    """
+    now = time.time()
+    if _health_cache["payload"] is not None and now - _health_cache["checked_at"] < _HEALTH_CACHE_TTL_SECONDS:
+        return _health_cache["payload"]
+
+    deps = await _probe_dependencies()
+    # "degraded" if anything that is configured is not actually reachable.
+    degraded = [
+        name for name, state in deps.items()
+        if state.get("configured") and state.get("reachable") is False
+    ]
+    payload = {
+        "status": "degraded" if degraded else "healthy",
+        "degraded": degraded,
+        "dependencies": deps,
     }
+
+    _health_cache["checked_at"] = now
+    _health_cache["payload"] = payload
+    return payload
 
 @app.post("/api/chat/stream")
 async def stream_chat(request: ChatRequest, user_info: dict = Depends(verify_token)):

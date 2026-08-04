@@ -58,6 +58,8 @@ dependencies:
   local_auth: ^2.3.0
   flutter_llama: ^0.1.0
 
+  crypto: any
+  pointycastle: any
 dev_dependencies:
   flutter_launcher_icons: ^0.13.1
   flutter_test:

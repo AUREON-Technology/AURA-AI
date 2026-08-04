@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:drift/drift.dart';
@@ -353,11 +354,11 @@ class AppDatabase extends _$AppDatabase {
               }
             }
           } catch (e) {
-            print("[Database] Integrity check encountered error: $e");
+            debugPrint("[Database] Integrity check encountered error: $e");
           }
 
           if (needsReset) {
-            print("[Database] Decryption key mismatch or key loss detected (e.g. after reinstall backup restore). Wiping local corrupted data to prevent sync pollution.");
+            debugPrint("[Database] Decryption key mismatch or key loss detected (e.g. after reinstall backup restore). Wiping local corrupted data to prevent sync pollution.");
             await transaction(() async {
               await delete(tasks).go();
               await delete(calendarEvents).go();
@@ -372,7 +373,7 @@ class AppDatabase extends _$AppDatabase {
               await delete(telemetryLogs).go();
               await delete(outboxEntries).go();
             });
-            print("[Database] Database wipe completed. Fresh sync will be triggered.");
+            debugPrint("[Database] Database wipe completed. Fresh sync will be triggered.");
           }
 
           if (details.versionBefore != null && details.versionBefore! < 6) {
@@ -387,7 +388,7 @@ class AppDatabase extends _$AppDatabase {
                 await update(learningLogs).replace(log);
               }
             } catch (e) {
-              print("[DatabaseMigration] Error encrypting existing tables: $e");
+              debugPrint("[DatabaseMigration] Error encrypting existing tables: $e");
             }
           }
         },

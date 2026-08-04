@@ -1,6 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:encrypt/encrypt.dart' as encrypt;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
@@ -10,15 +10,54 @@ import 'package:pointycastle/key_derivators/api.dart';
 import 'package:pointycastle/key_derivators/pbkdf2.dart';
 import 'package:pointycastle/digests/sha256.dart';
 import 'package:pointycastle/macs/hmac.dart';
-import 'package:pointycastle/api.dart' show Pbkdf2Parameters;
+
+/// Thrown when [EncryptionService.encryptText] cannot produce ciphertext.
+///
+/// Exists so encryption can fail *closed*. The previous behaviour was to
+/// return the plaintext unchanged on failure, which is silently catastrophic:
+/// the return value of encryptText is written straight into the `title_enc` /
+/// `description_enc` / `fact_enc` columns (see core/sync/sync_payloads.dart)
+/// and POSTed to the backend, which treats those columns as opaque ciphertext
+/// it is contractually forbidden to read. A failed encryption therefore did
+/// not degrade the zero-knowledge property — it inverted it, uploading real
+/// user data in the exact field the architecture promises never contains any.
+///
+/// Callers should let this propagate: losing a write is recoverable, silently
+/// transmitting plaintext is not.
+class EncryptionException implements Exception {
+  final String message;
+  final Object? cause;
+
+  const EncryptionException(this.message, [this.cause]);
+
+  @override
+  String toString() =>
+      'EncryptionException: $message${cause != null ? ' (cause: $cause)' : ''}';
+}
 
 class EncryptionService {
   static const _keyName = 'aura_db_encryption_key';
   static encrypt.Key? _cryptKey;
+
+  /// Whether [init] has completed and a key is available. Callers that want to
+  /// avoid triggering an [EncryptionException] can check this first.
+  static bool get isInitialized => _cryptKey != null;
+
+  /// Clears the in-memory key so the uninitialised branch of [encryptText] is
+  /// reachable from tests. [init] is idempotent, so tests must call it again
+  /// afterwards to restore normal state.
+  @visibleForTesting
+  static void debugResetKeyForTesting() {
+    _cryptKey = null;
+  }
   
   // Platform-native storage configuration
+  // `encryptedSharedPreferences` intentionally omitted: Jetpack Security is
+  // deprecated upstream and the flag is ignored as of flutter_secure_storage
+  // v10 (removed in v11). Existing data is migrated to custom ciphers on
+  // first access, so dropping it is behaviour-preserving.
   static const _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    aOptions: AndroidOptions(),
     iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
     mOptions: MacOsOptions(accessibility: KeychainAccessibility.first_unlock),
     wOptions: WindowsOptions(),
@@ -72,7 +111,7 @@ class EncryptionService {
       
       _cryptKey = encrypt.Key.fromBase64(keyB64);
     } catch (e) {
-      print("EncryptionService: Secure storage failed ($e). Falling back to PBKDF2 derivation.");
+      debugPrint("EncryptionService: Secure storage failed ($e). Falling back to PBKDF2 derivation.");
       try {
         final dir = await getApplicationSupportDirectory();
         
@@ -101,9 +140,9 @@ class EncryptionService {
         final userSecret = '$username:${Platform.localHostname}:${Platform.operatingSystem}';
 
         _cryptKey = _deriveFallbackKey(userSecret, salt, installId);
-        print("EncryptionService: Successfully initialized PBKDF2 derived key.");
+        debugPrint("EncryptionService: Successfully initialized PBKDF2 derived key.");
       } catch (deriveErr) {
-        print("EncryptionService: PBKDF2 key derivation failed ($deriveErr). Using environmental hash.");
+        debugPrint("EncryptionService: PBKDF2 key derivation failed ($deriveErr). Using environmental hash.");
         final username = Platform.environment['USERNAME'] ?? Platform.environment['USER'] ?? 'default_user';
         final rawKey = sha256.convert(utf8.encode('$username:${Platform.localHostname}')).bytes;
         _cryptKey = encrypt.Key(Uint8List.fromList(rawKey));
@@ -124,18 +163,29 @@ class EncryptionService {
   }
 
   /// Encrypts plain text using AES-256 (GCM mode).
-  /// Format output as: gcm:<iv_base64>:<ciphertext_base64> (which contains ciphertext + GCM tag)
+  /// Format output as: `gcm:<iv_base64>:<ciphertext_base64>` (which contains ciphertext + GCM tag)
+  /// Throws [EncryptionException] rather than returning plaintext if the key
+  /// is unavailable or encryption fails — see [EncryptionException] for why
+  /// failing closed is mandatory here. In practice this should never fire:
+  /// main() awaits [init] before runApp, and init has three fallback layers
+  /// (secure storage, PBKDF2 derivation, environmental hash) before it can
+  /// leave the key null. This is a guard, not an expected code path.
   static String encryptText(String plainText) {
     final key = _cryptKey;
-    if (key == null) return plainText;
+    if (key == null) {
+      throw const EncryptionException(
+        'encryptText called before init() completed — refusing to return '
+        'plaintext for a field that is stored and synced as ciphertext.',
+      );
+    }
     try {
       final iv = encrypt.IV.fromSecureRandom(12); // Standard 12-byte IV for GCM
       final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.gcm));
       final encrypted = encrypter.encrypt(plainText, iv: iv);
       return 'gcm:${iv.base64}:${encrypted.base64}';
     } catch (e) {
-      print("EncryptionService: Encryption error: $e");
-      return plainText;
+      debugPrint("EncryptionService: Encryption failed: $e");
+      throw EncryptionException('AES-GCM encryption failed', e);
     }
   }
 
@@ -153,7 +203,7 @@ class EncryptionService {
         final encrypter = encrypt.Encrypter(encrypt.AES(key, mode: encrypt.AESMode.gcm));
         return encrypter.decrypt(encrypt.Encrypted.fromBase64(parts[2]), iv: iv);
       } catch (e) {
-        print("EncryptionService: GCM Decryption error: $e");
+        debugPrint("EncryptionService: GCM Decryption error: $e");
         return cipherText;
       }
     }

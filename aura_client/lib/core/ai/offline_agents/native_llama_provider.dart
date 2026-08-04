@@ -1,13 +1,10 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart';
 import 'package:flutter_llama/flutter_llama.dart';
 import 'package:path_provider/path_provider.dart';
 import 'inference_provider.dart';
-import 'offline_agent_manager.dart';
-import '../../database/database.dart';
 import '../../database/database_provider.dart';
 
 class NativeLlamaInferenceProvider implements InferenceProvider {

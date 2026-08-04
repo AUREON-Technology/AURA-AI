@@ -105,7 +105,7 @@ def verify_device_integrity(attestation_token: Optional[str], platform: Optional
                 try:
                     logger.info("Calling Google Play Integrity API for cryptographic verification...")
                     result = service.v1().decodeIntegrityToken(
-                        packageName="com.aura.ai",
+                        packageName=settings.android_package_name,
                         body={"integrityToken": attestation_token}
                     ).execute()
                     payload = result.get("tokenPayloadExternal", {})
@@ -135,7 +135,7 @@ def verify_device_integrity(attestation_token: Optional[str], platform: Optional
             pkg_name = request_details.get("packageName")
             token_nonce = request_details.get("nonce")
 
-            if pkg_name != "com.aura.ai":
+            if pkg_name != settings.android_package_name:
                 logger.warning(f"Play Integrity error: package name mismatch '{pkg_name}'")
                 return False
 

@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     
     # Production Authentication Settings
     google_client_id: str = "87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com"
+    # Must match aura_client/android/app/build.gradle.kts `applicationId`.
+    # Play Integrity rejects any token whose requestDetails.packageName differs,
+    # so a drift between these two values silently breaks all Android auth —
+    # single-sourced here rather than hardcoded at the call sites.
+    android_package_name: str = "com.auraai.aura_client"
     firebase_service_account_path: str = "credentials.json"
     firebase_credentials_json: str = ""
     debug_mode: bool = False
@@ -32,6 +37,13 @@ class Settings(BaseSettings):
     # dev-mode convenience, which invalidates every session on each
     # restart/redeploy (acceptable for local dev, not for production).
     jwt_secret: str = ""
+
+    # Writable directory for the JSON-file state the learning pipeline keeps
+    # (feedback logs, compiled LoRA datasets, telemetry). Defaults to the app
+    # working directory, which is INSIDE the container image — anything written
+    # there is destroyed by `docker compose up --force-recreate`. Point this at
+    # a mounted volume in any deployment where the feedback corpus matters.
+    data_dir: str = "."
 
     # V2 observability (§10). Both no-op when unset — safe defaults for
     # local dev, wire real values in the target deploy environment.

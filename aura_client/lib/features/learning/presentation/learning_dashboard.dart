@@ -59,7 +59,10 @@ class _LearningDashboardState extends ConsumerState<LearningDashboard> {
         setState(() {
           _buildMessage = "Dataset built successfully! Saved as ${data['file_saved']} (${data['total_records']} records).";
         });
-        ref.refresh(learningStatsProvider);
+        // invalidate, not refresh: refresh returns the new value and the
+        // analyzer flags discarding it. Nothing here consumes the result —
+        // the ref.watch in build() is what re-renders.
+        ref.invalidate(learningStatsProvider);
       } else {
         setState(() {
           _buildMessage = "Build failed: Server returned ${response.statusCode}";
@@ -129,11 +132,16 @@ class _LearningDashboardState extends ConsumerState<LearningDashboard> {
           );
         }
       } else {
+        // Guarded for the same reason as the success path above: the request
+        // has a 15s timeout, and navigating away while it is in flight leaves
+        // this State defunct — ScaffoldMessenger.of() then throws.
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Export failed: Status ${response.statusCode}")),
         );
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Error exporting dataset: $e")),
       );
@@ -321,7 +329,7 @@ class _LearningDashboardState extends ConsumerState<LearningDashboard> {
                   ],
                 ),
               );
-            }).toList(),
+            }),
           ],
         ),
       ),
@@ -379,7 +387,7 @@ class _LearningDashboardState extends ConsumerState<LearningDashboard> {
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     dropdownColor: AuraTheme.background,
-                    value: _selectedFormat,
+                    initialValue: _selectedFormat,
                     items: const [
                       DropdownMenuItem(value: "alpaca", child: Text("Alpaca Formatted")),
                       DropdownMenuItem(value: "chatml", child: Text("ChatML Formatted")),

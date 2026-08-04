@@ -1,10 +1,8 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:drift/drift.dart' hide Column;
 import 'package:path_provider/path_provider.dart';
-import 'package:http/http.dart' as http;
 import '../../../core/database/database.dart';
 import '../../../core/database/database_provider.dart';
 import '../../../core/theme/theme.dart';
@@ -172,7 +170,7 @@ class ModelManagerPage extends ConsumerWidget {
         child: Row(
           children: [
             CircleAvatar(
-              backgroundColor: color.withOpacity(0.1),
+              backgroundColor: color.withValues(alpha: 0.1),
               child: Icon(connected ? Icons.memory : Icons.no_sim_outlined, color: color),
             ),
             const SizedBox(width: 16),
@@ -194,7 +192,9 @@ class ModelManagerPage extends ConsumerWidget {
             ),
             ElevatedButton.icon(
               onPressed: () {
-                ref.refresh(ollamaHealthProvider);
+                // invalidate rather than refresh — the returned future is not
+                // consumed here; the ref.watch above drives the rebuild.
+                ref.invalidate(ollamaHealthProvider);
               },
               icon: const Icon(Icons.refresh, size: 16),
               label: const Text("Refresh"),
@@ -290,7 +290,7 @@ class ModelManagerPage extends ConsumerWidget {
                     children: [
                       Switch(
                         value: isActive,
-                        activeColor: AuraTheme.accentTeal,
+                        activeThumbColor: AuraTheme.accentTeal,
                         onChanged: (val) {
                           if (val) {
                             _activateModel(ref, id);

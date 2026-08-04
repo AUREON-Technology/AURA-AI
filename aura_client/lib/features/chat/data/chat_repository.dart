@@ -3,19 +3,14 @@ import 'dart:async';
 import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
-import 'package:google_generative_ai/google_generative_ai.dart' as google_ai;
-import 'package:google_sign_in/google_sign_in.dart';
 import '../../../core/database/database.dart';
 import '../../../core/database/database_provider.dart';
-import '../../../core/config/config.dart';
 import '../../../core/ai/orchestrator/agent_orchestrator.dart';
 import '../../../core/ai/ai_router/aura_ai_router.dart';
 import '../../../core/ai/online_agents/sse_agent_client.dart';
 import 'agent_config_repository.dart';
 import 'memory_repository.dart';
-import '../../auth/presentation/auth_provider.dart';
 
 class PendingActions extends Notifier<List<dynamic>> {
   @override
@@ -33,7 +28,6 @@ class ChatRepository {
   final AppDatabase _db;
   final Ref _ref;
   final _uuid = const Uuid();
-  static const String _backendUrl = "${AppConfig.backendUrl}/api/chat/agent";
 
   ChatRepository(this._db, this._ref);
 

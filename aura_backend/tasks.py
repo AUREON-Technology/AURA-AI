@@ -1,9 +1,11 @@
 import asyncio
 import logging
 import json
+import os
 from celery_app import celery_app
+from config import settings
 from services.rag import rag_service
-from services.learning_pipeline import learning_pipeline
+from services.learning_pipeline import learning_pipeline, _atomic_write
 
 logger = logging.getLogger("aura_backend.tasks")
 
@@ -47,9 +49,13 @@ def build_lora_dataset_task(user_id: str) -> dict:
     logger.info(f"Celery task: Building LoRA dataset in background...")
     try:
         dataset = learning_pipeline.build_lora_dataset("alpaca")
-        filename = "train_lora.json"
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(dataset, f, indent=2, ensure_ascii=False)
+        # Written under settings.data_dir, not the container-local cwd — the
+        # Celery worker and the API run in *separate containers*, so a file
+        # written to either one's cwd is invisible to the other and is lost on
+        # the next redeploy. Only a shared mounted volume makes this artifact
+        # retrievable at all.
+        filename = os.path.join(settings.data_dir, "train_lora.json")
+        _atomic_write(filename, dataset)
         return {"status": "success", "total_records": len(dataset), "file_saved": filename}
     except Exception as e:
         logger.error(f"Failed to build LoRA dataset in task: {e}")

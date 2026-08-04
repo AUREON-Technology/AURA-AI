@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,7 +7,6 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import '../../database/database.dart';
 import '../../database/database_provider.dart';
-import 'offline_agent_manager.dart';
 
 class DownloadProgress {
   final String modelName;
@@ -201,7 +199,7 @@ class ModelDownloadNotifier extends Notifier<Map<String, DownloadProgress>> {
         OfflineModelWeightsCompanion.insert(
           id: modelName,
           modelName: modelName,
-          sizeBytes: "${sizeMb} MB",
+          sizeBytes: "$sizeMb MB",
           isDownloaded: Value(true),
           isActive: Value(false),
           updatedAt: DateTime.now(),

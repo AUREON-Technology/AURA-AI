@@ -33,8 +33,7 @@ class ClientAgentOrchestrator {
         final auraMemory = _ref.read(auraMemoryProvider);
         final memories = await auraMemory.semantic.queryMemories(lastUserMsg);
         if (memories.isNotEmpty) {
-          memoryContext = "\nThings AURA remembers about the user:\n" +
-              memories.map((m) => "- ${m.content}").join('\n');
+          memoryContext = "\nThings AURA remembers about the user:\n${memories.map((m) => "- ${m.content}").join('\n')}";
         }
       } catch (e) {
         debugPrint("ClientAgentOrchestrator: Memory fetch skipped: $e");
@@ -48,8 +47,7 @@ class ClientAgentOrchestrator {
         final knowledge = _ref.read(knowledgeCenterProvider);
         final chunks = await knowledge.queryKnowledge(lastUserMsg);
         if (chunks.isNotEmpty) {
-          ragContext = "\nRelevant Knowledge Base Chunks:\n" +
-              chunks.map((c) => "--- Chunk:\n${c['content']}\n").join('\n');
+          ragContext = "\nRelevant Knowledge Base Chunks:\n${chunks.map((c) => "--- Chunk:\n${c['content']}\n").join('\n')}";
         }
       } catch (e) {
         debugPrint("ClientAgentOrchestrator: RAG fetch skipped: $e");

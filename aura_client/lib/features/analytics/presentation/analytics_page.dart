@@ -103,7 +103,7 @@ class AnalyticsPage extends ConsumerWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.bar_chart, size: 72, color: Colors.white.withOpacity(0.3)),
+          Icon(Icons.bar_chart, size: 72, color: Colors.white.withValues(alpha: 0.3)),
           const SizedBox(height: 16),
           const Text("No telemetry metrics collected yet", style: TextStyle(color: AuraTheme.textSecondary, fontSize: 16)),
           const SizedBox(height: 8),
@@ -146,7 +146,7 @@ class AnalyticsPage extends ConsumerWidget {
         child: Row(
           children: [
             CircleAvatar(
-              backgroundColor: color.withOpacity(0.1),
+              backgroundColor: color.withValues(alpha: 0.1),
               radius: 20,
               child: Icon(icon, color: color, size: 20),
             ),
@@ -204,7 +204,7 @@ class AnalyticsPage extends ConsumerWidget {
                             dotData: const FlDotData(show: true),
                             belowBarData: BarAreaData(
                               show: true,
-                              color: AuraTheme.accentAmber.withOpacity(0.1),
+                              color: AuraTheme.accentAmber.withValues(alpha: 0.1),
                             ),
                           ),
                         ],

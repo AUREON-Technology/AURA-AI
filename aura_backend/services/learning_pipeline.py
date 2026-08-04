@@ -1,10 +1,45 @@
 import os
 import json
 import logging
+import tempfile
+import threading
 from typing import List, Dict, Any, Optional
 
+from config import settings
+
 logger = logging.getLogger(__name__)
-LOGS_FILE_PATH = "learning_logs.json"
+
+# Resolved against settings.data_dir so the corpus can live on a mounted
+# volume instead of inside the container image (see config.data_dir).
+LOGS_FILE_PATH = os.path.join(settings.data_dir, "learning_logs.json")
+
+# The read-modify-write in log_feedback_record is not atomic. Under the
+# Dockerfile's multiple uvicorn workers plus the Celery worker, two concurrent
+# appends would both read the same list and the second would write back a
+# version missing the first's record — or, worse, interleave mid-write and
+# leave truncated JSON on disk that fails to parse on every subsequent call.
+# This lock serialises writers within a process; _atomic_write below keeps the
+# file parseable across processes (last writer wins, but never corrupt).
+_write_lock = threading.Lock()
+
+
+def _atomic_write(path: str, payload: Any) -> None:
+    """Write via temp file + os.replace so a reader (or a crash) never observes
+    a partially-written file. os.replace is atomic on POSIX and Windows."""
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=directory, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+
 
 class LearningPipeline:
     def __init__(self):
@@ -12,24 +47,21 @@ class LearningPipeline:
 
     def _ensure_logs_file_exists(self):
         if not os.path.exists(LOGS_FILE_PATH):
-            with open(LOGS_FILE_PATH, "w", encoding="utf-8") as f:
-                json.dump([], f)
+            _atomic_write(LOGS_FILE_PATH, [])
 
     def log_feedback_record(self, record: Dict[str, Any]) -> bool:
         """Appends a client learning/feedback log into the backend logs file."""
         try:
-            self._ensure_logs_file_exists()
-            with open(LOGS_FILE_PATH, "r+", encoding="utf-8") as f:
-                data = json.load(f)
-                
+            with _write_lock:
+                self._ensure_logs_file_exists()
+                data = self.load_all_records()
+
                 # Deduplicate records by ID
                 if any(r.get("id") == record.get("id") for r in data):
                     return True
-                
+
                 data.append(record)
-                f.seek(0)
-                f.truncate()
-                json.dump(data, f, indent=2, ensure_ascii=False)
+                _atomic_write(LOGS_FILE_PATH, data)
             return True
         except Exception as e:
             logger.error(f"Failed to log learning feedback: {e}")

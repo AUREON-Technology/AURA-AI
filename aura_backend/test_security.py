@@ -14,7 +14,18 @@ class TestSecurityHardening(unittest.TestCase):
         self.client = TestClient(app)
         # Clear rate limiting history before each test to ensure a clean state
         RateLimitMiddleware.request_history.clear()
-        
+
+        # main.py's rate limiter holds its OWN Redis handle (`_rate_limit_redis`),
+        # separate from services.security.redis_client below. Without pinning it
+        # to None the limiter takes the Redis path, whose per-IP counter is keyed
+        # on a shared 60s window and therefore leaks between tests: once
+        # test_rate_limiting deliberately exhausts the window, every later test in
+        # that minute gets a 429 instead of its expected status. CI has no Redis
+        # service so this passed there and only failed in production-like envs.
+        import main
+        self.orig_rate_limit_redis = main._rate_limit_redis
+        main._rate_limit_redis = None
+
         # Save original settings
         self.orig_debug_mode = settings.debug_mode
         self.orig_allow_mock_attestation = settings.allow_mock_attestation
@@ -28,7 +39,10 @@ class TestSecurityHardening(unittest.TestCase):
         # Restore original settings
         settings.debug_mode = self.orig_debug_mode
         settings.allow_mock_attestation = self.orig_allow_mock_attestation
-        
+
+        import main
+        main._rate_limit_redis = self.orig_rate_limit_redis
+
         # Restore redis_client
         import services.security
         services.security.redis_client = self.orig_redis_client
@@ -131,7 +145,7 @@ class TestSecurityHardening(unittest.TestCase):
         mock_response = {
             "tokenPayloadExternal": {
                 "requestDetails": {
-                    "packageName": "com.aura.ai",
+                    "packageName": settings.android_package_name,
                     "nonce": "test_nonce"
                 },
                 "deviceIntegrity": {

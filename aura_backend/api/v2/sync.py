@@ -60,6 +60,16 @@ def _coerce_value(model, key: str, value: Any) -> Any:
     return value
 
 
+# Columns the server alone owns. `id`/`user_id` are identity (letting a client
+# set them is straightforward IDOR); the timestamp trio is subtler but worse in
+# practice — `updated_at` is the last-write-wins comparand, so a client that
+# writes a far-future value pins the row permanently into the `server has a
+# newer version` branch below and can never update it again. `deleted_at` would
+# let an `upsert` silently tombstone (or resurrect) a row, bypassing the `op`
+# field entirely. All four are set from server state, never from the payload.
+_SERVER_OWNED_COLUMNS = frozenset({"id", "user_id", "created_at", "updated_at", "deleted_at"})
+
+
 class SyncPullResponse(BaseModel):
     data: dict[str, list[dict[str, Any]]]
     cursor: str
@@ -152,7 +162,7 @@ async def push_sync(
                 existing = model(id=row_id, user_id=user.id)
                 db.add(existing)
             for key, value in payload.items():
-                if key in ("id", "user_id"):
+                if key in _SERVER_OWNED_COLUMNS:
                     continue
                 if hasattr(existing, key):
                     setattr(existing, key, _coerce_value(model, key, value))

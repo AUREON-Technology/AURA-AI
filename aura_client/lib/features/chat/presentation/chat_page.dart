@@ -271,7 +271,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 ],
                 onChanged: (val) {
                   if (val != null) {
-                    ref.read(aiProviderSettingProvider.notifier).state = val;
+                    ref.read(aiProviderSettingProvider.notifier).setProvider(val);
                   }
                 },
               ),
@@ -281,7 +281,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           // Fallback Key Inputs
           TextField(
             onChanged: (val) {
-              ref.read(localApiKeyProvider.notifier).state = val;
+              ref.read(localApiKeyProvider.notifier).setKey(val);
               setState(() => _geminiApiKey = val);
             },
             obscureText: true,
@@ -454,7 +454,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             borderRadius: BorderRadius.circular(8),
                             boxShadow: [
                               BoxShadow(
-                                color: AuraTheme.accentIndigo.withOpacity(0.3),
+                                color: AuraTheme.accentIndigo.withValues(alpha: 0.3),
                                 blurRadius: 8,
                                 offset: const Offset(0, 2),
                               ),
@@ -1151,7 +1151,7 @@ class MessageBubble extends ConsumerWidget {
           decoration: BoxDecoration(
             color: const Color(0xFF2D1616),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.redAccent.withOpacity(0.5), width: 1),
+            border: Border.all(color: Colors.redAccent.withValues(alpha: 0.5), width: 1),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
