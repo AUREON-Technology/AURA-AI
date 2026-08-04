@@ -100,11 +100,17 @@ Start with the [overview](docs/architecture/00-overview.md).
 **Getting it running**
 [Deployment](docs/guides/deployment-guide.md) ·
 [Administration](docs/guides/administrator-guide.md) ·
+[Maintenance](docs/guides/maintenance-guide.md) ·
 [Troubleshooting](docs/guides/troubleshooting-guide.md) ·
 [User guide](docs/guides/user-guide.md)
 
+**Building against it**
+[API reference](docs/guides/api-reference.md) ·
+[Migration from v1/v2](docs/guides/migration-guide.md)
+
 **Working on it**
 [Developer guide](docs/guides/developer-guide.md) ·
+[MLOps and fine-tuning](docs/guides/mlops-guide.md) ·
 [Architecture](docs/architecture/00-overview.md)
 
 **Evidence**
