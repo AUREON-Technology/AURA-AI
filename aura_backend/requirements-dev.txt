@@ -1,0 +1,17 @@
+# Test and development dependencies.
+#
+# Deliberately separate from requirements.txt: the production image should not
+# carry a test runner, and the `aura_core` suite needs nothing from the runtime
+# dependency set beyond fastapi/httpx/pydantic, which requirements.txt already
+# pins. Install both to run the full suite:
+#
+#     pip install -r requirements.txt -r requirements-dev.txt
+#     pytest
+#
+# The suite needs no Docker, no network, no API key, and no model — see
+# docs/guides/developer-guide.md. That is a design property enforced by the
+# fitness tests in tests/architecture/, not a convenience.
+
+pytest>=8.0
+pytest-asyncio>=0.23
+pytest-cov>=5.0
