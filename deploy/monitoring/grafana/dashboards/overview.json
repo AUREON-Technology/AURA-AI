@@ -1,0 +1,306 @@
+{
+  "title": "AURA \u2014 Overview",
+  "uid": "aura-overview",
+  "tags": [
+    "aura"
+  ],
+  "timezone": "utc",
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {
+          "text": "Prometheus",
+          "value": "Prometheus"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Turns per second",
+      "type": "timeseries",
+      "description": "Throughput split by outcome. A rising 'error' or 'blocked' series is the first signal of trouble.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aura_turns_total[5m])) by (outcome)",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Turn duration (p50 / p95)",
+      "type": "timeseries",
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(aura_turn_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aura_turn_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Time to first token by provider",
+      "type": "timeseries",
+      "description": "What users actually perceive as responsiveness.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aura_llm_ttft_seconds_bucket[5m])) by (le, provider))",
+          "legendFormat": "{{provider}} p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Pipeline overhead by stage (p95)",
+      "type": "timeseries",
+      "description": "Everything except model time. Target p95 < 60ms (docs/architecture/00-overview.md \u00a75).",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aura_stage_duration_seconds_bucket[5m])) by (le, stage))",
+          "legendFormat": "{{stage}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Degraded turns",
+      "type": "timeseries",
+      "description": "Turns that completed on a non-happy path. A system that degrades silently cannot be operated.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aura_turn_degraded_total[5m])) by (reason)",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "title": "Provider health",
+      "type": "timeseries",
+      "description": "0 means the circuit breaker is open and the provider is out of candidacy.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "aura_provider_healthy",
+          "legendFormat": "{{provider}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "Tokens per second",
+      "type": "timeseries",
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aura_llm_tokens_total[5m])) by (direction)",
+          "legendFormat": "{{direction}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "title": "Projected daily spend",
+      "type": "stat",
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 12,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aura_llm_cost_usd_total[1h])) * 86400",
+          "legendFormat": "USD/day",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "title": "Cache hit rate",
+      "type": "stat",
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 18,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aura_cache_lookups_total{result=\"hit\"}[15m])) / clamp_min(sum(rate(aura_cache_lookups_total[15m])), 0.001)",
+          "legendFormat": "hit rate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true
+}

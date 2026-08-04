@@ -1,0 +1,452 @@
+"""Session memory and the approved-source registry.
+
+Both modules exist to make an unattended process safe. Session state is cached data a user does
+not control the key of, so ownership is re-checked on every load. The source registry is the
+*only* thing the 02:00 job may fetch from, which is what keeps a scheduled job with the
+deployment's network position from being a server-side request forgery primitive.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+
+import pytest
+
+from aura_core.domain.errors import AuthorizationError, NotFoundError, ValidationError
+from aura_core.domain.identifiers import DocumentId, SessionId, UserId
+from aura_core.domain.knowledge import KnowledgeSource, SourceType, TrustTier
+from aura_core.domain.messages import Message, Role
+from aura_core.learning.sources import (
+    CompositeFetcher,
+    FetchedDocument,
+    HttpSourceFetcher,
+    InMemorySourceRegistry,
+    StaticSourceFetcher,
+    gather_sources,
+)
+from aura_core.llm import InMemoryCache
+from aura_core.memory.session import (
+    EpisodicMemory,
+    SessionState,
+    WorkingMemory,
+    build_session_summariser,
+    merge_context,
+)
+from aura_core.prompts import build_default_registry
+
+
+class TestWorkingMemory:
+    def test_notes_are_bounded_keeping_the_most_recent(self) -> None:
+        """An agent loop appending a note per step would otherwise exhaust the context budget
+        with its own bookkeeping."""
+        working = WorkingMemory(max_notes=3)
+        for i in range(10):
+            working.note(f"note {i}")
+
+        assert working.as_context() == ["note 7", "note 8", "note 9"]
+
+    def test_blank_notes_are_ignored(self) -> None:
+        working = WorkingMemory()
+        working.note("   ")
+        working.note("")
+        assert not working.notes
+
+    def test_notes_are_stripped(self) -> None:
+        working = WorkingMemory()
+        working.note("  a note  ")
+        assert working.notes == ["a note"]
+
+    def test_tool_results_are_bounded_independently(self) -> None:
+        working = WorkingMemory(max_tool_results=2)
+        for i in range(5):
+            working.record_tool(f"tool{i}", f"result {i}")
+        assert [name for name, _ in working.tool_results] == ["tool3", "tool4"]
+
+    def test_facts_round_trip_with_a_default(self) -> None:
+        working = WorkingMemory()
+        working.set("city", "Cairo")
+        assert working.get("city") == "Cairo"
+        assert working.get("absent", "fallback") == "fallback"
+
+    def test_clear_empties_everything(self) -> None:
+        working = WorkingMemory()
+        working.note("n")
+        working.set("k", "v")
+        working.record_tool("t", "r")
+        working.clear()
+        assert not working
+
+    def test_truthiness_reflects_whether_anything_was_recorded(self) -> None:
+        assert not WorkingMemory()
+        populated = WorkingMemory()
+        populated.set("k", "v")
+        assert populated
+
+
+class TestSessionStateSerialisation:
+    def _state(self, **overrides) -> SessionState:
+        base = dict(
+            session_id=SessionId("s1"),
+            owner_id=UserId("u1"),
+            messages=(Message.user("hello"), Message.assistant("hi")),
+            summary="earlier: greetings",
+            turn_count=3,
+            updated_at=1234.5,
+        )
+        base.update(overrides)
+        return SessionState(**base)
+
+    def test_round_trip(self) -> None:
+        restored = SessionState.from_json(self._state().to_json())
+        assert restored.session_id == SessionId("s1")
+        assert restored.owner_id == UserId("u1")
+        assert restored.summary == "earlier: greetings"
+        assert restored.turn_count == 3
+        assert [m.content for m in restored.messages] == ["hello", "hi"]
+
+    def test_system_messages_are_not_persisted(self) -> None:
+        """Persisting them would pin a session to a stale prompt version forever."""
+        state = self._state(messages=(
+            Message.system("You are AURA v1."), Message.user("hello"),
+        ))
+        restored = SessionState.from_json(state.to_json())
+        assert all(m.role is not Role.SYSTEM for m in restored.messages)
+
+    def test_corrupt_state_is_a_cold_start_not_an_exception(self) -> None:
+        """A bad cache entry must not make a user's session permanently unusable."""
+        assert SessionState.from_json(b"{{{ not json") is None
+        assert SessionState.from_json(json.dumps({"missing": "fields"})) is None
+
+    def test_bytes_and_str_are_both_accepted(self) -> None:
+        raw = self._state().to_json()
+        assert SessionState.from_json(raw.encode("utf-8")) is not None
+
+
+class TestEpisodicMemory:
+    @pytest.fixture
+    def episodic(self) -> EpisodicMemory:
+        return EpisodicMemory(cache=InMemoryCache(), window=2, summarise_after=4)
+
+    async def test_an_unknown_session_starts_empty(self, episodic) -> None:
+        state = await episodic.load(SessionId("new"), UserId("u1"))
+        assert state.messages == ()
+        assert state.turn_count == 0
+
+    async def test_an_exchange_is_recorded_and_reloaded(self, episodic) -> None:
+        await episodic.append(
+            SessionId("s1"), UserId("u1"),
+            user_message="what is my leave?", assistant_message="21 days.",
+        )
+        conversation, summary = await episodic.history(SessionId("s1"), UserId("u1"))
+
+        assert [m.content for m in conversation] == ["what is my leave?", "21 days."]
+        assert summary == ""
+
+    async def test_turn_count_accumulates(self, episodic) -> None:
+        for i in range(3):
+            state = await episodic.append(
+                SessionId("s1"), UserId("u1"), user_message=f"q{i}", assistant_message=f"a{i}"
+            )
+        assert state.turn_count == 3
+
+    async def test_overflow_is_summarised_and_the_window_trimmed(self, episodic) -> None:
+        for i in range(5):
+            state = await episodic.append(
+                SessionId("s1"), UserId("u1"), user_message=f"q{i}", assistant_message=f"a{i}"
+            )
+
+        assert len(state.messages) == 2
+        assert state.summary  # the trimmed turns are not simply lost
+        assert "q0" in state.summary
+
+    async def test_a_session_id_is_not_a_capability(self, episodic) -> None:
+        """Serving another user's conversation because a guessed id landed in the cache would be
+        a direct data leak."""
+        await episodic.append(
+            SessionId("s1"), UserId("alice"),
+            user_message="my salary is 95000", assistant_message="noted",
+        )
+        state = await episodic.load(SessionId("s1"), UserId("mallory"))
+
+        assert state.messages == ()
+        assert state.owner_id == UserId("mallory")
+
+    async def test_clearing_removes_the_state(self, episodic) -> None:
+        await episodic.append(
+            SessionId("s1"), UserId("u1"), user_message="q", assistant_message="a"
+        )
+        await episodic.clear(SessionId("s1"))
+        assert (await episodic.load(SessionId("s1"), UserId("u1"))).messages == ()
+
+    async def test_a_configured_summariser_is_used(self) -> None:
+        calls: list[str] = []
+
+        async def summariser(transcript: str, previous: str) -> str:
+            calls.append(transcript)
+            return "MODEL SUMMARY"
+
+        episodic = EpisodicMemory(
+            cache=InMemoryCache(), window=2, summarise_after=4, summariser=summariser
+        )
+        for i in range(5):
+            state = await episodic.append(
+                SessionId("s1"), UserId("u1"), user_message=f"q{i}", assistant_message=f"a{i}"
+            )
+
+        assert state.summary == "MODEL SUMMARY"
+        assert "q0" in calls[0]
+
+    async def test_a_failing_summariser_falls_back_to_a_transcript(self) -> None:
+        """Losing the conversation entirely is worse than keeping a crude record of it."""
+
+        async def broken(transcript: str, previous: str) -> str:
+            raise RuntimeError("model is down")
+
+        episodic = EpisodicMemory(
+            cache=InMemoryCache(), window=2, summarise_after=4, summariser=broken
+        )
+        for i in range(5):
+            state = await episodic.append(
+                SessionId("s1"), UserId("u1"), user_message=f"q{i}", assistant_message=f"a{i}"
+            )
+        assert "q0" in state.summary
+
+    async def test_the_fallback_summary_is_bounded(self) -> None:
+        episodic = EpisodicMemory(cache=InMemoryCache(), window=2, summarise_after=2)
+        for i in range(40):
+            state = await episodic.append(
+                SessionId("s1"), UserId("u1"),
+                user_message=f"question {i} " + "x" * 400, assistant_message="ok",
+            )
+        assert len(state.summary) <= 4000
+
+    async def test_corrupt_cached_state_yields_a_fresh_session(self, episodic) -> None:
+        await episodic._cache.set(episodic._key(SessionId("s1")), b"garbage")
+        assert (await episodic.load(SessionId("s1"), UserId("u1"))).messages == ()
+
+
+class TestSessionSummariser:
+    async def test_it_generates_deterministically(self) -> None:
+        """Sampling adds nothing to a compression task, and non-determinism would make a
+        session's summary depend on when it happened."""
+        captured: dict = {}
+
+        class Router:
+            async def complete(self, request):  # noqa: ANN001
+                captured["temperature"] = request.sampling.temperature
+
+                class Response:
+                    text = "  A summary.  "
+
+                return Response()
+
+        summarise = build_session_summariser(Router(), build_default_registry())
+        assert await summarise("user: hi\nassistant: hello", "") == "A summary."
+        assert captured["temperature"] == 0.0
+
+
+class TestMergeContext:
+    def test_it_reports_shape_not_content(self) -> None:
+        """Session context reaches logs and telemetry; message text must not."""
+        state = SessionState(
+            session_id=SessionId("s1"), owner_id=UserId("u1"),
+            messages=(Message.user("my salary is 95000"),), summary="something",
+        )
+        payload = merge_context(state, {"route": "chat"})
+
+        assert payload == {
+            "turn_count": 0, "has_summary": True, "window_messages": 1, "route": "chat",
+        }
+        assert "95000" not in json.dumps(payload)
+
+
+# --------------------------------------------------------------------------------------
+# Source registry
+# --------------------------------------------------------------------------------------
+
+
+def _source(source_id: str = "handbook", **overrides) -> KnowledgeSource:
+    base = dict(id=source_id, type=SourceType.INTERNAL, uri="https://example.com/handbook")
+    base.update(overrides)
+    return KnowledgeSource(**base)
+
+
+class TestSourceRegistry:
+    async def test_registration_and_lookup(self) -> None:
+        registry = InMemorySourceRegistry()
+        await registry.register(_source())
+
+        assert (await registry.get("handbook")).uri == "https://example.com/handbook"
+        assert len(await registry.list_all()) == 1
+
+    async def test_duplicate_registration_is_refused(self) -> None:
+        """Silently replacing would let a re-registration change a source's trust tier."""
+        registry = InMemorySourceRegistry([_source()])
+        with pytest.raises(ValidationError) as excinfo:
+            await registry.register(_source())
+        assert "already registered" in str(excinfo.value)
+
+    async def test_only_enabled_sources_are_listed_for_the_job(self) -> None:
+        registry = InMemorySourceRegistry([
+            _source("a"), _source("b", enabled=False),
+        ])
+        assert [s.id for s in await registry.list_enabled()] == ["a"]
+
+    async def test_disabling_is_reversible(self) -> None:
+        registry = InMemorySourceRegistry([_source()])
+        await registry.set_enabled("handbook", False)
+        assert await registry.list_enabled() == []
+        await registry.set_enabled("handbook", True)
+        assert len(await registry.list_enabled()) == 1
+
+    async def test_disabling_an_unknown_source_raises(self) -> None:
+        with pytest.raises(NotFoundError):
+            await InMemorySourceRegistry().set_enabled("nope", False)
+
+    async def test_removal_reports_whether_anything_was_removed(self) -> None:
+        registry = InMemorySourceRegistry([_source()])
+        assert await registry.remove("handbook") is True
+        assert await registry.remove("handbook") is False
+
+    async def test_progress_is_recorded_for_incremental_fetches(self) -> None:
+        registry = InMemorySourceRegistry([_source()])
+        at = datetime(2026, 3, 1, 2, 0, tzinfo=timezone.utc)
+        await registry.record_success("handbook", cursor="page-3", at=at)
+
+        source = await registry.get("handbook")
+        assert source.last_cursor == "page-3"
+        assert source.last_success_at == at
+
+    async def test_recording_progress_for_an_unknown_source_is_a_no_op(self) -> None:
+        registry = InMemorySourceRegistry()
+        await registry.record_success("nope", cursor=None, at=datetime.now(timezone.utc))
+
+    async def test_an_unknown_source_is_none(self) -> None:
+        assert await InMemorySourceRegistry().get("nope") is None
+
+
+class TestSourceCeilings:
+    async def test_positive_ceilings_are_required(self) -> None:
+        with pytest.raises(ValueError):
+            _source(max_documents=0)
+        with pytest.raises(ValueError):
+            _source(max_bytes_per_document=0)
+
+    async def test_an_empty_id_is_refused(self) -> None:
+        with pytest.raises(ValueError):
+            _source("")
+
+
+class TestHttpFetcherGuards:
+    """The 02:00 job runs unattended with the deployment's network position."""
+
+    def test_plain_http_is_refused(self) -> None:
+        with pytest.raises(AuthorizationError):
+            HttpSourceFetcher._assert_fetchable("http://example.com/doc")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://169.254.169.254/latest/meta-data/",
+            "https://127.0.0.1/admin",
+            "https://10.0.0.5/internal",
+            "https://192.168.1.1/",
+            "https://localhost/",
+            "https://metadata.google.internal/",
+        ],
+    )
+    def test_addresses_inside_the_deployment_are_refused(self, url: str) -> None:
+        with pytest.raises(AuthorizationError):
+            HttpSourceFetcher._assert_fetchable(url)
+
+    def test_a_public_https_host_is_permitted(self) -> None:
+        HttpSourceFetcher._assert_fetchable("https://docs.example.com/handbook")
+
+    def test_a_public_ip_literal_is_permitted(self) -> None:
+        HttpSourceFetcher._assert_fetchable("https://93.184.216.34/doc")
+
+    def test_a_url_with_no_host_is_refused(self) -> None:
+        with pytest.raises(AuthorizationError):
+            HttpSourceFetcher._assert_fetchable("https:///path")
+
+
+class TestFetcherDispatch:
+    async def test_a_static_fetcher_returns_its_configured_documents(self) -> None:
+        document = FetchedDocument(
+            title="Handbook", content="Annual leave is 21 days.",
+            document_id=DocumentId("handbook"), uri="static://handbook",
+        )
+        fetcher = StaticSourceFetcher({"handbook": [document]})
+        assert (await fetcher.fetch(_source()))[0].title == "Handbook"
+
+    async def test_an_unknown_static_source_yields_nothing(self) -> None:
+        assert await StaticSourceFetcher({}).fetch(_source()) == []
+
+    async def test_dispatch_selects_by_source_type(self) -> None:
+        """Keeps the refresh pipeline free of `if source.type == ...` branches."""
+        doc = FetchedDocument(
+            title="T", content="C", document_id=DocumentId("d"), uri="u",
+        )
+        composite = CompositeFetcher({SourceType.INTERNAL: StaticSourceFetcher({"handbook": [doc]})})
+        assert len(await composite.fetch(_source())) == 1
+
+    async def test_an_unregistered_type_names_what_is_registered(self) -> None:
+        composite = CompositeFetcher({})
+        with pytest.raises(ValidationError) as excinfo:
+            await composite.fetch(_source(type=SourceType.WEB))
+        assert "registered" in excinfo.value.details
+
+    async def test_a_default_fetcher_handles_unregistered_types(self) -> None:
+        doc = FetchedDocument(title="T", content="C", document_id=DocumentId("d"), uri="u")
+        composite = CompositeFetcher(
+            {}, default=StaticSourceFetcher({"handbook": [doc]})
+        )
+        assert len(await composite.fetch(_source(type=SourceType.WEB))) == 1
+
+    async def test_the_per_source_ceiling_is_enforced_centrally(self) -> None:
+        """Enforced here rather than trusting each fetcher -- one place to get right."""
+        docs = [
+            FetchedDocument(title=f"T{i}", content="C", document_id=DocumentId(f"d{i}"), uri="u")
+            for i in range(10)
+        ]
+        composite = CompositeFetcher({SourceType.INTERNAL: StaticSourceFetcher({"handbook": docs})})
+        assert len(await composite.fetch(_source(max_documents=3))) == 3
+
+    async def test_registering_a_fetcher_after_construction(self) -> None:
+        doc = FetchedDocument(title="T", content="C", document_id=DocumentId("d"), uri="u")
+        composite = CompositeFetcher({})
+        composite.register(SourceType.INTERNAL, StaticSourceFetcher({"handbook": [doc]}))
+        assert len(await composite.fetch(_source())) == 1
+
+
+class TestGatherSources:
+    async def test_every_enabled_source_is_fetched(self) -> None:
+        docs = {
+            "a": [FetchedDocument(title="A", content="C", document_id=DocumentId("a"), uri="u")],
+            "b": [FetchedDocument(title="B", content="C", document_id=DocumentId("b"), uri="u")],
+        }
+        registry = InMemorySourceRegistry([_source("a"), _source("b"), _source("c", enabled=False)])
+        result = await gather_sources(registry, StaticSourceFetcher(docs))
+
+        assert set(result) == {"a", "b"}
+        assert len(result["a"]) == 1
+
+    async def test_one_failing_source_does_not_abort_the_run(self) -> None:
+        """A single misbehaving source must not consume or fail the whole nightly run."""
+
+        class PartlyBroken:
+            async def fetch(self, source: KnowledgeSource):
+                if source.id == "broken":
+                    raise RuntimeError("upstream is down")
+                return [FetchedDocument(title="ok", content="c",
+                                        document_id=DocumentId(source.id), uri="u")]
+
+        registry = InMemorySourceRegistry([_source("good"), _source("broken")])
+        result = await gather_sources(registry, PartlyBroken())
+
+        assert result["broken"] == []
+        assert len(result["good"]) == 1
+
+    async def test_an_empty_registry_gathers_nothing(self) -> None:
+        assert await gather_sources(InMemorySourceRegistry(), StaticSourceFetcher({})) == {}

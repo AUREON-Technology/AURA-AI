@@ -1,0 +1,432 @@
+# AURA AI -- production stack for a single VPS (Scalability Report, Stage 0).
+#
+# Differences from the repository-root docker-compose.yml, each closing a finding:
+#
+#   SEC-12  Only Nginx publishes a port. Postgres, Redis, and Qdrant sit on an internal
+#           network with no host binding -- the existing compose file exposes 5432, 6379,
+#           and 6333 on the host with no authentication on Redis or Qdrant.
+#   SEC-08  Secrets come from Docker secret files, never from environment variables baked
+#           into the image or readable via `docker inspect`. No secret has a default.
+#   TD-06   Every stateful service has a named volume; nothing writes to a container path
+#           that vanishes on restart.
+#   Perf    Resource limits on every service, so one runaway container cannot starve the
+#           inference process on a 4-vCPU box.
+#
+# Bring up:  docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d
+# See docs/guides/deployment-guide.md for first-run setup and TLS.
+
+name: aura
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-restart: &restart
+  restart: unless-stopped
+
+networks:
+  # Ingress-facing. Only nginx and the gateway attach.
+  edge:
+    driver: bridge
+  # Data tier. internal=true means no route to the host or the internet at all, so a
+  # compromised datastore cannot call out.
+  data:
+    driver: bridge
+    internal: true
+  observability:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  redis_data:
+  ollama_models:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+  aura_workspace:
+  nginx_certs:
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  redis_password:
+    file: ./secrets/redis_password
+  qdrant_api_key:
+    file: ./secrets/qdrant_api_key
+  jwt_secret:
+    file: ./secrets/jwt_secret
+  grafana_admin_password:
+    file: ./secrets/grafana_admin_password
+
+services:
+  # ------------------------------------------------------------------ ingress
+  nginx:
+    image: nginx:1.27-alpine
+    <<: *restart
+    logging: *logging
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - nginx_certs:/etc/letsencrypt
+      - ./nginx/www:/var/www/certbot:ro
+    networks: [edge, observability]
+    depends_on:
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 256M}
+
+  # ------------------------------------------------------------------ application
+  gateway:
+    build:
+      context: ../aura_backend
+      dockerfile: Dockerfile
+    <<: *restart
+    logging: *logging
+    command: >
+      uvicorn aura_service:app
+      --host 0.0.0.0 --port 8000
+      --workers ${AURA_WORKERS:-4}
+      --proxy-headers --forwarded-allow-ips='*'
+      --timeout-keep-alive 65
+    environment:
+      AURA_ENVIRONMENT: production
+      AURA_LOG_FORMAT: json
+      AURA_LOG_LEVEL: ${AURA_LOG_LEVEL:-INFO}
+      AURA_METRICS_ENABLED: "true"
+      # Backends. In-memory is refused in production by AuraSettings.validate().
+      AURA_VECTOR_BACKEND: qdrant
+      AURA_DOCUMENT_BACKEND: postgres
+      AURA_MEMORY_BACKEND: postgres
+      AURA_CACHE_BACKEND: redis
+      AURA_QDRANT_URL: http://qdrant:6333
+      # Nginx is the single trusted hop; this is what makes X-Forwarded-For parsing correct.
+      AURA_TRUSTED_PROXY_COUNT: "1"
+      AURA_LLM_PROVIDERS: ${AURA_LLM_PROVIDERS:-local}
+      AURA_PROVIDER_LOCAL_KIND: openai_compatible
+      AURA_PROVIDER_LOCAL_BASE_URL: http://ollama:11434/v1
+      AURA_PROVIDER_LOCAL_MODEL: ${AURA_LOCAL_MODEL:-qwen2.5:7b-instruct-q4_K_M}
+      AURA_PROVIDER_LOCAL_IS_LOCAL: "true"
+      AURA_PROVIDER_LOCAL_QUALITY_TIER: "1"
+      AURA_PROVIDER_LOCAL_MAX_CONCURRENCY: "2"
+      AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
+      AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
+      AURA_MODEL_ALLOWLIST: ${AURA_MODEL_ALLOWLIST:-}
+      # Secrets are read from files by the entrypoint, never passed as values.
+      AURA_DATABASE_URL_FILE: /run/secrets/postgres_password
+      AURA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      AURA_QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
+      AURA_JWT_SECRET_FILE: /run/secrets/jwt_secret
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+    secrets: [postgres_password, redis_password, qdrant_api_key, jwt_secret]
+    volumes:
+      - aura_workspace:/var/lib/aura/workspace
+    networks: [edge, data]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      qdrant: {condition: service_started}
+    healthcheck:
+      # Readiness, not liveness: this gates traffic, so it must reflect dependencies.
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5).status==200 else 1)"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    deploy:
+      resources:
+        limits: {cpus: "2.0", memory: 3G}
+        reservations: {memory: 1G}
+
+  worker-realtime:
+    build:
+      context: ../aura_backend
+      dockerfile: Dockerfile
+    <<: *restart
+    logging: *logging
+    # Separate queues so a multi-minute ingestion backlog cannot delay a user-facing task.
+    command: celery -A aura_tasks worker -Q realtime -c 4 --loglevel=info --max-tasks-per-child=200
+    environment: &worker_env
+      AURA_ENVIRONMENT: production
+      AURA_LOG_FORMAT: json
+      AURA_VECTOR_BACKEND: qdrant
+      AURA_DOCUMENT_BACKEND: postgres
+      AURA_MEMORY_BACKEND: postgres
+      AURA_CACHE_BACKEND: redis
+      AURA_QDRANT_URL: http://qdrant:6333
+      AURA_DATABASE_URL_FILE: /run/secrets/postgres_password
+      AURA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      AURA_QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+    secrets: [postgres_password, redis_password, qdrant_api_key]
+    networks: [data]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 1G}
+
+  worker-ingestion:
+    build:
+      context: ../aura_backend
+      dockerfile: Dockerfile
+    <<: *restart
+    logging: *logging
+    command: celery -A aura_tasks worker -Q ingestion,learning -c 2 --loglevel=info --max-tasks-per-child=50
+    environment: *worker_env
+    secrets: [postgres_password, redis_password, qdrant_api_key]
+    networks: [data]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "1.5", memory: 2G}
+
+  beat:
+    build:
+      context: ../aura_backend
+      dockerfile: Dockerfile
+    <<: *restart
+    logging: *logging
+    # Schedules the 02:00 knowledge refresh (ADR-008) and memory consolidation.
+    command: celery -A aura_tasks beat --loglevel=info
+    environment: *worker_env
+    secrets: [postgres_password, redis_password, qdrant_api_key]
+    networks: [data]
+    depends_on:
+      redis: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 256M}
+
+  # ------------------------------------------------------------------ inference
+  ollama:
+    image: ollama/ollama:latest
+    <<: *restart
+    logging: *logging
+    volumes:
+      - ollama_models:/root/.ollama
+    networks: [data]
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      # One model resident; a second would evict the first on a 16 GB box and turn every
+      # other request into a cold load.
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_KEEP_ALIVE: 30m
+      OLLAMA_NUM_PARALLEL: "2"
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits: {cpus: "4.0", memory: 10G}
+    # For a GPU host, uncomment and install the NVIDIA container toolkit:
+    #   deploy.resources.reservations.devices:
+    #     - {driver: nvidia, count: 1, capabilities: [gpu]}
+
+  # ------------------------------------------------------------------ data tier
+  postgres:
+    image: postgres:16-alpine
+    <<: *restart
+    logging: *logging
+    environment:
+      POSTGRES_USER: aura
+      POSTGRES_DB: aura
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      # scram-sha-256 rather than the md5 default.
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    secrets: [postgres_password]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aura -d aura"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 2G}
+
+  redis:
+    image: redis:7-alpine
+    <<: *restart
+    logging: *logging
+    # requirepass from a secret file, appendonly for durability (refresh tokens and rate
+    # limit state live here), and a bounded maxmemory with LRU so a cache flood cannot OOM.
+    command: >
+      sh -c 'redis-server
+      --requirepass "$$(cat /run/secrets/redis_password)"
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --protected-mode yes'
+    secrets: [redis_password]
+    volumes:
+      - redis_data:/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$(cat /run/secrets/redis_password)\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 768M}
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    <<: *restart
+    logging: *logging
+    environment:
+      QDRANT__SERVICE__API_KEY_FILE: /run/secrets/qdrant_api_key
+      QDRANT__SERVICE__ENABLE_STATIC_CONTENT_SHARE: "false"
+      QDRANT__TELEMETRY_DISABLED: "true"
+      QDRANT__STORAGE__PERFORMANCE__MAX_OPTIMIZATION_THREADS: "2"
+    secrets: [qdrant_api_key]
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks: [data]
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 2G}
+
+  # ------------------------------------------------------------------ observability
+  prometheus:
+    image: prom/prometheus:latest
+    <<: *restart
+    logging: *logging
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts:/etc/prometheus/alerts:ro
+      - prometheus_data:/prometheus
+    networks: [observability, edge]
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 1G}
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    <<: *restart
+    logging: *logging
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    networks: [observability]
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 256M}
+
+  grafana:
+    image: grafana/grafana:latest
+    <<: *restart
+    logging: *logging
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_ROOT_URL: https://${AURA_DOMAIN:-localhost}/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    secrets: [grafana_admin_password]
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks: [observability]
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 512M}
+
+  loki:
+    image: grafana/loki:latest
+    <<: *restart
+    logging: *logging
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki_data:/loki
+    networks: [observability]
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 768M}
+
+  promtail:
+    image: grafana/promtail:latest
+    <<: *restart
+    logging: *logging
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - ./monitoring/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [observability]
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 256M}
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    <<: *restart
+    logging: *logging
+    command:
+      - --path.rootfs=/host
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    networks: [observability]
+    deploy:
+      resources:
+        limits: {cpus: "0.2", memory: 128M}
+
+  # ------------------------------------------------------------------ maintenance
+  backup:
+    image: postgres:16-alpine
+    <<: *restart
+    logging: *logging
+    entrypoint: ["/bin/sh", "/scripts/backup.sh"]
+    environment:
+      PGUSER: aura
+      PGDATABASE: aura
+      PGHOST: postgres
+      PGPASSFILE: /run/secrets/postgres_password
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      QDRANT_URL: http://qdrant:6333
+    secrets: [postgres_password, qdrant_api_key]
+    volumes:
+      - ./scripts:/scripts:ro
+      - ${BACKUP_PATH:-./backups}:/backups
+    networks: [data]
+    depends_on:
+      postgres: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 512M}

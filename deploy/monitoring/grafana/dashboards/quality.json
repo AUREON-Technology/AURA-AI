@@ -1,0 +1,371 @@
+{
+  "title": "AURA \u2014 AI Quality",
+  "uid": "aura-quality",
+  "tags": [
+    "aura"
+  ],
+  "timezone": "utc",
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {
+          "text": "Prometheus",
+          "value": "Prometheus"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Retrieval outcome",
+      "type": "timeseries",
+      "description": "'empty' means retrieval searched and honestly found nothing -- a feature, but a rising share means the corpus does not cover what users ask.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aura_retrieval_total[15m])) by (result)",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Top retrieval score distribution",
+      "type": "timeseries",
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(aura_retrieval_top_score_bucket[15m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.1, sum(rate(aura_retrieval_top_score_bucket[15m])) by (le))",
+          "legendFormat": "p10",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Groundedness (hallucination proxy)",
+      "type": "timeseries",
+      "description": "Content-word support of each sentence by retrieved sources. A proxy, not a factuality judgement -- never used to block.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(aura_groundedness_score_bucket[1h])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.1, sum(rate(aura_groundedness_score_bucket[1h])) by (le))",
+          "legendFormat": "p10",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Ungrounded claims per second",
+      "type": "timeseries",
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aura_ungrounded_claims_total[15m]))",
+          "legendFormat": "claims/s",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Answer confidence by strategy",
+      "type": "timeseries",
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(aura_confidence_score_bucket[1h])) by (le, strategy))",
+          "legendFormat": "{{strategy}} p50",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "title": "Reasoning strategy mix",
+      "type": "piechart",
+      "description": "Escalation should be rare. A high share of tree_of_thoughts multiplies cost.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aura_reasoning_strategy_total[1h])) by (strategy)",
+          "legendFormat": "{{strategy}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "Evaluation scores",
+      "type": "timeseries",
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "aura_eval_score",
+          "legendFormat": "{{suite}} / {{metric}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "title": "Knowledge freshness",
+      "type": "stat",
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 12,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "time() - aura_refresh_last_success_timestamp_seconds",
+          "legendFormat": "seconds since last promotion",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "title": "Knowledge generation",
+      "type": "stat",
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 18,
+        "y": 21
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "aura_knowledge_generation",
+          "legendFormat": "generation",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "title": "Tool outcomes",
+      "type": "timeseries",
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aura_tool_calls_total[15m])) by (tool, outcome)",
+          "legendFormat": "{{tool}} {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "title": "Memory recall volume",
+      "type": "timeseries",
+      "description": "",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aura_memory_recalls_total[15m])) by (kind)",
+          "legendFormat": "{{kind}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true
+}

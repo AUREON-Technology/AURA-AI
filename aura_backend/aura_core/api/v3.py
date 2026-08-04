@@ -1,0 +1,583 @@
+"""The v3 AI gateway (FastAPI adapter).
+
+A thin adapter, deliberately. It authenticates, applies cost-weighted rate limits, translates
+HTTP into :class:`~aura_core.kernel.kernel.TurnRequest`, and translates domain errors into
+status codes. Every decision of substance happens in the kernel, which is why the same kernel
+runs unchanged from a Celery worker and a CLI.
+
+Mounted alongside v1/v2 (ADR-002): no route here replaces one there, and nothing in
+``aura_core`` imports from ``aura_backend.services``. The Flutter client migrates one feature at
+a time behind a flag.
+"""
+
+# NOTE: deliberately no ``from __future__ import annotations`` here. FastAPI resolves handler
+# annotations with ``typing.get_type_hints``, which cannot see the request models defined inside
+# ``build_router``'s scope; with postponed evaluation every one of them would be misread as a
+# query parameter. Runtime annotations keep the models resolvable.
+import json
+from typing import Any, AsyncIterator, Mapping
+
+from ..domain.errors import AuraError, AuthenticationError, AuthorizationError, RateLimitedError
+from ..domain.identifiers import CorrelationId, DocumentId, SessionId, UserId
+from ..domain.llm import RoutingPolicy
+from ..domain.memory import MemoryKind, MemoryQuery
+from ..domain.reasoning import ReasoningStrategy
+from ..kernel.kernel import TurnRequest
+from ..observability.logging import get_logger
+from ..security.rate_limit import extract_client_ip
+
+__all__ = ["build_router", "build_app", "Principal"]
+
+logger = get_logger("api.v3")
+
+
+class Principal:
+    """The authenticated caller.
+
+    Deliberately minimal: an identity, a role, and granted capabilities. Nothing about the
+    transport, no raw token, no provider-specific claims -- so a change of identity provider
+    touches only the authenticator.
+    """
+
+    __slots__ = ("user_id", "email", "role", "capabilities")
+
+    def __init__(
+        self,
+        *,
+        user_id: UserId,
+        email: str = "",
+        role: str = "User",
+        capabilities: tuple[str, ...] = (),
+    ) -> None:
+        self.user_id = user_id
+        self.email = email
+        self.role = role
+        self.capabilities = capabilities
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role in ("Admin", "SuperAdmin")
+
+
+def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None) -> Any:
+    """Construct the ``/api/v3`` router.
+
+    ``authenticator`` is a callable ``(request) -> Principal``, injected rather than imported so
+    the gateway works with the existing Firebase/JWT verification during migration and with
+    whatever replaces it afterwards.
+    """
+    try:
+        from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
+        from fastapi.responses import JSONResponse, StreamingResponse
+        from pydantic import BaseModel, Field
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("FastAPI and pydantic are required for the HTTP gateway") from exc
+
+    router = APIRouter(prefix="/api/v3", tags=["aura v3"])
+    settings = container.settings
+
+    # -- request models ----------------------------------------------------------------
+
+    class ChatRequest(BaseModel):
+        message: str = Field(min_length=1, max_length=32_000)
+        session_id: str | None = None
+        agent: str = "orchestrator"
+        use_knowledge: bool = True
+        use_memory: bool = True
+        use_tools: bool = True
+        plan: bool | None = None
+        strategy: str | None = None
+        routing_policy: str | None = None
+        require_local: bool = False
+        confirmed_tools: list[str] = Field(default_factory=list)
+        max_output_tokens: int = Field(default=1024, ge=16, le=8192)
+        temperature: float = Field(default=0.3, ge=0.0, le=2.0)
+
+    class IngestRequest(BaseModel):
+        title: str = Field(min_length=1, max_length=500)
+        content: str = Field(min_length=1)
+        document_id: str | None = None
+        metadata: dict[str, Any] = Field(default_factory=dict)
+
+    class SearchRequest(BaseModel):
+        query: str = Field(min_length=1, max_length=1000)
+        limit: int = Field(default=6, ge=1, le=25)
+
+    class MemoryWriteRequest(BaseModel):
+        content: str = Field(min_length=1, max_length=2000)
+        subject: str | None = Field(default=None, max_length=64)
+        kind: str = "semantic"
+
+    class FeedbackRequest(BaseModel):
+        turn_id: str
+        rating: int = Field(ge=1, le=5)
+        correction: str | None = Field(default=None, max_length=8000)
+        comment: str | None = Field(default=None, max_length=2000)
+
+    # -- dependencies ------------------------------------------------------------------
+
+    async def principal(request: Request) -> Principal:
+        try:
+            return await authenticator(request)
+        except AuraError as exc:
+            raise HTTPException(status_code=exc.http_status, detail=exc.to_dict()) from exc
+
+    async def enforce_rate_limit(request: Request, caller: Principal, route_class: str) -> None:
+        if rate_limiter is None or not settings.security.rate_limit_enabled:
+            return
+        decision = await rate_limiter.check_all(
+            user_key=caller.user_id.value,
+            ip_key=extract_client_ip(
+                request.headers,
+                peer=request.client.host if request.client else None,
+                trusted_proxies=settings.security.trusted_proxy_count,
+            ),
+            route_class=route_class,
+        )
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=RateLimitedError(
+                    "rate limit exceeded", retry_after=decision.retry_after_s
+                ).to_dict(),
+                headers={"Retry-After": str(decision.retry_after_s)},
+            )
+
+    def require_admin(caller: Principal) -> None:
+        if not caller.is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError(
+                    "this endpoint requires an administrator role"
+                ).to_dict(),
+            )
+
+    def to_turn(payload: ChatRequest, caller: Principal, request: Request) -> TurnRequest:
+        return TurnRequest(
+            message=payload.message,
+            user_id=caller.user_id,
+            session_id=SessionId(payload.session_id) if payload.session_id else None,
+            agent=payload.agent,
+            correlation_id=CorrelationId(
+                request.headers.get("x-correlation-id") or CorrelationId.new().value
+            ),
+            use_knowledge=payload.use_knowledge,
+            use_memory=payload.use_memory,
+            use_tools=payload.use_tools,
+            plan=payload.plan,
+            strategy=_parse_enum(ReasoningStrategy, payload.strategy),
+            routing_policy=_parse_enum(RoutingPolicy, payload.routing_policy),
+            require_local=payload.require_local,
+            capabilities=caller.capabilities,
+            confirmed_tools=tuple(payload.confirmed_tools),
+            max_output_tokens=payload.max_output_tokens,
+            temperature=payload.temperature,
+        )
+
+    # -- chat --------------------------------------------------------------------------
+
+    @router.post("/chat")
+    async def chat(
+        request: Request,
+        payload: ChatRequest,
+        caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """One complete turn. Use ``/chat/stream`` for incremental output."""
+        await enforce_rate_limit(request, caller, "chat")
+        result = await container.kernel.run(to_turn(payload, caller, request))
+
+        if result.telemetry.outcome.value != "success":
+            # The kernel already produced telemetry for the failure; surface the domain error's
+            # status rather than a generic 500.
+            status = {"blocked": 400, "budget_exceeded": 429, "rate_limited": 429}.get(
+                result.telemetry.outcome.value, 503
+            )
+            return JSONResponse(
+                status_code=status,
+                content={
+                    "error": result.telemetry.error_kind,
+                    "correlation_id": result.telemetry.correlation_id.value,
+                },
+            )
+
+        return JSONResponse(
+            content={
+                "message": result.text,
+                "citations": list(result.citations),
+                "confidence": result.confidence,
+                "tools_used": list(result.tool_calls),
+                "needs_confirmation": list(result.needs_confirmation),
+                "plan": list(result.plan_summary),
+                "correlation_id": result.telemetry.correlation_id.value,
+                "turn_id": result.telemetry.turn_id.value,
+                "usage": {
+                    "prompt_tokens": result.telemetry.prompt_tokens,
+                    "completion_tokens": result.telemetry.completion_tokens,
+                    "cost_usd": round(result.telemetry.cost_usd, 6),
+                },
+                "provider": result.telemetry.provider,
+                "model": result.telemetry.model,
+                "cached": result.telemetry.cache.hit,
+                "degraded": result.degraded,
+            },
+            headers={"X-Correlation-Id": result.telemetry.correlation_id.value},
+        )
+
+    @router.post("/chat/stream")
+    async def chat_stream(
+        request: Request,
+        payload: ChatRequest,
+        caller: Principal = Depends(principal),
+    ) -> StreamingResponse:
+        """Server-sent events with typed frames.
+
+        Frames are ``token``, ``citations``, ``tool_calls``, ``step``, ``revision``, ``done``,
+        and ``error`` -- typed rather than a raw token stream the client must string-split for
+        an ``[ACTIONS]`` marker, which is the v1 protocol's fragility (TD-12).
+        """
+        await enforce_rate_limit(request, caller, "chat")
+        turn = to_turn(payload, caller, request)
+
+        async def events() -> AsyncIterator[bytes]:
+            try:
+                async for frame in container.kernel.stream(turn):
+                    event = frame.get("type", "message")
+                    yield f"event: {event}\ndata: {json.dumps(frame)}\n\n".encode()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.exception("stream failed")
+                payload_ = {"type": "error", "error": "internal_error", "message": type(exc).__name__}
+                yield f"event: error\ndata: {json.dumps(payload_)}\n\n".encode()
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                # Without this, Nginx buffers the whole response and the stream arrives at once.
+                "X-Accel-Buffering": "no",
+                "X-Correlation-Id": (turn.correlation_id or CorrelationId.new()).value,
+            },
+        )
+
+    # -- knowledge ---------------------------------------------------------------------
+
+    @router.post("/knowledge/documents")
+    async def ingest_document(
+        request: Request, payload: IngestRequest, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        await enforce_rate_limit(request, caller, "ingest")
+        result = await container.knowledge.ingest(
+            content=payload.content,
+            title=payload.title,
+            document_id=DocumentId(payload.document_id) if payload.document_id else None,
+            owner_id=caller.user_id,
+            metadata=payload.metadata,
+        )
+        return JSONResponse(
+            content={
+                "document_id": result.document.id.value if result.document else None,
+                "version": result.document.version if result.document else None,
+                "chunks": result.chunks,
+                "created": result.created,
+                "quarantined_chunks": result.quarantined,
+                "skipped_reason": result.skipped_reason,
+            }
+        )
+
+    @router.post("/knowledge/search")
+    async def search(
+        request: Request, payload: SearchRequest, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        await enforce_rate_limit(request, caller, "search")
+        result = await container.knowledge.retrieve(
+            payload.query, owner_id=caller.user_id, limit=payload.limit
+        )
+        return JSONResponse(
+            content={
+                "query": payload.query,
+                "strategy": result.strategy,
+                "candidates_considered": result.candidates_considered,
+                "results": [
+                    {
+                        "content": c.chunk.content,
+                        "citation": c.citation(),
+                        "score": round(c.score, 4),
+                        "document_id": c.chunk.document_id.value,
+                        "version": c.chunk.document_version,
+                    }
+                    for c in result.chunks
+                ],
+                # An empty result with candidates considered is the honest "I searched and found
+                # nothing relevant" signal, and the client should render it as such.
+                "searched_but_empty": result.is_empty_but_searched,
+            }
+        )
+
+    @router.delete("/knowledge/documents/{document_id}")
+    async def delete_document(
+        request: Request, document_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        await enforce_rate_limit(request, caller, "ingest")
+        removed = await container.knowledge.delete_document(
+            DocumentId(document_id), owner_id=caller.user_id
+        )
+        return JSONResponse(content={"deleted": True, "chunks_removed": removed})
+
+    # -- memory ------------------------------------------------------------------------
+
+    @router.get("/memory")
+    async def list_memories(
+        request: Request,
+        caller: Principal = Depends(principal),
+        query: str = Query(default="", max_length=500),
+        limit: int = Query(default=20, ge=1, le=100),
+    ) -> JSONResponse:
+        await enforce_rate_limit(request, caller, "read")
+        if container.memory is None:
+            return JSONResponse(content={"memories": [], "enabled": False})
+        if query:
+            hits = await container.memory.recall(
+                MemoryQuery(owner_id=caller.user_id, text=query, limit=limit)
+            )
+            records = [h.record for h in hits]
+        else:
+            records = await container.memory_store.list_for_owner(caller.user_id, limit=limit)
+        return JSONResponse(
+            content={
+                "enabled": True,
+                "memories": [
+                    {
+                        "id": r.id.value,
+                        "kind": str(r.kind),
+                        "content": r.content,
+                        "subject": r.subject,
+                        "confidence": round(r.confidence, 3),
+                        "source": r.provenance.source,
+                        "created_at": r.created_at.isoformat(),
+                    }
+                    for r in records
+                ],
+            }
+        )
+
+    @router.post("/memory")
+    async def write_memory(
+        request: Request, payload: MemoryWriteRequest, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        await enforce_rate_limit(request, caller, "read")
+        if container.memory is None:
+            raise HTTPException(status_code=503, detail={"error": "memory_disabled"})
+        record = await container.memory.remember(
+            owner_id=caller.user_id,
+            content=payload.content,
+            subject=payload.subject,
+            kind=_parse_enum(MemoryKind, payload.kind) or MemoryKind.SEMANTIC,
+            source=f"api:v3:{caller.user_id.value}",
+        )
+        return JSONResponse(content={"id": record.id.value, "content": record.content})
+
+    @router.delete("/memory/{memory_id}")
+    async def delete_memory(
+        request: Request, memory_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        await enforce_rate_limit(request, caller, "read")
+        if container.memory is None:
+            raise HTTPException(status_code=503, detail={"error": "memory_disabled"})
+        from ..domain.identifiers import MemoryId
+
+        deleted = await container.memory.forget(MemoryId(memory_id), owner_id=caller.user_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail={"error": "not_found"})
+        return JSONResponse(content={"deleted": True})
+
+    # -- feedback ----------------------------------------------------------------------
+
+    @router.post("/feedback")
+    async def submit_feedback(
+        request: Request, payload: FeedbackRequest, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Record a rating or correction.
+
+        Feeds the curation pipeline (ADR-008 Loop B). A correction is the highest-signal
+        training example the system can obtain, which is why the endpoint accepts one.
+        """
+        await enforce_rate_limit(request, caller, "read")
+        container.metrics.feedback_total.labels(rating=str(payload.rating)).inc()
+        logger.info(
+            "feedback recorded",
+            extra={"turn_id": payload.turn_id, "rating": payload.rating,
+                   "has_correction": bool(payload.correction)},
+        )
+        return JSONResponse(content={"recorded": True})
+
+    # -- introspection -----------------------------------------------------------------
+
+    @router.get("/tools")
+    async def list_tools(caller: Principal = Depends(principal)) -> JSONResponse:
+        specs = container.tools.available(capabilities=caller.capabilities)
+        return JSONResponse(
+            content={
+                "tools": [
+                    {
+                        "name": s.name,
+                        "description": s.description,
+                        "category": str(s.category),
+                        "side_effecting": s.side_effecting,
+                        "requires_confirmation": s.requires_confirmation,
+                        "parameters": s.json_schema(),
+                    }
+                    for s in specs
+                ]
+            }
+        )
+
+    @router.get("/agents")
+    async def list_agents(caller: Principal = Depends(principal)) -> JSONResponse:
+        from ..prompts.library import AGENT_PROMPT_IDS
+
+        return JSONResponse(
+            content={
+                "agents": [
+                    {
+                        "id": agent,
+                        "prompt": template,
+                        "version": container.prompts.get(template).version,
+                        "description": container.prompts.get(template).description,
+                    }
+                    for agent, template in AGENT_PROMPT_IDS.items()
+                ]
+            }
+        )
+
+    # -- admin -------------------------------------------------------------------------
+
+    @router.get("/admin/status")
+    async def admin_status(caller: Principal = Depends(principal)) -> JSONResponse:
+        require_admin(caller)
+        return JSONResponse(
+            content={
+                "health": await container.health(),
+                "providers": container.router.stats(),
+                "prompts": container.prompts.describe(),
+                "tools": container.tools.describe(),
+                "settings": container.settings.as_dict(),
+            }
+        )
+
+    @router.post("/admin/index/rebuild")
+    async def rebuild_index(caller: Principal = Depends(principal)) -> JSONResponse:
+        """Build a candidate index and promote it if the gates pass (ADR-007)."""
+        require_admin(caller)
+        identity = container.index_manager.identity_for_current_embedder()
+        report = await container.index_manager.build(identity=identity)
+        gate = await container.index_manager.evaluate_promotion(identity, report=report)
+        promoted = False
+        if gate.passed:
+            await container.index_manager.promote(identity, gate=gate, reason="manual_rebuild")
+            promoted = True
+        return JSONResponse(
+            content={
+                "index": identity.physical_name,
+                "documents": report.documents,
+                "chunks": report.chunks,
+                "failures": report.failures,
+                "promoted": promoted,
+                "gate_failures": list(gate.failures),
+                "measurements": dict(gate.measurements),
+            }
+        )
+
+    @router.post("/admin/prompts/{template_id}/pin")
+    async def pin_prompt(
+        template_id: str, version: str = Body(embed=True), caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Pin a prompt version -- the rollback mechanism for a bad prompt change (TD-11)."""
+        require_admin(caller)
+        container.prompts.pin(template_id, version)
+        return JSONResponse(content={"pinned": f"{template_id}@{version}"})
+
+    @router.post("/admin/providers/{name}/reset-circuit")
+    async def reset_circuit(name: str, caller: Principal = Depends(principal)) -> JSONResponse:
+        require_admin(caller)
+        container.router.reset_circuit(name)
+        return JSONResponse(content={"reset": name})
+
+    return router
+
+
+def build_app(container: Any, *, authenticator: Any, rate_limiter: Any = None) -> Any:
+    """Standalone FastAPI app exposing v3 plus health and metrics.
+
+    Used by the CLI, tests, and any deployment that runs the AI gateway as its own service. The
+    integrated deployment mounts :func:`build_router` on the existing app instead (ADR-002).
+    """
+    from fastapi import FastAPI, Request
+    from fastapi.responses import JSONResponse, Response
+
+    app = FastAPI(
+        title="AURA AI Gateway",
+        version="3.0.0",
+        description="Enterprise AI platform gateway. See docs/architecture/00-overview.md",
+    )
+    app.include_router(build_router(container, authenticator=authenticator, rate_limiter=rate_limiter))
+
+    @app.exception_handler(AuraError)
+    async def domain_error_handler(request: Request, exc: AuraError) -> JSONResponse:
+        """Map domain errors to status codes.
+
+        Every error carries its own ``http_status`` and a stable ``kind`` slug, so clients
+        branch on a machine-readable value rather than parsing prose.
+        """
+        if exc.http_status >= 500:
+            logger.error("request failed", extra={"error": exc.kind, "details": exc.details})
+        return JSONResponse(status_code=exc.http_status, content=exc.to_dict())
+
+    @app.get("/health/live")
+    async def liveness() -> JSONResponse:
+        """Process is running. Deliberately checks nothing else -- a liveness probe that fails
+        on a dependency outage causes the orchestrator to restart a healthy process, turning a
+        degradation into an outage."""
+        return JSONResponse(content={"status": "alive"})
+
+    @app.get("/health/ready")
+    async def readiness() -> JSONResponse:
+        """Dependencies are usable. This is what a load balancer should gate traffic on."""
+        health = await container.health()
+        return JSONResponse(
+            status_code=200 if health["healthy"] else 503, content=health
+        )
+
+    @app.get(container.settings.observability.metrics_path)
+    async def metrics() -> Response:
+        return Response(
+            content=container.metrics.render(), media_type=container.metrics.content_type
+        )
+
+    @app.on_event("startup")
+    async def on_startup() -> None:
+        await container.startup()
+
+    @app.on_event("shutdown")
+    async def on_shutdown() -> None:
+        await container.shutdown()
+
+    return app
+
+
+def _parse_enum(enum_type: Any, value: str | None) -> Any:
+    """Tolerant enum parsing: an unknown value falls back to the default rather than 422-ing.
+
+    A client sending a strategy name this build does not know should get a sensible answer, not
+    an error -- the field is an optimisation hint, not a semantic requirement.
+    """
+    if not value:
+        return None
+    try:
+        return enum_type(value.lower())
+    except (ValueError, AttributeError):
+        logger.debug("ignoring unknown enum value", extra={"type": enum_type.__name__})
+        return None
+
+
+def mapping_or_empty(value: Mapping[str, Any] | None) -> dict[str, Any]:
+    return dict(value or {})

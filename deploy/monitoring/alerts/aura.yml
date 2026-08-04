@@ -1,0 +1,178 @@
+# Alert rules derived from the ADR-009 metric catalogue.
+#
+# Every rule here is actionable: it names a condition an operator can do something about, and
+# it fires on user-visible impact rather than on a proxy for it. Rules that page without a
+# corresponding action get silenced within a month and then everything they would have caught
+# goes unnoticed.
+groups:
+  - name: aura-availability
+    rules:
+      - alert: AuraGatewayDown
+        expr: up{job="aura-gateway"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "AURA gateway is not scrapeable"
+          description: "No successful scrape for 2 minutes. Check `docker compose logs gateway`."
+
+      - alert: AuraAllProvidersUnhealthy
+        expr: sum(aura_provider_healthy) == 0
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: "Every LLM provider circuit is open"
+          description: >
+            No provider can serve a generation. Chat returns 503 rather than a fabricated
+            answer. Check provider health and reset a circuit via
+            POST /api/v3/admin/providers/{name}/reset-circuit once the cause is fixed.
+
+      - alert: AuraHighErrorRate
+        expr: |
+          sum(rate(aura_turns_total{outcome="error"}[5m]))
+            / clamp_min(sum(rate(aura_turns_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 5% of turns are failing"
+
+  - name: aura-security
+    rules:
+      # SEC-05 was invisible partly because nothing reported it. This is the one-line rule
+      # that catches a production deploy with debug or mock auth enabled.
+      - alert: AuraInsecureModeActive
+        expr: max(aura_insecure_mode) > 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "A security bypass is active in this deployment"
+          description: >
+            aura_insecure_mode is non-zero for bypass={{ $labels.bypass }}. Debug mode, mock
+            auth, disabled safety, or disabled rate limiting is enabled. Production settings
+            validation should have prevented this -- investigate immediately.
+
+      - alert: AuraGuardBlockSpike
+        expr: sum(rate(aura_guard_verdicts_total{action="block"}[15m])) > 0.5
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Output guards are blocking responses at an unusual rate"
+          description: "Either an attack is in progress or a guard threshold is mistuned."
+
+      - alert: AuraInjectionQuarantineSpike
+        expr: sum(rate(aura_turns_tainted_total[30m])) > 0.2
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Retrieved content is being quarantined frequently"
+          description: >
+            Documents in the knowledge base contain instruction-shaped content. Review recent
+            ingestions; a poisoned source may have been added.
+
+      - alert: AuraRateLimitSaturation
+        expr: sum(rate(aura_rate_limit_rejections_total[10m])) > 5
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Sustained rate-limit rejections"
+
+  - name: aura-quality
+    rules:
+      - alert: AuraRetrievalReturningNothing
+        expr: |
+          sum(rate(aura_retrieval_empty_total[30m]))
+            / clamp_min(sum(rate(aura_retrieval_total[30m])), 0.001) > 0.4
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Over 40% of retrievals find nothing above threshold"
+          description: >
+            Either the corpus does not cover what users ask, the score threshold is too high,
+            or an index promotion regressed recall. Check aura_knowledge_generation.
+
+      - alert: AuraGroundednessDegraded
+        expr: histogram_quantile(0.5, sum(rate(aura_groundedness_score_bucket[1h])) by (le)) < 0.35
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "Median groundedness has fallen below 0.35"
+          description: "Answers are drifting away from retrieved sources -- a hallucination proxy."
+
+      - alert: AuraKnowledgeStale
+        expr: time() - aura_refresh_last_success_timestamp_seconds > 172800
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "The nightly knowledge refresh has not succeeded in 48 hours"
+          description: >
+            The 02:00 job is failing or its promotion gates are blocking. Check the last
+            RefreshReport; the live index is intact either way.
+
+      - alert: AuraEvalRegression
+        expr: aura_eval_score{metric="recall_at_k"} < 0.6
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Retrieval evaluation recall has dropped below 0.6"
+
+  - name: aura-performance
+    rules:
+      - alert: AuraSlowTimeToFirstToken
+        expr: histogram_quantile(0.95, sum(rate(aura_llm_ttft_seconds_bucket[10m])) by (le, provider)) > 8
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "p95 time-to-first-token above 8s on {{ $labels.provider }}"
+
+      - alert: AuraPipelineOverheadHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(aura_stage_duration_seconds_bucket{stage!="generation"}[10m])) by (le)) > 0.25
+        for: 20m
+        labels: {severity: warning}
+        annotations:
+          summary: "p95 non-model pipeline overhead above 250ms"
+          description: "Target is <60ms. Check retrieval and memory stage timings."
+
+      - alert: AuraProviderSaturated
+        expr: sum(aura_llm_inflight) by (provider) >= 2
+        for: 10m
+        labels: {severity: info}
+        annotations:
+          summary: "{{ $labels.provider }} is at its concurrency limit"
+          description: "Requests are queueing. Scale the inference tier (Scalability Report, Stage 1)."
+
+      - alert: AuraCostSpike
+        expr: sum(rate(aura_llm_cost_usd_total[1h])) * 24 > 25
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "Projected LLM spend above $25/day"
+          description: "Check the cache hit rate and consider a local-first routing policy."
+
+      - alert: AuraCacheIneffective
+        expr: |
+          sum(rate(aura_cache_lookups_total{result="hit"}[1h]))
+            / clamp_min(sum(rate(aura_cache_lookups_total[1h])), 0.001) < 0.05
+        for: 2h
+        labels: {severity: info}
+        annotations:
+          summary: "Response cache hit rate below 5%"
+
+  - name: aura-infrastructure
+    rules:
+      - alert: AuraDiskFilling
+        expr: |
+          node_filesystem_avail_bytes{mountpoint="/host"}
+            / node_filesystem_size_bytes{mountpoint="/host"} < 0.15
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Less than 15% disk free"
+          description: "Model weights, Qdrant segments, and WAL grow silently. Check backups too."
+
+      - alert: AuraDependencyDown
+        expr: aura_dependency_up == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Dependency {{ $labels.dependency }} is failing its health probe"

@@ -1,0 +1,32 @@
+# Routing is grouped so a cascading outage produces one notification, not forty.
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default
+  group_by: [alertname, severity]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: [severity="critical"]
+      receiver: critical
+      group_wait: 10s
+      repeat_interval: 1h
+    - matchers: [severity="info"]
+      receiver: default
+      repeat_interval: 24h
+
+# Silence lower-severity noise while a critical alert for the same component is firing.
+inhibit_rules:
+  - source_matchers: [severity="critical"]
+    target_matchers: [severity="warning"]
+    equal: [alertname]
+
+receivers:
+  - name: default
+    # Configure a real receiver before relying on alerts. Left empty deliberately: a
+    # placeholder webhook that silently 404s is worse than none, because it looks configured.
+  - name: critical
+    # webhook_configs:
+    #   - url: https://hooks.example.com/aura-critical
