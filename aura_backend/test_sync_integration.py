@@ -75,6 +75,16 @@ class TestSyncApiIntegration(unittest.TestCase):
             engine = get_engine()
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+            # Drop the pooled connections before this loop dies.
+            #
+            # asyncpg binds a connection to the loop that opened it, and `asyncio.run` closes
+            # its loop on return. Without this dispose the engine's pool would still hold
+            # connections belonging to that dead loop, and the first request through
+            # `TestClient` -- which drives the app on a *different* loop -- fails in
+            # `pool_pre_ping` with "got Future attached to a different loop" before any
+            # assertion runs. Disposing leaves the pool empty so it refills on whichever loop
+            # next asks for a connection.
+            await engine.dispose()
 
         asyncio.run(_create_schema())
 
@@ -91,7 +101,13 @@ class TestSyncApiIntegration(unittest.TestCase):
             "picture": None,
             "role": "User",
         }
-        client = TestClient(app)
+        # Entered as a context manager, not constructed bare. A bare TestClient opens a fresh
+        # anyio portal -- and so a fresh event loop -- for *every* request, which strands the
+        # asyncpg pool from the previous request on a closed loop; the second call in this test
+        # would fail with "attached to a different loop" before reaching an assertion. Entering
+        # it once runs every request below on one loop, and also fires the app's lifespan
+        # events, which an integration test should exercise anyway.
+        client = self.enterContext(TestClient(app))
         task_id = str(uuid.uuid4())
 
         try:
@@ -169,7 +185,13 @@ class TestSyncApiIntegration(unittest.TestCase):
             "picture": None,
             "role": "User",
         }
-        client = TestClient(app)
+        # Entered as a context manager, not constructed bare. A bare TestClient opens a fresh
+        # anyio portal -- and so a fresh event loop -- for *every* request, which strands the
+        # asyncpg pool from the previous request on a closed loop; the second call in this test
+        # would fail with "attached to a different loop" before reaching an assertion. Entering
+        # it once runs every request below on one loop, and also fires the app's lifespan
+        # events, which an integration test should exercise anyway.
+        client = self.enterContext(TestClient(app))
         task_id = str(uuid.uuid4())
 
         try:
