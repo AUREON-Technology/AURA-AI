@@ -15,7 +15,6 @@ import 'package:aura_client/core/database/database_provider.dart';
 import 'package:drift/drift.dart' show OrderingTerm, OrderingMode;
 import '../../sync/sync_engine.dart';
 import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
-import 'package:aura_client/core/ai/online_agents/online_agent_manager.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
   const ChatPage({super.key});

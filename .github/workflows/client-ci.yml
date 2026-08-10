@@ -41,11 +41,12 @@ jobs:
       - name: Regenerate Drift codegen
         run: dart run build_runner build --delete-conflicting-outputs
 
-      # Errors-only gate, matching this repo's actual current state: 61
-      # pre-existing info/warning-level lints remain in screens not yet
-      # migrated to the V2 design system (tracked as ongoing Phase 2
-      # rollout, Doc/V2_BLUEPRINT.md §13). Tighten to --fatal-infos once
-      # that backlog is cleared, so this gate doesn't start red.
+      # `flutter analyze` fails on warnings as well as errors, which is the right gate here.
+      #
+      # The previous comment claimed 61 pre-existing info/warning lints made that impossible. That
+      # is no longer true and may never have been measurable: this step had never run, because the
+      # pinned Flutter version could not resolve the pubspec's Dart constraint. On its first real
+      # execution the whole client produced 2 warnings, both unused imports.
       - name: Analyze
         run: flutter analyze
 

@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/design_system/design_system.dart';
 import '../../../core/ai/offline_agents/offline_agent_manager.dart';
-import '../../../core/ai/online_agents/online_agent_manager.dart';
 import '../../../core/ai/ai_router/aura_ai_router.dart';
 
 /// V2 rebuild (Doc/V2_BLUEPRINT.md §3) — replaces the V1 flat grid of 5
