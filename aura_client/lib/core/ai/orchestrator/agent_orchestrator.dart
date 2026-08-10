@@ -1,74 +1,38 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../ai_router/aura_ai_router.dart';
-import '../memory/aura_memory.dart';
-import '../knowledge/knowledge_center.dart';
 
+/// Passes an agent turn to the router, which sends it to the backend.
+///
+/// This class used to assemble context on the device: it queried local semantic memory and the
+/// local knowledge base and prepended both to the system instruction — but only when the router had
+/// selected the on-device model, because "Backend handles online". With the on-device path removed,
+/// every turn is served by the backend, and the backend does memory recall and retrieval itself,
+/// with budgeting, trust-channel fencing and provenance the client cannot reproduce.
+///
+/// Keeping the client-side assembly would have meant doing that work twice and sending the results
+/// as an untrusted instruction blob — which is precisely the indirect prompt-injection shape the
+/// server-side guards exist to stop. So the orchestrator is now a seam, not a stage.
+///
+/// It is kept rather than inlined because `chat_repository` calls it as its fallback path and the
+/// custom-instruction plumbing belongs somewhere. If a second client-side concern ever appears, this
+/// is where it goes.
 class ClientAgentOrchestrator {
   final Ref _ref;
 
   ClientAgentOrchestrator(this._ref);
 
-  /// Orchestrates memories, standard RAG knowledge context, agent instructions, and routes to router streams
   Stream<String> executeAgentStream({
     required String agentId,
     required List<Map<String, String>> messages,
     Map<String, String>? customInstructions,
     bool useRag = true,
-  }) async* {
-    final lastUserMsg = messages.lastWhere(
-      (m) => m["role"] == "user",
-      orElse: () => <String, String>{},
-    )["content"] ?? "";
-
-    // Check if the selected route is online (Gemini) or offline
-    final route = await _ref.read(aiRouter).selectRoute();
-    final provider = route["provider"] as AIProvider;
-    final isOnline = provider == AIProvider.gemini;
-
-    // 1. Fetch relevant user memories (OFFLINE ONLY - Backend handles online)
-    String memoryContext = "";
-    if (!isOnline && lastUserMsg.isNotEmpty) {
-      try {
-        final auraMemory = _ref.read(auraMemoryProvider);
-        final memories = await auraMemory.semantic.queryMemories(lastUserMsg);
-        if (memories.isNotEmpty) {
-          memoryContext = "\nThings AURA remembers about the user:\n${memories.map((m) => "- ${m.content}").join('\n')}";
-        }
-      } catch (e) {
-        debugPrint("ClientAgentOrchestrator: Memory fetch skipped: $e");
-      }
-    }
-
-    // 2. Fetch relevant RAG chunks (OFFLINE ONLY - Backend handles online)
-    String ragContext = "";
-    if (!isOnline && useRag && lastUserMsg.isNotEmpty) {
-      try {
-        final knowledge = _ref.read(knowledgeCenterProvider);
-        final chunks = await knowledge.queryKnowledge(lastUserMsg);
-        if (chunks.isNotEmpty) {
-          ragContext = "\nRelevant Knowledge Base Chunks:\n${chunks.map((c) => "--- Chunk:\n${c['content']}\n").join('\n')}";
-        }
-      } catch (e) {
-        debugPrint("ClientAgentOrchestrator: RAG fetch skipped: $e");
-      }
-    }
-
-    // 3. Combine custom instruction prompts
-    final baseInstruction = customInstructions?[agentId] ?? "";
-    final finalInstruction = "$baseInstruction\n$memoryContext\n$ragContext";
-
-    final instructionsMap = {
-      agentId: finalInstruction,
-    };
-
-    final router = _ref.read(aiRouter);
-    yield* router.routePromptStream(
-      agentId: agentId,
-      messages: messages,
-      customInstructions: instructionsMap,
-      useRag: useRag,
-    );
+  }) {
+    return _ref.read(aiRouter).routePromptStream(
+          agentId: agentId,
+          messages: messages,
+          customInstructions: customInstructions,
+          useRag: useRag,
+        );
   }
 }
 

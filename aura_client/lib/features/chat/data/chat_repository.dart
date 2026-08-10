@@ -7,7 +7,6 @@ import 'package:uuid/uuid.dart';
 import '../../../core/database/database.dart';
 import '../../../core/database/database_provider.dart';
 import '../../../core/ai/orchestrator/agent_orchestrator.dart';
-import '../../../core/ai/ai_router/aura_ai_router.dart';
 import '../../../core/ai/online_agents/sse_agent_client.dart';
 import 'agent_config_repository.dart';
 import 'memory_repository.dart';
@@ -102,25 +101,23 @@ class ChatRepository {
       "content": userContent,
     });
 
-    // 6. Execute streaming. When the router is online, try the v2 SSE
-    // protocol first (Doc/V2_BLUEPRINT.md §7) — structured token/tool_calls
-    // events instead of string-splitting a "[ACTIONS]" marker out of the
-    // stream. Falls back to the existing ClientAgentOrchestrator path
-    // (which already handles offline routing/failover) on any SSE error,
-    // so a backend that hasn't deployed /api/v2/chat yet still works.
-    final route = await _ref.read(aiRouter).selectRoute();
-    final isOnline = route["provider"] == AIProvider.gemini;
-
-    bool sseSucceeded = false;
-    if (isOnline) {
-      sseSucceeded = await _sendViaSse(
-        agentId: activeAgentId,
-        historyPayload: historyPayload,
-        customInstructions: customInstructions,
-        useRag: useRag,
-        assistantMsgId: assistantMsgId,
-      );
-    }
+    // 6. Execute streaming. Try the v2 SSE protocol first (Doc/V2_BLUEPRINT.md §7) — structured
+    // token/tool_calls events instead of string-splitting an "[ACTIONS]" marker out of the stream —
+    // and fall back to the orchestrator path on any SSE error, so a backend that has not deployed
+    // /api/v2/chat yet still works.
+    //
+    // No online check precedes this any more. It used to gate SSE on the router having selected the
+    // hosted provider, which was really asking "are we about to use the on-device model"; with one
+    // engine behind one endpoint there is nothing to branch on, and attempting the request is a
+    // better connectivity test than a DNS lookup. Both paths surface an unreachable backend as an
+    // error rather than answering from somewhere else.
+    bool sseSucceeded = await _sendViaSse(
+      agentId: activeAgentId,
+      historyPayload: historyPayload,
+      customInstructions: customInstructions,
+      useRag: useRag,
+      assistantMsgId: assistantMsgId,
+    );
 
     if (!sseSucceeded) {
       await _sendViaOrchestrator(
@@ -182,7 +179,7 @@ class ChatRepository {
       }
 
       await _updateMessageText(assistantMsgId, displayText);
-      await _logTelemetry(eventType: "request", isOffline: false, latencyMs: stopwatch.elapsedMilliseconds.toDouble(), modelUsed: "gemini-2.5-flash-sse");
+      await _logTelemetry(eventType: "request", isOffline: false, latencyMs: stopwatch.elapsedMilliseconds.toDouble(), modelUsed: "server-sse");
       return true;
     } catch (e) {
       debugPrint("[ChatRepository] SSE path failed, falling back: $e");
@@ -190,17 +187,20 @@ class ChatRepository {
         eventType: "failover",
         isOffline: false,
         latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
-        modelUsed: "gemini-2.5-flash-sse",
+        modelUsed: "server-sse",
         errorMessage: e.toString(),
       );
       return false;
     }
   }
 
-  /// V1-era path: ClientAgentOrchestrator → AuraAIRouter, which itself
-  /// picks online/offline and handles failover, still parsing a trailing
-  /// "[ACTIONS]" marker out of the raw text stream. Kept as the fallback
-  /// for offline mode and for when /api/v2/chat is unavailable.
+  /// V1-era path: ClientAgentOrchestrator -> AuraAIRouter -> /api/chat/agent, still parsing a
+  /// trailing "[ACTIONS]" marker out of the raw text stream. Kept as the fallback for a backend
+  /// that has not deployed /api/v2/chat.
+  ///
+  /// It no longer "picks online/offline and handles failover" as the previous comment said -- there
+  /// is one engine, on the server, and an unreachable backend is reported rather than routed
+  /// around.
   Future<void> _sendViaOrchestrator({
     required String agentId,
     required List<Map<String, String>> historyPayload,

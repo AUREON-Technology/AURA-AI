@@ -59,7 +59,8 @@ dependencies:
   flutter_markdown: ^0.7.7+1
   http: ^1.6.0
   local_auth: ^2.3.0
-  flutter_llama: ^0.1.0
+  # flutter_llama deliberately absent: no inference runs on the device. It also could not build --
+  # its CMake 3.18.1 requirement failed the release APK gate on every run.
 
   crypto: any
   pointycastle: any
@@ -96,7 +97,9 @@ flutter:
 
   assets:
     - assets/app_icon.png
-    - assets/qwen2-1_5b-instruct-q4_k_m.gguf
+    # The Qwen2-1.5B GGUF asset was removed. It was a Git LFS pointer to 986 MB of model weights
+    # bundled into the APK and extracted at first launch by LocalModelSeeder, so every install
+    # carried a gigabyte of weights for inference that now happens on the server.
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -6,7 +6,6 @@ import '../../../core/design_system/design_system.dart';
 import '../../../core/insights/insights_client.dart';
 import '../../../l10n/generated/app_localizations.dart';
 import '../../notifications/notification_center.dart';
-import '../../../core/ai/offline_agents/offline_agent_manager.dart';
 import '../../tasks/data/task_repository.dart';
 import '../../calendar/data/calendar_repository.dart';
 import '../../finance/data/finance_repository.dart';

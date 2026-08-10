@@ -1,86 +1,30 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:drift/drift.dart' hide Column;
-import 'package:path_provider/path_provider.dart';
-import '../../../core/database/database.dart';
-import '../../../core/database/database_provider.dart';
+import '../../../core/ai/ai_router/aura_ai_router.dart';
 import '../../../core/theme/theme.dart';
-import '../../../core/ai/offline_agents/model_download_manager.dart';
-import '../../../core/ai/offline_agents/offline_agent_manager.dart';
 
-final installedModelsProvider = StreamProvider.autoDispose<List<OfflineModelWeight>>((ref) {
-  final db = ref.watch(databaseProvider);
-  return (db.select(db.offlineModelWeights)).watch();
-});
-
+/// Reports which engine is serving requests. Read-only, because there is nothing here to manage.
+///
+/// This page used to download GGUF model weights from HuggingFace onto the device, activate one of
+/// them, delete them, and show the reachability of an Ollama daemon whose address the user typed in.
+/// All of that is gone:
+///
+///  * Inference runs on the server. A phone cannot run a useful model, and the ones it can run are
+///    far worse than the one the server already has.
+///  * The downloads were unpinned and unverified -- multi-gigabyte executable artefacts fetched over
+///    the network with no digest check, onto user devices.
+///  * The client is not supposed to know the model server's address at all, which is what the
+///    Ollama host field exposed.
+///
+/// The route is kept rather than deleted so navigation is unchanged and a bookmark or a deep link
+/// still resolves. What it shows is now the truth: models are managed centrally, and here is
+/// whether we can reach them.
 class ModelManagerPage extends ConsumerWidget {
   const ModelManagerPage({super.key});
 
-  // Predefined models details
-  static const List<Map<String, String>> _availableModels = [
-    {
-      "id": "gemma2:2b",
-      "name": "Google Gemma 2 (2B)",
-      "size": "1.6 GB",
-      "desc": "Lightweight, highly capable model optimized by Google. Best for general use on average hardware."
-    },
-    {
-      "id": "phi3:latest",
-      "name": "Microsoft Phi-3 (3.8B)",
-      "size": "2.2 GB",
-      "desc": "Microsoft's state-of-the-art small language model with excellent reasoning capabilities."
-    },
-    {
-      "id": "qwen2:1.5b",
-      "name": "Alibaba Qwen 2 (1.5B)",
-      "size": "900 MB",
-      "desc": "Extremely fast, multilingual model. Ideal for low-end configurations."
-    },
-    {
-      "id": "llama3:8b",
-      "name": "Meta LLaMA 3 (8B)",
-      "size": "4.7 GB",
-      "desc": "Meta's flagship model. Requires at least 8GB-12GB of RAM. High capability."
-    }
-  ];
-
-  Future<void> _activateModel(WidgetRef ref, String modelId) async {
-    final db = ref.read(databaseProvider);
-    await db.transaction(() async {
-      // Deactivate all first
-      await (db.update(db.offlineModelWeights)..where((t) => Constant(true))).write(
-        OfflineModelWeightsCompanion(isActive: Value(false)),
-      );
-      // Activate selected
-      await (db.update(db.offlineModelWeights)..where((t) => t.id.equals(modelId))).write(
-        OfflineModelWeightsCompanion(isActive: Value(true)),
-      );
-    });
-  }
-
-  Future<void> _deleteModel(WidgetRef ref, String modelId) async {
-    final db = ref.read(databaseProvider);
-    await (db.delete(db.offlineModelWeights)..where((t) => t.id.equals(modelId))).go();
-    
-    // Delete local GGUF weight file
-    try {
-      final appDir = await getApplicationDocumentsDirectory();
-      final file = File("${appDir.path}/models/$modelId");
-      if (await file.exists()) {
-        await file.delete();
-        debugPrint("Deleted local model file: ${file.path}");
-      }
-    } catch (e) {
-      debugPrint("Failed to delete local model file: $e");
-    }
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final installedAsync = ref.watch(installedModelsProvider);
-    final downloads = ref.watch(modelDownloadProvider);
-    final ollamaHost = ref.watch(ollamaHostProvider);
+    final status = ref.watch(aiRouterStatusProvider);
 
     return Scaffold(
       backgroundColor: AuraTheme.background,
@@ -88,253 +32,105 @@ class ModelManagerPage extends ConsumerWidget {
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: const Text(
-          "Offline Model Manager",
+          "AI Engine",
           style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
         ),
       ),
-      body: installedAsync.when(
-        data: (installedList) {
-          return Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildOllamaStatusCard(ref, ollamaHost),
-                  const SizedBox(height: 24),
-                  Text(
-                    "Available Offline Models",
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    "Download and configure local models for offline execution.",
-                    style: TextStyle(color: AuraTheme.textSecondary, fontSize: 13),
-                  ),
-                  const SizedBox(height: 20),
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _availableModels.length,
-                    itemBuilder: (context, index) {
-                      final model = _availableModels[index];
-                      final modelId = model["id"]!;
-                      
-                      final isDownloaded = installedList.any((m) => m.id == modelId && m.isDownloaded);
-                      final isActive = installedList.any((m) => m.id == modelId && m.isActive);
-                      final progress = downloads[modelId];
-
-                      return _buildModelCard(
-                        context: context,
-                        ref: ref,
-                        id: modelId,
-                        name: model["name"]!,
-                        size: model["size"]!,
-                        desc: model["desc"]!,
-                        isDownloaded: isDownloaded,
-                        isActive: isActive,
-                        progress: progress,
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-        loading: () => const Center(child: CircularProgressIndicator(color: AuraTheme.accentIndigo)),
-        error: (err, _) => Center(
-          child: Text(
-            "Failed to load models configuration: $err",
-            style: const TextStyle(color: Colors.redAccent),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _StatusCard(status: status),
+              const SizedBox(height: 24),
+              const _ExplanationCard(),
+            ],
           ),
         ),
       ),
     );
   }
+}
 
-  Widget _buildOllamaStatusCard(WidgetRef ref, String host) {
-    final healthAsync = ref.watch(ollamaHealthProvider);
-    final connected = healthAsync.value ?? false;
-    final color = connected ? AuraTheme.accentTeal : AuraTheme.textSecondary;
-    final statusText = connected ? "On-Device Engine Ready" : "No Active Local Model";
-    final descText = connected ? "Active local model loaded in memory" : "Download a model and toggle it Active";
+class _StatusCard extends StatelessWidget {
+  final AIRouterStatus status;
 
+  const _StatusCard({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final reachable = !status.isOffline;
     return Card(
-      color: AuraTheme.cardBg,
-      child: Padding(
-        padding: const EdgeInsets.all(18.0),
-        child: Row(
-          children: [
-            CircleAvatar(
-              backgroundColor: color.withValues(alpha: 0.1),
-              child: Icon(connected ? Icons.memory : Icons.no_sim_outlined, color: color),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    statusText,
-                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 15),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    descText,
-                    style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-            ElevatedButton.icon(
-              onPressed: () {
-                // invalidate rather than refresh — the returned future is not
-                // consumed here; the ref.watch above drives the rebuild.
-                ref.invalidate(ollamaHealthProvider);
-              },
-              icon: const Icon(Icons.refresh, size: 16),
-              label: const Text("Refresh"),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              ),
-            )
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildModelCard({
-    required BuildContext context,
-    required WidgetRef ref,
-    required String id,
-    required String name,
-    required String size,
-    required String desc,
-    required bool isDownloaded,
-    required bool isActive,
-    required DownloadProgress? progress,
-  }) {
-    final isDownloading = progress != null && progress.status == "downloading";
-    
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      color: AuraTheme.cardBg,
+      color: AuraTheme.surface,
       child: Padding(
         padding: const EdgeInsets.all(20.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
+                Icon(
+                  reachable ? Icons.cloud_done_outlined : Icons.cloud_off_outlined,
+                  color: reachable ? Colors.greenAccent : Colors.orangeAccent,
+                ),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    name,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                    status.status,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
                   ),
-                ),
-                Text(
-                  size,
-                  style: const TextStyle(fontSize: 13, color: AuraTheme.accentAmber, fontWeight: FontWeight.bold),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Text(
-              desc,
-              style: const TextStyle(fontSize: 12, color: AuraTheme.textSecondary),
+              // Latency of the last turn, not a live probe: showing a number the app is not
+              // currently measuring would be inventing one.
+              status.latencyMs > 0
+                  ? "Last response in ${status.latencyMs.toStringAsFixed(0)} ms"
+                  : "No requests yet this session",
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
             ),
-            const SizedBox(height: 18),
-            if (isDownloading) ...[
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    "Downloading: ${(progress.progress * 100).toStringAsFixed(1)}%",
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                  Text(
-                    progress.speed,
-                    style: const TextStyle(color: AuraTheme.accentTeal, fontSize: 12),
-                  ),
-                ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ExplanationCard extends StatelessWidget {
+  const _ExplanationCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: AuraTheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: const [
+            Text(
+              "Models run on AURA's servers",
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 15,
               ),
-              const SizedBox(height: 8),
-              LinearProgressIndicator(
-                value: progress.progress,
-                backgroundColor: Colors.white12,
-                color: AuraTheme.accentIndigo,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton.icon(
-                    onPressed: () => ref.read(modelDownloadProvider.notifier).cancelDownload(id),
-                    icon: const Icon(Icons.pause, size: 16, color: Colors.redAccent),
-                    label: const Text("Pause", style: TextStyle(color: Colors.redAccent)),
-                  ),
-                ],
-              ),
-            ] else if (isDownloaded) ...[
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      Switch(
-                        value: isActive,
-                        activeThumbColor: AuraTheme.accentTeal,
-                        onChanged: (val) {
-                          if (val) {
-                            _activateModel(ref, id);
-                          }
-                        },
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        isActive ? "Active Model" : "Inactive Model",
-                        style: TextStyle(
-                          color: isActive ? AuraTheme.accentTeal : AuraTheme.textSecondary,
-                          fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      TextButton.icon(
-                        onPressed: () => _deleteModel(ref, id),
-                        icon: const Icon(Icons.delete_outline, size: 16, color: Colors.redAccent),
-                        label: const Text("Delete", style: TextStyle(color: Colors.redAccent)),
-                      ),
-                    ],
-                  ),
-                ],
-              )
-            ] else ...[
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  ElevatedButton.icon(
-                    onPressed: () => ref.read(modelDownloadProvider.notifier).startDownload(id),
-                    icon: const Icon(Icons.download, size: 16),
-                    label: const Text("Download"),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AuraTheme.accentIndigo,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                    ),
-                  ),
-                ],
-              )
-            ]
+            ),
+            SizedBox(height: 10),
+            Text(
+              "Your requests are processed on AURA's own infrastructure — never sent to a "
+              "third-party AI service, and never processed on this device.\n\n"
+              "Model selection, updates and rollbacks are handled centrally, so there is nothing "
+              "to download or configure here.",
+              style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+            ),
           ],
         ),
       ),
