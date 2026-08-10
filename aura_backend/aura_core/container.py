@@ -87,6 +87,10 @@ class Container:
         self.events = InMemoryEventBus(metrics=self.metrics)
         self.audit = InMemoryAuditSink(clock=self.clock)
 
+        # Memoised by _postgres_pool(); declared before the stores are built because both of them
+        # ask for it.
+        self._pg_pool: Any = None
+
         self.cache_backend = self._build_cache()
         self.embedder = self._build_embedder()
         self.vectors = self._build_vector_store()
@@ -318,12 +322,28 @@ class Container:
             )
         return InMemoryVectorStore()
 
+    def _postgres_pool(self) -> Any:
+        """One connection pool shared by every Postgres-backed store.
+
+        Built on first request and memoised. Two stores against the same database with separate
+        pools would double the connection count for no benefit -- the prod compose configures
+        Postgres for a modest `max_connections`, and each gateway worker holding two pools is how a
+        four-worker deployment exhausts it.
+        """
+        if self._pg_pool is None:
+            from .adapters.postgres_store import PostgresPool
+
+            self._pg_pool = PostgresPool(self.settings.infrastructure.database_url)
+        return self._pg_pool
+
     def _build_document_store(self) -> Any:
         backend = self.settings.infrastructure.document_backend
         if backend == "postgres":
             from .adapters.postgres_store import PostgresDocumentStore
 
-            return PostgresDocumentStore(self.settings.infrastructure.database_url)
+            return PostgresDocumentStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
         if backend != "memory":
             raise ConfigurationError(f"unknown document backend {backend!r}")
         return InMemoryDocumentStore()
@@ -333,7 +353,9 @@ class Container:
         if backend == "postgres":
             from .adapters.postgres_store import PostgresMemoryStore
 
-            return PostgresMemoryStore(self.settings.infrastructure.database_url)
+            return PostgresMemoryStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
         if backend != "memory":
             raise ConfigurationError(f"unknown memory backend {backend!r}")
         return InMemoryMemoryStore()
