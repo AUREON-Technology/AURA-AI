@@ -25,9 +25,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No flutter-version pin. Pinning one here duplicates the Dart constraint that
+      # aura_client/pubspec.yaml already states (`sdk: ^3.11.4`), in a form that rots silently:
+      # this job was pinned to Flutter 3.35.0, which ships Dart 3.9.0, so `flutter pub get`
+      # failed version solving on every run and the analyze and test steps below had never
+      # executed. Resolving `stable` keeps the pubspec as the single source of truth for what
+      # the code needs. `^3.11.4` still excludes Dart 4, so this cannot silently jump a major.
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.35.0"
           channel: stable
 
       - name: Install dependencies
@@ -53,9 +58,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No flutter-version pin. Pinning one here duplicates the Dart constraint that
+      # aura_client/pubspec.yaml already states (`sdk: ^3.11.4`), in a form that rots silently:
+      # this job was pinned to Flutter 3.35.0, which ships Dart 3.9.0, so `flutter pub get`
+      # failed version solving on every run and the analyze and test steps below had never
+      # executed. Resolving `stable` keeps the pubspec as the single source of truth for what
+      # the code needs. `^3.11.4` still excludes Dart 4, so this cannot silently jump a major.
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.35.0"
           channel: stable
 
       - uses: actions/setup-java@v4
