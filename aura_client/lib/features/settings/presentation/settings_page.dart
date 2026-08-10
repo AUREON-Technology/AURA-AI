@@ -31,7 +31,6 @@ class _SettingsScaffold extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
     final ollamaHost = ref.watch(ollamaHostProvider);
-    final geminiKey = ref.watch(localApiKeyProvider);
     final aiProvider = ref.watch(aiProviderSettingProvider);
 
     return Scaffold(
@@ -101,7 +100,7 @@ class _SettingsScaffold extends StatelessWidget {
           ),
           const SizedBox(height: AuraSpacing.xl),
           _SectionLabel('AI routing & API keys'),
-          _AIConfigCard(ref: ref, host: ollamaHost, geminiKey: geminiKey, activeProvider: aiProvider),
+          _AIConfigCard(ref: ref, host: ollamaHost, activeProvider: aiProvider),
         ],
       ),
     );
@@ -182,15 +181,13 @@ class _SettingsListItem extends StatelessWidget {
 class _AIConfigCard extends StatelessWidget {
   final WidgetRef ref;
   final String host;
-  final String geminiKey;
   final AIProvider activeProvider;
 
-  const _AIConfigCard({required this.ref, required this.host, required this.geminiKey, required this.activeProvider});
+  const _AIConfigCard({required this.ref, required this.host, required this.activeProvider});
 
   @override
   Widget build(BuildContext context) {
     final hostController = TextEditingController(text: host);
-    final keyController = TextEditingController(text: geminiKey);
 
     return AuraCard(
       child: Column(
@@ -217,13 +214,6 @@ class _AIConfigCard extends StatelessWidget {
             controller: hostController,
             onSubmitted: (val) => ref.read(ollamaHostProvider.notifier).setHost(val),
             decoration: const InputDecoration(labelText: 'Ollama host daemon endpoint', hintText: 'http://localhost:11434'),
-          ),
-          const SizedBox(height: AuraSpacing.md),
-          TextField(
-            controller: keyController,
-            obscureText: true,
-            onSubmitted: (val) => ref.read(localApiKeyProvider.notifier).setKey(val),
-            decoration: const InputDecoration(labelText: 'Local Gemini API key override', hintText: 'Enter API key'),
           ),
           const SizedBox(height: AuraSpacing.sm),
           Text('Press Enter on a field to save.', style: Theme.of(context).textTheme.bodySmall),

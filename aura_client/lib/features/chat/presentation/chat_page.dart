@@ -28,7 +28,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
   bool _useRag = true;
-  String _geminiApiKey = ""; // Local API key state for offline fallback
 
   @override
   void dispose() {
@@ -59,7 +58,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           conversationId: sessionId,
           userContent: text,
           useRag: _useRag,
-          localApiKey: _geminiApiKey.isEmpty ? null : _geminiApiKey,
         );
 
     // Short delay to let list update then scroll
@@ -276,21 +274,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 },
               ),
             ],
-          ),
-          const SizedBox(height: 12),
-          // Fallback Key Inputs
-          TextField(
-            onChanged: (val) {
-              ref.read(localApiKeyProvider.notifier).setKey(val);
-              setState(() => _geminiApiKey = val);
-            },
-            obscureText: true,
-            decoration: const InputDecoration(
-              labelText: 'Local Gemini API Key',
-              hintText: 'Enter API Key (Optional)',
-              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            ),
-            style: const TextStyle(color: Colors.white, fontSize: 12),
           ),
         ],
       ),

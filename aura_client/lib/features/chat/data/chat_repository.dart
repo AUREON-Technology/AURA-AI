@@ -53,7 +53,6 @@ class ChatRepository {
     required String conversationId,
     required String userContent,
     bool useRag = true,
-    String? localApiKey, // Optional fallback API key
   }) async {
     // Clear any previous pending actions first
     _ref.read(pendingActionsProvider.notifier).clear();

@@ -44,7 +44,10 @@ dependencies:
   googleapis: ^16.0.0
   extension_google_sign_in_as_googleapis_auth: ^3.0.0
   firebase_core: ^4.10.0
-  google_generative_ai: ^0.4.7
+  # google_generative_ai deliberately absent: the client must not be able to reach a hosted
+  # inference API. All AI processing happens on our own server, behind authentication. Re-adding
+  # this package would also re-add the on-device API key it needed, which is a credential that
+  # cannot be rotated out of an installed app.
   google_fonts: ^8.1.0
   fl_chart: ^1.2.0
   path_provider: ^2.1.5
