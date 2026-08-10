@@ -62,7 +62,7 @@ class _StatusCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final reachable = !status.isOffline;
     return Card(
-      color: AuraTheme.surface,
+      color: AuraTheme.cardBg,
       child: Padding(
         padding: const EdgeInsets.all(20.0),
         child: Column(
@@ -109,7 +109,7 @@ class _ExplanationCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: AuraTheme.surface,
+      color: AuraTheme.cardBg,
       child: Padding(
         padding: const EdgeInsets.all(20.0),
         child: Column(

@@ -6,6 +6,7 @@ import '../../../core/design_system/design_system.dart';
 import '../../../core/insights/insights_client.dart';
 import '../../../l10n/generated/app_localizations.dart';
 import '../../notifications/notification_center.dart';
+import '../../../core/ai/ai_router/aura_ai_router.dart';
 import '../../tasks/data/task_repository.dart';
 import '../../calendar/data/calendar_repository.dart';
 import '../../finance/data/finance_repository.dart';
@@ -48,7 +49,7 @@ class _TodayScaffold extends StatelessWidget {
     final calendarAsync = ref.watch(calendarEventsStreamProvider);
     final financeAsync = ref.watch(financeTransactionsStreamProvider);
     final healthAsync = ref.watch(dailyHealthStreamProvider(DateTime.now()));
-    final ollamaHealthAsync = ref.watch(ollamaHealthProvider);
+    final aiStatus = ref.watch(aiRouterStatusProvider);
 
     return Scaffold(
       backgroundColor: palette.background,
@@ -68,7 +69,8 @@ class _TodayScaffold extends StatelessWidget {
       ),
       body: RefreshIndicator(
         onRefresh: () async {
-          ref.invalidate(ollamaHealthProvider);
+          // Nothing to re-probe: AI reachability is now recorded by the router as turns
+          // happen, not polled. The other streams below refresh themselves.
         },
         child: ListView(
           padding: const EdgeInsets.all(AuraSpacing.lg),
@@ -85,7 +87,7 @@ class _TodayScaffold extends StatelessWidget {
             const SizedBox(height: AuraSpacing.lg),
             _QuickStatsRow(tasksAsync: tasksAsync, financeAsync: financeAsync, healthAsync: healthAsync),
             const SizedBox(height: AuraSpacing.lg),
-            _SystemHealthCard(ollamaHealthAsync: ollamaHealthAsync, ref: ref),
+            _SystemHealthCard(aiStatus: aiStatus, ref: ref),
             const SizedBox(height: AuraSpacing.xxl),
           ],
         ),
@@ -437,28 +439,28 @@ class _StatTile extends StatelessWidget {
 }
 
 class _SystemHealthCard extends StatelessWidget {
-  final AsyncValue<bool> ollamaHealthAsync;
+  final AIRouterStatus aiStatus;
   final WidgetRef ref;
-  const _SystemHealthCard({required this.ollamaHealthAsync, required this.ref});
+  const _SystemHealthCard({required this.aiStatus, required this.ref});
 
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
     final l10n = AppLocalizations.of(context)!;
+    // Reports whether the AI service is reachable, replacing an on-device model health probe.
+    // Synchronous rather than an AsyncValue: the router records this as turns happen instead of
+    // polling a daemon, so there is no loading state to render and no skeleton to show.
+    final reachable = !aiStatus.isOffline;
     return AuraCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           AuraSectionHeader(title: l10n.aiSystemStatus),
           const SizedBox(height: AuraSpacing.md),
-          ollamaHealthAsync.when(
-            data: (active) => _StatusRow(
-              label: l10n.onDeviceInference,
-              value: active ? l10n.statusReady : l10n.statusUnavailable,
-              color: active ? palette.success : palette.danger,
-            ),
-            loading: () => const AuraSkeleton(height: 16, width: 140),
-            error: (_, _) => _StatusRow(label: l10n.onDeviceInference, value: l10n.statusUnavailable, color: palette.danger),
+          _StatusRow(
+            label: l10n.serverInference,
+            value: reachable ? l10n.statusReady : l10n.statusUnavailable,
+            color: reachable ? palette.success : palette.danger,
           ),
           const SizedBox(height: AuraSpacing.sm),
           _StatusRow(label: l10n.localData, value: l10n.encryptedAesGcm, color: palette.textSecondary),
