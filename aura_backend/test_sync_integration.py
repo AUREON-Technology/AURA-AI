@@ -67,23 +67,36 @@ class TestSyncApiIntegration(unittest.TestCase):
         cls.postgres.stop()
 
     def setUp(self):
+        """Give each test its own engine, and hand it over with an empty pool.
+
+        Both halves are needed, because asyncpg binds every connection to the loop that opened it
+        and this test crosses loops twice.
+
+        **A fresh engine per test.** `infrastructure.db.base` caches the engine in a module global,
+        so without this reset test 2 inherits the engine whose pool test 1's `TestClient` filled on
+        *its* loop -- long since closed. That was the surviving failure after the first fix: the
+        error moved out of the request and into `_create_schema` itself.
+
+        **An empty pool before the loop dies.** `asyncio.run` closes its loop on return, so the
+        connections schema creation opened would otherwise be handed to `TestClient`, which drives
+        the app on a different loop again. `dispose()` drops them; the pool refills on whichever
+        loop next asks.
+
+        Net effect: schema creation and the requests each get connections belonging to the loop
+        actually running them, and no state leaks between tests.
+        """
         import asyncio
 
+        import infrastructure.db.base as db_base
         from infrastructure.db.base import Base, get_engine
+
+        db_base._engine = None
+        db_base._session_factory = None
 
         async def _create_schema():
             engine = get_engine()
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
-            # Drop the pooled connections before this loop dies.
-            #
-            # asyncpg binds a connection to the loop that opened it, and `asyncio.run` closes
-            # its loop on return. Without this dispose the engine's pool would still hold
-            # connections belonging to that dead loop, and the first request through
-            # `TestClient` -- which drives the app on a *different* loop -- fails in
-            # `pool_pre_ping` with "got Future attached to a different loop" before any
-            # assertion runs. Disposing leaves the pool empty so it refills on whichever loop
-            # next asks for a connection.
             await engine.dispose()
 
         asyncio.run(_create_schema())
