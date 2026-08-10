@@ -40,6 +40,7 @@ from .memory.engine import MemoryEngine
 from .memory.session import EpisodicMemory, build_session_summariser
 from .observability.logging import configure_logging, get_logger
 from .observability.metrics import get_metrics
+from .rag import StrategyFacade, build_strategies
 from .observability.tracing import get_tracer
 from .planning.engine import PlanningEngine
 from .prompts import build_default_registry
@@ -194,6 +195,30 @@ class Container:
             window=settings.memory.episodic_window,
             summarise_after=settings.memory.summarise_after_turns,
             summariser=build_session_summariser(self.router, self.prompts),
+        )
+
+        # The ten retrieval strategies, and a facade presenting the selected one with the
+        # KnowledgeEngine.retrieve signature. The facade is what keeps this out of the kernel's hot
+        # path: the kernel still calls `.retrieve(query, owner_id=...)` and does not know strategies
+        # exist. With the default `simple` the call reaches KnowledgeEngine.retrieve exactly as
+        # before, so selecting a strategy is opt-in rather than a change of behaviour on upgrade.
+        self.strategies = build_strategies(
+            knowledge=self.knowledge,
+            router=self.router,
+            memory=self.memory,
+            graph=self.graph if settings.knowledge.graph_enabled else None,
+            metrics=self.metrics,
+            max_parallel=settings.knowledge.retrieval_max_parallel,
+        )
+        selected = settings.knowledge.retrieval_strategy
+        if selected not in self.strategies:
+            raise ConfigurationError(
+                f"unknown retrieval strategy {selected!r}",
+                details={"supported": sorted(self.strategies)},
+            )
+        self.retrieval = StrategyFacade(
+            self.strategies[selected],
+            max_generations=settings.knowledge.retrieval_max_generations,
         )
 
         self.tools = self._build_tools()

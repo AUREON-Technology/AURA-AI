@@ -298,6 +298,20 @@ class KnowledgeSettings:
     graph_enabled: bool = True
     max_document_bytes: int = 8 * 1024 * 1024
 
+    #: Which of the ten retrieval strategies serves a turn. "simple" is hybrid retrieval with no
+    #: extra generations and is the default because it is the only one whose latency is bounded by
+    #: retrieval alone -- the expansion and verification strategies each cost at least one local
+    #: generation, which on CPU is seconds.
+    #:
+    #: "adaptive" is the recommended upgrade once an operator has capacity for it: it routes per
+    #: query, so simple questions stay on the simple path.
+    retrieval_strategy: str = "simple"
+    #: Generations a single retrieval may spend. 0 forces every strategy to degrade to plain
+    #: retrieval, which is the setting to reach for when the inference host is saturated.
+    retrieval_max_generations: int = 2
+    #: How many strategies the adaptive router may run in parallel for an ambiguous query.
+    retrieval_max_parallel: int = 2
+
     @classmethod
     def from_env(cls) -> "KnowledgeSettings":
         return cls(
@@ -310,6 +324,9 @@ class KnowledgeSettings:
             retrieval_candidate_k=_int("KNOWLEDGE_CANDIDATE_K", 24, minimum=1, maximum=200),
             score_threshold=_float("KNOWLEDGE_SCORE_THRESHOLD", 0.35, minimum=0.0, maximum=1.0),
             hybrid_enabled=_bool("KNOWLEDGE_HYBRID_ENABLED", True),
+            retrieval_strategy=(_env("KNOWLEDGE_RETRIEVAL_STRATEGY", "simple") or "simple").lower(),
+            retrieval_max_generations=_int("KNOWLEDGE_RETRIEVAL_MAX_GENERATIONS", 2, minimum=0, maximum=8),
+            retrieval_max_parallel=_int("KNOWLEDGE_RETRIEVAL_MAX_PARALLEL", 2, minimum=1, maximum=5),
             rrf_k=_int("KNOWLEDGE_RRF_K", 60, minimum=1),
             rerank_enabled=_bool("KNOWLEDGE_RERANK_ENABLED", True),
             mmr_lambda=_float("KNOWLEDGE_MMR_LAMBDA", 0.7, minimum=0.0, maximum=1.0),
