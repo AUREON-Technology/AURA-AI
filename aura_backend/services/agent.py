@@ -2,10 +2,9 @@ import json
 import logging
 import asyncio
 from typing import List, Dict, Any, AsyncGenerator
-from google import genai
-from google.genai import types
 from config import settings
 from services.memory import memory_service
+from services.ollama import ollama_service
 from services.rag import rag_service
 from services.budget import increment_and_check_gemini_budget, GeminiBudgetExceededException
 
@@ -41,9 +40,8 @@ Here is your text response.
 
 class AgentOrchestrator:
     def __init__(self):
-        self.client = None
-        if settings.gemini_api_key:
-            self.client = genai.Client(api_key=settings.gemini_api_key)
+        # Inference is `ollama_service`, a module singleton. No client and no key to hold.
+        pass
 
     def classify_intent(self, user_message: str) -> str:
         """Classifies user intent to route message to the appropriate specialized agent using semantic router, falling back to keywords."""
@@ -220,131 +218,98 @@ class AgentOrchestrator:
             if rag_context:
                 final_system_instruction += f"{rag_context}\n"
 
-        # 4. Stream response using Gemini if client is initialized
-        if self.client:
-            try:
-                # Map input messages to Gemini ContentDict format
-                gemini_history = []
-                for msg in messages[:-1]:
-                    role = "model" if msg["role"] == "assistant" or msg["role"] == "model" else "user"
-                    gemini_history.append(
-                        types.Content(
-                            role=role,
-                            parts=[types.Part.from_text(text=msg["content"])]
-                        )
-                    )
+        # 4. Run the agent turn on local inference, with tool calling.
+        #
+        # Tools are advertised only when a Drive token is present, matching the previous behaviour:
+        # two of the three reach Google Drive on the user's behalf and are useless without it, and
+        # advertising an unusable tool invites the model to call it and then apologise.
+        tool_specs = []
+        tool_impls = {}
+        if google_access_token:
+            tool_impls = {
+                "search_google_drive": search_google_drive,
+                "ingest_google_drive_pdf": ingest_google_drive_pdf,
+                "query_knowledge_base": query_knowledge_base,
+            }
+            tool_specs = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "search_google_drive",
+                        "description": "Search the user's Google Drive for files matching a query.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "Search terms."}
+                            },
+                            "required": ["query"],
+                        },
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "ingest_google_drive_pdf",
+                        "description": (
+                            "Download a PDF from the user's Google Drive and add it to the "
+                            "knowledge base so it can be searched."
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "file_id": {"type": "string", "description": "Drive file id."},
+                                "file_name": {"type": "string", "description": "File name."},
+                            },
+                            "required": ["file_id", "file_name"],
+                        },
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "query_knowledge_base",
+                        "description": "Search the already-ingested knowledge base.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "What to look for."}
+                            },
+                            "required": ["query"],
+                        },
+                    },
+                },
+            ]
 
-                current_prompt = messages[-1]["content"]
-
-                # Create chat with system instruction config and stream response with retries
-                attempt = 0
-                max_attempts = 3
-                while attempt < max_attempts:
-                    try:
-                        # Register Drive and RAG tools if OAuth token is available
-                        tools_list = []
-                        if google_access_token:
-                            tools_list = [search_google_drive, ingest_google_drive_pdf, query_knowledge_base]
-
-                        chat = self.client.aio.chats.create(
-                            model="gemini-2.5-flash",
-                            history=gemini_history,
-                            config=types.GenerateContentConfig(
-                                system_instruction=final_system_instruction,
-                                tools=tools_list if tools_list else None
-                            )
-                        )
-
-                        
-                        current_prompt_or_part = current_prompt
-                        while True:
-                            increment_and_check_gemini_budget()
-
-
-                            response = await chat.send_message_stream(current_prompt_or_part)
-                            has_function_call = False
-                            function_calls = []
-                            async for chunk in response:
-                                if chunk.function_calls:
-                                    has_function_call = True
-                                    function_calls.extend(chunk.function_calls)
-                                elif chunk.text:
-                                    yield chunk.text
-                            
-                            if has_function_call:
-                                for f in function_calls:
-                                    name = f.name
-                                    args = f.args
-                                    logger.info(f"Gemini requested tool call: {name} with args {args}")
-                                    
-                                    # Execute corresponding closure function
-                                    if name == "search_google_drive":
-                                        result = search_google_drive(**args)
-                                    elif name == "ingest_google_drive_pdf":
-                                        result = ingest_google_drive_pdf(**args)
-                                    elif name == "query_knowledge_base":
-                                        result = query_knowledge_base(**args)
-                                    else:
-                                        result = {"error": f"Tool '{name}' is not supported."}
-                                    
-                                    # Print tool execution logs in stream
-                                    yield f"\n*[AURA is running tool: {name.replace('_', ' ').title()}...]*\n"
-                                    
-                                    current_prompt_or_part = types.Part.from_function_response(
-                                        name=name,
-                                        response=result
-                                    )
-                                continue
-                            else:
-                                break
-                        return
-                    except GeminiBudgetExceededException:
-                        raise
-                    except Exception as stream_err:
-                        attempt += 1
-                        if attempt >= max_attempts:
-                            raise stream_err
-                        logger.warning(f"Gemini streaming attempt {attempt} failed: {stream_err}. Retrying...")
-                        await asyncio.sleep(2 ** attempt)
-            except GeminiBudgetExceededException as budget_exc:
-                yield f"\n[Error: {budget_exc.message}. Please retry after {budget_exc.retry_after} seconds.]\n"
-                return
-            except Exception as e:
-                logger.error(f"Error executing Gemini agent stream: {e}. Falling back to Ollama.")
-                yield f"\n[Gemini connection failed. Falling back to local Ollama assistant...]\n"
-
-        # 5. Try local Ollama execution fallback
-        import os
-        is_cloud = os.getenv("DEPLOYMENT_MODE") == "cloud"
-        if not is_cloud:
-            from services.ollama import ollama_service
-            if await ollama_service.check_health():
-                try:
-                    yield f"[Local Agent Mode - {active_agent.replace('_', ' ').title()}]\n"
-                    async for chunk in ollama_service.generate_chat_stream(
-                        messages=messages,
-                        system_instruction=final_system_instruction
-                    ):
-                        yield chunk
-                    return
-                except Exception as ollama_err:
-                    logger.error(f"Local Ollama execution failed: {ollama_err}")
-                    if settings.debug_mode:
-                        yield f"\n[Local Ollama agent error: {ollama_err}. Falling back to developer mocks...]\n"
-            else:
-                logger.info("Ollama is not running or not healthy.")
-        else:
-            logger.info("Cloud deployment detected. Ollama fallback disabled.")
-
-        # 6. Final Mock Fallback for local testing/offline validation
-        if not settings.debug_mode:
-            import json
-            yield json.dumps({
-                "success": False,
-                "error": "AURA AI service is currently unavailable. Gemini and local Ollama interfaces are offline.",
-                "retry_after": 60
-            })
+        try:
+            increment_and_check_gemini_budget()
+        except GeminiBudgetExceededException as budget_exc:
+            yield f"\n[Error: {budget_exc.message}. Please retry after {budget_exc.retry_after} seconds.]\n"
             return
+
+        try:
+            async for chunk in ollama_service.generate_agent_stream(
+                messages=messages,
+                system_instruction=final_system_instruction,
+                tools=tool_specs,
+                tool_impls=tool_impls,
+            ):
+                yield chunk
+            return
+        except Exception as e:
+            logger.error(f"Local agent execution failed: {e}")
+            yield f"\n[Local inference unavailable: {e}]\n"
+            if not settings.debug_mode:
+                # In production this is the end of the line. There is no second engine to try --
+                # that was the hosted API, and removing it is the point. The mock responses below
+                # exist for offline development only; serving them to a real user would be
+                # fabricating an answer because a subsystem failed.
+                import json
+                yield json.dumps({
+                    "success": False,
+                    "error": "AURA AI is currently unavailable: local inference did not respond.",
+                    "retry_after": 60
+                })
+                return
 
         yield f"[Mock Mode - {active_agent.replace('_', ' ').title()}]\n"
         if active_agent == "task_planner":

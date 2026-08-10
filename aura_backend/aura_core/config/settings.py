@@ -18,9 +18,11 @@ import os
 from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
 from typing import Any, Mapping, Sequence
+from urllib.parse import urlsplit
 
 from ..domain.errors import ConfigurationError
 from ..domain.llm import RoutingPolicy
+from .external_inference import is_external_inference_host
 
 __all__ = [
     "Environment",
@@ -127,7 +129,7 @@ class ProviderConfig:
     """
 
     name: str
-    kind: str  # openai_compatible | ollama | gemini | anthropic | echo
+    kind: str  # openai_compatible | ollama | echo
     base_url: str = ""
     model: str = ""
     api_key_env: str = ""
@@ -145,18 +147,44 @@ class ProviderConfig:
     weight: int = 1
     enabled: bool = True
 
-    _KINDS = frozenset({"openai_compatible", "ollama", "gemini", "anthropic", "echo"})
+    # Self-hosted runtimes only. There is deliberately no vendor kind here: `ollama` and
+    # `openai_compatible` between them cover Ollama, vLLM, llama.cpp's server, LocalAI, TGI and
+    # anything else exposing the OpenAI wire format, all of which run on our own hardware.
+    _KINDS = frozenset({"openai_compatible", "ollama", "echo"})
 
     def __post_init__(self) -> None:
         if self.kind not in self._KINDS:
             raise ConfigurationError(
                 f"provider {self.name!r} has unknown kind {self.kind!r}",
-                details={"supported": sorted(self._KINDS)},
+                details={
+                    "supported": sorted(self._KINDS),
+                    "note": "external inference providers are not supported; run the model locally",
+                },
             )
         if self.kind != "echo" and not self.model:
             raise ConfigurationError(f"provider {self.name!r} must declare a model")
         if self.kind in {"openai_compatible", "ollama"} and not self.base_url:
             raise ConfigurationError(f"provider {self.name!r} must declare a base_url")
+        self._reject_external_base_url()
+
+    def _reject_external_base_url(self) -> None:
+        """Refuse a base_url on a hosted inference service.
+
+        ``openai_compatible`` speaks the same protocol as several hosted APIs, so deleting the
+        vendor adapters was not on its own sufficient -- a base_url is all it would take to route
+        every turn back out to a third party. The host list is shared with the architecture
+        fitness tests so the runtime check and the static scan cannot disagree.
+        """
+        if not self.base_url:
+            return
+        host = urlsplit(self.base_url).hostname or ""
+        banned = is_external_inference_host(host)
+        if banned:
+            raise ConfigurationError(
+                f"provider {self.name!r} points at {host!r}, which is a hosted inference "
+                f"service. All inference must run on our own infrastructure.",
+                details={"provider": self.name, "host": host, "matched": banned},
+            )
 
     @property
     def api_key(self) -> str:
@@ -650,12 +678,21 @@ class AuraSettings:
             problems.append("the 'echo' test provider must not be enabled in staging/production")
 
         for provider in enabled:
-            if provider.kind in {"gemini", "anthropic"} and not provider.api_key_env:
-                problems.append(f"provider {provider.name!r} requires an api_key_env")
+            # api_key_env stays supported: a self-hosted vLLM or LocalAI instance can require a
+            # bearer token, and that token still must not live in settings. What is no longer
+            # possible is a provider whose *purpose* is a third-party key.
             if provider.api_key_env and not os.environ.get(provider.api_key_env):
                 problems.append(
                     f"provider {provider.name!r} references {provider.api_key_env} which is unset"
                 )
+
+        # Note on what is deliberately *not* checked here: there is no "every provider must be
+        # local" gate. `is_local` is a routing hint consumed by the local_first policy and by
+        # per-request require_local -- it defaults to false, so gating boot on it would reject
+        # every correctly configured deployment that had not set an extra flag, and a control that
+        # breaks the correct configuration is a control that gets switched off. Self-hosting is
+        # enforced where it can be enforced without false positives: the vendor adapters are gone,
+        # the SDKs fail the architecture tests, and ProviderConfig refuses a hosted base_url.
 
         if self.infrastructure.vector_backend == "qdrant" and not self.infrastructure.qdrant_url:
             problems.append("vector_backend='qdrant' requires AURA_QDRANT_URL")

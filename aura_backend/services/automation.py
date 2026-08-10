@@ -1,17 +1,21 @@
 import json
 import logging
 from datetime import datetime
-from google import genai
-from google.genai import types
 from config import settings
+from services.ollama import ollama_service
 
 logger = logging.getLogger(__name__)
 
 class AutomationService:
-    def __init__(self):
-        self.client = None
-        if settings.gemini_api_key:
-            self.client = genai.Client(api_key=settings.gemini_api_key)
+    """Structured email and issue analysis, running entirely on our own inference host.
+
+    There is no client to construct and no key to check: `ollama_service` is a module singleton
+    pointing at settings.ollama_host, and `generate_json` returns None for every failure mode --
+    unreachable server, non-200, unparseable output. The previous `if not self.client` guards
+    existed to detect a missing API key, a condition that no longer exists, so they are gone; the
+    default dictionaries they returned are now reached through the single None check in each
+    method.
+    """
     def analyze_email(self, subject: str, sender: str, body: str) -> dict:
         """Analyzes email subject and body using Gemini to return structured JSON data."""
         prompt = f"""
@@ -36,46 +40,40 @@ class AutomationService:
         - "event_end": String or null. End datetime in format YYYY-MM-DDTHH:MM:SS (local time).
         """
         
-        if not self.client:
-            logger.error("Gemini client not initialized for email analysis.")
-            return {
-                "category": "General",
-                "summary": "Failed to parse email content due to missing API configuration.",
-                "urgency": "low",
-                "action_items": [],
-                "should_create_event": False,
-                "event_title": None,
-                "event_start": None,
-                "event_end": None
-            }
+        fallback = {
+            "category": "General",
+            "summary": "Email analysis unavailable — local inference did not return a result.",
+            "urgency": "low",
+            "action_items": [],
+            "should_create_event": False,
+            "event_title": None,
+            "event_start": None,
+            "event_end": None
+        }
 
         try:
+            # The budget check stays. It no longer guards a bill -- local inference is free at the
+            # margin -- but it still guards the single scarcest resource on the box: model
+            # concurrency. An unbounded fan-out of analysis calls starves interactive chat.
             from services.budget import increment_and_check_gemini_budget, GeminiBudgetExceededException
             increment_and_check_gemini_budget()
 
-            response = self.client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                )
+            data = ollama_service.generate_json(
+                prompt,
+                system_instruction=(
+                    "You extract structured metadata from email. Reply with JSON only, matching "
+                    "the keys the prompt describes."
+                ),
             )
-            data = json.loads(response.text)
+            if data is None:
+                logger.warning("Local inference returned no usable email analysis.")
+                return fallback
             return data
         except GeminiBudgetExceededException:
             raise
         except Exception as e:
-            logger.error(f"Error in Gemini email analysis: {e}")
-            return {
-                "category": "General",
-                "summary": "Failed to parse email content due to error.",
-                "urgency": "low",
-                "action_items": [],
-                "should_create_event": False,
-                "event_title": None,
-                "event_start": None,
-                "event_end": None
-            }
+            logger.error(f"Error in local email analysis: {e}")
+            return fallback
 
     def analyze_github_issue(self, title: str, body: str) -> dict:
         """Analyzes a GitHub issue and extracts checkable subtask steps and metadata."""
@@ -92,37 +90,32 @@ class AutomationService:
         - "suggested_priority": String. "low", "medium", or "high".
         """
 
-        if not self.client:
-            logger.error("Gemini client not initialized for issue analysis.")
-            return {
-                "summary": "Failed to parse GitHub issue content due to missing API configuration.",
-                "subtasks": [],
-                "complexity": "medium",
-                "suggested_priority": "medium"
-            }
+        fallback = {
+            "summary": "Issue analysis unavailable — local inference did not return a result.",
+            "subtasks": [],
+            "complexity": "medium",
+            "suggested_priority": "medium"
+        }
 
         try:
             from services.budget import increment_and_check_gemini_budget, GeminiBudgetExceededException
             increment_and_check_gemini_budget()
 
-            response = self.client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                )
+            data = ollama_service.generate_json(
+                prompt,
+                system_instruction=(
+                    "You break issues into subtasks and estimate complexity. Reply with JSON "
+                    "only, matching the keys the prompt describes."
+                ),
             )
-            data = json.loads(response.text)
+            if data is None:
+                logger.warning("Local inference returned no usable issue analysis.")
+                return fallback
             return data
         except GeminiBudgetExceededException:
             raise
         except Exception as e:
-            logger.error(f"Error in Gemini issue analysis: {e}")
-            return {
-                "summary": "Failed to parse GitHub issue content due to error.",
-                "subtasks": [],
-                "complexity": "medium",
-                "suggested_priority": "medium"
-            }
+            logger.error(f"Error in local issue analysis: {e}")
+            return fallback
 
 automation_service = AutomationService()

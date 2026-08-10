@@ -71,15 +71,24 @@ artefacts fetched over the network onto user devices, with no digest check.
 
 Client dependencies backing these: `google_generative_ai: ^0.4.7`, `flutter_llama: ^0.1.0`.
 
-### 3.2 Server — 3 findings
+### 3.2 Server — 7 findings
 
 | # | Location | Finding | Rules violated |
 | --- | --- | --- | --- |
 | S-01 | `aura_core/llm/providers/gemini.py` (142 stmts) | Full Gemini provider — streaming, tool calls, cost accounting. Registered in `registry.py:78`. | 4, 5, 6 |
 | S-02 | `aura_core/llm/providers/anthropic.py` (158 stmts) | Full Anthropic provider. Registered in `registry.py:95`. | 4, 5, 6 |
-| S-03 | `services/ai.py:3-14, 91` | Legacy path constructs `genai.Client(api_key=…)` and calls `gemini-2.5-flash`. Falls back to Ollama, so the external call is the *preferred* path. | 4, 5, 6, 18 |
+| S-03 | `services/ai.py` | Chat streaming via `gemini-2.5-flash`. Ollama existed only as a fallback, so the external call was the *preferred* path. | 4, 5, 6, 18 |
+| S-04 | `services/agent.py` | Agent loop using Gemini **native function calling** across three Drive/RAG tools. The hardest to replace, and the only one needing new capability rather than rewiring. | 4, 5, 6, 18 |
+| S-05 | `services/rag.py` | `gemini-embedding-001` at 768d as the primary embedder, with local encoders as fallback. | 4, 6, 18 |
+| S-06 | `services/memory.py` | Fact extraction via `generate_content` with `response_schema=ExtractedFacts`. | 4, 6, 18 |
+| S-07 | `services/automation.py` | Email and GitHub-issue analysis via `generate_content` in JSON mode, two call sites. | 4, 6, 18 |
 
-`requirements.txt` carries `google-genai>=0.1.1` for S-03.
+`requirements.txt` carried `google-genai>=0.1.1` for S-03 through S-07.
+
+> **Correction.** The first pass of this audit recorded only `services/ai.py` for the legacy tree.
+> That was wrong: an AST scan of every import at any nesting depth found five files. The
+> undercount came from grepping for the provider *names* rather than for the SDK import, and it is
+> the reason the fitness test in §3.5 scans imports mechanically instead of relying on a read-through.
 
 ### 3.3 Already compliant
 
@@ -94,6 +103,28 @@ Client dependencies backing these: `google_generative_ai: ^0.4.7`, `flutter_llam
 
 No OpenAI, Azure, Bedrock, Groq, OpenRouter, Together, Replicate, or HF Inference API usage
 exists anywhere. The external surface is Google and Anthropic only.
+
+### 3.5 How this is now enforced
+
+All seven server findings are closed, and the enforcement is mechanical rather than a one-off
+deletion — `tests/architecture/test_no_external_inference.py` fails the build on any of:
+
+1. **an SDK import**, found by walking the full AST so a lazy `import openai` inside a function is
+   caught as readily as a module-level one;
+2. **a hosted endpoint in source**, which catches an SDK-free raw HTTP call;
+3. **a hosted package in either requirements file**, which catches the dependency returning before
+   any code uses it;
+4. **a hosted `base_url`** on the surviving `openai_compatible` kind — necessary because that kind
+   speaks the same wire protocol as several hosted APIs, so removing the vendor adapters alone left
+   a one-setting bypass.
+
+Every list lives in `aura_core/config/external_inference.py` and is read by both the runtime check
+and the scans. When the two kept separate copies, the weaker became the real policy.
+
+**What this does not do:** it cannot stop an operator pointing `base_url` at a proxy they run that
+forwards to a vendor. No in-process check can. That is what the compose file's private network and
+the deployment's egress policy are for. These layers close the accidental path — a hurried
+fallback, a copied snippet, a reinstalled SDK — not the determined one.
 
 ### 3.4 Non-AI external services (permitted under Rule 19)
 
