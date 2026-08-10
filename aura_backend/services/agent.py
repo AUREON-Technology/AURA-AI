@@ -296,13 +296,15 @@ class AgentOrchestrator:
                 yield chunk
             return
         except Exception as e:
+            # Only reached when local inference failed *before* emitting anything -- the generator
+            # raises in that case precisely so this branch keeps a free choice.
             logger.error(f"Local agent execution failed: {e}")
-            yield f"\n[Local inference unavailable: {e}]\n"
             if not settings.debug_mode:
-                # In production this is the end of the line. There is no second engine to try --
-                # that was the hosted API, and removing it is the point. The mock responses below
-                # exist for offline development only; serving them to a real user would be
-                # fabricating an answer because a subsystem failed.
+                # Production ends here. There is no second engine, by design: that was the hosted
+                # API, and removing it is the point of this change. The developer mocks below must
+                # never serve a real user -- returning invented task and expense actions because
+                # inference was unreachable is fabricating an answer, and the caller would have no
+                # way to tell.
                 import json
                 yield json.dumps({
                     "success": False,
@@ -310,6 +312,9 @@ class AgentOrchestrator:
                     "retry_after": 60
                 })
                 return
+            # Debug only: fall through to the mock responses below, which exist so the agent
+            # routing can be exercised offline with no model running.
+            yield f"\n[Local inference unavailable: {e}. Falling back to developer mocks...]\n"
 
         yield f"[Mock Mode - {active_agent.replace('_', ' ').title()}]\n"
         if active_agent == "task_planner":

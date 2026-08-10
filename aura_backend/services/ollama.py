@@ -129,6 +129,10 @@ class OllamaService:
 
         tool_impls = tool_impls or {}
 
+        # Whether any content has reached the caller yet, across all rounds. This decides how a
+        # transport failure is reported: see the handler below.
+        emitted_anything = False
+
         for round_index in range(max_tool_rounds + 1):
             payload = {
                 "model": self.model,
@@ -151,8 +155,9 @@ class OllamaService:
                         "POST", f"{self.host}/api/chat", json=payload, timeout=timeout_s
                     ) as response:
                         if response.status_code != 200:
-                            yield f"\n[Local inference error: server returned {response.status_code}]"
-                            return
+                            raise RuntimeError(
+                                f"local inference server returned {response.status_code}"
+                            )
                         async for line in response.aiter_lines():
                             if not line.strip():
                                 continue
@@ -164,12 +169,24 @@ class OllamaService:
                             content = message.get("content", "")
                             if content:
                                 assistant_text += content
+                                emitted_anything = True
                                 yield content
                             for call in message.get("tool_calls") or []:
                                 tool_calls.append(call)
             except Exception as e:
                 logger.error(f"Local agent stream failed: {e}")
-                yield f"\n[Local inference unavailable: {e}]"
+                if not emitted_anything:
+                    # Nothing has reached the caller, so the caller still has a free choice --
+                    # a different engine, a cached answer, or the developer mocks. Swallowing this
+                    # into the stream would take that choice away and make an unreachable server
+                    # indistinguishable from a model that answered with an apology.
+                    #
+                    # Same rule the v3 router follows: failover is only permitted before the first
+                    # token.
+                    raise
+                # Mid-stream: tokens are already on the wire and cannot be retracted, so the only
+                # honest option is to say the answer is incomplete.
+                yield f"\n[Local inference interrupted: {e}]"
                 return
 
             if not tool_calls:
