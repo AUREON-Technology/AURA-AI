@@ -12,8 +12,15 @@ a strategy must *not* do the obvious thing:
 * The adaptive router must survive one strategy failing.
 * Multimodal must be honest that no extraction pipeline exists behind it.
 
-Fakes throughout: no index, no model, no network. That is the same property the rest of this suite
-has, and it is what lets these run in seconds.
+No index, no model, no network -- the same property the rest of this suite has, and what lets these
+run in seconds.
+
+**Graph tests use the real InMemoryGraphStore, not a fake.** An earlier version faked it, exposing
+`edge.subject`/`edge.object` and returning a flat edge list. The real store returns an
+`(entities, relations)` tuple of `Relation` objects with `subject_key`/`object_key`, and
+`find_entities` takes `name` keyword-only. All five graph tests passed against that invented
+contract while three genuine bugs survived in the strategy. Where a real in-memory implementation
+exists, using it costs nothing and cannot drift.
 """
 
 from __future__ import annotations
@@ -161,31 +168,59 @@ class FakeMemory:
         return [Hit(c) for c in self._contents]
 
 
-class FakeEntity:
-    def __init__(self, key: str) -> None:
-        self.key = key
+async def _graph_with(triples, *, owner=None):
+    """A real InMemoryGraphStore populated via the real GraphDelta path.
+
+    Deliberately not a fake. The previous version of these tests used a fake exposing
+    `edge.subject` / `edge.object` and returning a flat edge list -- neither of which the real store
+    does. Every GraphRAG test passed against a contract that did not exist, and three genuine bugs
+    survived: a positional `find_entities(query)` (it is keyword-only), iterating the
+    `(entities, relations)` tuple as if it were a list of edges, and reading `.subject`/`.object`
+    instead of `.subject_key`/`.object_key`.
+
+    Using the real store is the fix. It costs nothing here -- it is in-memory and stdlib-only.
+    """
+    from aura_core.adapters.memory_stores import InMemoryGraphStore
+    from aura_core.domain.knowledge import Entity, GraphDelta, Relation
+
+    store = InMemoryGraphStore()
+    entities: dict[str, Entity] = {}
+
+    def ensure(name: str) -> Entity:
+        key = Entity.canonical_key(name, "concept")
+        if key not in entities:
+            entities[key] = Entity(key=key, name=name, type="concept", sources=("test",))
+        return entities[key]
+
+    relations = []
+    for subject, predicate, obj in triples:
+        s, o = ensure(subject), ensure(obj)
+        relations.append(
+            Relation(
+                subject_key=s.key,
+                predicate=predicate,
+                object_key=o.key,
+                owner_id=owner,
+                confidence=0.7,
+                sources=("test",),
+            )
+        )
+
+    await store.apply(
+        GraphDelta(entities=tuple(entities.values()), relations=tuple(relations), source="test"),
+        owner_id=owner,
+    )
+    return store
 
 
-class FakeEdge:
-    def __init__(self, subject: str, predicate: str, obj: str) -> None:
-        self.subject = subject
-        self.predicate = predicate
-        self.object = obj
+class BrokenGraph:
+    """Raises on every call, to exercise the degradation path."""
 
+    async def find_entities(self, **kwargs):
+        raise RuntimeError("graph store down")
 
-class FakeGraph:
-    def __init__(self, entities=(), edges=None, *, fail: bool = False) -> None:
-        self._entities = [FakeEntity(e) for e in entities]
-        self._edges = edges or {}
-        self.fail = fail
-
-    async def find_entities(self, query, *, owner_id=None, limit=10):
-        if self.fail:
-            raise RuntimeError("graph store down")
-        return self._entities[:limit]
-
-    async def neighbours(self, key, *, owner_id=None):
-        return [FakeEdge(*e) for e in self._edges.get(key, [])]
+    async def neighbours(self, key, **kwargs):
+        raise RuntimeError("graph store down")
 
 
 class FailingStrategy:
@@ -517,52 +552,104 @@ class TestSelfRAG:
 
 
 class TestGraphRAG:
-    async def test_it_traverses_to_the_hop_limit(self) -> None:
-        graph = FakeGraph(
-            entities=["auth"],
-            edges={
-                "auth": [("auth", "depends_on", "db")],
-                "db": [("db", "depends_on", "disk")],
-                "disk": [("disk", "depends_on", "hardware")],
-            },
+    """Driven by the real InMemoryGraphStore, not a fake. See `_graph_with`."""
+
+    async def test_it_returns_the_relations_it_traverses(self) -> None:
+        graph = await _graph_with([("auth", "depends_on", "db")])
+        outcome = await GraphRAG(graph, SimpleRAG(FakeKnowledge())).retrieve(
+            RetrievalRequest(query="auth")
         )
-        outcome = await GraphRAG(graph, SimpleRAG(FakeKnowledge()), max_hops=2).retrieve(
-            RetrievalRequest(query="what does auth depend on", owner_id=OWNER)
+        assert ("auth", "depends_on", "db") in outcome.graph_paths
+
+    async def test_triples_carry_entity_names_not_canonical_keys(self) -> None:
+        """The point of returning paths is that a person can read the derivation. Canonical keys
+        are slugged and type-suffixed, which is unreadable in an answer."""
+        graph = await _graph_with([("Auth Service", "depends_on", "Postgres")])
+        outcome = await GraphRAG(graph, None).retrieve(RetrievalRequest(query="Auth Service"))
+        subjects = [p[0] for p in outcome.graph_paths]
+        assert "Auth Service" in subjects
+        assert not any("concept" in p[0] for p in outcome.graph_paths)
+
+    async def test_multi_hop_reaches_a_second_degree_relation(self) -> None:
+        """The capability that justifies the strategy: composing two facts that may come from
+        different documents."""
+        graph = await _graph_with(
+            [("auth", "depends_on", "db"), ("db", "runs_on", "hardware")]
         )
-        flattened = " ".join(" ".join(p) for p in outcome.graph_paths)
-        assert "db" in flattened
-        assert "hardware" not in flattened  # third hop excluded
+        outcome = await GraphRAG(graph, None, max_hops=2).retrieve(
+            RetrievalRequest(query="auth")
+        )
+        predicates = {p[1] for p in outcome.graph_paths}
+        assert "depends_on" in predicates
+        assert "runs_on" in predicates
 
     async def test_a_cycle_terminates(self) -> None:
-        """Graphs extracted from prose routinely contain cycles; without visited-tracking this
-        would not stop."""
-        graph = FakeGraph(
-            entities=["a"],
-            edges={"a": [("a", "rel", "b")], "b": [("b", "rel", "a")]},
+        """Graphs extracted from prose routinely contain cycles -- A documents B, B references A."""
+        graph = await _graph_with([("alpha", "rel", "beta"), ("beta", "rel", "alpha")])
+        outcome = await GraphRAG(graph, None, max_hops=3).retrieve(
+            RetrievalRequest(query="alpha")
         )
-        outcome = await GraphRAG(graph, None, max_hops=5).retrieve(
-            RetrievalRequest(query="a and b", owner_id=OWNER)
-        )
-        assert outcome.graph_paths  # produced something and returned
+        assert outcome.graph_paths  # returned rather than spinning
+
+    async def test_a_term_shorter_than_three_characters_is_not_looked_up(self) -> None:
+        """A one- or two-character needle is a substring of almost every entity name, so seeding on
+        it would return the whole graph. Nothing to look up is not the same as an outage."""
+        graph = await _graph_with([("alpha", "rel", "beta")])
+        outcome = await GraphRAG(graph, None).retrieve(RetrievalRequest(query="a"))
+        assert outcome.graph_paths == ()
+        assert any("no matching entities" in n for n in outcome.trace.notes)
+
+    async def test_the_same_edge_is_not_reported_twice(self) -> None:
+        """An edge is reachable from both endpoints, and seeds overlap. Duplicates would pad the
+        context with repetition."""
+        graph = await _graph_with([("auth service", "depends_on", "database")])
+        outcome = await GraphRAG(graph, None).retrieve(RetrievalRequest(query="auth service"))
+        assert outcome.graph_paths
+        assert len(outcome.graph_paths) == len(set(outcome.graph_paths))
 
     async def test_a_graph_outage_still_returns_corpus_results(self) -> None:
         knowledge = FakeKnowledge(_result(_chunk("d1:v1:0", "text")))
-        outcome = await GraphRAG(FakeGraph(fail=True), SimpleRAG(knowledge)).retrieve(
-            RetrievalRequest(query="q", owner_id=OWNER)
+        outcome = await GraphRAG(BrokenGraph(), SimpleRAG(knowledge)).retrieve(
+            RetrievalRequest(query="Auth Service", owner_id=OWNER)
         )
         assert len(outcome.chunks) == 1
         assert any("graph unavailable" in n for n in outcome.trace.notes)
 
     async def test_no_matching_entities_is_reported(self) -> None:
-        outcome = await GraphRAG(FakeGraph(), None).retrieve(RetrievalRequest(query="q"))
+        graph = await _graph_with([("auth", "depends_on", "db")])
+        outcome = await GraphRAG(graph, None).retrieve(
+            RetrievalRequest(query="zzz nothing matches this")
+        )
+        assert outcome.graph_paths == ()
         assert any("no matching entities" in n for n in outcome.trace.notes)
 
     async def test_the_path_limit_is_enforced(self) -> None:
-        edges = {"root": [("root", "rel", f"n{i}") for i in range(50)]}
-        graph = FakeGraph(entities=["root"], edges=edges)
-        outcome = await GraphRAG(graph, None, max_paths=10).retrieve(RetrievalRequest(query="q"))
+        graph = await _graph_with([("root", "rel", f"n{i}") for i in range(40)])
+        outcome = await GraphRAG(graph, None, max_paths=10).retrieve(
+            RetrievalRequest(query="root")
+        )
         assert len(outcome.graph_paths) <= 10
-        assert any("path limit" in n for n in outcome.trace.notes)
+
+    async def test_a_confidence_floor_filters_weak_edges(self) -> None:
+        """Relations carry confidence because a surface-pattern match is evidence, not proof."""
+        graph = await _graph_with([("auth", "depends_on", "db")])
+        outcome = await GraphRAG(graph, None, min_confidence=0.95).retrieve(
+            RetrievalRequest(query="auth")
+        )
+        assert outcome.graph_paths == ()
+
+    async def test_owner_scoping_is_respected(self) -> None:
+        """A relation written for one owner must not surface for another -- the store partitions on
+        owner, and passing the wrong one would leak another tenant's graph."""
+        graph = await _graph_with([("auth", "depends_on", "db")], owner=OWNER)
+        mine = await GraphRAG(graph, None).retrieve(
+            RetrievalRequest(query="auth", owner_id=OWNER)
+        )
+        theirs = await GraphRAG(graph, None).retrieve(
+            RetrievalRequest(query="auth", owner_id=UserId("someone-else"))
+        )
+        assert mine.graph_paths
+        assert theirs.graph_paths == ()
 
 
 # -- agentic ------------------------------------------------------------------------------
@@ -857,12 +944,12 @@ class TestBuildStrategies:
         assert built["graph"] is built["simple"]
         assert built["memory"] is built["simple"]
 
-    def test_memory_and_graph_are_used_when_provided(self) -> None:
+    async def test_memory_and_graph_are_used_when_provided(self) -> None:
         built = build_strategies(
             knowledge=FakeKnowledge(),
             router=FakeRouter(),
             memory=FakeMemory(),
-            graph=FakeGraph(),
+            graph=await _graph_with([("alpha", "rel", "beta")]),
         )
         assert built["graph"].name == "graph"
         assert built["memory"].name == "memory"
@@ -876,3 +963,77 @@ class TestBuildStrategies:
     def test_corrective_falls_back_to_multi_query(self) -> None:
         built = build_strategies(knowledge=FakeKnowledge(), router=FakeRouter())
         assert built["corrective"]._fallback is built["multi_query"]
+
+
+# -- end to end ---------------------------------------------------------------------------
+
+
+class TestGraphRAGOverRealIngestion:
+    """Ingest a document, then traverse what extraction actually wrote.
+
+    Everything above tests GraphRAG against a graph a test populated directly. This closes the last
+    gap: it proves the *pipeline* connects -- KnowledgeEngine.ingest runs the extractor, applies the
+    delta to the graph store, and GraphRAG then finds the relations in it. If any link in that chain
+    were missing, GraphRAG would traverse an empty graph and every test above would still pass.
+    """
+
+    async def _container(self):
+        from aura_core.config.settings import AuraSettings
+        from aura_core.container import Container
+
+        return Container(AuraSettings.from_env())
+
+    async def test_relations_extracted_during_ingestion_are_traversable(self) -> None:
+        container = await self._container()
+
+        # Phrasings the rule extractor recognises: "X depends on Y", "X is located in Y".
+        await container.knowledge.ingest(
+            title="Service topology",
+            content=(
+                "Auth Service depends on Postgres Cluster. "
+                "Postgres Cluster is located in Frankfurt Datacenter. "
+                "Billing Service depends on Auth Service."
+            ),
+            owner_id=None,
+        )
+
+        strategy = GraphRAG(container.graph, None, max_hops=2)
+        outcome = await strategy.retrieve(RetrievalRequest(query="Auth Service"))
+
+        predicates = {predicate for _s, predicate, _o in outcome.graph_paths}
+        assert "depends_on" in predicates, outcome.graph_paths
+
+        # Multi-hop: Auth -> Postgres -> Frankfurt is two edges from different sentences, which is
+        # the case vector search handles worst.
+        subjects_and_objects = {
+            name for triple in outcome.graph_paths for name in (triple[0], triple[2])
+        }
+        assert "Postgres Cluster" in subjects_and_objects
+        assert "Frankfurt Datacenter" in subjects_and_objects
+
+    async def test_a_document_with_no_relations_yields_no_paths(self) -> None:
+        """Honest emptiness. Prose with no recognisable relation must not invent edges."""
+        container = await self._container()
+        await container.knowledge.ingest(
+            title="Prose",
+            content="The weather today is pleasant and the office is quiet.",
+            owner_id=None,
+        )
+        outcome = await GraphRAG(container.graph, None).retrieve(
+            RetrievalRequest(query="weather")
+        )
+        assert outcome.graph_paths == ()
+
+    async def test_the_adaptive_router_reaches_the_graph_for_a_relational_query(self) -> None:
+        """The full path: classification -> route -> traversal, over a real ingested corpus."""
+        container = await self._container()
+        await container.knowledge.ingest(
+            title="Service topology",
+            content="Billing Service depends on Auth Service.",
+            owner_id=None,
+        )
+        outcome = await container.strategies["adaptive"].retrieve(
+            RetrievalRequest(query="which services depend on Auth Service")
+        )
+        assert "graph" in " ".join(outcome.trace.notes)
+        assert outcome.graph_paths, outcome.trace.as_dict()

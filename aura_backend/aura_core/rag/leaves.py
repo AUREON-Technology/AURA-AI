@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from typing import Any
 
@@ -142,16 +143,21 @@ class GraphRAG(BaseStrategy):
     """Multi-hop retrieval over the knowledge graph.
 
     For questions about *relationships* -- "which services depend on the auth module", "what does
-    this project contain" -- where the answer is a path rather than a passage. Vector search is
-    poor at these: the sentence stating a dependency may not lexically or semantically resemble the
-    question, and the answer often requires composing two facts that appear in different documents.
+    this project contain" -- where the answer is a path rather than a passage. Vector search is poor
+    at these: the sentence stating a dependency may not lexically or semantically resemble the
+    question, and the answer often requires composing two facts from different documents.
 
-    Entities are seeded from the query, then expanded breadth-first to ``max_hops``. Paths are
-    returned in ``outcome.graph_paths`` as triples, so the answer can show its derivation instead
-    of asserting a conclusion the user cannot check.
+    Traversal is delegated to :meth:`GraphStore.neighbours`, which already does bounded
+    breadth-first expansion and clamps depth internally -- an unbounded walk driven by user input is
+    a denial-of-service primitive, and re-implementing the loop here would duplicate that cap while
+    being able to disagree with it.
 
-    ``max_hops`` defaults to 2. Three hops on a well-connected graph reaches most of it, which
-    produces a context full of loosely-related edges -- worse than not using the graph.
+    Paths come back in ``outcome.graph_paths`` as ``(subject, predicate, object)`` triples of entity
+    *names* rather than canonical keys, because the point of returning them is that a person can
+    read the derivation instead of taking a conclusion on trust.
+
+    ``max_hops`` defaults to 2. Three hops on a well-connected graph reaches most of it, producing a
+    context full of loosely-related edges -- worse than not using the graph at all.
     """
 
     name = "graph"
@@ -164,6 +170,7 @@ class GraphRAG(BaseStrategy):
         max_hops: int = 2,
         max_entities: int = 6,
         max_paths: int = 24,
+        min_confidence: float = 0.0,
         metrics: Any = None,
     ) -> None:
         super().__init__(metrics=metrics)
@@ -172,15 +179,71 @@ class GraphRAG(BaseStrategy):
         self._max_hops = max_hops
         self._max_entities = max_entities
         self._max_paths = max_paths
+        # Relations carry confidence because a surface-pattern match is evidence, not proof. A
+        # caller answering something consequential can require a higher bar.
+        self._min_confidence = min_confidence
+
+    #: Words that are never entity mentions. Short and question-shaped: a long stop list would
+    #: start removing words that are part of real entity names ("Bank of England").
+    _QUERY_NOISE = frozenset({
+        "which", "what", "who", "where", "when", "why", "how", "does", "do", "did", "is",
+        "are", "was", "were", "the", "a", "an", "and", "or", "of", "to", "in", "on", "for",
+        "depend", "depends", "related", "connected", "between", "tell", "me", "about", "show",
+        "list", "all", "any", "service", "services",
+    })
+
+    async def _seed_entities(self, request: RetrievalRequest) -> list[Any]:
+        """Find the entities a query mentions.
+
+        ``find_entities`` matches its ``name`` argument as a substring *of* an entity name, so
+        passing the whole query almost never matches: "which services depend on Auth Service" is
+        not a substring of "Auth Service". Passing the query verbatim was a real bug -- it only
+        appeared to work in tests that queried with a bare entity name.
+
+        Three passes, cheapest first, stopping as soon as one finds anything:
+
+        1. **The query as-is.** Correct and one round trip for the common short form -- a user
+           typing just "Auth Service".
+        2. **Capitalised phrases.** Entity mentions in English prose are overwhelmingly proper
+           nouns, and this recovers the multi-word ones intact, which matters because "Auth" alone
+           would also match "Auth Audit Log".
+        3. **Individual significant words.** The fallback for lowercase corpora and for queries
+           whose capitalisation the user did not preserve.
+        """
+        seeds: list[Any] = []
+        seen: set[str] = set()
+
+        async def lookup(term: str) -> None:
+            if len(seeds) >= self._max_entities or len(term) < 3:
+                return
+            found = await self._graph.find_entities(
+                owner_id=request.owner_id, name=term, limit=self._max_entities
+            )
+            for entity in found:
+                if entity.key not in seen:
+                    seen.add(entity.key)
+                    seeds.append(entity)
+
+        await lookup(request.query.strip())
+        if seeds:
+            return seeds[: self._max_entities]
+
+        for phrase in re.findall(r"\b[A-Z][\w'-]*(?:\s+[A-Z][\w'-]*)*", request.query):
+            await lookup(phrase.strip())
+        if seeds:
+            return seeds[: self._max_entities]
+
+        for word in re.findall(r"\b\w{3,}\b", request.query):
+            if word.lower() not in self._QUERY_NOISE:
+                await lookup(word)
+        return seeds[: self._max_entities]
 
     async def _run(self, request: RetrievalRequest) -> RetrievalOutcome:
         notes: list[str] = []
         paths: list[tuple[str, ...]] = []
 
         try:
-            seeds = await self._graph.find_entities(
-                request.query, owner_id=request.owner_id, limit=self._max_entities
-            )
+            seeds = await self._seed_entities(request)
         except Exception as exc:
             seeds = []
             notes.append(f"graph unavailable: {type(exc).__name__}")
@@ -188,47 +251,53 @@ class GraphRAG(BaseStrategy):
         if not seeds:
             notes.append("no matching entities")
 
-        # Breadth-first, tracking visited keys so a cycle terminates. Graphs extracted from prose
-        # routinely contain cycles (A depends on B, B documented in A), and without this the
-        # traversal would not stop.
-        frontier = [(entity.key if hasattr(entity, "key") else str(entity), ()) for entity in seeds]
-        visited: set[str] = set()
+        # Resolve keys to names once, so triples read as prose. Seeds are already Entity objects;
+        # neighbours() returns the entities it touched alongside the relations, which is exactly
+        # what makes this possible without a lookup per edge.
+        names: dict[str, str] = {entity.key: entity.name for entity in seeds}
+        seen_edges: set[tuple[str, str, str]] = set()
 
-        for _hop in range(self._max_hops):
-            if not frontier or len(paths) >= self._max_paths:
+        for entity in seeds:
+            if len(paths) >= self._max_paths:
+                notes.append("path limit reached")
                 break
-            next_frontier: list[tuple[str, tuple[str, ...]]] = []
-            for key, prefix in frontier:
-                if key in visited:
-                    continue
-                visited.add(key)
-                try:
-                    edges = await self._graph.neighbours(key, owner_id=request.owner_id)
-                except Exception as exc:
-                    notes.append(f"traversal failed at {key!r}: {type(exc).__name__}")
-                    continue
-                for edge in edges:
-                    subject = getattr(edge, "subject", None) or key
-                    predicate = getattr(edge, "predicate", "related_to")
-                    obj = getattr(edge, "object", None) or getattr(edge, "target", "")
-                    triple = (str(subject), str(predicate), str(obj))
-                    paths.append(prefix + triple if prefix else triple)
-                    if len(paths) >= self._max_paths:
-                        break
-                    if str(obj) not in visited:
-                        next_frontier.append((str(obj), triple))
-                if len(paths) >= self._max_paths:
-                    break
-            frontier = next_frontier
+            try:
+                neighbour_entities, relations = await self._graph.neighbours(
+                    entity.key,
+                    owner_id=request.owner_id,
+                    depth=self._max_hops,
+                    limit=self._max_paths,
+                )
+            except Exception as exc:
+                notes.append(f"traversal failed at {entity.key!r}: {type(exc).__name__}")
+                continue
 
-        if len(paths) >= self._max_paths:
-            notes.append("path limit reached")
+            names.update({e.key: e.name for e in neighbour_entities})
+
+            for relation in relations:
+                if relation.confidence < self._min_confidence:
+                    continue
+                triple_key = (relation.subject_key, relation.predicate, relation.object_key)
+                # The same edge is reachable from both of its endpoints, and seeds often overlap.
+                if triple_key in seen_edges:
+                    continue
+                seen_edges.add(triple_key)
+                paths.append(
+                    (
+                        names.get(relation.subject_key, relation.subject_key),
+                        relation.predicate,
+                        names.get(relation.object_key, relation.object_key),
+                    )
+                )
+                if len(paths) >= self._max_paths:
+                    notes.append("path limit reached")
+                    break
 
         result = RetrievalResult(query=request.query, strategy=self.name)
         children: tuple[StrategyTrace, ...] = ()
         if self._inner is not None:
-            # Graph edges answer "how are these connected"; the passages answer "what does it say".
-            # A multi-hop question usually needs both, so the corpus pass is not optional here.
+            # Graph edges answer "how are these connected"; passages answer "what does it say". A
+            # multi-hop question usually needs both, so the corpus pass is not optional here.
             inner_outcome = await self._inner.retrieve(request)
             result = inner_outcome.result
             children = (inner_outcome.trace,)
