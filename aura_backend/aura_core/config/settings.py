@@ -294,6 +294,12 @@ class KnowledgeSettings:
     hybrid_enabled: bool = True
     rrf_k: int = 60
     rerank_enabled: bool = True
+    #: "heuristic" (default) or "cross_encoder". The cross-encoder scores query/passage pairs
+    #: jointly and ranks materially better on vocabulary mismatch, but adds 100-300 ms per
+    #: retrieval on CPU -- a real cost on a box also running a 7B generator, which is why the
+    #: zero-dependency heuristic remains the default.
+    rerank_provider: str = "heuristic"
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     mmr_lambda: float = 0.7
     graph_enabled: bool = True
     max_document_bytes: int = 8 * 1024 * 1024
@@ -329,6 +335,9 @@ class KnowledgeSettings:
             retrieval_max_parallel=_int("KNOWLEDGE_RETRIEVAL_MAX_PARALLEL", 2, minimum=1, maximum=5),
             rrf_k=_int("KNOWLEDGE_RRF_K", 60, minimum=1),
             rerank_enabled=_bool("KNOWLEDGE_RERANK_ENABLED", True),
+            rerank_provider=(_env("KNOWLEDGE_RERANK_PROVIDER", "heuristic") or "heuristic").lower(),
+            rerank_model=_env("KNOWLEDGE_RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+            or "cross-encoder/ms-marco-MiniLM-L-6-v2",
             mmr_lambda=_float("KNOWLEDGE_MMR_LAMBDA", 0.7, minimum=0.0, maximum=1.0),
             graph_enabled=_bool("KNOWLEDGE_GRAPH_ENABLED", True),
             max_document_bytes=_int("KNOWLEDGE_MAX_DOC_BYTES", 8 * 1024 * 1024, minimum=1024),

@@ -32,10 +32,21 @@ comparable and their distributions shift per corpus; RRF uses only ranks, so it 
 deployment and is robust when one retriever returns garbage.
 
 **3. Rerank.** A cross-encoder reranker port (`ports/reranker.py`) scores (query, chunk) pairs.
-Default adapter is a heuristic lexical-overlap + position reranker with zero dependencies; the
-cross-encoder adapter (BGE-reranker, or an LLM-as-reranker for small candidate sets) is enabled by
-configuration. Reranking is where most of the precision gain comes from, and it is the stage most
-worth spending latency on.
+Default adapter is a heuristic lexical-overlap + position reranker with zero dependencies. A
+self-hosted cross-encoder (`CrossEncoderReranker`, ms-marco-MiniLM-L-6-v2 via
+sentence-transformers) implements the same port and is selected with
+`AURA_KNOWLEDGE_RERANK_PROVIDER=cross_encoder`. It ranks materially better where the corpus
+and the question use different vocabulary -- the case a lexical reranker cannot help with at
+all -- at 100-300 ms per retrieval on CPU. Every failure path in it degrades to the heuristic
+rather than raising, so enabling it cannot take search down.
+
+A larger cross-encoder (BGE-reranker) or an LLM-as-reranker for small candidate sets would both
+implement the same port; neither is wired today. Reranking is where most of the precision gain
+comes from, and it is the stage most worth spending latency on.
+
+Note what the cross-encoder's joint encoding costs: scoring is O(candidates), not a vector lookup,
+which is why it runs only over the ~24 candidates fusion has already selected and can never serve
+first-stage retrieval.
 
 **4. Threshold, diversify, cite.**
 - A **score floor** — below it, retrieval returns *nothing*, and the kernel says it has no grounded

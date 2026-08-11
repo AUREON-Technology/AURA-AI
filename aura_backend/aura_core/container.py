@@ -31,6 +31,7 @@ from .knowledge.chunking import ChunkingConfig
 from .knowledge.engine import KnowledgeEngine
 from .knowledge.extraction import RuleEntityExtractor
 from .knowledge.index_manager import IndexManager, PromotionGate
+from .knowledge.reranking import build_reranker
 from .kernel.kernel import AIKernel, KernelDependencies
 from .llm.cache import InMemoryCache, LLMCache
 from .llm.embeddings import HashEmbeddingProvider
@@ -166,6 +167,11 @@ class Container:
             score_threshold=settings.knowledge.score_threshold,
             hybrid_enabled=settings.knowledge.hybrid_enabled,
             rerank_enabled=settings.knowledge.rerank_enabled,
+            reranker=build_reranker(
+                settings.knowledge.rerank_provider,
+                model=settings.knowledge.rerank_model,
+                metrics=self.metrics,
+            ),
             rrf_k=settings.knowledge.rrf_k,
             mmr_lambda=settings.knowledge.mmr_lambda,
             max_document_bytes=settings.knowledge.max_document_bytes,

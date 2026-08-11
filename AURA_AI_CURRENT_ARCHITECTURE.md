@@ -97,7 +97,7 @@ Client dependencies backing these: `google_generative_ai: ^0.4.7`, `flutter_llam
 | Inference (v3 preferred) | Ollama + `openai_compatible` against a local base URL | self-hosted |
 | Embeddings | `hash` (deterministic, stdlib) or `sentence-transformers` (local weights) | self-hosted |
 | Tokenisation | `tiktoken` when present, heuristic fallback — no network either way | self-hosted |
-| Reranking | heuristic (lexical overlap + position + MMR), no model call | self-hosted, but not a model |
+| Reranking | heuristic default; self-hosted cross-encoder available via `AURA_KNOWLEDGE_RERANK_PROVIDER=cross_encoder` | self-hosted |
 | Safety guards | rule-based, in-process | self-hosted |
 | Vector search | Qdrant (self-hosted container) | self-hosted |
 
@@ -158,7 +158,7 @@ holds tokens it issued.
 | **Agentic RAG** | partial | planner/executor/tools exist; not wired as a retrieval strategy |
 | **Multimodal RAG** | **no** | no OCR, no vision, no image or table extraction |
 | **Graph RAG** | **no** | `InMemoryGraphStore` is a stub; no entities, edges, or multi-hop retrieval |
-| Self-hosted reranker model | **no** | heuristic only |
+| Self-hosted reranker model | yes | `CrossEncoderReranker`, ms-marco-MiniLM-L-6-v2, loaded locally. Opt-in: adds 100-300 ms per retrieval on CPU |
 | Storage adapters for prod | **no** | see §5 |
 
 ---
@@ -216,7 +216,7 @@ Client-side provider routing:    yes                   (target: server-only)
 Server-side self-hosted infer:   yes (Ollama)          ✓
 Server-side embeddings:          yes                   ✓
 Server-side memory:              yes                   ✓
-Server-side reranking:           heuristic, no model   partial
+Server-side reranking:           yes (cross-encoder)    ✓
 Server-side agents:              yes                   ✓
 RAG strategies implemented:      2 of 10               partial
 Production deployment:           BROKEN                blocker

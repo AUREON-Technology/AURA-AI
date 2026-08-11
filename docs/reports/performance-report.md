@@ -128,10 +128,17 @@ is another network hop, another failure mode, and another thing to operate. `reb
 runs at startup and is tested; the point at which this stops being right is documented in the
 Scalability Report.
 
-**The reranker is heuristic by default.** A cross-encoder is more accurate and costs a forward
-pass per candidate. The port exists (`knowledge/retrieval.py`) so a deployment can swap one in;
-the default does not pay for it, and a reranker failure falls back to fusion order rather than
-failing the turn.
+**The reranker is heuristic by default, and a cross-encoder is now available.**
+`CrossEncoderReranker` (ms-marco-MiniLM-L-6-v2, loaded locally by sentence-transformers) is
+selected with `AURA_KNOWLEDGE_RERANK_PROVIDER=cross_encoder`. It costs a forward pass per
+candidate — roughly 100-300 ms for a 24-candidate list on the 4-vCPU box these figures come from,
+which is why it is not the default on hardware also running a 7B generator.
+
+That estimate is **not measured**: it is inferred from published MiniLM-L6 throughput, and this
+environment has no torch installed to benchmark against. Treat it as an order of magnitude, and
+measure on your own hardware before enabling it in production. What *is* verified is the failure
+behaviour — a load failure, timeout or malformed output degrades to the heuristic reranker rather
+than to fusion order, so the reranking stage survives the model being unavailable.
 
 **No query result caching at the vector layer.** The response cache already covers repeated
 questions, and a vector-layer cache would need invalidating on every ingestion — complexity
