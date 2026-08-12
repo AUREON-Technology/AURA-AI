@@ -109,24 +109,22 @@ class AgenticRAG(BaseStrategy):
 class MultimodalRAG(BaseStrategy):
     """Retrieve only content that came from non-text sources.
 
-    **What this does today.** Filters retrieval to chunks whose document metadata marks them as
-    extracted from a non-text source -- a PDF page, a spreadsheet, an image caption -- using the
-    ``modality`` metadata key that the ingestion pipeline writes. Where such content exists, this
-    correctly finds it and nothing else, which is what a question like "what does the diagram on
-    page 4 say" needs.
+    **What this does.** Filters retrieval to chunks whose metadata marks them as extracted from a
+    non-text source, using the ``modality`` key that
+    :func:`aura_core.knowledge.documents.extract_pdf` writes and that
+    ``IndexManager._payload_for`` carries into the vector payload. A PDF ingested through that path
+    produces ``pdf_page``, ``table`` and ``image`` chunks with their page numbers attached, so "what
+    does the table on page 4 say" selects page 4's table and nothing else.
 
-    **What is not built.** There is no OCR and no vision model in the ingestion path. Chunks
-    therefore only carry a ``modality`` other than ``text`` if something else put it there. On a
-    corpus ingested by the current pipeline this strategy will find nothing and say so honestly via
-    ``is_empty_but_searched``.
+    **What is not built.** There is no OCR and no vision model. A page with images and no text layer
+    is indexed as an ``image`` chunk whose text *states* that the page could not be read and that OCR
+    is unconfigured -- so a question about it retrieves an honest account of a gap instead of a
+    confident answer drawn from the previous page. Recognising the text in that page needs an
+    :class:`~aura_core.ports.documents.OcrEngine` adapter, of which none ships.
 
-    That is deliberate. The alternative -- implementing this over plain text and calling it
-    multimodal -- would report a capability the platform does not have, and the first time someone
-    asked about an image they would get a confident answer drawn from unrelated prose. The strategy
-    is here so that finishing the extraction pipeline is a change to *ingestion* only, with the
-    retrieval side already in place and already tested.
-
-    See ``docs/reports/rag-strategies.md`` for what completing it requires.
+    That distinction is the whole design. Reporting a capability the platform lacks would be worse
+    than reporting the lack: the first person to ask about a scanned invoice would get an answer
+    grounded in unrelated prose and no indication that anything was missing.
     """
 
     name = "multimodal"

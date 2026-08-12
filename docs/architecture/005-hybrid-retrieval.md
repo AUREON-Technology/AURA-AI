@@ -60,6 +60,16 @@ first-stage retrieval.
 sentences, merge to a target token count with overlap measured in sentences, never mid-word. Fixed
 character slicing is retained only as a fallback for unstructured blobs.
 
+**Extraction** (`knowledge/documents.py`) runs before chunking and keeps page provenance. A PDF is
+read page by page; each block carries a `modality` (`pdf_page`, `table`, `image`) and a page number
+into chunk metadata and then into the vector payload, which is what lets `MultimodalRAG` filter on
+modality and lets `Chunk.citation()` name a page. Each block is chunked separately, so no chunk
+straddles a page boundary and then reports one page number for both halves. A page with images and no
+text layer is indexed as a block *stating* that it could not be read — retrievable, and honest about
+why. The legacy path concatenated every page into one string, which destroyed page numbers before
+retrieval ever saw them; no amount of retrieval quality can recover information discarded at
+ingestion.
+
 ## Alternatives rejected
 
 | Alternative | Why rejected |
