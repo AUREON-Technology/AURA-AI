@@ -125,7 +125,9 @@ section 8.
 
 **A self-hosted cross-encoder reranker** (`knowledge/reranking.py`) — section 6.
 
-**Three correctness defects fixed in code that predated this mission:**
+**Page-aware document extraction** (`knowledge/documents.py`, `ports/documents.py`) — section 11.
+
+**Four correctness defects fixed in code that predated this mission:**
 
 - *A zero-vector embedding fallback.* When embedding failed, `services/rag.py` returned a vector of
   zeros and indexed it. That poisons the index permanently: a zero vector has undefined cosine
@@ -134,6 +136,8 @@ section 8.
 - *A search could delete the corpus.* `query_knowledge` called `_ensure_collection_exists`, whose
   dimension-mismatch branch deletes and recreates the collection. Reads now pass
   `allow_recreate=False` and refuse.
+- *PDF ingestion destroyed page numbers.* Section 11. Every page concatenated into one string, and
+  scanned pages dropped without a trace.
 - *The sync API silently dropped offline edits.* Conflict detection compared the client's
   `client_updated_at` against the server's `updated_at`, which the server sets on write — so any
   edit made offline before the last server write was discarded as stale. Fixed with a new
@@ -281,7 +285,7 @@ different index. Promotion is an alias switch, so rollback is O(1) and needs no 
 | `self_rag` | decides whether to retrieve at all, then grades evidence | `corrective` |
 | `agentic` | iterative retrieve-reflect-refine with a step budget | `simple` |
 | `graph` | multi-hop traversal for relational questions | `simple` |
-| `multimodal` | filters on modality — see section 11 | `simple` |
+| `multimodal` | filters on the modality and page that extraction now writes — section 11 | `simple` |
 | `adaptive` | classifies the query and dispatches to the above | all |
 
 The composition is the interesting part. `corrective` falls back to `multi_query` specifically
@@ -353,22 +357,46 @@ raising is no longer possible.
 
 ## 11. Multimodal
 
-**This is the honest weak point, and it is the one I would fix next.**
+Half of this is now real, and the half that is not is precisely identified.
 
-`MultimodalRAG` is implemented, tested, and structurally correct: it filters retrieval on a
-`modality` payload key and merges modality-specific hits with text hits. What it filters on, nothing
-currently writes. Ingestion has no OCR and no vision — `requirements.txt` declares `pypdf` and
-nothing else in that family; `pytesseract`, `pdfplumber`, `Pillow` and `torch` are all absent.
+**What exists.** `aura_core/knowledge/documents.py` extracts a PDF page by page and tags each block
+with a modality and a page number. Those two keys travel into chunk metadata, from there into the
+vector payload (`IndexManager._payload_for` already forwarded scalar metadata), and from there back
+onto retrieved chunks — so `MultimodalRAG`'s filter now selects real content instead of an empty set,
+and `Chunk.citation()` can say "page 4" rather than "chunk 7".
 
-So `multimodal` today routes a media-flavoured question to what is effectively plain retrieval over
-whatever text the PDF extractor found. It says so at runtime in its trace notes and its tests assert
-that behaviour rather than papering over it. The retrieval half is ready; the extraction half does
-not exist.
+The defect this fixed was not in retrieval at all. The legacy PDF path concatenated every page into
+one string, so page numbers were destroyed *at ingestion*. No retrieval strategy, however good,
+could ever have answered "what does page 4 say" — the information had already been thrown away. And
+a page that was a scan extracted to nothing and was silently dropped, so a twenty-page scanned
+contract could be indexed as five pages of text with no record that fifteen pages went unread.
 
-I am recording this as a gap rather than shipping a stub that claims otherwise. The work is a
-`DocumentExtractor` port with a Tesseract adapter for scanned pages and an image-captioning adapter
-for figures, both optional dependencies degrading to text-only when unavailable — the same shape as
-the reranker. It is a day of work and it needs hardware I cannot measure on from here.
+Four modalities are produced: `pdf_page`, `table` (a conservative layout heuristic — a majority of
+lines showing two or more column gaps), `image`, and `text` for plain uploads. `pdf_page` is
+deliberately inside the retrieval filter's accepted set: without it, "what does page 4 say" could
+not be answered, and that is a more common question than "what does the diagram show".
+
+**An unreadable page becomes a block that says it is unreadable.** A page with images and no text
+layer is indexed with text naming the page, the number of images on it, and the fact that OCR is not
+configured. Asked about page 7 of a scanned contract, the system retrieves an honest account of the
+gap instead of answering confidently from page 6. That is the design decision worth defending here:
+indexing a truthful statement about missing content beats indexing nothing, because silence is
+indistinguishable from absence.
+
+**What does not exist.** No OCR and no vision model. `ports/documents.py` defines the `OcrEngine`
+port and `apply_ocr()` is the place an adapter plugs in — both tested, including every degradation
+path — but **no production adapter ships**. There is a second, smaller gap behind it:
+`pypdf` counts a page's images with no help, which is all the scan/blank distinction needs, but
+*decoding* those images to bytes calls into Pillow, which this platform does not declare. So
+`image_extraction_available()` returns false on a stock deployment and `apply_ocr` correctly reports
+that it never had the pixels — a different finding from "OCR could not read them", and an operator
+debugging an empty corpus needs to tell those apart.
+
+Completing it is Pillow plus a Tesseract adapter: a class with one method. What it needs that I do
+not have is hardware to measure the cost on, next to a 7B generator.
+
+Also absent: audio and video (the modality constants exist, nothing produces them), and layout-aware
+table structure — a table is currently detected and tagged, not parsed into cells.
 
 ## 12. Graph
 
@@ -534,10 +562,10 @@ staging copy. One drill would be a couple of hours and would move Reliability of
 
 | Suite | Count | Notes |
 | --- | --- | --- |
-| `aura_backend/tests/` | **1247 passed**, 8 deselected | ~7 s, no infrastructure required |
-| Legacy root suite | **55 passed, 2 skipped** | 2 skipped pending Docker |
-| Coverage on `aura_core` | **89%** | 10,883 statements, 1,143 uncovered |
-| Test code | 39 files / 12,904 lines | roughly half the size of the code it covers |
+| `aura_backend/tests/` | **1277 passed**, 8 deselected | ~7 s, no infrastructure required |
+| Legacy root suite | **61 passed, 2 skipped** | 2 skipped pending Docker |
+| Coverage on `aura_core` | **90%** | 11,059 statements, 1,159 uncovered |
+| Test code | 41 files / ~13,700 lines | roughly half the size of the code it covers |
 
 Three fitness-test groups make architecture a build failure rather than a review comment:
 `test_dependency_rules.py` (layer direction, stdlib-only domain, async ports),
@@ -548,7 +576,14 @@ selection is built exactly as written).
 **The deduction I would defend hardest in the readiness score is on Testing, and it belongs here
 too: fakes concealed real defects twice in this work.** Section 12 is one case, and it sat at 90%
 coverage while `GraphRAG` was incapable of traversing a graph. Coverage measures execution, not
-correctness. 89% is real and useful and it is not evidence that the system works.
+correctness. 90% is real and useful and it is not evidence that the system works.
+
+The extraction work in section 11 is the method corrected. Its tests build real PDFs byte by byte
+and hand them to real `pypdf`, and that decision paid immediately: it caught a regex that counted
+column gaps by consuming the character between them (so no table was ever detected while every
+prose test still passed), and then an end-to-end assertion caught the payload round trip dropping
+`modality` and `page` — which would have left the feature filterable but uncitable, working in the
+store and invisible to the reader. Neither defect was reachable from a test double.
 
 ## 19. Remaining limitations
 
@@ -558,8 +593,10 @@ Ordered by how much they matter, not by how easy they are.
    production traffic, no real corpus, no load test with the real data tier.
 2. **Retrieval quality is unmeasured.** The harness exists; there is no labelled suite. Ten
    strategies with no measurement is a count.
-3. **No multimodal extraction.** Section 11. `multimodal` retrieval is ready and filters on a key
-   nothing writes.
+3. **No OCR and no vision.** Section 11. PDF page structure and modality now survive ingestion, so
+   `multimodal` retrieval works on real content — but a scanned page is still indexed as a
+   placeholder saying it could not be read. Needs Pillow and one `OcrEngine` adapter. Audio and
+   video have no extraction at all.
 4. **Nothing has been trained or promoted.** Section 13. The ML pipeline is plumbing.
 5. **Performance numbers describe in-memory adapters and an echo provider.** Section 16. The
    interesting numbers do not exist yet.

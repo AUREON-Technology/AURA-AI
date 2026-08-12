@@ -37,12 +37,18 @@ from ..observability.logging import get_logger
 from ..ports.llm import EmbeddingProvider, Reranker
 from ..ports.storage import DocumentStore, VectorPoint, VectorStore
 from .chunking import ChunkingConfig, chunk_with_headings
+from .documents import ExtractedBlock
 from .index_manager import IndexManager
 from .retrieval import BM25Index, HeuristicReranker, reciprocal_rank_fusion
 
 __all__ = ["KnowledgeEngine", "IngestionResult"]
 
 logger = get_logger("knowledge")
+
+#: Chunk-metadata keys that must survive the vector-payload round trip. Deliberately a fixed list
+#: rather than "copy everything not already a field": the payload also carries the content and the
+#: owner, and echoing those back into metadata would duplicate them on every retrieved chunk.
+_PROVENANCE_KEYS = ("modality", "page", "needs_ocr")
 
 
 class IngestionResult:
@@ -123,7 +129,7 @@ class KnowledgeEngine:
     async def ingest(
         self,
         *,
-        content: str,
+        content: str = "",
         title: str,
         document_id: DocumentId | None = None,
         owner_id: UserId | None = None,
@@ -132,8 +138,22 @@ class KnowledgeEngine:
         trust_tier: TrustTier = TrustTier.COMMUNITY,
         metadata: Mapping[str, Any] | None = None,
         language: str | None = None,
+        segments: Sequence[ExtractedBlock] | None = None,
     ) -> IngestionResult:
+        """Chunk, guard, embed and index a document.
+
+        ``segments`` is the structured form, produced by
+        :func:`aura_core.knowledge.documents.extract_pdf`. Passing it does two things a single
+        ``content`` string cannot: each block is chunked on its own, so no chunk straddles a page
+        boundary, and each block's ``modality`` and ``page`` follow its chunks into the vector
+        payload -- which is what makes ``MultimodalRAG``'s filter select real content.
+
+        ``content`` remains the plain-text path and stays the default. When only ``segments`` is
+        given, the document text is derived from it.
+        """
         started = time.perf_counter()
+        if not content and segments:
+            content = "\n\n".join(b.text for b in segments if b.text)
         text = content.strip()
         if not text:
             raise ValidationError("cannot ingest empty content")
@@ -170,13 +190,14 @@ class KnowledgeEngine:
             else candidate
         )
 
-        pieces = chunk_with_headings(text, self._chunking)
+        pieces, piece_metadata = self._chunk_pieces(text, segments)
         if not pieces:
             raise KnowledgeError("chunking produced no content", details={"document": doc_id.value})
 
         quarantined = 0
         if self._safety is not None:
             accepted_pieces: list[tuple[str, tuple[str, ...]]] = []
+            accepted_metadata: list[Mapping[str, Any]] = []
             scanned = await self._safety.guard_context_items(
                 [(f"{doc_id.value}#{i}", piece) for i, (piece, _path) in enumerate(pieces)]
             )
@@ -186,9 +207,15 @@ class KnowledgeEngine:
                 key = f"{doc_id.value}#{index}"
                 if key in accepted_text:
                     accepted_pieces.append((accepted_text[key], path))
+                    # Filtered in lockstep. Keeping the two lists index-aligned is the whole
+                    # correctness requirement here: drop one without the other and every surviving
+                    # chunk after the first quarantined one reports the wrong page.
+                    if piece_metadata:
+                        accepted_metadata.append(piece_metadata[index])
                 else:
                     quarantined += 1
             pieces = accepted_pieces
+            piece_metadata = accepted_metadata
             if not pieces:
                 # Every chunk was instruction-shaped. Ingesting nothing is correct; recording
                 # why is what makes it diagnosable.
@@ -208,7 +235,7 @@ class KnowledgeEngine:
                     skipped_reason="fully_quarantined",
                 )
 
-        chunks = build_chunks(document, pieces)
+        chunks = build_chunks(document, pieces, chunk_metadata=piece_metadata or None)
 
         identity = await self._indexes.ensure_ready()
         await self._embed_and_write(chunks, identity)
@@ -255,6 +282,28 @@ class KnowledgeEngine:
             document=document, chunks=len(chunks), created=True,
             quarantined=quarantined, duration_ms=duration,
         )
+
+    def _chunk_pieces(
+        self, text: str, segments: Sequence[ExtractedBlock] | None
+    ) -> tuple[list[tuple[str, tuple[str, ...]]], list[Mapping[str, Any]]]:
+        """Chunk either the whole text or each extracted block, and keep per-piece provenance.
+
+        Returns ``(pieces, metadata)`` index-aligned, with ``metadata`` empty for the plain-text
+        path so ``build_chunks`` behaves exactly as it did before segments existed.
+        """
+        if not segments:
+            return chunk_with_headings(text, self._chunking), []
+
+        pieces: list[tuple[str, tuple[str, ...]]] = []
+        metadata: list[Mapping[str, Any]] = []
+        for block in segments:
+            if not block.text.strip():
+                continue
+            block_meta = block.chunk_metadata
+            for piece in chunk_with_headings(block.text, self._chunking):
+                pieces.append(piece)
+                metadata.append(block_meta)
+        return pieces, metadata
 
     async def _embed_and_write(self, chunks: Sequence[Chunk], identity: IndexIdentity) -> None:
         """Embed in batches and upsert.
@@ -572,7 +621,15 @@ class KnowledgeEngine:
                 content=content or str(payload.get("content", "")),
                 heading_path=tuple(payload.get("heading_path") or ()),
                 owner_id=UserId(owner) if owner and owner != "global" else None,
-                metadata={"title": payload.get("title", "")},
+                # Provenance keys have to survive the round trip, not just the filter. Rebuilding
+                # with only the title made `modality` and `page` write-only: the vector store could
+                # filter on them, but a retrieved chunk could not say which page it came from, so
+                # no citation could name one and nothing downstream could tell an unreadable-page
+                # placeholder apart from real content.
+                metadata={
+                    "title": payload.get("title", ""),
+                    **{k: payload[k] for k in _PROVENANCE_KEYS if k in payload},
+                },
             )
 
         document_id, version, index = self._parse_chunk_id(chunk_id)

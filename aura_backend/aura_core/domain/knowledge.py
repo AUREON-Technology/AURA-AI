@@ -165,7 +165,21 @@ class Chunk:
         return ChunkId(f"{document_id.value}:v{version}:{index}")
 
     def citation(self) -> str:
-        location = " > ".join(self.heading_path) if self.heading_path else f"chunk {self.index}"
+        """A human-readable reference, precise enough to go and check.
+
+        Prefers the page number when the extraction recorded one, because "page 4" is a place a
+        reader can turn to and "chunk 7" is not. Falls back to the heading path, then to the chunk
+        index -- in that order, because a heading is still a location a person can find.
+        """
+        page = self.metadata.get("page")
+        if page is not None:
+            location = f"page {page}"
+            if self.heading_path:
+                location += " > " + " > ".join(self.heading_path)
+        elif self.heading_path:
+            location = " > ".join(self.heading_path)
+        else:
+            location = f"chunk {self.index}"
         return f"{self.document_id.value}@v{self.document_version} ({location})"
 
 
@@ -411,8 +425,25 @@ def estimate_tokens(text: str) -> int:
     return max(1, (len(text) + 3) // 4)
 
 
-def build_chunks(document: Document, pieces: Sequence[tuple[str, tuple[str, ...]]]) -> tuple[Chunk, ...]:
-    """Materialise chunks for a document version from ``(content, heading_path)`` pairs."""
+def build_chunks(
+    document: Document,
+    pieces: Sequence[tuple[str, tuple[str, ...]]],
+    *,
+    chunk_metadata: Sequence[Mapping[str, Any]] | None = None,
+) -> tuple[Chunk, ...]:
+    """Materialise chunks for a document version from ``(content, heading_path)`` pairs.
+
+    ``chunk_metadata`` is index-aligned with ``pieces`` and merged into each chunk's metadata. It
+    exists so that per-page provenance from a structured extraction (``modality``, ``page``) reaches
+    the vector payload, where ``MultimodalRAG`` can filter on it. Kept as a parallel sequence rather
+    than widening the ``pieces`` tuple, because every existing caller passes the output of
+    ``chunk_with_headings`` and a shape change would break all of them for one optional feature.
+
+    A shorter ``chunk_metadata`` than ``pieces`` is not an error -- the remaining chunks simply get
+    the base metadata -- so a caller that filters pieces after building the metadata list degrades
+    to less provenance rather than to a crash.
+    """
+    extra = tuple(chunk_metadata or ())
     return tuple(
         Chunk(
             id=Chunk.build_id(document.id, document.version, i),
@@ -424,7 +455,11 @@ def build_chunks(document: Document, pieces: Sequence[tuple[str, tuple[str, ...]
             token_estimate=estimate_tokens(content),
             owner_id=document.owner_id,
             trust_tier=document.trust_tier,
-            metadata={"source_type": str(document.source_type), "title": document.title},
+            metadata={
+                "source_type": str(document.source_type),
+                "title": document.title,
+                **(dict(extra[i]) if i < len(extra) else {}),
+            },
         )
         for i, (content, heading_path) in enumerate(pieces)
     )

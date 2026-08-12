@@ -145,8 +145,8 @@ Measured on 4 vCPU / 15 GB with the in-memory stack — see the
 | Pipeline overhead (p95, model time excluded) | **4.6 ms** — target is 60 ms |
 | Guard pipeline over 2 KB (p50) | 0.21 ms |
 | Concurrent turns before throughput falls off | 32 — the legacy pipeline caps at ~4 |
-| Tests | 1247, ~7 s, no infrastructure |
-| Coverage | 89% |
+| Tests | 1277, ~7 s, no infrastructure |
+| Coverage | 90% |
 | External AI inference APIs | **none** — enforced by four independent checks |
 
 ## Deploying

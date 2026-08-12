@@ -136,6 +136,11 @@ holds tokens it issued.
 
 ## 4. Subsystem status against the target
 
+The **Present?** column is the state at the audit commit `e767c4a` and is not revised — that is the
+point of a baseline. Where the mission has since changed the answer, the Notes column says so and
+names where. Two rows were annotated that way before this convention was written down (Observability
+and the reranker); the rest follow it.
+
 | Target capability | Present? | Notes |
 | --- | --- | --- |
 | AI gateway, authenticated | yes | `/api/v3/*`, auth → authz → rate limit → orchestrator |
@@ -156,10 +161,10 @@ holds tokens it issued.
 | **Corrective RAG** | **no** | no relevance evaluation → reformulate → re-retrieve loop |
 | **Self-RAG** | **no** | confidence is computed, but no reflective verification pass |
 | **Agentic RAG** | partial | planner/executor/tools exist; not wired as a retrieval strategy |
-| **Multimodal RAG** | **no** | no OCR, no vision, no image or table extraction |
-| **Graph RAG** | **no** | `InMemoryGraphStore` is a stub; no entities, edges, or multi-hop retrieval |
+| **Multimodal RAG** | **no** | no OCR, no vision, no image or table extraction. *Since built in part:* `knowledge/documents.py` gives per-page modality and page numbers, so the strategy filters real content; OCR and vision are still absent (Final Report §11) |
+| **Graph RAG** | **no** | `InMemoryGraphStore` is a stub; no entities, edges, or multi-hop retrieval. *Since built* (Final Report §12) |
 | Self-hosted reranker model | yes | `CrossEncoderReranker`, ms-marco-MiniLM-L-6-v2, loaded locally. Opt-in: adds 100-300 ms per retrieval on CPU |
-| Storage adapters for prod | **no** | see §5 |
+| Storage adapters for prod | **no** | see §5. *Since written* — all three, plus a fitness test that parses the production compose file |
 
 ---
 

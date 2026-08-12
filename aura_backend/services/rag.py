@@ -190,14 +190,42 @@ class RAGService:
     self._embedding_cache[text_hash] = res_embedding
     return res_embedding
 
-  def ingest_document(self, doc_id: str, content: str, metadata: Dict[str, Any]) -> bool:
-    """Chunks and uploads a document to local/cloud Qdrant."""
+  def ingest_document(
+    self,
+    doc_id: str,
+    content: str,
+    metadata: Dict[str, Any],
+    segments: Any = None,
+  ) -> bool:
+    """Chunks and uploads a document to local/cloud Qdrant.
+
+    ``segments`` is an optional sequence of ``aura_core.knowledge.documents.ExtractedBlock``. When
+    given, each block is chunked separately and its per-block metadata (``modality``, ``page``) is
+    merged into every chunk's payload. That is what lets a reader ask about page 4 and what lets the
+    v3 ``multimodal`` strategy filter on modality — neither is possible once pages have been
+    concatenated into one string, because the page numbers no longer exist to filter on.
+
+    Omitting it preserves the previous behaviour exactly: one text blob, one metadata dict.
+    """
     if not self.client:
       logger.warning("Cannot ingest document: Qdrant client not initialized.")
       return False
 
     try:
-      chunks = self._chunk_text(content, max_chars=1000, overlap=100)
+      if segments:
+        # (chunk_text, extra_payload) pairs. The chunk index stays global across blocks so point
+        # ids remain unique — restarting it per page would collide every page after the first.
+        chunk_pairs = [
+          (piece, block.chunk_metadata)
+          for block in segments
+          if block.text.strip()
+          for piece in self._chunk_text(block.text, max_chars=1000, overlap=100)
+        ]
+      else:
+        chunk_pairs = [
+          (piece, {}) for piece in self._chunk_text(content, max_chars=1000, overlap=100)
+        ]
+      chunks = [piece for piece, _extra in chunk_pairs]
       points = []
 
       # Generate first embedding to determine dimension dynamically and ensure collection
@@ -205,19 +233,20 @@ class RAGService:
         first_emb = self._get_embedding(chunks[0])
         self._ensure_collection_exists(len(first_emb))
 
-        for idx, chunk in enumerate(chunks):
+        for idx, (chunk, extra) in enumerate(chunk_pairs):
           # Skip embedding generation for first chunk since we already did it
           embedding = first_emb if idx == 0 else self._get_embedding(chunk)
           point_id = f"{doc_id}_{idx}"
-          
+
           # Build payload
           payload = {
             "chunk_index": idx,
             "content": chunk,
             "doc_id": doc_id,
-            **metadata
+            **metadata,
+            **extra,
           }
-          
+
           from services.deterministic_id import get_deterministic_id
           points.append(PointStruct(
             id=get_deterministic_id(point_id),
@@ -237,23 +266,47 @@ class RAGService:
       return False
 
   def ingest_pdf(self, doc_id: str, pdf_bytes: bytes, metadata: Dict[str, Any]) -> bool:
-    """Extracts text from PDF bytes and ingests it into Qdrant."""
+    """Extracts a PDF page by page and ingests it into Qdrant.
+
+    This used to concatenate every page into one string. That destroyed page numbers at ingestion,
+    so no amount of retrieval quality downstream could answer "what does page 4 say" — the
+    information was already gone. Worse, a page that was a *scan* extracted to nothing and was
+    silently dropped, so a twenty-page scanned contract could be indexed as five pages of text with
+    no record that fifteen pages were never read.
+
+    ``extract_pdf`` (shared with the v3 kernel, so the two paths cannot disagree about what a page
+    is) keeps the page numbers, tags each block's modality, and represents an unreadable page with a
+    block that says so rather than with silence.
+    """
     try:
-      import io
-      from pypdf import PdfReader
-      
-      reader = PdfReader(io.BytesIO(pdf_bytes))
-      text = ""
-      for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-          text += page_text + "\n"
-          
-      if not text.strip():
-        logger.warning(f"No text extracted from PDF {doc_id}.")
+      # Imported lazily, matching the existing style in this module: the legacy tree's import graph
+      # stays as it was, and `aura_core` is only touched when a PDF is actually ingested.
+      from aura_core.knowledge.documents import extract_pdf
+
+      title = str(metadata.get("title") or metadata.get("filename") or doc_id)
+      extraction = extract_pdf(pdf_bytes, title=title)
+
+      if not extraction.blocks:
+        logger.warning(
+          f"No content extracted from PDF {doc_id}: "
+          f"{extraction.pages} pages, {len(extraction.blank_pages)} blank."
+        )
         return False
-        
-      return self.ingest_document(doc_id=doc_id, content=text, metadata=metadata)
+
+      if extraction.unreadable_pages:
+        # Logged at warning because it is actionable: these pages are invisible to search until
+        # OCR is configured, and the operator is the only one who can change that.
+        logger.warning(
+          f"PDF {doc_id}: pages {list(extraction.unreadable_pages)} have no text layer "
+          f"and were indexed as image placeholders (OCR is not configured)."
+        )
+
+      return self.ingest_document(
+        doc_id=doc_id,
+        content=extraction.text(),
+        metadata=metadata,
+        segments=extraction.blocks,
+      )
     except Exception as e:
       logger.error(f"Failed to parse and ingest PDF {doc_id}: {e}")
       return False
