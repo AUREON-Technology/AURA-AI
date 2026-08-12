@@ -6,8 +6,9 @@ from config import settings
 
 class TestMultiAgentIntelligence(unittest.TestCase):
     def setUp(self):
-        # Ensure a clean state
-        settings.gemini_api_key = "" # Run in mock mode for unit tests
+        # Ensure a clean state. `settings.gemini_api_key = ""` used to sit here to force mock
+        # mode; the field is gone along with the provider, and clearing the two clients below is
+        # what actually selects the local fallback paths these tests exercise.
         settings.debug_mode = True   # Enable debug mode to test local fallbacks
         agent_orchestrator.client = None
         memory_service.client_ai = None
@@ -18,7 +19,7 @@ class TestMultiAgentIntelligence(unittest.TestCase):
         self.assertEqual(intent, "task_planner")
 
     def test_memory_extraction_fallback(self):
-        """Verify memory extraction runs locally and extracts facts without calling Gemini."""
+        """Verify memory extraction runs locally and extracts facts without any model call."""
         facts = memory_service.extract_memories([
             {"role": "user", "content": "I am studying CS"},
             {"role": "assistant", "content": "That is neat!"}

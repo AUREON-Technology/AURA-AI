@@ -56,9 +56,10 @@ class HealthStatus:
 class LLMProvider(Protocol):
     """One model endpoint.
 
-    A *provider instance* is one (endpoint, model) pair, not a vendor. ``gemini-2.5-flash`` and
-    ``gemini-2.5-pro`` are two providers sharing an adapter class. That granularity is what lets
-    the router reason about cost and quality per model rather than per company.
+    A *provider instance* is one (endpoint, model) pair, not a vendor. ``qwen2.5:7b-instruct``
+    on the local Ollama and ``qwen2.5:32b-instruct`` on a GPU host are two providers sharing an
+    adapter class. That granularity is what lets the router reason about latency and quality per
+    model rather than per host.
     """
 
     @property

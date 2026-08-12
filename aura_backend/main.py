@@ -13,6 +13,7 @@ from typing import List, Dict, Any, Optional
 
 from config import settings
 from services.ai import ai_service
+from services.ollama import ollama_service
 from services.rag import rag_service
 from services.automation import automation_service
 from services.agent import agent_orchestrator
@@ -131,11 +132,11 @@ class PayloadSizeLimitMiddleware(BaseHTTPMiddleware):
 app = FastAPI(title="AURA AI OS Backend", version="1.0")
 configure_tracing(app)
 
-from services.budget import GeminiBudgetExceededException
+from services.budget import InferenceBudgetExceededException
 from fastapi.responses import JSONResponse
 
-@app.exception_handler(GeminiBudgetExceededException)
-async def gemini_budget_exception_handler(request: Request, exc: GeminiBudgetExceededException):
+@app.exception_handler(InferenceBudgetExceededException)
+async def inference_budget_exception_handler(request: Request, exc: InferenceBudgetExceededException):
     return JSONResponse(
         status_code=429,
         content={
@@ -308,10 +309,20 @@ async def _probe_dependencies() -> Dict[str, Any]:
         except Exception as e:
             deps["redis"] = {"configured": True, "reachable": False, "error": str(e)[:200]}
 
-    # Gemini is deliberately NOT probed: the only way to verify it is to spend
-    # a real generation/embedding call, and doing that on every health poll
-    # would burn quota (and money) to answer a monitoring question.
-    deps["gemini"] = {"configured": bool(settings.gemini_api_key), "probed": False}
+    # Ollama — the inference backend that serves every AI request, and until now
+    # the one dependency this endpoint said nothing about. It reported a
+    # `gemini` entry instead, which was unprobed by construction ("verifying it
+    # costs a real generation call") and, after external inference was removed,
+    # simply false: there is no Gemini in this system.
+    #
+    # Local inference has no quota and no per-call cost, and `/api/tags` lists
+    # loaded models without generating anything, so the reason not to probe
+    # evaporated along with the provider. This is a real round trip.
+    try:
+        reachable = await ollama_service.check_health()
+        deps["ollama"] = {"configured": True, "reachable": bool(reachable)}
+    except Exception as e:
+        deps["ollama"] = {"configured": True, "reachable": False, "error": str(e)[:200]}
 
     return deps
 
@@ -409,7 +420,7 @@ async def analyze_email(request: EmailAnalyzeRequest, user_info: dict = Depends(
             body=request.body
         )
         return result
-    except GeminiBudgetExceededException as ge:
+    except InferenceBudgetExceededException as ge:
         raise ge
     except Exception as e:
         logger.error(f"Error in analyze_email for user {user_info.get('email')}: {e}")
@@ -424,7 +435,7 @@ async def analyze_issue(request: IssueAnalyzeRequest, user_info: dict = Depends(
             body=request.body
         )
         return result
-    except GeminiBudgetExceededException as ge:
+    except InferenceBudgetExceededException as ge:
         raise ge
     except Exception as e:
         logger.error(f"Error in analyze_issue for user {user_info.get('email')}: {e}")

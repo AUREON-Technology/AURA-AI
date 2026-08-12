@@ -15,7 +15,6 @@ resource "google_project_iam_member" "backend_secret_access" {
   for_each = toset([
     google_secret_manager_secret.database_url.secret_id,
     google_secret_manager_secret.jwt_secret.secret_id,
-    google_secret_manager_secret.gemini_api_key.secret_id,
     google_secret_manager_secret.qdrant_api_key.secret_id,
     google_secret_manager_secret.firebase_credentials.secret_id,
   ])
@@ -75,15 +74,9 @@ resource "google_cloud_run_v2_service" "backend" {
           }
         }
       }
-      env {
-        name = "GEMINI_API_KEY"
-        value_source {
-          secret_key_ref {
-            secret  = google_secret_manager_secret.gemini_api_key.secret_id
-            version = "latest"
-          }
-        }
-      }
+      # An env block for a hosted-inference API key sat here, sourced from Secret Manager.
+      # Removed: no code reads it, and injecting such a credential into a runtime that is
+      # forbidden from using one is the kind of dead wiring that quietly becomes live wiring.
       env {
         name = "QDRANT_API_KEY"
         value_source {

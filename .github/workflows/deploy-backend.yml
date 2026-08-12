@@ -41,6 +41,10 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      # A hosted-inference API key was mapped into --set-secrets below. Removed: nothing in the
+      # image reads it, and the platform is forbidden from calling hosted inference. The Secret
+      # Manager resource itself is gone from infra/terraform/secrets.tf — read the note there
+      # before applying, since Terraform will want to destroy the secret.
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy aura-backend \
@@ -48,7 +52,7 @@ jobs:
             --region="${{ vars.GCP_REGION }}" \
             --source=aura_backend \
             --allow-unauthenticated \
-            --set-secrets="DATABASE_URL=aura-database-url:latest,JWT_SECRET=aura-jwt-secret:latest,GEMINI_API_KEY=aura-gemini-api-key:latest,QDRANT_API_KEY=aura-qdrant-api-key:latest,FIREBASE_CREDENTIALS_JSON=aura-firebase-credentials:latest" \
+            --set-secrets="DATABASE_URL=aura-database-url:latest,JWT_SECRET=aura-jwt-secret:latest,QDRANT_API_KEY=aura-qdrant-api-key:latest,FIREBASE_CREDENTIALS_JSON=aura-firebase-credentials:latest" \
             --set-env-vars="REDIS_HOST=${{ vars.GCP_REDIS_HOST }},QDRANT_HOST=${{ vars.GCP_QDRANT_HOST }},ALLOWED_ORIGINS=${{ vars.ALLOWED_ORIGINS }}" \
             --vpc-connector="${{ vars.GCP_VPC_CONNECTOR }}" \
             --min-instances=0 \

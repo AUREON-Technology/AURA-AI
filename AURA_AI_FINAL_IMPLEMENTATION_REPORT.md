@@ -1,6 +1,8 @@
 # AURA AI — Final Implementation Report
 
-Written 2026-08-12, describing the tree at commit `e7c7896`.
+Written 2026-08-12. Sections 1-20 describe the tree as merged at `e7c7896`; section 3's
+enforcement table and section 11 were revised after later work extended both, and each revision
+says so where it changes an earlier claim.
 
 This is the record of a mission with one governing constraint: **AURA AI must run its own AI, on its
 own servers, with no external inference API anywhere in the system, and it must keep the product it
@@ -94,18 +96,42 @@ Sixteen commits between the audit baseline and `e7c7896`. The substantive ones:
 **Every external inference path is gone, and cannot come back.** Deleted
 `llm/providers/gemini.py` and `anthropic.py`; removed `google-genai` from requirements; narrowed
 `ProviderConfig._KINDS` to `{openai_compatible, ollama, echo}`; rewrote `services/ai.py` to use
-Ollama as its only provider. Enforcement is four independent layers reading **one shared registry**
+Ollama as its only provider. Enforcement is seven independent layers reading **one shared registry**
 (`aura_core/config/external_inference.py`) so they cannot drift apart:
 
 | Layer | What it catches | Where |
 | --- | --- | --- |
 | AST import scan | any import of a banned SDK, at any nesting depth — including lazy imports inside functions | `tests/architecture/test_no_external_inference.py` |
-| Source endpoint scan | a banned hostname appearing as a literal anywhere in the tree | same |
-| Dependency scan | a banned distribution declared in `requirements*.txt` or `pubspec.yaml` | same |
+| Source endpoint scan | a banned hostname appearing as a literal anywhere in the backend | same |
+| Python dependency scan | a banned distribution declared in `requirements*.txt` | same |
+| **Dart dependency scan** | a hosted-API *or on-device* package declared in `pubspec.yaml` | same |
+| **Manifest credential scan** | a hosted-inference API key provisioned by any YAML, HCL, shell or env template | same |
+| **Config template scan** | a removed provider `kind` offered by any configuration example | same |
 | Runtime validation | a `base_url` pointing at a banned host — rejected at construction, before a request can be made | `config/settings.py::_reject_external_base_url` |
 
-Getting inference off this system now requires defeating all four deliberately. That is the
-strongest claim in this report.
+**The last three were added after the first four missed real violations, and how they missed them
+is the more useful fact.** Every one of the original four opens only `*.py` files under
+`aura_backend/` plus `requirements*.txt`. So:
+
+- **`pubspec.yaml` was read by nothing.** Removing `google_generative_ai` and `flutter_llama` from
+  the client was enforced by memory alone — re-adding either would have passed the entire suite.
+  This was the largest hole, and it sat on the side of the system Rules 14–16 are specifically
+  about. An earlier draft of this report claimed the dependency scan covered `pubspec.yaml`. It did
+  not; that claim was wrong and this is the correction.
+- **`infra/terraform/`, `.github/workflows/deploy-backend.yml` and `deploy/.env.example` all still
+  provisioned a `GEMINI_API_KEY`** into a runtime where nothing read it. Not a call — but the last
+  step before one, and it reads to the next engineer as permission.
+- **`deploy/.env.example` instructed operators to set `AURA_PROVIDER_CLOUD_KIND=gemini`.** A
+  template telling you to do the forbidden thing, which had additionally been broken since that
+  kind was removed, so following it failed at boot.
+
+The generalisable lesson: **a scan that reads one file type enforces the rule only in that file
+type.** "No external AI APIs" is a property of a whole deployment, and a deployment is mostly not
+Python. All three new layers were mutation-tested — a banned Dart package and a commented-out
+`GEMINI_API_KEY` were each re-introduced and each caught — because a fitness function that cannot
+fail detects nothing.
+
+Getting inference off this system now requires defeating all seven deliberately.
 
 **The client became a client.** Deleted `lib/core/ai/offline_agents/` (5 files), the
 `google_generative_ai` and `flutter_llama` dependencies, and a 986 MB GGUF asset tracked in LFS.
@@ -562,14 +588,14 @@ staging copy. One drill would be a couple of hours and would move Reliability of
 
 | Suite | Count | Notes |
 | --- | --- | --- |
-| `aura_backend/tests/` | **1277 passed**, 8 deselected | ~7 s, no infrastructure required |
+| `aura_backend/tests/` | **1284 passed**, 8 deselected | ~7 s, no infrastructure required |
 | Legacy root suite | **61 passed, 2 skipped** | 2 skipped pending Docker |
 | Coverage on `aura_core` | **90%** | 11,059 statements, 1,159 uncovered |
 | Test code | 41 files / ~13,700 lines | roughly half the size of the code it covers |
 
 Three fitness-test groups make architecture a build failure rather than a review comment:
 `test_dependency_rules.py` (layer direction, stdlib-only domain, async ports),
-`test_no_external_inference.py` (the four layers in section 3), and
+`test_no_external_inference.py` (the six static layers in section 3), and
 `test_backends_are_resolvable.py` (every backend name constructs; the production compose file's
 selection is built exactly as written).
 
@@ -641,7 +667,7 @@ Two things I would spend money on before any hardware:
 | Rule | Requirement | Status | How it is enforced |
 | --- | --- | --- | --- |
 | 1–3 | Do not redesign the app, UI, navigation or branding | ✅ | Client diff is removal + call-site repair only; one string changed (section 4) |
-| 4–6, 17–19 | No external AI/LLM API, no hidden fallback | ✅ | **External AI APIs: NONE** — four independent checks over one registry |
+| 4–6, 17–19 | No external AI/LLM API, no hidden fallback | ✅ | **External AI APIs: NONE** — seven independent checks over one registry, covering Python, Dart, YAML, HCL and runtime config |
 | 7–13 | All AI processing on our servers; client is a client | ✅ | Ollama + local embeddings; client has no provider vocabulary |
 | 14–16 | No model in the APK, on the device, or inferring on-device | ✅ | **Mobile AI models: NONE** — 5 files, 2 packages and a 986 MB asset deleted; green release build |
 | 20 | Functional with no internet | ✅ | Weights resident in volumes; no egress on the serving path |

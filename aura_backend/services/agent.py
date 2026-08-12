@@ -6,7 +6,7 @@ from config import settings
 from services.memory import memory_service
 from services.ollama import ollama_service
 from services.rag import rag_service
-from services.budget import increment_and_check_gemini_budget, GeminiBudgetExceededException
+from services.budget import increment_and_check_inference_budget, InferenceBudgetExceededException
 
 
 logger = logging.getLogger(__name__)
@@ -281,8 +281,8 @@ class AgentOrchestrator:
             ]
 
         try:
-            increment_and_check_gemini_budget()
-        except GeminiBudgetExceededException as budget_exc:
+            increment_and_check_inference_budget()
+        except InferenceBudgetExceededException as budget_exc:
             yield f"\n[Error: {budget_exc.message}. Please retry after {budget_exc.retry_after} seconds.]\n"
             return
 

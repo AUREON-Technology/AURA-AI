@@ -3,7 +3,9 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     port: int = 8000
-    gemini_api_key: str = ""
+    # `gemini_api_key` used to live here. Removed with the provider: a settings field for a
+    # banned API is an invitation to wire it back up, and the /health endpoint was reporting
+    # `gemini: {configured: ...}` off the back of it long after nothing read the value.
     qdrant_host: str = ""
     qdrant_api_key: str = ""
     ollama_host: str = "http://localhost:11434"

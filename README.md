@@ -1,12 +1,13 @@
 # AURA AI
 
 A production AI platform that runs on a single VPS: hybrid retrieval over your own documents,
-durable memory, tool use, and a local or hosted model behind one gateway.
+durable memory, tool use, and a self-hosted model behind one gateway. No inference leaves your
+infrastructure.
 
 ```bash
 cd aura_backend
 pip install -r requirements.txt
-pytest          # 1010 tests, ~7 seconds, no Docker, no network, no model
+pytest          # 1284 tests, ~7 seconds, no Docker, no network, no model
 ```
 
 That the test suite needs no infrastructure is a design property, not a convenience: the domain
@@ -24,8 +25,9 @@ implementations of every storage port. A fitness test fails the build if that st
   is a real operation.
 - **Uses tools** — capability-gated, argument-validated, timed out, and audited on every attempt
   including refusals.
-- **Runs on your hardware** — local models via Ollama or vLLM, with automatic failover to a
-  hosted provider. `LOCAL_FIRST` is the default policy.
+- **Runs entirely on your hardware** — Ollama or vLLM, on your own machines. There is no hosted
+  provider to fail over to: external inference APIs are rejected at construction and the build
+  fails if one reappears in code, dependencies, manifests or the Flutter client.
 - **Learns on a schedule, never silently** — a nightly job rebuilds the index into a *new*
   generation and promotes it only if quality gates pass. Promoting a fine-tuned model requires a
   recorded human approval; rollback never does.
@@ -63,7 +65,7 @@ These are deliberate, and each is tested:
    └──────────┴───────┴────────┴──────────┴─────────┴──────────┘
                       │
                       ▼
-              LLM Router  ──▶  local · OpenAI-compatible · Gemini · Anthropic
+              LLM Router  ──▶  Ollama · any OpenAI-compatible endpoint you host
 ```
 
 Layering, enforced by AST-based fitness tests in `tests/architecture/`:
@@ -145,9 +147,9 @@ Measured on 4 vCPU / 15 GB with the in-memory stack — see the
 | Pipeline overhead (p95, model time excluded) | **4.6 ms** — target is 60 ms |
 | Guard pipeline over 2 KB (p50) | 0.21 ms |
 | Concurrent turns before throughput falls off | 32 — the legacy pipeline caps at ~4 |
-| Tests | 1277, ~7 s, no infrastructure |
+| Tests | 1284, ~7 s, no infrastructure |
 | Coverage | 90% |
-| External AI inference APIs | **none** — enforced by four independent checks |
+| External AI inference APIs | **none** — enforced by seven independent checks |
 
 ## Deploying
 

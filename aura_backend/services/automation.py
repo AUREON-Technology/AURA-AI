@@ -55,8 +55,8 @@ class AutomationService:
             # The budget check stays. It no longer guards a bill -- local inference is free at the
             # margin -- but it still guards the single scarcest resource on the box: model
             # concurrency. An unbounded fan-out of analysis calls starves interactive chat.
-            from services.budget import increment_and_check_gemini_budget, GeminiBudgetExceededException
-            increment_and_check_gemini_budget()
+            from services.budget import increment_and_check_inference_budget, InferenceBudgetExceededException
+            increment_and_check_inference_budget()
 
             data = ollama_service.generate_json(
                 prompt,
@@ -69,7 +69,7 @@ class AutomationService:
                 logger.warning("Local inference returned no usable email analysis.")
                 return fallback
             return data
-        except GeminiBudgetExceededException:
+        except InferenceBudgetExceededException:
             raise
         except Exception as e:
             logger.error(f"Error in local email analysis: {e}")
@@ -98,8 +98,8 @@ class AutomationService:
         }
 
         try:
-            from services.budget import increment_and_check_gemini_budget, GeminiBudgetExceededException
-            increment_and_check_gemini_budget()
+            from services.budget import increment_and_check_inference_budget, InferenceBudgetExceededException
+            increment_and_check_inference_budget()
 
             data = ollama_service.generate_json(
                 prompt,
@@ -112,7 +112,7 @@ class AutomationService:
                 logger.warning("Local inference returned no usable issue analysis.")
                 return fallback
             return data
-        except GeminiBudgetExceededException:
+        except InferenceBudgetExceededException:
             raise
         except Exception as e:
             logger.error(f"Error in local issue analysis: {e}")

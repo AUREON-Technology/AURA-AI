@@ -23,7 +23,11 @@ __all__ = [
     "EXTERNAL_INFERENCE_HOSTS",
     "BANNED_SDK_ROOTS",
     "BANNED_DISTRIBUTIONS",
+    "BANNED_DART_PACKAGES",
+    "BANNED_CREDENTIAL_NAMES",
+    "BANNED_PROVIDER_KINDS",
     "is_external_inference_host",
+    "credential_name_variants",
 ]
 
 
@@ -98,6 +102,104 @@ BANNED_DISTRIBUTIONS: tuple[str, ...] = (
     "langchain-anthropic",
     "langchain-google-genai",
 )
+
+
+#: Dart/Flutter packages that perform or broker inference. The client is a client: it must hold
+#: no key, no model and no inference path (Rules 8-16, 30).
+#:
+#: This list exists because deleting ``google_generative_ai`` and ``flutter_llama`` from
+#: ``pubspec.yaml`` was, until now, enforced by nothing at all. The Python side had three static
+#: layers; the Dart side had none, so re-adding either package would have been caught only by
+#: someone remembering. ``flutter_llama`` is on-device inference rather than a hosted API, but it
+#: violates the same rule from the other direction and belongs in the same gate.
+BANNED_DART_PACKAGES: tuple[str, ...] = (
+    "google_generative_ai",
+    "googleai_dart",
+    "firebase_vertexai",
+    "firebase_ai",
+    "openai_dart",
+    "dart_openai",
+    "anthropic_dart",
+    "langchain_openai",
+    "flutter_llama",
+    "llama_cpp_dart",
+    "fllama",
+    "flutter_gemma",
+    "tflite_flutter",
+    "onnxruntime",
+)
+
+
+#: Environment-variable and secret names whose only purpose is to hold a hosted-inference
+#: credential. Scanned across deployment manifests -- YAML, HCL, shell, env templates -- which no
+#: other layer reads.
+#:
+#: This list is the direct product of a miss. ``GEMINI_API_KEY`` survived in
+#: ``infra/terraform``, ``.github/workflows/deploy-backend.yml`` and ``deploy/.env.example``
+#: through every one of the other checks, because none of them opens a file that is not Python or
+#: a requirements list. Provisioning a credential is not calling an API, but it is the last step
+#: before one, and it reads to the next engineer as permission.
+#:
+#: Deliberately excludes ambiguous names. ``GOOGLE_API_KEY`` is not here: this product legitimately
+#: uses Google Drive and Calendar, so that name has an innocent meaning and banning it would
+#: produce a failure an engineer learns to suppress. ``HF_TOKEN`` is excluded for the same reason --
+#: it also authenticates model *weight* downloads, which are permitted and separately gated
+#: (SEC-01). A list that cries wolf stops being read.
+BANNED_CREDENTIAL_NAMES: tuple[str, ...] = (
+    "GEMINI_API_KEY",
+    "GOOGLE_GENAI_API_KEY",
+    "OPENAI_API_KEY",
+    "AZURE_OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GROQ_API_KEY",
+    "OPENROUTER_API_KEY",
+    "TOGETHER_API_KEY",
+    "REPLICATE_API_TOKEN",
+    "COHERE_API_KEY",
+    "MISTRAL_API_KEY",
+    "PERPLEXITY_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "FIREWORKS_API_KEY",
+    "HUGGINGFACEHUB_API_TOKEN",
+)
+
+
+#: Provider ``kind`` values that no longer exist. ``ProviderConfig._KINDS`` rejects these at
+#: runtime, but configuration *templates* are not parsed by anything, so a template could -- and
+#: did -- instruct an operator to set one.
+#:
+#: Note what is absent: ``openai_compatible``, which is how we reach a *local* vLLM or LocalAI.
+#: Any matcher over this list must therefore respect value boundaries, or it will reject the one
+#: kind the platform depends on.
+BANNED_PROVIDER_KINDS: tuple[str, ...] = (
+    "gemini",
+    "anthropic",
+    "openai",
+    "azure",
+    "azure_openai",
+    "bedrock",
+    "vertex",
+    "vertexai",
+    "groq",
+    "openrouter",
+    "together",
+    "replicate",
+    "cohere",
+    "mistral",
+    "huggingface",
+)
+
+
+def credential_name_variants(name: str) -> tuple[str, ...]:
+    """Spellings of a credential name that mean the same thing to a scanner.
+
+    An env var is ``GEMINI_API_KEY``; the Secret Manager resource holding it is
+    ``aura-gemini-api-key``; a settings field is ``gemini_api_key``. All three are the same
+    provisioning act, and a scan that only knows the first misses the other two -- which is
+    exactly what happened.
+    """
+    lower = name.lower()
+    return (lower, lower.replace("_", "-"), lower.replace("_", ""))
 
 
 def is_external_inference_host(host: str) -> str | None:

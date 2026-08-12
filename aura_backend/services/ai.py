@@ -54,10 +54,10 @@ class AIService:
     # Concurrency guard. Formerly a spend cap on a metered API; now it bounds how many
     # simultaneous generations we ask of a single local model, which is the scarcest resource on
     # the box. Without it, background analysis jobs starve interactive chat.
-    from services.budget import increment_and_check_gemini_budget, GeminiBudgetExceededException
+    from services.budget import increment_and_check_inference_budget, InferenceBudgetExceededException
     try:
-      increment_and_check_gemini_budget()
-    except GeminiBudgetExceededException as budget_exc:
+      increment_and_check_inference_budget()
+    except InferenceBudgetExceededException as budget_exc:
       yield f"\n[Error: {budget_exc.message}. Please retry after {budget_exc.retry_after} seconds.]\n"
       return
 
