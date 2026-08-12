@@ -25,9 +25,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No flutter-version pin. Pinning one here duplicates the Dart constraint that
+      # aura_client/pubspec.yaml already states (`sdk: ^3.11.4`), in a form that rots silently:
+      # this job was pinned to Flutter 3.35.0, which ships Dart 3.9.0, so `flutter pub get`
+      # failed version solving on every run and the analyze and test steps below had never
+      # executed. Resolving `stable` keeps the pubspec as the single source of truth for what
+      # the code needs. `^3.11.4` still excludes Dart 4, so this cannot silently jump a major.
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.35.0"
           channel: stable
 
       - name: Install dependencies
@@ -36,11 +41,12 @@ jobs:
       - name: Regenerate Drift codegen
         run: dart run build_runner build --delete-conflicting-outputs
 
-      # Errors-only gate, matching this repo's actual current state: 61
-      # pre-existing info/warning-level lints remain in screens not yet
-      # migrated to the V2 design system (tracked as ongoing Phase 2
-      # rollout, Doc/V2_BLUEPRINT.md §13). Tighten to --fatal-infos once
-      # that backlog is cleared, so this gate doesn't start red.
+      # `flutter analyze` fails on warnings as well as errors, which is the right gate here.
+      #
+      # The previous comment claimed 61 pre-existing info/warning lints made that impossible. That
+      # is no longer true and may never have been measurable: this step had never run, because the
+      # pinned Flutter version could not resolve the pubspec's Dart constraint. On its first real
+      # execution the whole client produced 2 warnings, both unused imports.
       - name: Analyze
         run: flutter analyze
 
@@ -53,9 +59,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No flutter-version pin. Pinning one here duplicates the Dart constraint that
+      # aura_client/pubspec.yaml already states (`sdk: ^3.11.4`), in a form that rots silently:
+      # this job was pinned to Flutter 3.35.0, which ships Dart 3.9.0, so `flutter pub get`
+      # failed version solving on every run and the analyze and test steps below had never
+      # executed. Resolving `stable` keeps the pubspec as the single source of truth for what
+      # the code needs. `^3.11.4` still excludes Dart 4, so this cannot silently jump a major.
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.35.0"
           channel: stable
 
       - uses: actions/setup-java@v4

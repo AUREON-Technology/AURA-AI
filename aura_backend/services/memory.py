@@ -1,15 +1,14 @@
 import json
 import logging
 from typing import List, Dict, Any
-from google import genai
-from google.genai import types
 from config import settings
 from qdrant_client.http import models
+from services.ollama import ollama_service
 from services.rag import rag_service
 
 logger = logging.getLogger(__name__)
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 class Fact(BaseModel):
     type: str = Field(description="The category of fact. e.g. Name, Hobby, Study, Location, Goal, Preference")
@@ -21,9 +20,10 @@ class ExtractedFacts(BaseModel):
 
 class MemoryService:
     def __init__(self):
-        self.client_ai = None
-        if settings.gemini_api_key:
-            self.client_ai = genai.Client(api_key=settings.gemini_api_key)
+        # Fact extraction runs on our own inference host; there is no API client to hold. The
+        # Fact/ExtractedFacts pydantic models above are kept as the contract they always were --
+        # they are now enforced by validating the model's JSON rather than by passing a
+        # response_schema to a hosted API.
         self._memory_cache = {}
 
     @property
@@ -65,31 +65,46 @@ class MemoryService:
             f"Extract only explicitly stated, high-confidence facts. Do not make assumptions."
         )
         
-        try:
-            response = self.client_ai.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
+        # The hosted API enforced the shape for us via `response_schema=ExtractedFacts`. Ollama's
+        # JSON mode guarantees *valid JSON*, not the right JSON, so the schema has to be stated in
+        # the prompt and then actually verified below. This matters more than it did before: a 7B
+        # local model gets structure wrong far more often than a frontier model, and the previous
+        # `f.get("confidence", 0.0)` on raw dicts would have silently accepted a fact whose
+        # confidence arrived as the string "high".
+        system_instruction = (
+            "You are a personal fact extraction agent. Reply with JSON only, in exactly this "
+            'shape: {"facts": [{"type": "<category>", "value": "<fact in third person>", '
+            '"confidence": <number between 0 and 1>}]}. '
+            "Return an empty facts list if the conversation states nothing about the user. "
+            "confidence must be a number, not a word."
+        )
 
-                    response_mime_type="application/json",
-                    response_schema=ExtractedFacts,
-                    system_instruction="You are a personal fact extraction agent. Extract facts from the user conversation and output them matching the schema."
-                )
-            )
-            
-            extracted = json.loads(response.text)
-            facts_list = extracted.get("facts", [])
-            
-            # Apply confidence threshold
+        try:
+            payload = ollama_service.generate_json(prompt, system_instruction=system_instruction)
+            if payload is None:
+                logger.warning("Local inference returned no usable fact extraction.")
+                return []
+
+            # Validate rather than trust. A ValidationError here means the model produced
+            # well-formed JSON of the wrong shape, which is a normal local-model outcome and must
+            # not propagate as an exception into the caller's request.
+            try:
+                extracted = ExtractedFacts.model_validate(payload)
+            except ValidationError as e:
+                logger.warning(f"Fact extraction did not match the expected schema: {e.error_count()} error(s)")
+                return []
+
             CONFIDENCE_THRESHOLD = 0.75
-            valid_facts = []
-            for f in facts_list:
-                if f.get("confidence", 0.0) >= CONFIDENCE_THRESHOLD:
-                    val = f.get("value", "").strip()
-                    if val:
-                        valid_facts.append(val)
-                        
-            logger.info(f"Structured memory extraction: Extracted {len(valid_facts)} valid facts (Threshold >= {CONFIDENCE_THRESHOLD}).")
+            valid_facts = [
+                fact.value.strip()
+                for fact in extracted.facts
+                if fact.confidence >= CONFIDENCE_THRESHOLD and fact.value.strip()
+            ]
+
+            logger.info(
+                f"Structured memory extraction: {len(valid_facts)} of {len(extracted.facts)} "
+                f"facts cleared the confidence threshold (>= {CONFIDENCE_THRESHOLD})."
+            )
             return valid_facts
         except Exception as e:
             logger.error(f"Failed to extract memories via structured LLM: {e}")

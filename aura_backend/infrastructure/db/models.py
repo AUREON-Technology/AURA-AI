@@ -51,14 +51,32 @@ class User(Base):
 
 
 class SyncableMixin:
-    """Adds the (user_id, updated_at, deleted_at) triple every table needs
-    to participate in cursor-based sync. `deleted_at` is a soft delete —
-    tombstones are returned to clients on the next pull instead of a
-    separate pending-deletes table, unlike V1's Drift `PendingDeletes`."""
+    """Adds the columns every table needs to participate in cursor-based sync.
+
+    `deleted_at` is a soft delete — tombstones are returned to clients on the
+    next pull instead of a separate pending-deletes table, unlike V1's Drift
+    `PendingDeletes`.
+
+    **Two timestamps, two different clocks, two different jobs.**
+
+    `updated_at` is the *server's* clock and drives cursor pagination
+    (`WHERE updated_at > ?`). It has to be server-set: a cursor built from
+    client clocks would skip or repeat rows whenever devices disagreed.
+
+    `client_updated_at` is the *client's* clock and drives conflict detection.
+    It exists because those two questions were previously answered by the same
+    column, which is wrong for an offline-first API: comparing a client's
+    "I edited this on Jan 1" against the server's "I wrote this on Aug 10"
+    rejects the edit as stale whenever a device syncs later than it edited —
+    the normal case this API exists to serve. Nullable so rows written before
+    the column existed keep working; `api/v2/sync.py` falls back to
+    `updated_at` for them.
+    """
 
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    client_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

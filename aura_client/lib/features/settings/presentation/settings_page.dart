@@ -2,9 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/design_system/design_system.dart';
-import '../../../core/ai/offline_agents/offline_agent_manager.dart';
-import '../../../core/ai/online_agents/online_agent_manager.dart';
-import '../../../core/ai/ai_router/aura_ai_router.dart';
 
 /// V2 rebuild (Doc/V2_BLUEPRINT.md §3) — replaces the V1 flat grid of 5
 /// equally-weighted dashboard cards (which implied Profile/Models/
@@ -30,9 +27,6 @@ class _SettingsScaffold extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
-    final ollamaHost = ref.watch(ollamaHostProvider);
-    final geminiKey = ref.watch(localApiKeyProvider);
-    final aiProvider = ref.watch(aiProviderSettingProvider);
 
     return Scaffold(
       backgroundColor: palette.background,
@@ -100,8 +94,8 @@ class _SettingsScaffold extends StatelessWidget {
             ),
           ),
           const SizedBox(height: AuraSpacing.xl),
-          _SectionLabel('AI routing & API keys'),
-          _AIConfigCard(ref: ref, host: ollamaHost, geminiKey: geminiKey, activeProvider: aiProvider),
+          _SectionLabel('AI processing'),
+          const _AIConfigCard(),
         ],
       ),
     );
@@ -180,53 +174,36 @@ class _SettingsListItem extends StatelessWidget {
 }
 
 class _AIConfigCard extends StatelessWidget {
-  final WidgetRef ref;
-  final String host;
-  final String geminiKey;
-  final AIProvider activeProvider;
-
-  const _AIConfigCard({required this.ref, required this.host, required this.geminiKey, required this.activeProvider});
+  /// Reports where inference happens. Nothing here is configurable, deliberately.
+  ///
+  /// This card used to offer a provider dropdown (auto / Gemini / three on-device models) and a
+  /// text field for an Ollama daemon address. Every one of those options is gone: inference runs on
+  /// AURA's server, the client no longer holds a hosted-API key, and the client is not supposed to
+  /// know the model server's address -- that field handed it to anyone who opened Settings.
+  ///
+  /// Replaced with a statement rather than deleted outright, so the section a user knows still
+  /// exists and answers the question the controls were really being used to ask: where does my data
+  /// go? An empty section, or a dropdown with one item, would answer it worse.
+  const _AIConfigCard();
 
   @override
   Widget build(BuildContext context) {
-    final hostController = TextEditingController(text: host);
-    final keyController = TextEditingController(text: geminiKey);
-
     return AuraCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Model routing', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: AuraSpacing.md),
-          DropdownButtonFormField<AIProvider>(
-            initialValue: activeProvider,
-            items: const [
-              DropdownMenuItem(value: AIProvider.auto, child: Text('Auto failover (recommended)')),
-              DropdownMenuItem(value: AIProvider.gemini, child: Text('Force Gemini 2.5')),
-              DropdownMenuItem(value: AIProvider.offlineFast, child: Text('Offline fast (Qwen/Gemma)')),
-              DropdownMenuItem(value: AIProvider.offlineReasoning, child: Text('Offline reasoning (Phi)')),
-              DropdownMenuItem(value: AIProvider.offlinePremium, child: Text('Offline premium (LLaMA)')),
-            ],
-            onChanged: (val) {
-              if (val != null) ref.read(aiProviderSettingProvider.notifier).setProvider(val);
-            },
-            decoration: const InputDecoration(labelText: 'Active model provider'),
-          ),
-          const SizedBox(height: AuraSpacing.md),
-          TextField(
-            controller: hostController,
-            onSubmitted: (val) => ref.read(ollamaHostProvider.notifier).setHost(val),
-            decoration: const InputDecoration(labelText: 'Ollama host daemon endpoint', hintText: 'http://localhost:11434'),
-          ),
-          const SizedBox(height: AuraSpacing.md),
-          TextField(
-            controller: keyController,
-            obscureText: true,
-            onSubmitted: (val) => ref.read(localApiKeyProvider.notifier).setKey(val),
-            decoration: const InputDecoration(labelText: 'Local Gemini API key override', hintText: 'Enter API key'),
+          Text('Where AURA runs', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: AuraSpacing.sm),
+          Text(
+            'Requests are processed on AURA\'s own servers. They are never sent to a third-party '
+            'AI service, and never processed on this device.',
+            style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: AuraSpacing.sm),
-          Text('Press Enter on a field to save.', style: Theme.of(context).textTheme.bodySmall),
+          Text(
+            'Model selection and updates are managed centrally — there is nothing to configure here.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         ],
       ),
     );

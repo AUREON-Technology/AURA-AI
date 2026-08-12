@@ -40,11 +40,11 @@
   "aiSystemStatus": "AI system status",
   "@aiSystemStatus": {"description": "Section header for the system status card"},
 
-  "onDeviceInference": "On-device inference",
-  "@onDeviceInference": {"description": "Status row label"},
+  "serverInference": "AURA AI service",
+  "@serverInference": {"description": "Status row label for backend reachability"},
 
   "statusReady": "Ready",
-  "@statusReady": {"description": "Status value when the on-device model is loaded and available"},
+  "@statusReady": {"description": "Status value when the AI service is reachable"},
 
   "statusUnavailable": "Unavailable",
   "@statusUnavailable": {"description": "Status value when the on-device model failed to load"},

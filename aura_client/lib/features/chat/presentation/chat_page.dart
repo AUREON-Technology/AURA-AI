@@ -15,7 +15,6 @@ import 'package:aura_client/core/database/database_provider.dart';
 import 'package:drift/drift.dart' show OrderingTerm, OrderingMode;
 import '../../sync/sync_engine.dart';
 import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
-import 'package:aura_client/core/ai/online_agents/online_agent_manager.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
   const ChatPage({super.key});
@@ -28,7 +27,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
   bool _useRag = true;
-  String _geminiApiKey = ""; // Local API key state for offline fallback
 
   @override
   void dispose() {
@@ -59,7 +57,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           conversationId: sessionId,
           userContent: text,
           useRag: _useRag,
-          localApiKey: _geminiApiKey.isEmpty ? null : _geminiApiKey,
         );
 
     // Short delay to let list update then scroll
@@ -256,41 +253,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('AI Provider:', style: TextStyle(fontSize: 12, color: Colors.white70)),
-              DropdownButton<AIProvider>(
-                value: ref.watch(aiProviderSettingProvider),
-                dropdownColor: const Color(0xFF0F0C1B),
-                style: const TextStyle(color: Colors.white, fontSize: 12),
-                underline: const SizedBox(),
-                items: const [
-                  DropdownMenuItem(value: AIProvider.auto, child: Text('Auto (Failover)')),
-                  DropdownMenuItem(value: AIProvider.gemini, child: Text('Force Gemini')),
-                  DropdownMenuItem(value: AIProvider.offlineFast, child: Text('Offline Fast')),
-                  DropdownMenuItem(value: AIProvider.offlineReasoning, child: Text('Reasoning')),
-                  DropdownMenuItem(value: AIProvider.offlinePremium, child: Text('Premium')),
-                ],
-                onChanged: (val) {
-                  if (val != null) {
-                    ref.read(aiProviderSettingProvider.notifier).setProvider(val);
-                  }
-                },
+              const Text('AI engine:', style: TextStyle(fontSize: 12, color: Colors.white70)),
+              // A read-out, not a control. This was a dropdown selecting between a hosted API and
+              // three on-device models; all four are gone, and a picker with one option is a worse
+              // answer to "which engine am I using" than simply saying.
+              Text(
+                ref.watch(aiRouterStatusProvider).isOffline ? 'AURA (unreachable)' : 'AURA server',
+                style: const TextStyle(fontSize: 12, color: Colors.white),
               ),
             ],
-          ),
-          const SizedBox(height: 12),
-          // Fallback Key Inputs
-          TextField(
-            onChanged: (val) {
-              ref.read(localApiKeyProvider.notifier).setKey(val);
-              setState(() => _geminiApiKey = val);
-            },
-            obscureText: true,
-            decoration: const InputDecoration(
-              labelText: 'Local Gemini API Key',
-              hintText: 'Enter API Key (Optional)',
-              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            ),
-            style: const TextStyle(color: Colors.white, fontSize: 12),
           ),
         ],
       ),
@@ -1205,41 +1176,6 @@ class MessageBubble extends ConsumerWidget {
                     label: const Text("Retry"),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AuraTheme.accentIndigo,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    ),
-                  ),
-                  ElevatedButton.icon(
-                    onPressed: () async {
-                      // Switch to local offline model
-                      ref.read(aiProviderSettingProvider.notifier).setProvider(AIProvider.offlineFast);
-                      
-                      final db = ref.read(databaseProvider);
-                      final activeSessionId = ref.read(activeConversationIdProvider);
-                      final messages = await (db.select(db.messages)
-                            ..where((m) => m.conversationId.equals(activeSessionId))
-                            ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
-                          .get();
-                      
-                      final userMessages = messages.where((m) => m.role == "user").toList();
-                      if (userMessages.isNotEmpty) {
-                        final lastUserMsg = userMessages.last;
-                        // Delete the failed assistant message
-                        await (db.delete(db.messages)..where((m) => m.id.equals(message.id))).go();
-                        // Delete the last user message so sendChatMessage can recreate it cleanly
-                        await (db.delete(db.messages)..where((m) => m.id.equals(lastUserMsg.id))).go();
-                        
-                        // Resend using local model
-                        await ref.read(chatRepositoryProvider).sendChatMessage(
-                          conversationId: activeSessionId,
-                          userContent: lastUserMsg.content,
-                          useRag: true,
-                        );
-                      }
-                    },
-                    icon: const Icon(Icons.cloud_off, size: 14),
-                    label: const Text("Use Local AI"),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AuraTheme.accentTeal,
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     ),
                   ),

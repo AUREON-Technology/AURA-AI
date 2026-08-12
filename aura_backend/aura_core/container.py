@@ -31,6 +31,7 @@ from .knowledge.chunking import ChunkingConfig
 from .knowledge.engine import KnowledgeEngine
 from .knowledge.extraction import RuleEntityExtractor
 from .knowledge.index_manager import IndexManager, PromotionGate
+from .knowledge.reranking import build_reranker
 from .kernel.kernel import AIKernel, KernelDependencies
 from .llm.cache import InMemoryCache, LLMCache
 from .llm.embeddings import HashEmbeddingProvider
@@ -40,6 +41,7 @@ from .memory.engine import MemoryEngine
 from .memory.session import EpisodicMemory, build_session_summariser
 from .observability.logging import configure_logging, get_logger
 from .observability.metrics import get_metrics
+from .rag import StrategyFacade, build_strategies
 from .observability.tracing import get_tracer
 from .planning.engine import PlanningEngine
 from .prompts import build_default_registry
@@ -86,6 +88,10 @@ class Container:
         self.clock = SystemClock()
         self.events = InMemoryEventBus(metrics=self.metrics)
         self.audit = InMemoryAuditSink(clock=self.clock)
+
+        # Memoised by _postgres_pool(); declared before the stores are built because both of them
+        # ask for it.
+        self._pg_pool: Any = None
 
         self.cache_backend = self._build_cache()
         self.embedder = self._build_embedder()
@@ -161,6 +167,11 @@ class Container:
             score_threshold=settings.knowledge.score_threshold,
             hybrid_enabled=settings.knowledge.hybrid_enabled,
             rerank_enabled=settings.knowledge.rerank_enabled,
+            reranker=build_reranker(
+                settings.knowledge.rerank_provider,
+                model=settings.knowledge.rerank_model,
+                metrics=self.metrics,
+            ),
             rrf_k=settings.knowledge.rrf_k,
             mmr_lambda=settings.knowledge.mmr_lambda,
             max_document_bytes=settings.knowledge.max_document_bytes,
@@ -190,6 +201,30 @@ class Container:
             window=settings.memory.episodic_window,
             summarise_after=settings.memory.summarise_after_turns,
             summariser=build_session_summariser(self.router, self.prompts),
+        )
+
+        # The ten retrieval strategies, and a facade presenting the selected one with the
+        # KnowledgeEngine.retrieve signature. The facade is what keeps this out of the kernel's hot
+        # path: the kernel still calls `.retrieve(query, owner_id=...)` and does not know strategies
+        # exist. With the default `simple` the call reaches KnowledgeEngine.retrieve exactly as
+        # before, so selecting a strategy is opt-in rather than a change of behaviour on upgrade.
+        self.strategies = build_strategies(
+            knowledge=self.knowledge,
+            router=self.router,
+            memory=self.memory,
+            graph=self.graph if settings.knowledge.graph_enabled else None,
+            metrics=self.metrics,
+            max_parallel=settings.knowledge.retrieval_max_parallel,
+        )
+        selected = settings.knowledge.retrieval_strategy
+        if selected not in self.strategies:
+            raise ConfigurationError(
+                f"unknown retrieval strategy {selected!r}",
+                details={"supported": sorted(self.strategies)},
+            )
+        self.retrieval = StrategyFacade(
+            self.strategies[selected],
+            max_generations=settings.knowledge.retrieval_max_generations,
         )
 
         self.tools = self._build_tools()
@@ -318,12 +353,28 @@ class Container:
             )
         return InMemoryVectorStore()
 
+    def _postgres_pool(self) -> Any:
+        """One connection pool shared by every Postgres-backed store.
+
+        Built on first request and memoised. Two stores against the same database with separate
+        pools would double the connection count for no benefit -- the prod compose configures
+        Postgres for a modest `max_connections`, and each gateway worker holding two pools is how a
+        four-worker deployment exhausts it.
+        """
+        if self._pg_pool is None:
+            from .adapters.postgres_store import PostgresPool
+
+            self._pg_pool = PostgresPool(self.settings.infrastructure.database_url)
+        return self._pg_pool
+
     def _build_document_store(self) -> Any:
         backend = self.settings.infrastructure.document_backend
         if backend == "postgres":
             from .adapters.postgres_store import PostgresDocumentStore
 
-            return PostgresDocumentStore(self.settings.infrastructure.database_url)
+            return PostgresDocumentStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
         if backend != "memory":
             raise ConfigurationError(f"unknown document backend {backend!r}")
         return InMemoryDocumentStore()
@@ -333,7 +384,9 @@ class Container:
         if backend == "postgres":
             from .adapters.postgres_store import PostgresMemoryStore
 
-            return PostgresMemoryStore(self.settings.infrastructure.database_url)
+            return PostgresMemoryStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
         if backend != "memory":
             raise ConfigurationError(f"unknown memory backend {backend!r}")
         return InMemoryMemoryStore()

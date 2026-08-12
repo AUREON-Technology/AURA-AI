@@ -1,20 +1,18 @@
 import logging
 from typing import AsyncGenerator, List, Dict, Any
-from google import genai
-from google.genai import types
 from config import settings
+from services.ollama import ollama_service
 from services.rag import rag_service
 
 logger = logging.getLogger(__name__)
 
 class AIService:
-  def __init__(self):
-    self.client = None
-    if settings.gemini_api_key:
-      self.client = genai.Client(api_key=settings.gemini_api_key)
-      logger.info("Gemini API client initialized successfully.")
-    else:
-      logger.warning("GEMINI_API_KEY is missing. AI calls will fail.")
+  """Chat generation, running on our own inference host.
+
+  There is no client to construct and no key to warn about: `ollama_service` is a module singleton
+  pointing at settings.ollama_host. Nothing here reaches a third party, so the class has no
+  meaningful constructor state left.
+  """
 
   async def generate_chat_response_stream(
     self, 
@@ -22,7 +20,7 @@ class AIService:
     use_rag: bool = True,
     user_id: str = None
   ) -> AsyncGenerator[str, None]:
-    """Streams responses from Gemini 1.5 Flash, injecting RAG context, and falls back to Ollama if offline."""
+    """Streams a response from the local model, injecting RAG context first."""
     # Extract last user message to query the RAG knowledge base
     last_user_message = next(
       (m["content"] for m in reversed(messages) if m["role"] == "user"), 
@@ -53,19 +51,9 @@ class AIService:
           )
           break
 
-    # If Gemini API key is missing, fallback immediately to Ollama
-    if not self.client:
-      logger.info("Gemini client is not initialized. Falling back to local Ollama.")
-      yield "[Running in Local Offline Mode - Powered by Ollama]\n"
-      try:
-        from services.ollama import ollama_service
-        async for chunk in ollama_service.generate_chat_stream(modified_messages):
-          yield chunk
-      except Exception as fallback_error:
-        yield f"\n[Offline Fallback Error: Failed to run Ollama: {fallback_error}]"
-      return
-
-    # Check Gemini Request Budget
+    # Concurrency guard. Formerly a spend cap on a metered API; now it bounds how many
+    # simultaneous generations we ask of a single local model, which is the scarcest resource on
+    # the box. Without it, background analysis jobs starve interactive chat.
     from services.budget import increment_and_check_gemini_budget, GeminiBudgetExceededException
     try:
       increment_and_check_gemini_budget()
@@ -74,35 +62,13 @@ class AIService:
       return
 
     try:
-      # Parse input messages into Gemini's format:
-      gemini_history = []
-      for msg in modified_messages[:-1]:
-        role = "model" if msg["role"] == "assistant" or msg["role"] == "model" else "user"
-        gemini_history.append(
-          types.Content(
-            role=role,
-            parts=[types.Part.from_text(text=msg["content"])]
-          )
-        )
-
-      current_prompt = modified_messages[-1]["content"]
-
-      # Create chat model and stream asynchronously
-      chat = self.client.aio.chats.create(model="gemini-2.5-flash", history=gemini_history)
-
-      response = await chat.send_message_stream(current_prompt)
-      async for chunk in response:
-        if chunk.text:
-          yield chunk.text
-
+      async for chunk in ollama_service.generate_chat_stream(modified_messages):
+        yield chunk
     except Exception as e:
-      logger.error(f"Error in Gemini streaming generation: {e}. Falling back to Ollama.")
-      yield f"\n[Gemini connection failed. Falling back to local Ollama assistant...]\n"
-      try:
-        from services.ollama import ollama_service
-        async for chunk in ollama_service.generate_chat_stream(modified_messages):
-          yield chunk
-      except Exception as fallback_error:
-        yield f"\n[Offline Fallback Error: Failed to run Ollama: {fallback_error}]"
+      # No second engine to fall back to, by design. Reporting the failure is the correct
+      # behaviour -- the alternative was a hosted API, and reaching for one is what this change
+      # removes. Silence or a fabricated answer would be worse than an honest error.
+      logger.error(f"Local inference failed during streaming generation: {e}")
+      yield f"\n[Local inference unavailable: {e}]"
 
 ai_service = AIService()

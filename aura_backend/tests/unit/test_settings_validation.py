@@ -105,7 +105,7 @@ class TestProviderConfig:
 
     def test_a_model_is_required_except_for_the_echo_provider(self) -> None:
         with pytest.raises(ConfigurationError):
-            ProviderConfig(name="p", kind="gemini", model="")
+            ProviderConfig(name="p", kind="ollama", model="", base_url="http://ollama:11434")
         ProviderConfig(name="echo", kind="echo", model="")
 
     def test_http_kinds_require_a_base_url(self) -> None:
@@ -115,9 +115,14 @@ class TestProviderConfig:
             ProviderConfig(name="p", kind="ollama", model="m", base_url="")
 
     def test_an_api_key_is_read_at_use_and_never_stored(self, env) -> None:
-        """So it cannot be dumped by as_dict(), a config echo, or a Sentry breadcrumb."""
+        """So it cannot be dumped by as_dict(), a config echo, or a Sentry breadcrumb.
+
+        Still relevant with hosted providers gone: a self-hosted vLLM or LocalAI instance can be
+        put behind a bearer token, and that token deserves the same handling.
+        """
         env.setenv("MY_PROVIDER_KEY", "sk-secret-value")
-        provider = ProviderConfig(name="p", kind="gemini", model="m",
+        provider = ProviderConfig(name="p", kind="openai_compatible", model="m",
+                                  base_url="http://vllm.internal:8000/v1",
                                   api_key_env="MY_PROVIDER_KEY")
 
         assert provider.api_key == "sk-secret-value"
@@ -265,19 +270,35 @@ class TestAlwaysOnChecks:
         problems = _problems(AuraSettings.from_env())
         assert any("must be unique" in p for p in problems)
 
-    def test_a_cloud_provider_must_name_its_key_variable(self, env) -> None:
-        env.setenv("AURA_LLM_PROVIDERS", "cloud")
-        env.setenv("AURA_PROVIDER_CLOUD_KIND", "gemini")
-        env.setenv("AURA_PROVIDER_CLOUD_MODEL", "gemini-2.5-flash")
-        problems = _problems(AuraSettings.from_env())
-        assert any("requires an api_key_env" in p for p in problems)
+    def test_a_hosted_inference_base_url_is_refused(self, env) -> None:
+        """Replaces the old "a cloud provider must name its key variable" rule.
+
+        That rule regulated hosted providers, which no longer exist as a provider kind. The check
+        that matters now is that the surviving `openai_compatible` kind -- which speaks the same
+        wire protocol as several hosted APIs -- cannot be aimed at one.
+        """
+        from aura_core.config.external_inference import EXTERNAL_INFERENCE_HOSTS
+
+        # Built from the registry rather than written as a literal, for two reasons: the
+        # architecture test that scans for hosted endpoints would otherwise flag this file, and a
+        # host added to the registry is covered here automatically.
+        for host in EXTERNAL_INFERENCE_HOSTS:
+            with pytest.raises(ConfigurationError) as excinfo:
+                ProviderConfig(
+                    name="cloud",
+                    kind="openai_compatible",
+                    model="m",
+                    base_url=f"https://{host}/v1",
+                )
+            assert "own infrastructure" in str(excinfo.value)
 
     def test_a_named_but_unset_key_variable_is_reported(self, env) -> None:
         """Otherwise the failure surfaces as a 401 on the first user request."""
-        env.setenv("AURA_LLM_PROVIDERS", "cloud")
-        env.setenv("AURA_PROVIDER_CLOUD_KIND", "gemini")
-        env.setenv("AURA_PROVIDER_CLOUD_MODEL", "gemini-2.5-flash")
-        env.setenv("AURA_PROVIDER_CLOUD_API_KEY_ENV", "GEMINI_KEY_THAT_IS_NOT_SET")
+        env.setenv("AURA_LLM_PROVIDERS", "local")
+        env.setenv("AURA_PROVIDER_LOCAL_KIND", "openai_compatible")
+        env.setenv("AURA_PROVIDER_LOCAL_MODEL", "qwen2.5:7b")
+        env.setenv("AURA_PROVIDER_LOCAL_BASE_URL", "http://vllm.internal:8000/v1")
+        env.setenv("AURA_PROVIDER_LOCAL_API_KEY_ENV", "TOKEN_THAT_IS_NOT_SET")
         problems = _problems(AuraSettings.from_env())
         assert any("which is unset" in p for p in problems)
 
@@ -315,11 +336,12 @@ class TestCoherenceChecks:
 
 class TestIntrospection:
     def test_as_dict_never_contains_a_key(self, env) -> None:
-        env.setenv("GEMINI_KEY", "sk-super-secret")
+        env.setenv("VLLM_TOKEN", "sk-super-secret")
         env.setenv("AURA_LLM_PROVIDERS", "cloud")
-        env.setenv("AURA_PROVIDER_CLOUD_KIND", "gemini")
-        env.setenv("AURA_PROVIDER_CLOUD_MODEL", "gemini-2.5-flash")
-        env.setenv("AURA_PROVIDER_CLOUD_API_KEY_ENV", "GEMINI_KEY")
+        env.setenv("AURA_PROVIDER_CLOUD_KIND", "openai_compatible")
+        env.setenv("AURA_PROVIDER_CLOUD_MODEL", "qwen2.5:7b")
+        env.setenv("AURA_PROVIDER_CLOUD_BASE_URL", "http://vllm.internal:8000/v1")
+        env.setenv("AURA_PROVIDER_CLOUD_API_KEY_ENV", "VLLM_TOKEN")
 
         payload = AuraSettings.from_env().as_dict()
         assert "sk-super-secret" not in json.dumps(payload)
@@ -327,8 +349,9 @@ class TestIntrospection:
 
     def test_a_missing_key_is_reported_as_not_configured(self, env) -> None:
         env.setenv("AURA_LLM_PROVIDERS", "cloud")
-        env.setenv("AURA_PROVIDER_CLOUD_KIND", "gemini")
+        env.setenv("AURA_PROVIDER_CLOUD_KIND", "openai_compatible")
         env.setenv("AURA_PROVIDER_CLOUD_MODEL", "m")
+        env.setenv("AURA_PROVIDER_CLOUD_BASE_URL", "http://vllm.internal:8000/v1")
         env.setenv("AURA_PROVIDER_CLOUD_API_KEY_ENV", "ABSENT_KEY")
         payload = AuraSettings.from_env().as_dict()
         assert payload["llm"]["providers"][0]["api_key_configured"] is False

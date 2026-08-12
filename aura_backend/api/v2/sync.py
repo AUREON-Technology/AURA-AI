@@ -60,14 +60,41 @@ def _coerce_value(model, key: str, value: Any) -> Any:
     return value
 
 
-# Columns the server alone owns. `id`/`user_id` are identity (letting a client
-# set them is straightforward IDOR); the timestamp trio is subtler but worse in
-# practice — `updated_at` is the last-write-wins comparand, so a client that
-# writes a far-future value pins the row permanently into the `server has a
-# newer version` branch below and can never update it again. `deleted_at` would
-# let an `upsert` silently tombstone (or resurrect) a row, bypassing the `op`
-# field entirely. All four are set from server state, never from the payload.
-_SERVER_OWNED_COLUMNS = frozenset({"id", "user_id", "created_at", "updated_at", "deleted_at"})
+# Columns no payload may set. `id`/`user_id` are identity (letting a client set
+# them is straightforward IDOR); the timestamps are subtler but worse in
+# practice — a client that writes a far-future comparand pins the row
+# permanently into the `server has a newer version` branch below and can never
+# update it again. `deleted_at` would let an `upsert` silently tombstone (or
+# resurrect) a row, bypassing the `op` field entirely.
+#
+# `client_updated_at` is on this list even though it *is* a client value: it may
+# only arrive through the mutation envelope, which is validated, never through
+# the free-form payload, which is not.
+_SERVER_OWNED_COLUMNS = frozenset({
+    "id", "user_id", "created_at", "updated_at", "client_updated_at", "deleted_at",
+})
+
+
+def conflict_comparand(existing) -> datetime:
+    """The timestamp an incoming mutation must beat to be applied.
+
+    Returns the row's *client* clock, because that is what the incoming mutation carries. Using
+    `updated_at` here -- the server's write time -- is the bug this function exists to prevent:
+    it rejected any mutation whose client timestamp predated the last server write, which for an
+    offline-first client is the normal case rather than a conflict. Edit on a plane, sync on
+    landing, and the server refuses the edit for being older than its own record of receiving the
+    previous one. The client saw HTTP 200 and a per-mutation `conflict` it did not inspect, so the
+    change disappeared with nothing surfacing as an error.
+
+    Falls back to `updated_at` when `client_updated_at` is NULL, which is every row written before
+    that column existed. Returning epoch for those instead would make each one writable by an
+    arbitrarily stale mutation; falling back preserves exactly the previous behaviour until the
+    row's first write populates the column.
+
+    A free function so the rule is testable without a database -- the case that exposed the bug
+    needed Postgres, which is why it went unnoticed for so long.
+    """
+    return existing.client_updated_at or existing.updated_at
 
 
 class SyncPullResponse(BaseModel):
@@ -149,13 +176,14 @@ async def push_sync(
             results.append(SyncMutationResult(id=mutation.id, table=mutation.table, status="error", detail="not owned by this user"))
             continue
 
-        if existing is not None and existing.updated_at >= mutation.client_updated_at:
+        if existing is not None and conflict_comparand(existing) >= mutation.client_updated_at:
             results.append(SyncMutationResult(id=mutation.id, table=mutation.table, status="conflict", detail="server has a newer version"))
             continue
 
         if mutation.op == "delete":
             if existing is not None:
                 existing.deleted_at = datetime.now(timezone.utc)
+                existing.client_updated_at = mutation.client_updated_at
         else:
             payload = mutation.payload or {}
             if existing is None:
@@ -166,6 +194,10 @@ async def push_sync(
                     continue
                 if hasattr(existing, key):
                     setattr(existing, key, _coerce_value(model, key, value))
+            # Set after the payload loop, so it records the envelope's value and cannot be
+            # overwritten by a payload key of the same name. Without this the comparand would stay
+            # NULL and every row would fall back to the server clock -- the bug this fixes.
+            existing.client_updated_at = mutation.client_updated_at
 
         results.append(SyncMutationResult(id=mutation.id, table=mutation.table, status="applied"))
 

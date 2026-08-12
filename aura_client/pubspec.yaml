@@ -44,7 +44,10 @@ dependencies:
   googleapis: ^16.0.0
   extension_google_sign_in_as_googleapis_auth: ^3.0.0
   firebase_core: ^4.10.0
-  google_generative_ai: ^0.4.7
+  # google_generative_ai deliberately absent: the client must not be able to reach a hosted
+  # inference API. All AI processing happens on our own server, behind authentication. Re-adding
+  # this package would also re-add the on-device API key it needed, which is a credential that
+  # cannot be rotated out of an installed app.
   google_fonts: ^8.1.0
   fl_chart: ^1.2.0
   path_provider: ^2.1.5
@@ -56,7 +59,8 @@ dependencies:
   flutter_markdown: ^0.7.7+1
   http: ^1.6.0
   local_auth: ^2.3.0
-  flutter_llama: ^0.1.0
+  # flutter_llama deliberately absent: no inference runs on the device. It also could not build --
+  # its CMake 3.18.1 requirement failed the release APK gate on every run.
 
   crypto: any
   pointycastle: any
@@ -93,7 +97,9 @@ flutter:
 
   assets:
     - assets/app_icon.png
-    - assets/qwen2-1_5b-instruct-q4_k_m.gguf
+    # The Qwen2-1.5B GGUF asset was removed. It was a Git LFS pointer to 986 MB of model weights
+    # bundled into the APK and extracted at first launch by LocalModelSeeder, so every install
+    # carried a gigabyte of weights for inference that now happens on the server.
 
   # To add assets to your application, add an assets section, like this:
   # assets:

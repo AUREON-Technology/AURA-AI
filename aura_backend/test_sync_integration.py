@@ -67,14 +67,37 @@ class TestSyncApiIntegration(unittest.TestCase):
         cls.postgres.stop()
 
     def setUp(self):
+        """Give each test its own engine, and hand it over with an empty pool.
+
+        Both halves are needed, because asyncpg binds every connection to the loop that opened it
+        and this test crosses loops twice.
+
+        **A fresh engine per test.** `infrastructure.db.base` caches the engine in a module global,
+        so without this reset test 2 inherits the engine whose pool test 1's `TestClient` filled on
+        *its* loop -- long since closed. That was the surviving failure after the first fix: the
+        error moved out of the request and into `_create_schema` itself.
+
+        **An empty pool before the loop dies.** `asyncio.run` closes its loop on return, so the
+        connections schema creation opened would otherwise be handed to `TestClient`, which drives
+        the app on a different loop again. `dispose()` drops them; the pool refills on whichever
+        loop next asks.
+
+        Net effect: schema creation and the requests each get connections belonging to the loop
+        actually running them, and no state leaks between tests.
+        """
         import asyncio
 
+        import infrastructure.db.base as db_base
         from infrastructure.db.base import Base, get_engine
+
+        db_base._engine = None
+        db_base._session_factory = None
 
         async def _create_schema():
             engine = get_engine()
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+            await engine.dispose()
 
         asyncio.run(_create_schema())
 
@@ -91,7 +114,13 @@ class TestSyncApiIntegration(unittest.TestCase):
             "picture": None,
             "role": "User",
         }
-        client = TestClient(app)
+        # Entered as a context manager, not constructed bare. A bare TestClient opens a fresh
+        # anyio portal -- and so a fresh event loop -- for *every* request, which strands the
+        # asyncpg pool from the previous request on a closed loop; the second call in this test
+        # would fail with "attached to a different loop" before reaching an assertion. Entering
+        # it once runs every request below on one loop, and also fires the app's lifespan
+        # events, which an integration test should exercise anyway.
+        client = self.enterContext(TestClient(app))
         task_id = str(uuid.uuid4())
 
         try:
@@ -169,7 +198,13 @@ class TestSyncApiIntegration(unittest.TestCase):
             "picture": None,
             "role": "User",
         }
-        client = TestClient(app)
+        # Entered as a context manager, not constructed bare. A bare TestClient opens a fresh
+        # anyio portal -- and so a fresh event loop -- for *every* request, which strands the
+        # asyncpg pool from the previous request on a closed loop; the second call in this test
+        # would fail with "attached to a different loop" before reaching an assertion. Entering
+        # it once runs every request below on one loop, and also fires the app's lifespan
+        # events, which an integration test should exercise anyway.
+        client = self.enterContext(TestClient(app))
         task_id = str(uuid.uuid4())
 
         try:

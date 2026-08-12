@@ -6,21 +6,34 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../database/database.dart';
 import '../../database/database_provider.dart';
-import '../offline_agents/offline_agent_manager.dart';
 import '../online_agents/online_agent_manager.dart';
 
-enum AIProvider {
-  auto,
-  gemini,
-  offlineFast,
-  offlineReasoning,
-  offlinePremium
-}
-
+/// Routes every AI request to the AURA backend, and reports whether it is reachable.
+///
+/// This class used to choose between a hosted API and an on-device model, and to fail over from
+/// one to the other. Both are gone: all inference now runs on our own server, and the client is a
+/// client. What remains is connection state, which is still worth tracking -- the UI shows it, and
+/// "AURA is unreachable" is a different message from "AURA could not answer".
+///
+/// The `AIProvider` enum that used to select between engines was removed rather than reduced to a
+/// single value. A settings control offering a choice that no longer exists is worse than no
+/// control: it tells the user something about the system that is not true.
+///
+/// There is deliberately no fallback path. When the backend is unreachable the router surfaces
+/// that. It does not answer from a local model, and it does not answer at all -- inventing a reply
+/// because the server was down is the failure mode this whole change exists to remove.
 class AIRouterStatus {
   final String activeModel;
   final double latencyMs;
-  final String status; // e.g. "Optimal", "Degraded", "Offline Fallback"
+
+  /// Human-readable connection state, shown in the UI.
+  final String status;
+
+  /// True when the last attempt could not reach the backend.
+  ///
+  /// Note the changed meaning: this used to signal "answering from the on-device model". It now
+  /// signals "not answering", which is why nothing downstream should treat it as a degraded-but-
+  /// working state.
   final bool isOffline;
 
   AIRouterStatus({
@@ -48,7 +61,9 @@ class AIRouterStatus {
 class AIRouterStatusNotifier extends Notifier<AIRouterStatus> {
   @override
   AIRouterStatus build() => AIRouterStatus(
-        activeModel: 'gemini-2.5-flash',
+        // The server decides which model serves a turn, and it may change per request under its
+        // own routing policy. The client does not know the model name and should not claim one.
+        activeModel: 'server',
         latencyMs: 0.0,
         status: 'Initializing',
         isOffline: false,
@@ -64,29 +79,19 @@ final aiRouterStatusProvider =
   return AIRouterStatusNotifier();
 });
 
-class AIProviderSetting extends Notifier<AIProvider> {
-  @override
-  AIProvider build() => AIProvider.auto;
-
-  void setProvider(AIProvider val) {
-    state = val;
-  }
-}
-
-final aiProviderSettingProvider =
-    NotifierProvider<AIProviderSetting, AIProvider>(() {
-  return AIProviderSetting();
-});
-
 class AuraAIRouter {
   final Ref _ref;
 
   AuraAIRouter(this._ref);
 
-  /// Helper to test internet connectivity by performing a fast DNS lookup
-  Future<bool> checkInternet() async {
+  /// Whether the device has any network path at all.
+  ///
+  /// A DNS lookup rather than a request to our own backend: this distinguishes "the phone is
+  /// offline" from "AURA is down", which are different things to tell a user. It is only a hint --
+  /// the authoritative answer is whether the request below succeeds.
+  Future<bool> checkConnectivity() async {
     try {
-      final result = await InternetAddress.lookup('google.com')
+      final result = await InternetAddress.lookup('one.one.one.one')
           .timeout(const Duration(seconds: 2));
       return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
     } on SocketException catch (_) {
@@ -96,123 +101,71 @@ class AuraAIRouter {
     }
   }
 
-  /// Evaluates routing conditions and returns the selected provider & model name
-  Future<Map<String, dynamic>> selectRoute() async {
-    final manualSetting = _ref.read(aiProviderSettingProvider);
-    final isOnline = await checkInternet();
-    
-    _ref.read(aiRouterStatusProvider.notifier).updateStatus(
-      _ref.read(aiRouterStatusProvider).copyWith(isOffline: !isOnline),
-    );
-
-    if (manualSetting == AIProvider.gemini) {
-      return {"provider": AIProvider.gemini, "model": "gemini-2.5-flash"};
-    } else if (manualSetting == AIProvider.offlineFast) {
-      return {"provider": AIProvider.offlineFast, "model": "phi3"};
-    } else if (manualSetting == AIProvider.offlineReasoning) {
-      return {"provider": AIProvider.offlineReasoning, "model": "mistral"};
-    } else if (manualSetting == AIProvider.offlinePremium) {
-      return {"provider": AIProvider.offlinePremium, "model": "llama3"};
-    }
-
-    // Auto Mode Selection
-    if (isOnline) {
-      // Check if Gemini quota was recently exhausted or if server is failing
-      // If everything is fine, route to Gemini
-      return {"provider": AIProvider.gemini, "model": "gemini-2.5-flash"};
-    } else {
-      // Auto fall back to local fast offline model
-      return {"provider": AIProvider.offlineFast, "model": "phi3"};
-    }
-  }
-
-  /// Core routing function returning a stream of chunks
+  /// Streams a response from the backend, recording latency and connection state.
+  ///
+  /// Rethrows [AuraBackendException] so the caller can distinguish an outage from an answer. The
+  /// previous implementation caught everything here and quietly switched to a local model, which
+  /// meant the UI could not tell the two apart and neither could the user.
   Stream<String> routePromptStream({
     required String agentId,
     required List<Map<String, String>> messages,
     Map<String, String>? customInstructions,
     bool useRag = true,
   }) async* {
-    final route = await selectRoute();
-    final provider = route["provider"] as AIProvider;
-    final modelName = route["model"] as String;
-
     final stopwatch = Stopwatch()..start();
-    
-    _ref.read(aiRouterStatusProvider.notifier).updateStatus(AIRouterStatus(
-      activeModel: modelName,
+    final notifier = _ref.read(aiRouterStatusProvider.notifier);
+
+    notifier.updateStatus(AIRouterStatus(
+      activeModel: 'server',
       latencyMs: 0.0,
-      status: provider == AIProvider.gemini ? "Online (Optimal)" : "Offline Fallback",
-      isOffline: provider != AIProvider.gemini,
+      status: 'Contacting AURA',
+      isOffline: false,
     ));
 
-    String finalModel = modelName;
-    bool finalIsOffline = provider != AIProvider.gemini;
     String? errorMessage;
-    String eventType = "request";
+    var eventType = 'request';
+    var unreachable = false;
 
-    if (provider == AIProvider.gemini) {
-      bool hasErrors = false;
-      try {
-        final onlineAgent = _ref.read(onlineAgentManagerProvider);
-        final stream = onlineAgent.streamResponse(
-          agentId: agentId,
-          messages: messages,
-          customInstructions: customInstructions,
-          useRag: useRag,
-        );
-        await for (final chunk in stream) {
-          yield chunk;
-        }
-      } catch (e) {
-        debugPrint("Gemini stream failed, triggering auto failover: $e");
-        hasErrors = true;
-        errorMessage = e.toString();
-      }
-
-      if (hasErrors) {
-        // Update state to failover
-        _ref.read(aiRouterStatusProvider.notifier).updateStatus(AIRouterStatus(
-          activeModel: "phi3",
-          latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
-          status: "Failover Triggered",
-          isOffline: true,
-        ));
-        finalModel = "phi3";
-        finalIsOffline = true;
-        eventType = "failover";
-        // Fall back to offline fast model
-        final offlineAgent = _ref.read(offlineAgentManagerProvider);
-        yield* offlineAgent.streamResponse(
-          model: "phi3",
-          messages: messages,
-          systemInstruction: customInstructions?[agentId] ?? "",
-        );
-      }
-    } else {
-      final offlineAgent = _ref.read(offlineAgentManagerProvider);
-      yield* offlineAgent.streamResponse(
-        model: modelName,
+    try {
+      final agent = _ref.read(onlineAgentManagerProvider);
+      await for (final chunk in agent.streamResponse(
+        agentId: agentId,
         messages: messages,
-        systemInstruction: customInstructions?[agentId] ?? "",
+        customInstructions: customInstructions,
+        useRag: useRag,
+      )) {
+        yield chunk;
+      }
+      notifier.updateStatus(AIRouterStatus(
+        activeModel: 'server',
+        latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
+        status: 'Online',
+        isOffline: false,
+      ));
+    } catch (e) {
+      unreachable = true;
+      eventType = 'error';
+      errorMessage = e.toString();
+      notifier.updateStatus(AIRouterStatus(
+        activeModel: 'server',
+        latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
+        status: 'AURA unreachable',
+        isOffline: true,
+      ));
+      rethrow;
+    } finally {
+      stopwatch.stop();
+      // Logged in `finally` so a failed turn is recorded too. Telemetry that only covers successes
+      // is how an outage looks like a drop in traffic rather than a fault.
+      await _logTelemetry(
+        eventType: eventType,
+        latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
+        agentUsed: agentId,
+        modelUsed: 'server',
+        isOffline: unreachable,
+        errorMessage: errorMessage,
       );
     }
-
-    stopwatch.stop();
-    _ref.read(aiRouterStatusProvider.notifier).updateStatus(
-      _ref.read(aiRouterStatusProvider).copyWith(
-        latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
-      ),
-    );
-
-    await _logTelemetry(
-      eventType: eventType,
-      latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
-      agentUsed: agentId,
-      modelUsed: finalModel,
-      isOffline: finalIsOffline,
-      errorMessage: errorMessage,
-    );
   }
 
   Future<void> _logTelemetry({
