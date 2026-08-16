@@ -162,9 +162,39 @@ about why. That is worse than an honest "not yet", because it looks like it is w
 
 | Goal | Spec | What it gets you |
 | --- | --- | --- |
-| **Minimum for the documented stack** | 4 vCPU / 16 GB / 100 GB | 7B Q4 on CPU, full observability. TTFT will still be seconds, not sub-second. |
-| **Comfortable** | 8 vCPU / 32 GB / 200 GB | Room for a larger model, real concurrency, and Velvet on the same box. |
-| **If generation quality matters** | above + 1 GPU, 24 GB VRAM | Roughly 10–20× the tokens/second (Deployment Guide §Sizing). This is the upgrade that changes the product, not just the metrics. |
+| **Absolute floor** | 4 vCPU / 16 GB / 100 GB | 7B Q4 on CPU, **with trimming** — see below. Nothing else on the box. |
+| **Comfortable single box** | 8 vCPU / 24 GB / 200 GB | Everything at defaults, plus Velvet, plus headroom. |
+| **Roomy** | 8 vCPU / 32 GB / 200 GB | A larger model and real concurrency. |
+| **If generation quality matters** | above + 1 GPU, 24 GB VRAM | Roughly 10–20× the tokens/second (Deployment Guide §Sizing). The upgrade that changes the product, not just the metrics. |
+
+**A correction to an earlier version of this table**, which listed 16 GB as the minimum for "7B Q4
+on CPU, full observability". That does not add up against the component table in §2 of this same
+document:
+
+| | GB |
+| --- | --- |
+| Ollama + 7B Q4 | 6.00 |
+| Gateway, 4 workers | 3.00 |
+| worker-ingestion | 2.00 |
+| worker-realtime | 1.00 |
+| beat + nginx | 0.50 |
+| Postgres + Qdrant + Redis | 2.25 |
+| Observability | 1.50 |
+| **Subtotal** | **16.25** |
+| OS and page cache | ~0.50 |
+| **Total** | **~16.75** |
+
+Which is more than 16 GB, before anything else on the host. **16 GB therefore requires trimming,
+and the trim is not optional:**
+
+- `AURA_WORKERS=2` instead of 4 — saves ~1.5 GB, and 4 workers on 4 vCPU is over-provisioned
+  anyway. This alone brings it to ~15.25 GB and is the change to make first.
+- Dropping the observability tier saves a further ~1.5 GB. Cheaper in memory, expensive the first
+  time something breaks and there is nothing to look at.
+- A 3B model instead of 7B saves ~4 GB and costs answer quality.
+
+**24 GB is the smallest size where the documented defaults simply work**, which is why it is listed
+as the comfortable single-box target rather than 32 GB.
 
 **The cheapest path that actually works** is to split the tiers rather than buy one large machine:
 keep the gateway, Postgres, Qdrant and Redis on a modest host, and point
