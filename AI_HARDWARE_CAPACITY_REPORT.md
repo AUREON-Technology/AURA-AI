@@ -106,9 +106,16 @@ magnitude. Measure before relying on any of them.
 | 3B Q4 | 3–6 | 35–70 s |
 | 1.5B Q4 | 8–14 | 15–25 s |
 
-For comparison, the alert threshold in `deploy/monitoring/alerts/aura.yml` is a **p95 time-to-first
--token under 3 seconds**. Even the 1.5B row misses the target the platform is instrumented to
-enforce, and it misses it on the second token, not the two-hundredth.
+Two thresholds are worth separating, because I conflated them in an earlier draft of this report.
+`AuraSlowTimeToFirstToken` in `deploy/monitoring/alerts/aura.yml` fires at **p95 TTFT > 8 s**; the
+*target* of 3 s appears in the Performance Report's operating table. The alert is the looser of the
+two by design — an alert that fires on the target fires constantly.
+
+Time-to-first-token is dominated by prompt processing, not generation rate, and a RAG turn arrives
+with a couple of thousand tokens of retrieved context. On one core that is *estimated* at tens of
+seconds for a 7B and high single digits for a 1.5B — so even the smallest viable model is marginal
+against the 8 s alert and misses the 3 s target. Both figures are inferred, and the honest summary
+is that this host is not close enough for the distinction between the two thresholds to matter.
 
 `OLLAMA_NUM_PARALLEL: "2"` in the compose file assumes two concurrent generations. On one core they
 share it, so concurrency here halves the per-request rate rather than adding throughput.

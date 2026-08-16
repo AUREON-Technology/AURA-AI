@@ -101,6 +101,7 @@ Start with the [overview](docs/architecture/00-overview.md).
 
 **Getting it running**
 [Provisioning runbook](docs/guides/provisioning-runbook.md) ·
+[Host migration](docs/guides/host-migration-runbook.md) ·
 [Deployment](docs/guides/deployment-guide.md) ·
 [Administration](docs/guides/administrator-guide.md) ·
 [Maintenance](docs/guides/maintenance-guide.md) ·
