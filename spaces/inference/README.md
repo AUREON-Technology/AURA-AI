@@ -21,7 +21,7 @@ application, and it will refuse to start without an API key.
 
 | Name | Where | Value |
 | --- | --- | --- |
-| `LLAMA_API_KEY` | Space → Settings → Variables and secrets | a long random string |
+| `LLAMA_API_KEY` | set at creation with `hf repo create --secrets`, or Space → Settings → Variables and secrets | a long random string |
 
 The same value goes on the gateway as `AURA_PROVIDER_REMOTE_API_KEY`. Without it the container
 exits at startup rather than serving an open endpoint — a Space is public by default, and an

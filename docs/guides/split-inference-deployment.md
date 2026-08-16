@@ -43,29 +43,58 @@ running your model, and there is a test asserting it cannot be used for anything
 Everything needed is in [`spaces/inference/`](../../spaces/inference/). These commands need your
 Hugging Face credentials, so they are yours to run.
 
-```bash
-pip install -U "huggingface_hub[cli]"
-hf auth login          # paste a token with write scope
+Two notes that cost a round trip the first time:
 
-# Create it. Docker SDK; the README frontmatter sets app_port 7860.
-hf repo create aura-inference --repo-type space --space_sdk docker
+- The `cli` extra **does not exist** — the CLI ships in the base `huggingface_hub` package. `pip
+  install -U "huggingface_hub[cli]"` warns and installs the right thing anyway, but the extra is
+  not a thing.
+- `hf upload` is used below rather than `git push`. A Space is its own git repository, so the git
+  route means initialising a **nested** repo inside this one, which works and then confuses every
+  later `git status`. `hf upload` sends a directory and skips all of it.
 
-# Push the three files
-cd spaces/inference
-git init && git branch -M main
-git remote add space https://huggingface.co/spaces/<your-username>/aura-inference
-git add Dockerfile entrypoint.sh README.md && git commit -m "AURA inference endpoint"
-git push space main
+### PowerShell
+
+```powershell
+pip install -U huggingface_hub
+hf auth login
+
+# The Space files live on this repo's branch — make sure they exist locally first.
+git fetch origin
+git checkout main          # or the branch carrying spaces/inference
+
+# A key for the endpoint. Save it; you need the same value on the gateway.
+$key = -join ((1..64) | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })
+$key
+
+# Create the Space with the secret already set, so it is never briefly unauthenticated.
+hf repo create aura-inference --type space --sdk docker --flavor cpu-basic --secrets "LLAMA_API_KEY=$key"
+
+# Upload the three files. This triggers the build.
+hf upload <your-username>/aura-inference spaces/inference . --repo-type space
 ```
 
-**Then set the secret before it finishes building** — Space → Settings → Variables and secrets:
+### bash / zsh
 
-| Name | Value |
-| --- | --- |
-| `LLAMA_API_KEY` | a long random string — `openssl rand -hex 32` |
+```bash
+pip install -U huggingface_hub
+hf auth login
 
-The container **exits at startup without it**. That is deliberate: a Space is public by default,
-and llama-server with no `--api-key` is an open inference endpoint for anyone who finds the URL.
+git fetch origin && git checkout main
+key=$(openssl rand -hex 32); echo "$key"
+
+hf repo create aura-inference --type space --sdk docker --flavor cpu-basic --secrets "LLAMA_API_KEY=$key"
+hf upload <your-username>/aura-inference spaces/inference . --repo-type space
+```
+
+`--secrets` sets `LLAMA_API_KEY` at creation, which matters: the container **exits at startup
+without it**, and setting it up front means there is never a window where the Space is running
+unauthenticated. A Space is public by default, and llama-server with no `--api-key` is an open
+inference endpoint for anyone who finds the URL.
+
+To set or rotate it later, use Space → Settings → Variables and secrets.
+
+`--flavor cpu-basic` is the free tier: 2 vCPU, 16 GB, and it sleeps when idle. `--sleep-time -1`
+disables sleeping but requires a paid flavor; on free it is rejected rather than ignored.
 
 Optional, same screen, if you want a different model:
 
