@@ -16,6 +16,19 @@ google_client_id.txt
 service-account*.json
 roles.json
 
+# SSH keys. `*.key` above does not match them: ssh-keygen names its output `id_ed25519`,
+# `aura_deploy` or whatever -f was given, with no extension at all. A deploy key committed here
+# would be readable by everyone with repo access and would stay in history after deletion.
+id_rsa
+id_ecdsa
+id_ed25519
+id_*[!.]
+*_rsa
+*_ed25519
+*_deploy
+!*.pub
+known_hosts
+
 # ==========================================
 # Python (aura_backend)
 # ==========================================
