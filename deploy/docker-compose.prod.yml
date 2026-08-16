@@ -165,7 +165,7 @@ services:
     <<: *restart
     logging: *logging
     # Separate queues so a multi-minute ingestion backlog cannot delay a user-facing task.
-    command: celery -A aura_tasks worker -Q realtime -c 4 --loglevel=info --max-tasks-per-child=200
+    command: celery -A tasks worker -Q realtime -c 4 --loglevel=info --max-tasks-per-child=200
     environment: &worker_env
       AURA_ENVIRONMENT: production
       AURA_LOG_FORMAT: json
@@ -194,7 +194,7 @@ services:
       dockerfile: Dockerfile
     <<: *restart
     logging: *logging
-    command: celery -A aura_tasks worker -Q ingestion,learning -c 2 --loglevel=info --max-tasks-per-child=50
+    command: celery -A tasks worker -Q ingestion,learning -c 2 --loglevel=info --max-tasks-per-child=50
     environment: *worker_env
     secrets: [postgres_password, redis_password, qdrant_api_key]
     networks: [data]
@@ -212,7 +212,7 @@ services:
     <<: *restart
     logging: *logging
     # Schedules the 02:00 knowledge refresh (ADR-008) and memory consolidation.
-    command: celery -A aura_tasks beat --loglevel=info
+    command: celery -A celery_app beat --loglevel=info
     environment: *worker_env
     secrets: [postgres_password, redis_password, qdrant_api_key]
     networks: [data]
