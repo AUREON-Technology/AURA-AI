@@ -172,13 +172,13 @@ abstract class AppLocalizations {
   /// **'AI system status'**
   String get aiSystemStatus;
 
-  /// Status row label
+  /// Status row label for backend reachability
   ///
   /// In en, this message translates to:
-  /// **'On-device inference'**
-  String get onDeviceInference;
+  /// **'AURA AI service'**
+  String get serverInference;
 
-  /// Status value when the on-device model is loaded and available
+  /// Status value when the AI service is reachable
   ///
   /// In en, this message translates to:
   /// **'Ready'**

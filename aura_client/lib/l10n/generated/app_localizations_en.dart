@@ -48,7 +48,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get aiSystemStatus => 'AI system status';
 
   @override
-  String get onDeviceInference => 'On-device inference';
+  String get serverInference => 'AURA AI service';
 
   @override
   String get statusReady => 'Ready';
