@@ -100,6 +100,8 @@ Start with the [overview](docs/architecture/00-overview.md).
 ## Documentation
 
 **Getting it running**
+[Provisioning runbook](docs/guides/provisioning-runbook.md) ·
+[Host migration](docs/guides/host-migration-runbook.md) ·
 [Deployment](docs/guides/deployment-guide.md) ·
 [Administration](docs/guides/administrator-guide.md) ·
 [Maintenance](docs/guides/maintenance-guide.md) ·
@@ -124,7 +126,8 @@ Start with the [overview](docs/architecture/00-overview.md).
 uninflated assessment of how close to production it actually is:
 [pre-modification audit](AURA_AI_CURRENT_ARCHITECTURE.md) ·
 [final implementation report](AURA_AI_FINAL_IMPLEMENTATION_REPORT.md) ·
-[production readiness score](AURA_AI_PRODUCTION_READINESS_SCORE.md)
+[production readiness score](AURA_AI_PRODUCTION_READINESS_SCORE.md) ·
+[hardware capacity report](AI_HARDWARE_CAPACITY_REPORT.md)
 
 **Where it started** — the Phase 1 analysis of the system this replaces, with file:line evidence
 for every finding: [architecture](docs/analysis/01-architecture-report.md) ·
@@ -162,6 +165,9 @@ cp .env.example .env && $EDITOR .env      # set AURA_DOMAIN
 ./scripts/bootstrap-secrets.sh
 docker compose -f docker-compose.prod.yml --env-file .env up -d
 ```
+
+First time on a host? Use the [Provisioning Runbook](docs/guides/provisioning-runbook.md) instead
+of the four lines above — it covers the parts that only bite once, and it checks the hardware first.
 
 Nothing in the stack has a secret default — a deployment that forgets a value fails to start
 rather than running with a publicly-known password. Full instructions, including TLS and the
