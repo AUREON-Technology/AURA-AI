@@ -37,6 +37,11 @@ networks:
     internal: true
   observability:
     driver: bridge
+  # Outbound-only, for ollama to pull model weights from registry.ollama.ai. Not `edge`:
+  # that network is documented as ingress-facing (nginx + gateway) and mixing egress into it
+  # would blur that boundary. Model pulls are still gated by AURA_MODEL_ALLOWLIST (SEC-01).
+  egress:
+    driver: bridge
 
 volumes:
   postgres_data:
@@ -224,7 +229,9 @@ services:
     logging: *logging
     volumes:
       - ollama_models:/root/.ollama
-    networks: [data]
+    # data: reachable by the gateway that calls it. egress: the only service that needs a
+    # route to the internet, to pull model weights -- see the `egress` network's comment above.
+    networks: [data, egress]
     environment:
       OLLAMA_HOST: 0.0.0.0:11434
       # One model resident; a second would evict the first on a 16 GB box and turn every
