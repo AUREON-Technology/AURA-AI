@@ -75,9 +75,21 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    # AURA_DOMAIN must reach nginx's actual config, not just docker-compose.yml's own
+    # interpolation -- ${AURA_DOMAIN} inside aura.conf.template is nginx's own envsubst, run by
+    # its entrypoint against *.template files, not docker compose's variable substitution (which
+    # only applies within this YAML file). NGINX_ENVSUBST_FILTER restricts that substitution to
+    # this one name; without it, envsubst would also stomp nginx's own $host, $request_uri, etc.,
+    # replacing them with empty strings since those aren't real environment variables.
+    environment:
+      AURA_DOMAIN: ${AURA_DOMAIN}
+      NGINX_ENVSUBST_FILTER: ^AURA_DOMAIN$$
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/templates:/etc/nginx/templates:ro
+      # Not :ro -- the entrypoint's envsubst step renders *.template into this directory.
+      # proxy_headers.inc (no variables, untouched by envsubst) lives here as a plain file too.
+      - ./nginx/conf.d:/etc/nginx/conf.d
       - nginx_certs:/etc/letsencrypt
       - ./nginx/www:/var/www/certbot:ro
     networks: [edge, observability]

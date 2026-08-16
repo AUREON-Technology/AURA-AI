@@ -11,6 +11,14 @@
 # 3. Rate limiting here is a coarse pre-filter only. Real limiting is cost-weighted and
 #    per-user inside the gateway; Nginx cannot know that a chat turn costs twenty times a
 #    health check.
+#
+# This file is a *.template*, not a plain .conf: it is rendered by the official nginx image's
+# entrypoint (20-envsubst-on-templates.sh), which envsubst's it into /etc/nginx/conf.d/aura.conf
+# on container start. NGINX_ENVSUBST_FILTER=^AURA_DOMAIN$ on the nginx service restricts that
+# substitution to exactly this one variable -- everything else below with a leading '$' is an
+# nginx runtime variable ($host, $request_uri, ...) and must NOT be touched, which an
+# unrestricted envsubst would otherwise do by replacing every $name it finds with an empty
+# string.
 
 # Coarse connection-level limits. Zones are shared across workers.
 limit_req_zone $binary_remote_addr zone=aura_general:10m rate=30r/s;
