@@ -1,4 +1,5 @@
 import asyncio
+import os
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -17,9 +18,31 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-# Single source of truth for the connection string: config.settings
-# (populated from DATABASE_URL), not a duplicated value in alembic.ini.
-config.set_main_option("sqlalchemy.url", settings.database_url or "postgresql+asyncpg://localhost/aura")
+
+def _database_url_from_secret_file() -> str | None:
+    """Build the DSN from a Docker secret file, the way aura_service.py hydrates
+    AURA_DATABASE_URL at app startup (SEC-08: the password never sits in an env var on
+    disk). `docker compose run ... alembic` invokes this module directly, bypassing that
+    hydration, so deploy/docker-compose.prod.yml's AURA_DATABASE_URL_FILE would otherwise
+    be silently ignored and this would fall through to the localhost default."""
+    path = os.environ.get("AURA_DATABASE_URL_FILE")
+    if not path or not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as handle:
+        password = handle.read().strip()
+    if not password:
+        return None
+    host = os.environ.get("POSTGRES_HOST", "postgres")
+    return f"postgresql+asyncpg://aura:{password}@{host}:5432/aura"
+
+
+# Single source of truth for the connection string: config.settings (populated from
+# DATABASE_URL), falling back to the Docker-secret-file DSN when DATABASE_URL itself was
+# never set, then to localhost as a last resort for a bare local run with neither.
+config.set_main_option(
+    "sqlalchemy.url",
+    settings.database_url or _database_url_from_secret_file() or "postgresql+asyncpg://localhost/aura",
+)
 
 
 def run_migrations_offline() -> None:

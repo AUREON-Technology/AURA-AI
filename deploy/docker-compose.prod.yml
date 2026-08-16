@@ -37,6 +37,11 @@ networks:
     internal: true
   observability:
     driver: bridge
+  # Outbound-only, for ollama to pull model weights from registry.ollama.ai. Not `edge`:
+  # that network is documented as ingress-facing (nginx + gateway) and mixing egress into it
+  # would blur that boundary. Model pulls are still gated by AURA_MODEL_ALLOWLIST (SEC-01).
+  egress:
+    driver: bridge
 
 volumes:
   postgres_data:
@@ -70,9 +75,21 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    # AURA_DOMAIN must reach nginx's actual config, not just docker-compose.yml's own
+    # interpolation -- ${AURA_DOMAIN} inside aura.conf.template is nginx's own envsubst, run by
+    # its entrypoint against *.template files, not docker compose's variable substitution (which
+    # only applies within this YAML file). NGINX_ENVSUBST_FILTER restricts that substitution to
+    # this one name; without it, envsubst would also stomp nginx's own $host, $request_uri, etc.,
+    # replacing them with empty strings since those aren't real environment variables.
+    environment:
+      AURA_DOMAIN: ${AURA_DOMAIN}
+      NGINX_ENVSUBST_FILTER: ^AURA_DOMAIN$$
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/templates:/etc/nginx/templates:ro
+      # Not :ro -- the entrypoint's envsubst step renders *.template into this directory.
+      # proxy_headers.inc (no variables, untouched by envsubst) lives here as a plain file too.
+      - ./nginx/conf.d:/etc/nginx/conf.d
       - nginx_certs:/etc/letsencrypt
       - ./nginx/www:/var/www/certbot:ro
     networks: [edge, observability]
@@ -160,7 +177,7 @@ services:
     <<: *restart
     logging: *logging
     # Separate queues so a multi-minute ingestion backlog cannot delay a user-facing task.
-    command: celery -A aura_tasks worker -Q realtime -c 4 --loglevel=info --max-tasks-per-child=200
+    command: celery -A tasks worker -Q realtime -c 4 --loglevel=info --max-tasks-per-child=200
     environment: &worker_env
       AURA_ENVIRONMENT: production
       AURA_LOG_FORMAT: json
@@ -189,7 +206,7 @@ services:
       dockerfile: Dockerfile
     <<: *restart
     logging: *logging
-    command: celery -A aura_tasks worker -Q ingestion,learning -c 2 --loglevel=info --max-tasks-per-child=50
+    command: celery -A tasks worker -Q ingestion,learning -c 2 --loglevel=info --max-tasks-per-child=50
     environment: *worker_env
     secrets: [postgres_password, redis_password, qdrant_api_key]
     networks: [data]
@@ -207,7 +224,7 @@ services:
     <<: *restart
     logging: *logging
     # Schedules the 02:00 knowledge refresh (ADR-008) and memory consolidation.
-    command: celery -A aura_tasks beat --loglevel=info
+    command: celery -A celery_app beat --loglevel=info
     environment: *worker_env
     secrets: [postgres_password, redis_password, qdrant_api_key]
     networks: [data]
@@ -224,7 +241,9 @@ services:
     logging: *logging
     volumes:
       - ollama_models:/root/.ollama
-    networks: [data]
+    # data: reachable by the gateway that calls it. egress: the only service that needs a
+    # route to the internet, to pull model weights -- see the `egress` network's comment above.
+    networks: [data, egress]
     environment:
       OLLAMA_HOST: 0.0.0.0:11434
       # One model resident; a second would evict the first on a 16 GB box and turn every

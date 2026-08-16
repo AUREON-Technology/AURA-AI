@@ -17,6 +17,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from fastapi import Response
+
 from aura_core.api import Principal, build_app, build_router
 from aura_core.config import load_settings
 from aura_core.container import build_container
@@ -154,8 +156,6 @@ def create_app(*, standalone: bool = False):
     legacy_app.include_router(
         build_router(container, authenticator=authenticator, rate_limiter=rate_limiter)
     )
-
-    from fastapi import Response
 
     @legacy_app.get("/health/live", tags=["health"])
     async def liveness() -> dict[str, str]:
