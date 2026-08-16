@@ -37,6 +37,17 @@ or left for you (Phase 4).
 
 ## Phase 1 — Inventory, before touching anything
 
+> **One command does Phases 1 and 2:**
+> ```bash
+> ./deploy/scripts/pre-migration-backup.sh
+> ```
+> It is read-only against the running system — nothing is stopped or reconfigured — and it exits
+> non-zero with a summary if anything could not be captured. A backup that is a wall of
+> copy-paste is a backup that gets half-done under time pressure, which is when it matters.
+>
+> The rest of this section explains what it collects and why, which is worth reading once before
+> trusting it.
+
 You cannot back up what you have not found. Three things on this host are not where a fresh install
 would put them, and all three are easy to lose.
 
