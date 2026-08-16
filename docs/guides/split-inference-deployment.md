@@ -8,7 +8,12 @@ to a Space until you say so explicitly.
 
 ## 1. What this costs, before anything else
 
-Two of the platform's own rules stop holding:
+**It is not free.** A Docker Space needs a PRO subscription at **$9/month** even on `cpu-basic` —
+only static Spaces are free — and that is *on top of* the VPS you still need for the gateway. See
+[§2](#cpu-basic-is-not-free-for-this) for the arithmetic against simply buying a bigger VPS, which
+wins on every axis except the first invoice.
+
+Two of the platform's own rules also stop holding:
 
 | Rule | Status | Why |
 | --- | --- | --- |
@@ -93,10 +98,44 @@ inference endpoint for anyone who finds the URL.
 
 To set or rotate it later, use Space → Settings → Variables and secrets.
 
-`--flavor cpu-basic` is the free tier: 2 vCPU, 16 GB, and it sleeps when idle. `--sleep-time -1`
-disables sleeping but requires a paid flavor; on free it is rejected rather than ignored.
+### `cpu-basic` is not free for this
 
-Optional, same screen, if you want a different model:
+**A Docker Space requires a PRO subscription ($9/month), even on `cpu-basic`.** Only *static*
+Spaces are free. Creating one without PRO fails at the API with:
+
+```
+402 Payment Required
+Static Spaces are free for everyone, but hosting Gradio and Docker Spaces
+on free cpu-basic requires a PRO subscription.
+```
+
+This is worth stating loudly because it removes the main reason anyone reaches for this topology.
+The Spaces *hardware* table does list CPU Basic at $0/hr, and that is accurate — the hardware is
+free, the right to run a Docker Space on it is not. Reading the price table alone gives you the
+wrong answer, which is how this guide originally came to claim a free tier.
+
+`cpu-basic` is 2 vCPU / 16 GB and sleeps when idle. `--sleep-time -1` disables sleeping but needs
+a paid flavor; on `cpu-basic` it is rejected rather than ignored.
+
+**Recompute before continuing:**
+
+| | Monthly | vCPU | Sleeps | Rules | Data egress | Hosts |
+| --- | --- | --- | --- | --- | --- | --- |
+| PRO + `cpu-basic` Space | **$9** | 2 | yes | 20 broken, 7 weakened | prompts + documents | the model only |
+| Contabo Cloud VPS 3 | **$16.18** | 8 | no | all intact | none | the whole stack |
+
+**$7.18/month is the entire difference**, and the cheaper option is worse on every other axis —
+including that it still leaves you needing a VPS for the gateway, so it is $9 *on top of* whatever
+you already pay rather than instead of it.
+
+The one thing PRO buys that a bigger VPS does not is **ZeroGPU**, which is genuinely much faster
+than any CPU. It is built for bursty demos with quotas and queueing rather than a 24/7 backend
+dependency, so treat it as a way to measure what GPU inference would feel like, not as somewhere to
+serve users from.
+
+### Choosing a different model
+
+Set these as Space variables (Settings → Variables and secrets), or pass `--env` at creation:
 
 | Name | Default |
 | --- | --- |
@@ -240,12 +279,15 @@ That build also needs HTTPS — Android blocks cleartext by default — and a re
 ## 7. Honest summary
 
 This gets you working generation without buying hardware. What it costs is Rule 20 outright, Rule 7
-in substance, and your prompts and document content leaving your infrastructure. On the free tier it
-also sleeps, and each wake re-downloads the model before answering.
+in substance, and your prompts and document content leaving your infrastructure. It also is not
+free — a Docker Space needs PRO at $9/month — and on `cpu-basic` it sleeps, with each wake
+re-downloading the model before answering.
 
-It is a very good way to **prove the pipeline works end to end** before spending anything. As a
-place to serve real users with a real corpus, a $16/month resize and a model on your own box is
-better on every axis except the first month's invoice.
+Once the free tier turned out not to apply, the argument for this topology largely went with it.
+$9/month for 2 sleeping vCPUs that host only the model, against $16.18 for 8 vCPUs that host
+everything and keep every rule intact, is not a close comparison. It remains a reasonable way to
+**prove the pipeline works end to end** if you already have PRO. It is not the cheap option it
+looked like.
 
 ---
 

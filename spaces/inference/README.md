@@ -36,7 +36,7 @@ unauthenticated llama-server is free generation for anyone who finds the URL.
 | `CTX_SIZE` | `8192` | RAG turns arrive with a lot of context |
 | `THREADS` | `nproc` | |
 
-3B is the default because free Spaces are 2 vCPU and time-to-first-token is dominated by prompt
+3B is the default because `cpu-basic` is 2 vCPU and time-to-first-token is dominated by prompt
 processing, not generation rate. A 7B fits the 16 GB of RAM comfortably and is the better model —
 switch if you would rather have quality than latency, and measure rather than guessing which you
 want.
@@ -64,6 +64,7 @@ That is a deliberate trade recorded in
 [`docs/guides/split-inference-deployment.md`](https://github.com/anasibrahimgnedy-collab/AURA-AI/blob/main/docs/guides/split-inference-deployment.md),
 and the gateway will not talk to a host like this without an explicit opt-in flag.
 
-On the free CPU tier the Space also sleeps when idle, and its disk is ephemeral — so every wake
-re-downloads the model before it can answer. That is the main reason this is a good way to prove
-the wiring and a poor way to serve users.
+Note also that a Docker Space needs a **PRO subscription ($9/month)** even on `cpu-basic` — only
+static Spaces are free. On `cpu-basic` it sleeps when idle and its disk is ephemeral, so every wake
+re-downloads the model before it can answer. Between the subscription and the cold starts, this is a
+good way to prove the wiring and a poor way to serve users.
