@@ -26,7 +26,9 @@ __all__ = [
     "BANNED_DART_PACKAGES",
     "BANNED_CREDENTIAL_NAMES",
     "BANNED_PROVIDER_KINDS",
+    "REMOTE_INFERENCE_HOSTS",
     "is_external_inference_host",
+    "is_remote_inference_host",
     "credential_name_variants",
 ]
 
@@ -188,6 +190,52 @@ BANNED_PROVIDER_KINDS: tuple[str, ...] = (
     "mistral",
     "huggingface",
 )
+
+
+#: Hosts that run *your* container and *your* weights, on infrastructure you do not own.
+#:
+#: These are a genuinely different category from :data:`EXTERNAL_INFERENCE_HOSTS`. Calling
+#: ``api.openai.com`` sends your prompt to somebody else's model; deploying a llama.cpp server to a
+#: Hugging Face Space sends it to your own model running on rented compute. The first is what the
+#: platform forbids outright. The second is a deployment topology with real costs -- the system
+#: stops working without internet, and prompts plus retrieved document content leave infrastructure
+#: you control -- that an operator may nonetheless choose knowingly.
+#:
+#: So these are not banned. They are *gated*: :meth:`ProviderConfig._reject_external_base_url`
+#: refuses them unless ``AURA_ALLOW_REMOTE_INFERENCE=true`` is set, which makes the choice a
+#: deliberate, greppable act rather than something that happens because a URL was pasted into an
+#: env file.
+#:
+#: This list exists because the alternative was worse. ``*.hf.space`` was not on the banned list --
+#: only ``api-inference.huggingface.co`` and ``endpoints.huggingface.cloud`` were -- so a Space URL
+#: would have sailed through all six static layers and the runtime check without anyone noticing.
+#: Quietly using that gap would have made the platform's central claim false while every test still
+#: reported it true.
+REMOTE_INFERENCE_HOSTS: tuple[str, ...] = (
+    "hf.space",
+    "run.app",           # Cloud Run
+    "azurecontainerapps.io",
+    "onrender.com",
+    "railway.app",
+    "fly.dev",
+    "modal.run",
+)
+
+
+def is_remote_inference_host(host: str) -> str | None:
+    """Return the matching gated entry for ``host``, or ``None``.
+
+    Suffix match, so ``anas-aura-inference.hf.space`` matches ``hf.space``. Deliberately not a
+    substring match: ``hf.space`` appearing inside a longer unrelated label should not trip this,
+    and a substring rule here would fire on hostnames that merely contain the string.
+    """
+    if not host:
+        return None
+    host = host.lower().rstrip(".")
+    for gated in REMOTE_INFERENCE_HOSTS:
+        if host == gated or host.endswith("." + gated):
+            return gated
+    return None
 
 
 def credential_name_variants(name: str) -> tuple[str, ...]:

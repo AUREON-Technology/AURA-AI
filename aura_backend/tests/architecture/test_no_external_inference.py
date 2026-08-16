@@ -350,6 +350,103 @@ class TestNoConfigTemplateOffersARemovedProviderKind:
         assert self._PATTERN.search("KIND = bedrock") is not None
 
 
+class TestRemoteInferenceIsGatedNotSilent:
+    """Rented infrastructure is a choice, and it has to be made on purpose.
+
+    A Space runs *your* container and *your* weights on someone else's hardware. That is a
+    genuinely different thing from calling a vendor's model, and the platform permits it -- but two
+    of the mission's rules stop holding when you do, so it must never happen because a URL was
+    pasted into an env file.
+
+    These tests exist because ``*.hf.space`` was on no list at all. A Space URL would have passed
+    all six static layers and the runtime check, and the platform's central claim would have become
+    false while every test still reported it true.
+    """
+
+    REMOTE_URLS = [
+        "https://anas-aura-inference.hf.space/v1",
+        "https://aura-backend-abc123.run.app/v1",
+        "https://aura.fly.dev/v1",
+        "https://aura-production-a31f.up.railway.app/v1",
+        "https://aura--infer.modal.run/v1",
+    ]
+
+    @pytest.mark.parametrize("base_url", REMOTE_URLS)
+    def test_refused_without_the_opt_in(self, base_url: str, monkeypatch) -> None:
+        from aura_core.config.settings import ProviderConfig
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.delenv("AURA_ALLOW_REMOTE_INFERENCE", raising=False)
+        with pytest.raises(ConfigurationError) as excinfo:
+            ProviderConfig(name="remote", kind="openai_compatible", model="m", base_url=base_url)
+
+        message = str(excinfo.value)
+        # The error has to state the cost, not merely refuse. An operator who reads "invalid
+        # configuration" changes the setting; one who reads what stops working makes a decision.
+        assert "without internet" in message
+        assert "leave infrastructure you control" in message
+        assert "AURA_ALLOW_REMOTE_INFERENCE" in message
+
+    @pytest.mark.parametrize("base_url", REMOTE_URLS)
+    def test_permitted_with_the_opt_in(self, base_url: str, monkeypatch) -> None:
+        from aura_core.config.settings import ProviderConfig
+
+        monkeypatch.setenv("AURA_ALLOW_REMOTE_INFERENCE", "true")
+        config = ProviderConfig(
+            name="remote", kind="openai_compatible", model="m", base_url=base_url
+        )
+        assert config.base_url == base_url
+
+    def test_the_opt_in_does_not_unlock_a_banned_vendor(self, monkeypatch) -> None:
+        """The gate is for rented compute running your model, not for hosted APIs.
+
+        If this ever passes, the escape hatch has become a way around the whole rule.
+        """
+        from aura_core.config.settings import ProviderConfig
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.setenv("AURA_ALLOW_REMOTE_INFERENCE", "true")
+        with pytest.raises(ConfigurationError) as excinfo:
+            ProviderConfig(
+                name="sneaky",
+                kind="openai_compatible",
+                model="m",
+                base_url="https://api.openai.com/v1",
+            )
+        assert "own infrastructure" in str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "http://ollama:11434",
+            "http://localhost:8000/v1",
+            "http://gpu-host.internal:8000/v1",
+            "http://10.0.0.5:8000/v1",
+        ],
+    )
+    def test_a_host_you_own_needs_no_opt_in(self, base_url: str, monkeypatch) -> None:
+        """The gate must not fire on ordinary self-hosted deployments."""
+        from aura_core.config.settings import ProviderConfig
+
+        monkeypatch.delenv("AURA_ALLOW_REMOTE_INFERENCE", raising=False)
+        assert ProviderConfig(
+            name="local", kind="openai_compatible", model="m", base_url=base_url
+        ).base_url == base_url
+
+    def test_suffix_match_does_not_fire_on_a_lookalike(self, monkeypatch) -> None:
+        """`is_remote_inference_host` matches suffixes, not substrings.
+
+        A substring rule would reject `hf.space.internal.mycorp.net`, which is a host you own.
+        """
+        from aura_core.config.external_inference import is_remote_inference_host
+
+        assert is_remote_inference_host("anas-aura.hf.space") == "hf.space"
+        assert is_remote_inference_host("hf.space") == "hf.space"
+        assert is_remote_inference_host("hf.space.internal.mycorp.net") is None
+        assert is_remote_inference_host("notreallyhf.space") is None
+        assert is_remote_inference_host("") is None
+
+
 class TestProviderConfigRefusesHostedEndpoints:
     """The runtime half of the rule, sharing the registry with the scans above."""
 
