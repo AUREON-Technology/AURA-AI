@@ -131,7 +131,24 @@ Python. All three new layers were mutation-tested — a banned Dart package and 
 `GEMINI_API_KEY` were each re-introduced and each caught — because a fitness function that cannot
 fail detects nothing.
 
-Getting inference off this system now requires defeating all seven deliberately.
+Getting inference off this system to a *vendor* now requires defeating all seven deliberately.
+
+**One category is gated rather than banned, and the distinction is deliberate.** A Hugging Face
+Space, a Cloud Run service or a Fly app running *your* container and *your* weights is not the same
+act as calling somebody else's model — it is rented compute, which an operator may legitimately
+choose when their own hardware cannot hold a model. Those hosts are refused unless
+`AURA_ALLOW_REMOTE_INFERENCE=true`, and permitting one logs a warning naming the host on every
+boot, because a trade accepted once should stay visible to whoever operates the system afterwards.
+
+This exists because the alternative was a silent hole. `*.hf.space` was on no list — only
+`api-inference.huggingface.co` and `endpoints.huggingface.cloud` were — so a Space URL would have
+passed all seven checks with nothing to report. Using that gap quietly would have made this
+document's central claim false while every test still said it was true. A test asserts the escape
+hatch cannot be turned on a vendor API, so it widens exactly one thing and no more.
+
+What the gate does **not** do: once opted in, prompts and retrieved content genuinely do leave the
+operator's infrastructure and Rule 20 no longer holds. See
+[`docs/guides/split-inference-deployment.md`](docs/guides/split-inference-deployment.md).
 
 **The client became a client.** Deleted `lib/core/ai/offline_agents/` (5 files), the
 `google_generative_ai` and `flutter_llama` dependencies, and a 986 MB GGUF asset tracked in LFS.

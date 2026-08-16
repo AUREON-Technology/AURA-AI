@@ -14,6 +14,7 @@ Every setting is read from ``AURA_``-prefixed environment variables. The product
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
@@ -22,7 +23,12 @@ from urllib.parse import urlsplit
 
 from ..domain.errors import ConfigurationError
 from ..domain.llm import RoutingPolicy
-from .external_inference import is_external_inference_host
+from .external_inference import is_external_inference_host, is_remote_inference_host
+
+# Stdlib logging rather than aura_core.observability: settings is the lowest layer here and
+# the observability module reads configuration, so importing it would risk a cycle for the
+# sake of one warning.
+logger = logging.getLogger("aura_core.config")
 
 __all__ = [
     "Environment",
@@ -168,22 +174,50 @@ class ProviderConfig:
         self._reject_external_base_url()
 
     def _reject_external_base_url(self) -> None:
-        """Refuse a base_url on a hosted inference service.
+        """Refuse a base_url on a hosted inference service; gate one on rented compute.
 
         ``openai_compatible`` speaks the same protocol as several hosted APIs, so deleting the
         vendor adapters was not on its own sufficient -- a base_url is all it would take to route
-        every turn back out to a third party. The host list is shared with the architecture
+        every turn back out to a third party. The host lists are shared with the architecture
         fitness tests so the runtime check and the static scan cannot disagree.
+
+        Two categories, and the difference matters:
+
+        * A **banned** host runs somebody else's model. Always refused, no override.
+        * A **gated** host runs *your* container and *your* weights on rented infrastructure --
+          a Hugging Face Space, Cloud Run, Fly. Refused *unless* ``AURA_ALLOW_REMOTE_INFERENCE``
+          is true, because it is a topology an operator may legitimately choose and should have
+          to choose on purpose. Two rules stop holding when they do, and the error says which.
         """
         if not self.base_url:
             return
         host = urlsplit(self.base_url).hostname or ""
+
         banned = is_external_inference_host(host)
         if banned:
             raise ConfigurationError(
                 f"provider {self.name!r} points at {host!r}, which is a hosted inference "
                 f"service. All inference must run on our own infrastructure.",
                 details={"provider": self.name, "host": host, "matched": banned},
+            )
+
+        gated = is_remote_inference_host(host)
+        if gated and not _bool("ALLOW_REMOTE_INFERENCE", False):
+            raise ConfigurationError(
+                f"provider {self.name!r} points at {host!r}, which is rented infrastructure "
+                f"rather than your own. This is allowed, but not by accident: inference there "
+                f"means the system stops working without internet, and prompts plus retrieved "
+                f"document content leave infrastructure you control. Set "
+                f"AURA_ALLOW_REMOTE_INFERENCE=true to accept that, or point at a host you own.",
+                details={"provider": self.name, "host": host, "matched": gated},
+            )
+        if gated:
+            # Logged at warning on every boot, deliberately. A trade-off accepted once should
+            # stay visible to whoever operates the system afterwards, who may not have been the
+            # person who accepted it.
+            logger.warning(
+                "remote inference host permitted by AURA_ALLOW_REMOTE_INFERENCE",
+                extra={"provider": self.name, "host": host, "matched": gated},
             )
 
     @property

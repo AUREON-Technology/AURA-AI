@@ -25,9 +25,11 @@ implementations of every storage port. A fitness test fails the build if that st
   is a real operation.
 - **Uses tools** — capability-gated, argument-validated, timed out, and audited on every attempt
   including refusals.
-- **Runs entirely on your hardware** — Ollama or vLLM, on your own machines. There is no hosted
-  provider to fail over to: external inference APIs are rejected at construction and the build
-  fails if one reappears in code, dependencies, manifests or the Flutter client.
+- **Runs on your hardware** — Ollama or vLLM, on your own machines. There is no hosted provider
+  to fail over to: external inference APIs are rejected at construction and the build fails if one
+  reappears in code, dependencies, manifests or the Flutter client. Running your own model on
+  rented compute is possible but gated behind an explicit flag, because it costs you the
+  works-without-internet guarantee ([split inference](docs/guides/split-inference-deployment.md)).
 - **Learns on a schedule, never silently** — a nightly job rebuilds the index into a *new*
   generation and promotes it only if quality gates pass. Promoting a fine-tuned model requires a
   recorded human approval; rollback never does.
@@ -102,6 +104,7 @@ Start with the [overview](docs/architecture/00-overview.md).
 **Getting it running**
 [Provisioning runbook](docs/guides/provisioning-runbook.md) ·
 [Host migration](docs/guides/host-migration-runbook.md) ·
+[Split inference](docs/guides/split-inference-deployment.md) ·
 [Deployment](docs/guides/deployment-guide.md) ·
 [Administration](docs/guides/administrator-guide.md) ·
 [Maintenance](docs/guides/maintenance-guide.md) ·
@@ -153,6 +156,7 @@ Measured on 4 vCPU / 15 GB with the in-memory stack — see the
 | Tests | 1284, ~7 s, no infrastructure |
 | Coverage | 90% |
 | External AI inference APIs | **none** — enforced by seven independent checks |
+| Remote inference on rented compute | gated — refused unless `AURA_ALLOW_REMOTE_INFERENCE=true` |
 
 ## Deploying
 

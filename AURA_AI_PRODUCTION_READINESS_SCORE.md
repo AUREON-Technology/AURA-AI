@@ -94,9 +94,20 @@ against a staging copy (Reliability). Both are hours, not weeks.
 
 ## What I am confident about
 
-- **External inference is genuinely impossible** without deliberately defeating four independent
-  checks — SDK imports, endpoint strings, declared dependencies, and runtime `base_url` validation,
-  all reading one shared registry. This is the strongest claim in the document.
+- **A hosted vendor API cannot be reached** without deliberately defeating seven independent checks
+  — SDK imports, endpoint strings, Python dependencies, Dart dependencies, deployment manifests,
+  config templates, and runtime `base_url` validation, all reading one shared registry. This is the
+  strongest claim in the document. (An earlier version of this line said "four", written before
+  three of the layers existed. It also said "external inference is impossible", which the next
+  bullet now qualifies.)
+- **Running your own model on rented compute is gated, not impossible.** A Hugging Face Space,
+  Cloud Run or Fly endpoint is refused unless `AURA_ALLOW_REMOTE_INFERENCE=true` — a deliberate,
+  logged, greppable act, and one that cannot be used to reach a vendor API. The gate exists because
+  `*.hf.space` was on no list at all: a Space URL would have passed every check while making the
+  platform's central claim false. **Note what the gate does not do.** Once an operator opts in,
+  prompts and retrieved document content do leave their infrastructure, and the system stops working
+  offline. The enforcement makes that a decision someone has to make on purpose; it is not a
+  guarantee against it.
 - **No inference happens on the mobile device, and no model weights ship in the APK.** Verified by
   `flutter analyze`, a green release build, and the removal of a 986 MB LFS-tracked asset.
 - **The production stack boots.** Verified by constructing the real container against the real
