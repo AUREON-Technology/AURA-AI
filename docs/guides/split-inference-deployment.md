@@ -124,14 +124,44 @@ a paid flavor; on `cpu-basic` it is rejected rather than ignored.
 | PRO + `cpu-basic` Space | **$9** | 2 | yes | 20 broken, 7 weakened | prompts + documents | the model only |
 | Contabo Cloud VPS 3 | **$16.18** | 8 | no | all intact | none | the whole stack |
 
+Note the last column. The Space hosts the model and nothing else, so its $9 is *additional to* the
+VPS you still need for the gateway, Postgres, Qdrant and retrieval — not a replacement for it.
+
 **$7.18/month is the entire difference**, and the cheaper option is worse on every other axis —
 including that it still leaves you needing a VPS for the gateway, so it is $9 *on top of* whatever
 you already pay rather than instead of it.
 
-The one thing PRO buys that a bigger VPS does not is **ZeroGPU**, which is genuinely much faster
-than any CPU. It is built for bursty demos with quotas and queueing rather than a 24/7 backend
-dependency, so treat it as a way to measure what GPU inference would feel like, not as somewhere to
-serve users from.
+### ZeroGPU does not apply here, despite appearances
+
+PRO's headline feature is ZeroGPU, and it is the obvious thing to reach for once you are paying
+anyway. It does not work for this. From the
+[ZeroGPU documentation](https://huggingface.co/docs/hub/spaces-zerogpu):
+
+> Currently, ZeroGPU Spaces are exclusively compatible with the **Gradio SDK**.
+
+A Docker Space cannot use ZeroGPU at all. Three further properties make it the wrong shape for a
+chat backend even if the SDK restriction were lifted:
+
+| Property | Consequence |
+| --- | --- |
+| GPU attached **per decorated function call**, released after | No persistent server holding weights in VRAM — which is exactly what `llama-server` is |
+| **60 s** default runtime per call | Extensible via `duration=`, but the model is a request-scoped resource, not a service |
+| **40 min/day** quota on PRO, then $1 per 10 min | At ~10 s GPU per turn that is roughly 240 turns/day before metered billing at $6/hour |
+
+Reaching it would mean rewriting the Space as a Gradio app in Python with `@spaces.GPU`, then
+building an OpenAI-compatible shim on top of Gradio — which is not what Gradio is, and would still
+leave the quota and the queue.
+
+**So for this use case PRO buys exactly one thing: permission to run a Docker Space on
+`cpu-basic`.** Two sleeping vCPUs, hosting the model and nothing else.
+
+### One feature to deliberately not use
+
+PRO includes *"Inference Providers: 20× included credits across all inference providers."* That is
+the hosted inference API — `api-inference.huggingface.co` — which is on this platform's banned list
+and rejected at construction by `ProviderConfig`. It will sit there looking like the convenient
+option. The `AURA_ALLOW_REMOTE_INFERENCE` gate deliberately does **not** unlock it, and there is a
+test asserting so.
 
 ### Choosing a different model
 
