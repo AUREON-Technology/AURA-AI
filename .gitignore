@@ -16,6 +16,8 @@ google_client_id.txt
 service-account*.json
 roles.json
 
+aura-ai-89ab4-firebase-adminsdk-fbsvc-8123ff090c.json
+
 # SSH keys. `*.key` above does not match them: ssh-keygen names its output `id_ed25519`,
 # `aura_deploy` or whatever -f was given, with no extension at all. A deploy key committed here
 # would be readable by everyone with repo access and would stay in history after deletion.
