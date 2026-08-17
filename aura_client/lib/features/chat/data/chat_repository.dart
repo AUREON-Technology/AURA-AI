@@ -23,6 +23,12 @@ final pendingActionsProvider = NotifierProvider<PendingActions, List<dynamic>>((
   return PendingActions();
 });
 
+/// The id of the assistant message currently receiving a stream, or null
+/// when nothing is in flight. Distinct from "content is empty" -- lets the
+/// UI show a loading skeleton only while a turn is genuinely still
+/// streaming, not forever on a message that legitimately finished empty.
+final streamingMessageIdProvider = StateProvider<String?>((ref) => null);
+
 class ChatRepository {
   final AppDatabase _db;
   final Ref _ref;
@@ -84,49 +90,49 @@ class ChatRepository {
         role: "assistant",
         content: "",
         modelUsed: Value(activeAgentId),
+        agentId: Value(activeAgentId),
         createdAt: DateTime.now(),
       ),
     );
 
-    // 4. Load agent state
-    final customInstructions = _ref.read(allAgentInstructionsProvider).value ?? {};
-
-    // 5. Prepare messages history format
-    final historyPayload = historyMessages.map((m) => {
-      "role": m.role,
-      "content": m.content,
-    }).toList();
-    historyPayload.add({
-      "role": "user",
-      "content": userContent,
-    });
-
-    // 6. Execute streaming. Try the v2 SSE protocol first (Doc/V2_BLUEPRINT.md §7) — structured
-    // token/tool_calls events instead of string-splitting an "[ACTIONS]" marker out of the stream —
-    // and fall back to the orchestrator path on any SSE error, so a backend that has not deployed
-    // /api/v2/chat yet still works.
-    //
-    // No online check precedes this any more. It used to gate SSE on the router having selected the
-    // hosted provider, which was really asking "are we about to use the on-device model"; with one
-    // engine behind one endpoint there is nothing to branch on, and attempting the request is a
-    // better connectivity test than a DNS lookup. Both paths surface an unreachable backend as an
-    // error rather than answering from somewhere else.
-    bool sseSucceeded = await _sendViaSse(
-      agentId: activeAgentId,
-      historyPayload: historyPayload,
-      customInstructions: customInstructions,
-      useRag: useRag,
-      assistantMsgId: assistantMsgId,
-    );
-
-    if (!sseSucceeded) {
-      await _sendViaOrchestrator(
+    // 4. Execute streaming against the v3 kernel (aura_core/api/v3.py's /chat/stream). Unlike the
+    // legacy v1/v2 path, v3 loads conversation history itself from server-side episodic memory
+    // keyed by session_id, so the client sends only the latest message. Falls back to the v1
+    // orchestrator path (which does need a history payload) on any SSE-level error.
+    _ref.read(streamingMessageIdProvider.notifier).state = assistantMsgId;
+    try {
+      bool sseSucceeded = await _sendViaSse(
+        message: userContent,
+        sessionId: conversationId,
         agentId: activeAgentId,
-        historyPayload: historyPayload,
-        customInstructions: customInstructions,
         useRag: useRag,
         assistantMsgId: assistantMsgId,
       );
+
+      if (!sseSucceeded) {
+        // Legacy fallback still needs a message-history array and per-agent custom instructions,
+        // neither of which the v3 path above uses.
+        final customInstructions = _ref.read(allAgentInstructionsProvider).value ?? {};
+        final historyPayload = historyMessages.map((m) => {
+          "role": m.role,
+          "content": m.content,
+        }).toList();
+        historyPayload.add({
+          "role": "user",
+          "content": userContent,
+        });
+        await _sendViaOrchestrator(
+          agentId: activeAgentId,
+          historyPayload: historyPayload,
+          customInstructions: customInstructions,
+          useRag: useRag,
+          assistantMsgId: assistantMsgId,
+        );
+      }
+    } finally {
+      if (_ref.read(streamingMessageIdProvider) == assistantMsgId) {
+        _ref.read(streamingMessageIdProvider.notifier).state = null;
+      }
     }
 
     // Asynchronously trigger memory extraction regardless of which path served the response
@@ -136,24 +142,32 @@ class ChatRepository {
   /// Returns true if the SSE stream completed successfully (even if the
   /// model's reply was itself an error frame) — false signals the caller
   /// to fall back to [_sendViaOrchestrator].
+  ///
+  /// Deliberately does not write to [pendingActionsProvider]: v3's tool
+  /// registry (aura_core/tools/builtin.py) has no task/calendar/finance/
+  /// health CRUD tools, so that panel would only ever be empty on this
+  /// path. It stays populated exclusively by [_sendViaOrchestrator], the
+  /// v1 fallback whose backend agent still proposes those actions.
   Future<bool> _sendViaSse({
+    required String message,
+    required String sessionId,
     required String agentId,
-    required List<Map<String, String>> historyPayload,
-    required Map<String, String> customInstructions,
     required bool useRag,
     required String assistantMsgId,
   }) async {
     final stopwatch = Stopwatch()..start();
     String displayText = "";
     DateTime lastDbUpdate = DateTime.now();
+    final citations = <String>[];
+    final toolCalls = <Map<String, dynamic>>[];
 
     try {
       final client = _ref.read(sseAgentClientProvider);
       final stream = client.streamAgentEvents(
+        message: message,
+        sessionId: sessionId,
         agentId: agentId,
-        messages: historyPayload,
-        customInstructions: customInstructions,
-        useRag: useRag,
+        useKnowledge: useRag,
       );
 
       await for (final event in stream) {
@@ -167,13 +181,45 @@ class ChatRepository {
             }
             break;
           case SseEventKind.toolCalls:
-            _ref.read(pendingActionsProvider.notifier).setActions(event.actions ?? []);
+            for (final call in event.actions ?? []) {
+              if (call is Map<String, dynamic>) {
+                toolCalls.add({...call, 'settled': false});
+              }
+            }
+            // Written immediately (not throttled like token text) so a chip
+            // appears while the turn is still streaming, not only at the end.
+            await _updateMessageToolCalls(assistantMsgId, toolCalls);
+            break;
+          case SseEventKind.citations:
+            citations
+              ..clear()
+              ..addAll((event.citations ?? []).map((c) => c.toString()));
+            await _updateMessageCitations(assistantMsgId, citations);
+            break;
+          case SseEventKind.revision:
+            // A full-text replacement (post-hoc safety-guard redaction), not an append.
+            displayText = event.text ?? displayText;
+            await _updateMessageText(assistantMsgId, displayText);
             break;
           case SseEventKind.error:
             displayText = displayText.isEmpty ? "Error: ${event.message}" : displayText;
             debugPrint("[ChatRepository] SSE stream error event: ${event.message}");
             break;
           case SseEventKind.done:
+            // Safety net: use done's citations if the dedicated frame never arrived.
+            if (citations.isEmpty && (event.citations ?? []).isNotEmpty) {
+              citations.addAll(event.citations!.map((c) => c.toString()));
+              await _updateMessageCitations(assistantMsgId, citations);
+            }
+            for (final call in toolCalls) {
+              call['settled'] = true;
+            }
+            if (toolCalls.isNotEmpty) {
+              await _updateMessageToolCalls(assistantMsgId, toolCalls);
+            }
+            break;
+          case SseEventKind.unknown:
+            debugPrint("[ChatRepository] ignoring unrecognised SSE frame type: ${event.unknownType}");
             break;
         }
       }
@@ -195,12 +241,10 @@ class ChatRepository {
   }
 
   /// V1-era path: ClientAgentOrchestrator -> AuraAIRouter -> /api/chat/agent, still parsing a
-  /// trailing "[ACTIONS]" marker out of the raw text stream. Kept as the fallback for a backend
-  /// that has not deployed /api/v2/chat.
-  ///
-  /// It no longer "picks online/offline and handles failover" as the previous comment said -- there
-  /// is one engine, on the server, and an unreachable backend is reported rather than routed
-  /// around.
+  /// trailing "[ACTIONS]" marker out of the raw text stream. Kept as the fallback for when the
+  /// v3 kernel's /api/v3/chat/stream is unreachable or errors -- also the only path that still
+  /// proposes task/calendar/finance/health actions and forwards Google Drive access, neither of
+  /// which v3's tool registry has yet (see _sendViaSse's doc comment).
   Future<void> _sendViaOrchestrator({
     required String agentId,
     required List<Map<String, String>> historyPayload,
@@ -288,6 +332,28 @@ class ChatRepository {
     await (_db.update(_db.messages)..where((m) => m.id.equals(messageId))).write(
       MessagesCompanion(
         content: Value(text),
+      ),
+    );
+  }
+
+  // Persists RAG citation labels for a message, called each time the `citations` (or, as a
+  // fallback, `done`) SSE frame arrives.
+  Future<void> _updateMessageCitations(String messageId, List<String> citations) async {
+    await (_db.update(_db.messages)..where((m) => m.id.equals(messageId))).write(
+      MessagesCompanion(
+        citationsJson: Value(jsonEncode(citations)),
+      ),
+    );
+  }
+
+  // Persists the in-flight tool-call list for a message. Called on every `tool_calls` frame
+  // (so a chip appears while the turn is still streaming) and once more on `done` to flip
+  // every call's `settled` flag -- there is no per-tool completion signal to key off of, so
+  // "settled" means "the turn finished", not "this specific call finished".
+  Future<void> _updateMessageToolCalls(String messageId, List<Map<String, dynamic>> toolCalls) async {
+    await (_db.update(_db.messages)..where((m) => m.id.equals(messageId))).write(
+      MessagesCompanion(
+        toolCallsJson: Value(jsonEncode(toolCalls)),
       ),
     );
   }

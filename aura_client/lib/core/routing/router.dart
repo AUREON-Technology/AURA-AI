@@ -24,14 +24,17 @@ class ShellLayout extends ConsumerWidget {
   final Widget child;
   const ShellLayout({super.key, required this.child});
 
+  // Copilot (chat) sits at index 1, promoted from its old position 6/6 per
+  // Doc/V2_BLUEPRINT.md §3 -- position and rename only, not the full
+  // Today/Copilot/Life Hub/You restructuring the blueprint also describes.
   int _calculateSelectedIndex(BuildContext context) {
     final location = GoRouterState.of(context).uri.toString();
     if (location.startsWith('/home')) return 0;
-    if (location.startsWith('/tasks')) return 1;
-    if (location.startsWith('/calendar')) return 2;
-    if (location.startsWith('/finance')) return 3;
-    if (location.startsWith('/health')) return 4;
-    if (location.startsWith('/chat')) return 5;
+    if (location.startsWith('/chat')) return 1;
+    if (location.startsWith('/tasks')) return 2;
+    if (location.startsWith('/calendar')) return 3;
+    if (location.startsWith('/finance')) return 4;
+    if (location.startsWith('/health')) return 5;
     return 0;
   }
 
@@ -41,19 +44,19 @@ class ShellLayout extends ConsumerWidget {
         context.go('/home');
         break;
       case 1:
-        context.go('/tasks');
+        context.go('/chat');
         break;
       case 2:
-        context.go('/calendar');
+        context.go('/tasks');
         break;
       case 3:
-        context.go('/finance');
+        context.go('/calendar');
         break;
       case 4:
-        context.go('/health');
+        context.go('/finance');
         break;
       case 5:
-        context.go('/chat');
+        context.go('/health');
         break;
     }
   }
@@ -106,6 +109,11 @@ class ShellLayout extends ConsumerWidget {
               label: 'Home',
             ),
             BottomNavigationBarItem(
+              icon: Icon(Icons.auto_awesome_outlined),
+              activeIcon: Icon(Icons.auto_awesome),
+              label: 'Copilot',
+            ),
+            BottomNavigationBarItem(
               icon: Icon(Icons.check_circle_outline),
               activeIcon: Icon(Icons.check_circle),
               label: 'Tasks',
@@ -124,11 +132,6 @@ class ShellLayout extends ConsumerWidget {
               icon: Icon(Icons.favorite_outline),
               activeIcon: Icon(Icons.favorite),
               label: 'Health',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.chat_bubble_outline),
-              activeIcon: Icon(Icons.chat_bubble),
-              label: 'Chat',
             ),
           ],
         ),
@@ -195,6 +198,11 @@ class ShellLayout extends ConsumerWidget {
                 label: Text('Home'),
               ),
               NavigationRailDestination(
+                icon: Icon(Icons.auto_awesome_outlined),
+                selectedIcon: Icon(Icons.auto_awesome),
+                label: Text('Copilot'),
+              ),
+              NavigationRailDestination(
                 icon: Icon(Icons.check_circle_outline),
                 selectedIcon: Icon(Icons.check_circle),
                 label: Text('Tasks'),
@@ -213,11 +221,6 @@ class ShellLayout extends ConsumerWidget {
                 icon: Icon(Icons.favorite_outline),
                 selectedIcon: Icon(Icons.favorite),
                 label: Text('Health'),
-              ),
-              NavigationRailDestination(
-                icon: Icon(Icons.chat_bubble_outline),
-                selectedIcon: Icon(Icons.chat_bubble),
-                label: Text('Chat'),
               ),
             ],
             selectedIndex: selectedIndex,

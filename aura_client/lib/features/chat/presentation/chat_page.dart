@@ -1,21 +1,33 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:intl/intl.dart';
 import '../data/chat_repository.dart';
 import '../data/agent_config_repository.dart';
+import '../data/agents_repository.dart';
 import '../data/memory_repository.dart';
+import 'widgets/citation_chip.dart';
+import 'widgets/tool_call_chip.dart';
+import 'widgets/persona_badge.dart';
+import 'widgets/streaming_message_skeleton.dart';
 import '../../tasks/data/task_repository.dart';
 import '../../calendar/data/calendar_repository.dart';
 import '../../finance/data/finance_repository.dart';
 import '../../health/data/health_repository.dart';
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:drift/drift.dart' show OrderingTerm, OrderingMode;
 import '../../sync/sync_engine.dart';
 import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
 
+/// "Copilot" -- chat, rebuilt on the V2 design system.
+///
+/// Locally scoped to [AuraThemeV2] via the [Theme] wrapper in [build] rather
+/// than flipping the app-wide theme, matching how home_page.dart/
+/// settings_page.dart already do this (see Doc/V2_BLUEPRINT.md §13 Phase 2 --
+/// a deliberate incremental migration, not a big-bang swap).
 class ChatPage extends ConsumerStatefulWidget {
   const ChatPage({super.key});
 
@@ -52,62 +64,153 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _messageController.clear();
     FocusScope.of(context).unfocus();
 
-    // Call chat repository send message
     await ref.read(chatRepositoryProvider).sendChatMessage(
           conversationId: sessionId,
           userContent: text,
           useRag: _useRag,
         );
 
-    // Short delay to let list update then scroll
     Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
   }
 
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
+  /// Persona picker, replacing the old bare `DropdownButton` in both the
+  /// desktop header and the mobile drawer -- a modal listing icon + name +
+  /// one-line description per persona, sourced live from `agentsProvider`
+  /// (GET /api/v3/agents) rather than a hardcoded list that had drifted
+  /// from the backend's real 7 persona ids.
+  void _showPersonaPicker(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return Consumer(
+          builder: (context, ref, _) {
+            final palette = AuraPalette.of(context);
+            final agentsAsync = ref.watch(agentsProvider);
+            final activeId = ref.watch(activeAgentIdProvider);
+
+            return Container(
+              decoration: BoxDecoration(
+                color: palette.surface,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(AuraRadius.xl)),
+                border: Border.all(color: palette.border),
+              ),
+              padding: const EdgeInsets.all(AuraSpacing.lg),
+              child: SafeArea(
+                child: agentsAsync.when(
+                  data: (agents) => Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Choose a persona', style: Theme.of(context).textTheme.titleSmall),
+                      const SizedBox(height: AuraSpacing.sm),
+                      ...agents.map((agent) {
+                        final (label, icon) = personaDisplay(agent.id);
+                        final isActive = agent.id == activeId;
+                        return ListTile(
+                          leading: Icon(icon, color: isActive ? palette.brandOnSurfaceText : palette.textSecondary),
+                          title: Text(
+                            label,
+                            style: TextStyle(
+                              color: palette.textPrimary,
+                              fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          ),
+                          subtitle: agent.description.isEmpty
+                              ? null
+                              : Text(
+                                  agent.description,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(color: palette.textSecondary, fontSize: 12),
+                                ),
+                          trailing: isActive ? Icon(Icons.check, color: palette.brandOnSurfaceText) : null,
+                          onTap: () {
+                            ref.read(activeAgentIdProvider.notifier).setAgent(agent.id);
+                            Navigator.pop(context);
+                          },
+                        );
+                      }),
+                    ],
+                  ),
+                  loading: () => const Padding(
+                    padding: EdgeInsets.all(AuraSpacing.xl),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                  error: (e, _) => Padding(
+                    padding: const EdgeInsets.all(AuraSpacing.xl),
+                    child: Text('Could not load personas: $e', style: TextStyle(color: palette.danger)),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildPersonaChip(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    final activeId = ref.watch(activeAgentIdProvider);
+    final (label, icon) = personaDisplay(activeId);
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(AuraRadius.pill),
+      onTap: () => _showPersonaPicker(context),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md, vertical: 6),
+        decoration: BoxDecoration(
+          color: palette.surfaceVariant,
+          borderRadius: BorderRadius.circular(AuraRadius.pill),
+          border: Border.all(color: palette.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: palette.brandOnSurfaceText),
+            const SizedBox(width: AuraSpacing.xs),
+            Text(label, style: TextStyle(fontSize: 13, color: palette.textPrimary)),
+            const SizedBox(width: AuraSpacing.xs),
+            Icon(Icons.expand_more, size: 16, color: palette.textSecondary),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildSidebar(BuildContext context, String activeSessionId, AsyncValue<List<String>> sessionsAsync) {
+    final palette = AuraPalette.of(context);
     final isMobile = MediaQuery.of(context).size.width < 768;
 
     return Container(
       width: 260,
-      color: const Color(0xFF0C0917),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      color: palette.background,
+      padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.lg, vertical: AuraSpacing.xl),
       child: ListView(
         padding: EdgeInsets.zero,
         children: [
-          // New Chat Button
-          ElevatedButton.icon(
+          AuraButton(
+            label: 'New Session',
+            icon: Icons.add,
+            expand: true,
             onPressed: () {
               final newId = "session_${DateTime.now().millisecondsSinceEpoch}";
               ref.read(activeConversationIdProvider.notifier).setSession(newId);
-              if (isMobile) {
-                Navigator.pop(context); // Close drawer
-              }
+              if (isMobile) Navigator.pop(context);
             },
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('New Session'),
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-            ),
           ),
-          const SizedBox(height: 24),
-          const Text(
-            'CHATS SESSIONS',
-            style: TextStyle(
-              color: AuraTheme.textSecondary,
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1.2,
-            ),
+          const SizedBox(height: AuraSpacing.xl),
+          Text(
+            'CHAT SESSIONS',
+            style: TextStyle(color: palette.textSecondary, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.2),
           ),
-          const SizedBox(height: 12),
-
-          // Sessions List
+          const SizedBox(height: AuraSpacing.md),
           sessionsAsync.when(
             data: (sessions) {
-              final allSessions = sessions.contains('default_session')
-                  ? sessions
-                  : ['default_session', ...sessions];
+              final allSessions = sessions.contains('default_session') ? sessions : ['default_session', ...sessions];
 
               return ListView.builder(
                 shrinkWrap: true,
@@ -116,29 +219,25 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 itemBuilder: (context, index) {
                   final session = allSessions[index];
                   final isActive = session == activeSessionId;
-                  final label = session == 'default_session'
-                      ? 'Default Workspace'
-                      : 'Session ${session.split('_').last.substring(0, 5)}';
+                  final label = session == 'default_session' ? 'Default Workspace' : 'Session ${session.split('_').last.substring(0, 5)}';
 
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 6.0),
                     child: ListTile(
                       dense: true,
                       selected: isActive,
-                      selectedTileColor: AuraTheme.accentIndigo.withAlpha(38),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
+                      selectedTileColor: palette.brand.withValues(alpha: 0.15),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AuraRadius.sm)),
                       title: Text(
                         label,
                         style: TextStyle(
-                          color: isActive ? Colors.white : AuraTheme.textSecondary,
+                          color: isActive ? palette.textPrimary : palette.textSecondary,
                           fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
                         ),
                       ),
                       trailing: isActive && session != 'default_session'
                           ? IconButton(
-                              icon: const Icon(Icons.delete_outline, size: 16, color: Colors.white30),
+                              icon: Icon(Icons.delete_outline, size: 16, color: palette.textDisabled),
                               onPressed: () {
                                 ref.read(chatRepositoryProvider).clearConversation(session);
                                 ref.read(activeConversationIdProvider.notifier).setSession('default_session');
@@ -147,9 +246,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           : null,
                       onTap: () {
                         ref.read(activeConversationIdProvider.notifier).setSession(session);
-                        if (isMobile) {
-                          Navigator.pop(context); // Close drawer
-                        }
+                        if (isMobile) Navigator.pop(context);
                       },
                     ),
                   );
@@ -157,109 +254,50 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               );
             },
             loading: () => const Center(
-              child: Padding(
-                padding: EdgeInsets.all(8.0),
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
+              child: Padding(padding: EdgeInsets.all(8.0), child: CircularProgressIndicator(strokeWidth: 2)),
             ),
             error: (err, _) => Padding(
               padding: const EdgeInsets.all(8.0),
-              child: Text('Error: $err', style: const TextStyle(color: Colors.red)),
+              child: Text('Error: $err', style: TextStyle(color: palette.danger)),
             ),
           ),
-          
-          // Mobile specific settings in drawer to avoid header overflow
           if (isMobile) ...[
-            const Divider(color: Color(0x1F94A3B8), height: 32),
-            const Text(
-              'AGENT CONFIGURATIONS',
-              style: TextStyle(
-                color: AuraTheme.textSecondary,
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.2,
-              ),
+            Divider(color: palette.border, height: 32),
+            Text(
+              'ACTIVE PERSONA',
+              style: TextStyle(color: palette.textSecondary, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.2),
             ),
-            const SizedBox(height: 12),
-            // Agent Selector Dropdown
+            const SizedBox(height: AuraSpacing.md),
+            _buildPersonaChip(context),
+            const SizedBox(height: AuraSpacing.md),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Active Agent:', style: TextStyle(fontSize: 12, color: Colors.white70)),
-                DropdownButton<String>(
-                  value: ref.watch(activeAgentIdProvider),
-                  dropdownColor: const Color(0xFF0F0C1B),
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  underline: const SizedBox(),
-                  items: const [
-                    DropdownMenuItem(value: 'orchestrator', child: Text('Orchestrator')),
-                    DropdownMenuItem(value: 'task_planner', child: Text('Task Planner')),
-                    DropdownMenuItem(value: 'finance_advisor', child: Text('Finance Advisor')),
-                    DropdownMenuItem(value: 'health_companion', child: Text('Health Companion')),
-                    DropdownMenuItem(value: 'academic_coach', child: Text('Academic Coach')),
-                  ],
-                  onChanged: (val) {
-                    if (val != null) {
-                      ref.read(activeAgentIdProvider.notifier).setAgent(val);
-                    }
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            // RAG Toggler
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Use Knowledge (RAG):', style: TextStyle(fontSize: 12, color: Colors.white70)),
+                Text('Use Knowledge (RAG)', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
                 Switch(
                   value: _useRag,
-                  activeTrackColor: AuraTheme.accentIndigo,
-                  onChanged: (val) {
-                    setState(() {
-                      _useRag = val;
-                    });
-                  },
+                  activeTrackColor: palette.brand,
+                  onChanged: (val) => setState(() => _useRag = val),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            // Agent Prompt Settings button
-            ElevatedButton.icon(
-              onPressed: () {
-                Navigator.pop(context); // Close drawer
-                _showAgentSettingsDialog();
-              },
-              icon: const Icon(Icons.settings_suggest, size: 16),
-              label: const Text('Prompt Settings', style: TextStyle(fontSize: 12)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0x0DFFFFFF),
-                padding: const EdgeInsets.symmetric(vertical: 8),
-              ),
-            ),
           ],
-          
-          const Divider(color: Color(0x1F94A3B8), height: 32),
-          const Text(
-            'AI ROUTING CONFIG',
-            style: TextStyle(
-              color: AuraTheme.textSecondary,
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1.2,
-            ),
+          Divider(color: palette.border, height: 32),
+          Text(
+            'AI ROUTING',
+            style: TextStyle(color: palette.textSecondary, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.2),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: AuraSpacing.md),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('AI engine:', style: TextStyle(fontSize: 12, color: Colors.white70)),
+              Text('AI engine', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
               // A read-out, not a control. This was a dropdown selecting between a hosted API and
               // three on-device models; all four are gone, and a picker with one option is a worse
               // answer to "which engine am I using" than simply saying.
               Text(
                 ref.watch(aiRouterStatusProvider).isOffline ? 'AURA (unreachable)' : 'AURA server',
-                style: const TextStyle(fontSize: 12, color: Colors.white),
+                style: TextStyle(fontSize: 12, color: palette.textPrimary),
               ),
             ],
           ),
@@ -268,96 +306,66 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
-  Widget _buildSyncIndicator(bool isMobile) {
+  Widget _buildSyncIndicator(BuildContext context, bool isMobile) {
+    final palette = AuraPalette.of(context);
     final syncState = ref.watch(syncEngineProvider);
-    
+
     Color indicatorColor;
     String statusText;
     IconData syncIcon;
-    Color iconColor;
     bool isSyncing = syncState == SyncState.syncing;
-    
+
     switch (syncState) {
       case SyncState.synced:
-        indicatorColor = AuraTheme.accentTeal;
+        indicatorColor = palette.success;
         statusText = 'Synced';
         syncIcon = Icons.sync;
-        iconColor = AuraTheme.accentTeal;
         break;
       case SyncState.syncing:
-        indicatorColor = AuraTheme.accentAmber;
+        indicatorColor = palette.warning;
         statusText = 'Syncing';
         syncIcon = Icons.sync;
-        iconColor = AuraTheme.accentAmber;
         break;
       case SyncState.offline:
-        indicatorColor = Colors.grey;
+        indicatorColor = palette.textDisabled;
         statusText = 'Offline';
         syncIcon = Icons.sync_disabled;
-        iconColor = Colors.grey;
         break;
       case SyncState.error:
-        indicatorColor = Colors.redAccent;
+        indicatorColor = palette.danger;
         statusText = 'Error';
         syncIcon = Icons.sync_problem;
-        iconColor = Colors.redAccent;
         break;
     }
-    
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.sm, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.white.withAlpha(8),
-        border: Border.all(color: Colors.white.withAlpha(20)),
-        borderRadius: BorderRadius.circular(16),
+        color: palette.surfaceVariant,
+        border: Border.all(color: palette.border),
+        borderRadius: BorderRadius.circular(AuraRadius.pill),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              color: indicatorColor,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: indicatorColor.withAlpha(128),
-                  blurRadius: 6,
-                  spreadRadius: 2,
-                ),
-              ],
-            ),
-          ),
+          Container(width: 8, height: 8, decoration: BoxDecoration(color: indicatorColor, shape: BoxShape.circle)),
           if (!isMobile) ...[
-            const SizedBox(width: 8),
-            Text(
-              statusText,
-              style: TextStyle(
-                fontSize: 11,
-                color: Colors.white.withAlpha(178),
-                fontWeight: FontWeight.w500,
-              ),
-            ),
+            const SizedBox(width: AuraSpacing.xs),
+            Text(statusText, style: TextStyle(fontSize: 11, color: palette.textSecondary, fontWeight: FontWeight.w500)),
           ],
           const SizedBox(width: 4),
           isSyncing
-              ? const SizedBox(
+              ? SizedBox(
                   width: 12,
                   height: 12,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.5,
-                    valueColor: AlwaysStoppedAnimation<Color>(AuraTheme.accentAmber),
-                  ),
+                  child: CircularProgressIndicator(strokeWidth: 1.5, valueColor: AlwaysStoppedAnimation<Color>(palette.warning)),
                 )
               : IconButton(
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
-                  icon: Icon(syncIcon, color: iconColor, size: 12),
+                  icon: Icon(syncIcon, color: indicatorColor, size: 12),
                   tooltip: 'Sync Now',
-                  onPressed: syncState == SyncState.offline
-                      ? null
-                      : () => ref.read(syncEngineProvider.notifier).synchronize(),
+                  onPressed: syncState == SyncState.offline ? null : () => ref.read(syncEngineProvider.notifier).synchronize(),
                 ),
         ],
       ),
@@ -366,6 +374,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
+    return Theme(
+      data: AuraThemeV2.dark,
+      child: Builder(builder: (context) => _buildScaffold(context)),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context) {
+    final palette = AuraPalette.of(context);
     final activeSessionId = ref.watch(activeConversationIdProvider);
     final messagesAsync = ref.watch(chatMessagesStreamProvider(activeSessionId));
     final sessionsAsync = ref.watch(conversationsStreamProvider);
@@ -373,86 +389,54 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     return Scaffold(
       key: _scaffoldKey,
-      backgroundColor: AuraTheme.background,
-      drawer: isMobile
-          ? Drawer(
-              child: _buildSidebar(context, activeSessionId, sessionsAsync),
-            )
-          : null,
+      backgroundColor: palette.background,
+      drawer: isMobile ? Drawer(child: _buildSidebar(context, activeSessionId, sessionsAsync)) : null,
       body: Row(
         children: [
-          // Sidebar: Conversations List (only visible directly on desktop)
           if (!isMobile) _buildSidebar(context, activeSessionId, sessionsAsync),
-
-          // Main Chat Area
           Expanded(
             child: Container(
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 gradient: RadialGradient(
-                  center: Alignment(-0.6, -0.6),
+                  center: const Alignment(-0.6, -0.6),
                   radius: 1.4,
-                  colors: [
-                    Color(0x0C6366F1), // Translucent indigo glow
-                    Colors.transparent,
-                  ],
+                  colors: [palette.brand.withValues(alpha: 0.05), Colors.transparent],
                 ),
               ),
               child: Column(
                 children: [
-                  // Chat Page Header
+                  // Copilot Header
                   Container(
-                    padding: const EdgeInsets.all(20.0),
-                    decoration: const BoxDecoration(
-                      border: Border(
-                        bottom: BorderSide(color: Color(0x1F94A3B8), width: 1),
-                      ),
-                    ),
+                    padding: const EdgeInsets.all(AuraSpacing.xl),
+                    decoration: BoxDecoration(border: Border(bottom: BorderSide(color: palette.border, width: 1))),
                     child: Row(
                       children: [
                         if (isMobile) ...[
                           IconButton(
-                            icon: const Icon(Icons.menu, color: Colors.white),
-                            onPressed: () {
-                              _scaffoldKey.currentState?.openDrawer();
-                            },
+                            icon: Icon(Icons.menu, color: palette.textPrimary),
+                            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: AuraSpacing.sm),
                         ],
                         Container(
                           width: 32,
                           height: 32,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(8),
-                            boxShadow: [
-                              BoxShadow(
-                                color: AuraTheme.accentIndigo.withValues(alpha: 0.3),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
+                          decoration: BoxDecoration(borderRadius: BorderRadius.circular(AuraRadius.sm)),
                           child: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: Image.asset(
-                              'assets/app_icon.png',
-                              fit: BoxFit.contain,
-                            ),
+                            borderRadius: BorderRadius.circular(AuraRadius.sm),
+                            child: Image.asset('assets/app_icon.png', fit: BoxFit.contain),
                           ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: AuraSpacing.md),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                'Aura Assistant',
+                              Text(
+                                'Copilot',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                ),
+                                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: palette.textPrimary),
                               ),
                               Row(
                                 children: [
@@ -460,24 +444,19 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                     width: 8,
                                     height: 8,
                                     decoration: BoxDecoration(
-                                      color: ref.watch(aiRouterStatusProvider).isOffline 
-                                          ? AuraTheme.accentAmber 
-                                          : AuraTheme.accentTeal,
+                                      color: ref.watch(aiRouterStatusProvider).isOffline ? palette.warning : palette.success,
                                       shape: BoxShape.circle,
                                     ),
                                   ),
                                   const SizedBox(width: 6),
                                   Expanded(
                                     child: Text(
-                                      isMobile 
-                                          ? 'Active • ${ref.watch(aiRouterStatusProvider).activeModel}' 
-                                          : 'Hybrid OS Active • ${ref.watch(aiRouterStatusProvider).activeModel} (${ref.watch(aiRouterStatusProvider).status}) • Latency: ${ref.watch(aiRouterStatusProvider).latencyMs.toStringAsFixed(0)}ms',
+                                      isMobile
+                                          ? 'Active • ${ref.watch(aiRouterStatusProvider).activeModel}'
+                                          : 'Active • ${ref.watch(aiRouterStatusProvider).activeModel} (${ref.watch(aiRouterStatusProvider).status}) • ${ref.watch(aiRouterStatusProvider).latencyMs.toStringAsFixed(0)}ms',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontSize: 11,
-                                        color: AuraTheme.textSecondary,
-                                      ),
+                                      style: TextStyle(fontSize: 11, color: palette.textSecondary),
                                     ),
                                   ),
                                 ],
@@ -485,140 +464,83 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             ],
                           ),
                         ),
-                        // Memory Bank Button
                         IconButton(
-                          icon: const Icon(Icons.psychology_outlined, color: AuraTheme.accentAmber, size: 20),
+                          icon: Icon(Icons.psychology_outlined, color: palette.warning, size: 20),
                           tooltip: 'Memory Bank',
                           onPressed: _showMemoryBankDialog,
                         ),
-                        
-                        // Desktop Only Settings Buttons
                         if (!isMobile) ...[
-                          const SizedBox(width: 8),
-                          // Agent Selector Dropdown
-                          const Text(
-                            'Agent: ',
-                            style: TextStyle(fontSize: 12, color: AuraTheme.textSecondary),
-                          ),
-                          const SizedBox(width: 4),
-                          DropdownButton<String>(
-                            value: ref.watch(activeAgentIdProvider),
-                            dropdownColor: const Color(0xFF0F0C1B),
-                            style: const TextStyle(color: Colors.white, fontSize: 13),
-                            underline: const SizedBox(),
-                            items: const [
-                              DropdownMenuItem(value: 'orchestrator', child: Text('Auto-Orchestrator')),
-                              DropdownMenuItem(value: 'task_planner', child: Text('Task Planner')),
-                              DropdownMenuItem(value: 'finance_advisor', child: Text('Finance Advisor')),
-                              DropdownMenuItem(value: 'health_companion', child: Text('Health Companion')),
-                              DropdownMenuItem(value: 'academic_coach', child: Text('Academic Coach')),
-                            ],
-                            onChanged: (val) {
-                              if (val != null) {
-                                ref.read(activeAgentIdProvider.notifier).setAgent(val);
-                              }
-                            },
-                          ),
-                          const SizedBox(width: 8),
-                          // Agent Config Button
-                          IconButton(
-                            icon: const Icon(Icons.settings_suggest, color: AuraTheme.accentIndigo, size: 20),
-                            tooltip: 'Agent Prompt Settings',
-                            onPressed: _showAgentSettingsDialog,
-                          ),
-                          const SizedBox(width: 12),
-                          // RAG Toggler
+                          const SizedBox(width: AuraSpacing.sm),
+                          _buildPersonaChip(context),
+                          const SizedBox(width: AuraSpacing.md),
                           Row(
                             children: [
-                              const Text(
-                                'RAG',
-                                style: TextStyle(fontSize: 12, color: AuraTheme.textSecondary),
-                              ),
+                              Text('RAG', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
                               Switch(
                                 value: _useRag,
-                                activeTrackColor: AuraTheme.accentIndigo,
-                                onChanged: (val) {
-                                  setState(() {
-                                    _useRag = val;
-                                  });
-                                },
+                                activeTrackColor: palette.brand,
+                                onChanged: (val) => setState(() => _useRag = val),
                               ),
                             ],
                           ),
                         ],
-                        const SizedBox(width: 8),
-                        // Sync Status Indicator & Manual Sync Button
-                        _buildSyncIndicator(isMobile),
+                        const SizedBox(width: AuraSpacing.sm),
+                        _buildSyncIndicator(context, isMobile),
                       ],
                     ),
                   ),
 
-                  // Chat Message Feed
+                  // Message Feed
                   Expanded(
                     child: messagesAsync.when(
                       data: (messages) {
                         if (messages.isEmpty) {
                           return EmptyStateChat(
-                            onSuggestionSelected: (prompt) {
-                              _messageController.text = prompt;
-                            },
+                            onSuggestionSelected: (prompt) => _messageController.text = prompt,
                           );
                         }
-                        // Scroll to bottom when list changes
                         WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
 
                         return ListView.builder(
                           controller: _scrollController,
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                          padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.xl, vertical: AuraSpacing.lg),
                           itemCount: messages.length,
                           itemBuilder: (context, index) {
                             final msg = messages[index];
-                            final isUser = msg.role == "user";
-                            return MessageBubble(message: msg, isUser: isUser);
+                            return MessageBubble(message: msg, isUser: msg.role == "user");
                           },
                         );
                       },
-                      loading: () => const Center(
-                        child: CircularProgressIndicator(color: AuraTheme.accentIndigo),
-                      ),
+                      loading: () => Center(child: CircularProgressIndicator(color: palette.brand)),
                       error: (err, _) => Center(
-                        child: Text('Failed to load message history: $err',
-                            style: const TextStyle(color: Colors.redAccent)),
+                        child: Text('Failed to load message history: $err', style: TextStyle(color: palette.danger)),
                       ),
                     ),
                   ),
 
-                  // Pending Actions Confirmation Panel
-                  _buildPendingActionsCard(),
+                  _buildPendingActionsCard(context),
 
                   // Input Bar
                   Container(
-                    padding: const EdgeInsets.all(24.0),
-                    decoration: const BoxDecoration(
-                      border: Border(
-                        top: BorderSide(color: Color(0x1F94A3B8), width: 1),
-                      ),
-                    ),
+                    padding: const EdgeInsets.all(AuraSpacing.xl),
+                    decoration: BoxDecoration(border: Border(top: BorderSide(color: palette.border, width: 1))),
                     child: Row(
                       children: [
                         Expanded(
                           child: TextField(
                             controller: _messageController,
                             decoration: InputDecoration(
-                              hintText: isMobile ? 'Ask Aura...' : 'Ask Aura anything... (e.g. Explain how to set up Riverpod)',
+                              hintText: isMobile ? 'Ask Copilot...' : 'Ask Copilot anything...',
                             ),
-                            style: const TextStyle(color: Colors.white),
+                            style: TextStyle(color: palette.textPrimary),
                             onSubmitted: (_) => _sendMessage(activeSessionId),
                           ),
                         ),
-                        const SizedBox(width: 16),
+                        const SizedBox(width: AuraSpacing.lg),
                         Container(
-                          decoration: BoxDecoration(
-                            gradient: AuraTheme.primaryGradient,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+                          decoration: BoxDecoration(gradient: palette.brandGradient, borderRadius: BorderRadius.circular(AuraRadius.md)),
                           child: IconButton(
-                            icon: const Icon(Icons.send, color: Colors.white),
+                            icon: Icon(Icons.send, color: palette.onBrand),
                             onPressed: () => _sendMessage(activeSessionId),
                           ),
                         ),
@@ -634,52 +556,53 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
   }
 
-  Widget _buildPendingActionsCard() {
+  /// Fallback-only: v3's tool registry (aura_core/tools/builtin.py) has no
+  /// task/calendar/finance/health CRUD tools, so this panel only ever
+  /// populates via _sendViaOrchestrator, chat_repository.dart's v1 fallback
+  /// path -- not the primary v3 stream, which shows tool activity inline
+  /// per-message instead (see ToolCallChips in MessageBubble below).
+  Widget _buildPendingActionsCard(BuildContext context) {
+    final palette = AuraPalette.of(context);
     final actions = ref.watch(pendingActionsProvider);
     if (actions.isEmpty) return const SizedBox();
 
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-      color: AuraTheme.cardBg,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.xl, vertical: AuraSpacing.sm),
+      child: AuraCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Row(
+            Row(
               children: [
-                Icon(Icons.auto_awesome, color: AuraTheme.accentTeal, size: 20),
-                SizedBox(width: 8),
-                Text(
-                  "AURA Proposes Actions",
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
-                ),
+                Icon(Icons.auto_awesome, color: palette.success, size: 20),
+                const SizedBox(width: AuraSpacing.sm),
+                Text("AURA Proposes Actions", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: palette.textPrimary)),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AuraSpacing.md),
             ...actions.map((act) {
               final type = act['type'] ?? '';
               final params = act['params'] ?? {};
               String label = "";
               IconData icon = Icons.check_circle_outline;
-              Color color = AuraTheme.accentIndigo;
+              Color color = palette.brand;
 
               if (type == 'add_task') {
                 label = "Create Task: ${params['title']} (${params['priority']} priority, ${params['category']})";
                 icon = Icons.playlist_add;
-                color = AuraTheme.accentTeal;
+                color = palette.success;
               } else if (type == 'add_event') {
                 label = "Schedule Event: ${params['title']} at ${params['startTime']}";
                 icon = Icons.event;
-                color = AuraTheme.accentIndigo;
+                color = palette.brand;
               } else if (type == 'add_expense') {
                 label = "Log Expense: \$${params['amount']} for ${params['category']}";
                 icon = Icons.remove_circle_outline;
-                color = Colors.redAccent;
+                color = palette.danger;
               } else if (type == 'add_income') {
                 label = "Log Income: \$${params['amount']} for ${params['category']}";
                 icon = Icons.add_circle_outline;
-                color = AuraTheme.accentTeal;
+                color = palette.success;
               } else if (type == 'log_health') {
                 final metrics = [];
                 if (params['waterIntakeMl'] != null) metrics.add("${params['waterIntakeMl']}ml water");
@@ -695,30 +618,29 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               }
 
               return Padding(
-                padding: const EdgeInsets.only(bottom: 8.0),
+                padding: const EdgeInsets.only(bottom: AuraSpacing.sm),
                 child: Row(
                   children: [
                     Icon(icon, size: 16, color: color),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(label, style: const TextStyle(fontSize: 13, color: AuraTheme.textSecondary)),
-                    ),
+                    const SizedBox(width: AuraSpacing.sm),
+                    Expanded(child: Text(label, style: TextStyle(fontSize: 13, color: palette.textSecondary))),
                   ],
                 ),
               );
             }),
-            const Divider(color: Color(0x1F94A3B8), height: 20),
+            Divider(color: palette.border, height: 20),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                TextButton(
-                  onPressed: () {
-                    ref.read(pendingActionsProvider.notifier).clear();
-                  },
-                  child: const Text("Reject", style: TextStyle(color: AuraTheme.textSecondary)),
+                AuraButton(
+                  label: "Reject",
+                  variant: AuraButtonVariant.ghost,
+                  onPressed: () => ref.read(pendingActionsProvider.notifier).clear(),
                 ),
-                const SizedBox(width: 8),
-                ElevatedButton(
+                const SizedBox(width: AuraSpacing.sm),
+                AuraButton(
+                  label: "Approve Actions",
+                  variant: AuraButtonVariant.primary,
                   onPressed: () async {
                     final messenger = ScaffoldMessenger.of(context);
                     for (final act in actions) {
@@ -730,36 +652,36 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           DateTime? due;
                           if (params['dueDate'] != null) due = DateTime.tryParse(params['dueDate']);
                           await ref.read(taskRepositoryProvider).addTask(
-                            title: params['title'] ?? 'Task',
-                            priority: params['priority'] ?? 'medium',
-                            category: params['category'] ?? 'personal',
-                            dueDate: due,
-                          );
+                                title: params['title'] ?? 'Task',
+                                priority: params['priority'] ?? 'medium',
+                                category: params['category'] ?? 'personal',
+                                dueDate: due,
+                              );
                         } else if (type == 'add_event') {
                           final start = DateTime.tryParse(params['startTime']) ?? DateTime.now();
                           final end = params['endTime'] != null ? DateTime.tryParse(params['endTime']) : start.add(const Duration(hours: 1));
                           await ref.read(calendarRepositoryProvider).addEvent(
-                            title: params['title'] ?? 'Event',
-                            description: params['description'],
-                            startTime: start,
-                            endTime: end ?? start.add(const Duration(hours: 1)),
-                          );
+                                title: params['title'] ?? 'Event',
+                                description: params['description'],
+                                startTime: start,
+                                endTime: end ?? start.add(const Duration(hours: 1)),
+                              );
                         } else if (type == 'add_expense') {
                           await ref.read(financeRepositoryProvider).addTransaction(
-                            type: 'expense',
-                            amount: (params['amount'] as num).toDouble(),
-                            category: params['category'] ?? 'Other',
-                            description: params['description'],
-                            date: DateTime.now(),
-                          );
+                                type: 'expense',
+                                amount: (params['amount'] as num).toDouble(),
+                                category: params['category'] ?? 'Other',
+                                description: params['description'],
+                                date: DateTime.now(),
+                              );
                         } else if (type == 'add_income') {
                           await ref.read(financeRepositoryProvider).addTransaction(
-                            type: 'income',
-                            amount: (params['amount'] as num).toDouble(),
-                            category: params['category'] ?? 'Other',
-                            description: params['description'],
-                            date: DateTime.now(),
-                          );
+                                type: 'income',
+                                amount: (params['amount'] as num).toDouble(),
+                                category: params['category'] ?? 'Other',
+                                description: params['description'],
+                                date: DateTime.now(),
+                              );
                         } else if (type == 'log_health') {
                           final now = DateTime.now();
                           final repo = ref.read(healthRepositoryProvider);
@@ -784,17 +706,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       }
                     }
 
-                    // Clear actions and show confirmation
                     ref.read(pendingActionsProvider.notifier).clear();
                     messenger.showSnackBar(
-                      const SnackBar(content: Text("Proposed actions successfully executed!"), backgroundColor: AuraTheme.accentTeal),
+                      SnackBar(content: const Text("Proposed actions successfully executed!"), backgroundColor: palette.success),
                     );
                   },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AuraTheme.accentTeal,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  ),
-                  child: const Text("Approve Actions", style: TextStyle(fontSize: 13)),
                 ),
               ],
             ),
@@ -809,65 +725,56 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return Consumer(
           builder: (context, ref, child) {
+            final palette = AuraPalette.of(context);
             final memoriesAsync = ref.watch(localMemoriesStreamProvider);
 
             return Dialog(
-              backgroundColor: const Color(0xFF0F0C1B),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-                side: const BorderSide(color: Color(0x1F94A3B8)),
-              ),
+              backgroundColor: palette.surface,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AuraRadius.lg), side: BorderSide(color: palette.border)),
               child: Container(
                 width: 500,
                 height: 500,
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(AuraSpacing.xl),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Row(
+                        Row(
                           children: [
-                            Icon(Icons.psychology, color: AuraTheme.accentAmber),
-                            SizedBox(width: 8),
-                            Text(
-                              "User Memory Bank",
-                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
-                            ),
+                            Icon(Icons.psychology, color: palette.warning),
+                            const SizedBox(width: AuraSpacing.sm),
+                            Text("User Memory Bank", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: palette.textPrimary)),
                           ],
                         ),
                         IconButton(
-                          icon: const Icon(Icons.close, color: Colors.white30),
+                          icon: Icon(Icons.close, color: palette.textDisabled),
                           onPressed: () => Navigator.pop(context),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 4),
-                    const Text(
+                    const SizedBox(height: AuraSpacing.xs),
+                    Text(
                       "These are facts and preferences AURA has learned about you. They are injected as system prompts to personalize reasoning.",
-                      style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12),
+                      style: TextStyle(color: palette.textSecondary, fontSize: 12),
                     ),
-                    const Divider(color: Color(0x1F94A3B8), height: 24),
-                    
-                    // Add Fact input
+                    Divider(color: palette.border, height: 24),
                     Row(
                       children: [
                         Expanded(
                           child: TextField(
                             controller: factController,
-                            decoration: const InputDecoration(
-                              hintText: "Add a custom fact manually...",
-                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                            ),
-                            style: const TextStyle(color: Colors.white, fontSize: 13),
+                            decoration: const InputDecoration(hintText: "Add a custom fact manually..."),
+                            style: TextStyle(color: palette.textPrimary, fontSize: 13),
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        ElevatedButton(
+                        const SizedBox(width: AuraSpacing.sm),
+                        AuraButton(
+                          label: "Add",
                           onPressed: () async {
                             final fact = factController.text.trim();
                             if (fact.isNotEmpty) {
@@ -875,26 +782,19 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                               factController.clear();
                             }
                           },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AuraTheme.accentIndigo,
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                          ),
-                          child: const Text("Add", style: TextStyle(fontSize: 13)),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 16),
-
-                    // Memories List
+                    const SizedBox(height: AuraSpacing.lg),
                     Expanded(
                       child: memoriesAsync.when(
                         data: (memories) {
                           if (memories.isEmpty) {
-                            return const Center(
+                            return Center(
                               child: Text(
                                 "No memories stored yet. AURA extracts them automatically from conversations, or you can add one above.",
                                 textAlign: TextAlign.center,
-                                style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12),
+                                style: TextStyle(color: palette.textSecondary, fontSize: 12),
                               ),
                             );
                           }
@@ -902,24 +802,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             itemCount: memories.length,
                             itemBuilder: (context, index) {
                               final mem = memories[index];
-                              return Card(
-                                margin: const EdgeInsets.only(bottom: 8),
-                                color: const Color(0x0CFFFFFF),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: AuraSpacing.sm),
+                                child: AuraCard(
+                                  padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md, vertical: AuraSpacing.sm),
                                   child: Row(
                                     children: [
-                                      Expanded(
-                                        child: Text(
-                                          mem.fact,
-                                          style: const TextStyle(fontSize: 13, color: Colors.white),
-                                        ),
-                                      ),
+                                      Expanded(child: Text(mem.fact, style: TextStyle(fontSize: 13, color: palette.textPrimary))),
                                       IconButton(
-                                        icon: const Icon(Icons.delete, size: 16, color: Colors.redAccent),
-                                        onPressed: () {
-                                          ref.read(memoryRepositoryProvider).deleteMemory(mem.id);
-                                        },
+                                        icon: Icon(Icons.delete, size: 16, color: palette.danger),
+                                        onPressed: () => ref.read(memoryRepositoryProvider).deleteMemory(mem.id),
                                       ),
                                     ],
                                   ),
@@ -929,162 +821,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           );
                         },
                         loading: () => const Center(child: CircularProgressIndicator()),
-                        error: (e, _) => Center(child: Text("Error: $e", style: const TextStyle(color: Colors.redAccent))),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  void _showAgentSettingsDialog() {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return Consumer(
-          builder: (context, ref, child) {
-            final instructionsAsync = ref.watch(allAgentInstructionsProvider);
-
-            return Dialog(
-              backgroundColor: const Color(0xFF0F0C1B),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-                side: const BorderSide(color: Color(0x1F94A3B8)),
-              ),
-              child: Container(
-                width: 600,
-                height: 550,
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Row(
-                          children: [
-                            Icon(Icons.settings_suggest, color: AuraTheme.accentIndigo),
-                            SizedBox(width: 8),
-                            Text(
-                              "Agent System Prompt Configurations",
-                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
-                            ),
-                          ],
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.close, color: Colors.white30),
-                          onPressed: () => Navigator.pop(context),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      "Customize the core system prompt guidelines for each of AURA's cognitive agent personas.",
-                      style: TextStyle(color: AuraTheme.textSecondary, fontSize: 12),
-                    ),
-                    const Divider(color: Color(0x1F94A3B8), height: 24),
-                    
-                    Expanded(
-                      child: instructionsAsync.when(
-                        data: (instructionsMap) {
-                          final agents = [
-                            {"id": "orchestrator", "name": "Auto-Orchestrator / Classifier"},
-                            {"id": "task_planner", "name": "Task Planner"},
-                            {"id": "finance_advisor", "name": "Finance Advisor"},
-                            {"id": "health_companion", "name": "Health Companion"},
-                            {"id": "academic_coach", "name": "Academic Coach"},
-                          ];
-
-                          return ListView.builder(
-                            itemCount: agents.length,
-                            itemBuilder: (context, index) {
-                              final agent = agents[index];
-                              final agentId = agent['id']!;
-                              final name = agent['name']!;
-
-                              final defaultPrompts = {
-                                "orchestrator": "You are AURA, a premium Personal AI Operating System...",
-                                "task_planner": "You are AURA's Task Planner. Help prioritize tasks...",
-                                "finance_advisor": "You are AURA's Finance Advisor. Analyze expenses...",
-                                "health_companion": "You are AURA's Health Companion. Track health...",
-                                "academic_coach": "You are AURA's Academic Coach. Assist with engineering spec development..."
-                              };
-
-                              final initialText = instructionsMap[agentId] ?? defaultPrompts[agentId] ?? "";
-                              final controller = TextEditingController(text: initialText);
-
-                              return Card(
-                                margin: const EdgeInsets.only(bottom: 16),
-                                color: const Color(0x0CFFFFFF),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16.0),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                                    children: [
-                                      Text(
-                                        name,
-                                        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      TextField(
-                                        controller: controller,
-                                        maxLines: 3,
-                                        style: const TextStyle(color: Colors.white, fontSize: 12),
-                                        decoration: const InputDecoration(
-                                          border: OutlineInputBorder(),
-                                          contentPadding: EdgeInsets.all(8),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.end,
-                                        children: [
-                                          TextButton(
-                                            onPressed: () async {
-                                              final messenger = ScaffoldMessenger.of(context);
-                                              await ref.read(agentConfigRepositoryProvider).deleteInstruction(agentId);
-                                              ref.invalidate(allAgentInstructionsProvider);
-                                              messenger.showSnackBar(
-                                                SnackBar(content: Text("Reset $name to default prompt.")),
-                                              );
-                                            },
-                                            child: const Text("Reset Default", style: TextStyle(color: AuraTheme.accentAmber, fontSize: 12)),
-                                          ),
-                                          const SizedBox(width: 8),
-                                          ElevatedButton(
-                                            onPressed: () async {
-                                              final text = controller.text.trim();
-                                              if (text.isNotEmpty) {
-                                                final messenger = ScaffoldMessenger.of(context);
-                                                await ref.read(agentConfigRepositoryProvider).saveInstruction(agentId, text);
-                                                ref.invalidate(allAgentInstructionsProvider);
-                                                messenger.showSnackBar(
-                                                  SnackBar(content: Text("Saved custom instructions for $name.")),
-                                                );
-                                              }
-                                            },
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: AuraTheme.accentTeal,
-                                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                            ),
-                                            child: const Text("Save Custom", style: TextStyle(fontSize: 12)),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                          );
-                        },
-                        loading: () => const Center(child: CircularProgressIndicator()),
-                        error: (e, _) => Center(child: Text("Error loading configurations: $e")),
+                        error: (e, _) => Center(child: Text("Error: $e", style: TextStyle(color: palette.danger))),
                       ),
                     ),
                   ],
@@ -1106,163 +843,178 @@ class MessageBubble extends ConsumerWidget {
   final bool isUser;
   const MessageBubble({super.key, required this.message, required this.isUser});
 
+  List<String> _decodeCitations() {
+    final raw = message.citationsJson;
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      return (jsonDecode(raw) as List<dynamic>).map((c) => c.toString()).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  List<Map<String, dynamic>> _decodeToolCalls() {
+    final raw = message.toolCallsJson;
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      return (jsonDecode(raw) as List<dynamic>).cast<Map<String, dynamic>>();
+    } catch (_) {
+      return const [];
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final palette = AuraPalette.of(context);
     final formattedTime = DateFormat('jm').format(message.createdAt);
+    final maxWidthFraction = MediaQuery.of(context).size.width < 768 ? 0.85 : 0.65;
 
     if (!isUser && message.content.startsWith("Connection Error")) {
       return Align(
         alignment: Alignment.centerLeft,
         child: Container(
-          margin: const EdgeInsets.only(bottom: 16),
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * (MediaQuery.of(context).size.width < 768 ? 0.85 : 0.65),
-          ),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0xFF2D1616),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.redAccent.withValues(alpha: 0.5), width: 1),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.cloud_off, color: Colors.redAccent, size: 20),
-                  SizedBox(width: 8),
-                  Text(
-                    "Cloud AI is currently unavailable",
-                    style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                "AURA could not connect to the cloud assistant. You can retry, switch to a local offline model, or report this issue.",
-                style: TextStyle(color: AuraTheme.textSecondary, fontSize: 13, height: 1.4),
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  ElevatedButton.icon(
-                    onPressed: () async {
-                      final db = ref.read(databaseProvider);
-                      final activeSessionId = ref.read(activeConversationIdProvider);
-                      final messages = await (db.select(db.messages)
-                            ..where((m) => m.conversationId.equals(activeSessionId))
-                            ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
-                          .get();
-                      
-                      final userMessages = messages.where((m) => m.role == "user").toList();
-                      if (userMessages.isNotEmpty) {
-                        final lastUserMsg = userMessages.last;
-                        // Delete the failed assistant message
-                        await (db.delete(db.messages)..where((m) => m.id.equals(message.id))).go();
-                        // Delete the last user message so sendChatMessage can recreate it cleanly
-                        await (db.delete(db.messages)..where((m) => m.id.equals(lastUserMsg.id))).go();
-                        
-                        // Resend
-                        await ref.read(chatRepositoryProvider).sendChatMessage(
-                          conversationId: activeSessionId,
-                          userContent: lastUserMsg.content,
-                          useRag: true,
+          margin: const EdgeInsets.only(bottom: AuraSpacing.lg),
+          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * maxWidthFraction),
+          child: AuraCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.cloud_off, color: palette.danger, size: 20),
+                    const SizedBox(width: AuraSpacing.sm),
+                    Text("Cloud AI is currently unavailable", style: TextStyle(fontWeight: FontWeight.bold, color: palette.textPrimary, fontSize: 14)),
+                  ],
+                ),
+                const SizedBox(height: AuraSpacing.sm),
+                Text(
+                  "AURA could not connect to the cloud assistant. You can retry or report this issue.",
+                  style: TextStyle(color: palette.textSecondary, fontSize: 13, height: 1.4),
+                ),
+                const SizedBox(height: AuraSpacing.md),
+                Wrap(
+                  spacing: AuraSpacing.sm,
+                  runSpacing: AuraSpacing.sm,
+                  children: [
+                    AuraButton(
+                      label: "Retry",
+                      icon: Icons.refresh,
+                      onPressed: () async {
+                        final db = ref.read(databaseProvider);
+                        final activeSessionId = ref.read(activeConversationIdProvider);
+                        final messages = await (db.select(db.messages)
+                              ..where((m) => m.conversationId.equals(activeSessionId))
+                              ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
+                            .get();
+
+                        final userMessages = messages.where((m) => m.role == "user").toList();
+                        if (userMessages.isNotEmpty) {
+                          final lastUserMsg = userMessages.last;
+                          await (db.delete(db.messages)..where((m) => m.id.equals(message.id))).go();
+                          await (db.delete(db.messages)..where((m) => m.id.equals(lastUserMsg.id))).go();
+
+                          await ref.read(chatRepositoryProvider).sendChatMessage(
+                                conversationId: activeSessionId,
+                                userContent: lastUserMsg.content,
+                                useRag: true,
+                              );
+                        }
+                      },
+                    ),
+                    AuraButton(
+                      label: "Report Issue",
+                      icon: Icons.bug_report_outlined,
+                      variant: AuraButtonVariant.secondary,
+                      onPressed: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: const Text("Issue reported successfully to developers."), backgroundColor: palette.success),
                         );
-                      }
-                    },
-                    icon: const Icon(Icons.refresh, size: 14),
-                    label: const Text("Retry"),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AuraTheme.accentIndigo,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      },
                     ),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text("Issue reported successfully to developers."),
-                          backgroundColor: AuraTheme.accentTeal,
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.bug_report_outlined, size: 14, color: Colors.white70),
-                    label: const Text("Report Issue", style: TextStyle(color: Colors.white70)),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.white24),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       );
     }
 
+    final isStreaming = !isUser && ref.watch(streamingMessageIdProvider) == message.id;
+    final showSkeleton = isStreaming && message.content.isEmpty;
+    final citations = isUser ? const <String>[] : _decodeCitations();
+    final toolCalls = isUser ? const <Map<String, dynamic>>[] : _decodeToolCalls();
+    final agentId = message.agentId;
+    final personaInfo = agentId != null ? personaDisplay(agentId) : null;
+
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * (MediaQuery.of(context).size.width < 768 ? 0.75 : 0.55),
-        ),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: isUser ? null : AuraTheme.cardBg,
-          gradient: isUser ? AuraTheme.primaryGradient : null,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft: isUser ? const Radius.circular(16) : const Radius.circular(0),
-            bottomRight: isUser ? const Radius.circular(0) : const Radius.circular(16),
-          ),
-          border: isUser
-              ? null
-              : Border.all(color: const Color(0x1F94A3B8), width: 1),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (isUser)
-              Text(
-                message.content,
-                style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.4),
+        margin: const EdgeInsets.only(bottom: AuraSpacing.lg),
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * (isUser ? 0.75 : maxWidthFraction)),
+        child: isUser
+            ? Container(
+                padding: const EdgeInsets.all(AuraSpacing.lg),
+                decoration: BoxDecoration(
+                  gradient: palette.brandGradient,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(AuraRadius.lg),
+                    topRight: Radius.circular(AuraRadius.lg),
+                    bottomLeft: Radius.circular(AuraRadius.lg),
+                    bottomRight: Radius.circular(0),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(message.content, style: TextStyle(color: palette.onBrand, fontSize: 15, height: 1.4)),
+                    const SizedBox(height: AuraSpacing.sm),
+                    Align(
+                      alignment: Alignment.bottomRight,
+                      child: Text(formattedTime, style: TextStyle(fontSize: 10, color: palette.onBrand.withValues(alpha: 0.7))),
+                    ),
+                  ],
+                ),
               )
-            else
-              MarkdownBody(
-                data: message.content.isEmpty ? "..." : message.content,
-                styleSheet: MarkdownStyleSheet(
-                  p: const TextStyle(color: Colors.white, fontSize: 15, height: 1.4),
-                  code: const TextStyle(
-                    backgroundColor: Color(0xFF1E1B4B),
-                    color: Color(0xFFF59E0B),
-                    fontFamily: 'Courier',
-                    fontSize: 13,
-                  ),
-                  codeblockDecoration: BoxDecoration(
-                    color: const Color(0xFF0F0C1B),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0x1F94A3B8)),
-                  ),
+            : AuraCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (personaInfo != null) ...[
+                      PersonaBadge(label: personaInfo.$1, icon: personaInfo.$2),
+                      const SizedBox(height: AuraSpacing.sm),
+                    ],
+                    if (showSkeleton)
+                      const StreamingMessageSkeleton()
+                    else
+                      MarkdownBody(
+                        data: message.content,
+                        styleSheet: MarkdownStyleSheet(
+                          p: TextStyle(color: palette.textPrimary, fontSize: 15, height: 1.4),
+                          code: TextStyle(backgroundColor: palette.surfaceVariant, color: palette.warning, fontFamily: 'Courier', fontSize: 13),
+                          codeblockDecoration: BoxDecoration(
+                            color: palette.background,
+                            borderRadius: BorderRadius.circular(AuraRadius.sm),
+                            border: Border.all(color: palette.border),
+                          ),
+                        ),
+                      ),
+                    if (toolCalls.isNotEmpty) ...[
+                      const SizedBox(height: AuraSpacing.sm),
+                      ToolCallChips(toolCalls: toolCalls),
+                    ],
+                    if (citations.isNotEmpty) ...[
+                      const SizedBox(height: AuraSpacing.sm),
+                      CitationChips(citations: citations),
+                    ],
+                    const SizedBox(height: AuraSpacing.sm),
+                    Align(
+                      alignment: Alignment.bottomRight,
+                      child: Text(formattedTime, style: TextStyle(fontSize: 10, color: palette.textSecondary)),
+                    ),
+                  ],
                 ),
               ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.bottomRight,
-              child: Text(
-                formattedTime,
-                style: TextStyle(
-                  fontSize: 10,
-                  color: isUser ? Colors.white70 : AuraTheme.textSecondary,
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -1277,77 +1029,32 @@ class EmptyStateChat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
     return Center(
       child: SingleChildScrollView(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: AuraTheme.accentIndigo.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.auto_awesome,
-                size: 64,
-                color: AuraTheme.accentIndigo,
-              ),
+            AuraEmptyState(
+              icon: Icons.auto_awesome,
+              title: 'Ask Copilot Anything',
+              message: 'Programming questions, academic inquiries, or coordinating your tasks.',
             ),
-            const SizedBox(height: 24),
-            const Text(
-              'Ask Aura Anything',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Ask programming questions, academic inquiries,\nor ask it to sync schedules and coordinate tasks.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                color: AuraTheme.textSecondary,
-                height: 1.4,
-              ),
-            ),
-            const SizedBox(height: 32),
+            const SizedBox(height: AuraSpacing.lg),
             ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 500),
               child: GridView.count(
                 shrinkWrap: true,
                 crossAxisCount: MediaQuery.of(context).size.width < 500 ? 1 : 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
+                crossAxisSpacing: AuraSpacing.md,
+                mainAxisSpacing: AuraSpacing.md,
                 childAspectRatio: MediaQuery.of(context).size.width < 500 ? 3.8 : 2.2,
                 physics: const NeverScrollableScrollPhysics(),
                 children: [
-                  _buildSuggestionCard(
-                    context,
-                    "Sync Tasks",
-                    "Synchronize my task database with Google Tasks",
-                    "Sync my Google Tasks",
-                  ),
-                  _buildSuggestionCard(
-                    context,
-                    "Log Health",
-                    "Log water intake and exercise duration for today",
-                    "Log 500ml of water and 30 minutes of exercise",
-                  ),
-                  _buildSuggestionCard(
-                    context,
-                    "Financial Health",
-                    "Show my current balance and expense distribution",
-                    "How are my expenses this month?",
-                  ),
-                  _buildSuggestionCard(
-                    context,
-                    "Agent Memory",
-                    "View facts the system has remembered about me",
-                    "What do you remember about me?",
-                  ),
+                  _buildSuggestionCard(context, "Explain a Concept", "Ask a programming or academic question", "Explain how dependency injection works"),
+                  _buildSuggestionCard(context, "Log Health", "Log water intake and exercise duration for today", "Log 500ml of water and 30 minutes of exercise"),
+                  _buildSuggestionCard(context, "Financial Health", "Show my current balance and expense distribution", "How are my expenses this month?"),
+                  _buildSuggestionCard(context, "Agent Memory", "View facts the system has remembered about me", "What do you remember about me?"),
                 ],
               ),
             ),
@@ -1357,37 +1064,19 @@ class EmptyStateChat extends StatelessWidget {
     );
   }
 
-  Widget _buildSuggestionCard(
-    BuildContext context,
-    String title,
-    String subtitle,
-    String prompt,
-  ) {
-    return Card(
-      margin: EdgeInsets.zero,
-      child: InkWell(
-        onTap: () => onSuggestionSelected(prompt),
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(14.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                subtitle,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 11, color: AuraTheme.textSecondary),
-              ),
-            ],
-          ),
-        ),
+  Widget _buildSuggestionCard(BuildContext context, String title, String subtitle, String prompt) {
+    final palette = AuraPalette.of(context);
+    return AuraCard(
+      padding: const EdgeInsets.all(14.0),
+      onTap: () => onSuggestionSelected(prompt),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(title, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: palette.textPrimary)),
+          const SizedBox(height: AuraSpacing.xs),
+          Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, color: palette.textSecondary)),
+        ],
       ),
     );
   }

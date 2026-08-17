@@ -24,7 +24,7 @@ const _destinations = [
   _Destination('Calendar', Icons.calendar_month_outlined, '/calendar'),
   _Destination('Finance', Icons.monetization_on_outlined, '/finance'),
   _Destination('Health', Icons.favorite_outline, '/health'),
-  _Destination('Copilot / Chat', Icons.auto_awesome_outlined, '/chat'),
+  _Destination('Copilot', Icons.auto_awesome_outlined, '/chat'),
   _Destination('Automations', Icons.bolt_outlined, '/automations'),
   _Destination('Knowledge Center', Icons.folder_shared_outlined, '/knowledge'),
   _Destination('System Analytics', Icons.bar_chart_outlined, '/analytics'),

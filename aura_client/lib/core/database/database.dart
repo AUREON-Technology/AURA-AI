@@ -104,6 +104,23 @@ class Messages extends Table {
   TextColumn get modelUsed => text().nullable()();
   IntColumn get tokensUsed => integer().nullable()();
   DateTimeColumn get createdAt => dateTime()();
+  // JSON-encoded List<String> of citation labels from the v3 kernel's
+  // `citations`/`done` SSE frames (aura_core/kernel/kernel.py). Encrypted
+  // like `content` since a citation label can reveal what a user searched
+  // for.
+  TextColumn get citationsJson => text().map(const EncryptedTextConverter()).nullable()();
+  // JSON-encoded List<Map> of {name, arguments, settled} built from
+  // `tool_calls` SSE frames as they arrive; `settled` flips to true when
+  // the turn's `done` frame lands. Encrypted since tool arguments can
+  // carry user-provided data.
+  TextColumn get toolCallsJson => text().map(const EncryptedTextConverter()).nullable()();
+  // Which persona (aura_core/prompts/library.py's AGENT_PROMPT_IDS)
+  // actually answered this message, recorded at send time. Distinct from
+  // `modelUsed` above, which this codebase already uses to store the
+  // selected agent id rather than a model identifier -- left as-is to
+  // avoid an unrelated cleanup; this column is the correctly-purposed one
+  // for new code to read.
+  TextColumn get agentId => text().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -219,7 +236,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   Future<List<TelemetryLog>> getTelemetry() => select(telemetryLogs).get();
   Future<void> insertTelemetry(TelemetryLogsCompanion log) => into(telemetryLogs).insert(log);
@@ -317,6 +334,11 @@ class AppDatabase extends _$AppDatabase {
           if (from < 7) {
             await m.createTable(outboxEntries);
             await m.createTable(syncMetadata);
+          }
+          if (from < 8) {
+            await m.addColumn(messages, messages.citationsJson);
+            await m.addColumn(messages, messages.toolCallsJson);
+            await m.addColumn(messages, messages.agentId);
           }
         },
         beforeOpen: (details) async {

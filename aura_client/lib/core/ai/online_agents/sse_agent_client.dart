@@ -1,37 +1,56 @@
 import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
-import 'package:google_sign_in/google_sign_in.dart';
-import 'package:flutter/foundation.dart';
 import '../../auth/token_manager.dart';
 import '../../config/config.dart';
 import '../../security/device_validation_service.dart';
 
-enum SseEventKind { token, toolCalls, done, error }
+enum SseEventKind { token, toolCalls, citations, revision, done, error, unknown }
 
-/// One decoded frame from the `/api/v2/chat` SSE stream (Doc/V2_BLUEPRINT.md
-/// §7). Replaces string-splitting `[ACTIONS]` out of a raw text stream
-/// (V1's approach, still used by the v1 `/api/chat/agent` endpoint this
-/// falls back to) with typed events the caller switches on directly.
+/// One decoded frame from the `/api/v3/chat/stream` SSE stream
+/// (`aura_core/kernel/kernel.py`'s `AIKernel.stream()`).
 class SseChatEvent {
   final SseEventKind kind;
   final String? text;
   final List<dynamic>? actions;
   final String? message;
+  final List<dynamic>? citations;
 
-  const SseChatEvent._({required this.kind, this.text, this.actions, this.message});
+  /// The raw `event:` name, populated only when [kind] is
+  /// [SseEventKind.unknown] — lets a caller log/ignore a frame type this
+  /// client doesn't know about yet without misreading it as [SseEventKind.done].
+  final String? unknownType;
+
+  const SseChatEvent._({
+    required this.kind,
+    this.text,
+    this.actions,
+    this.message,
+    this.citations,
+    this.unknownType,
+  });
 
   factory SseChatEvent.fromWire(String eventType, Map<String, dynamic> data) {
     switch (eventType) {
       case 'token':
         return SseChatEvent._(kind: SseEventKind.token, text: data['text'] as String?);
       case 'tool_calls':
-        return SseChatEvent._(kind: SseEventKind.toolCalls, actions: data['actions'] as List<dynamic>?);
+        return SseChatEvent._(kind: SseEventKind.toolCalls, actions: data['calls'] as List<dynamic>?);
+      case 'citations':
+        return SseChatEvent._(kind: SseEventKind.citations, citations: data['citations'] as List<dynamic>?);
+      case 'revision':
+        return SseChatEvent._(kind: SseEventKind.revision, text: data['text'] as String?);
       case 'error':
         return SseChatEvent._(kind: SseEventKind.error, message: data['message'] as String?);
       case 'done':
+        // citations is repeated here as a safety net by the backend in case the
+        // earlier dedicated `citations` frame was missed.
+        return SseChatEvent._(kind: SseEventKind.done, citations: data['citations'] as List<dynamic>?);
       default:
-        return const SseChatEvent._(kind: SseEventKind.done);
+        // Anything not recognised above must NOT fall through to `done` --
+        // that used to silently discard `citations`/`revision` frames by
+        // misreading them as stream completion. Callers ignore `unknown`.
+        return SseChatEvent._(kind: SseEventKind.unknown, unknownType: eventType);
     }
   }
 }
@@ -86,26 +105,25 @@ class SseFrameParser {
 
 class SseAgentClient {
   final Ref _ref;
-  static const String _url = "${AppConfig.backendUrl}/api/v2/chat";
+  static const String _url = "${AppConfig.backendUrl}/api/v3/chat/stream";
 
   SseAgentClient(this._ref);
 
+  /// Streams one chat turn from the v3 kernel (`aura_core/api/v3.py`'s
+  /// `ChatRequest`). Conversation history is loaded server-side from
+  /// episodic memory keyed by [sessionId] -- unlike the legacy v1/v2 path,
+  /// the client does not send a message history array.
   Stream<SseChatEvent> streamAgentEvents({
+    required String message,
+    required String sessionId,
     required String agentId,
-    required List<Map<String, String>> messages,
-    Map<String, String>? customInstructions,
-    bool useRag = true,
+    bool useKnowledge = true,
+    bool useMemory = true,
+    bool useTools = true,
+    int maxOutputTokens = 1024,
+    double temperature = 0.3,
   }) async* {
     final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
-
-    String? googleAccessToken;
-    try {
-      final scopes = ['https://www.googleapis.com/auth/drive.readonly'];
-      final authorization = await GoogleSignIn.instance.authorizationClient.authorizeScopes(scopes);
-      googleAccessToken = authorization.accessToken;
-    } catch (e) {
-      debugPrint("[SseAgentClient] Failed to fetch Google access token: $e");
-    }
 
     final client = http.Client();
     try {
@@ -114,11 +132,14 @@ class SseAgentClient {
       if (token != null) request.headers['Authorization'] = 'Bearer $token';
       request.headers.addAll(DeviceValidationService.getAttestationHeaders());
       request.body = jsonEncode({
-        "agent_id": agentId,
-        "messages": messages.map((m) => {"role": m["role"], "content": m["content"]}).toList(),
-        "custom_instructions": customInstructions,
-        "use_rag": useRag,
-        "google_access_token": googleAccessToken,
+        "message": message,
+        "session_id": sessionId,
+        "agent": agentId,
+        "use_knowledge": useKnowledge,
+        "use_memory": useMemory,
+        "use_tools": useTools,
+        "max_output_tokens": maxOutputTokens,
+        "temperature": temperature,
       });
 
       final response = await client.send(request).timeout(const Duration(seconds: 15));

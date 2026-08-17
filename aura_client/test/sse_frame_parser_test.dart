@@ -41,13 +41,13 @@ void main() {
       expect(events[0].text, 'partial');
     });
 
-    test('parses tool_calls with a nested actions array', () {
+    test('parses tool_calls with a nested calls array', () {
       final events = feedAll([
-        'event: tool_calls\ndata: {"actions": [{"type": "add_task", "params": {"title": "x"}}]}\n\n',
+        'event: tool_calls\ndata: {"calls": [{"name": "calculator", "arguments": {"expr": "1+1"}}]}\n\n',
       ]);
       expect(events[0].kind, SseEventKind.toolCalls);
       expect(events[0].actions, [
-        {'type': 'add_task', 'params': {'title': 'x'}},
+        {'name': 'calculator', 'arguments': {'expr': '1+1'}},
       ]);
     });
 
@@ -55,6 +55,49 @@ void main() {
       final events = feedAll(['event: error\ndata: {"message": "boom"}\n\n']);
       expect(events[0].kind, SseEventKind.error);
       expect(events[0].message, 'boom');
+    });
+
+    test('parses a citations event', () {
+      final events = feedAll([
+        'event: citations\ndata: {"citations": ["my-doc@v1 (page 4 > Heading)"]}\n\n',
+      ]);
+      expect(events[0].kind, SseEventKind.citations);
+      expect(events[0].citations, ['my-doc@v1 (page 4 > Heading)']);
+    });
+
+    test('parses a citations event split across chunk boundaries', () {
+      final events = feedAll([
+        'event: citat',
+        'ions\ndata: {"citations": ["doc',
+        'A", "docB"]}\n\n',
+      ]);
+      expect(events.length, 1);
+      expect(events[0].kind, SseEventKind.citations);
+      expect(events[0].citations, ['docA', 'docB']);
+    });
+
+    test('parses a revision event', () {
+      final events = feedAll([
+        'event: revision\ndata: {"reason": "output_guard_redaction", "text": "redacted answer"}\n\n',
+      ]);
+      expect(events[0].kind, SseEventKind.revision);
+      expect(events[0].text, 'redacted answer');
+    });
+
+    test('done event carries a citations safety-net field when present', () {
+      final events = feedAll([
+        'event: done\ndata: {"tainted": false, "guards_complete": true, "citations": ["docA"]}\n\n',
+      ]);
+      expect(events[0].kind, SseEventKind.done);
+      expect(events[0].citations, ['docA']);
+    });
+
+    test('an unrecognised event type is reported as unknown, never as done', () {
+      final events = feedAll(['event: some_future_frame\ndata: {"foo": "bar"}\n\n']);
+      expect(events.length, 1);
+      expect(events[0].kind, SseEventKind.unknown);
+      expect(events[0].kind, isNot(SseEventKind.done));
+      expect(events[0].unknownType, 'some_future_frame');
     });
 
     test('holds back an incomplete trailing frame until the next feed', () {
