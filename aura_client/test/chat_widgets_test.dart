@@ -28,7 +28,13 @@ void main() {
   group('ToolCallChips', () {
     testWidgets('renders nothing for an empty call list', (tester) async {
       await tester.pumpWidget(_wrap(const ToolCallChips(toolCalls: [])));
-      expect(find.byType(AnimatedBuilder), findsNothing);
+      // Scoped to descendants of ToolCallChips: MaterialApp/Scaffold have their
+      // own unrelated AnimatedBuilder internally, so an unscoped find.byType
+      // search matches those too and is not what this test means to assert.
+      expect(
+        find.descendant(of: find.byType(ToolCallChips), matching: find.byType(AnimatedBuilder)),
+        findsNothing,
+      );
     });
 
     testWidgets('renders a title-cased label for a known tool', (tester) async {
