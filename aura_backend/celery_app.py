@@ -1,12 +1,28 @@
 import os
 from celery import Celery
 
+
+def _redis_password() -> str | None:
+    """Docker mounts the Redis password as a secret file (AURA_REDIS_PASSWORD_FILE); the
+    running app hydrates it into AURA_REDIS_URL at startup (aura_service.py), but the celery
+    CLI (`celery -A celery_app worker`) imports this module directly and never goes through
+    that hydration, so it has to read the file itself."""
+    path = os.environ.get("AURA_REDIS_PASSWORD_FILE")
+    if path and os.path.exists(path):
+        with open(path, encoding="utf-8") as handle:
+            return handle.read().strip()
+    return os.environ.get("AURA_REDIS_PASSWORD")
+
+
 redis_host = os.getenv("REDIS_HOST", "localhost")
+_redis_password_value = _redis_password()
+_redis_auth = f":{_redis_password_value}@" if _redis_password_value else ""
+_redis_url = f"redis://{_redis_auth}{redis_host}:6379/0"
 
 celery_app = Celery(
     "aura_tasks",
-    broker=f"redis://{redis_host}:6379/0",
-    backend=f"redis://{redis_host}:6379/0"
+    broker=_redis_url,
+    backend=_redis_url
 )
 
 celery_app.conf.update(
