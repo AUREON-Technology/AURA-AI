@@ -1029,7 +1029,6 @@ class EmptyStateChat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = AuraPalette.of(context);
     return Center(
       child: SingleChildScrollView(
         child: Column(

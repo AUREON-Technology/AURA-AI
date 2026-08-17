@@ -27,7 +27,16 @@ final pendingActionsProvider = NotifierProvider<PendingActions, List<dynamic>>((
 /// when nothing is in flight. Distinct from "content is empty" -- lets the
 /// UI show a loading skeleton only while a turn is genuinely still
 /// streaming, not forever on a message that legitimately finished empty.
-final streamingMessageIdProvider = StateProvider<String?>((ref) => null);
+class StreamingMessageId extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void set(String? messageId) => state = messageId;
+}
+
+final streamingMessageIdProvider = NotifierProvider<StreamingMessageId, String?>(() {
+  return StreamingMessageId();
+});
 
 class ChatRepository {
   final AppDatabase _db;
@@ -99,7 +108,7 @@ class ChatRepository {
     // legacy v1/v2 path, v3 loads conversation history itself from server-side episodic memory
     // keyed by session_id, so the client sends only the latest message. Falls back to the v1
     // orchestrator path (which does need a history payload) on any SSE-level error.
-    _ref.read(streamingMessageIdProvider.notifier).state = assistantMsgId;
+    _ref.read(streamingMessageIdProvider.notifier).set(assistantMsgId);
     try {
       bool sseSucceeded = await _sendViaSse(
         message: userContent,
@@ -131,7 +140,7 @@ class ChatRepository {
       }
     } finally {
       if (_ref.read(streamingMessageIdProvider) == assistantMsgId) {
-        _ref.read(streamingMessageIdProvider.notifier).state = null;
+        _ref.read(streamingMessageIdProvider.notifier).set(null);
       }
     }
 
