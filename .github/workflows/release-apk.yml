@@ -1,0 +1,49 @@
+name: Release APK
+
+# Manual, on-demand build of a real installable release APK, pointed at the
+# live production backend (unlike client-ci.yml's build-android job, which
+# is a placeholder-backend build-only CI gate and never uploads its output).
+# Signing: aura_client/android/app/build.gradle.kts's release buildType has
+# no dedicated signing config yet, so this still ships debug-key-signed —
+# installable by sideloading, not Play Store-ready.
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_url:
+        description: "Backend URL to bake into the build"
+        required: false
+        default: "https://169.58.188.43.nip.io"
+
+jobs:
+  build-release-apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aura_client
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Regenerate Drift codegen
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Build release APK
+        run: flutter build apk --release --dart-define=BACKEND_URL=${{ github.event.inputs.backend_url }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aura-copilot-release-apk
+          path: aura_client/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 14
