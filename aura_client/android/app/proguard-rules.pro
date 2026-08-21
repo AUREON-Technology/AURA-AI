@@ -15,3 +15,7 @@
 # Ignore warnings from Google Play Core (split install/deferred components)
 -dontwarn com.google.android.play.core.**
 -keep class com.google.android.play.core.** { *; }
+
+# Play Integrity Standard API
+-keep class com.google.android.play.core.integrity.** { *; }
+-dontwarn com.google.android.play.core.integrity.**

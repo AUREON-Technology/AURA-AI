@@ -10,8 +10,8 @@ Three rules:
    runnable at all.
 2. Engines never import adapters. Policy must not depend on infrastructure, or the dependency
    inversion is decorative.
-3. ``aura_core`` never imports ``aura_backend.services`` (ADR-002's one-directional rule during
-   the strangler migration).
+3. ``aura_core`` never imports ``aura_backend.services`` or ``infrastructure`` (ADR-002's
+   one-directional rule during the strangler migration; v2 SQLAlchemy stays outside the core).
 """
 
 from __future__ import annotations
@@ -115,7 +115,7 @@ def test_core_never_imports_legacy_services() -> None:
     (explaining which defect they replace), and a grep-style check would flag those comments
     while still missing an aliased import.
     """
-    forbidden = {"services", "aura_backend", "main", "tasks", "celery_app"}
+    forbidden = {"services", "aura_backend", "main", "tasks", "celery_app", "infrastructure"}
     violations: list[str] = []
 
     for module in _modules(""):

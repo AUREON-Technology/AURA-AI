@@ -32,6 +32,7 @@ from ..domain.memory import MemoryKind, MemoryQuery
 from ..domain.tools import ToolCategory, ToolSensitivity
 from ..ports.runtime import Tool, ToolContext
 from .base import param, tool
+from .personal_os import personal_os_tools
 
 __all__ = [
     "calculator",
@@ -535,10 +536,10 @@ def default_tools(
     """Assemble the tool set for a deployment.
 
     Everything that touches the network or the filesystem is opt-in and requires explicit
-    configuration. A default install has arithmetic and the clock: useful, and incapable of
-    reaching anything.
+    configuration. A default install has arithmetic, the clock, and personal-OS proposals
+    (client-applied JSON; no server writes): useful, and incapable of reaching anything.
     """
-    tools: list[Tool] = [calculator, current_datetime]
+    tools: list[Tool] = [calculator, current_datetime, *personal_os_tools()]
     if knowledge_engine is not None:
         tools += build_knowledge_tools(knowledge_engine)
     if memory_engine is not None:

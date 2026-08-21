@@ -215,13 +215,18 @@ git pull && docker compose -f docker-compose.prod.yml up -d --build
 
 ### Backups
 
-The `backup` service runs continuously, dumping Postgres daily and snapshotting Qdrant, with a
-14-day retention. It **verifies each dump is restorable and non-empty before counting it** —
-the failure that matters is discovering at recovery time that months of dumps were empty.
+The `backup` service runs continuously, dumping Postgres daily, copying Qdrant snapshots into
+`$BACKUP_DIR`, and writing a Redis RDB, with verified dumps and a 14-day local retention. After
+a successful local cycle it `rclone copy`s `$BACKUP_DIR` to `BACKUP_S3_URI` when that is set
+(credentials from `deploy/secrets/rclone.conf` or `backup_s3_access_key` /
+`backup_s3_secret_key`, never from the image). Offsite retention defaults to local
+(`BACKUP_OFFSITE_RETENTION_DAYS`). `AuraBackupStale` and `AuraBackupOffsiteFailed` scrape the
+textfile metrics the sidecar writes.
 
 ```bash
 ls -lh backups/
-cat backups/.last_success | xargs -I{} date -d @{}     # last verified backup
+cat backups/.last_success | xargs -I{} date -d @{}     # last verified local backup
+rclone ls "$BACKUP_S3_URI"                             # last offsite objects
 ```
 
 Restore is deliberately interactive:
@@ -265,6 +270,13 @@ The short version, in the order the constraints actually bind:
    Postgres.
 3. **Split the data tier.** Managed Postgres with read replicas, then a Qdrant cluster sharded
    by `user_id`.
+
+---
+
+## Launch checklist
+
+Store-ready cut: [Launch checklist](launch-checklist.md). Play upload keystore and Play App
+Signing: [Play Store signing](play-store-signing.md).
 
 ---
 

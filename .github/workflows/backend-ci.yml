@@ -21,10 +21,16 @@ on:
     paths:
       - "aura_backend/**"
       - ".github/workflows/backend-ci.yml"
+      - "deploy/monitoring/**"
+      - "deploy/scripts/**"
+      - "deploy/docker-compose.prod.yml"
   push:
     branches: [main]
     paths:
       - "aura_backend/**"
+      - "deploy/monitoring/**"
+      - "deploy/scripts/**"
+      - "deploy/docker-compose.prod.yml"
 
 jobs:
   test:
@@ -41,11 +47,18 @@ jobs:
           python-version: "3.11"
           cache: "pip"
           cache-dependency-path: |
+            aura_backend/requirements.lock
             aura_backend/requirements.txt
             aura_backend/requirements-dev.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.txt -r requirements-dev.txt
+        run: pip install -r requirements.lock -r requirements-dev.txt
+
+      - name: Dockerfile boots aura_service (AURA-012)
+        run: |
+          grep -q 'aura_service:app' Dockerfile
+          grep -q 'requirements.lock' Dockerfile
+          ! grep -E '^\s*CMD\b' Dockerfile | grep -q 'main:app'
 
       - name: Syntax check (full tree)
         run: |
@@ -79,6 +92,29 @@ jobs:
         # the failure reads as "legacy suite broken" rather than "wrong
         # runner".
         run: python -m unittest discover -p "test_*.py"
+
+  pip-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aura_backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: aura_backend/requirements.lock
+
+      - name: Audit lockfile (AURA-020)
+        # --disable-pip: audit the pins as written. Installing the lockfile
+        # would pull Linux CUDA wheels (torch) which the scan does not need.
+        # Fail on known CVEs. Do not mass-upgrade here: scan first, upgrade with tests later.
+        run: |
+          pip install pip-audit
+          pip-audit --disable-pip --no-deps -r requirements.lock
 
   docker-build:
     runs-on: ubuntu-latest

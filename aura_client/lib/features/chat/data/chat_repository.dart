@@ -1,18 +1,16 @@
 import 'dart:convert';
-import 'dart:async';
 import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
-import 'package:aura_client/core/ai/orchestrator/agent_orchestrator.dart';
 import 'package:aura_client/core/ai/online_agents/sse_agent_client.dart';
+import 'package:aura_client/core/sync/sync_payloads.dart';
 import 'agent_config_repository.dart';
 import 'chat_connection_error.dart';
-import 'memory_repository.dart';
 
-enum _SseSendOutcome { succeeded, connectionFailure, otherFailure }
+enum _SseSendOutcome { succeeded, failed }
 
 class PendingActions extends Notifier<List<dynamic>> {
   @override
@@ -65,6 +63,21 @@ class ChatRepository {
     return query.map((row) => row.read(_db.messages.conversationId)!).watch();
   }
 
+  Future<void> _enqueueUpsert(String id) async {
+    final row = await (_db.select(_db.messages)..where((m) => m.id.equals(id))).getSingleOrNull();
+    if (row == null) return;
+    await _db.enqueueOutbox(
+      table: 'messages',
+      recordId: id,
+      operation: 'upsert',
+      payload: SyncPayloads.message(row),
+    );
+  }
+
+  Future<void> _enqueueDelete(String id) async {
+    await _db.enqueueOutbox(table: 'messages', recordId: id, operation: 'delete');
+  }
+
   // Sends message and streams response, saving to Drift DB in real-time
   Future<void> sendChatMessage({
     required String conversationId,
@@ -88,16 +101,12 @@ class ChatRepository {
         role: "user",
         content: userContent,
         createdAt: DateTime.now(),
+        updatedAt: Value(DateTime.now()),
       ),
     );
+    await _enqueueUpsert(userMsgId);
 
-    // 2. Load Conversation History
-    final historyMessages = await (_db.select(_db.messages)
-          ..where((m) => m.conversationId.equals(conversationId))
-          ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
-        .get();
-
-    // 3. Save Placeholder Assistant Message
+    // 2. Save Placeholder Assistant Message
     final assistantMsgId = _uuid.v4();
     final activeAgentId = _ref.read(activeAgentIdProvider);
     await _db.into(_db.messages).insert(
@@ -109,14 +118,14 @@ class ChatRepository {
         modelUsed: Value(activeAgentId),
         agentId: Value(activeAgentId),
         createdAt: DateTime.now(),
+        updatedAt: Value(DateTime.now()),
       ),
     );
+    await _enqueueUpsert(assistantMsgId);
 
-    // 4. Execute streaming against the v3 kernel (aura_core/api/v3.py's /chat/stream). Unlike the
-    // legacy v1/v2 path, v3 loads conversation history itself from server-side episodic memory
-    // keyed by session_id, so the client sends only the latest message. Falls back to the v1
-    // orchestrator path (which does need a history payload) on SSE-level errors that are not a
-    // dead host — a connection/socket failure would hit the same unreachable backend twice.
+    // 3. Stream against the v3 kernel. Conversation history is loaded server-side
+    // from episodic memory keyed by session_id. SSE errors stay a retry bubble;
+    // there is no v1 orchestrator fallback.
     _ref.read(streamingMessageIdProvider.notifier).set(assistantMsgId);
     try {
       final sseOutcome = await _sendViaSse(
@@ -127,39 +136,13 @@ class ChatRepository {
         assistantMsgId: assistantMsgId,
       );
 
-      if (sseOutcome == _SseSendOutcome.otherFailure) {
-        // Legacy fallback still needs a message-history array and per-agent custom instructions,
-        // neither of which the v3 path above uses.
-        final customInstructions = _ref.read(allAgentInstructionsProvider).value ?? {};
-        final historyPayload = historyMessages.map((m) => {
-          "role": m.role,
-          "content": m.content,
-        }).toList();
-        historyPayload.add({
-          "role": "user",
-          "content": userContent,
-        });
-        await _sendViaOrchestrator(
-          agentId: activeAgentId,
-          historyPayload: historyPayload,
-          customInstructions: customInstructions,
-          useRag: useRag,
-          assistantMsgId: assistantMsgId,
-        );
-      } else if (sseOutcome == _SseSendOutcome.connectionFailure) {
+      if (sseOutcome == _SseSendOutcome.failed) {
         await _updateMessageText(assistantMsgId, kChatConnectionErrorMessage);
       }
     } finally {
       if (_ref.read(streamingMessageIdProvider) == assistantMsgId) {
         _ref.read(streamingMessageIdProvider.notifier).set(null);
       }
-    }
-
-    final assistantRow = await (_db.select(_db.messages)
-          ..where((m) => m.id.equals(assistantMsgId)))
-        .getSingleOrNull();
-    if (assistantRow != null && !isChatConnectionErrorText(assistantRow.content)) {
-      unawaited(_ref.read(memoryRepositoryProvider).triggerMemoryExtraction(historyMessages));
     }
   }
 
@@ -180,7 +163,9 @@ class ChatRepository {
 
     final lastUserMsg = userMessages.last;
     await (_db.delete(_db.messages)..where((m) => m.id.equals(errorMessageId))).go();
+    await _enqueueDelete(errorMessageId);
     await (_db.delete(_db.messages)..where((m) => m.id.equals(lastUserMsg.id))).go();
+    await _enqueueDelete(lastUserMsg.id);
 
     await sendChatMessage(
       conversationId: conversationId,
@@ -189,17 +174,9 @@ class ChatRepository {
   }
 
   /// Returns [_SseSendOutcome.succeeded] if the SSE stream completed
-  /// without an `error` frame.
-  /// [_SseSendOutcome.connectionFailure] means the host was unreachable
-  /// **or** the stream sent an `error` frame — the caller must not fall
-  /// back to the orchestrator, and the UI should show retry.
-  /// [_SseSendOutcome.otherFailure] signals a fall back to [_sendViaOrchestrator].
-  ///
-  /// Deliberately does not write to [pendingActionsProvider]: v3's tool
-  /// registry (aura_core/tools/builtin.py) has no task/calendar/finance/
-  /// health CRUD tools, so that panel would only ever be empty on this
-  /// path. It stays populated exclusively by [_sendViaOrchestrator], the
-  /// v1 fallback whose backend agent still proposes those actions.
+  /// without an `error` frame. Any connection failure or `error` frame is
+  /// [_SseSendOutcome.failed] — the UI shows a retry bubble. There is no
+  /// orchestrator fallback.
   Future<_SseSendOutcome> _sendViaSse({
     required String message,
     required String sessionId,
@@ -228,7 +205,7 @@ class ChatRepository {
             displayText += event.text ?? "";
             final now = DateTime.now();
             if (now.difference(lastDbUpdate).inMilliseconds > 500) {
-              await _updateMessageText(assistantMsgId, displayText);
+              await _updateMessageText(assistantMsgId, displayText, enqueue: false);
               lastDbUpdate = now;
             }
             break;
@@ -238,9 +215,12 @@ class ChatRepository {
                 toolCalls.add({...call, 'settled': false});
               }
             }
-            // Written immediately (not throttled like token text) so a chip
-            // appears while the turn is still streaming, not only at the end.
             await _updateMessageToolCalls(assistantMsgId, toolCalls);
+            break;
+          case SseEventKind.step:
+            break;
+          case SseEventKind.actions:
+            _ref.read(pendingActionsProvider.notifier).setActions(event.actions ?? []);
             break;
           case SseEventKind.citations:
             citations
@@ -249,13 +229,11 @@ class ChatRepository {
             await _updateMessageCitations(assistantMsgId, citations);
             break;
           case SseEventKind.revision:
-            // A full-text replacement (post-hoc safety-guard redaction), not an append.
             displayText = event.text ?? displayText;
             await _updateMessageText(assistantMsgId, displayText);
             break;
           case SseEventKind.error:
             debugPrint("[ChatRepository] SSE stream error event: ${event.message}");
-            await _updateMessageText(assistantMsgId, kChatConnectionErrorMessage);
             await _logTelemetry(
               eventType: "error",
               isOffline: false,
@@ -263,9 +241,8 @@ class ChatRepository {
               modelUsed: "server-sse",
               errorMessage: event.message,
             );
-            return _SseSendOutcome.connectionFailure;
+            return _SseSendOutcome.failed;
           case SseEventKind.done:
-            // Safety net: use done's citations if the dedicated frame never arrived.
             if (citations.isEmpty && (event.citations ?? []).isNotEmpty) {
               citations.addAll(event.citations!.map((c) => c.toString()));
               await _updateMessageCitations(assistantMsgId, citations);
@@ -287,10 +264,7 @@ class ChatRepository {
       await _logTelemetry(eventType: "request", isOffline: false, latencyMs: stopwatch.elapsedMilliseconds.toDouble(), modelUsed: "server-sse");
       return _SseSendOutcome.succeeded;
     } catch (e) {
-      final unreachable = isUnreachableBackendError(e);
-      debugPrint(unreachable
-          ? "[ChatRepository] SSE path failed (host unreachable), skipping orchestrator: $e"
-          : "[ChatRepository] SSE path failed, falling back: $e");
+      debugPrint("[ChatRepository] SSE path failed: $e");
       await _logTelemetry(
         eventType: "failover",
         isOffline: false,
@@ -298,73 +272,7 @@ class ChatRepository {
         modelUsed: "server-sse",
         errorMessage: e.toString(),
       );
-      return unreachable
-          ? _SseSendOutcome.connectionFailure
-          : _SseSendOutcome.otherFailure;
-    }
-  }
-
-  /// V1-era path: ClientAgentOrchestrator -> AuraAIRouter -> /api/chat/agent, still parsing a
-  /// trailing "[ACTIONS]" marker out of the raw text stream. Kept as the fallback for SSE-level
-  /// errors that are not a dead host -- also the only path that still proposes
-  /// task/calendar/finance/health actions and forwards Google Drive access, neither of
-  /// which v3's tool registry has yet (see _sendViaSse's doc comment).
-  Future<void> _sendViaOrchestrator({
-    required String agentId,
-    required List<Map<String, String>> historyPayload,
-    required Map<String, String> customInstructions,
-    required bool useRag,
-    required String assistantMsgId,
-  }) async {
-    String fullResponseText = "";
-    DateTime lastDbUpdate = DateTime.now();
-
-    try {
-      final orchestrator = _ref.read(clientAgentOrchestratorProvider);
-      final stream = orchestrator.executeAgentStream(
-        agentId: agentId,
-        messages: historyPayload,
-        customInstructions: customInstructions,
-        useRag: useRag,
-      );
-
-      await for (final chunk in stream) {
-        fullResponseText += chunk;
-        String displayText = fullResponseText;
-        if (fullResponseText.contains('[ACTIONS]')) {
-          displayText = fullResponseText.split('[ACTIONS]')[0].trim();
-        }
-
-        // Throttled updates (max once per 500ms) to prevent UI thread blocking
-        final now = DateTime.now();
-        if (now.difference(lastDbUpdate).inMilliseconds > 500) {
-          await _updateMessageText(assistantMsgId, displayText);
-          lastDbUpdate = now;
-        }
-      }
-
-      // Ensure the final chunk is persisted
-      String finalDisplayText = fullResponseText;
-      if (fullResponseText.contains('[ACTIONS]')) {
-        finalDisplayText = fullResponseText.split('[ACTIONS]')[0].trim();
-      }
-      await _updateMessageText(assistantMsgId, finalDisplayText);
-
-      // Parse tool action cards if generated by the backend
-      if (fullResponseText.contains('[ACTIONS]')) {
-        final parts = fullResponseText.split('[ACTIONS]');
-        final actionsText = parts[1].trim();
-        try {
-          final List actions = jsonDecode(actionsText);
-          _ref.read(pendingActionsProvider.notifier).setActions(actions);
-        } catch (e) {
-          debugPrint("Actions JSON parse failed: $e");
-        }
-      }
-    } catch (e) {
-      debugPrint("ClientAgentOrchestrator stream execution failed: $e");
-      fullResponseText = kChatConnectionErrorMessage;
-      await _updateMessageText(assistantMsgId, fullResponseText);
+      return _SseSendOutcome.failed;
     }
   }
 
@@ -407,12 +315,14 @@ class ChatRepository {
   }
 
   // Updates message content in Drift database
-  Future<void> _updateMessageText(String messageId, String text) async {
+  Future<void> _updateMessageText(String messageId, String text, {bool enqueue = true}) async {
     await (_db.update(_db.messages)..where((m) => m.id.equals(messageId))).write(
       MessagesCompanion(
         content: Value(text),
+        updatedAt: Value(DateTime.now()),
       ),
     );
+    if (enqueue) await _enqueueUpsert(messageId);
   }
 
   // Persists RAG citation labels for a message, called each time the `citations` (or, as a
@@ -421,8 +331,10 @@ class ChatRepository {
     await (_db.update(_db.messages)..where((m) => m.id.equals(messageId))).write(
       MessagesCompanion(
         citationsJson: Value(jsonEncode(citations)),
+        updatedAt: Value(DateTime.now()),
       ),
     );
+    await _enqueueUpsert(messageId);
   }
 
   // Persists the in-flight tool-call list for a message. Called on every `tool_calls` frame
@@ -433,13 +345,19 @@ class ChatRepository {
     await (_db.update(_db.messages)..where((m) => m.id.equals(messageId))).write(
       MessagesCompanion(
         toolCallsJson: Value(jsonEncode(toolCalls)),
+        updatedAt: Value(DateTime.now()),
       ),
     );
+    await _enqueueUpsert(messageId);
   }
 
   // Delete Conversation session history
   Future<void> clearConversation(String conversationId) async {
+    final rows = await (_db.select(_db.messages)..where((m) => m.conversationId.equals(conversationId))).get();
     await (_db.delete(_db.messages)..where((m) => m.conversationId.equals(conversationId))).go();
+    for (final row in rows) {
+      await _enqueueDelete(row.id);
+    }
   }
 }
 

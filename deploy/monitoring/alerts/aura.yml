@@ -107,6 +107,29 @@ groups:
             The 02:00 job is failing or its promotion gates are blocking. Check the last
             RefreshReport; the live index is intact either way.
 
+      - alert: AuraBackupStale
+        expr: |
+          aura_backup_last_success_timestamp_seconds > 0
+          and time() - aura_backup_last_success_timestamp_seconds > 93600
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Verified backup is more than 26 hours old"
+          description: >
+            The backup sidecar failed verification or did not finish a cycle.
+            Check `docker compose logs backup`. Offsite copy is independent
+            (`AuraBackupOffsiteFailed`).
+
+      - alert: AuraBackupOffsiteFailed
+        expr: aura_backup_offsite_configured == 1 and aura_backup_offsite_last_exit_code != 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Offsite rclone copy failed"
+          description: >
+            BACKUP_S3_URI is set but the last rclone copy exited non-zero.
+            Credentials live in deploy/secrets/; no keys are in the image.
+
       - alert: AuraEvalRegression
         expr: aura_eval_score{metric="recall_at_k"} < 0.6
         for: 30m

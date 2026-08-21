@@ -223,7 +223,7 @@ class AutomationRepository {
     if (token != null) {
       headers['Authorization'] = 'Bearer $token';
     }
-    headers.addAll(DeviceValidationService.getAttestationHeaders());
+    headers.addAll(await DeviceValidationService.getAttestationHeaders());
     final response = await http.post(
       url,
       headers: headers,
@@ -274,7 +274,7 @@ class AutomationRepository {
     if (token != null) {
       headers['Authorization'] = 'Bearer $token';
     }
-    headers.addAll(DeviceValidationService.getAttestationHeaders());
+    headers.addAll(await DeviceValidationService.getAttestationHeaders());
     final response = await http.post(
       url,
       headers: headers,

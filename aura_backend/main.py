@@ -2,22 +2,18 @@ import asyncio
 import logging
 import uvicorn
 import time
-import json
+import uuid
 from sqlalchemy import text as sa_text
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 
 from config import settings
-from services.ai import ai_service
 from services.ollama import ollama_service
 from services.rag import rag_service
 from services.automation import automation_service
-from services.agent import agent_orchestrator
-from services.memory import memory_service
 from services.security import verify_token
 from services.rbac import require_role
 from services.drive import check_google_drive_configuration
@@ -34,6 +30,36 @@ from infrastructure.observability import configure_logging, configure_sentry, co
 configure_logging()
 configure_sentry()
 logger = logging.getLogger("aura_backend")
+
+_INTERNAL_ERROR = "internal_error"
+_V1_AI_GONE_DETAIL = {
+    "error": "gone",
+    "message": (
+        "This endpoint has been retired. Use /api/v3/chat, /api/v3/knowledge, "
+        "or /api/v3/memory."
+    ),
+}
+
+
+def _v1_ai_gone() -> None:
+    """Phase 4 lock: v1 chat/RAG/memory/telemetry after the Flutter cutover."""
+    raise HTTPException(status_code=410, detail=_V1_AI_GONE_DETAIL)
+
+
+def _http_internal_error(
+    exc: Exception, *, where: str, user_email: str | None = None
+) -> HTTPException:
+    """Log the real exception with a correlation id; never put ``str(e)`` on the wire."""
+    correlation_id = uuid.uuid4().hex
+    logger.error(
+        "%s failed correlation_id=%s user=%s: %s",
+        where,
+        correlation_id,
+        user_email,
+        exc,
+        exc_info=True,
+    )
+    return HTTPException(status_code=500, detail=_INTERNAL_ERROR)
 
 # ----------------------------------------------------
 # Security Middlewares
@@ -359,56 +385,18 @@ async def health_check():
 
 @app.post("/api/chat/stream")
 async def stream_chat(request: ChatRequest, user_info: dict = Depends(verify_token)):
-    """Streams responses from Gemini 1.5 Flash."""
-    formatted_messages = [{"role": m.role, "content": m.content} for m in request.messages]
-    
-    if not formatted_messages:
-        raise HTTPException(status_code=400, detail="Messages list cannot be empty")
-
-    async def event_generator():
-        try:
-            async for chunk in ai_service.generate_chat_response_stream(
-                messages=formatted_messages, 
-                use_rag=request.use_rag,
-                user_id=user_info["uid"]
-            ):
-                yield chunk
-        except Exception as e:
-            logger.error(f"Error in stream_chat event generation for user {user_info.get('email')}: {e}")
-            yield f"\n[Internal Server Error during stream: {e}]"
-
-    return StreamingResponse(event_generator(), media_type="text/plain")
+    """Retired: use ``POST /api/v3/chat/stream``."""
+    _v1_ai_gone()
 
 @app.post("/api/rag/ingest")
 async def ingest_document(request: IngestRequest, user_info: dict = Depends(verify_token)):
-    """Ingests text content into Qdrant Cloud via background task."""
-    metadata = request.metadata or {}
-    metadata["user_id"] = user_info["uid"]
-    try:
-        from tasks import ingest_document_task
-        task = ingest_document_task.delay(request.doc_id, request.content, metadata)
-        return {
-            "status": "success", 
-            "message": f"Document {request.doc_id} ingestion queued in background.", 
-            "task_id": task.id
-        }
-    except Exception as e:
-        logger.error(f"Error queuing ingest_document for user {user_info.get('email')}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Retired: use ``POST /api/v3/knowledge/documents``."""
+    _v1_ai_gone()
 
 @app.post("/api/rag/query")
 async def query_document(request: QueryRequest, user_info: dict = Depends(verify_token)):
-    """Queries Qdrant vector store directly."""
-    try:
-        results = rag_service.query_knowledge(
-            query=request.query, 
-            limit=request.limit, 
-            user_id=user_info["uid"]
-        )
-        return {"results": results}
-    except Exception as e:
-        logger.error(f"Error in query_document for user {user_info.get('email')}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Retired: use ``POST /api/v3/knowledge/search``."""
+    _v1_ai_gone()
 
 @app.post("/api/automation/analyze-email")
 async def analyze_email(request: EmailAnalyzeRequest, user_info: dict = Depends(verify_token)):
@@ -422,9 +410,12 @@ async def analyze_email(request: EmailAnalyzeRequest, user_info: dict = Depends(
         return result
     except InferenceBudgetExceededException as ge:
         raise ge
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error in analyze_email for user {user_info.get('email')}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _http_internal_error(
+            e, where="analyze_email", user_email=user_info.get("email")
+        )
 
 @app.post("/api/automation/analyze-issue")
 async def analyze_issue(request: IssueAnalyzeRequest, user_info: dict = Depends(verify_token)):
@@ -437,84 +428,37 @@ async def analyze_issue(request: IssueAnalyzeRequest, user_info: dict = Depends(
         return result
     except InferenceBudgetExceededException as ge:
         raise ge
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error in analyze_issue for user {user_info.get('email')}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _http_internal_error(
+            e, where="analyze_issue", user_email=user_info.get("email")
+        )
 
 @app.post("/api/chat/agent")
 async def agent_chat(request: AgentChatRequest, user_info: dict = Depends(verify_token)):
-    """Streams responses from a classified/selected specialized agent persona."""
-    formatted_messages = [{"role": m.role, "content": m.content} for m in request.messages]
-    
-    if not formatted_messages:
-        raise HTTPException(status_code=400, detail="Messages list cannot be empty")
-
-    async def event_generator():
-        try:
-            async for chunk in agent_orchestrator.execute_agent_stream(
-                agent_id=request.agent_id,
-                messages=formatted_messages,
-                custom_instructions=request.custom_instructions,
-                use_rag=request.use_rag,
-                user_id=user_info["uid"],
-                google_access_token=request.google_access_token
-            ):
-                yield chunk
-        except Exception as e:
-            logger.error(f"Error in agent_chat stream generation for user {user_info.get('email')}: {e}")
-            yield f"\n[Internal Server Agent Error during stream: {e}]"
-
-    return StreamingResponse(event_generator(), media_type="text/plain")
+    """Retired: use ``POST /api/v3/chat/stream``."""
+    _v1_ai_gone()
 
 @app.post("/api/memory/extract")
 async def extract_memory(request: MemoryExtractRequest, user_info: dict = Depends(verify_token)):
-    """Extracts long-term user facts from recent messages and saves them."""
-    try:
-        formatted_messages = [{"role": m.role, "content": m.content} for m in request.messages]
-        facts = memory_service.extract_memories(formatted_messages)
-        saved_facts = []
-        for fact in facts:
-            if memory_service.save_memory(fact, user_id=user_info["uid"]):
-                saved_facts.append(fact)
-        return {"status": "success", "extracted_facts": saved_facts}
-    except Exception as e:
-        logger.error(f"Error in extract_memory for user {user_info.get('email')}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Retired: v3 kernel memory runs on the turn; use ``POST /api/v3/memory`` to write."""
+    _v1_ai_gone()
 
 @app.post("/api/memory/save")
 async def save_memory(request: MemorySaveRequest, user_info: dict = Depends(verify_token)):
-    """Manually saves a user memory fact."""
-    try:
-        success = memory_service.save_memory(request.fact, user_id=user_info["uid"])
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to save memory point")
-        return {"status": "success"}
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        logger.error(f"Error in save_memory for user {user_info.get('email')}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Retired: use ``POST /api/v3/memory``."""
+    _v1_ai_gone()
 
 @app.get("/api/memory/list")
 async def list_memories(user_info: dict = Depends(verify_token)):
-    """Lists all user memories stored in Qdrant Cloud."""
-    try:
-        return memory_service.list_all_memories(user_id=user_info["uid"])
-    except Exception as e:
-        logger.error(f"Error in list_memories for user {user_info.get('email')}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Retired: use ``GET /api/v3/memory``."""
+    _v1_ai_gone()
 
 @app.delete("/api/memory/delete/{point_id}")
 async def delete_memory(point_id: int, user_info: dict = Depends(verify_token)):
-    """Deletes a user memory by Qdrant point ID."""
-    try:
-        success = memory_service.delete_memory(point_id)
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to delete memory point")
-        return {"status": "success"}
-    except Exception as e:
-        logger.error(f"Error in delete_memory for user {user_info.get('email')}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Retired: use ``DELETE /api/v3/memory/{memory_id}``."""
+    _v1_ai_gone()
 
 # ----------------------------------------------------
 # Telemetry & Learning Pipeline Endpoints
@@ -522,15 +466,8 @@ async def delete_memory(point_id: int, user_info: dict = Depends(verify_token)):
 
 @app.post("/api/telemetry/log")
 async def log_telemetry(request: TelemetryLogSchema, user_info: dict = Depends(verify_token)):
-    """Logs telemetry metadata in append-only JSONL format."""
-    try:
-        telemetry_file = "telemetry_logs.jsonl"
-        with open(telemetry_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(request.dict(), ensure_ascii=False) + "\n")
-        return {"status": "success"}
-    except Exception as e:
-        logger.error(f"Failed to save telemetry: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Retired: turn telemetry is recorded by the v3 kernel."""
+    _v1_ai_gone()
 
 @app.post("/api/learning/log")
 async def log_learning_record(request: LearningLogSchema, user_info: dict = Depends(verify_token)):
@@ -546,9 +483,10 @@ async def export_learning_dataset(format: str = "alpaca", user_info: dict = Depe
     try:
         dataset = learning_pipeline.build_lora_dataset(format)
         return dataset
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Export dataset failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _http_internal_error(e, where="export_learning_dataset", user_email=user_info.get("email"))
 
 @app.post("/api/learning/build_dataset")
 async def build_dataset(user_info: dict = Depends(require_role("Admin"))):
@@ -561,9 +499,10 @@ async def build_dataset(user_info: dict = Depends(require_role("Admin"))):
             "message": "LoRA dataset build queued in background.", 
             "task_id": task.id
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Build dataset failed to queue: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _http_internal_error(e, where="build_dataset", user_email=user_info.get("email"))
 
 @app.get("/api/learning/evaluate")
 async def evaluate_dataset(user_info: dict = Depends(require_role("Developer"))):
@@ -571,9 +510,10 @@ async def evaluate_dataset(user_info: dict = Depends(require_role("Developer")))
     try:
         metrics = learning_pipeline.evaluate_metrics()
         return metrics
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Evaluate learning logs failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _http_internal_error(e, where="evaluate_dataset", user_email=user_info.get("email"))
 
 # ----------------------------------------------------
 # Removed: unauthenticated Ollama proxy (SEC-01)

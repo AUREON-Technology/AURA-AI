@@ -1,4 +1,8 @@
 # Routing is grouped so a cascading outage produces one notification, not forty.
+#
+# Receivers are filled at container start by deploy/scripts/alertmanager-entrypoint.sh
+# from ALERTMANAGER_WEBHOOK_URL (and optional SMTP). This file must not contain a
+# live webhook: a placeholder that 404s looks configured and drops pages on the floor.
 global:
   resolve_timeout: 5m
 
@@ -25,8 +29,4 @@ inhibit_rules:
 
 receivers:
   - name: default
-    # Configure a real receiver before relying on alerts. Left empty deliberately: a
-    # placeholder webhook that silently 404s is worse than none, because it looks configured.
   - name: critical
-    # webhook_configs:
-    #   - url: https://hooks.example.com/aura-critical

@@ -17,6 +17,13 @@ from .builtin import (
     current_datetime,
     default_tools,
 )
+from .personal_os import (
+    PERSONAL_OS_TOOL_NAMES,
+    actions_from_tool_results,
+    matching_personal_os_tool,
+    parse_proposed_action,
+    personal_os_tools,
+)
 from .policy import ToolPolicy
 from .registry import ToolExecutionReport, ToolRegistry
 from .schema import validate_arguments
@@ -37,4 +44,9 @@ __all__ = [
     "build_file_tools",
     "build_http_tool",
     "build_weather_tool",
+    "personal_os_tools",
+    "PERSONAL_OS_TOOL_NAMES",
+    "parse_proposed_action",
+    "actions_from_tool_results",
+    "matching_personal_os_tool",
 ]

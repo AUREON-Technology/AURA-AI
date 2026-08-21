@@ -201,6 +201,111 @@ class TestSecurityHardening(unittest.TestCase):
         
         self.assertFalse(verify_device_integrity("valid.jws.token", "android", expected_nonce="test_nonce"))
 
+    @patch('services.security.os.environ')
+    @patch('services.security._get_play_integrity_service')
+    def test_device_integrity_android_unsigned_jws_rejected(self, mock_get_service, mock_env):
+        """A crafted JWS payload is not attestation when Play Integrity is unavailable."""
+        mock_env.get.return_value = "False"
+        settings.debug_mode = False
+        settings.allow_mock_attestation = False
+        mock_get_service.return_value = None
+
+        payload = {
+            "requestDetails": {
+                "packageName": settings.android_package_name,
+                "nonce": "test_nonce",
+            },
+            "deviceIntegrity": {
+                "deviceRecognitionVerdict": ["MEETS_DEVICE_INTEGRITY"]
+            },
+        }
+        payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+        token = f"eyJhbGciOiJub25lIn0.{payload_b64}.fakesig"
+        self.assertFalse(verify_device_integrity(token, "android"))
+
+    @patch('services.security.os.environ')
+    @patch('services.security._get_play_integrity_service')
+    def test_device_integrity_android_api_failure_is_rejected(self, mock_get_service, mock_env):
+        """Play Integrity errors fail closed instead of decoding the token locally."""
+        mock_env.get.return_value = "False"
+        settings.debug_mode = False
+        settings.allow_mock_attestation = False
+        mock_service = MagicMock()
+        mock_get_service.return_value = mock_service
+        mock_service.v1().decodeIntegrityToken().execute.side_effect = RuntimeError("api down")
+        self.assertFalse(verify_device_integrity("valid.jws.token", "android"))
+
+    @patch('services.security.os.environ')
+    def test_device_integrity_ios_placeholder_rejected(self, mock_env):
+        """Fake iOS blobs are refused; only cryptographic App Attest verify can pass."""
+        mock_env.get.return_value = "False"
+        settings.debug_mode = False
+        settings.allow_mock_attestation = False
+        harmless = base64.b64encode(b"looks_valid_device_blob").decode()
+        self.assertFalse(verify_device_integrity(harmless, "ios"))
+        self.assertFalse(verify_device_integrity("ios_app_attest_mock_assertion_token_string", "ios"))
+        self.assertFalse(verify_device_integrity("aura_attestation_unsupported", "ios"))
+
+    @patch('services.security.os.environ')
+    @patch('services.attestation.app_attest.verify_app_attest', return_value=True)
+    def test_device_integrity_ios_crypto_verification_success(self, mock_verify, mock_env):
+        """A valid-shaped App Attest envelope is accepted when the verifier agrees."""
+        mock_env.get.return_value = "False"
+        settings.debug_mode = False
+        settings.allow_mock_attestation = False
+        token = json.dumps({
+            "format": "apple-appattest",
+            "key_id": "abc",
+            "attestation": base64.b64encode(b"cbor").decode(),
+            "challenge": "n",
+        })
+        self.assertTrue(verify_device_integrity(token, "ios"))
+        mock_verify.assert_called_once()
+        _, kwargs = mock_verify.call_args
+        self.assertEqual(kwargs["bundle_id"], settings.ios_bundle_id)
+
+    def test_production_debug_mode_cannot_mint_mock_user(self):
+        """DEBUG_MODE in a production-like env must not return mock_user_123."""
+        settings.debug_mode = True
+        orig_env = os.environ.get("AURA_ENVIRONMENT")
+        orig_testing = os.environ.get("TESTING")
+        os.environ["AURA_ENVIRONMENT"] = "production"
+        os.environ.pop("TESTING", None)
+        try:
+            with patch("services.security.verify_device_integrity", return_value=True):
+                response = self.client.get("/api/memory/list")
+            self.assertNotIn("mock_user_123", response.text)
+            self.assertIn(response.status_code, (401, 403))
+        finally:
+            if orig_env is None:
+                os.environ.pop("AURA_ENVIRONMENT", None)
+            else:
+                os.environ["AURA_ENVIRONMENT"] = orig_env
+            if orig_testing is None:
+                os.environ.pop("TESTING", None)
+            else:
+                os.environ["TESTING"] = orig_testing
+
+    def test_legacy_settings_refuse_debug_mode_in_production(self):
+        orig_env = os.environ.get("AURA_ENVIRONMENT")
+        orig_testing = os.environ.get("TESTING")
+        os.environ["AURA_ENVIRONMENT"] = "production"
+        os.environ.pop("TESTING", None)
+        os.environ["DEBUG_MODE"] = "true"
+        try:
+            from aura_core.domain.errors import ConfigurationError
+            from config import Settings
+            with self.assertRaises(ConfigurationError):
+                Settings(_env_file=None)
+        finally:
+            os.environ.pop("DEBUG_MODE", None)
+            if orig_env is None:
+                os.environ.pop("AURA_ENVIRONMENT", None)
+            else:
+                os.environ["AURA_ENVIRONMENT"] = orig_env
+            if orig_testing is not None:
+                os.environ["TESTING"] = orig_testing
+
 
     # ----------------------------------------------------
     # Role-Based Access Control (RBAC) Tests

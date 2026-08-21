@@ -3,9 +3,9 @@
 # Deliberately separate from requirements.txt: the production image should not
 # carry a test runner, and the `aura_core` suite needs nothing from the runtime
 # dependency set beyond fastapi/httpx/pydantic, which requirements.txt already
-# pins. Install both to run the full suite:
+# pins. Install the lockfile plus this file to run the full suite:
 #
-#     pip install -r requirements.txt -r requirements-dev.txt
+#     pip install -r requirements.lock -r requirements-dev.txt
 #     pytest
 #
 # The `aura_core` suite needs no Docker, no network, no API key, and no model —
@@ -14,12 +14,12 @@
 #
 # The *legacy* suite is a different matter, and the gap cost several CI rounds:
 # `python -m unittest discover` imports the whole v1/v2 tree, so it needs the
-# runtime dependencies of every module it touches. requirements.txt covers most,
+# runtime dependencies of every module it touches. requirements.lock covers most,
 # but `docker` (the client library testcontainers uses to decide whether to skip)
 # was implicit, and without it the Postgres integration test errors instead of
 # skipping. Pinning it here means a fresh checkout reproduces what CI runs.
 #
-#     pip install -r requirements.txt -r requirements-dev.txt
+#     pip install -r requirements.lock -r requirements-dev.txt
 #     pytest                                   # aura_core
 #     TESTING=True python -m unittest discover -p "test_*.py"   # legacy
 
@@ -31,3 +31,11 @@ pytest-cov>=5.0
 # fails and the integration test reports an error rather than skipping cleanly —
 # which is the difference between "no Docker here" and "this test is broken".
 docker>=7.0
+
+# Runtime image must not carry this (AURA-020). unittest discover in CI installs
+# both requirement files, so the Postgres integration test still runs there.
+testcontainers[postgres]>=4.0.0
+
+# Lockfile regeneration (runtime pins only; run on Linux 3.11 or with uv's platform flags):
+#   uv pip compile --python-version 3.11 --python-platform linux --strip-extras -o requirements.lock requirements.txt
+pip-tools>=7.4

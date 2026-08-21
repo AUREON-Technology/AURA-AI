@@ -27,7 +27,9 @@ cat /opt/aura/deploy/backups/.last_success | xargs -I{} date -d @{}
 
 The backup service **verifies each dump is restorable and non-empty before counting it**. A
 timestamp older than ~26 hours means the last run failed verification, not merely that it did not
-run. The failure that matters is discovering at recovery time that months of dumps were empty.
+run. `AuraBackupStale` pages on that. If `BACKUP_S3_URI` is set, also confirm an offsite object
+exists (`rclone ls`) and that `AuraBackupOffsiteFailed` is not firing. The failure that matters
+is discovering at recovery time that months of dumps were empty.
 
 ### The nightly refresh reported success
 
@@ -80,12 +82,27 @@ df -h /var/lib/docker && du -sh /opt/aura/deploy/backups
 
 ### Practise a restore
 
-**A restore procedure that has never been run is not a recovery plan.** Do this on a staging copy,
-not production:
+**A restore procedure that has never been run is not a recovery plan.**
+
+First, run the throwaway drill (never against the compose `postgres` service):
+
+```bash
+cd /opt/aura
+./deploy/scripts/restore-drill.sh
+# or, against a copied dump (still throwaway Postgres, not prod):
+./deploy/scripts/restore-drill.sh /opt/aura/deploy/backups/postgres-<stamp>.dump
+```
+
+That script starts an ephemeral Postgres container, `pg_restore --list`, restores into an empty
+database, and asserts at least one table. It refuses to run if `PGHOST` / `PGDATABASE` are set.
+
+Then, on a **staging** copy of the data (not production), restore for real. Non-interactive
+confirm is allowed only when the env value **equals** the target database name:
 
 ```bash
 docker compose -f docker-compose.prod.yml stop gateway worker-realtime worker-ingestion beat
-docker compose -f docker-compose.prod.yml run --rm backup \
+RESTORE_CONFIRM=aura docker compose -f docker-compose.prod.yml run --rm \
+  -e RESTORE_CONFIRM=aura backup \
   /scripts/restore.sh /backups/postgres-<stamp>.dump
 docker compose -f docker-compose.prod.yml start gateway worker-realtime worker-ingestion beat
 curl -X POST -H "$AUTH" $AURA/api/v3/admin/index/rebuild
@@ -94,6 +111,32 @@ curl -X POST -H "$AUTH" $AURA/api/v3/admin/index/rebuild
 The final step matters: documents are the source of truth and the vector index is *derived*
 (ADR-007), so a restored database needs its index rebuilt. Skipping it leaves an index describing
 data that no longer exists.
+
+**Qdrant / Redis (manual — not applied by restore-drill.sh or restore.sh):**
+
+Nightly `backup.sh` now copies Qdrant snapshot files into `backups/qdrant-<stamp>/` and a Redis
+RDB into `backups/redis-<stamp>.rdb`. Offsite copy is Phase 8 (`rclone`). Until then, on the
+VPS tick:
+
+- [ ] Latest `postgres-*.dump` verified (`pg_restore --list` shows TABLE DATA).
+- [ ] Matching `qdrant-<stamp>/` directory contains `.snapshot` files (recover via Qdrant
+      snapshot recover API, then rebuild the index if documents were the source of truth).
+- [ ] Matching `redis-*.rdb` exists. Restoring a stale RDB means users **re-login** (refresh
+      tokens live in Redis). Prefer a fresh login over a days-old RDB if unsure.
+
+### Send a test alert
+
+After setting `ALERTMANAGER_WEBHOOK_URL` in `deploy/.env` (or a gitignored secrets file) and
+recreating Alertmanager, confirm a human is paged:
+
+```bash
+docker compose -f docker-compose.prod.yml exec alertmanager amtool config routes
+# Fire a synthetic alert (must receive it on the webhook / inbox):
+docker compose -f docker-compose.prod.yml exec alertmanager \
+  amtool alert add alertname=AuraManualTest severity=critical
+```
+
+Empty `ALERTMANAGER_WEBHOOK_URL` is silent on purpose. Do not point it at a dummy URL that 404s.
 
 ### Review pending approvals
 

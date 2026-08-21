@@ -13,10 +13,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# Pin the runtime set. requirements.lock is compiled from requirements.txt
+# (`uv pip compile --python-version 3.11 --python-platform linux`). Test/dev
+# extras stay in requirements-dev.txt and never land here.
+COPY requirements.lock .
 
-# Install dependencies into the local user folder to copy easily
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --user -r requirements.lock
 
 # ==========================================
 # STAGE 2: Runner
@@ -36,9 +38,15 @@ COPY --from=builder /root/.local /root/.local
 COPY . .
 
 # Create volume/directory for local qdrant storage if running locally
-RUN mkdir -p local_qdrant_storage
+RUN mkdir -p local_qdrant_storage \
+    && chmod +x /app/docker-entrypoint.sh
 
 EXPOSE 8000
 
-# Run optimized uvicorn server in production, binding to the environment PORT if set
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 4 --log-level info"]
+# Hydrate *_FILE secrets and mount /api/v3. Compose may override the command
+# (extra uvicorn flags) but must not skip this entrypoint: it wipes the
+# Prometheus multiprocess directory before workers spawn.
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+
+# Workers via AURA_WORKERS, same default as deploy/docker-compose.prod.yml.
+CMD ["sh", "-c", "uvicorn aura_service:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${AURA_WORKERS:-4} --proxy-headers --log-level info"]

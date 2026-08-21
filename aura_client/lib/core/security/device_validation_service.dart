@@ -1,36 +1,126 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
+import 'app_attest_client.dart';
+import 'hardware_attestation_client.dart';
+import 'play_integrity_client.dart';
+
 /// Honest device-attestation headers for backend `X-Device-Attestation`.
 ///
-/// This app does not ship Play Integrity or App Attest SDKs, so it never
-/// produces a hardware attestation token. Debug/dev builds send an explicit
-/// `aura_dev_attestation` marker that the backend may accept only when
-/// `ALLOW_MOCK_ATTESTATION` (or debug mode) is on. Release builds send
-/// `aura_attestation_unsupported` so production verification rejects it
-/// instead of treating a hardcoded mock as real.
+/// Debug/dev builds send `aura_dev_attestation`, which the backend may accept
+/// only when `ALLOW_MOCK_ATTESTATION` is on and the environment is not
+/// production-like. Release builds request a real Play Integrity / App Attest
+/// token when the platform SDK can produce one. The unsupported marker is used
+/// only when no SDK token is available (desktop, missing Play services, etc.).
 class DeviceValidationService {
   static const String devToken = 'aura_dev_attestation';
   static const String unsupportedMarker = 'aura_attestation_unsupported';
 
-  static DeviceAttestation resolve({bool? debugMode}) {
+  static const Duration tokenCacheTtl = Duration(minutes: 5);
+
+  static DeviceAttestation? _cached;
+  static DateTime? _cachedAt;
+  static bool? _cachedDebug;
+  static String? _cachedPlatform;
+
+  static void clearCache() {
+    _cached = null;
+    _cachedAt = null;
+    _cachedDebug = null;
+    _cachedPlatform = null;
+  }
+
+  static Future<DeviceAttestation> resolve({
+    bool? debugMode,
+    String? platform,
+    HardwareAttestationClient? client,
+  }) async {
     final isDebug = debugMode ?? kDebugMode;
-    return DeviceAttestation(
-      platform: _platformName(),
-      token: isDebug ? devToken : unsupportedMarker,
-      isHardwareAttestation: false,
-      isDebugBypass: isDebug,
+    final platformName = platform ?? _platformName();
+
+    if (!isDebug &&
+        _cached != null &&
+        _cachedAt != null &&
+        _cachedDebug == isDebug &&
+        _cachedPlatform == platformName &&
+        DateTime.now().difference(_cachedAt!) < tokenCacheTtl) {
+      return _cached!;
+    }
+
+    if (isDebug) {
+      final attestation = DeviceAttestation(
+        platform: platformName,
+        token: devToken,
+        isHardwareAttestation: false,
+        isDebugBypass: true,
+      );
+      _storeCache(attestation, isDebug: isDebug, platformName: platformName);
+      return attestation;
+    }
+
+    final sdk = client ?? _defaultClient(platformName);
+    String? hardwareToken;
+    if (sdk != null) {
+      hardwareToken = await sdk.requestToken(nonce: _freshNonce());
+    }
+
+    final hasHardware = hardwareToken != null && hardwareToken.isNotEmpty;
+    final attestation = DeviceAttestation(
+      platform: platformName,
+      token: hasHardware ? hardwareToken : unsupportedMarker,
+      isHardwareAttestation: hasHardware,
+      isDebugBypass: false,
     );
+    _storeCache(attestation, isDebug: isDebug, platformName: platformName);
+    return attestation;
   }
 
   /// Resolves device validation token and platform headers.
-  static Map<String, String> getAttestationHeaders({bool? debugMode}) {
-    final attestation = resolve(debugMode: debugMode);
+  static Future<Map<String, String>> getAttestationHeaders({
+    bool? debugMode,
+    String? platform,
+    HardwareAttestationClient? client,
+  }) async {
+    final attestation = await resolve(
+      debugMode: debugMode,
+      platform: platform,
+      client: client,
+    );
     return {
       'X-Device-Platform': attestation.platform,
       'X-Device-Attestation': attestation.token,
     };
+  }
+
+  static HardwareAttestationClient? _defaultClient(String platform) {
+    switch (platform) {
+      case 'android':
+        return PlayIntegrityClient();
+      case 'ios':
+        return AppAttestClient();
+      default:
+        return null;
+    }
+  }
+
+  static void _storeCache(
+    DeviceAttestation attestation, {
+    required bool isDebug,
+    required String platformName,
+  }) {
+    _cached = attestation;
+    _cachedAt = DateTime.now();
+    _cachedDebug = isDebug;
+    _cachedPlatform = platformName;
+  }
+
+  static String _freshNonce() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    return base64UrlEncode(bytes);
   }
 
   static String _platformName() {

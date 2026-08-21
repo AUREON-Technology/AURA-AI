@@ -31,6 +31,7 @@ from ..domain.llm import CompletionRequest, SamplingParams
 from ..domain.messages import Conversation, Message
 from ..domain.planning import Goal, Plan, PlanStep, Priority, StepKind, StepStatus
 from ..observability.logging import get_logger
+from ..tools.personal_os import matching_personal_os_tool
 
 __all__ = ["PlanningEngine"]
 
@@ -78,13 +79,17 @@ class PlanningEngine:
 
         Returns False for short questions and for anything with no tools available -- without
         tools, a plan can only contain generate/respond steps, which is what a direct answer
-        already is.
+        already is. Short personal-OS imperatives ("add a task to buy milk") are the exception:
+        they only fire when a matching ``propose_*`` tool is in ``available_tools``, so ordinary
+        Q&A does not pay for a planning generation.
         """
         if force is not None:
             return force and self._enabled
         if not self._enabled or not available_tools:
             return False
         text = message.strip()
+        if matching_personal_os_tool(text, available_tools):
+            return True
         if len(text) < 40:
             return False
         if any(pattern.search(text) for pattern in _MULTI_STEP_MARKERS):

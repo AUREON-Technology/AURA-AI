@@ -26,7 +26,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
     });
 
     await Future.delayed(const Duration(milliseconds: 400));
-    final attestation = DeviceValidationService.resolve();
+    final attestation = await DeviceValidationService.resolve();
 
     setState(() {
       _validationLogs.add('Identified platform as: ${attestation.platform.toUpperCase()}');
@@ -34,10 +34,14 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
         _validationLogs.add('Debug build: sending explicit aura_dev_attestation marker.');
         _validationLogs.add('This is not a Play Integrity or App Attest token.');
         _validationStatus = 'Debug marker only — hardware attestation is not enabled in this app';
+      } else if (attestation.isHardwareAttestation) {
+        _validationLogs.add('Release build: Play Integrity / App Attest SDK produced a token.');
+        _validationLogs.add('Header carries the hardware attestation token for server verify.');
+        _validationStatus = 'Hardware attestation token ready';
       } else {
-        _validationLogs.add('Release build: no Play Integrity / App Attest SDK is shipped.');
+        _validationLogs.add('Release build: SDK could not produce a Play Integrity / App Attest token.');
         _validationLogs.add('Header uses aura_attestation_unsupported so the server will not treat it as real.');
-        _validationStatus = 'Hardware attestation unsupported on this client';
+        _validationStatus = 'Hardware attestation unavailable on this device';
       }
       _isValidating = false;
     });

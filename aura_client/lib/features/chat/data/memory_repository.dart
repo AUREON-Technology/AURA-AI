@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/config/config.dart';
-import '../../auth/presentation/auth_provider.dart';
+import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/security/device_validation_service.dart';
 import 'package:aura_client/core/security/deterministic_id.dart';
 
@@ -20,9 +20,34 @@ class MemoryItem {
 class MemoryRepository {
   final AppDatabase _db;
   final Ref _ref;
-  static const String _backendUrl = "${AppConfig.backendUrl}/api/memory";
+  final http.Client? _http;
+  static const String _backendUrl = "${AppConfig.backendUrl}/api/v3/memory";
 
-  MemoryRepository(this._db, this._ref);
+  MemoryRepository(this._db, this._ref, {http.Client? httpClient}) : _http = httpClient;
+
+  Future<Map<String, String>> _headers(String? token, {bool jsonBody = false}) async {
+    final headers = <String, String>{};
+    if (jsonBody) headers['Content-Type'] = 'application/json';
+    if (token != null) headers['Authorization'] = 'Bearer $token';
+    headers.addAll(await DeviceValidationService.getAttestationHeaders());
+    return headers;
+  }
+
+  Future<http.Response> _send(Future<http.Response> Function(Map<String, String> headers) send) async {
+    final tokens = _ref.read(tokenManagerProvider);
+    Future<http.Response> once() async {
+      final token = await tokens.getValidAccessToken();
+      return send(await _headers(token, jsonBody: true));
+    }
+
+    var response = await once();
+    if (response.statusCode == 401) {
+      debugPrint("[MemoryRepository] 401 — invalidating access token and retrying once");
+      tokens.invalidateAccessToken();
+      response = await once();
+    }
+    return response;
+  }
 
   // Watch local cache of memories
   Stream<List<UserMemory>> watchLocalMemories() {
@@ -37,26 +62,32 @@ class MemoryRepository {
     return cached.map((c) => MemoryItem(id: c.id, content: c.fact)).toList();
   }
 
+  List<MemoryItem> _parseMemories(String body) {
+    final decoded = jsonDecode(body);
+    final list = decoded is Map<String, dynamic> ? decoded['memories'] : decoded;
+    if (list is! List) return [];
+    return list.map((item) {
+      final map = item is Map<String, dynamic> ? item : <String, dynamic>{};
+      return MemoryItem(
+        id: map['id']?.toString() ?? '',
+        content: map['content']?.toString() ?? '',
+      );
+    }).where((item) => item.id.isNotEmpty).toList();
+  }
+
   // Fetch all memories from backend and sync to local Drift database
   Future<List<MemoryItem>> syncMemories() async {
     try {
-      final token = await _ref.read(authProvider.notifier).getIdToken();
-      final headers = <String, String>{};
-      if (token != null) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-      headers.addAll(DeviceValidationService.getAttestationHeaders());
-      final response = await http.get(Uri.parse("$_backendUrl/list"), headers: headers);
+      final uri = Uri.parse(_backendUrl);
+      final response = await _send((headers) {
+        final client = _http;
+        return client != null
+            ? client.get(uri, headers: headers)
+            : http.get(uri, headers: headers);
+      });
       if (response.statusCode == 200) {
-        final List list = jsonDecode(response.body);
-        final items = list.map((item) {
-          return MemoryItem(
-            id: item['id'].toString(),
-            content: item['content'] ?? '',
-          );
-        }).toList();
+        final items = _parseMemories(response.body);
 
-        // Sync to local DB: Clear and overwrite cache
         await _db.transaction(() async {
           await _db.delete(_db.userMemories).go();
           for (final item in items) {
@@ -81,58 +112,20 @@ class MemoryRepository {
     }
   }
 
-  // Asynchronously trigger backend fact extraction from recent conversation messages
-  Future<void> triggerMemoryExtraction(List<Message> recentMessages) async {
-    if (recentMessages.isEmpty) return;
-
-    try {
-      final token = await _ref.read(authProvider.notifier).getIdToken();
-      final payload = recentMessages.map((m) => {
-        "role": m.role,
-        "content": m.content,
-      }).toList();
-
-      final headers = {"Content-Type": "application/json"};
-      if (token != null) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-      headers.addAll(DeviceValidationService.getAttestationHeaders());
-
-      final response = await http.post(
-        Uri.parse("$_backendUrl/extract"),
-        headers: headers,
-        body: jsonEncode({"messages": payload}),
-      );
-
-      if (response.statusCode == 200) {
-        debugPrint("Successfully extracted memories: ${response.body}");
-        // Trigger a sync to update local Drift DB cache
-        await syncMemories();
-      }
-    } catch (e) {
-      debugPrint("Trigger memory extraction failed: $e");
-    }
-  }
-
   // Delete memory fact from both server and local Drift cache
   Future<void> deleteMemory(String memoryId) async {
-    // 1. Delete locally
     await (_db.delete(_db.userMemories)..where((m) => m.id.equals(memoryId))).go();
 
-    // 2. Delete remotely
     try {
-      final token = await _ref.read(authProvider.notifier).getIdToken();
-      final headers = <String, String>{};
-      if (token != null) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-      headers.addAll(DeviceValidationService.getAttestationHeaders());
-      final pointId = int.tryParse(memoryId);
-      if (pointId != null) {
-        final response = await http.delete(Uri.parse("$_backendUrl/delete/$pointId"), headers: headers);
-        if (response.statusCode != 200) {
-          debugPrint("Failed to delete remote memory point $pointId: ${response.body}");
-        }
+      final uri = Uri.parse("$_backendUrl/$memoryId");
+      final response = await _send((headers) {
+        final client = _http;
+        return client != null
+            ? client.delete(uri, headers: headers)
+            : http.delete(uri, headers: headers);
+      });
+      if (response.statusCode != 200) {
+        debugPrint("Failed to delete remote memory $memoryId: ${response.body}");
       }
     } catch (e) {
       debugPrint("Failed to delete remote memory: $e");
@@ -141,7 +134,6 @@ class MemoryRepository {
 
   // Manually add memory fact to server and local Drift cache
   Future<void> saveMemory(String fact) async {
-    // Save locally first
     final id = getDeterministicId(fact);
     await _db.into(_db.userMemories).insertOnConflictUpdate(
       UserMemoriesCompanion.insert(
@@ -151,19 +143,15 @@ class MemoryRepository {
       ),
     );
 
-    // Save remotely
     try {
-      final token = await _ref.read(authProvider.notifier).getIdToken();
-      final headers = {"Content-Type": "application/json"};
-      if (token != null) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-      headers.addAll(DeviceValidationService.getAttestationHeaders());
-      final response = await http.post(
-        Uri.parse("$_backendUrl/save"),
-        headers: headers,
-        body: jsonEncode({"fact": fact}),
-      );
+      final uri = Uri.parse(_backendUrl);
+      final response = await _send((headers) {
+        final client = _http;
+        final body = jsonEncode({"content": fact});
+        return client != null
+            ? client.post(uri, headers: headers, body: body)
+            : http.post(uri, headers: headers, body: body);
+      });
       if (response.statusCode != 200) {
         debugPrint("Failed to save memory remotely: ${response.body}");
       }

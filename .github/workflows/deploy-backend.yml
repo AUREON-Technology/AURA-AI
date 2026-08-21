@@ -53,7 +53,7 @@ jobs:
             --source=aura_backend \
             --allow-unauthenticated \
             --set-secrets="DATABASE_URL=aura-database-url:latest,JWT_SECRET=aura-jwt-secret:latest,QDRANT_API_KEY=aura-qdrant-api-key:latest,FIREBASE_CREDENTIALS_JSON=aura-firebase-credentials:latest" \
-            --set-env-vars="REDIS_HOST=${{ vars.GCP_REDIS_HOST }},QDRANT_HOST=${{ vars.GCP_QDRANT_HOST }},ALLOWED_ORIGINS=${{ vars.ALLOWED_ORIGINS }}" \
+            --set-env-vars="AURA_ENVIRONMENT=production,REDIS_HOST=${{ vars.GCP_REDIS_HOST }},QDRANT_HOST=${{ vars.GCP_QDRANT_HOST }},ALLOWED_ORIGINS=${{ vars.ALLOWED_ORIGINS }}" \
             --vpc-connector="${{ vars.GCP_VPC_CONNECTOR }}" \
             --min-instances=0 \
             --max-instances=10

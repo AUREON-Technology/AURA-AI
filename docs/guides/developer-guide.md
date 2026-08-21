@@ -10,7 +10,7 @@ the test suite enforces.
 ```bash
 cd aura_backend
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt -r requirements-dev.txt
+pip install -r requirements.lock -r requirements-dev.txt
 pytest                      # 1010 tests, ~7 seconds
 ```
 

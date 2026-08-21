@@ -46,7 +46,7 @@ class InsightsClient {
     final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
     final headers = <String, String>{"Content-Type": "application/json"};
     if (token != null) headers["Authorization"] = "Bearer $token";
-    headers.addAll(DeviceValidationService.getAttestationHeaders());
+    headers.addAll(await DeviceValidationService.getAttestationHeaders());
     return headers;
   }
 

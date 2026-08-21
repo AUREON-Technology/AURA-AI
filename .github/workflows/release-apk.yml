@@ -3,9 +3,12 @@ name: Release APK
 # Manual, on-demand build of a real installable release APK, pointed at the
 # live production backend (unlike client-ci.yml's build-android job, which
 # is a placeholder-backend build-only CI gate and never uploads its output).
-# Signing: aura_client/android/app/build.gradle.kts's release buildType has
-# no dedicated signing config yet, so this still ships debug-key-signed —
-# installable by sideloading, not Play Store-ready.
+# Signing: the smoke APK job stays unsigned / debug-key-signed on purpose.
+# A second job builds a store-signed AAB only when GitHub secrets exist:
+# AURA_RELEASE_STORE_FILE (base64 of the .jks/.keystore), 
+# AURA_RELEASE_STORE_PASSWORD, AURA_RELEASE_KEY_PASSWORD, and
+# AURA_RELEASE_KEY_ALIAS. Missing secrets skip the AAB job steps; they do
+# not fail the workflow. Never generate a keystore in CI.
 
 on:
   workflow_dispatch:
@@ -46,4 +49,68 @@ jobs:
         with:
           name: aura-copilot-release-apk
           path: aura_client/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 14
+
+  build-signed-aab:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aura_client
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect signing secrets
+        id: signing
+        env:
+          STORE_B64: ${{ secrets.AURA_RELEASE_STORE_FILE }}
+          STORE_PASSWORD: ${{ secrets.AURA_RELEASE_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.AURA_RELEASE_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.AURA_RELEASE_KEY_ALIAS }}
+        run: |
+          if [ -n "$STORE_B64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ] && [ -n "$KEY_ALIAS" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets missing; skipping signed AAB. Unsigned smoke APK still runs."
+          fi
+
+      - uses: subosito/flutter-action@v2
+        if: steps.signing.outputs.available == 'true'
+        with:
+          channel: stable
+
+      - uses: actions/setup-java@v4
+        if: steps.signing.outputs.available == 'true'
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Install dependencies
+        if: steps.signing.outputs.available == 'true'
+        run: flutter pub get
+
+      - name: Regenerate Drift codegen
+        if: steps.signing.outputs.available == 'true'
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Decode upload keystore
+        if: steps.signing.outputs.available == 'true'
+        env:
+          STORE_B64: ${{ secrets.AURA_RELEASE_STORE_FILE }}
+        run: echo "$STORE_B64" | base64 -d > "$RUNNER_TEMP/aura-upload.jks"
+
+      - name: Build signed AAB
+        if: steps.signing.outputs.available == 'true'
+        env:
+          AURA_RELEASE_STORE_FILE: ${{ runner.temp }}/aura-upload.jks
+          AURA_RELEASE_STORE_PASSWORD: ${{ secrets.AURA_RELEASE_STORE_PASSWORD }}
+          AURA_RELEASE_KEY_PASSWORD: ${{ secrets.AURA_RELEASE_KEY_PASSWORD }}
+          AURA_RELEASE_KEY_ALIAS: ${{ secrets.AURA_RELEASE_KEY_ALIAS }}
+        run: flutter build appbundle --release --dart-define=BACKEND_URL=${{ github.event.inputs.backend_url }}
+
+      - uses: actions/upload-artifact@v4
+        if: steps.signing.outputs.available == 'true'
+        with:
+          name: aura-copilot-release-aab
+          path: aura_client/build/app/outputs/bundle/release/app-release.aab
           retention-days: 14

@@ -15,6 +15,8 @@ Cardinality rules, enforced by review and by the label sets below:
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 __all__ = ["Metrics", "get_metrics", "reset_metrics", "PROMETHEUS_AVAILABLE"]
@@ -74,6 +76,22 @@ class _NoopMetric:
 _NOOP = _NoopMetric()
 
 
+def _multiproc_dir() -> str | None:
+    """Return the multiprocess mmap directory when the operator has opted in.
+
+    Unset (the pytest default) keeps a private in-process registry so tests
+    stay isolated. The env var must be set *before* the interpreter starts in
+    production so prometheus_client selects MultiProcessValue at import.
+    """
+    path = os.environ.get("PROMETHEUS_MULTIPROC_DIR") or os.environ.get(
+        "prometheus_multiproc_dir"
+    )
+    if not path:
+        return None
+    Path(path).mkdir(parents=True, exist_ok=True)
+    return path
+
+
 class Metrics:
     """The catalogue.
 
@@ -86,7 +104,15 @@ class Metrics:
     def __init__(self, *, enabled: bool = True, namespace: str = "aura") -> None:
         self.enabled = enabled and PROMETHEUS_AVAILABLE
         self.namespace = namespace
-        self.registry = CollectorRegistry() if self.enabled else None
+        # Private registry when multiprocess is off (pytest isolation). In
+        # multiprocess mode metrics write to mmap files and must *not* also
+        # register on a registry later used by MultiProcessCollector — that
+        # would export each series twice.
+        self._multiproc_dir = _multiproc_dir() if self.enabled else None
+        if self.enabled and not self._multiproc_dir:
+            self.registry = CollectorRegistry()
+        else:
+            self.registry = None
         self._build()
 
     # -- construction helpers ----------------------------------------------------------
@@ -96,10 +122,22 @@ class Metrics:
             return _NOOP
         return Counter(f"{self.namespace}_{name}", doc, list(labels), registry=self.registry)
 
-    def _gauge(self, name: str, doc: str, labels: Sequence[str] = ()) -> Any:
+    def _gauge(
+        self,
+        name: str,
+        doc: str,
+        labels: Sequence[str] = (),
+        *,
+        multiprocess_mode: str = "livesum",
+    ) -> Any:
         if not self.enabled:
             return _NOOP
-        return Gauge(f"{self.namespace}_{name}", doc, list(labels), registry=self.registry)
+        kwargs: dict[str, Any] = {"registry": self.registry}
+        if self._multiproc_dir:
+            # livesum: in-flight style gauges add across uvicorn workers.
+            # Callers can pass livemax/livemin for 0/1 snapshots.
+            kwargs["multiprocess_mode"] = multiprocess_mode
+        return Gauge(f"{self.namespace}_{name}", doc, list(labels), **kwargs)
 
     def _histogram(
         self, name: str, doc: str, labels: Sequence[str] = (), buckets: Sequence[float] = _MS_BUCKETS
@@ -157,7 +195,10 @@ class Metrics:
             "llm_queue_depth", "Requests waiting for a provider slot.", ("provider",)
         )
         self.provider_healthy = self._gauge(
-            "provider_healthy", "1 when the circuit breaker is closed.", ("provider",)
+            "provider_healthy",
+            "1 when the circuit breaker is closed.",
+            ("provider",),
+            multiprocess_mode="livemax",
         )
         self.provider_circuit_opens_total = self._counter(
             "provider_circuit_opens_total", "Circuit breaker openings.", ("provider",)
@@ -167,7 +208,12 @@ class Metrics:
         self.cache_lookups_total = self._counter(
             "cache_lookups_total", "Cache lookups.", ("cache", "tier", "result")
         )
-        self.cache_entries = self._gauge("cache_entries", "Entries held in a cache.", ("cache",))
+        self.cache_entries = self._gauge(
+            "cache_entries",
+            "Entries held in a cache.",
+            ("cache",),
+            multiprocess_mode="livemax",
+        )
 
         # -- retrieval -----------------------------------------------------------------
         self.retrieval_total = self._counter(
@@ -211,7 +257,9 @@ class Metrics:
         self.memory_writes_total = self._counter(
             "memory_writes_total", "Memory records written.", ("kind",)
         )
-        self.memory_records = self._gauge("memory_records", "Stored records by kind.", ("kind",))
+        self.memory_records = self._gauge(
+            "memory_records", "Stored records by kind.", ("kind",), multiprocess_mode="livemax"
+        )
         self.memory_consolidation_total = self._counter(
             "memory_consolidation_total", "Consolidation outcomes.", ("action",)
         )
@@ -222,13 +270,19 @@ class Metrics:
         )
         self.chunks_indexed_total = self._counter("chunks_indexed_total", "Chunks written to an index.")
         self.knowledge_generation = self._gauge(
-            "knowledge_generation", "Current promoted knowledge generation number."
+            "knowledge_generation",
+            "Current promoted knowledge generation number.",
+            multiprocess_mode="livemax",
         )
         self.knowledge_age_seconds = self._gauge(
-            "knowledge_age_seconds", "Seconds since the knowledge index was last promoted."
+            "knowledge_age_seconds",
+            "Seconds since the knowledge index was last promoted.",
+            multiprocess_mode="livemax",
         )
         self.refresh_last_success_timestamp = self._gauge(
-            "refresh_last_success_timestamp_seconds", "Unix time of the last successful refresh."
+            "refresh_last_success_timestamp_seconds",
+            "Unix time of the last successful refresh.",
+            multiprocess_mode="livemax",
         )
         self.refresh_duration = self._histogram(
             "refresh_duration_seconds", "Nightly refresh duration.", (), (1, 10, 30, 60, 300, 900, 3600)
@@ -260,6 +314,7 @@ class Metrics:
             "insecure_mode",
             "1 when an auth/attestation/safety bypass is active. Alert on this being non-zero.",
             ("bypass",),
+            multiprocess_mode="livemax",
         )
 
         # -- tools ---------------------------------------------------------------------
@@ -292,9 +347,19 @@ class Metrics:
         )
 
         # -- evaluation / drift --------------------------------------------------------
-        self.eval_score = self._gauge("eval_score", "Latest evaluation score.", ("suite", "metric"))
+        self.eval_score = self._gauge(
+            "eval_score",
+            "Latest evaluation score.",
+            ("suite", "metric"),
+            multiprocess_mode="livemax",
+        )
         self.eval_runs_total = self._counter("eval_runs_total", "Evaluation runs.", ("suite", "outcome"))
-        self.drift_score = self._gauge("drift_score", "Population stability index by signal.", ("signal",))
+        self.drift_score = self._gauge(
+            "drift_score",
+            "Population stability index by signal.",
+            ("signal",),
+            multiprocess_mode="livemax",
+        )
         self.feedback_total = self._counter("feedback_total", "User feedback.", ("rating",))
 
         # -- platform ------------------------------------------------------------------
@@ -308,13 +373,22 @@ class Metrics:
             "event_handler_failures_total", "Event subscribers that raised.", ("event",)
         )
         self.dependency_up = self._gauge(
-            "dependency_up", "1 when a dependency's health probe passes.", ("dependency",)
+            "dependency_up",
+            "1 when a dependency's health probe passes.",
+            ("dependency",),
+            multiprocess_mode="livemin",
         )
         self.gpu_memory_used_bytes = self._gauge(
-            "gpu_memory_used_bytes", "GPU memory in use, when a probe is available.", ("device",)
+            "gpu_memory_used_bytes",
+            "GPU memory in use, when a probe is available.",
+            ("device",),
+            multiprocess_mode="livemax",
         )
         self.gpu_utilisation = self._gauge(
-            "gpu_utilisation_ratio", "GPU utilisation 0-1, when a probe is available.", ("device",)
+            "gpu_utilisation_ratio",
+            "GPU utilisation 0-1, when a probe is available.",
+            ("device",),
+            multiprocess_mode="livemax",
         )
 
     # -- convenience -------------------------------------------------------------------
@@ -407,7 +481,24 @@ class Metrics:
         """Prometheus exposition text for the ``/metrics`` endpoint."""
         if not self.enabled or generate_latest is None:
             return b"# metrics disabled: prometheus_client not installed or metrics_enabled=false\n"
+        if self._multiproc_dir:
+            from prometheus_client import multiprocess
+
+            try:
+                registry = CollectorRegistry(support_collectors_without_names=True)
+            except TypeError:
+                registry = CollectorRegistry()
+            multiprocess.MultiProcessCollector(registry, path=self._multiproc_dir)
+            return generate_latest(registry)
         return generate_latest(self.registry)
+
+    def mark_process_dead(self) -> None:
+        """Drop this worker's live-gauge mmap files (uvicorn/Gunicorn child_exit)."""
+        if not self._multiproc_dir:
+            return
+        from prometheus_client import multiprocess
+
+        multiprocess.mark_process_dead(os.getpid(), path=self._multiproc_dir)
 
     @property
     def content_type(self) -> str:

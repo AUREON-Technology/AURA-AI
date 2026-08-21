@@ -13,9 +13,8 @@ import '../ai_router/aura_ai_router.dart';
 /// as an untrusted instruction blob — which is precisely the indirect prompt-injection shape the
 /// server-side guards exist to stop. So the orchestrator is now a seam, not a stage.
 ///
-/// It is kept rather than inlined because `chat_repository` calls it as its fallback path and the
-/// custom-instruction plumbing belongs somewhere. If a second client-side concern ever appears, this
-/// is where it goes.
+/// Chat send no longer uses this path (v3 SSE only). Connectivity status still goes through
+/// the AI router.
 class ClientAgentOrchestrator {
   final Ref _ref;
 

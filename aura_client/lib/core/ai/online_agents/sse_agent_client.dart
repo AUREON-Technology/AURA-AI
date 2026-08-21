@@ -4,8 +4,9 @@ import 'package:http/http.dart' as http;
 import '../../auth/token_manager.dart';
 import '../../config/config.dart';
 import '../../security/device_validation_service.dart';
+import 'llm_timeouts.dart';
 
-enum SseEventKind { token, toolCalls, citations, revision, done, error, unknown }
+enum SseEventKind { token, toolCalls, step, actions, citations, revision, done, error, unknown }
 
 /// One decoded frame from the `/api/v3/chat/stream` SSE stream
 /// (`aura_core/kernel/kernel.py`'s `AIKernel.stream()`).
@@ -36,6 +37,10 @@ class SseChatEvent {
         return SseChatEvent._(kind: SseEventKind.token, text: data['text'] as String?);
       case 'tool_calls':
         return SseChatEvent._(kind: SseEventKind.toolCalls, actions: data['calls'] as List<dynamic>?);
+      case 'step':
+        return SseChatEvent._(kind: SseEventKind.step);
+      case 'actions':
+        return SseChatEvent._(kind: SseEventKind.actions, actions: data['actions'] as List<dynamic>?);
       case 'citations':
         return SseChatEvent._(kind: SseEventKind.citations, citations: data['citations'] as List<dynamic>?);
       case 'revision':
@@ -130,7 +135,7 @@ class SseAgentClient {
         req.headers['Content-Type'] = 'application/json';
         final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
         if (token != null) req.headers['Authorization'] = 'Bearer $token';
-        req.headers.addAll(DeviceValidationService.getAttestationHeaders());
+        req.headers.addAll(await DeviceValidationService.getAttestationHeaders());
       }
 
       await applyAuth(request);
@@ -145,13 +150,13 @@ class SseAgentClient {
         "temperature": temperature,
       });
 
-      var response = await client.send(request).timeout(const Duration(seconds: 60));
+      var response = await client.send(request).timeout(kLlmConnectTimeout);
       if (response.statusCode == 401) {
         _ref.read(tokenManagerProvider).invalidateAccessToken();
         final retry = http.Request('POST', Uri.parse(_url));
         await applyAuth(retry);
         retry.body = request.body;
-        response = await client.send(retry).timeout(const Duration(seconds: 60));
+        response = await client.send(retry).timeout(kLlmConnectTimeout);
       }
       if (response.statusCode != 200) {
         final body = await response.stream.bytesToString();

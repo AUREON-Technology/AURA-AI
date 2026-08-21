@@ -59,11 +59,13 @@ from ..domain.telemetry import (
     TurnOutcome,
     TurnTelemetry,
 )
+from ..execution.engine import ExecutionOutcome, StepEvent
 from ..llm.router import TurnBudget
 from ..observability.logging import LogContext, get_logger
 from ..ports.runtime import ToolContext
 from ..prompts.library import AGENT_PROMPT_IDS
 from ..reasoning.engine import ReasoningRequest
+from ..tools.personal_os import actions_from_tool_results
 
 __all__ = ["AIKernel", "TurnRequest", "TurnResult", "KernelDependencies"]
 
@@ -378,9 +380,10 @@ class AIKernel:
     async def stream(self, request: TurnRequest) -> AsyncIterator[Mapping[str, Any]]:
         """Stream a turn as typed frames.
 
-        Frames: ``{"type": "token"|"step"|"citations"|"done"|"error", ...}``. Typed rather than
-        raw text so the client never has to string-split a marker out of the token stream
-        (TD-12).
+        Frames: ``{"type": "token"|"step"|"actions"|"citations"|"tool_calls"|"revision"|"done"|"error", ...}``.
+        Typed rather than raw text so the client never has to string-split a marker out of the
+        token stream (TD-12). Planning/execution is the only tool-execute path (ADR-006);
+        ``tool_calls`` frames from the model are informational and are not dispatched.
 
         **Honest limitation, stated in the contract:** output guards that need the complete
         answer -- system-prompt leakage, groundedness -- cannot run before the first token is
@@ -419,10 +422,40 @@ class AIKernel:
                         ),
                         query=retrieval.query,
                         candidates_considered=retrieval.candidates_considered,
+                        below_threshold=retrieval.below_threshold,
+                        quarantined=tuple(
+                            c for c in retrieval.chunks if c.citation() not in accepted_citations
+                        ),
                         strategy=retrieval.strategy,
+                        duration_ms=retrieval.duration_ms,
                     )
 
                 tool_declarations = self._tool_declarations(request)
+                tool_results: list[tuple[str, str]] = []
+                needs_confirmation: list[str] = []
+                outcome: ExecutionOutcome | None = None
+                if self._should_plan(request, tool_declarations):
+                    try:
+                        async for item in self._iter_execution(
+                            request, message, tool_declarations, tainted
+                        ):
+                            if isinstance(item, StepEvent):
+                                yield {"type": "step", **item.as_dict()}
+                            elif isinstance(item, ExecutionOutcome):
+                                outcome = item
+                    except Exception:
+                        logger.warning("planning or execution failed; answering directly")
+                        outcome = None
+                if outcome is not None:
+                    tool_results = outcome.summary_for_context()
+                    for report in outcome.tool_reports:
+                        if report.needs_confirmation:
+                            needs_confirmation.append(report.tool)
+
+                actions = actions_from_tool_results(tool_results)
+                if actions:
+                    yield {"type": "actions", "actions": actions}
+
                 assembled = deps.context.assemble(
                     ContextRequest(
                         system_prompt=self._render_system_prompt(request, tool_declarations),
@@ -430,6 +463,7 @@ class AIKernel:
                         history=history,
                         memories=memories,
                         retrieval=retrieval,
+                        tool_results=tool_results,
                         history_summary=history_summary,
                         context_window=self._context_window(),
                         max_output_tokens=request.max_output_tokens,
@@ -457,6 +491,8 @@ class AIKernel:
                         collected.append(chunk.delta)
                         yield {"type": "token", "text": chunk.delta}
                     if chunk.tool_calls:
+                        # Informational only. Dispatching these would bypass taint/confirmation
+                        # (ADR-006); planning/execution above is the only execute path.
                         yield {
                             "type": "tool_calls",
                             "calls": [
@@ -510,6 +546,7 @@ class AIKernel:
                     "tainted": tainted,
                     "guards_complete": guards_complete,
                     "citations": list(assembled.citations),
+                    "needs_confirmation": list(dict.fromkeys(needs_confirmation)),
                 }
             except AuraError as exc:
                 yield {"type": "error", "error": exc.kind, "message": exc.message,
@@ -589,6 +626,35 @@ class AIKernel:
             request.message, available_tools=[t.get("name", "") for t in tools], force=request.plan
         )
 
+    def _tool_context(self, request: TurnRequest, tainted: bool) -> ToolContext:
+        return ToolContext(
+            user_id=request.user_id,
+            correlation_id=(request.correlation_id or CorrelationId.new()).value,
+            deadline_s=60.0,
+            tainted=tainted,
+        )
+
+    async def _compose_plan(
+        self,
+        request: TurnRequest,
+        message: str,
+        tools: Sequence[Mapping[str, Any]],
+    ) -> Any:
+        deps = self._deps
+        try:
+            goal = deps.planner.goal_from_message(message)
+            plan = await deps.planner.plan(goal, available_tools=tools)
+            if not plan.steps:
+                return None
+            if len(plan.steps) <= 1 and plan.steps[0].kind is StepKind.RESPOND:
+                # A one-step "just answer" plan is what the direct path already does; running the
+                # executor for it costs latency and buys nothing.
+                return None
+            return plan
+        except Exception:
+            logger.warning("planning failed; answering directly")
+            return None
+
     async def _plan_and_execute(
         self,
         request: TurnRequest,
@@ -598,28 +664,48 @@ class AIKernel:
     ) -> Any:
         deps = self._deps
         try:
-            goal = deps.planner.goal_from_message(message)
-            plan = await deps.planner.plan(goal, available_tools=tools)
-            if len(plan.steps) <= 1 and plan.steps[0].kind is StepKind.RESPOND:
-                # A one-step "just answer" plan is what the direct path already does; running the
-                # executor for it costs latency and buys nothing.
+            plan = await self._compose_plan(request, message, tools)
+            if plan is None:
                 return None
-
-            context = ToolContext(
-                user_id=request.user_id,
-                correlation_id=(request.correlation_id or CorrelationId.new()).value,
-                deadline_s=60.0,
-                tainted=tainted,
-            )
             return await deps.executor.execute(
                 plan,
-                context=context,
+                context=self._tool_context(request, tainted),
                 capabilities=request.capabilities,
                 confirmed_tools=request.confirmed_tools,
             )
         except Exception:
             logger.warning("planning or execution failed; answering directly")
             return None
+
+    async def _iter_execution(
+        self,
+        request: TurnRequest,
+        message: str,
+        tools: Sequence[Mapping[str, Any]],
+        tainted: bool,
+    ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
+        """Yield step progress, then the outcome. Prefer ``executor.stream``."""
+        deps = self._deps
+        plan = await self._compose_plan(request, message, tools)
+        if plan is None:
+            return
+        context = self._tool_context(request, tainted)
+        stream = getattr(deps.executor, "stream", None)
+        if callable(stream):
+            async for item in stream(
+                plan,
+                context=context,
+                capabilities=request.capabilities,
+                confirmed_tools=request.confirmed_tools,
+            ):
+                yield item
+            return
+        yield await deps.executor.execute(
+            plan,
+            context=context,
+            capabilities=request.capabilities,
+            confirmed_tools=request.confirmed_tools,
+        )
 
     def _render_system_prompt(
         self, request: TurnRequest, tools: Sequence[Mapping[str, Any]]

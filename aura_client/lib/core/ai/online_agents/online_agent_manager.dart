@@ -6,6 +6,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import '../../config/config.dart';
 import '../../../features/auth/presentation/auth_provider.dart';
 import '../../security/device_validation_service.dart';
+import 'llm_timeouts.dart';
 
 /// The backend did not produce an answer.
 ///
@@ -69,7 +70,7 @@ class OnlineAgentManager {
         request.headers['Authorization'] = 'Bearer $token';
       }
       // Inject device validation integrity headers
-      request.headers.addAll(DeviceValidationService.getAttestationHeaders());
+      request.headers.addAll(await DeviceValidationService.getAttestationHeaders());
 
       // Retrieve Google Access Token if logged in via Google Sign-In
       String? googleAccessToken;
@@ -89,7 +90,7 @@ class OnlineAgentManager {
         "google_access_token": googleAccessToken,
       });
 
-      final response = await client.send(request).timeout(const Duration(seconds: 60));
+      final response = await client.send(request).timeout(kLlmConnectTimeout);
 
       if (response.statusCode != 200) {
         // Surface the server's own message when it sent one. A 429 with a retry hint or a 503

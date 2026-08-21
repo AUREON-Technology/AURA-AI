@@ -101,6 +101,37 @@ class TestPlanningGate:
     def test_a_disabled_engine_never_plans_even_when_forced(self) -> None:
         assert _engine(enabled=False).needs_plan("x", available_tools=["a"], force=True) is False
 
+    def test_short_add_task_plans_when_personal_os_tools_are_offered(self) -> None:
+        assert _engine().needs_plan(
+            "add a task to buy milk",
+            available_tools=["propose_task", "calculator"],
+        ) is True
+
+    def test_short_add_task_does_not_plan_without_those_tools(self) -> None:
+        """The default length gate still applies when propose_* is not offered."""
+        assert _engine().needs_plan(
+            "add a task to buy milk",
+            available_tools=["calculator"],
+        ) is False
+
+    def test_short_fact_question_skips_planning_even_with_personal_os_tools(self) -> None:
+        """propose_* is in the default install; Q&A must not pay for a planner generation."""
+        assert _engine().needs_plan(
+            "what is my leave balance?",
+            available_tools=["propose_task", "propose_event", "search_knowledge"],
+        ) is False
+
+    def test_other_personal_os_imperatives_plan(self) -> None:
+        engine = _engine()
+        tools = [
+            "propose_task", "propose_event", "propose_expense",
+            "propose_income", "propose_health_log",
+        ]
+        assert engine.needs_plan("schedule lunch tomorrow at 1", available_tools=tools) is True
+        assert engine.needs_plan("log an expense of 12 dollars", available_tools=tools) is True
+        assert engine.needs_plan("log 500 ml of water", available_tools=tools) is True
+        assert engine.needs_plan("remind me to call mom", available_tools=tools) is True
+
 
 class TestPlanParsing:
     async def test_a_well_formed_plan_becomes_a_dag(self) -> None:

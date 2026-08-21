@@ -8,6 +8,8 @@ refuse to fail over and surface the error instead.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from aura_core.domain import CompletionRequest, Conversation, Message, SamplingParams
@@ -262,3 +264,227 @@ class TestRouterFailover:
         )
         health = await router.health()
         assert set(health) == {"a", "b"}
+
+
+class _FixedPlanner:
+    def __init__(self, plan) -> None:
+        self._plan = plan
+
+    def needs_plan(self, message, *, available_tools=(), force=None) -> bool:  # noqa: ANN001
+        return True
+
+    def goal_from_message(self, message, *, criteria=()):  # noqa: ANN001
+        from aura_core.domain.planning import Goal
+
+        return Goal(description=message)
+
+    async def plan(self, goal, available_tools=()):  # noqa: ANN001
+        return self._plan
+
+
+class _CountingTools:
+    def __init__(self, inner) -> None:
+        self._inner = inner
+        self.names: list[str] = []
+
+    def declarations(self, capabilities=()):  # noqa: ANN001
+        return self._inner.declarations(capabilities=capabilities)
+
+    def spec(self, name):  # noqa: ANN001
+        return self._inner.spec(name)
+
+    async def execute(self, call, context, **kwargs):  # noqa: ANN001
+        self.names.append(call.name)
+        return await self._inner.execute(call, context, **kwargs)
+
+
+def _tool_plan(tool: str, arguments: dict) -> object:
+    from aura_core.domain.identifiers import PlanId, StepId
+    from aura_core.domain.planning import Goal, Plan, PlanStep, StepKind
+
+    return Plan(
+        id=PlanId.new(),
+        goal=Goal(description="test"),
+        steps=(
+            PlanStep(
+                id=StepId("s1"),
+                kind=StepKind.TOOL,
+                tool=tool,
+                description=f"run {tool}",
+                arguments=arguments,
+            ),
+        ),
+    )
+
+
+def _tainted_retrieve():
+    from aura_core.domain.identifiers import DocumentId
+    from aura_core.domain.knowledge import Chunk, ChunkId, RetrievalResult, RetrievedChunk
+
+    async def retrieve(query, owner_id=None, **kwargs):  # noqa: ANN001
+        chunk = Chunk(
+            id=ChunkId("doc:v1:0"),
+            document_id=DocumentId("doc"),
+            document_version=1,
+            index=0,
+            content="retrieved context",
+        )
+        return RetrievalResult(
+            chunks=(RetrievedChunk(chunk=chunk, score=0.9),),
+            query=query,
+            candidates_considered=1,
+        )
+
+    return retrieve
+
+
+def _force_taint(safety):
+    original = safety.guard_context_items
+
+    async def force_taint(items, **kwargs):  # noqa: ANN001
+        accepted, quarantined, _ = await original(items, **kwargs)
+        return accepted, quarantined, True
+
+    return force_taint
+
+
+class TestStreamToolExecution:
+    """AURA-007: kernel.stream runs the same plan/execute loop as run."""
+
+    async def test_stream_yields_step_frames_and_feeds_tool_results(
+        self, container
+    ) -> None:
+        await container.startup()
+        container.kernel._deps.planner = _FixedPlanner(
+            _tool_plan("calculator", {"expression": "2+2"})
+        )
+
+        frames = [
+            frame async for frame in container.kernel.stream(
+                _request("What is 2+2?", plan=True)
+            )
+        ]
+
+        types = [f["type"] for f in frames]
+        assert "step" in types
+        assert "token" in types
+        assert types[-1] == "done"
+        echo = container.router.get("echo")
+        blob = "\n".join(m.content for m in echo.calls[-1].conversation)
+        assert "2+2 = 4" in blob
+
+    async def test_token_stream_tool_calls_are_not_executed(self, container) -> None:
+        """Model-emitted tool_calls are frames only; planning is the only execute path."""
+        from aura_core.llm.providers.echo import ScriptedTurn
+
+        await container.startup()
+        counter = _CountingTools(container.tools)
+        container.kernel._deps.tools = counter
+        container.executor._tools = counter
+        container.kernel._deps.planner = _FixedPlanner(
+            _tool_plan("calculator", {"expression": "3+3"})
+        )
+        echo = container.router.get("echo")
+        echo.queue(ScriptedTurn(
+            text="done",
+            tool_calls=[("calculator", {"expression": "9*9"})],
+        ))
+
+        frames = [
+            frame async for frame in container.kernel.stream(
+                _request("calculate then answer", plan=True)
+            )
+        ]
+        assert any(f["type"] == "tool_calls" for f in frames)
+        assert counter.names == ["calculator"]
+
+    async def test_tainted_side_effect_does_not_run_without_confirmation(
+        self, container
+    ) -> None:
+        await container.startup()
+        container.kernel._deps.planner = _FixedPlanner(
+            _tool_plan("propose_task", {"title": "Exfiltrate files"})
+        )
+        container.kernel._deps.knowledge.retrieve = _tainted_retrieve()
+        container.kernel._deps.safety.guard_context_items = _force_taint(
+            container.kernel._deps.safety
+        )
+
+        frames = [
+            frame async for frame in container.kernel.stream(
+                _request("add a task called Exfiltrate files", plan=True)
+            )
+        ]
+        assert not any(f.get("type") == "actions" for f in frames)
+        done = frames[-1]
+        assert done["type"] == "done"
+        assert "propose_task" in done.get("needs_confirmation", [])
+
+    async def test_tainted_side_effect_runs_when_confirmed(self, container) -> None:
+        await container.startup()
+        container.kernel._deps.planner = _FixedPlanner(
+            _tool_plan("propose_task", {"title": "Backup notes"})
+        )
+        container.kernel._deps.knowledge.retrieve = _tainted_retrieve()
+        container.kernel._deps.safety.guard_context_items = _force_taint(
+            container.kernel._deps.safety
+        )
+
+        frames = [
+            frame async for frame in container.kernel.stream(
+                _request(
+                    "add a backup task",
+                    plan=True,
+                    confirmed_tools=("propose_task",),
+                )
+            )
+        ]
+        actions = next(f for f in frames if f["type"] == "actions")
+        assert actions["actions"][0]["type"] == "add_task"
+        assert actions["actions"][0]["params"]["title"] == "Backup notes"
+
+    async def test_short_add_task_stream_yields_actions_without_forcing_plan(
+        self, container
+    ) -> None:
+        """Heuristic, not request.plan=True: a short imperative still reaches execute."""
+        await container.startup()
+        echo = container.router.get("echo")
+        echo.queue(ScriptedTurn(text=json.dumps({
+            "steps": [{
+                "kind": "tool",
+                "tool": "propose_task",
+                "description": "Propose buying milk",
+                "arguments": {"title": "Buy milk", "priority": "medium"},
+            }]
+        })))
+
+        frames = [
+            frame async for frame in container.kernel.stream(
+                _request("add a task to buy milk")
+            )
+        ]
+        actions = next(f for f in frames if f["type"] == "actions")
+        assert actions["actions"][0]["type"] == "add_task"
+        assert actions["actions"][0]["params"]["title"] == "Buy milk"
+        assert any(f["type"] == "step" for f in frames)
+
+    async def test_short_fact_question_stream_skips_planning(self, container) -> None:
+        await container.startup()
+        plan_calls = {"n": 0}
+        original = container.kernel._deps.planner.plan
+
+        async def wrapped(*args, **kwargs):  # noqa: ANN002, ANN003
+            plan_calls["n"] += 1
+            return await original(*args, **kwargs)
+
+        container.kernel._deps.planner.plan = wrapped
+
+        frames = [
+            frame async for frame in container.kernel.stream(
+                _request("what is my leave balance?")
+            )
+        ]
+        assert plan_calls["n"] == 0
+        assert not any(f["type"] in {"step", "actions"} for f in frames)
+        assert frames[-1]["type"] == "done"
+

@@ -1,3 +1,6 @@
+# Runtime dependencies. The production image and CI install the compiled pin set
+# in requirements.lock (pip-compile from this file). Do not add test-only packages;
+# those belong in requirements-dev.txt (AURA-020).
 fastapi>=0.110.0
 uvicorn[standard]>=0.28.0
 qdrant-client>=1.8.0
@@ -19,6 +22,7 @@ alembic>=1.13.0
 pyjwt>=2.8.0
 cbor2>=5.6.0
 sentry-sdk[fastapi]>=2.0.0
+cryptography>=42.0.0
 # aura_core.observability.metrics imports this behind a try/except so the domain stays
 # importable on bare CPython, but the deployed stack is not optional about it: the prod compose
 # sets AURA_METRICS_ENABLED=true and runs Prometheus, Grafana, and Alertmanager against
@@ -28,6 +32,3 @@ opentelemetry-api>=1.24.0
 opentelemetry-sdk>=1.24.0
 opentelemetry-instrumentation-fastapi>=0.45b0
 opentelemetry-exporter-otlp-proto-http>=1.24.0
-# Test-only (test_sync_integration.py) — needs Docker, used in CI's
-# backend-ci.yml, not at runtime.
-testcontainers[postgres]>=4.0.0

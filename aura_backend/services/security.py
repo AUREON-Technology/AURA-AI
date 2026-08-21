@@ -1,9 +1,8 @@
 import os
 import json
 import logging
-import base64
 from typing import Optional, Dict, Any
-from config import settings
+from config import debug_bypass_allowed, settings
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 from infrastructure.redis_client import get_redis_client
@@ -15,6 +14,14 @@ logger = logging.getLogger("aura_backend.security")
 redis_client = get_redis_client()
 
 _local_nonce_cache = set()
+_apple_app_attest_client = None
+
+
+def _get_apple_app_attest_client():
+    if _apple_app_attest_client is not None:
+        return _apple_app_attest_client
+    from services.attestation.apple_client import default_apple_client
+    return default_apple_client()
 
 def _get_play_integrity_service():
     """Builds and returns the Google Play Integrity API client service using credentials.json."""
@@ -59,7 +66,7 @@ def verify_device_integrity(attestation_token: Optional[str], platform: Optional
     In debug_mode or testing, bypasses check.
     In production, attestation is strictly evaluated.
     """
-    is_testing = os.environ.get("TESTING") == "True" or settings.debug_mode
+    is_testing = debug_bypass_allowed(settings.debug_mode)
     if is_testing:
         logger.info("Device integrity bypass: running in testing/debug mode.")
         return True
@@ -102,37 +109,33 @@ def verify_device_integrity(attestation_token: Optional[str], platform: Optional
         if platform == "android":
             logger.info("Verifying Android Play Integrity Token...")
             
-            # Try Google Play Integrity API first for cryptographic validation
+            # Try Google Play Integrity API for cryptographic validation.
+            # If the API is unavailable or the call fails, refuse — never decode
+            # an unsigned JWS locally (that accepts a crafted payload).
             service = _get_play_integrity_service()
-            payload = None
-            if service:
-                try:
-                    logger.info("Calling Google Play Integrity API for cryptographic verification...")
-                    result = service.v1().decodeIntegrityToken(
-                        packageName=settings.android_package_name,
-                        body={"integrityToken": attestation_token}
-                    ).execute()
-                    payload = result.get("tokenPayloadExternal", {})
-                    logger.info("Google Play Integrity API cryptographic verification call succeeded.")
-                except Exception as api_err:
-                    logger.warning(f"Google Play Integrity API cryptographic verification call failed: {api_err}. Falling back to local JWS decoding.")
-            
-            if not payload:
-                # Local fallback parsing
-                parts = attestation_token.split('.')
-                if len(parts) != 3:
-                    logger.warning("Android Integrity failure: Invalid JWS format.")
-                    return False
+            if not service:
+                logger.warning(
+                    "Android Integrity failure: Play Integrity API is unavailable."
+                )
+                return False
 
-                # Base64url decode Play Integrity JWS Payload
-                payload_b64 = parts[1]
-                payload_b64 += '=' * (4 - len(payload_b64) % 4)
-                try:
-                    payload_bytes = base64.urlsafe_b64decode(payload_b64)
-                    payload = json.loads(payload_bytes.decode('utf-8'))
-                except Exception as parse_err:
-                    logger.warning(f"Android Integrity failure: Failed to parse JWS payload: {parse_err}")
-                    return False
+            try:
+                logger.info("Calling Google Play Integrity API for cryptographic verification...")
+                result = service.v1().decodeIntegrityToken(
+                    packageName=settings.android_package_name,
+                    body={"integrityToken": attestation_token}
+                ).execute()
+                payload = result.get("tokenPayloadExternal", {})
+                logger.info("Google Play Integrity API cryptographic verification call succeeded.")
+            except Exception as api_err:
+                logger.warning(
+                    f"Google Play Integrity API cryptographic verification call failed: {api_err}."
+                )
+                return False
+
+            if not payload:
+                logger.warning("Android Integrity failure: empty Play Integrity payload.")
+                return False
 
             # Check app integrity package
             request_details = payload.get("requestDetails", {})
@@ -160,16 +163,16 @@ def verify_device_integrity(attestation_token: Optional[str], platform: Optional
 
 
         elif platform == "ios":
-            logger.info("Verifying iOS AppAttest assertion...")
-            try:
-                # AppAttest assertion verify: decode assertion and check payload content
-                decoded_bytes = base64.b64decode(attestation_token)
-                if b"invalid_device" in decoded_bytes:
-                    return False
-                return True
-            except Exception as ios_err:
-                logger.error(f"AppAttest token validation error: {ios_err}")
-                return False
+            logger.info("Verifying iOS App Attest token...")
+            from services.attestation.app_attest import verify_app_attest
+
+            return verify_app_attest(
+                attestation_token,
+                bundle_id=settings.ios_bundle_id,
+                team_id=settings.apple_team_id,
+                apple_client=_get_apple_app_attest_client(),
+                expected_nonce=expected_nonce,
+            )
 
         else:
             logger.warning(f"Unsupported device validation platform: {platform}")
@@ -247,9 +250,9 @@ async def verify_token(
             detail="Device attestation validation failed."
         )
 
-    # 1. Check for mock/bypass mode in unit testing/development
-    # Under unittest, we check for pytest / unittest setting or empty keys.
-    is_testing = os.environ.get("TESTING") == "True" or settings.debug_mode
+    # 1. Check for mock/bypass mode in unit testing/development.
+    # Production-like env never mints mock_user even if DEBUG_MODE was flipped.
+    is_testing = debug_bypass_allowed(settings.debug_mode)
     
     if not authorization:
         if is_testing:

@@ -12,7 +12,7 @@ impact on scalability, maintainability, security, and operating cost.
 
 Everything AURA can *think* lives in `aura_backend/aura_core/`, a framework-free Python package that
 imports no web framework, no database driver, and no vendor SDK at its core. FastAPI, Celery,
-Postgres, Qdrant, Redis, Gemini, Ollama, and vLLM are all **adapters plugged into ports**.
+Postgres, Qdrant, Redis, Ollama, and vLLM are all **adapters plugged into ports**.
 
 Concretely: `aura_core/domain/` and `aura_core/ports/` import only the Python standard library. The
 engines (`prompts`, `context`, `memory`, `knowledge`, `tools`, `planning`, `reasoning`, `execution`,
@@ -76,7 +76,7 @@ aura_backend/aura_core/
 ├── observability/   structured logging, Prometheus metrics, tracing, correlation
 ├── llm/             provider registry, router (fallback/cost/latency/LB),
 │                    two-tier cache, streaming, token accounting
-│   └── providers/   openai_compatible · ollama · gemini · anthropic · echo
+│   └── providers/   openai_compatible · ollama · echo
 ├── prompts/         template registry, renderer, versioning, evaluation
 ├── context/         token budgeting, ranking, compression, assembly
 ├── memory/          working · episodic · semantic · entity · reflection,

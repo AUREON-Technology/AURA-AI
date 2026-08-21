@@ -51,6 +51,23 @@ void main() {
       ]);
     });
 
+    test('parses actions frames for PendingActionsExecutor', () {
+      final events = feedAll([
+        'event: actions\ndata: {"actions": [{"type": "add_task", "params": {"title": "Buy milk"}}]}\n\n',
+      ]);
+      expect(events[0].kind, SseEventKind.actions);
+      expect(events[0].actions, [
+        {'type': 'add_task', 'params': {'title': 'Buy milk'}},
+      ]);
+    });
+
+    test('parses a step progress frame', () {
+      final events = feedAll([
+        'event: step\ndata: {"step_id": "s1", "kind": "tool", "status": "running"}\n\n',
+      ]);
+      expect(events[0].kind, SseEventKind.step);
+    });
+
     test('parses an error event', () {
       final events = feedAll(['event: error\ndata: {"message": "boom"}\n\n']);
       expect(events[0].kind, SseEventKind.error);

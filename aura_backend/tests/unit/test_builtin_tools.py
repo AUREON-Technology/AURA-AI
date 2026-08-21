@@ -28,6 +28,7 @@ from aura_core.tools.builtin import (
     current_datetime,
     default_tools,
 )
+from aura_core.tools.personal_os import PERSONAL_OS_TOOL_NAMES
 
 
 @pytest.fixture
@@ -394,7 +395,11 @@ class TestWeatherTool:
 class TestAssembly:
     def test_a_default_install_can_reach_nothing(self) -> None:
         names = {t.spec.name for t in default_tools()}
-        assert names == {"calculator", "current_datetime"}
+        assert names == {
+            "calculator", "current_datetime",
+            "propose_task", "propose_event", "propose_expense",
+            "propose_income", "propose_health_log",
+        }
 
     def test_each_capability_is_opt_in(self, knowledge, memory, tmp_path) -> None:
         names = {
@@ -410,7 +415,11 @@ class TestAssembly:
         assert names == {
             "calculator", "current_datetime", "search_knowledge", "recall_memory",
             "remember_fact", "list_files", "read_file", "fetch_url", "get_weather",
+            "propose_task", "propose_event", "propose_expense", "propose_income",
+            "propose_health_log",
         }
 
-    def test_no_tool_is_side_effecting_by_default(self) -> None:
-        assert not any(t.spec.side_effecting for t in default_tools())
+    def test_only_personal_os_tools_are_side_effecting_by_default(self) -> None:
+        """Personal-OS tools propose client writes; they do not touch server state."""
+        side = {t.spec.name for t in default_tools() if t.spec.side_effecting}
+        assert side == PERSONAL_OS_TOOL_NAMES
