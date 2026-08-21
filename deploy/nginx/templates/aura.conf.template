@@ -1,5 +1,10 @@
 # AURA ingress. The only container with a published port (SEC-12).
 #
+# ${AURA_DOMAIN} is also the Flutter client's BACKEND_URL host. The certificate
+# SAN, this server_name, and --dart-define=BACKEND_URL=https://${AURA_DOMAIN} must
+# be the same string. On a shared host where Velvet already owns 80/443, do not
+# start this container — use deploy/nginx/host-proxy.conf.example instead.
+#
 # Three things here are not boilerplate and are worth reading:
 #
 # 1. SSE requires buffering off and a long read timeout. With Nginx's defaults the whole

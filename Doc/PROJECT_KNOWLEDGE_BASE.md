@@ -281,7 +281,7 @@ aura_backend → Ollama (local fallback, disabled when DEPLOYMENT_MODE=cloud)
 
 **docker-compose.yml** sets `REDIS_URL`/`CELERY_BROKER_URL`/`CELERY_RESULT_BACKEND`, none of which `celery_app.py` actually reads (it only reads `REDIS_HOST`, which compose never sets) — **likely a live bug**: the compose-orchestrated Celery worker/backend would default `REDIS_HOST` to `localhost` inside its own container rather than resolving the `redis` service by Docker DNS name. **[VERIFIED]**
 
-**Client**: single `AppConfig.backendUrl`, overridable at build time via `--dart-define=BACKEND_URL=...`. **[VERIFIED]**
+**Client**: single `AppConfig.backendUrl`. Debug default is `http://localhost:8000`; release builds must inject `--dart-define=BACKEND_URL=https://$AURA_DOMAIN` (via `deploy_client.sh` / `deploy_client.ps1`). `AURA_DOMAIN` is `169.58.188.43.nip.io` when there is no owned domain. Bare IPs are rejected. **[VERIFIED]**
 
 ---
 

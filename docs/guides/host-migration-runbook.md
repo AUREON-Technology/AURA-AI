@@ -223,34 +223,17 @@ Two things specific to this host:
 
 **Port collision.** The host nginx owns 80 and 443 for Velvet, and `docker-compose.prod.yml`
 publishes exactly those. Remove the `nginx` service from the compose file and let the existing nginx
-reverse-proxy to the gateway on loopback:
+reverse-proxy to the gateway on loopback. Copy
+[`deploy/nginx/host-proxy.conf.example`](../../deploy/nginx/host-proxy.conf.example) to
+`/etc/nginx/sites-available/aura`, replace `__AURA_DOMAIN__` with the same hostname as
+`deploy/.env` `AURA_DOMAIN` (this is also the Flutter `BACKEND_URL` host), and replace
+`__GATEWAY_PORT__` with a free loopback port.
 
-```nginx
-# /etc/nginx/sites-available/aura
-server {
-    listen 443 ssl http2;
-    server_name aura.your-domain;
-
-    # SSE streaming: buffering here holds tokens until the response completes,
-    # which turns a streaming chat reply into a long silence followed by a wall of text.
-    proxy_buffering off;
-    proxy_read_timeout 300s;
-
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Host              $host;
-        proxy_set_header X-Real-IP         $remote_addr;
-        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Connection        "";
-    }
-}
-```
-
-Publish the gateway on `127.0.0.1:8080` instead of `80:80`/`443:443`. **Not 8000** — that is
+Publish the gateway on `127.0.0.1:<that port>` instead of `80:80`/`443:443`. **Not 8000** — that is
 Velvet's Django, and **not 8080** either if `nginx -T` shows it already bound there; pick a free
-loopback port and keep the proxy in step with it.
+loopback port and keep the proxy in step with it. Issue the Let's Encrypt cert for `AURA_DOMAIN`
+through this vhost (HTTP-01 on port 80), then
+`./deploy/scripts/verify-client-hostname.sh` before rebuilding the client.
 
 **Memory budget on a 24 GB box, with Velvet resident:**
 
@@ -308,10 +291,15 @@ free -h; docker stats --no-stream
 `dependencies.ollama.reachable` being `true` is the single check that distinguishes this deployment
 from the old one. It was never true on the old host, because there was no Ollama.
 
-Then rebuild the mobile client — **this is what fixes the 404s**, and no server-side change does:
+Then rebuild the mobile client — **this is what fixes the 404s**, and no server-side change does.
+`BACKEND_URL` is compile-time and must equal `https://$AURA_DOMAIN` (the vhost `server_name` and
+the cert SAN). Debug `flutter run` stays on localhost. With no owned domain, `AURA_DOMAIN` is
+`169.58.188.43.nip.io` — not a bare IP.
 
 ```bash
-flutter build apk --release --dart-define=BACKEND_URL=https://aura.your-domain
+# from the repo root, with AURA_DOMAIN set in deploy/.env
+./deploy/scripts/verify-client-hostname.sh
+./deploy_client.sh
 ```
 
 ---

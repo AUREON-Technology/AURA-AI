@@ -1,4 +1,3 @@
-import os
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
@@ -11,7 +10,12 @@ class Settings(BaseSettings):
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "llama3"
     local_embedding_model: str = "all-MiniLM-L6-v2"
-    allowed_origins: str = "http://localhost,http://127.0.0.1"
+    # Native Android/iOS ignore CORS. Flutter web (local :8080 and production
+    # https://$AURA_DOMAIN) does not. Compose overrides this with ALLOWED_ORIGINS.
+    allowed_origins: str = (
+        "http://localhost,http://127.0.0.1,"
+        "http://localhost:8080,http://127.0.0.1:8080"
+    )
     
     # Production Authentication Settings
     google_client_id: str = "87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com"

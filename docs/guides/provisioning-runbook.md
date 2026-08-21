@@ -226,14 +226,30 @@ curl -fsS http://localhost:8000/metrics | grep -i 'security_bypass' || echo "  c
 
 The Flutter client's backend URL is **compile-time** (`String.fromEnvironment` in
 `lib/core/config/config.dart`). There is no runtime override and no settings screen — an installed
-APK cannot be redirected, it must be rebuilt:
+APK cannot be redirected, it must be rebuilt.
+
+`flutter run` / IDE debug defaults to `http://localhost:8000`. Production builds **must** inject
+`https://$AURA_DOMAIN` — the same hostname TLS was issued for and nginx `server_name` uses. With no
+owned domain that is the VPS nip.io name (`169.58.188.43.nip.io`). Do not bake a bare IP into the APK.
 
 ```bash
-flutter build apk --release --dart-define=BACKEND_URL=https://your-domain
+# from the repo root, after AURA_DOMAIN is set in deploy/.env
+./deploy_client.sh          # or .\deploy_client.ps1 on Windows
+
+# TLS must already match that hostname:
+./deploy/scripts/verify-client-hostname.sh
+```
+
+Equivalent one-liner (still `https://$AURA_DOMAIN`, never an IP):
+
+```bash
+flutter build apk --release --dart-define=BACKEND_URL=https://$AURA_DOMAIN
 ```
 
 Use HTTPS. Android blocks cleartext HTTP by default, so a bare `http://IP:8000` will fail in the app
-even though `curl` is perfectly happy with it.
+even though `curl` is perfectly happy with it. On a shared host, the vhost in
+[`host-proxy.conf.example`](../../deploy/nginx/host-proxy.conf.example) must use the same
+`server_name`.
 
 ---
 

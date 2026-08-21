@@ -91,7 +91,7 @@ flutter test
 ### 2.3 Production Compilation
 Run production build:
 ```bash
-flutter build apk --release --obfuscate --split-debug-info=build/app/outputs/symbols --split-per-abi --dart-define=BACKEND_URL=https://anas-ibrahim-mahmoud-aura-ai-backend.hf.space
+flutter build apk --release --obfuscate --split-debug-info=build/app/outputs/symbols --split-per-abi --dart-define=BACKEND_URL=https://$AURA_DOMAIN
 ```
 * **Status:** Built release APKs successfully in `aura_client/build/app/outputs/flutter-apk/`:
   * `app-armeabi-v7a-release.apk` (21.3 MB)

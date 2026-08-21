@@ -1,7 +1,12 @@
+/// Compile-time backend binding.
+///
+/// Debug / IDE / `flutter run` default to the local gateway. Release APKs, IPAs,
+/// and web bundles must inject `BACKEND_URL` via `--dart-define` (see
+/// `deploy_client.sh` / `deploy_client.ps1`), which reads the canonical hostname
+/// `AURA_DOMAIN` from `deploy/.env`. There is no runtime override.
 class AppConfig {
-  // Configured via compile-time environment injection (e.g. --dart-define=BACKEND_URL=...)
   static const String backendUrl = String.fromEnvironment(
     'BACKEND_URL',
-    defaultValue: "https://aura-ai-production-a31f.up.railway.app",
+    defaultValue: 'http://localhost:8000',
   );
 }

@@ -1,5 +1,11 @@
 # AURA AI Deployment Guide (Alternative Free-Tier Platforms)
 
+> **Historical.** Production deploys on the VPS stack in
+> [`docs/guides/deployment-guide.md`](../docs/guides/deployment-guide.md). The Flutter client's
+> `BACKEND_URL` is `https://$AURA_DOMAIN` from `deploy/.env`, injected by `./deploy_client.sh`
+> (or `.\deploy_client.ps1`). Do not point a release APK at Railway, Render, Hugging Face, or
+> a bare IP. With no owned domain, `AURA_DOMAIN` is `169.58.188.43.nip.io`.
+
 This guide walks you through deploying the AURA AI backend and frontend using free-tier alternative cloud platforms to bypass the Google Cloud billing requirement.
 
 ---
@@ -81,7 +87,7 @@ Before deploying, compile your Flutter web client on your development machine:
 
 ```powershell
 cd aura_client
-flutter build web --release
+flutter build web --release --dart-define=BACKEND_URL=https://$AURA_DOMAIN
 ```
 
 This command compiles the app and saves the output in `aura_client/build/web`.
@@ -120,11 +126,22 @@ This command compiles the app and saves the output in `aura_client/build/web`.
 
 Once both are deployed:
 
-1. **Configure Client to use Cloud Backend:**
-   In your client code (`aura_client`), point your base API URL to your Render/Railway backend URL (e.g., `https://aura-backend.onrender.com`).
+1. **Configure Client to use the VPS backend:**
+   Rebuild with `--dart-define=BACKEND_URL=https://$AURA_DOMAIN` (or run `./deploy_client.sh`). There is no runtime URL setting.
 2. **Update Backend CORS Configuration:**
-   Go to your Render/Railway dashboard and set the `ALLOWED_ORIGINS` environment variable to include your Vercel/Netlify production URL. This permits secure communication between the frontend browser and the backend server.
+   Set `ALLOWED_ORIGINS` in `deploy/.env` to include `https://$AURA_DOMAIN` and the origin that hosts the Flutter web bundle (Vercel/Netlify if used). Native Android/iOS ignore CORS.
 
 ## Build the APK
 
-run "flutter build apk --release --obfuscate --split-debug-info=build/app/outputs/symbols --split-per-abi --dart-define=BACKEND_URL=https://anas-ibrahim-mahmoud-aura-ai-backend.hf.space" in aura_client directory
+From the repo root, with `AURA_DOMAIN` set in `deploy/.env`:
+
+```bash
+./deploy_client.sh
+```
+
+Or:
+
+```bash
+cd aura_client
+flutter build apk --release --obfuscate --split-debug-info=build/app/outputs/symbols --split-per-abi --dart-define=BACKEND_URL=https://$AURA_DOMAIN
+```

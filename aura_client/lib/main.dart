@@ -1,7 +1,10 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'core/config/backend_url_policy.dart';
+import 'core/config/config.dart';
 import 'core/theme/theme.dart';
 import 'core/routing/router.dart';
 import 'core/security/encryption_service.dart';
@@ -9,6 +12,9 @@ import 'l10n/generated/app_localizations.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (kReleaseMode) {
+    BackendUrlPolicy.assertSafeForRelease(AppConfig.backendUrl);
+  }
   await EncryptionService.init();
   
   // Gracefully initialize Firebase for mobile/web,

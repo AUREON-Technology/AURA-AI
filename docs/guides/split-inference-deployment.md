@@ -291,13 +291,20 @@ Time-to-first-token now includes a network round trip to HF on top of prompt pro
 ## 6. The APK
 
 ```bash
+# from the repo root; injects https://$AURA_DOMAIN from deploy/.env
+./deploy_client.sh
+```
+
+Or, equivalently:
+
+```bash
 cd aura_client
 flutter pub get
 dart run build_runner build --delete-conflicting-outputs
-flutter build apk --release --dart-define=BACKEND_URL=https://<your-vps-domain>
+flutter build apk --release --dart-define=BACKEND_URL=https://$AURA_DOMAIN
 ```
 
-**The app's URL is your VPS, never the Space.** The Space is a backend dependency of the gateway;
+**The app's URL is your VPS hostname (`AURA_DOMAIN`), never the Space and never a raw IP.** The Space is a backend dependency of the gateway;
 the client must not know a model server address exists (Rule 30), and pointing it at the Space would
 bypass auth, retrieval, memory and every safety guard in the pipeline.
 

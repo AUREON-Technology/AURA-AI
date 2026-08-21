@@ -158,6 +158,11 @@ services:
       # config.py (the v1/v2 legacy settings, not aura_core) reads this directly as a file
       # path -- no _FILE-suffix hydration needed, it already supports pointing at any path.
       FIREBASE_SERVICE_ACCOUNT_PATH: /run/secrets/firebase_credentials
+      # Flutter web CORS. Native clients ignore this. Hostname must match AURA_DOMAIN
+      # (and the cert / client BACKEND_URL). Add extra origins in deploy/.env if the
+      # web bundle is hosted off this box.
+      AURA_DOMAIN: ${AURA_DOMAIN}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:8080,http://127.0.0.1:8080,https://${AURA_DOMAIN}}
     secrets: [postgres_password, redis_password, qdrant_api_key, jwt_secret, firebase_credentials]
     volumes:
       - aura_workspace:/var/lib/aura/workspace

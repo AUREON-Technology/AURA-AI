@@ -41,13 +41,19 @@ docker-compose up --build -d
 ### 2.1 Configuration Variables
 Compile-time configuration handles endpoint bindings. 
 
-To run the application targeting a local developer backend:
+`AppConfig.backendUrl` defaults to `http://localhost:8000`, so a plain `flutter run` talks to
+the local gateway. You can also pass the same value explicitly:
+
 ```bash
 cd aura_client
-flutter run --dart-define=BACKEND_URL=http://localhost:8000
+flutter run --dart-define-from-file=config/dev.json
 ```
 
-To build a production executable (e.g., Windows Desktop):
+Production builds must inject `https://$AURA_DOMAIN` (from `deploy/.env`) — never a bare IP.
+With no owned domain that is `https://169.58.188.43.nip.io`. From the repo root:
+
 ```bash
-flutter build windows --dart-define=BACKEND_URL=https://your-production-server.com
+./deploy_client.sh
+# or:
+flutter build windows --dart-define=BACKEND_URL=https://$AURA_DOMAIN
 ```

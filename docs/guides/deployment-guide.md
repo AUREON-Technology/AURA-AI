@@ -83,6 +83,7 @@ Verify:
 
 ```bash
 curl -s https://$AURA_DOMAIN/health/ready | jq
+./deploy/scripts/verify-client-hostname.sh
 ```
 
 `healthy: true` means at least one provider answered its health probe and the index alias
