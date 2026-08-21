@@ -1,6 +1,6 @@
 /// Produces a hardware attestation token for `X-Device-Attestation`.
 ///
-/// Debug builds never call this; they send [DeviceValidationService.devToken].
+/// Debug builds skip this and send [DeviceValidationService.devToken].
 /// Release builds send whatever the platform SDK returns, or the unsupported
 /// marker when the SDK cannot produce a token.
 abstract class HardwareAttestationClient {

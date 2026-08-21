@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from config import settings
-from services.security import verify_device_integrity
+from services.security import attestation_failure_reason, verify_device_integrity
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +34,7 @@ def _production_mode():
 def test_android_unsigned_or_missing_api_is_rejected(_service, _bypass):
     _production_mode()
     assert verify_device_integrity("valid.jws.token", "android") is False
+    assert attestation_failure_reason.get() == "play_integrity_unavailable"
     assert verify_device_integrity("aura_attestation_unsupported", "android") is False
 
 

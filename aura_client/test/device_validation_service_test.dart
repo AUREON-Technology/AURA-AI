@@ -15,6 +15,17 @@ void main() {
   setUp(DeviceValidationService.clearCache);
 
   group('DeviceValidationService', () {
+    test('debug builds send the mock marker even against a production URL', () async {
+      const jws = 'header.payload.signature';
+      final headers = await DeviceValidationService.getAttestationHeaders(
+        debugMode: true,
+        platform: 'android',
+        backendUrl: 'https://169.58.188.43.nip.io',
+        client: _FakeAttestationClient(token: jws),
+      );
+      expect(headers['X-Device-Attestation'], DeviceValidationService.devToken);
+    });
+
     test('debug builds send an explicit aura_dev_attestation marker', () async {
       final headers = await DeviceValidationService.getAttestationHeaders(
         debugMode: true,

@@ -127,7 +127,7 @@ services:
       --proxy-headers --forwarded-allow-ips='*'
       --timeout-keep-alive 65
     environment:
-      AURA_ENVIRONMENT: production
+      AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-production}
       AURA_LOG_FORMAT: json
       AURA_LOG_LEVEL: ${AURA_LOG_LEVEL:-INFO}
       AURA_METRICS_ENABLED: "true"
@@ -215,7 +215,7 @@ services:
     # Separate queues so a multi-minute ingestion backlog cannot delay a user-facing task.
     command: celery -A tasks worker -Q realtime -c 4 --loglevel=info --max-tasks-per-child=200
     environment: &worker_env
-      AURA_ENVIRONMENT: production
+      AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-production}
       AURA_LOG_FORMAT: json
       AURA_VECTOR_BACKEND: qdrant
       AURA_DOCUMENT_BACKEND: postgres

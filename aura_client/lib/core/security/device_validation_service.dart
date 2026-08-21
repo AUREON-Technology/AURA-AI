@@ -10,11 +10,10 @@ import 'play_integrity_client.dart';
 
 /// Honest device-attestation headers for backend `X-Device-Attestation`.
 ///
-/// Debug/dev builds send `aura_dev_attestation`, which the backend may accept
-/// only when `ALLOW_MOCK_ATTESTATION` is on and the environment is not
-/// production-like. Release builds request a real Play Integrity / App Attest
-/// token when the platform SDK can produce one. The unsupported marker is used
-/// only when no SDK token is available (desktop, missing Play services, etc.).
+/// Debug/dev builds send `aura_dev_attestation`. Play Integrity cannot be
+/// decoded for this package until it exists in Play Console under the same
+/// Cloud project as the VPS service account. Release builds request a real
+/// Play Integrity / App Attest token when the platform SDK can produce one.
 class DeviceValidationService {
   static const String devToken = 'aura_dev_attestation';
   static const String unsupportedMarker = 'aura_attestation_unsupported';
@@ -37,11 +36,13 @@ class DeviceValidationService {
     bool? debugMode,
     String? platform,
     HardwareAttestationClient? client,
+    String? backendUrl,
   }) async {
     final isDebug = debugMode ?? kDebugMode;
     final platformName = platform ?? _platformName();
+    final useDebugMock = isDebug;
 
-    if (!isDebug &&
+    if (!useDebugMock &&
         _cached != null &&
         _cachedAt != null &&
         _cachedDebug == isDebug &&
@@ -50,7 +51,7 @@ class DeviceValidationService {
       return _cached!;
     }
 
-    if (isDebug) {
+    if (useDebugMock) {
       final attestation = DeviceAttestation(
         platform: platformName,
         token: devToken,
@@ -83,11 +84,13 @@ class DeviceValidationService {
     bool? debugMode,
     String? platform,
     HardwareAttestationClient? client,
+    String? backendUrl,
   }) async {
     final attestation = await resolve(
       debugMode: debugMode,
       platform: platform,
       client: client,
+      backendUrl: backendUrl,
     );
     return {
       'X-Device-Platform': attestation.platform,

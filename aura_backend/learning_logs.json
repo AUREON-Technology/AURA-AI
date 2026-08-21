@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "id": "l1",
+    "prompt": "p",
+    "response": "r",
+    "rating": 5,
+    "correction": null,
+    "model": null,
+    "timestamp": "2026-08-21T00:00:00Z"
+  }
+]

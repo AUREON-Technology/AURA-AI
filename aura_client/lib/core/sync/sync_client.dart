@@ -34,22 +34,35 @@ class SyncClient {
 
   // v2 endpoints authenticate via TokenManager's backend-issued JWT
   // (Doc/V2_BLUEPRINT.md §9), not the raw Google ID token v1 endpoints use.
-  Future<Map<String, String>> _headers() async {
+  Future<Map<String, String>?> _headers() async {
     final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
-    final headers = <String, String>{"Content-Type": "application/json"};
-    if (token != null) headers["Authorization"] = "Bearer $token";
+    if (token == null) return null;
+    final headers = <String, String>{
+      "Content-Type": "application/json",
+      "Authorization": "Bearer $token",
+    };
     headers.addAll(await DeviceValidationService.getAttestationHeaders());
     return headers;
   }
 
-  /// One 401 retry after dropping the cached access token. Sync used to
-  /// replay a rejected JWT until its local 15-minute expiry.
-  Future<http.Response> _send(Future<http.Response> Function() send) async {
-    var response = await send();
+  /// One 401 retry after dropping the cached access token. Returns null when
+  /// there is no JWT so callers skip the HTTP round-trip (a 403 attestation
+  /// failure cannot be retried into existence).
+  Future<http.Response?> _send(
+    Future<http.Response> Function(Map<String, String> headers) send,
+  ) async {
+    Future<http.Response?> once() async {
+      final headers = await _headers();
+      if (headers == null) return null;
+      return send(headers);
+    }
+
+    var response = await once();
+    if (response == null) return null;
     if (response.statusCode == 401) {
       debugPrint("[SyncClient] 401 — invalidating access token and retrying once");
       _ref.read(tokenManagerProvider).invalidateAccessToken();
-      response = await send();
+      response = await once();
     }
     return response;
   }
@@ -92,16 +105,15 @@ class SyncClient {
         .toList();
 
     try {
-      final response = await _send(() async {
+      final response = await _send((headers) {
         return _post(
           Uri.parse(_syncUrl),
-          headers: await _headers(),
+          headers: headers,
           body: jsonEncode({"mutations": mutations}),
         );
       });
-
-      if (response.statusCode == 401) {
-        debugPrint("[SyncClient] push unauthorized: ${response.statusCode}");
+      if (response == null || response.statusCode == 401) {
+        debugPrint("[SyncClient] push unauthorized: ${response?.statusCode}");
         return const SyncResult.fail(SyncFailureKind.unauthorized);
       }
       if (response.statusCode == 503) {
@@ -140,11 +152,9 @@ class SyncClient {
     final uri = Uri.parse(_syncUrl).replace(queryParameters: cursor != null ? {"since": cursor} : null);
 
     try {
-      final response = await _send(() async {
-        return _get(uri, headers: await _headers());
-      });
-      if (response.statusCode == 401) {
-        debugPrint("[SyncClient] pull unauthorized: ${response.statusCode}");
+      final response = await _send((headers) => _get(uri, headers: headers));
+      if (response == null || response.statusCode == 401) {
+        debugPrint("[SyncClient] pull unauthorized: ${response?.statusCode}");
         return const SyncResult.fail(SyncFailureKind.unauthorized);
       }
       if (response.statusCode == 503) {

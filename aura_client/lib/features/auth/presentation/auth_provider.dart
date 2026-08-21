@@ -59,6 +59,8 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         } else if (event is GoogleSignInAuthenticationEventSignOut) {
           _currentAccount = null;
         }
+      }, onError: (Object error) {
+        debugPrint("[AuthNotifier] Google authenticationEvents: $error");
       });
 
       // Attempt silently restoring session
