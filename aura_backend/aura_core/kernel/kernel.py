@@ -289,6 +289,7 @@ class AIKernel:
                 history_summary=history_summary,
                 context_window=self._context_window(),
                 max_output_tokens=request.max_output_tokens,
+                max_prompt_tokens=self._max_prompt_tokens(),
             )
         )
         timings["context"] = (time.perf_counter() - stage_start) * 1000.0
@@ -297,7 +298,7 @@ class AIKernel:
         # 8. Generate ----------------------------------------------------------------
         stage_start = time.perf_counter()
         answer, provider, model, usage, cost, cached, cache_tier, fallbacks, strategy, confidence = (
-            await self._generate(request, assembled, retrieval, budget)
+            await self._generate(request, assembled, retrieval, budget, tool_declarations)
         )
         timings["generation"] = (time.perf_counter() - stage_start) * 1000.0
 
@@ -432,6 +433,7 @@ class AIKernel:
                         history_summary=history_summary,
                         context_window=self._context_window(),
                         max_output_tokens=request.max_output_tokens,
+                        max_prompt_tokens=self._max_prompt_tokens(),
                     )
                 )
 
@@ -540,9 +542,9 @@ class AIKernel:
                         text=message,
                         session_id=request.session_id,
                         kinds=(MemoryKind.SEMANTIC, MemoryKind.PROCEDURAL, MemoryKind.ENTITY),
-                        limit=getattr(getattr(deps.settings, "memory", None), "recall_limit", 8),
+                        limit=getattr(getattr(deps.settings, "memory", None), "recall_limit", 3),
                         token_budget=getattr(
-                            getattr(deps.settings, "memory", None), "token_budget", 600
+                            getattr(deps.settings, "memory", None), "token_budget", 80
                         ),
                     )
                 )
@@ -633,7 +635,9 @@ class AIKernel:
                     # only needs a slot for it.
                     "fence_rules": "",
                     "current_time": now.isoformat(timespec="minutes"),
-                    "capabilities": [f"{t.get('name')}: {t.get('description', '')[:80]}" for t in tools],
+                    "capabilities": ", ".join(
+                        str(t.get("name") or "") for t in tools if t.get("name")
+                    ),
                 },
             )
             return rendered.text
@@ -658,12 +662,17 @@ class AIKernel:
         except Exception:
             return 8192
 
+    def _max_prompt_tokens(self) -> int:
+        llm = getattr(self._deps.settings, "llm", None) if self._deps.settings is not None else None
+        return int(getattr(llm, "max_prompt_tokens", 400) or 400)
+
     async def _generate(
         self,
         request: TurnRequest,
         assembled: Any,
         retrieval: RetrievalResult | None,
         budget: TurnBudget,
+        tools: Sequence[Mapping[str, Any]] = (),
     ) -> tuple[str, str | None, str | None, Any, float, bool, str | None, int, Any, float | None]:
         deps = self._deps
         namespace = request.user_id.value
@@ -675,6 +684,7 @@ class AIKernel:
             ),
             policy=request.routing_policy,
             require_local=request.require_local,
+            tools=tuple(tools),
         )
 
         if deps.cache is not None:

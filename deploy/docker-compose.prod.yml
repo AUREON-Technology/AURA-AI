@@ -138,9 +138,13 @@ services:
       # Nginx is the single trusted hop; this is what makes X-Forwarded-For parsing correct.
       AURA_TRUSTED_PROXY_COUNT: "1"
       AURA_LLM_PROVIDERS: ${AURA_LLM_PROVIDERS:-local}
+      # CPU inference on this VPS exceeds the 60s library default; both the router
+      # deadline (LLM_TIMEOUT_S) and the local provider HTTP client must match.
+      AURA_LLM_TIMEOUT_S: ${AURA_LLM_TIMEOUT_S:-180}
       AURA_PROVIDER_LOCAL_KIND: openai_compatible
       AURA_PROVIDER_LOCAL_BASE_URL: http://ollama:11434/v1
-      AURA_PROVIDER_LOCAL_MODEL: ${AURA_LOCAL_MODEL:-qwen2.5:7b-instruct-q4_K_M}
+      AURA_PROVIDER_LOCAL_MODEL: ${AURA_PROVIDER_LOCAL_MODEL:-${AURA_LOCAL_MODEL:-qwen2.5:3b-instruct-q4_K_M}}
+      AURA_PROVIDER_LOCAL_TIMEOUT_S: ${AURA_PROVIDER_LOCAL_TIMEOUT_S:-180}
       AURA_PROVIDER_LOCAL_IS_LOCAL: "true"
       AURA_PROVIDER_LOCAL_QUALITY_TIER: "1"
       AURA_PROVIDER_LOCAL_MAX_CONCURRENCY: "2"
@@ -270,7 +274,9 @@ services:
       # other request into a cold load.
       OLLAMA_MAX_LOADED_MODELS: "1"
       OLLAMA_KEEP_ALIVE: 30m
-      OLLAMA_NUM_PARALLEL: "2"
+      # One in-flight generation: two concurrent CPU jobs on this 8-core box
+      # time-share the model and both miss the chat timeout.
+      OLLAMA_NUM_PARALLEL: "1"
     healthcheck:
       test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
       interval: 30s
@@ -279,7 +285,8 @@ services:
       start_period: 60s
     deploy:
       resources:
-        limits: {cpus: "4.0", memory: 10G}
+        # 6 of 8 cores for inference; leave 2 for postgres/redis/gateway/nginx.
+        limits: {cpus: "6.0", memory: 10G}
     # For a GPU host, uncomment and install the NVIDIA container toolkit:
     #   deploy.resources.reservations.devices:
     #     - {driver: nvidia, count: 1, capabilities: [gpu]}

@@ -67,6 +67,7 @@ class TestPipelineOverhead:
             history=Conversation.of([Message.user(f"turn {i}") for i in range(12)]),
             retrieval=RetrievalResult(chunks=chunks),
             context_window=8192,
+            max_prompt_tokens=0,
         )
 
         samples = []

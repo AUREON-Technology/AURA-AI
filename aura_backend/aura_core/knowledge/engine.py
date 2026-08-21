@@ -88,7 +88,7 @@ class KnowledgeEngine:
         graph: Any = None,
         extractor: Any = None,
         chunking: ChunkingConfig | None = None,
-        top_k: int = 6,
+        top_k: int = 2,
         candidate_k: int = 24,
         score_threshold: float = 0.35,
         hybrid_enabled: bool = True,

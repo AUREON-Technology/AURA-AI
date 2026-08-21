@@ -131,6 +131,10 @@ class Container:
         self.context = ContextEngine(
             tokenizer=get_tokenizer(model=self._primary_model()),
             metrics=self.metrics,
+            history_turns=settings.memory.prompt_history_messages,
+            max_prompt_tokens=settings.llm.max_prompt_tokens,
+            knowledge_chunk_max_chars=settings.knowledge.prompt_chunk_max_chars,
+            max_knowledge_items=settings.knowledge.retrieval_top_k,
         )
 
         self.index_manager = IndexManager(

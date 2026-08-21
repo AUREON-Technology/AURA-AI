@@ -28,9 +28,25 @@ from ..domain.messages import Conversation, Message, Role, TrustChannel
 from ..observability.logging import get_logger
 from .tokenizer import Tokenizer, get_tokenizer
 
-__all__ = ["ContextEngine", "ContextRequest", "AssembledContext"]
+__all__ = [
+    "ContextEngine",
+    "ContextRequest",
+    "AssembledContext",
+    "DEFAULT_MAX_PROMPT_TOKENS",
+    "DEFAULT_HISTORY_TURNS",
+    "DEFAULT_KNOWLEDGE_CHUNK_MAX_CHARS",
+    "DEFAULT_MAX_KNOWLEDGE_ITEMS",
+]
 
 logger = get_logger("context")
+
+#: Hard cap on the assembled completion prompt (system + RAG + memory + history + user).
+#: CPU-only qwen2.5 7B prompt-eval is ~11 tok/s; 400 tokens keeps prefill under ~40s.
+DEFAULT_MAX_PROMPT_TOKENS = 400
+DEFAULT_HISTORY_TURNS = 4
+DEFAULT_KNOWLEDGE_CHUNK_MAX_CHARS = 280
+DEFAULT_MAX_KNOWLEDGE_ITEMS = 2
+_CLIP_MARKER = " […truncated]"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +64,8 @@ class ContextRequest:
     context_window: int = 8192
     max_output_tokens: int = 1024
     memory_token_budget: int | None = None
+    #: None uses the engine default. 0 disables the extra cap (provider window only).
+    max_prompt_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,27 +92,48 @@ class ContextEngine:
         *,
         tokenizer: Tokenizer | None = None,
         metrics: Any = None,
-        history_turns: int = 12,
+        history_turns: int = DEFAULT_HISTORY_TURNS,
         min_relevance: float = 0.0,
+        max_prompt_tokens: int = DEFAULT_MAX_PROMPT_TOKENS,
+        knowledge_chunk_max_chars: int = DEFAULT_KNOWLEDGE_CHUNK_MAX_CHARS,
+        max_knowledge_items: int = DEFAULT_MAX_KNOWLEDGE_ITEMS,
     ) -> None:
         self._tokenizer = tokenizer or get_tokenizer()
         self._metrics = metrics
         self._history_turns = history_turns
         self._min_relevance = min_relevance
+        self._max_prompt_tokens = max_prompt_tokens
+        self._knowledge_chunk_max_chars = knowledge_chunk_max_chars
+        self._max_knowledge_items = max_knowledge_items
 
     # -- budgeting ---------------------------------------------------------------------
 
     def budget_for(self, request: ContextRequest) -> ContextBudget:
-        """Derive the budget from the provider's window.
+        """Derive the budget from the provider's window and the prompt cap.
 
-        Reserves output space plus a 5 % margin. The margin absorbs tokenizer estimation error
-        (``HeuristicTokenizer`` is biased high but not exact) and per-provider framing
-        differences -- without it, a prompt sized to exactly the window overflows on the vendor
-        whose message framing costs two more tokens than ours.
+        Reserves output space plus a 5 % margin against the provider window. A separate
+        ``max_prompt_tokens`` cap bounds *prefill* independently of the window -- otherwise a
+        8k-context local model would still ingest 1k+ token RAG prompts that CPU Ollama cannot
+        evaluate before the stream timeout.
         """
         usable = int(request.context_window * 0.95)
         reserved = min(request.max_output_tokens, max(256, usable // 4))
-        return ContextBudget(total=usable, reserved_for_output=reserved)
+        cap = self._effective_prompt_cap(request)
+        if cap is None:
+            return ContextBudget(total=usable, reserved_for_output=reserved)
+        # Prefill is the assembled prompt. Output reservation must not consume that cap.
+        # Hold ~15 % back for fence wrappers, section headers, and per-message framing, which
+        # are added at render time and are not in item.token counts.
+        framing = max(48, cap * 15 // 100)
+        available = max(64, cap - framing)
+        return ContextBudget(total=available + 1, reserved_for_output=1)
+
+    def _effective_prompt_cap(self, request: ContextRequest) -> int | None:
+        if request.max_prompt_tokens == 0:
+            return None
+        if request.max_prompt_tokens is not None:
+            return request.max_prompt_tokens
+        return self._max_prompt_tokens or None
 
     # -- candidate construction --------------------------------------------------------
 
@@ -154,26 +193,31 @@ class ContextEngine:
         if request.retrieval is None:
             return []
         items = []
+        kept = 0
         for index, retrieved in enumerate(request.retrieval.chunks):
             if retrieved.quarantined:
                 # Quarantined chunks never reach the model, even fenced. The taint flag on the
                 # turn is what the rest of the pipeline reacts to.
                 continue
-            content = retrieved.chunk.content
+            if kept >= self._max_knowledge_items:
+                break
+            content = _clip_chars(retrieved.chunk.content, self._knowledge_chunk_max_chars)
             items.append(
                 ContextItem(
                     content=content,
                     section=ContextSection.KNOWLEDGE,
                     channel=TrustChannel.DATA,
                     relevance=retrieved.score,
-                    # Rank order is a tiebreak within equal relevance, keeping the reranker's
-                    # ordering visible in the final prompt.
-                    priority=10 - min(index, 9),
+                    # Knowledge outranks memory (20): a retrieved citation is why this turn
+                    # retrieved, and on a tight CPU prefill budget memory would otherwise spend
+                    # the last tokens and drop the chunk.
+                    priority=25 - min(index, 9),
                     tokens=self._tokenizer.count(content),
                     provenance=retrieved.citation(),
                     item_id=retrieved.chunk.id.value,
                 )
             )
+            kept += 1
         return items
 
     def _tool_items(self, request: ContextRequest) -> list[ContextItem]:
@@ -225,6 +269,11 @@ class ContextEngine:
         if not messages:
             return Conversation(), request.history_summary, 0
 
+        dropped_by_window = 0
+        if self._history_turns > 0 and len(messages) > self._history_turns:
+            dropped_by_window = len(messages) - self._history_turns
+            messages = messages[-self._history_turns :]
+
         kept: list[Message] = []
         used = 0
         # Walk backwards so the newest turns win the budget.
@@ -236,12 +285,10 @@ class ContextEngine:
             used += cost
         kept.reverse()
 
-        dropped = len(messages) - len(kept)
+        dropped = dropped_by_window + (len(messages) - len(kept))
         summary = request.history_summary
-        if dropped > 0 and not summary:
-            # No summary was supplied for the turns being dropped. Say so explicitly rather
-            # than letting the model believe the conversation started where the window does.
-            summary = f"[{dropped} earlier turn(s) omitted for length]"
+        # Do not invent an omission notice: it costs a system message and tokens that the
+        # CPU prefill budget needs for RAG. An operator-supplied episodic summary still lands.
         return Conversation.of(kept), summary, dropped
 
     # -- assembly ----------------------------------------------------------------------
@@ -290,11 +337,9 @@ class ContextEngine:
         # Reserve what history will actually consume so the packer cannot spend it.
         history_tokens = sum(self._tokenizer.count(m.content) + 4 for m in history)
         user_tokens = self._tokenizer.count(request.user_message) + 4
+        remaining = budget.total - history_tokens - user_tokens
         packing_budget = ContextBudget(
-            total=max(
-                budget.reserved_for_output + 256,
-                budget.total - history_tokens - user_tokens,
-            ),
+            total=max(budget.reserved_for_output + 64, remaining),
             reserved_for_output=budget.reserved_for_output,
             section_caps=budget.section_caps,
         )
@@ -322,14 +367,32 @@ class ContextEngine:
         )
         history_text = bundle.render(include_sections=(ContextSection.HISTORY,))
 
-        messages: list[Message] = [Message.system(system_text)]
-        if history_text:
-            messages.append(Message.system(history_text))
-        messages.extend(history)
-        messages.append(Message.user(request.user_message))
-
-        conversation = Conversation.of(messages)
-        prompt_tokens = self._tokenizer.count_messages(messages)
+        cap = self._effective_prompt_cap(request)
+        conversation, prompt_tokens, trimmed = self._fit_to_cap(
+            system_text=system_text,
+            history_text=history_text,
+            history=history,
+            user_message=request.user_message,
+            cap=cap,
+        )
+        if cap and prompt_tokens > cap and bundle.by_section(ContextSection.MEMORY):
+            # Memory lost the budget fight: keep instructions + citations.
+            system_text = bundle.render(
+                include_sections=(
+                    ContextSection.INSTRUCTIONS,
+                    ContextSection.KNOWLEDGE,
+                    ContextSection.TOOL_OUTPUT,
+                    ContextSection.SCRATCHPAD,
+                )
+            )
+            conversation, prompt_tokens, trimmed_more = self._fit_to_cap(
+                system_text=system_text,
+                history_text=history_text,
+                history=history,
+                user_message=request.user_message,
+                cap=cap,
+            )
+            trimmed += trimmed_more
         duration_ms = (time.perf_counter() - started) * 1000.0
 
         if self._metrics is not None and bundle.dropped:
@@ -346,11 +409,53 @@ class ContextEngine:
             citations=bundle.citations,
             prompt_tokens=prompt_tokens,
             duration_ms=duration_ms,
-            dropped=len(bundle.dropped) + dropped_turns,
+            dropped=len(bundle.dropped) + dropped_turns + trimmed,
             truncated=len(bundle.truncated),
         )
 
     # -- helpers -----------------------------------------------------------------------
+
+    def _fit_to_cap(
+        self,
+        *,
+        system_text: str,
+        history_text: str,
+        history: Conversation,
+        user_message: str,
+        cap: int | None,
+    ) -> tuple[Conversation, int, int]:
+        """Drop oldest history until the assembled prompt fits ``cap``.
+
+        RAG and instructions stay. History is already in the session store; trimming it here
+        only changes what the model sees this turn.
+        """
+        extra_system = [Message.system(history_text)] if history_text else []
+        history_msgs = list(history)
+        dropped = 0
+
+        def build() -> list[Message]:
+            return [
+                Message.system(system_text),
+                *extra_system,
+                *history_msgs,
+                Message.user(user_message),
+            ]
+
+        messages = build()
+        prompt_tokens = self._tokenizer.count_messages(messages)
+        if not cap:
+            return Conversation.of(messages), prompt_tokens, 0
+        while prompt_tokens > cap and history_msgs:
+            history_msgs.pop(0)
+            dropped += 1
+            messages = build()
+            prompt_tokens = self._tokenizer.count_messages(messages)
+        if prompt_tokens > cap and extra_system:
+            extra_system.clear()
+            dropped += 1
+            messages = build()
+            prompt_tokens = self._tokenizer.count_messages(messages)
+        return Conversation.of(messages), prompt_tokens, dropped
 
     def count(self, text: str) -> int:
         return self._tokenizer.count(text)
@@ -362,3 +467,14 @@ class ContextEngine:
     @property
     def counts_are_exact(self) -> bool:
         return self._tokenizer.exact
+
+
+def _clip_chars(text: str, max_chars: int) -> str:
+    """Bound a retrieved chunk for the prompt without changing the stored document."""
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    budget = max(16, max_chars - len(_CLIP_MARKER))
+    cut = text[:budget]
+    if " " in cut[-32:]:
+        cut = cut[: cut.rfind(" ")]
+    return cut.rstrip() + _CLIP_MARKER

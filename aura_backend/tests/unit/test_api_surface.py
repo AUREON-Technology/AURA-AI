@@ -72,7 +72,7 @@ class TestAuthorisation:
         ("get", "/api/v3/admin/status", None),
         ("post", "/api/v3/admin/index/rebuild", None),
         ("post", "/api/v3/admin/providers/local/reset-circuit", None),
-        ("post", "/api/v3/admin/prompts/system.orchestrator/pin", {"version": "1.0.0"}),
+        ("post", "/api/v3/admin/prompts/system.orchestrator/pin", {"version": "1.1.0"}),
     ]
 
     @pytest.mark.parametrize("method,path,body", ADMIN_ROUTES)
@@ -187,10 +187,10 @@ class TestAdminOperations:
 
     def test_pinning_a_prompt_version_is_the_rollback_lever(self, admin_client) -> None:
         response = admin_client.post(
-            "/api/v3/admin/prompts/system.orchestrator/pin", json={"version": "1.0.0"}
+            "/api/v3/admin/prompts/system.orchestrator/pin", json={"version": "1.1.0"}
         )
         assert response.status_code == 200
-        assert response.json()["pinned"] == "system.orchestrator@1.0.0"
+        assert response.json()["pinned"] == "system.orchestrator@1.1.0"
 
     def test_pinning_an_unknown_version_is_refused(self, admin_client) -> None:
         response = admin_client.post(

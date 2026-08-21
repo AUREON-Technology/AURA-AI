@@ -271,6 +271,9 @@ class LLMSettings:
     semantic_cache_enabled: bool = True
     semantic_cache_threshold: float = 0.97
     max_generations_per_turn: int = 8
+    #: Assembled prompt cap (prefill). Independent of the provider context window so a local
+    #: 8k model does not ingest 1k+ token RAG prompts that CPU Ollama cannot evaluate in time.
+    max_prompt_tokens: int = 400
 
     #: Used when nothing is configured, so ``aura_core`` is importable and testable out of the
     #: box. ``validate()`` refuses to let it run in staging/production.
@@ -308,6 +311,7 @@ class LLMSettings:
             semantic_cache_enabled=_bool("LLM_SEMANTIC_CACHE_ENABLED", True),
             semantic_cache_threshold=_float("LLM_SEMANTIC_CACHE_THRESHOLD", 0.97, minimum=0.5, maximum=1.0),
             max_generations_per_turn=_int("LLM_MAX_GENERATIONS_PER_TURN", 8, minimum=1, maximum=64),
+            max_prompt_tokens=_int("LLM_MAX_PROMPT_TOKENS", 400, minimum=64, maximum=32768),
         )
 
     @property
@@ -322,7 +326,7 @@ class KnowledgeSettings:
     chunk_target_tokens: int = 320
     chunk_overlap_sentences: int = 1
     chunk_max_tokens: int = 512
-    retrieval_top_k: int = 6
+    retrieval_top_k: int = 2
     retrieval_candidate_k: int = 24
     score_threshold: float = 0.35
     hybrid_enabled: bool = True
@@ -337,6 +341,9 @@ class KnowledgeSettings:
     mmr_lambda: float = 0.7
     graph_enabled: bool = True
     max_document_bytes: int = 8 * 1024 * 1024
+    #: Character cap applied when a chunk is *injected into the prompt*. Stored chunks stay at
+    #: ``chunk_max_tokens``; this is the citation budget the model actually sees.
+    prompt_chunk_max_chars: int = 280
 
     #: Which of the ten retrieval strategies serves a turn. "simple" is hybrid retrieval with no
     #: extra generations and is the default because it is the only one whose latency is bounded by
@@ -360,7 +367,7 @@ class KnowledgeSettings:
             chunk_target_tokens=_int("KNOWLEDGE_CHUNK_TOKENS", 320, minimum=32, maximum=2048),
             chunk_overlap_sentences=_int("KNOWLEDGE_CHUNK_OVERLAP_SENTENCES", 1, minimum=0, maximum=8),
             chunk_max_tokens=_int("KNOWLEDGE_CHUNK_MAX_TOKENS", 512, minimum=32, maximum=4096),
-            retrieval_top_k=_int("KNOWLEDGE_TOP_K", 6, minimum=1, maximum=50),
+            retrieval_top_k=_int("KNOWLEDGE_TOP_K", 2, minimum=1, maximum=50),
             retrieval_candidate_k=_int("KNOWLEDGE_CANDIDATE_K", 24, minimum=1, maximum=200),
             score_threshold=_float("KNOWLEDGE_SCORE_THRESHOLD", 0.35, minimum=0.0, maximum=1.0),
             hybrid_enabled=_bool("KNOWLEDGE_HYBRID_ENABLED", True),
@@ -375,6 +382,7 @@ class KnowledgeSettings:
             mmr_lambda=_float("KNOWLEDGE_MMR_LAMBDA", 0.7, minimum=0.0, maximum=1.0),
             graph_enabled=_bool("KNOWLEDGE_GRAPH_ENABLED", True),
             max_document_bytes=_int("KNOWLEDGE_MAX_DOC_BYTES", 8 * 1024 * 1024, minimum=1024),
+            prompt_chunk_max_chars=_int("KNOWLEDGE_PROMPT_CHUNK_CHARS", 280, minimum=64, maximum=4000),
         )
 
     def __post_init__(self) -> None:
@@ -394,29 +402,32 @@ class KnowledgeSettings:
 @dataclass(frozen=True, slots=True)
 class MemorySettings:
     enabled: bool = True
-    recall_limit: int = 8
+    recall_limit: int = 3
     recall_min_score: float = 0.25
-    token_budget: int = 600
+    token_budget: int = 80
     episodic_window: int = 12
     summarise_after_turns: int = 20
     extraction_min_confidence: float = 0.7
     consolidation_enabled: bool = True
     duplicate_threshold: float = 0.94
     max_records_per_user: int = 20_000
+    #: Verbatim messages injected into the model. Stored session history is unchanged.
+    prompt_history_messages: int = 4
 
     @classmethod
     def from_env(cls) -> "MemorySettings":
         return cls(
             enabled=_bool("MEMORY_ENABLED", True),
-            recall_limit=_int("MEMORY_RECALL_LIMIT", 8, minimum=1, maximum=100),
+            recall_limit=_int("MEMORY_RECALL_LIMIT", 3, minimum=1, maximum=100),
             recall_min_score=_float("MEMORY_RECALL_MIN_SCORE", 0.25, minimum=0.0, maximum=1.0),
-            token_budget=_int("MEMORY_TOKEN_BUDGET", 600, minimum=0),
+            token_budget=_int("MEMORY_TOKEN_BUDGET", 80, minimum=0),
             episodic_window=_int("MEMORY_EPISODIC_WINDOW", 12, minimum=0, maximum=200),
             summarise_after_turns=_int("MEMORY_SUMMARISE_AFTER", 20, minimum=2),
             extraction_min_confidence=_float("MEMORY_EXTRACTION_MIN_CONFIDENCE", 0.7, minimum=0.0, maximum=1.0),
             consolidation_enabled=_bool("MEMORY_CONSOLIDATION_ENABLED", True),
             duplicate_threshold=_float("MEMORY_DUPLICATE_THRESHOLD", 0.94, minimum=0.5, maximum=1.0),
             max_records_per_user=_int("MEMORY_MAX_RECORDS_PER_USER", 20_000, minimum=100),
+            prompt_history_messages=_int("MEMORY_PROMPT_HISTORY_MESSAGES", 4, minimum=0, maximum=64),
         )
 
 
