@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../../../core/theme/theme.dart';
-import '../../../core/security/device_validation_service.dart';
+
+import 'package:aura_client/core/security/device_validation_service.dart';
+import 'package:aura_client/core/theme/theme.dart';
 import 'auth_provider.dart';
 
 class ProfilePage extends ConsumerStatefulWidget {
@@ -21,37 +22,25 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
     setState(() {
       _isValidating = true;
       _validationStatus = null;
-      _validationLogs = ["Starting local device integrity scan..."];
+      _validationLogs = ['Reading local attestation headers...'];
     });
 
-    await Future.delayed(const Duration(milliseconds: 800));
-    final headers = DeviceValidationService.getAttestationHeaders();
-    final platform = headers["X-Device-Platform"] ?? "unknown";
-    final token = headers["X-Device-Attestation"] ?? "";
+    await Future.delayed(const Duration(milliseconds: 400));
+    final attestation = DeviceValidationService.resolve();
 
     setState(() {
-      _validationLogs.add("Identified platform as: ${platform.toUpperCase()}");
+      _validationLogs.add('Identified platform as: ${attestation.platform.toUpperCase()}');
+      if (attestation.isDebugBypass) {
+        _validationLogs.add('Debug build: sending explicit aura_dev_attestation marker.');
+        _validationLogs.add('This is not a Play Integrity or App Attest token.');
+        _validationStatus = 'Debug marker only — hardware attestation is not enabled in this app';
+      } else {
+        _validationLogs.add('Release build: no Play Integrity / App Attest SDK is shipped.');
+        _validationLogs.add('Header uses aura_attestation_unsupported so the server will not treat it as real.');
+        _validationStatus = 'Hardware attestation unsupported on this client';
+      }
+      _isValidating = false;
     });
-    await Future.delayed(const Duration(milliseconds: 600));
-
-    setState(() {
-      _validationLogs.add("Retrieving secure hardware attestation token...");
-    });
-    await Future.delayed(const Duration(milliseconds: 600));
-
-    if (token.isNotEmpty) {
-      setState(() {
-        _validationLogs.add("Token resolved: ${token.substring(0, 15)}...");
-        _validationLogs.add("Validating token formats against local debug profiles...");
-        _validationStatus = "Device Fully Valid & Verified";
-        _isValidating = false;
-      });
-    } else {
-      setState(() {
-        _validationStatus = "Integrity check failed: missing token";
-        _isValidating = false;
-      });
-    }
   }
 
   @override
@@ -64,17 +53,17 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: const Text(
-          "User Profile & Security",
+          'User Profile & Security',
           style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
         ),
       ),
       body: authState.when(
         data: (profile) {
           if (profile == null) {
-            return const Center(child: Text("Not signed in", style: TextStyle(color: Colors.white70)));
+            return const Center(child: Text('Not signed in', style: TextStyle(color: Colors.white70)));
           }
 
-          final avatarUrl = profile.photoUrl ?? "https://api.dicebear.com/7.x/bottts/png?seed=${profile.displayName}";
+          final avatarUrl = profile.photoUrl ?? 'https://api.dicebear.com/7.x/bottts/png?seed=${profile.displayName}';
 
           return Padding(
             padding: const EdgeInsets.all(24.0),
@@ -93,7 +82,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
           );
         },
         loading: () => const Center(child: CircularProgressIndicator(color: AuraTheme.accentIndigo)),
-        error: (err, _) => Center(child: Text("Error: $err", style: const TextStyle(color: Colors.redAccent))),
+        error: (err, _) => Center(child: Text('Error: $err', style: const TextStyle(color: Colors.redAccent))),
       ),
     );
   }
@@ -128,7 +117,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                 borderRadius: BorderRadius.circular(20),
               ),
               child: const Text(
-                "Authorized User",
+                'Authorized User',
                 style: TextStyle(color: AuraTheme.accentIndigo, fontSize: 11, fontWeight: FontWeight.bold),
               ),
             )
@@ -150,15 +139,17 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
               children: [
                 Icon(Icons.security, color: AuraTheme.accentTeal, size: 24),
                 SizedBox(width: 12),
-                Text(
-                  "Device Integrity & Attestation",
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+                Expanded(
+                  child: Text(
+                    'Device Attestation Status',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: 10),
             const Text(
-              "AURA AI validates device integrity in production via Google Play Integrity API (Android) and App Attest (iOS) to prevent automated bots or root exploits from accessing backend models.",
+              'This client does not request Google Play Integrity or Apple App Attest tokens. Debug builds send an explicit development marker; release builds advertise that hardware attestation is unsupported. Backend verification of real Play Integrity tokens exists, but this app cannot produce them without a vendor SDK and Play Console keys.',
               style: TextStyle(fontSize: 12, color: AuraTheme.textSecondary, height: 1.4),
             ),
             const SizedBox(height: 20),
@@ -173,8 +164,8 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                             height: 16,
                             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                           )
-                        : const Icon(Icons.verified_user, size: 16),
-                    label: const Text("Scan Device Integrity"),
+                        : const Icon(Icons.info_outline, size: 16),
+                    label: const Text('Show Attestation Status'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AuraTheme.accentTeal,
                     ),
@@ -198,7 +189,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 4.0),
                       child: Text(
-                        "> $log",
+                        '> $log',
                         style: const TextStyle(
                           fontFamily: 'monospace',
                           fontSize: 11,
@@ -215,8 +206,9 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
               Center(
                 child: Text(
                   _validationStatus!,
+                  textAlign: TextAlign.center,
                   style: const TextStyle(
-                    color: AuraTheme.accentTeal,
+                    color: AuraTheme.accentAmber,
                     fontWeight: FontWeight.bold,
                     fontSize: 13,
                   ),
@@ -235,11 +227,12 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text(
-              "Session Operations",
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
+            const Expanded(
+              child: Text(
+                'Session Operations',
+                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14),
+              ),
             ),
             TextButton.icon(
               onPressed: () async {
@@ -249,7 +242,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                 }
               },
               icon: const Icon(Icons.logout, size: 16, color: Colors.redAccent),
-              label: const Text("Sign Out", style: TextStyle(color: Colors.redAccent)),
+              label: const Text('Sign Out', style: TextStyle(color: Colors.redAccent)),
             ),
           ],
         ),

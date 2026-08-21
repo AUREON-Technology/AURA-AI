@@ -64,15 +64,19 @@ def verify_device_integrity(attestation_token: Optional[str], platform: Optional
         logger.info("Device integrity bypass: running in testing/debug mode.")
         return True
 
+    # Explicit debug marker from current clients, plus legacy mock strings
+    # from older APKs. `aura_attestation_unsupported` is never listed — that
+    # is the release-build "we have no Play Integrity SDK" marker.
     if settings.allow_mock_attestation and attestation_token in [
+        "aura_dev_attestation",
         "android_play_integrity_mock_assertion_token_string",
         "ios_app_attest_mock_assertion_token_string",
         "windows_hello_mock_attestation_token",
         "macos_device_mock_attestation_token",
         "linux_desktop_mock_attestation_token",
-        "local_developer_trust_token"
+        "local_developer_trust_token",
     ]:
-        logger.info(f"Device integrity bypass: allowed mock token '{attestation_token}'")
+        logger.info("Device integrity bypass: allowed configured debug/mock attestation token")
         return True
         
     if not attestation_token:

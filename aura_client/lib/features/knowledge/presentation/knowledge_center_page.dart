@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/theme/theme.dart';
-import '../../../core/ai/knowledge/knowledge_center.dart';
+import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/ai/knowledge/knowledge_center.dart';
 
 class KnowledgeCenterPage extends ConsumerStatefulWidget {
   const KnowledgeCenterPage({super.key});

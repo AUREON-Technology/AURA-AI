@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../../../core/design_system/design_system.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 
 /// V2 rebuild (Doc/V2_BLUEPRINT.md §3) — replaces the V1 flat grid of 5
 /// equally-weighted dashboard cards (which implied Profile/Models/

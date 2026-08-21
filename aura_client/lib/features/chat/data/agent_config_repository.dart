@@ -1,6 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/database/database.dart';
-import '../../../core/database/database_provider.dart';
+import 'package:aura_client/core/database/database.dart';
+import 'package:aura_client/core/database/database_provider.dart';
 
 class AgentConfigRepository {
   final AppDatabase _db;

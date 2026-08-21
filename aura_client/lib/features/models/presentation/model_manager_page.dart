@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/ai/ai_router/aura_ai_router.dart';
-import '../../../core/theme/theme.dart';
+import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
+import 'package:aura_client/core/theme/theme.dart';
 
 /// Reports which engine is serving requests. Read-only, because there is nothing here to manage.
 ///

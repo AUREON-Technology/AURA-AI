@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:local_auth/local_auth.dart';
 import 'auth_provider.dart';
-import '../../../core/design_system/design_system.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 
 /// V2 rebuild (Doc/V2_BLUEPRINT.md §4) — same auth flows as V1, restyled
 /// on the design system (light+dark-ready, contrast-checked palette,

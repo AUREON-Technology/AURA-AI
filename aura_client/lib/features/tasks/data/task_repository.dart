@@ -4,9 +4,9 @@ import 'package:uuid/uuid.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/tasks/v1.dart' as tasks_api;
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
-import '../../../core/database/database.dart';
-import '../../../core/database/database_provider.dart';
-import '../../../core/sync/sync_payloads.dart';
+import 'package:aura_client/core/database/database.dart';
+import 'package:aura_client/core/database/database_provider.dart';
+import 'package:aura_client/core/sync/sync_payloads.dart';
 
 class TaskRepository {
   final AppDatabase _db;

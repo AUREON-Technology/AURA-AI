@@ -1,9 +1,9 @@
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
-import '../../../core/database/database.dart';
-import '../../../core/database/database_provider.dart';
-import '../../../core/sync/sync_payloads.dart';
+import 'package:aura_client/core/database/database.dart';
+import 'package:aura_client/core/database/database_provider.dart';
+import 'package:aura_client/core/sync/sync_payloads.dart';
 
 class FinanceStats {
   final double totalIncome;

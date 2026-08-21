@@ -3,12 +3,12 @@ import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
-import '../../../core/database/database.dart';
-import '../../../core/database/database_provider.dart';
-import '../../../core/config/config.dart';
+import 'package:aura_client/core/database/database.dart';
+import 'package:aura_client/core/database/database_provider.dart';
+import 'package:aura_client/core/config/config.dart';
 import '../../auth/presentation/auth_provider.dart';
-import '../../../core/security/device_validation_service.dart';
-import '../../../core/security/deterministic_id.dart';
+import 'package:aura_client/core/security/device_validation_service.dart';
+import 'package:aura_client/core/security/deterministic_id.dart';
 
 class MemoryItem {
   final String id;

@@ -120,6 +120,16 @@ class TestSecurityHardening(unittest.TestCase):
         settings.allow_mock_attestation = True
         
         self.assertTrue(verify_device_integrity("android_play_integrity_mock_assertion_token_string", "android"))
+        self.assertTrue(verify_device_integrity("aura_dev_attestation", "android"))
+
+    @patch('services.security.os.environ')
+    def test_device_integrity_unsupported_marker_rejected(self, mock_env):
+        """Release-client unsupported marker is never treated as attestation."""
+        mock_env.get.return_value = "False"
+        settings.debug_mode = False
+        settings.allow_mock_attestation = True
+
+        self.assertFalse(verify_device_integrity("aura_attestation_unsupported", "android"))
 
     @patch('services.security.os.environ')
     def test_device_integrity_android_invalid_jws(self, mock_env):

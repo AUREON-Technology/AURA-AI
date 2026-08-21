@@ -2,8 +2,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import '../../../core/auth/token_manager.dart';
-import '../../../core/security/aura_secure_storage.dart';
+import 'package:aura_client/core/auth/token_manager.dart';
+import 'package:aura_client/core/security/aura_secure_storage.dart';
 
 class UserProfile {
   final String id;

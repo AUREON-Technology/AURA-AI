@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:fl_chart/fl_chart.dart';
-import '../../../core/database/database.dart';
-import '../../../core/database/database_provider.dart';
-import '../../../core/theme/theme.dart';
+import 'package:aura_client/core/database/database.dart';
+import 'package:aura_client/core/database/database_provider.dart';
+import 'package:aura_client/core/theme/theme.dart';
 
 final telemetryLogsFutureProvider = FutureProvider.autoDispose<List<TelemetryLog>>((ref) async {
   final db = ref.watch(databaseProvider);

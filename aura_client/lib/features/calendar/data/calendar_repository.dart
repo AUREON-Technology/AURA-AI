@@ -4,9 +4,9 @@ import 'package:uuid/uuid.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/calendar/v3.dart' as calendar_api;
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
-import '../../../core/database/database.dart';
-import '../../../core/database/database_provider.dart';
-import '../../../core/sync/sync_payloads.dart';
+import 'package:aura_client/core/database/database.dart';
+import 'package:aura_client/core/database/database_provider.dart';
+import 'package:aura_client/core/sync/sync_payloads.dart';
 
 class CalendarRepository {
   final AppDatabase _db;

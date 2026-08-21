@@ -2,10 +2,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
-import '../../../core/config/config.dart';
-import '../../../core/theme/theme.dart';
+import 'package:aura_client/core/config/config.dart';
+import 'package:aura_client/core/theme/theme.dart';
 import '../../auth/presentation/auth_provider.dart';
-import '../../../core/security/device_validation_service.dart';
+import 'package:aura_client/core/security/device_validation_service.dart';
 
 final learningStatsProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
   final token = await ref.read(authProvider.notifier).getIdToken();
