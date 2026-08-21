@@ -1,5 +1,8 @@
 import os
 from celery import Celery
+from celery.schedules import crontab
+
+from infrastructure.secret_hydration import hydrate_secrets_from_files
 
 
 def _redis_password() -> str | None:
@@ -14,6 +17,29 @@ def _redis_password() -> str | None:
     return os.environ.get("AURA_REDIS_PASSWORD")
 
 
+def _truthy(raw: str | None, default: bool = True) -> bool:
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _crontab_from_cron(expr: str) -> crontab:
+    parts = expr.split()
+    if len(parts) != 5:
+        parts = ["0", "2", "*", "*", "*"]
+    return crontab(
+        minute=parts[0],
+        hour=parts[1],
+        day_of_month=parts[2],
+        month_of_year=parts[3],
+        day_of_week=parts[4],
+    )
+
+
+# Beat is scheduler-only; workers execute. Hydrate Postgres/Qdrant/JWT so a
+# worker that imported this module can build the v3 container.
+hydrate_secrets_from_files()
+
 redis_host = os.getenv("REDIS_HOST", "localhost")
 _redis_password_value = _redis_password()
 _redis_auth = f":{_redis_password_value}@" if _redis_password_value else ""
@@ -22,7 +48,7 @@ _redis_url = f"redis://{_redis_auth}{redis_host}:6379/0"
 celery_app = Celery(
     "aura_tasks",
     broker=_redis_url,
-    backend=_redis_url
+    backend=_redis_url,
 )
 
 celery_app.conf.update(
@@ -38,10 +64,27 @@ celery_app.conf.update(
 # top of the on-demand POST /api/v2/insights/generate endpoint (which
 # works without a beat scheduler at all). Requires a separate
 # `celery -A celery_app beat` process — see docker-compose.yml's
-# celery_beat service.
-celery_app.conf.beat_schedule = {
+# celery_beat service. Beat only enqueues; workers consume the queues.
+_beat_schedule = {
     "generate-insights-hourly": {
         "task": "tasks.generate_insights_for_all_users_task",
         "schedule": 3600.0,
+        "options": {"queue": "realtime"},
+    },
+    "memory-consolidate-daily": {
+        "task": "tasks.memory_consolidate_task",
+        "schedule": crontab(minute=30, hour=2),
+        "options": {"queue": "learning"},
     },
 }
+
+if _truthy(os.environ.get("AURA_LEARNING_REFRESH_ENABLED"), default=True):
+    _beat_schedule["knowledge-refresh-nightly"] = {
+        "task": "tasks.knowledge_refresh_task",
+        "schedule": _crontab_from_cron(
+            os.environ.get("AURA_LEARNING_REFRESH_CRON") or "0 2 * * *"
+        ),
+        "options": {"queue": "learning"},
+    }
+
+celery_app.conf.beat_schedule = _beat_schedule

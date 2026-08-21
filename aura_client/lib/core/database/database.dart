@@ -121,6 +121,9 @@ class Messages extends Table {
   // avoid an unrelated cleanup; this column is the correctly-purposed one
   // for new code to read.
   TextColumn get agentId => text().nullable()();
+  // Cursor-sync clock (AURA-014). Tombstones are not stored locally —
+  // a pull row with `deleted_at` deletes this row, same as tasks.
+  DateTimeColumn get updatedAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -235,8 +238,11 @@ class TelemetryLogs extends Table {
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
+  /// In-memory / test executor. Production uses [_openConnection].
+  AppDatabase.forTesting(super.e);
+
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 9;
 
   Future<List<TelemetryLog>> getTelemetry() => select(telemetryLogs).get();
   Future<void> insertTelemetry(TelemetryLogsCompanion log) => into(telemetryLogs).insert(log);
@@ -357,6 +363,9 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(messages, messages.citationsJson);
             await m.addColumn(messages, messages.toolCallsJson);
             await m.addColumn(messages, messages.agentId);
+          }
+          if (from < 9) {
+            await m.addColumn(messages, messages.updatedAt);
           }
         },
         beforeOpen: (details) async {

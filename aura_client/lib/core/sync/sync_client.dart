@@ -9,6 +9,7 @@ import '../database/database.dart';
 import '../database/database_provider.dart';
 import '../security/device_validation_service.dart';
 import '../security/encryption_service.dart';
+import 'outbox_ack.dart';
 import 'sync_result.dart';
 
 /// V2 cursor-based sync client (Doc/V2_BLUEPRINT.md §5/§7) — talks to
@@ -19,17 +20,17 @@ import 'sync_result.dart';
 /// the diffing (`WHERE user_id = ? AND updated_at > ?`); the client only
 /// has to (1) push its outbox and (2) apply whatever rows come back.
 ///
-/// Scope note: Tasks/CalendarEvents/FinanceRecords/HealthRecords are wired
-/// to this protocol. UserMemories stay on the existing Qdrant-backed
-/// `/api/memory/*` endpoints (MemoryRepository) for now — that data is
-/// shaped around embeddings, not a plain CRUD row, and folding it into the
-/// same cursor protocol is Phase 1.5/2 work, not part of this rebuild.
+/// Scope note: Tasks/CalendarEvents/FinanceRecords/HealthRecords/Messages
+/// are wired to this protocol. UserMemories go through `/api/v3/memory`
+/// (MemoryRepository) — that data is shaped around embeddings, not a plain
+/// CRUD row.
 class SyncClient {
   final AppDatabase _db;
   final Ref _ref;
+  final http.Client? _http;
   static const String _syncUrl = "${AppConfig.backendUrl}/api/v2/sync";
 
-  SyncClient(this._db, this._ref);
+  SyncClient(this._db, this._ref, {http.Client? httpClient}) : _http = httpClient;
 
   // v2 endpoints authenticate via TokenManager's backend-issued JWT
   // (Doc/V2_BLUEPRINT.md §9), not the raw Google ID token v1 endpoints use.
@@ -37,7 +38,7 @@ class SyncClient {
     final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
     final headers = <String, String>{"Content-Type": "application/json"};
     if (token != null) headers["Authorization"] = "Bearer $token";
-    headers.addAll(DeviceValidationService.getAttestationHeaders());
+    headers.addAll(await DeviceValidationService.getAttestationHeaders());
     return headers;
   }
 
@@ -51,6 +52,20 @@ class SyncClient {
       response = await send();
     }
     return response;
+  }
+
+  Future<http.Response> _post(Uri uri, {required Map<String, String> headers, required String body}) {
+    final client = _http;
+    final sent = client != null
+        ? client.post(uri, headers: headers, body: body)
+        : http.post(uri, headers: headers, body: body);
+    return sent.timeout(const Duration(seconds: 20));
+  }
+
+  Future<http.Response> _get(Uri uri, {required Map<String, String> headers}) {
+    final client = _http;
+    final sent = client != null ? client.get(uri, headers: headers) : http.get(uri, headers: headers);
+    return sent.timeout(const Duration(seconds: 20));
   }
 
   /// Pushes the outbox, then pulls everything changed since the last
@@ -78,9 +93,11 @@ class SyncClient {
 
     try {
       final response = await _send(() async {
-        return http
-            .post(Uri.parse(_syncUrl), headers: await _headers(), body: jsonEncode({"mutations": mutations}))
-            .timeout(const Duration(seconds: 20));
+        return _post(
+          Uri.parse(_syncUrl),
+          headers: await _headers(),
+          body: jsonEncode({"mutations": mutations}),
+        );
       });
 
       if (response.statusCode == 401) {
@@ -96,12 +113,21 @@ class SyncClient {
         return const SyncResult.fail(SyncFailureKind.unknown);
       }
 
-      // Every mutation the server responded to (applied OR conflict) is
-      // done from this client's point of view — a conflict means the
-      // server holds a newer value, which the subsequent pull() brings
-      // down; retrying the same push would just conflict again.
-      final ids = pending.map((e) => e.id).toList();
-      await (_db.delete(_db.outboxEntries)..where((t) => t.id.isIn(ids))).go();
+      // Applied and conflicted rows are done from this client's point of
+      // view (a conflict is resolved by the subsequent pull). Error rows
+      // stay in the outbox for retry — HTTP 200 used to wipe them too.
+      final decoded = jsonDecode(response.body);
+      if (decoded is! List) {
+        debugPrint("[SyncClient] push response was not a result list; leaving outbox intact");
+        return const SyncResult.fail(SyncFailureKind.unknown);
+      }
+      final idsToDrop = outboxIdsToDrop(
+        pendingIds: pending.map((e) => e.id).toList(),
+        results: decoded,
+      );
+      if (idsToDrop.isNotEmpty) {
+        await (_db.delete(_db.outboxEntries)..where((t) => t.id.isIn(idsToDrop))).go();
+      }
       return const SyncResult.success();
     } catch (e) {
       debugPrint("[SyncClient] push error: $e");
@@ -115,7 +141,7 @@ class SyncClient {
 
     try {
       final response = await _send(() async {
-        return http.get(uri, headers: await _headers()).timeout(const Duration(seconds: 20));
+        return _get(uri, headers: await _headers());
       });
       if (response.statusCode == 401) {
         debugPrint("[SyncClient] pull unauthorized: ${response.statusCode}");
@@ -138,6 +164,7 @@ class SyncClient {
         await _applyCalendarEvents(data["calendar_events"] as List<dynamic>? ?? const []);
         await _applyFinanceRecords(data["finance_records"] as List<dynamic>? ?? const []);
         await _applyHealthRecords(data["health_records"] as List<dynamic>? ?? const []);
+        await _applyMessages(data["messages"] as List<dynamic>? ?? const []);
       });
 
       await _db.setSyncCursor(body["cursor"] as String);
@@ -237,6 +264,43 @@ class SyncClient {
             exerciseMinutes: Value(row["exercise_minutes"] as int? ?? 0),
             createdAt: Value(_parseDate(row["created_at"]) ?? DateTime.now()),
             isSynced: const Value(true),
+            updatedAt: Value(_parseDate(row["updated_at"])),
+          ));
+    }
+  }
+
+  Future<void> _applyMessages(List<dynamic> rows) async {
+    for (final raw in rows) {
+      final row = raw as Map<String, dynamic>;
+      final id = row["id"] as String;
+      if (row["deleted_at"] != null) {
+        await (_db.delete(_db.messages)..where((t) => t.id.equals(id))).go();
+        continue;
+      }
+      final contentEnc = row["content_enc"] as String?;
+      if (contentEnc == null) {
+        debugPrint("[SyncClient] skipping message $id: missing content_enc");
+        continue;
+      }
+      await _db.into(_db.messages).insertOnConflictUpdate(MessagesCompanion(
+            id: Value(id),
+            conversationId: Value(row["conversation_id"] as String),
+            role: Value(row["role"] as String),
+            content: Value(EncryptionService.decryptText(contentEnc)),
+            modelUsed: Value(row["model_used"] as String?),
+            tokensUsed: Value(row["tokens_used"] as int?),
+            citationsJson: Value(
+              row["citations_enc"] != null
+                  ? EncryptionService.decryptText(row["citations_enc"] as String)
+                  : null,
+            ),
+            toolCallsJson: Value(
+              row["tool_calls_enc"] != null
+                  ? EncryptionService.decryptText(row["tool_calls_enc"] as String)
+                  : null,
+            ),
+            agentId: Value(row["persona"] as String?),
+            createdAt: Value(_parseDate(row["created_at"]) ?? DateTime.now()),
             updatedAt: Value(_parseDate(row["updated_at"])),
           ));
     }

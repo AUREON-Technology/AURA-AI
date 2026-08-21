@@ -20,7 +20,9 @@ from .curation import (
     FineTuneRecommendation,
     dataset_digest,
 )
+from .feedback import FeedbackStore, InMemoryFeedbackStore
 from .knowledge_refresh import KnowledgeRefreshPipeline, RefreshReport, SourceOutcome
+from .jobs import run_knowledge_refresh, run_memory_consolidate
 from .sources import (
     CompositeFetcher,
     FetchedDocument,
@@ -42,8 +44,12 @@ __all__ = [
     "StaticSourceFetcher",
     "CompositeFetcher",
     "FetchedDocument",
+    "run_knowledge_refresh",
+    "run_memory_consolidate",
     "DatasetCurator",
     "FeedbackRecord",
+    "FeedbackStore",
+    "InMemoryFeedbackStore",
     "CuratedExample",
     "DatasetStatistics",
     "FineTuneRecommendation",

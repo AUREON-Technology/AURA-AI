@@ -84,6 +84,22 @@ class TestSyncServerOwnedColumns(unittest.TestCase):
                 f"{table_name} is missing server-owned column(s) {missing}",
             )
 
+    def test_messages_is_a_syncable_model(self):
+        """AURA-014: chat rows must ride the generic cursor loop."""
+        self.assertIn("messages", SYNCABLE_MODELS)
+        columns = set(SYNCABLE_MODELS["messages"].__table__.columns.keys())
+        for required in (
+            "conversation_id",
+            "role",
+            "content_enc",
+            "model_used",
+            "tokens_used",
+            "citations_enc",
+            "tool_calls_enc",
+            "persona",
+        ):
+            self.assertIn(required, columns)
+
 
 if __name__ == "__main__":
     unittest.main()

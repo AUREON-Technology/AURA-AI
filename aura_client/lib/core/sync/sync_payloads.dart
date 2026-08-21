@@ -44,4 +44,19 @@ class SyncPayloads {
         "calories": r.caloriesConsumed,
         "exercise_minutes": r.exerciseMinutes,
       };
+
+  /// Postgres `messages` columns (AURA-014). Drift `agentId` is `persona`;
+  /// `citationsJson` / `toolCallsJson` travel as `citations_enc` /
+  /// `tool_calls_enc`. Ciphertext is produced here from already-decrypted
+  /// Drift fields, matching [task].
+  static Map<String, dynamic> message(Message m) => {
+        "conversation_id": m.conversationId,
+        "role": m.role,
+        "content_enc": EncryptionService.encryptText(m.content),
+        "model_used": m.modelUsed,
+        "tokens_used": m.tokensUsed,
+        "citations_enc": m.citationsJson != null ? EncryptionService.encryptText(m.citationsJson!) : null,
+        "tool_calls_enc": m.toolCallsJson != null ? EncryptionService.encryptText(m.toolCallsJson!) : null,
+        "persona": m.agentId,
+      };
 }

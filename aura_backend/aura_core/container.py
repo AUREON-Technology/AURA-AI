@@ -80,6 +80,7 @@ class Container:
             {
                 "debug": settings.debug,
                 "mock_auth": settings.security.allow_mock_auth,
+                "mock_attestation": settings.security.allow_mock_attestation,
                 "safety_disabled": not settings.safety.enabled,
                 "rate_limit_disabled": not settings.security.rate_limit_enabled,
             }
@@ -87,7 +88,6 @@ class Container:
 
         self.clock = SystemClock()
         self.events = InMemoryEventBus(metrics=self.metrics)
-        self.audit = InMemoryAuditSink(clock=self.clock)
 
         # Memoised by _postgres_pool(); declared before the stores are built because both of them
         # ask for it.
@@ -98,7 +98,10 @@ class Container:
         self.vectors = self._build_vector_store()
         self.documents = self._build_document_store()
         self.memory_store = self._build_memory_store()
-        self.graph = InMemoryGraphStore()
+        self.graph = self._build_graph_store()
+        self.feedback = self._build_feedback_store()
+        self.audit = self._build_audit_sink()
+        self.sources = self._build_source_registry()
 
         self.providers = build_providers(
             settings.llm, model_allowlist=settings.security.model_allowlist
@@ -181,6 +184,23 @@ class Container:
             max_document_bytes=settings.knowledge.max_document_bytes,
             metrics=self.metrics,
             event_bus=self.events,
+        )
+
+        learning = settings.learning
+        from .learning.knowledge_refresh import KnowledgeRefreshPipeline
+        from .learning.sources import HttpSourceFetcher
+
+        self.source_fetcher = HttpSourceFetcher()
+        self.refresh_pipeline = KnowledgeRefreshPipeline(
+            registry=self.sources,
+            fetcher=self.source_fetcher,
+            knowledge=self.knowledge,
+            index_manager=self.index_manager,
+            metrics=self.metrics,
+            event_bus=self.events,
+            max_documents=learning.refresh_max_documents,
+            promote_requires_gates=learning.promote_requires_gates,
+            index_retention_days=learning.index_retention_days,
         )
 
         self.memory = (
@@ -395,6 +415,47 @@ class Container:
             raise ConfigurationError(f"unknown memory backend {backend!r}")
         return InMemoryMemoryStore()
 
+    def _build_graph_store(self) -> Any:
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_graph import PostgresGraphStore
+
+            return PostgresGraphStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        return InMemoryGraphStore()
+
+    def _build_feedback_store(self) -> Any:
+        infra = self.settings.infrastructure
+        if infra.document_backend == "postgres" or infra.memory_backend == "postgres":
+            from .adapters.postgres_feedback import PostgresFeedbackStore
+
+            return PostgresFeedbackStore(infra.database_url, pool=self._postgres_pool())
+        from .learning.feedback import InMemoryFeedbackStore
+
+        return InMemoryFeedbackStore()
+
+    def _build_audit_sink(self) -> Any:
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_audit import PostgresAuditSink
+
+            return PostgresAuditSink(
+                self.settings.infrastructure.database_url,
+                pool=self._postgres_pool(),
+                clock=self.clock,
+            )
+        return InMemoryAuditSink(clock=self.clock)
+
+    def _build_source_registry(self) -> Any:
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_sources import PostgresSourceRegistry
+
+            return PostgresSourceRegistry(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        from .learning.sources import InMemorySourceRegistry
+
+        return InMemorySourceRegistry()
+
     def _build_tools(self) -> ToolRegistry:
         registry = ToolRegistry(
             policy=ToolPolicy.from_settings(self.settings.tools),
@@ -430,6 +491,9 @@ class Container:
         close = getattr(self.embedder, "close", None)
         if close is not None:
             await close()
+        mark_dead = getattr(self.metrics, "mark_process_dead", None)
+        if mark_dead is not None:
+            mark_dead()
         logger.info("container shutdown complete")
 
     async def health(self) -> dict[str, Any]:

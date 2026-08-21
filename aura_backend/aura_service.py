@@ -14,7 +14,6 @@ what ``deploy/docker-compose.prod.yml`` runs.
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from fastapi import HTTPException, Response
@@ -26,60 +25,9 @@ from aura_core.domain.errors import AuthenticationError, ConfigurationError
 from aura_core.domain.identifiers import UserId
 from aura_core.observability.logging import get_logger
 from aura_core.security import SlidingWindowRateLimiter
+from infrastructure.secret_hydration import hydrate_secrets_from_files
 
 logger = get_logger("service")
-
-
-def _read_secret_file(env_var: str) -> str | None:
-    """Read a value from a Docker secret file named by ``<VAR>_FILE``.
-
-    Secrets arrive as files rather than environment values so they are not visible in
-    ``docker inspect``, process listings, or a crash dump's environment block (SEC-08).
-    """
-    path = os.environ.get(f"{env_var}_FILE")
-    if not path or not os.path.exists(path):
-        return None
-    with open(path, encoding="utf-8") as handle:
-        return handle.read().strip()
-
-
-def _hydrate_secrets_from_files() -> None:
-    """Populate settings variables from their ``*_FILE`` counterparts before settings load."""
-    password = _read_secret_file("AURA_DATABASE_URL")
-    if password and not os.environ.get("AURA_DATABASE_URL"):
-        host = os.environ.get("POSTGRES_HOST", "postgres")
-        os.environ["AURA_DATABASE_URL"] = (
-            f"postgresql+asyncpg://aura:{password}@{host}:5432/aura"
-        )
-
-    redis_password = _read_secret_file("AURA_REDIS_PASSWORD")
-    if redis_password and not os.environ.get("AURA_REDIS_URL"):
-        host = os.environ.get("REDIS_HOST", "redis")
-        os.environ["AURA_REDIS_URL"] = f"redis://:{redis_password}@{host}:6379/0"
-
-    for variable in ("AURA_QDRANT_API_KEY", "AURA_JWT_SECRET"):
-        value = _read_secret_file(variable)
-        if value and not os.environ.get(variable):
-            os.environ[variable] = value
-
-    # aura_core reads AURA_* names; legacy config.py / jwt_auth / sync read the
-    # unprefixed pydantic-settings names (JWT_SECRET, DATABASE_URL, …). Without
-    # this copy, each uvicorn worker mints a random JWT secret and Postgres
-    # sync raises RuntimeError → 500 even though the Docker secrets are present.
-    _mirror_legacy_secret_env()
-
-
-def _mirror_legacy_secret_env() -> None:
-    """Copy AURA_* secrets onto the unprefixed names legacy Settings expects."""
-    for aura_name, legacy_name in (
-        ("AURA_JWT_SECRET", "JWT_SECRET"),
-        ("AURA_DATABASE_URL", "DATABASE_URL"),
-        ("AURA_QDRANT_API_KEY", "QDRANT_API_KEY"),
-        ("AURA_REDIS_URL", "REDIS_URL"),
-    ):
-        value = os.environ.get(aura_name)
-        if value and not os.environ.get(legacy_name):
-            os.environ[legacy_name] = value
 
 
 def _build_authenticator(settings: Any):
@@ -154,7 +102,7 @@ def create_app(*, standalone: bool = False):
     AI gateway as its own service). The default mounts v3 onto the existing application so v1
     and v2 keep serving the shipped client.
     """
-    _hydrate_secrets_from_files()
+    hydrate_secrets_from_files()
     settings = load_settings()
     container = build_container(settings)
     authenticator = _build_authenticator(settings)

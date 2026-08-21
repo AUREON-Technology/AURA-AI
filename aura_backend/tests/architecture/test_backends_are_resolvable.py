@@ -149,6 +149,8 @@ class TestAdaptersConnectLazily:
         assert container.vectors._client is None
         assert container.cache_backend._client is None
         assert container.documents._pool._pool is None
+        assert container.graph._pool._pool is None
+        assert container.feedback._pool._pool is None
 
     def test_both_postgres_stores_share_one_pool(self, monkeypatch) -> None:
         """Separate pools would double the connection count per worker against a Postgres
@@ -157,3 +159,5 @@ class TestAdaptersConnectLazily:
             monkeypatch, DOCUMENT_BACKEND="postgres", MEMORY_BACKEND="postgres"
         )
         assert container.documents._pool is container.memory_store._pool
+        assert container.graph._pool is container.documents._pool
+        assert container.feedback._pool is container.documents._pool

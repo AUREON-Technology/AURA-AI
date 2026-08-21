@@ -3,9 +3,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import '../config/config.dart';
-import '../security/aura_secure_storage.dart';
 import '../security/device_validation_service.dart';
 import '../../features/auth/presentation/auth_provider.dart';
+import 'refresh_token_store.dart';
 
 /// Manages the backend-issued access/refresh JWT pair (Doc/V2_BLUEPRINT.md
 /// §9), shared by every v2 API client (SyncClient, InsightsClient,
@@ -14,18 +14,27 @@ import '../../features/auth/presentation/auth_provider.dart';
 /// unaffected — they keep sending the raw Google ID token, unchanged.
 class TokenManager {
   final Ref _ref;
+  final http.Client? _http;
+  final RefreshTokenStore _store;
   static const String _authUrl = "${AppConfig.backendUrl}/api/v2/auth";
-  static const _storage = auraSecureStorage;
-  static const _refreshTokenKey = 'v2_refresh_token';
 
   String? _accessToken;
   DateTime? _accessTokenExpiry;
   String? _refreshToken;
 
-  TokenManager(this._ref);
+  /// Shared by concurrent [getValidAccessToken] callers so a rotated
+  /// refresh token is not spent twice (AURA-010).
+  Future<String?>? _inFlightAccessToken;
+
+  TokenManager(
+    this._ref, {
+    http.Client? httpClient,
+    RefreshTokenStore? store,
+  })  : _http = httpClient,
+        _store = store ?? const SecureRefreshTokenStore();
 
   Future<void> _loadCachedRefreshToken() async {
-    _refreshToken ??= await _storage.read(key: _refreshTokenKey);
+    _refreshToken ??= await _store.read();
   }
 
   /// True when a v2 refresh token is on disk. Does not hit the network;
@@ -35,19 +44,42 @@ class TokenManager {
     return _refreshToken != null && _refreshToken!.isNotEmpty;
   }
 
+  bool _hasFreshAccessToken() {
+    return _accessToken != null &&
+        _accessTokenExpiry != null &&
+        DateTime.now().isBefore(_accessTokenExpiry!.subtract(const Duration(seconds: 30)));
+  }
+
   /// Returns a valid access token, transparently refreshing or
   /// re-exchanging as needed. Returns null if no path succeeded (backend
   /// hasn't deployed /api/v2/auth yet, device offline, etc.) — every v2
   /// client already degrades gracefully when its HTTP call fails, so a
   /// null token just becomes "sync/insights/chat unavailable right now"
   /// rather than a crash.
-  Future<String?> getValidAccessToken() async {
-    if (_accessToken != null &&
-        _accessTokenExpiry != null &&
-        DateTime.now().isBefore(_accessTokenExpiry!.subtract(const Duration(seconds: 30)))) {
+  ///
+  /// Concurrent callers share one in-flight refresh/exchange. The refresh
+  /// token is not cleared here or by [invalidateAccessToken]; only a
+  /// failed `/refresh` response does that.
+  Future<String?> getValidAccessToken() {
+    if (_hasFreshAccessToken()) {
       debugPrint("[TokenManager] using cached access token");
-      return _accessToken;
+      return Future<String?>.value(_accessToken);
     }
+
+    final inFlight = _inFlightAccessToken;
+    if (inFlight != null) return inFlight;
+
+    final request = _refreshOrExchange();
+    _inFlightAccessToken = request;
+    return request.whenComplete(() {
+      if (identical(_inFlightAccessToken, request)) {
+        _inFlightAccessToken = null;
+      }
+    });
+  }
+
+  Future<String?> _refreshOrExchange() async {
+    if (_hasFreshAccessToken()) return _accessToken;
 
     await _loadCachedRefreshToken();
     if (_refreshToken != null) {
@@ -61,22 +93,30 @@ class TokenManager {
   /// Drop the in-memory access token so the next [getValidAccessToken]
   /// refreshes or re-exchanges. Call this when a v2/v3 endpoint returns 401
   /// "Invalid access token" — otherwise the same rejected JWT is reused
-  /// until its local expiry (up to 15 minutes).
+  /// until its local expiry (up to 15 minutes). Does not touch the refresh
+  /// token; rotation only happens when `/refresh` itself fails.
   void invalidateAccessToken() {
     debugPrint("[TokenManager] clearing rejected access token");
     _accessToken = null;
     _accessTokenExpiry = null;
   }
 
+  Future<http.Response> _post(String url, {Map<String, String>? headers, Object? body}) {
+    final uri = Uri.parse(url);
+    final client = _http;
+    final sent = client != null
+        ? client.post(uri, headers: headers, body: body)
+        : http.post(uri, headers: headers, body: body);
+    return sent.timeout(const Duration(seconds: 10));
+  }
+
   Future<bool> _tryRefresh() async {
     try {
-      final response = await http
-          .post(
-            Uri.parse("$_authUrl/refresh"),
-            headers: {"Content-Type": "application/json"},
-            body: jsonEncode({"refresh_token": _refreshToken}),
-          )
-          .timeout(const Duration(seconds: 10));
+      final response = await _post(
+        "$_authUrl/refresh",
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"refresh_token": _refreshToken}),
+      );
 
       if (response.statusCode != 200) {
         debugPrint(
@@ -106,9 +146,9 @@ class TokenManager {
       }
 
       final headers = {"Authorization": "Bearer $idToken"};
-      headers.addAll(DeviceValidationService.getAttestationHeaders());
+      headers.addAll(await DeviceValidationService.getAttestationHeaders());
 
-      final response = await http.post(Uri.parse("$_authUrl/token"), headers: headers).timeout(const Duration(seconds: 10));
+      final response = await _post("$_authUrl/token", headers: headers);
       if (response.statusCode != 200) {
         debugPrint(
           "[TokenManager] token exchange failed: ${response.statusCode} ${response.body}",
@@ -130,12 +170,12 @@ class TokenManager {
     _refreshToken = body['refresh_token'] as String;
     final expiresIn = body['expires_in'] as int;
     _accessTokenExpiry = DateTime.now().add(Duration(seconds: expiresIn));
-    await _storage.write(key: _refreshTokenKey, value: _refreshToken);
+    await _store.write(_refreshToken!);
   }
 
   Future<void> _clearRefreshToken() async {
     _refreshToken = null;
-    await _storage.delete(key: _refreshTokenKey);
+    await _store.delete();
   }
 
   /// Call from AuthNotifier.signOut() so a signed-out session's refresh

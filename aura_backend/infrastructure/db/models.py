@@ -149,6 +149,30 @@ class Memory(Base, SyncableMixin):
     qdrant_point_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class Message(Base, SyncableMixin):
+    """Chat turns in v2 cursor sync (AURA-014).
+
+    Ciphertext in ``*_enc`` matches Drift ``Messages`` (content, citations,
+    tool calls). ``persona`` is Drift ``agentId``.
+    """
+
+    __tablename__ = "messages"
+    __table_args__ = (
+        Index("ix_messages_user_updated", "user_id", "updated_at"),
+        Index("ix_messages_user_conversation", "user_id", "conversation_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    conversation_id: Mapped[str] = mapped_column(String(128))
+    role: Mapped[str] = mapped_column(String(16))
+    content_enc: Mapped[str] = mapped_column(Text)
+    model_used: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    tokens_used: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    citations_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tool_calls_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    persona: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
 class Insight(Base):
     """AURA Insights feed (blueprint §8) — not part of the Phase 0 sync
     protocol (insights are generated server-side, not user-editable), but
@@ -171,4 +195,5 @@ SYNCABLE_MODELS: dict[str, type[Base]] = {
     "finance_records": FinanceRecord,
     "health_records": HealthRecord,
     "memories": Memory,
+    "messages": Message,
 }

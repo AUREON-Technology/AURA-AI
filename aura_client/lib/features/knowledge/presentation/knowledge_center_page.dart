@@ -272,7 +272,10 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
                   // Context matches list
                   final content = result["content"] ?? result["text"] ?? "";
                   final score = result["score"] ?? 0.0;
-                  final docId = result["metadata"]?["doc_id"] ?? "unknown_doc";
+                  final docId = result["document_id"] ??
+                      result["metadata"]?["doc_id"] ??
+                      result["citation"] ??
+                      "unknown_doc";
 
                   return Container(
                     margin: const EdgeInsets.only(bottom: 10),

@@ -2608,6 +2608,17 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -2620,6 +2631,7 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
     citationsJson,
     toolCallsJson,
     agentId,
+    updatedAt,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2683,6 +2695,12 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
         agentId.isAcceptableOrUnknown(data['agent_id']!, _agentIdMeta),
       );
     }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    }
     return context;
   }
 
@@ -2738,6 +2756,10 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
         DriftSqlType.string,
         data['${effectivePrefix}agent_id'],
       ),
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      ),
     );
   }
 
@@ -2769,6 +2791,7 @@ class Message extends DataClass implements Insertable<Message> {
   final String? citationsJson;
   final String? toolCallsJson;
   final String? agentId;
+  final DateTime? updatedAt;
   const Message({
     required this.id,
     required this.conversationId,
@@ -2780,6 +2803,7 @@ class Message extends DataClass implements Insertable<Message> {
     this.citationsJson,
     this.toolCallsJson,
     this.agentId,
+    this.updatedAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -2812,6 +2836,9 @@ class Message extends DataClass implements Insertable<Message> {
     if (!nullToAbsent || agentId != null) {
       map['agent_id'] = Variable<String>(agentId);
     }
+    if (!nullToAbsent || updatedAt != null) {
+      map['updated_at'] = Variable<DateTime>(updatedAt);
+    }
     return map;
   }
 
@@ -2837,6 +2864,9 @@ class Message extends DataClass implements Insertable<Message> {
       agentId: agentId == null && nullToAbsent
           ? const Value.absent()
           : Value(agentId),
+      updatedAt: updatedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(updatedAt),
     );
   }
 
@@ -2856,6 +2886,7 @@ class Message extends DataClass implements Insertable<Message> {
       citationsJson: serializer.fromJson<String?>(json['citationsJson']),
       toolCallsJson: serializer.fromJson<String?>(json['toolCallsJson']),
       agentId: serializer.fromJson<String?>(json['agentId']),
+      updatedAt: serializer.fromJson<DateTime?>(json['updatedAt']),
     );
   }
   @override
@@ -2872,6 +2903,7 @@ class Message extends DataClass implements Insertable<Message> {
       'citationsJson': serializer.toJson<String?>(citationsJson),
       'toolCallsJson': serializer.toJson<String?>(toolCallsJson),
       'agentId': serializer.toJson<String?>(agentId),
+      'updatedAt': serializer.toJson<DateTime?>(updatedAt),
     };
   }
 
@@ -2886,6 +2918,7 @@ class Message extends DataClass implements Insertable<Message> {
     Value<String?> citationsJson = const Value.absent(),
     Value<String?> toolCallsJson = const Value.absent(),
     Value<String?> agentId = const Value.absent(),
+    Value<DateTime?> updatedAt = const Value.absent(),
   }) => Message(
     id: id ?? this.id,
     conversationId: conversationId ?? this.conversationId,
@@ -2901,6 +2934,7 @@ class Message extends DataClass implements Insertable<Message> {
         ? toolCallsJson.value
         : this.toolCallsJson,
     agentId: agentId.present ? agentId.value : this.agentId,
+    updatedAt: updatedAt.present ? updatedAt.value : this.updatedAt,
   );
   Message copyWithCompanion(MessagesCompanion data) {
     return Message(
@@ -2922,6 +2956,7 @@ class Message extends DataClass implements Insertable<Message> {
           ? data.toolCallsJson.value
           : this.toolCallsJson,
       agentId: data.agentId.present ? data.agentId.value : this.agentId,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
   }
 
@@ -2937,7 +2972,8 @@ class Message extends DataClass implements Insertable<Message> {
           ..write('createdAt: $createdAt, ')
           ..write('citationsJson: $citationsJson, ')
           ..write('toolCallsJson: $toolCallsJson, ')
-          ..write('agentId: $agentId')
+          ..write('agentId: $agentId, ')
+          ..write('updatedAt: $updatedAt')
           ..write(')'))
         .toString();
   }
@@ -2954,6 +2990,7 @@ class Message extends DataClass implements Insertable<Message> {
     citationsJson,
     toolCallsJson,
     agentId,
+    updatedAt,
   );
   @override
   bool operator ==(Object other) =>
@@ -2968,7 +3005,8 @@ class Message extends DataClass implements Insertable<Message> {
           other.createdAt == this.createdAt &&
           other.citationsJson == this.citationsJson &&
           other.toolCallsJson == this.toolCallsJson &&
-          other.agentId == this.agentId);
+          other.agentId == this.agentId &&
+          other.updatedAt == this.updatedAt);
 }
 
 class MessagesCompanion extends UpdateCompanion<Message> {
@@ -2982,6 +3020,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
   final Value<String?> citationsJson;
   final Value<String?> toolCallsJson;
   final Value<String?> agentId;
+  final Value<DateTime?> updatedAt;
   final Value<int> rowid;
   const MessagesCompanion({
     this.id = const Value.absent(),
@@ -2994,6 +3033,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.citationsJson = const Value.absent(),
     this.toolCallsJson = const Value.absent(),
     this.agentId = const Value.absent(),
+    this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   MessagesCompanion.insert({
@@ -3007,6 +3047,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.citationsJson = const Value.absent(),
     this.toolCallsJson = const Value.absent(),
     this.agentId = const Value.absent(),
+    this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        conversationId = Value(conversationId),
@@ -3024,6 +3065,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     Expression<String>? citationsJson,
     Expression<String>? toolCallsJson,
     Expression<String>? agentId,
+    Expression<DateTime>? updatedAt,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -3037,6 +3079,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       if (citationsJson != null) 'citations_json': citationsJson,
       if (toolCallsJson != null) 'tool_calls_json': toolCallsJson,
       if (agentId != null) 'agent_id': agentId,
+      if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -3052,6 +3095,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     Value<String?>? citationsJson,
     Value<String?>? toolCallsJson,
     Value<String?>? agentId,
+    Value<DateTime?>? updatedAt,
     Value<int>? rowid,
   }) {
     return MessagesCompanion(
@@ -3065,6 +3109,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       citationsJson: citationsJson ?? this.citationsJson,
       toolCallsJson: toolCallsJson ?? this.toolCallsJson,
       agentId: agentId ?? this.agentId,
+      updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -3108,6 +3153,9 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     if (agentId.present) {
       map['agent_id'] = Variable<String>(agentId.value);
     }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -3127,6 +3175,7 @@ class MessagesCompanion extends UpdateCompanion<Message> {
           ..write('citationsJson: $citationsJson, ')
           ..write('toolCallsJson: $toolCallsJson, ')
           ..write('agentId: $agentId, ')
+          ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -7513,6 +7562,7 @@ typedef $$MessagesTableCreateCompanionBuilder =
       Value<String?> citationsJson,
       Value<String?> toolCallsJson,
       Value<String?> agentId,
+      Value<DateTime?> updatedAt,
       Value<int> rowid,
     });
 typedef $$MessagesTableUpdateCompanionBuilder =
@@ -7527,6 +7577,7 @@ typedef $$MessagesTableUpdateCompanionBuilder =
       Value<String?> citationsJson,
       Value<String?> toolCallsJson,
       Value<String?> agentId,
+      Value<DateTime?> updatedAt,
       Value<int> rowid,
     });
 
@@ -7591,6 +7642,11 @@ class $$MessagesTableFilterComposer
     column: $table.agentId,
     builder: (column) => ColumnFilters(column),
   );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 }
 
 class $$MessagesTableOrderingComposer
@@ -7651,6 +7707,11 @@ class $$MessagesTableOrderingComposer
     column: $table.agentId,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$MessagesTableAnnotationComposer
@@ -7701,6 +7762,9 @@ class $$MessagesTableAnnotationComposer
 
   GeneratedColumn<String> get agentId =>
       $composableBuilder(column: $table.agentId, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
 }
 
 class $$MessagesTableTableManager
@@ -7741,6 +7805,7 @@ class $$MessagesTableTableManager
                 Value<String?> citationsJson = const Value.absent(),
                 Value<String?> toolCallsJson = const Value.absent(),
                 Value<String?> agentId = const Value.absent(),
+                Value<DateTime?> updatedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MessagesCompanion(
                 id: id,
@@ -7753,6 +7818,7 @@ class $$MessagesTableTableManager
                 citationsJson: citationsJson,
                 toolCallsJson: toolCallsJson,
                 agentId: agentId,
+                updatedAt: updatedAt,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -7767,6 +7833,7 @@ class $$MessagesTableTableManager
                 Value<String?> citationsJson = const Value.absent(),
                 Value<String?> toolCallsJson = const Value.absent(),
                 Value<String?> agentId = const Value.absent(),
+                Value<DateTime?> updatedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MessagesCompanion.insert(
                 id: id,
@@ -7779,6 +7846,7 @@ class $$MessagesTableTableManager
                 citationsJson: citationsJson,
                 toolCallsJson: toolCallsJson,
                 agentId: agentId,
+                updatedAt: updatedAt,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
