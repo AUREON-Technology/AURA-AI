@@ -69,8 +69,22 @@ class _TodayScaffold extends StatelessWidget {
       ),
       body: RefreshIndicator(
         onRefresh: () async {
-          // Nothing to re-probe: AI reachability is now recorded by the router as turns
-          // happen, not polled. The other streams below refresh themselves.
+          ref.invalidate(tasksStreamProvider);
+          ref.invalidate(calendarEventsStreamProvider);
+          ref.invalidate(financeTransactionsStreamProvider);
+          ref.invalidate(dailyHealthStreamProvider(DateTime.now()));
+          ref.invalidate(insightsProvider);
+          final reachable = await ref.read(aiRouter).checkConnectivity();
+          if (!reachable) {
+            ref.read(aiRouterStatusProvider.notifier).updateStatus(
+                  AIRouterStatus(
+                    activeModel: 'server',
+                    latencyMs: ref.read(aiRouterStatusProvider).latencyMs,
+                    status: 'AURA unreachable',
+                    isOffline: true,
+                  ),
+                );
+          }
         },
         child: ListView(
           padding: const EdgeInsets.all(AuraSpacing.lg),

@@ -28,6 +28,13 @@ class TokenManager {
     _refreshToken ??= await _storage.read(key: _refreshTokenKey);
   }
 
+  /// True when a v2 refresh token is on disk. Does not hit the network;
+  /// callers that need a live JWT should use [getValidAccessToken].
+  Future<bool> hasCachedRefreshToken() async {
+    await _loadCachedRefreshToken();
+    return _refreshToken != null && _refreshToken!.isNotEmpty;
+  }
+
   /// Returns a valid access token, transparently refreshing or
   /// re-exchanging as needed. Returns null if no path succeeded (backend
   /// hasn't deployed /api/v2/auth yet, device offline, etc.) — every v2

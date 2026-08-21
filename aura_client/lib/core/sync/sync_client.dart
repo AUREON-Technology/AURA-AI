@@ -9,6 +9,7 @@ import '../database/database.dart';
 import '../database/database_provider.dart';
 import '../security/device_validation_service.dart';
 import '../security/encryption_service.dart';
+import 'sync_result.dart';
 
 /// V2 cursor-based sync client (Doc/V2_BLUEPRINT.md §5/§7) — talks to
 /// `/api/v2/sync` on the FastAPI backend, which owns Postgres as the
@@ -53,18 +54,17 @@ class SyncClient {
   }
 
   /// Pushes the outbox, then pulls everything changed since the last
-  /// cursor. Returns true if both phases completed (a 503 from an
-  /// unconfigured backend, or a network failure, returns false so the
-  /// caller can show an "offline" state rather than a crash).
-  Future<bool> synchronize() async {
+  /// cursor. Distinguishes 401 / 503 / network so the UI can show error
+  /// vs offline while still allowing retry.
+  Future<SyncResult> synchronize() async {
     final pushed = await push();
-    if (!pushed) return false;
+    if (!pushed.ok) return pushed;
     return pull();
   }
 
-  Future<bool> push() async {
+  Future<SyncResult> push() async {
     final pending = await _db.select(_db.outboxEntries).get();
-    if (pending.isEmpty) return true;
+    if (pending.isEmpty) return const SyncResult.success();
 
     final mutations = pending
         .map((e) => {
@@ -83,13 +83,17 @@ class SyncClient {
             .timeout(const Duration(seconds: 20));
       });
 
+      if (response.statusCode == 401) {
+        debugPrint("[SyncClient] push unauthorized: ${response.statusCode}");
+        return const SyncResult.fail(SyncFailureKind.unauthorized);
+      }
       if (response.statusCode == 503) {
         debugPrint("[SyncClient] Postgres sync not configured on the backend yet.");
-        return false;
+        return const SyncResult.fail(SyncFailureKind.unavailable);
       }
       if (response.statusCode != 200) {
         debugPrint("[SyncClient] push failed: ${response.statusCode} ${response.body}");
-        return false;
+        return const SyncResult.fail(SyncFailureKind.unknown);
       }
 
       // Every mutation the server responded to (applied OR conflict) is
@@ -98,14 +102,14 @@ class SyncClient {
       // down; retrying the same push would just conflict again.
       final ids = pending.map((e) => e.id).toList();
       await (_db.delete(_db.outboxEntries)..where((t) => t.id.isIn(ids))).go();
-      return true;
+      return const SyncResult.success();
     } catch (e) {
       debugPrint("[SyncClient] push error: $e");
-      return false;
+      return const SyncResult.fail(SyncFailureKind.network);
     }
   }
 
-  Future<bool> pull() async {
+  Future<SyncResult> pull() async {
     final cursor = await _db.getSyncCursor();
     final uri = Uri.parse(_syncUrl).replace(queryParameters: cursor != null ? {"since": cursor} : null);
 
@@ -113,13 +117,17 @@ class SyncClient {
       final response = await _send(() async {
         return http.get(uri, headers: await _headers()).timeout(const Duration(seconds: 20));
       });
+      if (response.statusCode == 401) {
+        debugPrint("[SyncClient] pull unauthorized: ${response.statusCode}");
+        return const SyncResult.fail(SyncFailureKind.unauthorized);
+      }
       if (response.statusCode == 503) {
         debugPrint("[SyncClient] Postgres sync not configured on the backend yet.");
-        return false;
+        return const SyncResult.fail(SyncFailureKind.unavailable);
       }
       if (response.statusCode != 200) {
         debugPrint("[SyncClient] pull failed: ${response.statusCode} ${response.body}");
-        return false;
+        return const SyncResult.fail(SyncFailureKind.unknown);
       }
 
       final body = jsonDecode(response.body) as Map<String, dynamic>;
@@ -133,10 +141,10 @@ class SyncClient {
       });
 
       await _db.setSyncCursor(body["cursor"] as String);
-      return true;
+      return const SyncResult.success();
     } catch (e) {
       debugPrint("[SyncClient] pull error: $e");
-      return false;
+      return const SyncResult.fail(SyncFailureKind.network);
     }
   }
 

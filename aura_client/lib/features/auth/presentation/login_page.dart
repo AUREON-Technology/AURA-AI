@@ -35,6 +35,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     try {
       final canCheck = await _localAuth.canCheckBiometrics;
       final hasCache = await ref.read(authProvider.notifier).hasCachedCredentials();
+      if (!mounted) return;
       setState(() {
         _canCheckBiometrics = canCheck;
         _hasCachedCredentials = hasCache;
@@ -51,6 +52,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
         localizedReason: 'Authenticate to unlock your AURA AI profile',
         options: const AuthenticationOptions(stickyAuth: true, biometricOnly: true),
       );
+      if (!mounted) return;
       if (authenticated) {
         await ref.read(authProvider.notifier).signInCached();
       }
@@ -74,6 +76,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     // it's used purely to get a BuildContext scoped under the Theme override).
     ref.listen(authProvider, (previous, next) {
       if (next.hasError && kDebugMode) {
+        if (!mounted) return;
         setState(() => _showDeveloperPanel = true);
       }
     });

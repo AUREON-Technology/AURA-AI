@@ -48,9 +48,12 @@ class AnalyticsPage extends ConsumerWidget {
               ? logs.where((l) => l.eventType == 'request').map((l) => l.latencyMs).reduce((a, b) => a + b) / totalRequests
               : 0.0;
 
-          // Model distributions count
-          int geminiCount = logs.where((l) => l.modelUsed.contains('gemini')).length;
-          int offlineCount = logs.where((l) => l.isOffline).length;
+          // Inference path distribution (server-sse vs failover), not Gemini/offline models.
+          int serverSseCount = logs.where((l) =>
+              (l.modelUsed.contains('server-sse') || l.modelUsed == 'server') &&
+              l.eventType == 'request' &&
+              !l.isOffline).length;
+          int failoverCount = logs.where((l) => l.eventType == 'failover' || l.isOffline).length;
 
           return Padding(
             padding: const EdgeInsets.all(24.0),
@@ -68,7 +71,7 @@ class AnalyticsPage extends ConsumerWidget {
                           children: [
                             _buildLatencyChartCard(logs),
                             const SizedBox(height: 20),
-                            _buildModelDistributionCard(geminiCount, offlineCount),
+                            _buildModelDistributionCard(serverSseCount, failoverCount),
                             const SizedBox(height: 20),
                             _buildFailoverChartCard(totalRequests, failovers),
                           ],
@@ -82,7 +85,7 @@ class AnalyticsPage extends ConsumerWidget {
                           childAspectRatio: 1.4,
                           children: [
                             _buildLatencyChartCard(logs),
-                            _buildModelDistributionCard(geminiCount, offlineCount),
+                            _buildModelDistributionCard(serverSseCount, failoverCount),
                             _buildFailoverChartCard(totalRequests, failovers),
                             _buildTelemetriesHistoryCard(logs),
                           ],
@@ -217,7 +220,26 @@ class AnalyticsPage extends ConsumerWidget {
     );
   }
 
-  Widget _buildModelDistributionCard(int geminiCount, int offlineCount) {
+  Widget _buildModelDistributionCard(int serverSseCount, int failoverCount) {
+    final sections = <PieChartSectionData>[
+      if (serverSseCount > 0)
+        PieChartSectionData(
+          color: AuraTheme.accentIndigo,
+          value: serverSseCount.toDouble(),
+          title: 'server-sse ($serverSseCount)',
+          radius: 50,
+          titleStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
+        ),
+      if (failoverCount > 0)
+        PieChartSectionData(
+          color: AuraTheme.accentTeal,
+          value: failoverCount.toDouble(),
+          title: 'failover ($failoverCount)',
+          radius: 50,
+          titleStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
+        ),
+    ];
+
     return Card(
       color: AuraTheme.cardBg,
       child: Padding(
@@ -225,31 +247,12 @@ class AnalyticsPage extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Active Model Distribution", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
+            const Text("Inference Path Distribution", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
             const SizedBox(height: 24),
             Expanded(
-              child: geminiCount == 0 && offlineCount == 0
+              child: sections.isEmpty
                   ? const Center(child: Text("No inference data", style: TextStyle(color: Colors.white24)))
-                  : PieChart(
-                      PieChartData(
-                        sections: [
-                          PieChartSectionData(
-                            color: AuraTheme.accentIndigo,
-                            value: geminiCount.toDouble(),
-                            title: 'Gemini ($geminiCount)',
-                            radius: 50,
-                            titleStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
-                          ),
-                          PieChartSectionData(
-                            color: AuraTheme.accentTeal,
-                            value: offlineCount.toDouble(),
-                            title: 'Offline ($offlineCount)',
-                            radius: 50,
-                            titleStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
-                          ),
-                        ],
-                      ),
-                    ),
+                  : PieChart(PieChartData(sections: sections)),
             ),
           ],
         ),

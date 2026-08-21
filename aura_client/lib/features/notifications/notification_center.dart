@@ -32,8 +32,8 @@ class AppNotification {
     if (log.eventType == 'failover') {
       return AppNotification(
         id: log.id,
-        title: 'Switched to offline model',
-        message: 'AURA failed over to ${log.modelUsed} after the online request failed.',
+        title: 'Server inference failover',
+        message: 'AURA could not complete the request on ${log.modelUsed} and recorded a failover.',
         createdAt: log.createdAt,
         isError: false,
       );

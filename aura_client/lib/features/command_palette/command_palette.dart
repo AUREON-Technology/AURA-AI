@@ -28,7 +28,7 @@ const _destinations = [
   _Destination('Automations', Icons.bolt_outlined, '/automations'),
   _Destination('Knowledge Center', Icons.folder_shared_outlined, '/knowledge'),
   _Destination('System Analytics', Icons.bar_chart_outlined, '/analytics'),
-  _Destination('Offline Models', Icons.download_for_offline_outlined, '/models'),
+  _Destination('AI Engine', Icons.cloud_outlined, '/models'),
   _Destination('Continuous Learning', Icons.psychology_outlined, '/learning'),
   _Destination('Profile', Icons.person_outline, '/profile'),
   _Destination('Settings', Icons.settings_outlined, '/settings'),

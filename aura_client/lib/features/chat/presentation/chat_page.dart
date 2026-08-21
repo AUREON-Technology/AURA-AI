@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../data/chat_repository.dart';
 import '../data/chat_connection_error.dart';
@@ -29,7 +30,9 @@ import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
 /// settings_page.dart already do this (see Doc/V2_BLUEPRINT.md §13 Phase 2 --
 /// a deliberate incremental migration, not a big-bang swap).
 class ChatPage extends ConsumerStatefulWidget {
-  const ChatPage({super.key});
+  final String? initialQuery;
+
+  const ChatPage({super.key, this.initialQuery});
 
   @override
   ConsumerState<ChatPage> createState() => _ChatPageState();
@@ -39,6 +42,39 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
   bool _useRag = true;
+  bool _sendInFlight = false;
+  bool _consumedInitialQuery = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final q = widget.initialQuery?.trim();
+    if (q == null || q.isEmpty) return;
+    _messageController.text = q;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _consumeInitialQuery(q));
+  }
+
+  /// Auto-sends the Home capture-bar query once, then clears GoRouter extra
+  /// so a shell rebuild / hot reload cannot fire it again.
+  void _consumeInitialQuery(String query) {
+    if (!mounted || _consumedInitialQuery) return;
+    _consumedInitialQuery = true;
+
+    final repo = ref.read(chatRepositoryProvider);
+    final sessionId = ref.read(activeConversationIdProvider);
+    final useRag = _useRag;
+    _messageController.clear();
+
+    unawaited(repo.sendChatMessage(
+      conversationId: sessionId,
+      userContent: query,
+      useRag: useRag,
+    ));
+
+    if (GoRouterState.of(context).extra is String) {
+      context.go('/chat');
+    }
+  }
 
   @override
   void dispose() {
@@ -58,19 +94,28 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Future<void> _sendMessage(String sessionId) async {
+    if (_sendInFlight || ref.read(streamingMessageIdProvider) != null) return;
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
+    setState(() => _sendInFlight = true);
     _messageController.clear();
-    FocusScope.of(context).unfocus();
+    if (mounted) FocusScope.of(context).unfocus();
 
-    await ref.read(chatRepositoryProvider).sendChatMessage(
-          conversationId: sessionId,
-          userContent: text,
-          useRag: _useRag,
-        );
-
-    Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
+    try {
+      await ref.read(chatRepositoryProvider).sendChatMessage(
+            conversationId: sessionId,
+            userContent: text,
+            useRag: _useRag,
+          );
+      if (!mounted) return;
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (mounted) _scrollToBottom();
+      });
+    } finally {
+      _sendInFlight = false;
+      if (mounted) setState(() {});
+    }
   }
 
   final _scaffoldKey = GlobalKey<ScaffoldState>();
@@ -365,7 +410,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   constraints: const BoxConstraints(),
                   icon: Icon(syncIcon, color: indicatorColor, size: 12),
                   tooltip: 'Sync Now',
-                  onPressed: syncState == SyncState.offline ? null : () => ref.read(syncEngineProvider.notifier).synchronize(),
+                  onPressed: isSyncing
+                      ? null
+                      : () => ref.read(syncEngineProvider.notifier).synchronize(),
                 ),
         ],
       ),
@@ -386,6 +433,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final messagesAsync = ref.watch(chatMessagesStreamProvider(activeSessionId));
     final sessionsAsync = ref.watch(conversationsStreamProvider);
     final isMobile = MediaQuery.of(context).size.width < 768;
+
+    final composerLocked = _sendInFlight || ref.watch(streamingMessageIdProvider) != null;
 
     return Scaffold(
       key: _scaffoldKey,
@@ -529,11 +578,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                         Expanded(
                           child: TextField(
                             controller: _messageController,
+                            enabled: !composerLocked,
                             decoration: InputDecoration(
-                              hintText: isMobile ? 'Ask Copilot...' : 'Ask Copilot anything...',
+                              hintText: composerLocked
+                                  ? 'Waiting for Copilot...'
+                                  : (isMobile ? 'Ask Copilot...' : 'Ask Copilot anything...'),
                             ),
                             style: TextStyle(color: palette.textPrimary),
-                            onSubmitted: (_) => _sendMessage(activeSessionId),
+                            onSubmitted: composerLocked ? null : (_) => _sendMessage(activeSessionId),
                           ),
                         ),
                         const SizedBox(width: AuraSpacing.lg),
@@ -541,7 +593,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           decoration: BoxDecoration(gradient: palette.brandGradient, borderRadius: BorderRadius.circular(AuraRadius.md)),
                           child: IconButton(
                             icon: Icon(Icons.send, color: palette.onBrand),
-                            onPressed: () => _sendMessage(activeSessionId),
+                            onPressed: composerLocked ? null : () => _sendMessage(activeSessionId),
                           ),
                         ),
                       ],
@@ -648,10 +700,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     final financeRepo = ref.read(financeRepositoryProvider);
                     final healthRepo = ref.read(healthRepositoryProvider);
                     final pendingActions = ref.read(pendingActionsProvider.notifier);
+                    final failed = <String>[];
+                    var succeeded = 0;
 
                     for (final act in actions) {
                       final type = act['type'] ?? '';
                       final params = act['params'] ?? {};
+                      final label = _pendingActionLabel(type, params);
 
                       try {
                         if (type == 'add_task') {
@@ -705,17 +760,38 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           if (params['weight'] != null) {
                             await healthRepo.logWeight(now, (params['weight'] as num).toDouble());
                           }
+                        } else {
+                          failed.add(label);
+                          continue;
                         }
+                        succeeded++;
                       } catch (e) {
                         debugPrint("Action execution failed: $e");
+                        failed.add(label);
                       }
                     }
 
                     pendingActions.clear();
                     if (!mounted) return;
-                    messenger.showSnackBar(
-                      SnackBar(content: const Text("Proposed actions successfully executed!"), backgroundColor: palette.success),
-                    );
+                    if (failed.isEmpty) {
+                      messenger.showSnackBar(
+                        SnackBar(content: const Text("Proposed actions successfully executed!"), backgroundColor: palette.success),
+                      );
+                    } else if (succeeded == 0) {
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text("All actions failed: ${failed.join('; ')}"),
+                          backgroundColor: palette.danger,
+                        ),
+                      );
+                    } else {
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text("${failed.length} action(s) failed: ${failed.join('; ')}"),
+                          backgroundColor: palette.warning,
+                        ),
+                      );
+                    }
                   },
                 ),
               ],
@@ -842,6 +918,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 }
 
+String _pendingActionLabel(dynamic type, dynamic params) {
+  final t = type?.toString() ?? '';
+  final p = params is Map ? params : const {};
+  if (t == 'add_task') return "Create Task: ${p['title']}";
+  if (t == 'add_event') return "Schedule Event: ${p['title']}";
+  if (t == 'add_expense') return "Log Expense: \$${p['amount']}";
+  if (t == 'add_income') return "Log Income: \$${p['amount']}";
+  if (t == 'log_health') return "Log Health";
+  return "Unknown Action: $t";
+}
+
 // ----------------------------------------------------
 // Message Bubble Widget
 // ----------------------------------------------------
@@ -918,9 +1005,17 @@ class MessageBubble extends ConsumerWidget {
                       label: "Report Issue",
                       icon: Icons.bug_report_outlined,
                       variant: AuraButtonVariant.secondary,
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: const Text("Issue reported successfully to developers."), backgroundColor: palette.success),
+                      onPressed: () async {
+                        final messenger = ScaffoldMessenger.of(context);
+                        await ref.read(chatRepositoryProvider).reportConnectionIssue(
+                              conversationId: message.conversationId,
+                              messageId: message.id,
+                            );
+                        messenger.showSnackBar(
+                          SnackBar(
+                            content: const Text("Issue recorded in local telemetry."),
+                            backgroundColor: palette.success,
+                          ),
                         );
                       },
                     ),

@@ -71,6 +71,11 @@ class ChatRepository {
     required String userContent,
     bool useRag = true,
   }) async {
+    if (_ref.read(streamingMessageIdProvider) != null) {
+      debugPrint("[ChatRepository] ignoring send while a stream is already in flight");
+      return;
+    }
+
     // Clear any previous pending actions first
     _ref.read(pendingActionsProvider.notifier).clear();
 
@@ -184,9 +189,10 @@ class ChatRepository {
   }
 
   /// Returns [_SseSendOutcome.succeeded] if the SSE stream completed
-  /// (even if the model's reply was itself an error frame).
-  /// [_SseSendOutcome.connectionFailure] means the host was unreachable —
-  /// the caller must not fall back to the orchestrator (same dead host).
+  /// without an `error` frame.
+  /// [_SseSendOutcome.connectionFailure] means the host was unreachable
+  /// **or** the stream sent an `error` frame — the caller must not fall
+  /// back to the orchestrator, and the UI should show retry.
   /// [_SseSendOutcome.otherFailure] signals a fall back to [_sendViaOrchestrator].
   ///
   /// Deliberately does not write to [pendingActionsProvider]: v3's tool
@@ -248,9 +254,16 @@ class ChatRepository {
             await _updateMessageText(assistantMsgId, displayText);
             break;
           case SseEventKind.error:
-            displayText = displayText.isEmpty ? "Error: ${event.message}" : displayText;
             debugPrint("[ChatRepository] SSE stream error event: ${event.message}");
-            break;
+            await _updateMessageText(assistantMsgId, kChatConnectionErrorMessage);
+            await _logTelemetry(
+              eventType: "error",
+              isOffline: false,
+              latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
+              modelUsed: "server-sse",
+              errorMessage: event.message,
+            );
+            return _SseSendOutcome.connectionFailure;
           case SseEventKind.done:
             // Safety net: use done's citations if the dedicated frame never arrived.
             if (citations.isEmpty && (event.citations ?? []).isNotEmpty) {
@@ -353,6 +366,21 @@ class ChatRepository {
       fullResponseText = kChatConnectionErrorMessage;
       await _updateMessageText(assistantMsgId, fullResponseText);
     }
+  }
+
+  /// Records a user-initiated connection-issue report in local telemetry.
+  /// Does not claim a remote ticket was opened.
+  Future<void> reportConnectionIssue({
+    required String conversationId,
+    required String messageId,
+  }) async {
+    await _logTelemetry(
+      eventType: "user_report",
+      isOffline: false,
+      latencyMs: 0,
+      modelUsed: "server-sse",
+      errorMessage: "connection_issue conversation=$conversationId message=$messageId",
+    );
   }
 
   Future<void> _logTelemetry({

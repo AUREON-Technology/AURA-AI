@@ -12,6 +12,7 @@ import '../../features/finance/presentation/finance_page.dart';
 import '../../features/health/presentation/health_page.dart';
 import '../../features/automations/presentation/automations_page.dart';
 import '../../features/chat/presentation/chat_page.dart';
+import '../../features/chat/presentation/chat_route_extra.dart';
 import '../../features/settings/presentation/settings_page.dart';
 import '../../features/auth/presentation/profile_page.dart';
 import '../../features/knowledge/presentation/knowledge_center_page.dart';
@@ -300,7 +301,9 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/chat',
-            builder: (context, state) => const ChatPage(),
+            builder: (context, state) => ChatPage(
+              initialQuery: chatInitialQueryFromExtra(state.extra),
+            ),
           ),
           GoRoute(
             path: '/settings',

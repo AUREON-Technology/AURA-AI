@@ -83,16 +83,44 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       final cachedName = await _storage.read(key: 'user_name');
       final cachedPhoto = await _storage.read(key: 'user_photo');
 
-      if (cachedId != null && cachedEmail != null && cachedName != null) {
-        state = AsyncValue.data(UserProfile(
-          id: cachedId,
-          email: cachedEmail,
-          displayName: cachedName,
-          photoUrl: cachedPhoto,
-        ));
-      } else {
+      if (cachedId == null || cachedEmail == null || cachedName == null) {
         state = const AsyncValue.data(null);
+        return;
       }
+
+      GoogleSignInAccount? restored;
+      try {
+        restored = await _googleSignIn.attemptLightweightAuthentication();
+        if (restored != null) {
+          _currentAccount = restored;
+          final idToken = restored.authentication.idToken;
+          if (idToken != null) {
+            await _storage.write(key: 'auth_token', value: idToken);
+          }
+        }
+      } catch (e) {
+        debugPrint("[AuthNotifier] Silent Google restore after cached sign-in failed: $e");
+      }
+
+      if (restored == null) {
+        final hasRefresh = await ref.read(tokenManagerProvider).hasCachedRefreshToken();
+        final cachedGoogleToken = await _storage.read(key: 'auth_token');
+        // Allow the cached UI session when a v2 refresh token exists, or a
+        // leftover Google/mock token is on disk (developer bypass). Do not
+        // treat that leftover Google ID token as freshly refreshed.
+        if (!hasRefresh && (cachedGoogleToken == null || cachedGoogleToken.isEmpty)) {
+          debugPrint("[AuthNotifier] Cached profile found but no Google session or v2 refresh token.");
+          state = const AsyncValue.data(null);
+          return;
+        }
+      }
+
+      state = AsyncValue.data(UserProfile(
+        id: restored?.id ?? cachedId,
+        email: restored?.email ?? cachedEmail,
+        displayName: restored?.displayName ?? cachedName,
+        photoUrl: restored?.photoUrl ?? cachedPhoto,
+      ));
     } catch (err, stack) {
       state = AsyncValue.error(err, stack);
     }
@@ -173,19 +201,31 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
 
   Future<String?> getIdToken() async {
     try {
-      // If we are signed in with Google, refresh the token to prevent expiration
+      // google_sign_in 7.x: authentication.idToken is a snapshot from the last
+      // authenticate / lightweight restore, not a live refresh. Re-run silent
+      // restore whenever a Google account is (or might be) present.
+      try {
+        final restored = await _googleSignIn.attemptLightweightAuthentication();
+        if (restored != null) {
+          _currentAccount = restored;
+        }
+      } catch (e) {
+        debugPrint("[AuthNotifier] Silent Google ID token refresh failed: $e");
+      }
+
       final currentAccount = _currentAccount;
       if (currentAccount != null) {
-        final auth = currentAccount.authentication;
-        if (auth.idToken != null) {
-          await _storage.write(key: 'auth_token', value: auth.idToken!);
-          return auth.idToken;
+        final idToken = currentAccount.authentication.idToken;
+        if (idToken != null) {
+          await _storage.write(key: 'auth_token', value: idToken);
+          return idToken;
         }
       }
+
+      // Fallback: cached Google ID token or mock token. Not claimed as fresh.
       return await _storage.read(key: 'auth_token');
     } catch (e) {
       debugPrint("[AuthNotifier] Error refreshing or reading ID Token: $e");
-      // Fallback to reading cached token directly
       try {
         return await _storage.read(key: 'auth_token');
       } catch (_) {}

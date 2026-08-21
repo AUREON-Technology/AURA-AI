@@ -68,16 +68,33 @@ class EncryptionService {
       var keyB64 = storedKey ?? backupKey ?? legacyKey;
       if (keyB64 == null) {
         keyB64 = encrypt.Key.fromSecureRandom(32).base64;
+        _cryptKey = encrypt.Key.fromBase64(keyB64);
+        await _dualWriteKey(dir, keyB64);
       } else if (storedKey == null) {
         debugPrint(
           backupKey != null
               ? 'EncryptionService: Restored DB key from ${EncryptionKeyBackup.fileName} after secure-storage miss.'
               : 'EncryptionService: Migrated DB key from legacy .aura_key.',
         );
+        _cryptKey = encrypt.Key.fromBase64(keyB64);
+        await _dualWriteKey(dir, keyB64);
+      } else if (backupKey != null && backupKey != storedKey) {
+        // A newly generated stored key must not overwrite the backup until
+        // the DB integrity check proves the stored key can decrypt rows.
+        debugPrint(
+          'EncryptionService: Stored key differs from backup; preserving '
+          '${EncryptionKeyBackup.fileName} until DB integrity check.',
+        );
+        _cryptKey = encrypt.Key.fromBase64(storedKey);
+        try {
+          await auraSecureStorage.write(key: _keyName, value: storedKey);
+        } catch (e) {
+          debugPrint('EncryptionService: Failed to write key to secure storage ($e).');
+        }
+      } else {
+        _cryptKey = encrypt.Key.fromBase64(keyB64);
+        await _dualWriteKey(dir, keyB64);
       }
-
-      _cryptKey = encrypt.Key.fromBase64(keyB64);
-      await _dualWriteKey(dir, keyB64);
       await _deleteLegacyPlaintextKey(dir);
     } catch (e) {
       debugPrint("EncryptionService: Secure storage failed ($e). Falling back to PBKDF2 derivation.");
@@ -161,6 +178,45 @@ class EncryptionService {
         await legacyFile.delete();
       }
     } catch (_) {}
+  }
+
+  static String? _keyBeforeBackupRestore;
+
+  /// Swaps the in-memory key to `.aura_db_key` when it differs from the
+  /// current key. Caller must re-check decryption and then either
+  /// [persistCurrentKey] or [revertBackupKeyRestore].
+  static Future<bool> tryRestoreBackupKey() async {
+    try {
+      final dir = await EncryptionKeyBackup.supportDirectory();
+      final backupKey = await EncryptionKeyBackup.readFrom(dir);
+      if (backupKey == null) return false;
+      if (_cryptKey != null && backupKey == _cryptKey!.base64) return false;
+      _keyBeforeBackupRestore = _cryptKey?.base64;
+      _cryptKey = encrypt.Key.fromBase64(backupKey);
+      debugPrint(
+        'EncryptionService: Trying backup DB key from ${EncryptionKeyBackup.fileName} after decrypt mismatch.',
+      );
+      return true;
+    } catch (e) {
+      debugPrint('EncryptionService: Backup key restore failed: $e');
+      return false;
+    }
+  }
+
+  static void revertBackupKeyRestore() {
+    final previous = _keyBeforeBackupRestore;
+    _keyBeforeBackupRestore = null;
+    if (previous == null) return;
+    _cryptKey = encrypt.Key.fromBase64(previous);
+    debugPrint('EncryptionService: Reverted in-memory key after backup restore did not decrypt rows.');
+  }
+
+  static Future<void> persistCurrentKey() async {
+    final key = _cryptKey;
+    if (key == null) return;
+    _keyBeforeBackupRestore = null;
+    final dir = await EncryptionKeyBackup.supportDirectory();
+    await _dualWriteKey(dir, key.base64);
   }
 
   /// Derives a 256-bit AES key using PBKDF2-HMAC-SHA256 from user secret and salt details.

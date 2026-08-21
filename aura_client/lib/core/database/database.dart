@@ -181,7 +181,7 @@ class OfflineModelWeights extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// V2 generalized mutation queue (Doc/V2_BLUEPRINT.md §5). Replaces the
+/// V2 generalized mutation queue (Doc/V2_BLUEPRINT.md section 5). Replaces the
 /// per-table `isSynced` boolean + `PendingDeletes` combo: every create/
 /// update/delete of a syncable record enqueues one row here, encoding the
 /// full mutation (table, op, id, JSON payload matching the backend's
@@ -201,7 +201,7 @@ class OutboxEntries extends Table {
   Set<Column> get primaryKey => {id};
 }
 
-/// Small key/value store for sync bookkeeping — currently just the last
+/// Small key/value store for sync bookkeeping -- currently just the last
 /// server cursor returned by `GET /api/v2/sync`, so the next pull only
 /// requests what changed since then.
 class SyncMetadata extends Table {
@@ -247,7 +247,7 @@ class AppDatabase extends _$AppDatabase {
 
   /// Enqueues one mutation for the next `SyncClient.push()`. [payload] must
   /// use the backend's Postgres column names (see
-  /// infrastructure/db/models.py) — callers are responsible for encrypting
+  /// infrastructure/db/models.py) -- callers are responsible for encrypting
   /// any sensitive field with [EncryptionService.encryptText] before
   /// putting it in the map, since the server only ever stores ciphertext.
   Future<void> enqueueOutbox({
@@ -281,7 +281,7 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
-  /// Watermark for the Notification Center's unread badge — reuses the
+  /// Watermark for the Notification Center's unread badge -- reuses the
   /// same key/value table as the sync cursor rather than adding a
   /// dedicated table for one timestamp.
   Future<DateTime?> getNotificationsLastRead() async {
@@ -293,6 +293,24 @@ class AppDatabase extends _$AppDatabase {
     await into(syncMetadata).insertOnConflictUpdate(
       SyncMetadataCompanion.insert(key: 'notifications_last_read', value: time.toIso8601String()),
     );
+  }
+
+  /// True when decrypted rows still start with `gcm:`, meaning the current
+  /// key could not unwrap ciphertext (TypeConverter returns the raw blob).
+  Future<bool> _hasUndecryptedCiphertext() async {
+    try {
+      final allMessages = await (select(messages)..limit(5)).get();
+      if (allMessages.any((msg) => msg.content.startsWith('gcm:'))) return true;
+
+      final allTasks = await (select(tasks)..limit(5)).get();
+      if (allTasks.any((t) => t.title.startsWith('gcm:'))) return true;
+
+      final allLogs = await (select(learningLogs)..limit(5)).get();
+      if (allLogs.any((l) => l.prompt.startsWith('gcm:'))) return true;
+    } catch (e) {
+      debugPrint("[Database] Integrity check encountered error: $e");
+    }
+    return false;
   }
 
   @override
@@ -343,44 +361,24 @@ class AppDatabase extends _$AppDatabase {
         },
         beforeOpen: (details) async {
           // Perform a decryption integrity check (detect key mismatch/loss from backup restore)
-          bool needsReset = false;
-          try {
-            // Check if we can decrypt the messages
-            final allMessages = await (select(messages)..limit(5)).get();
-            for (final msg in allMessages) {
-              if (msg.content.startsWith('gcm:')) {
-                needsReset = true;
-                break;
-              }
-            }
-            
-            // Check if we can decrypt tasks
+          var needsReset = await _hasUndecryptedCiphertext();
+          if (needsReset && await EncryptionService.tryRestoreBackupKey()) {
+            needsReset = await _hasUndecryptedCiphertext();
             if (!needsReset) {
-              final allTasks = await (select(tasks)..limit(5)).get();
-              for (final t in allTasks) {
-                if (t.title.startsWith('gcm:')) {
-                  needsReset = true;
-                  break;
-                }
-              }
+              await EncryptionService.persistCurrentKey();
+              debugPrint("[Database] Decryption restored via encryption-key backup. No wipe.");
+            } else {
+              EncryptionService.revertBackupKeyRestore();
+              debugPrint("[Database] Backup encryption key also failed to decrypt rows.");
             }
-
-            // Check if we can decrypt learning logs
-            if (!needsReset) {
-              final allLogs = await (select(learningLogs)..limit(5)).get();
-              for (final l in allLogs) {
-                if (l.prompt.startsWith('gcm:')) {
-                  needsReset = true;
-                  break;
-                }
-              }
-            }
-          } catch (e) {
-            debugPrint("[Database] Integrity check encountered error: $e");
           }
 
           if (needsReset) {
-            debugPrint("[Database] Decryption key mismatch or key loss detected (e.g. after reinstall backup restore). Wiping local corrupted data to prevent sync pollution.");
+            debugPrint(
+              "[Database] Decryption key mismatch or key loss detected. "
+              "Clearing unreadable content tables; preserving outboxEntries, "
+              "syncMetadata, and pendingDeletes so unsynced mutations are not destroyed.",
+            );
             await transaction(() async {
               await delete(tasks).go();
               await delete(calendarEvents).go();
@@ -389,13 +387,11 @@ class AppDatabase extends _$AppDatabase {
               await delete(messages).go();
               await delete(agentConfigurations).go();
               await delete(userMemories).go();
-              await delete(pendingDeletes).go();
               await delete(learningLogs).go();
               await delete(offlineModelWeights).go();
               await delete(telemetryLogs).go();
-              await delete(outboxEntries).go();
             });
-            debugPrint("[Database] Database wipe completed. Fresh sync will be triggered.");
+            debugPrint("[Database] Unreadable content tables cleared. Outbox and sync cursor kept.");
           }
 
           if (details.versionBefore != null && details.versionBefore! < 6) {

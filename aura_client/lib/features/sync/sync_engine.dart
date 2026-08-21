@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/sync/sync_client.dart';
+import '../../core/sync/sync_result.dart';
 import '../../features/auth/presentation/auth_provider.dart';
 
 enum SyncState {
@@ -46,8 +47,20 @@ class SyncEngine extends Notifier<SyncState> {
 
     state = SyncState.syncing;
     try {
-      final ok = await ref.read(syncClientProvider).synchronize();
-      state = ok ? SyncState.synced : SyncState.offline;
+      final result = await ref.read(syncClientProvider).synchronize();
+      if (result.ok) {
+        state = SyncState.synced;
+        return;
+      }
+      switch (result.failure) {
+        case SyncFailureKind.unauthorized:
+        case SyncFailureKind.unknown:
+          state = SyncState.error;
+        case SyncFailureKind.unavailable:
+        case SyncFailureKind.network:
+        case null:
+          state = SyncState.offline;
+      }
     } catch (_) {
       state = SyncState.error;
     }
