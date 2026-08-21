@@ -50,9 +50,20 @@ class InsightsClient {
     return headers;
   }
 
+  Future<http.Response> _send(Future<http.Response> Function() send) async {
+    var response = await send();
+    if (response.statusCode == 401) {
+      _ref.read(tokenManagerProvider).invalidateAccessToken();
+      response = await send();
+    }
+    return response;
+  }
+
   Future<List<AppInsight>> fetch() async {
     try {
-      final response = await http.get(Uri.parse(_baseUrl), headers: await _headers()).timeout(const Duration(seconds: 10));
+      final response = await _send(() async {
+        return http.get(Uri.parse(_baseUrl), headers: await _headers()).timeout(const Duration(seconds: 10));
+      });
       if (response.statusCode != 200) return const [];
       final List list = jsonDecode(response.body);
       return list.map((e) => AppInsight.fromJson(e as Map<String, dynamic>)).toList();
@@ -64,7 +75,9 @@ class InsightsClient {
 
   Future<List<AppInsight>> generate() async {
     try {
-      final response = await http.post(Uri.parse("$_baseUrl/generate"), headers: await _headers()).timeout(const Duration(seconds: 15));
+      final response = await _send(() async {
+        return http.post(Uri.parse("$_baseUrl/generate"), headers: await _headers()).timeout(const Duration(seconds: 15));
+      });
       if (response.statusCode != 200) return const [];
       final List list = jsonDecode(response.body);
       return list.map((e) => AppInsight.fromJson(e as Map<String, dynamic>)).toList();

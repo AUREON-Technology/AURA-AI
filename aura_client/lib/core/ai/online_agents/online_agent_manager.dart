@@ -89,7 +89,7 @@ class OnlineAgentManager {
         "google_access_token": googleAccessToken,
       });
 
-      final response = await client.send(request).timeout(const Duration(seconds: 15));
+      final response = await client.send(request).timeout(const Duration(seconds: 60));
 
       if (response.statusCode != 200) {
         // Surface the server's own message when it sent one. A 429 with a retry hint or a 503

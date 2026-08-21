@@ -40,6 +40,18 @@ class SyncClient {
     return headers;
   }
 
+  /// One 401 retry after dropping the cached access token. Sync used to
+  /// replay a rejected JWT until its local 15-minute expiry.
+  Future<http.Response> _send(Future<http.Response> Function() send) async {
+    var response = await send();
+    if (response.statusCode == 401) {
+      debugPrint("[SyncClient] 401 — invalidating access token and retrying once");
+      _ref.read(tokenManagerProvider).invalidateAccessToken();
+      response = await send();
+    }
+    return response;
+  }
+
   /// Pushes the outbox, then pulls everything changed since the last
   /// cursor. Returns true if both phases completed (a 503 from an
   /// unconfigured backend, or a network failure, returns false so the
@@ -65,9 +77,11 @@ class SyncClient {
         .toList();
 
     try {
-      final response = await http
-          .post(Uri.parse(_syncUrl), headers: await _headers(), body: jsonEncode({"mutations": mutations}))
-          .timeout(const Duration(seconds: 20));
+      final response = await _send(() async {
+        return http
+            .post(Uri.parse(_syncUrl), headers: await _headers(), body: jsonEncode({"mutations": mutations}))
+            .timeout(const Duration(seconds: 20));
+      });
 
       if (response.statusCode == 503) {
         debugPrint("[SyncClient] Postgres sync not configured on the backend yet.");
@@ -96,7 +110,9 @@ class SyncClient {
     final uri = Uri.parse(_syncUrl).replace(queryParameters: cursor != null ? {"since": cursor} : null);
 
     try {
-      final response = await http.get(uri, headers: await _headers()).timeout(const Duration(seconds: 20));
+      final response = await _send(() async {
+        return http.get(uri, headers: await _headers()).timeout(const Duration(seconds: 20));
+      });
       if (response.statusCode == 503) {
         debugPrint("[SyncClient] Postgres sync not configured on the backend yet.");
         return false;

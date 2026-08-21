@@ -38,6 +38,7 @@ class TokenManager {
     if (_accessToken != null &&
         _accessTokenExpiry != null &&
         DateTime.now().isBefore(_accessTokenExpiry!.subtract(const Duration(seconds: 30)))) {
+      debugPrint("[TokenManager] using cached access token");
       return _accessToken;
     }
 
@@ -48,6 +49,16 @@ class TokenManager {
     }
 
     return _tryExchange();
+  }
+
+  /// Drop the in-memory access token so the next [getValidAccessToken]
+  /// refreshes or re-exchanges. Call this when a v2/v3 endpoint returns 401
+  /// "Invalid access token" — otherwise the same rejected JWT is reused
+  /// until its local expiry (up to 15 minutes).
+  void invalidateAccessToken() {
+    debugPrint("[TokenManager] clearing rejected access token");
+    _accessToken = null;
+    _accessTokenExpiry = null;
   }
 
   Future<bool> _tryRefresh() async {
@@ -61,6 +72,9 @@ class TokenManager {
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode != 200) {
+        debugPrint(
+          "[TokenManager] refresh failed: ${response.statusCode} ${response.body}",
+        );
         // Refresh token rejected (expired/revoked/already rotated) —
         // clear it so the next call falls through to a fresh exchange
         // instead of retrying the same dead token forever.
@@ -68,6 +82,7 @@ class TokenManager {
         return false;
       }
       await _applyTokenResponse(jsonDecode(response.body) as Map<String, dynamic>);
+      debugPrint("[TokenManager] refresh succeeded");
       return true;
     } catch (e) {
       debugPrint("[TokenManager] refresh failed: $e");
@@ -78,15 +93,24 @@ class TokenManager {
   Future<String?> _tryExchange() async {
     try {
       final idToken = await _ref.read(authProvider.notifier).getIdToken();
-      if (idToken == null) return null;
+      if (idToken == null) {
+        debugPrint("[TokenManager] token exchange skipped: no Google ID token");
+        return null;
+      }
 
       final headers = {"Authorization": "Bearer $idToken"};
       headers.addAll(DeviceValidationService.getAttestationHeaders());
 
       final response = await http.post(Uri.parse("$_authUrl/token"), headers: headers).timeout(const Duration(seconds: 10));
-      if (response.statusCode != 200) return null;
+      if (response.statusCode != 200) {
+        debugPrint(
+          "[TokenManager] token exchange failed: ${response.statusCode} ${response.body}",
+        );
+        return null;
+      }
 
       await _applyTokenResponse(jsonDecode(response.body) as Map<String, dynamic>);
+      debugPrint("[TokenManager] token exchange succeeded");
       return _accessToken;
     } catch (e) {
       debugPrint("[TokenManager] exchange failed: $e");

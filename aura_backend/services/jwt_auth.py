@@ -16,6 +16,7 @@ a session.
 """
 import json
 import logging
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
@@ -39,12 +40,20 @@ _REFRESH_PREFIX = "refresh_token:"
 # restart in this mode — fine for local dev, not for production (see
 # config.py's jwt_secret doc comment).
 _dev_secret = secrets.token_urlsafe(32)
-if not settings.jwt_secret:
+if not (settings.jwt_secret or os.environ.get("JWT_SECRET") or os.environ.get("AURA_JWT_SECRET")):
     logger.warning("JWT_SECRET is not configured — using a random per-process dev secret. Set JWT_SECRET for stable sessions across restarts.")
 
 
 def _secret() -> str:
-    return settings.jwt_secret or _dev_secret
+    # Read env at call time so a secret hydrated after Settings() was
+    # constructed (AURA_JWT_SECRET from the Docker secret file) is still used
+    # instead of the per-process random fallback.
+    return (
+        settings.jwt_secret
+        or os.environ.get("JWT_SECRET")
+        or os.environ.get("AURA_JWT_SECRET")
+        or _dev_secret
+    )
 
 
 # In-process fallback store for refresh tokens if Redis is unreachable.

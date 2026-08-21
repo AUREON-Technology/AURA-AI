@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import Response
+from fastapi import HTTPException, Response
 
 from aura_core.api import Principal, build_app, build_router
 from aura_core.config import load_settings
@@ -62,6 +62,25 @@ def _hydrate_secrets_from_files() -> None:
         if value and not os.environ.get(variable):
             os.environ[variable] = value
 
+    # aura_core reads AURA_* names; legacy config.py / jwt_auth / sync read the
+    # unprefixed pydantic-settings names (JWT_SECRET, DATABASE_URL, …). Without
+    # this copy, each uvicorn worker mints a random JWT secret and Postgres
+    # sync raises RuntimeError → 500 even though the Docker secrets are present.
+    _mirror_legacy_secret_env()
+
+
+def _mirror_legacy_secret_env() -> None:
+    """Copy AURA_* secrets onto the unprefixed names legacy Settings expects."""
+    for aura_name, legacy_name in (
+        ("AURA_JWT_SECRET", "JWT_SECRET"),
+        ("AURA_DATABASE_URL", "DATABASE_URL"),
+        ("AURA_QDRANT_API_KEY", "QDRANT_API_KEY"),
+        ("AURA_REDIS_URL", "REDIS_URL"),
+    ):
+        value = os.environ.get(aura_name)
+        if value and not os.environ.get(legacy_name):
+            os.environ[legacy_name] = value
+
 
 def _build_authenticator(settings: Any):
     """Resolve the callable that turns a request into a :class:`Principal`.
@@ -101,6 +120,11 @@ def _build_authenticator(settings: Any):
                 "no authenticator is available: the v2 JWT module could not be imported and "
                 "no replacement is configured"
             ) from exc
+        except HTTPException:
+            # jwt_auth raises FastAPI HTTPException (401 invalid/expired). Do not
+            # collapse that into a generic "invalid or expired credentials" —
+            # the client uses the detail to decide whether to re-exchange.
+            raise
         except AuthenticationError:
             raise
         except Exception as exc:

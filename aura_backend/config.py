@@ -1,5 +1,6 @@
 import os
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 
@@ -28,7 +29,10 @@ class Settings(BaseSettings):
     # banned API is an invitation to wire it back up, and the /health endpoint was reporting
     # `gemini: {configured: ...}` off the back of it long after nothing read the value.
     qdrant_host: str = ""
-    qdrant_api_key: str = ""
+    qdrant_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("QDRANT_API_KEY", "AURA_QDRANT_API_KEY"),
+    )
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "llama3"
     local_embedding_model: str = "all-MiniLM-L6-v2"
@@ -49,22 +53,32 @@ class Settings(BaseSettings):
     firebase_service_account_path: str = "credentials.json"
     firebase_credentials_json: str = ""
     debug_mode: bool = False
-    # Default to False for production safety; enable explicitly via .env for
-    # local development/testing (tests already override this per-case).
+    # Env: ALLOW_MOCK_ATTESTATION. Default False for production safety.
+    # When true, verify_device_integrity accepts only the known mock-token
+    # allowlist — not arbitrary tokens, and not an auth bypass (use DEBUG_MODE
+    # for that, which must stay false in production).
     allow_mock_attestation: bool = False
 
     # V2: Postgres is the relational source of truth for tasks/calendar/
     # finance/health/memories (see Doc/V2_BLUEPRINT.md §6). Empty by default
     # so the app still boots without Postgres configured — the /api/v2/sync
     # router degrades to a clear 503 rather than crashing at import time.
-    database_url: str = ""
+    database_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("DATABASE_URL", "AURA_DATABASE_URL"),
+    )
 
     # V2: signs access/refresh JWTs issued by /api/v2/auth/token (§9).
     # MUST be set to a stable, random value in production — if left empty,
     # services/jwt_auth.py generates a random one at process startup as a
     # dev-mode convenience, which invalidates every session on each
     # restart/redeploy (acceptable for local dev, not for production).
-    jwt_secret: str = ""
+    # Compose hydrates AURA_JWT_SECRET from the Docker secret file; accept
+    # that name too so v2 jwt_auth and v3 share one signing key across workers.
+    jwt_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("JWT_SECRET", "AURA_JWT_SECRET"),
+    )
 
     # Writable directory for the JSON-file state the learning pipeline keeps
     # (feedback logs, compiled LoRA datasets, telemetry). Defaults to the app
@@ -84,6 +98,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         extra = "ignore"
+        populate_by_name = True
 
 settings = Settings()
 

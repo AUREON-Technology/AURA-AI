@@ -163,6 +163,11 @@ services:
       # web bundle is hosted off this box.
       AURA_DOMAIN: ${AURA_DOMAIN}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:8080,http://127.0.0.1:8080,https://${AURA_DOMAIN}}
+      # Debug Flutter APKs send the hardcoded mock tokens in
+      # DeviceValidationService. Off by default: only the known allowlist in
+      # verify_device_integrity is accepted, and only when this is true.
+      # Do not set DEBUG_MODE: that bypasses all authentication.
+      ALLOW_MOCK_ATTESTATION: ${ALLOW_MOCK_ATTESTATION:-false}
     secrets: [postgres_password, redis_password, qdrant_api_key, jwt_secret, firebase_credentials]
     volumes:
       - aura_workspace:/var/lib/aura/workspace

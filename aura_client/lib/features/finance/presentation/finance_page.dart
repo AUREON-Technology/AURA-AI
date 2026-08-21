@@ -160,6 +160,9 @@ class _FinancePageState extends ConsumerState<FinancePage> {
                           } else {
                             final isVerticalCharts = constraints.maxWidth < 600;
                             return ListView(
+                              padding: EdgeInsets.only(
+                                bottom: MediaQuery.viewInsetsOf(context).bottom,
+                              ),
                               children: [
                                 summaryWidget,
                                 const SizedBox(height: 24),
@@ -562,46 +565,41 @@ class _FinancePageState extends ConsumerState<FinancePage> {
               ],
             ),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: TextField(
-                    controller: _amountController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: r'Amount ($)',
-                      hintText: '0.00',
-                    ),
-                    style: const TextStyle(color: Colors.white),
+            TextField(
+              controller: _amountController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: r'Amount ($)',
+                hintText: '0.00',
+              ),
+              style: const TextStyle(color: Colors.white),
+            ),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<String>(
+              isExpanded: true,
+              initialValue: _categories.contains(_categoryController.text) ? _categoryController.text : 'Other',
+              dropdownColor: const Color(0xFF0F0C1B),
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Category',
+              ),
+              items: _categories.map((cat) {
+                return DropdownMenuItem(
+                  value: cat,
+                  child: Text(
+                    cat,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _categories.contains(_categoryController.text) ? _categoryController.text : 'Other',
-                    dropdownColor: const Color(0xFF0F0C1B),
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(
-                      labelText: 'Category',
-                    ),
-                    items: _categories.map((cat) {
-                      return DropdownMenuItem(
-                        value: cat,
-                        child: Text(cat),
-                      );
-                    }).toList(),
-                    onChanged: (val) {
-                      if (val != null) {
-                        setState(() {
-                          _categoryController.text = val;
-                        });
-                      }
-                    },
-                  ),
-                ),
-              ],
+                );
+              }).toList(),
+              onChanged: (val) {
+                if (val != null) {
+                  setState(() {
+                    _categoryController.text = val;
+                  });
+                }
+              },
             ),
             const SizedBox(height: 16),
             TextField(

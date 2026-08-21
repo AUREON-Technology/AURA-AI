@@ -123,14 +123,17 @@ class SseAgentClient {
     int maxOutputTokens = 1024,
     double temperature = 0.3,
   }) async* {
-    final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
-
     final client = http.Client();
     try {
       final request = http.Request('POST', Uri.parse(_url));
-      request.headers['Content-Type'] = 'application/json';
-      if (token != null) request.headers['Authorization'] = 'Bearer $token';
-      request.headers.addAll(DeviceValidationService.getAttestationHeaders());
+      Future<void> applyAuth(http.Request req) async {
+        req.headers['Content-Type'] = 'application/json';
+        final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
+        if (token != null) req.headers['Authorization'] = 'Bearer $token';
+        req.headers.addAll(DeviceValidationService.getAttestationHeaders());
+      }
+
+      await applyAuth(request);
       request.body = jsonEncode({
         "message": message,
         "session_id": sessionId,
@@ -142,7 +145,14 @@ class SseAgentClient {
         "temperature": temperature,
       });
 
-      final response = await client.send(request).timeout(const Duration(seconds: 15));
+      var response = await client.send(request).timeout(const Duration(seconds: 60));
+      if (response.statusCode == 401) {
+        _ref.read(tokenManagerProvider).invalidateAccessToken();
+        final retry = http.Request('POST', Uri.parse(_url));
+        await applyAuth(retry);
+        retry.body = request.body;
+        response = await client.send(retry).timeout(const Duration(seconds: 60));
+      }
       if (response.statusCode != 200) {
         final body = await response.stream.bytesToString();
         throw Exception("SSE chat request failed with status ${response.statusCode}: $body");
