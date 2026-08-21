@@ -113,6 +113,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         rating: int = Field(ge=1, le=5)
         correction: str | None = Field(default=None, max_length=8000)
         comment: str | None = Field(default=None, max_length=2000)
+        prompt: str | None = Field(default=None, max_length=32_000)
+        response: str | None = Field(default=None, max_length=32_000)
 
     # -- dependencies ------------------------------------------------------------------
 
@@ -231,9 +233,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     ) -> StreamingResponse:
         """Server-sent events with typed frames.
 
-        Frames are ``token``, ``citations``, ``tool_calls``, ``step``, ``revision``, ``done``,
-        and ``error`` -- typed rather than a raw token stream the client must string-split for
-        an ``[ACTIONS]`` marker, which is the v1 protocol's fragility (TD-12).
+        Frames are ``token``, ``citations``, ``tool_calls``, ``step``, ``actions``, ``revision``,
+        ``done``, and ``error`` -- typed rather than a raw token stream the client must
+        string-split for an ``[ACTIONS]`` marker, which is the v1 protocol's fragility (TD-12).
         """
         await enforce_rate_limit(request, caller, "chat")
         turn = to_turn(payload, caller, request)
@@ -402,6 +404,25 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         training example the system can obtain, which is why the endpoint accepts one.
         """
         await enforce_rate_limit(request, caller, "read")
+        from datetime import datetime, timezone
+        from uuid import uuid4
+
+        from ..learning.curation import FeedbackRecord
+
+        record = FeedbackRecord(
+            id=str(uuid4()),
+            prompt=payload.prompt or "",
+            response=payload.response or "",
+            rating=payload.rating,
+            correction=payload.correction,
+            user_ref=caller.user_id.value,
+            created_at=datetime.now(timezone.utc),
+            metadata={
+                "turn_id": payload.turn_id,
+                "comment": payload.comment or "",
+            },
+        )
+        await container.feedback.put(record, owner_id=caller.user_id)
         container.metrics.feedback_total.labels(rating=str(payload.rating)).inc()
         logger.info(
             "feedback recorded",

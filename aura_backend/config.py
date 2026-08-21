@@ -1,7 +1,10 @@
 import os
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings
+
+from aura_core.config.settings import Environment
+from aura_core.domain.errors import ConfigurationError
 
 
 def native_ollama_base_url(configured_host: str = "") -> str:
@@ -21,6 +24,32 @@ def native_ollama_base_url(configured_host: str = "") -> str:
         return host
     host = (configured_host or "").strip() or "http://localhost:11434"
     return host.rstrip("/")
+
+
+def environment_is_production_like() -> bool:
+    """Same staging/production gate v3 ``Environment.is_production_like`` uses."""
+    raw = (
+        os.environ.get("AURA_ENVIRONMENT")
+        or os.environ.get("ENVIRONMENT")
+        or "local"
+    ).strip().lower()
+    try:
+        return Environment(raw).is_production_like
+    except ValueError:
+        return False
+
+
+def debug_bypass_allowed(debug_mode: bool) -> bool:
+    """Mock-auth / attestation bypass is only for tests and local/dev.
+
+    Production-like environments ignore ``DEBUG_MODE`` even if someone flipped
+    the singleton after boot. ``TESTING=True`` remains the unittest escape hatch.
+    """
+    if os.environ.get("TESTING") == "True":
+        return True
+    if environment_is_production_like():
+        return False
+    return bool(debug_mode)
 
 
 class Settings(BaseSettings):
@@ -50,6 +79,16 @@ class Settings(BaseSettings):
     # so a drift between these two values silently breaks all Android auth —
     # single-sourced here rather than hardcoded at the call sites.
     android_package_name: str = "com.auraai.aura_client"
+    # Must match aura_client/ios PRODUCT_BUNDLE_IDENTIFIER.
+    ios_bundle_id: str = Field(
+        default="com.auraai.auraClient",
+        validation_alias=AliasChoices("IOS_BUNDLE_ID", "AURA_IOS_BUNDLE_ID"),
+    )
+    # Apple Developer Team ID used as the App Attest app ID prefix (TEAMID.bundle).
+    apple_team_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("APPLE_TEAM_ID", "AURA_APPLE_TEAM_ID"),
+    )
     firebase_service_account_path: str = "credentials.json"
     firebase_credentials_json: str = ""
     debug_mode: bool = False
@@ -85,7 +124,10 @@ class Settings(BaseSettings):
     # working directory, which is INSIDE the container image — anything written
     # there is destroyed by `docker compose up --force-recreate`. Point this at
     # a mounted volume in any deployment where the feedback corpus matters.
-    data_dir: str = "."
+    data_dir: str = Field(
+        default=".",
+        validation_alias=AliasChoices("DATA_DIR", "AURA_DATA_DIR"),
+    )
 
     # V2 observability (§10). Both no-op when unset — safe defaults for
     # local dev, wire real values in the target deploy environment.
@@ -99,6 +141,15 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
         extra = "ignore"
         populate_by_name = True
+
+    @model_validator(mode="after")
+    def _refuse_debug_mode_in_production(self) -> "Settings":
+        if self.debug_mode and environment_is_production_like() and os.environ.get("TESTING") != "True":
+            raise ConfigurationError(
+                "DEBUG_MODE must be false in staging/production",
+                details={"problems": ["debug_mode must be false in staging/production"]},
+            )
+        return self
 
 settings = Settings()
 

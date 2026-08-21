@@ -4,31 +4,31 @@ overview: Implement the audit’s Phase 0 (emergency security/bugs), Phase 3 (ch
 todos:
   - id: p0-idor
     content: "AURA-001: owner-scoped v1 memory delete + tests"
-    status: pending
+    status: completed
   - id: p0-attest
     content: "AURA-002/003/005: production mock-attest gate, fail-closed Android/iOS, .env.example false"
-    status: pending
+    status: completed
   - id: p0-celery-token
     content: "AURA-004: download Drive PDF in-process; Celery gets workspace path only"
-    status: pending
+    status: completed
   - id: p0-client-ai
     content: "AURA-006: remove client_ai gate; keep Ollama JSON extraction"
-    status: pending
+    status: completed
   - id: p0-signing
     content: "AURA-017: optional env-based release signingConfig; no generated keystore"
-    status: pending
+    status: completed
   - id: p3-timeouts
     content: "AURA-011: SSE + v1 agent TTFT timeout 180s shared constant"
-    status: pending
+    status: completed
   - id: p3-concurrency
     content: "AURA-022: AURA_PROVIDER_LOCAL_MAX_CONCURRENCY=1 to match Ollama"
-    status: pending
+    status: completed
   - id: p7-feedback
     content: "AURA-013: persist /feedback with owner isolation into curation store"
-    status: pending
+    status: completed
   - id: p7-graph
     content: PostgresGraphStore + container wiring when document backend is postgres
-    status: pending
+    status: completed
 isProject: false
 ---
 

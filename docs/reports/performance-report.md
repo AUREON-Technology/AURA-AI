@@ -175,6 +175,46 @@ When one host stops being enough, the constraints bind in this order
 3. **Split the data tier.** Managed Postgres with read replicas, then a Qdrant cluster sharded by
    `user_id` — the natural shard key, since retrieval is already owner-scoped.
 
+## 8. Measuring production p95 (required before any scale change)
+
+The **4.56 ms p95** in §2 is pipeline overhead against in-memory adapters and `EchoProvider`.
+It is not time-to-first-token with Ollama in the path, and it must not be cited as production
+latency.
+
+### How to measure (manual; not CI)
+
+```bash
+# compose up, model pulled, JWT in $TOKEN
+# 1 client, then 2, then 4 concurrent SSE streams (expect serialization at OLLAMA_NUM_PARALLEL=1)
+curl -N -X POST "https://$AURA_DOMAIN/api/v3/chat/stream" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"message":"hello"}' -w "\nTTFB %{time_starttransfer}s total %{time_total}s\n"
+```
+
+Record: curl TTFB (TTFT), full-turn time, concurrent 1 vs 2 vs 4, Ollama queue wait,
+Qdrant retrieve p95 (`aura_stage_duration_seconds`), Postgres sync payload bytes, and
+LLM cache hit rate (`aura_llm_cache_*`). Do **not** add a CI job that needs GPU/weights.
+
+In-process benches remain:
+
+```bash
+cd aura_backend
+pytest tests/benchmarks -m bench -s
+```
+
+### Postgres pool budget (verify, do not retune)
+
+Production: `AURA_WORKERS:-4`, `PostgresPool` `max_size=10`, Postgres `max_connections=120`.
+Graph, audit, and the knowledge source registry share that same pool with documents and
+memory (asserted in `tests/architecture/test_backends_are_resolvable.py`).
+
+Budget: 4 gateway workers × 10 = 40, plus Celery workers (2 pools) + beat + headroom.
+Stay under 120. Do not raise `max_size` without measuring wait time. Prod compose keeps
+`AURA_CACHE_BACKEND=redis`; do not switch it to memory.
+
+Do not add Kubernetes, extra gateway workers, GPUs, or raise `OLLAMA_NUM_PARALLEL` on this
+CPU host until those numbers exist.
+
 ---
 
 Related: [Benchmark Report](benchmark-report.md) · [Security Audit](security-audit.md) ·

@@ -32,6 +32,8 @@ def env(monkeypatch):
 
     for key in [k for k in os.environ if k.startswith("AURA_")]:
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.delenv("ALLOW_MOCK_ATTESTATION", raising=False)
+    monkeypatch.delenv("DEBUG_MODE", raising=False)
     return monkeypatch
 
 
@@ -189,6 +191,27 @@ class TestProductionGate:
     def test_mock_authentication_is_refused(self, env) -> None:
         assert any("allow_mock_auth" in p
                    for p in _problems(self._production(env, AURA_ALLOW_MOCK_AUTH="true")))
+
+    def test_mock_attestation_is_refused(self, env) -> None:
+        assert any("allow_mock_attestation" in p
+                   for p in _problems(self._production(env, AURA_ALLOW_MOCK_ATTESTATION="true")))
+
+    def test_unprefixed_debug_mode_is_refused(self, env) -> None:
+        """Legacy DEBUG_MODE must fail closed the same way AURA_DEBUG does."""
+        assert any("debug must be false" in p
+                   for p in _problems(self._production(env, DEBUG_MODE="true")))
+
+    def test_legacy_settings_class_refuses_debug_mode_in_production(self, env) -> None:
+        env.setenv("AURA_ENVIRONMENT", "production")
+        env.setenv("DEBUG_MODE", "true")
+        from config import Settings
+
+        with pytest.raises(ConfigurationError):
+            Settings(_env_file=None)
+
+    def test_unprefixed_mock_attestation_flag_is_honoured(self, env) -> None:
+        env.setenv("ALLOW_MOCK_ATTESTATION", "true")
+        assert AuraSettings.from_env().security.allow_mock_attestation is True
 
     def test_disabled_safety_is_refused(self, env) -> None:
         assert any("safety.enabled" in p

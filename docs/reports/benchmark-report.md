@@ -11,6 +11,21 @@ cd aura_backend
 pytest tests/benchmarks -m bench -s
 ```
 
+That measures pipeline overhead against in-memory adapters and `EchoProvider`. It is **not**
+time-to-first-token with Ollama in the path.
+
+To time a real chat turn against compose (CPU Ollama, nginx, the 180s LLM timeout):
+
+```bash
+# from a machine that can reach the gateway, after compose is up and a model is pulled
+curl -N -X POST "https://$AURA_DOMAIN/api/v3/chat/stream" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"message":"hello"}' -w "\nTTFB via curl %{time_starttransfer}s total %{time_total}s\n"
+```
+
+Do not treat the bench millisecond figures as production TTFT, and do not add a CI job that
+needs GPU/weights for this measurement.
+
 ---
 
 ## What is measured, and what deliberately is not

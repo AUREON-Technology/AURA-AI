@@ -38,20 +38,17 @@ class MemoryService:
     def extract_memories(self, messages: List[Dict[str, str]]) -> List[str]:
         """Analyzes a message segment to extract long-term user facts and preferences using structured LLM extraction."""
         user_msgs = [m["content"] for m in messages if m["role"] == "user"]
-        if not self.client_ai:
-            if settings.debug_mode:
-                # Return standard developer fallback facts for unit testing
-                fallback_facts = []
-                for msg in user_msgs:
-                    if "studying cs" in msg.lower():
-                        fallback_facts.append("The user is studying CS.")
-                if fallback_facts:
-                    return fallback_facts
-            logger.warning("Gemini client not initialized. Cannot extract memories.")
-            return []
-            
         if not user_msgs:
             return []
+
+        if settings.debug_mode:
+            # Deterministic facts for unit tests that do not run a local model.
+            fallback_facts = []
+            for msg in user_msgs:
+                if "studying cs" in msg.lower():
+                    fallback_facts.append("The user is studying CS.")
+            if fallback_facts:
+                return fallback_facts
             
         # Compile recent conversation history for context
         history_str = ""
@@ -239,23 +236,48 @@ class MemoryService:
             logger.error(f"Error listing memories: {e}")
             return []
 
-    def delete_memory(self, point_id: int) -> bool:
-        """Deletes a memory point from Qdrant Cloud."""
-        if not self.client:
+    def delete_memory(self, point_id: int, user_id: str) -> bool:
+        """Deletes a memory point only when it belongs to ``user_id``.
+
+        Missing points and points owned by someone else both return False so
+        the API can respond 404 without leaking whether the id exists.
+        """
+        if not self.client or not user_id:
             return False
 
+        must_conditions = [
+            models.HasIdCondition(has_id=[point_id]),
+            models.FieldCondition(
+                key="type",
+                match=models.MatchValue(value="user_memory"),
+            ),
+            models.FieldCondition(
+                key="user_id",
+                match=models.MatchValue(value=user_id),
+            ),
+        ]
+        owner_filter = models.Filter(must=must_conditions)
+
         try:
+            existing, _ = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=owner_filter,
+                limit=1,
+                with_payload=False,
+                with_vectors=False,
+            )
+            if not existing:
+                return False
+
             self._memory_cache.clear()
             self.client.delete(
                 collection_name=self.collection_name,
-                points_selector=models.PointIdsList(
-                    points=[point_id]
-                )
+                points_selector=models.FilterSelector(filter=owner_filter),
             )
-            logger.info(f"Memory point deleted: {point_id}")
+            logger.info(f"Memory point deleted: {point_id} for user {user_id}")
             return True
         except Exception as e:
             logger.error(f"Error deleting memory point {point_id}: {e}")
-            return False
+            raise
 
 memory_service = MemoryService()

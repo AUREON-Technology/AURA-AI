@@ -11,7 +11,6 @@ class TestMultiAgentIntelligence(unittest.TestCase):
         # what actually selects the local fallback paths these tests exercise.
         settings.debug_mode = True   # Enable debug mode to test local fallbacks
         agent_orchestrator.client = None
-        memory_service.client_ai = None
 
     def test_intent_classification_fallback(self):
         """Verify fallback classification works in mock mode (no API key)."""

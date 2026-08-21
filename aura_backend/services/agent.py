@@ -124,13 +124,8 @@ class AgentOrchestrator:
             """
             if not google_access_token:
                 return {"error": "Google Drive access token is missing. Please log in with Google."}
-            
-            from tasks import ingest_pdf_task
-            task = ingest_pdf_task.delay(file_id, file_name, google_access_token, user_id or "global")
-            return {
-                "status": "queued",
-                "message": f"Successfully queued download and background ingestion of PDF '{file_name}'. Task ID: {task.id}"
-            }
+            from services.drive import queue_drive_pdf_ingest
+            return queue_drive_pdf_ingest(file_id, file_name, google_access_token, user_id)
 
         def query_knowledge_base(query: str) -> dict:
             """Query AURA's local Knowledge Base (RAG) for matching text passages or facts.

@@ -14,8 +14,7 @@ bool isChatConnectionErrorText(String text) =>
     text.startsWith(kChatConnectionErrorPrefix);
 
 /// True when [error] means the host was unreachable (socket, TLS handshake,
-/// connect timeout, or an [http.ClientException] wrapping the same). Used to
-/// skip orchestrator fallback so a dead backend is not hit twice.
+/// connect timeout, or an [http.ClientException] wrapping the same).
 bool isUnreachableBackendError(Object error) {
   if (error is SocketException ||
       error is HandshakeException ||

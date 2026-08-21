@@ -83,6 +83,28 @@ def _bool(key: str, default: bool) -> bool:
     )
 
 
+def _bool_aliased(key: str, default: bool) -> bool:
+    """Read ``AURA_{key}``, then the unprefixed ``{key}``.
+
+    Compose historically exported a handful of security flags without the
+    ``AURA_`` prefix (``ALLOW_MOCK_ATTESTATION``). Prefer the prefixed name
+    when both are set.
+    """
+    raw = os.environ.get(f"AURA_{key}")
+    if raw is None:
+        raw = os.environ.get(key)
+    if raw is None:
+        return default
+    lowered = raw.strip().lower()
+    if lowered in _TRUE:
+        return True
+    if lowered in _FALSE:
+        return False
+    raise ConfigurationError(
+        f"{key} must be a boolean", details={"value": raw, "accepted": sorted(_TRUE | _FALSE)}
+    )
+
+
 def _int(key: str, default: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
     raw = _env(key)
     if raw is None:
@@ -545,6 +567,7 @@ class ObservabilitySettings:
 class SecuritySettings:
     require_auth: bool = True
     allow_mock_auth: bool = False
+    allow_mock_attestation: bool = False
     admin_roles: tuple[str, ...] = ("Admin", "SuperAdmin")
     rate_limit_enabled: bool = True
     rate_limit_per_user_per_minute: int = 60
@@ -560,6 +583,7 @@ class SecuritySettings:
         return cls(
             require_auth=_bool("REQUIRE_AUTH", True),
             allow_mock_auth=_bool("ALLOW_MOCK_AUTH", False),
+            allow_mock_attestation=_bool_aliased("ALLOW_MOCK_ATTESTATION", False),
             admin_roles=_list("ADMIN_ROLES", ("Admin", "SuperAdmin")),
             rate_limit_enabled=_bool("RATE_LIMIT_ENABLED", True),
             rate_limit_per_user_per_minute=_int("RATE_LIMIT_USER_PER_MIN", 60, minimum=1),
@@ -675,7 +699,11 @@ class AuraSettings:
             ) from exc
         return cls(
             environment=environment,
-            debug=_bool("DEBUG", False),
+            # Unprefixed DEBUG_MODE is the legacy v1 flag (config.Settings).
+            # Honour it here so production boot fails closed even when only
+            # that name is set — AURA_DEBUG alone used to leave the v1 mock
+            # user path open.
+            debug=_bool("DEBUG", False) or _bool_aliased("DEBUG_MODE", False),
             llm=LLMSettings.from_env(),
             knowledge=KnowledgeSettings.from_env(),
             memory=MemorySettings.from_env(),
@@ -708,6 +736,10 @@ class AuraSettings:
                 problems.append("security.require_auth must be true in staging/production")
             if self.security.allow_mock_auth:
                 problems.append("security.allow_mock_auth must be false in staging/production")
+            if self.security.allow_mock_attestation:
+                problems.append(
+                    "security.allow_mock_attestation must be false in staging/production"
+                )
             if not self.safety.enabled:
                 problems.append("safety.enabled must be true in staging/production")
             if not self.security.rate_limit_enabled:
