@@ -10,15 +10,26 @@ class AuraSectionHeader extends StatelessWidget {
   final String? actionLabel;
   final VoidCallback? onAction;
 
-  const AuraSectionHeader({super.key, required this.title, this.actionLabel, this.onAction});
+  const AuraSectionHeader({
+    super.key,
+    required this.title,
+    this.actionLabel,
+    this.onAction,
+  });
 
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(title, style: Theme.of(context).textTheme.titleSmall),
+        Expanded(
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+        ),
         if (actionLabel != null && onAction != null)
           Semantics(
             button: true,
@@ -27,10 +38,17 @@ class AuraSectionHeader extends StatelessWidget {
               onTap: onAction,
               borderRadius: BorderRadius.circular(AuraRadius.sm),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.sm, vertical: AuraSpacing.xs),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AuraSpacing.sm,
+                  vertical: AuraSpacing.xs,
+                ),
                 child: Text(
                   actionLabel!,
-                  style: TextStyle(color: palette.brandOnSurfaceText, fontSize: 12, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    color: palette.brandOnSurfaceText,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ),

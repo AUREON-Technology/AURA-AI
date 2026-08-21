@@ -12,3 +12,4 @@ export 'components/aura_button.dart';
 export 'components/aura_skeleton.dart';
 export 'components/aura_empty_state.dart';
 export 'components/aura_section_header.dart';
+export 'components/aura_select_tile.dart';

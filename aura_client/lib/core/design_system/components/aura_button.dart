@@ -33,8 +33,16 @@ class AuraButton extends StatelessWidget {
 
     final (bg, fg, border) = switch (variant) {
       AuraButtonVariant.primary => (palette.brand, palette.onBrand, null),
-      AuraButtonVariant.secondary => (palette.surfaceVariant, palette.textPrimary, palette.border),
-      AuraButtonVariant.ghost => (Colors.transparent, palette.brandOnSurfaceText, null),
+      AuraButtonVariant.secondary => (
+        palette.surfaceVariant,
+        palette.textPrimary,
+        palette.border,
+      ),
+      AuraButtonVariant.ghost => (
+        Colors.transparent,
+        palette.brandOnSurfaceText,
+        null,
+      ),
       AuraButtonVariant.destructive => (palette.danger, Colors.white, null),
     };
 
@@ -48,8 +56,32 @@ class AuraButton extends StatelessWidget {
             mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              if (icon != null) ...[Icon(icon, size: 18, color: fg), const SizedBox(width: AuraSpacing.sm)],
-              Text(label, style: TextStyle(color: fg, fontWeight: FontWeight.w600, fontSize: 15)),
+              if (icon != null) ...[
+                Icon(icon, size: 18, color: fg),
+                const SizedBox(width: AuraSpacing.sm),
+              ],
+              if (expand)
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: fg,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                    ),
+                  ),
+                )
+              else
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: fg,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                  ),
+                ),
             ],
           );
 
@@ -67,8 +99,16 @@ class AuraButton extends StatelessWidget {
             onTap: isDisabled ? null : onPressed,
             child: Container(
               constraints: const BoxConstraints(minHeight: 44),
-              padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.xl, vertical: AuraSpacing.md),
-              decoration: border != null ? BoxDecoration(border: Border.all(color: border), borderRadius: BorderRadius.circular(AuraRadius.md)) : null,
+              padding: const EdgeInsets.symmetric(
+                horizontal: AuraSpacing.xl,
+                vertical: AuraSpacing.md,
+              ),
+              decoration: border != null
+                  ? BoxDecoration(
+                      border: Border.all(color: border),
+                      borderRadius: BorderRadius.circular(AuraRadius.md),
+                    )
+                  : null,
               alignment: Alignment.center,
               child: child,
             ),

@@ -33,16 +33,19 @@ class AppNotification {
       return AppNotification(
         id: log.id,
         title: 'Server inference failover',
-        message: 'AURA could not complete the request on ${log.modelUsed} and recorded a failover.',
+        message:
+            'AURA could not complete the request on ${log.modelUsed} and recorded a failover.',
         createdAt: log.createdAt,
         isError: false,
       );
     }
-    if (log.eventType == 'error' || (log.errorMessage != null && log.errorMessage!.isNotEmpty)) {
+    if (log.eventType == 'error' ||
+        (log.errorMessage != null && log.errorMessage!.isNotEmpty)) {
       return AppNotification(
         id: log.id,
         title: 'Request failed',
-        message: log.errorMessage ?? 'An AI request failed on ${log.modelUsed}.',
+        message:
+            log.errorMessage ?? 'An AI request failed on ${log.modelUsed}.',
         createdAt: log.createdAt,
         isError: true,
       );
@@ -51,14 +54,21 @@ class AppNotification {
   }
 }
 
-final notificationsProvider = StreamProvider.autoDispose<List<AppNotification>>((ref) {
-  final db = ref.watch(databaseProvider);
-  return db.watchTelemetry().map(
-        (logs) => logs.map(AppNotification.fromTelemetry).whereType<AppNotification>().toList(),
-      );
-});
+final notificationsProvider = StreamProvider.autoDispose<List<AppNotification>>(
+  (ref) {
+    final db = ref.watch(databaseProvider);
+    return db.watchTelemetry().map(
+      (logs) => logs
+          .map(AppNotification.fromTelemetry)
+          .whereType<AppNotification>()
+          .toList(),
+    );
+  },
+);
 
-final notificationsLastReadProvider = FutureProvider.autoDispose<DateTime?>((ref) {
+final notificationsLastReadProvider = FutureProvider.autoDispose<DateTime?>((
+  ref,
+) {
   final db = ref.watch(databaseProvider);
   return db.getNotificationsLastRead();
 });
@@ -80,7 +90,9 @@ class NotificationBellIcon extends ConsumerWidget {
     final l10n = AppLocalizations.of(context)!;
 
     return Semantics(
-      label: unread > 0 ? l10n.unreadNotifications(unread) : l10n.notificationsTooltip,
+      label: unread > 0
+          ? l10n.unreadNotifications(unread)
+          : l10n.notificationsTooltip,
       button: true,
       child: InkWell(
         borderRadius: BorderRadius.circular(AuraRadius.pill),
@@ -96,11 +108,21 @@ class NotificationBellIcon extends ConsumerWidget {
                   right: -2,
                   top: -2,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                    decoration: BoxDecoration(color: palette.danger, borderRadius: BorderRadius.circular(AuraRadius.pill)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: palette.danger,
+                      borderRadius: BorderRadius.circular(AuraRadius.pill),
+                    ),
                     child: Text(
                       unread > 9 ? '9+' : '$unread',
-                      style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ),
@@ -135,58 +157,76 @@ class _NotificationSheet extends ConsumerWidget {
 
     return Theme(
       data: AuraThemeV2.dark,
-      child: Builder(builder: (context) {
-        final palette = AuraPalette.of(context);
-        return SafeArea(
-          child: Container(
-            constraints: const BoxConstraints(maxHeight: 480),
-            margin: const EdgeInsets.all(AuraSpacing.md),
-            decoration: BoxDecoration(
-              color: palette.surface,
-              borderRadius: BorderRadius.circular(AuraRadius.xl),
-              border: Border.all(color: palette.border),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(AuraSpacing.lg),
-                  child: Text('Notifications', style: Theme.of(context).textTheme.titleLarge),
-                ),
-                const Divider(height: 1),
-                Flexible(
-                  child: notificationsAsync.when(
-                    data: (items) => items.isEmpty
-                        ? const Padding(
-                            padding: EdgeInsets.all(AuraSpacing.xl),
-                            child: AuraEmptyState(
-                              icon: Icons.notifications_none,
-                              title: 'Nothing to report',
-                              message: "You'll see AI failovers and request errors here.",
-                            ),
-                          )
-                        : ListView.separated(
-                            shrinkWrap: true,
-                            padding: const EdgeInsets.symmetric(vertical: AuraSpacing.sm),
-                            itemCount: items.length,
-                            separatorBuilder: (_, _) => const Divider(height: 1),
-                            itemBuilder: (context, i) => _NotificationTile(item: items[i]),
-                          ),
-                    loading: () => const Padding(
-                      padding: EdgeInsets.all(AuraSpacing.xl),
-                      child: Center(child: CircularProgressIndicator()),
-                    ),
-                    error: (_, _) => const Padding(
-                      padding: EdgeInsets.all(AuraSpacing.xl),
-                      child: AuraEmptyState(icon: Icons.error_outline, title: "Couldn't load notifications"),
+      child: Builder(
+        builder: (context) {
+          final palette = AuraPalette.of(context);
+          return SafeArea(
+            child: Container(
+              constraints: const BoxConstraints(maxHeight: 480),
+              margin: const EdgeInsets.all(AuraSpacing.md),
+              decoration: BoxDecoration(
+                color: palette.surface,
+                borderRadius: BorderRadius.circular(AuraRadius.xl),
+                border: Border.all(color: palette.border),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(AuraSpacing.lg),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Notifications',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                  const Divider(height: 1),
+                  Flexible(
+                    child: notificationsAsync.when(
+                      data: (items) => items.isEmpty
+                          ? const Padding(
+                              padding: EdgeInsets.all(AuraSpacing.xl),
+                              child: AuraEmptyState(
+                                icon: Icons.notifications_none,
+                                title: 'Nothing to report',
+                                message:
+                                    "You'll see AI failovers and request errors here.",
+                              ),
+                            )
+                          : ListView.separated(
+                              shrinkWrap: true,
+                              padding: const EdgeInsets.symmetric(
+                                vertical: AuraSpacing.sm,
+                              ),
+                              itemCount: items.length,
+                              separatorBuilder: (_, _) =>
+                                  const Divider(height: 1),
+                              itemBuilder: (context, i) =>
+                                  _NotificationTile(item: items[i]),
+                            ),
+                      loading: () => const Padding(
+                        padding: EdgeInsets.all(AuraSpacing.xl),
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
+                      error: (_, _) => const Padding(
+                        padding: EdgeInsets.all(AuraSpacing.xl),
+                        child: AuraEmptyState(
+                          icon: Icons.error_outline,
+                          title: "Couldn't load notifications",
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        );
-      }),
+          );
+        },
+      ),
     );
   }
 }
@@ -199,7 +239,10 @@ class _NotificationTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.lg, vertical: AuraSpacing.md),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AuraSpacing.lg,
+        vertical: AuraSpacing.md,
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -215,9 +258,17 @@ class _NotificationTile extends StatelessWidget {
               children: [
                 Text(item.title, style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 2),
-                Text(item.message, style: Theme.of(context).textTheme.bodySmall, maxLines: 2, overflow: TextOverflow.ellipsis),
+                Text(
+                  item.message,
+                  style: Theme.of(context).textTheme.bodySmall,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
                 const SizedBox(height: 4),
-                Text(DateFormat('MMM d, h:mm a').format(item.createdAt), style: TextStyle(color: palette.textDisabled, fontSize: 11)),
+                Text(
+                  DateFormat('MMM d, h:mm a').format(item.createdAt),
+                  style: TextStyle(color: palette.textDisabled, fontSize: 11),
+                ),
               ],
             ),
           ),

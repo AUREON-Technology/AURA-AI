@@ -34,7 +34,9 @@ class AuraThemeV2 {
       colorScheme: colorScheme,
       textTheme: AuraTypography.textTheme(palette),
       extensions: [palette],
-      splashFactory: InkSparkle.splashFactory,
+      // InkSparkle + ListTile tile/selected colors hides ink (Flutter asserts
+      // "ListTile background color or ink splashes may be invisible").
+      splashFactory: InkRipple.splashFactory,
       cardTheme: CardThemeData(
         color: palette.surface,
         elevation: AuraElevation.none,
@@ -49,8 +51,13 @@ class AuraThemeV2 {
           backgroundColor: palette.brand,
           foregroundColor: palette.onBrand,
           elevation: AuraElevation.none,
-          padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.xl, vertical: AuraSpacing.md + 2),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AuraRadius.md)),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AuraSpacing.xl,
+            vertical: AuraSpacing.md + 2,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AuraRadius.md),
+          ),
           minimumSize: const Size(44, 44),
           textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
@@ -59,8 +66,13 @@ class AuraThemeV2 {
         style: OutlinedButton.styleFrom(
           foregroundColor: palette.textPrimary,
           side: BorderSide(color: palette.border, width: 1),
-          padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.xl, vertical: AuraSpacing.md + 2),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AuraRadius.md)),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AuraSpacing.xl,
+            vertical: AuraSpacing.md + 2,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AuraRadius.md),
+          ),
           minimumSize: const Size(44, 44),
         ),
       ),
@@ -74,8 +86,13 @@ class AuraThemeV2 {
         filled: true,
         fillColor: palette.surfaceVariant,
         labelStyle: TextStyle(color: palette.textSecondary),
-        hintStyle: TextStyle(color: palette.textSecondary.withValues(alpha: 0.6)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: AuraSpacing.lg, vertical: AuraSpacing.lg),
+        hintStyle: TextStyle(
+          color: palette.textSecondary.withValues(alpha: 0.6),
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: AuraSpacing.lg,
+          vertical: AuraSpacing.lg,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AuraRadius.md),
           borderSide: BorderSide.none,
@@ -89,12 +106,18 @@ class AuraThemeV2 {
           borderSide: BorderSide(color: palette.brand, width: 2),
         ),
       ),
-      dividerTheme: DividerThemeData(color: palette.border, thickness: 1, space: AuraSpacing.xl),
+      dividerTheme: DividerThemeData(
+        color: palette.border,
+        thickness: 1,
+        space: AuraSpacing.xl,
+      ),
       snackBarTheme: SnackBarThemeData(
         backgroundColor: palette.surfaceVariant,
         contentTextStyle: TextStyle(color: palette.textPrimary),
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AuraRadius.md)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AuraRadius.md),
+        ),
       ),
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {

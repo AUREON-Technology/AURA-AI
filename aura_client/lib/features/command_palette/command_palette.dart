@@ -46,7 +46,8 @@ class _CommandPaletteDialog extends ConsumerStatefulWidget {
   const _CommandPaletteDialog();
 
   @override
-  ConsumerState<_CommandPaletteDialog> createState() => _CommandPaletteDialogState();
+  ConsumerState<_CommandPaletteDialog> createState() =>
+      _CommandPaletteDialogState();
 }
 
 class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
@@ -79,15 +80,23 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
     final events = await db.select(db.calendarEvents).get();
     if (!mounted) return;
     setState(() {
-      _matchingTasks = tasks.where((t) => t.title.toLowerCase().contains(lower)).take(5).toList();
-      _matchingEvents = events.where((e) => e.title.toLowerCase().contains(lower)).take(5).toList();
+      _matchingTasks = tasks
+          .where((t) => t.title.toLowerCase().contains(lower))
+          .take(5)
+          .toList();
+      _matchingEvents = events
+          .where((e) => e.title.toLowerCase().contains(lower))
+          .take(5)
+          .toList();
     });
   }
 
   List<_Destination> get _matchingDestinations {
     if (_query.trim().isEmpty) return _destinations;
     final lower = _query.trim().toLowerCase();
-    return _destinations.where((d) => d.label.toLowerCase().contains(lower)).toList();
+    return _destinations
+        .where((d) => d.label.toLowerCase().contains(lower))
+        .toList();
   }
 
   void _go(String route) {
@@ -100,19 +109,35 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
     final palette = AuraPalette.of(context);
     final destinations = _matchingDestinations;
 
+    final viewInsets = MediaQuery.viewInsetsOf(context);
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final topInset = screenHeight < 700 ? 24.0 : 100.0;
+    final maxHeight = (screenHeight - topInset - viewInsets.bottom - 24).clamp(
+      180.0,
+      480.0,
+    );
+
     return Dialog(
       alignment: Alignment.topCenter,
-      insetPadding: const EdgeInsets.only(top: 100, left: 24, right: 24),
+      insetPadding: EdgeInsets.only(
+        top: topInset,
+        left: 24,
+        right: 24,
+        bottom: 24 + viewInsets.bottom,
+      ),
       backgroundColor: Colors.transparent,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 480),
+        constraints: BoxConstraints(maxWidth: 560, maxHeight: maxHeight),
         child: AuraCard(
           padding: EdgeInsets.zero,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.lg, vertical: AuraSpacing.sm),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AuraSpacing.lg,
+                  vertical: AuraSpacing.sm,
+                ),
                 child: Row(
                   children: [
                     Icon(Icons.search, color: palette.textSecondary, size: 20),
@@ -130,7 +155,13 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
                         ),
                       ),
                     ),
-                    Text('ESC', style: TextStyle(color: palette.textDisabled, fontSize: 11)),
+                    Text(
+                      'ESC',
+                      style: TextStyle(
+                        color: palette.textDisabled,
+                        fontSize: 11,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -143,20 +174,37 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
                     if (_matchingTasks.isNotEmpty) ...[
                       _GroupLabel('Tasks'),
                       for (final t in _matchingTasks)
-                        _ResultTile(icon: Icons.circle_outlined, label: t.title, onTap: () => _go('/tasks')),
+                        _ResultTile(
+                          icon: Icons.circle_outlined,
+                          label: t.title,
+                          onTap: () => _go('/tasks'),
+                        ),
                     ],
                     if (_matchingEvents.isNotEmpty) ...[
                       _GroupLabel('Calendar'),
                       for (final e in _matchingEvents)
-                        _ResultTile(icon: Icons.event_outlined, label: e.title, onTap: () => _go('/calendar')),
+                        _ResultTile(
+                          icon: Icons.event_outlined,
+                          label: e.title,
+                          onTap: () => _go('/calendar'),
+                        ),
                     ],
                     if (destinations.isNotEmpty) ...[
                       _GroupLabel('Go to'),
                       for (final d in destinations)
-                        _ResultTile(icon: d.icon, label: d.label, onTap: () => _go(d.route)),
+                        _ResultTile(
+                          icon: d.icon,
+                          label: d.label,
+                          onTap: () => _go(d.route),
+                        ),
                     ],
-                    if (destinations.isEmpty && _matchingTasks.isEmpty && _matchingEvents.isEmpty)
-                      const AuraEmptyState(icon: Icons.search_off, title: 'No matches'),
+                    if (destinations.isEmpty &&
+                        _matchingTasks.isEmpty &&
+                        _matchingEvents.isEmpty)
+                      const AuraEmptyState(
+                        icon: Icons.search_off,
+                        title: 'No matches',
+                      ),
                   ],
                 ),
               ),
@@ -176,8 +224,21 @@ class _GroupLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(AuraSpacing.lg, AuraSpacing.md, AuraSpacing.lg, AuraSpacing.xs),
-      child: Text(text.toUpperCase(), style: TextStyle(color: palette.textDisabled, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.6)),
+      padding: const EdgeInsets.fromLTRB(
+        AuraSpacing.lg,
+        AuraSpacing.md,
+        AuraSpacing.lg,
+        AuraSpacing.xs,
+      ),
+      child: Text(
+        text.toUpperCase(),
+        style: TextStyle(
+          color: palette.textDisabled,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.6,
+        ),
+      ),
     );
   }
 }
@@ -186,7 +247,11 @@ class _ResultTile extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-  const _ResultTile({required this.icon, required this.label, required this.onTap});
+  const _ResultTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -197,12 +262,23 @@ class _ResultTile extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.lg, vertical: AuraSpacing.sm),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AuraSpacing.lg,
+            vertical: AuraSpacing.sm,
+          ),
           child: Row(
             children: [
               Icon(icon, size: 18, color: palette.textSecondary),
               const SizedBox(width: AuraSpacing.md),
-              Expanded(child: Text(label, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: palette.textPrimary), overflow: TextOverflow.ellipsis)),
+              Expanded(
+                child: Text(
+                  label,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: palette.textPrimary),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ],
           ),
         ),

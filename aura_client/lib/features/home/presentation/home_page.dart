@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
-import '../../../core/design_system/design_system.dart';
-import '../../../core/insights/insights_client.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/insights/insights_client.dart';
 import '../../../l10n/generated/app_localizations.dart';
 import '../../notifications/notification_center.dart';
-import '../../../core/ai/ai_router/aura_ai_router.dart';
+import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
 import '../../tasks/data/task_repository.dart';
 import '../../calendar/data/calendar_repository.dart';
 import '../../finance/data/finance_repository.dart';
@@ -494,10 +494,25 @@ class _StatusRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: TextStyle(color: palette.textSecondary, fontSize: 12)),
-        Text(value, style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12)),
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: palette.textSecondary, fontSize: 12),
+          ),
+        ),
+        const SizedBox(width: AuraSpacing.sm),
+        Flexible(
+          child: Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.end,
+            style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12),
+          ),
+        ),
       ],
     );
   }
