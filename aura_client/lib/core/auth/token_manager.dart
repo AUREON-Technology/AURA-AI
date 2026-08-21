@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import '../config/config.dart';
+import '../security/aura_secure_storage.dart';
 import '../security/device_validation_service.dart';
 import '../../features/auth/presentation/auth_provider.dart';
 
@@ -15,7 +15,7 @@ import '../../features/auth/presentation/auth_provider.dart';
 class TokenManager {
   final Ref _ref;
   static const String _authUrl = "${AppConfig.backendUrl}/api/v2/auth";
-  static const _storage = FlutterSecureStorage();
+  static const _storage = auraSecureStorage;
   static const _refreshTokenKey = 'v2_refresh_token';
 
   String? _accessToken;

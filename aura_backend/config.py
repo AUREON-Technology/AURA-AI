@@ -1,4 +1,26 @@
+import os
+
 from pydantic_settings import BaseSettings
+
+
+def native_ollama_base_url(configured_host: str = "") -> str:
+    """Native Ollama API origin (no OpenAI ``/v1`` suffix).
+
+    Production compose already sets ``AURA_PROVIDER_LOCAL_BASE_URL`` to the
+    OpenAI-compatible endpoint on the compose service (``http://ollama:11434/v1``).
+    The legacy client and ``/api/tags`` health probe talk to the native API, so
+    that URL is reused with ``/v1`` stripped rather than falling back to
+    localhost — which is unreachable from a Docker service.
+    """
+    provider = os.environ.get("AURA_PROVIDER_LOCAL_BASE_URL", "").strip()
+    if provider:
+        host = provider.rstrip("/")
+        if host.endswith("/v1"):
+            host = host[:-3].rstrip("/")
+        return host
+    host = (configured_host or "").strip() or "http://localhost:11434"
+    return host.rstrip("/")
+
 
 class Settings(BaseSettings):
     port: int = 8000

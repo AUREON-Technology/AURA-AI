@@ -9,7 +9,10 @@ import '../../../core/database/database_provider.dart';
 import '../../../core/ai/orchestrator/agent_orchestrator.dart';
 import '../../../core/ai/online_agents/sse_agent_client.dart';
 import 'agent_config_repository.dart';
+import 'chat_connection_error.dart';
 import 'memory_repository.dart';
+
+enum _SseSendOutcome { succeeded, connectionFailure, otherFailure }
 
 class PendingActions extends Notifier<List<dynamic>> {
   @override
@@ -107,10 +110,11 @@ class ChatRepository {
     // 4. Execute streaming against the v3 kernel (aura_core/api/v3.py's /chat/stream). Unlike the
     // legacy v1/v2 path, v3 loads conversation history itself from server-side episodic memory
     // keyed by session_id, so the client sends only the latest message. Falls back to the v1
-    // orchestrator path (which does need a history payload) on any SSE-level error.
+    // orchestrator path (which does need a history payload) on SSE-level errors that are not a
+    // dead host — a connection/socket failure would hit the same unreachable backend twice.
     _ref.read(streamingMessageIdProvider.notifier).set(assistantMsgId);
     try {
-      bool sseSucceeded = await _sendViaSse(
+      final sseOutcome = await _sendViaSse(
         message: userContent,
         sessionId: conversationId,
         agentId: activeAgentId,
@@ -118,7 +122,7 @@ class ChatRepository {
         assistantMsgId: assistantMsgId,
       );
 
-      if (!sseSucceeded) {
+      if (sseOutcome == _SseSendOutcome.otherFailure) {
         // Legacy fallback still needs a message-history array and per-agent custom instructions,
         // neither of which the v3 path above uses.
         final customInstructions = _ref.read(allAgentInstructionsProvider).value ?? {};
@@ -137,6 +141,8 @@ class ChatRepository {
           useRag: useRag,
           assistantMsgId: assistantMsgId,
         );
+      } else if (sseOutcome == _SseSendOutcome.connectionFailure) {
+        await _updateMessageText(assistantMsgId, kChatConnectionErrorMessage);
       }
     } finally {
       if (_ref.read(streamingMessageIdProvider) == assistantMsgId) {
@@ -144,20 +150,51 @@ class ChatRepository {
       }
     }
 
-    // Asynchronously trigger memory extraction regardless of which path served the response
-    unawaited(_ref.read(memoryRepositoryProvider).triggerMemoryExtraction(historyMessages));
+    final assistantRow = await (_db.select(_db.messages)
+          ..where((m) => m.id.equals(assistantMsgId)))
+        .getSingleOrNull();
+    if (assistantRow != null && !isChatConnectionErrorText(assistantRow.content)) {
+      unawaited(_ref.read(memoryRepositoryProvider).triggerMemoryExtraction(historyMessages));
+    }
   }
 
-  /// Returns true if the SSE stream completed successfully (even if the
-  /// model's reply was itself an error frame) — false signals the caller
-  /// to fall back to [_sendViaOrchestrator].
+  /// Re-sends the last user turn after a connection-error bubble. Deletes the
+  /// error row and that user row, then calls [sendChatMessage] so the UI never
+  /// needs to touch Drift or `ref` after the bubble unmounts.
+  Future<void> retryLastFailedTurn({
+    required String conversationId,
+    required String errorMessageId,
+  }) async {
+    final messages = await (_db.select(_db.messages)
+          ..where((m) => m.conversationId.equals(conversationId))
+          ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
+        .get();
+
+    final userMessages = messages.where((m) => m.role == "user").toList();
+    if (userMessages.isEmpty) return;
+
+    final lastUserMsg = userMessages.last;
+    await (_db.delete(_db.messages)..where((m) => m.id.equals(errorMessageId))).go();
+    await (_db.delete(_db.messages)..where((m) => m.id.equals(lastUserMsg.id))).go();
+
+    await sendChatMessage(
+      conversationId: conversationId,
+      userContent: lastUserMsg.content,
+    );
+  }
+
+  /// Returns [_SseSendOutcome.succeeded] if the SSE stream completed
+  /// (even if the model's reply was itself an error frame).
+  /// [_SseSendOutcome.connectionFailure] means the host was unreachable —
+  /// the caller must not fall back to the orchestrator (same dead host).
+  /// [_SseSendOutcome.otherFailure] signals a fall back to [_sendViaOrchestrator].
   ///
   /// Deliberately does not write to [pendingActionsProvider]: v3's tool
   /// registry (aura_core/tools/builtin.py) has no task/calendar/finance/
   /// health CRUD tools, so that panel would only ever be empty on this
   /// path. It stays populated exclusively by [_sendViaOrchestrator], the
   /// v1 fallback whose backend agent still proposes those actions.
-  Future<bool> _sendViaSse({
+  Future<_SseSendOutcome> _sendViaSse({
     required String message,
     required String sessionId,
     required String agentId,
@@ -235,9 +272,12 @@ class ChatRepository {
 
       await _updateMessageText(assistantMsgId, displayText);
       await _logTelemetry(eventType: "request", isOffline: false, latencyMs: stopwatch.elapsedMilliseconds.toDouble(), modelUsed: "server-sse");
-      return true;
+      return _SseSendOutcome.succeeded;
     } catch (e) {
-      debugPrint("[ChatRepository] SSE path failed, falling back: $e");
+      final unreachable = isUnreachableBackendError(e);
+      debugPrint(unreachable
+          ? "[ChatRepository] SSE path failed (host unreachable), skipping orchestrator: $e"
+          : "[ChatRepository] SSE path failed, falling back: $e");
       await _logTelemetry(
         eventType: "failover",
         isOffline: false,
@@ -245,14 +285,16 @@ class ChatRepository {
         modelUsed: "server-sse",
         errorMessage: e.toString(),
       );
-      return false;
+      return unreachable
+          ? _SseSendOutcome.connectionFailure
+          : _SseSendOutcome.otherFailure;
     }
   }
 
   /// V1-era path: ClientAgentOrchestrator -> AuraAIRouter -> /api/chat/agent, still parsing a
-  /// trailing "[ACTIONS]" marker out of the raw text stream. Kept as the fallback for when the
-  /// v3 kernel's /api/v3/chat/stream is unreachable or errors -- also the only path that still
-  /// proposes task/calendar/finance/health actions and forwards Google Drive access, neither of
+  /// trailing "[ACTIONS]" marker out of the raw text stream. Kept as the fallback for SSE-level
+  /// errors that are not a dead host -- also the only path that still proposes
+  /// task/calendar/finance/health actions and forwards Google Drive access, neither of
   /// which v3's tool registry has yet (see _sendViaSse's doc comment).
   Future<void> _sendViaOrchestrator({
     required String agentId,
@@ -308,7 +350,7 @@ class ChatRepository {
       }
     } catch (e) {
       debugPrint("ClientAgentOrchestrator stream execution failed: $e");
-      fullResponseText = "Connection Error: Failed to retrieve response from active AI agent.";
+      fullResponseText = kChatConnectionErrorMessage;
       await _updateMessageText(assistantMsgId, fullResponseText);
     }
   }

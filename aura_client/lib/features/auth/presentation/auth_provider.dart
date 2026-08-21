@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../../../core/auth/token_manager.dart';
+import '../../../core/security/aura_secure_storage.dart';
 
 class UserProfile {
   final String id;
@@ -38,7 +38,7 @@ class UserProfile {
 }
 
 class AuthNotifier extends AsyncNotifier<UserProfile?> {
-  final _storage = const FlutterSecureStorage();
+  final _storage = auraSecureStorage;
   late final GoogleSignIn _googleSignIn;
   GoogleSignInAccount? _currentAccount;
 
@@ -159,6 +159,10 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     } catch (_) {} // Might fail if never logged into google
     _currentAccount = null;
     await _storage.deleteAll();
+    // Shared storage also drops the DB encryption-key copy. Tokens must be
+    // re-issued on login; EncryptionService restores the Drift key from
+    // `.aura_db_key` on the next init() so encrypted rows stay readable.
+
     // Clears TokenManager's in-memory access/refresh token cache — without
     // this, a still-valid (up to 15min) cached v2 access token from the
     // outgoing session could authenticate v2 API calls as the wrong user

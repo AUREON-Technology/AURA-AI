@@ -2,14 +2,15 @@ import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:encrypt/encrypt.dart' as encrypt;
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:crypto/crypto.dart';
 import 'package:pointycastle/key_derivators/api.dart';
 import 'package:pointycastle/key_derivators/pbkdf2.dart';
 import 'package:pointycastle/digests/sha256.dart';
 import 'package:pointycastle/macs/hmac.dart';
+
+import 'aura_secure_storage.dart';
+import 'encryption_key_backup.dart';
 
 /// Thrown when [EncryptionService.encryptText] cannot produce ciphertext.
 ///
@@ -50,70 +51,38 @@ class EncryptionService {
   static void debugResetKeyForTesting() {
     _cryptKey = null;
   }
-  
-  // Platform-native storage configuration
-  // `encryptedSharedPreferences` intentionally omitted: Jetpack Security is
-  // deprecated upstream and the flag is ignored as of flutter_secure_storage
-  // v10 (removed in v11). Existing data is migrated to custom ciphers on
-  // first access, so dropping it is behaviour-preserving.
-  static const _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(),
-    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
-    mOptions: MacOsOptions(accessibility: KeychainAccessibility.first_unlock),
-    wOptions: WindowsOptions(),
-  );
 
-  /// Initializes the encryption key. Loads from secure storage,
-  /// handles legacy migration, or generates a new key.
+  /// Initializes the encryption key. Loads from secure storage, restores
+  /// from the app-support backup if the plugin wiped itself, migrates a
+  /// leftover `.aura_key`, or generates a new key only when both stores
+  /// are empty.
   static Future<void> init() async {
     if (_cryptKey != null) return;
 
     try {
-      final dir = await getApplicationSupportDirectory();
-      final legacyFile = File('${dir.path}/.aura_key');
-      String? migratedKeyB64;
+      final dir = await EncryptionKeyBackup.supportDirectory();
+      final storedKey = EncryptionKeyBackup.usableKey(await _readSecureKey());
+      final backupKey = await EncryptionKeyBackup.readFrom(dir);
+      final legacyKey = await _readLegacyPlaintextKey(dir);
 
-      // 1. Secure Migration: Read and delete legacy plaintext key
-      if (await legacyFile.exists()) {
-        try {
-          final legacyContent = await legacyFile.readAsString();
-          final trimmed = legacyContent.trim();
-          if (trimmed.isNotEmpty && trimmed != 'aura_ai_secure_db_encryption_key') {
-            migratedKeyB64 = trimmed;
-          }
-        } catch (_) {}
-      }
-
-      String? keyB64 = await _storage.read(key: _keyName);
-
-      if (keyB64 == null && migratedKeyB64 != null) {
-        // Store the migrated key in native secure storage
-        await _storage.write(key: _keyName, value: migratedKeyB64);
-        keyB64 = migratedKeyB64;
-        
-        // Delete legacy plaintext file
-        try {
-          await legacyFile.delete();
-        } catch (_) {}
-      } else if (legacyFile.existsSync()) {
-        // If secure storage already has a key, clean up plaintext key
-        try {
-          await legacyFile.delete();
-        } catch (_) {}
-      }
-
+      var keyB64 = storedKey ?? backupKey ?? legacyKey;
       if (keyB64 == null) {
-        // Generate a cryptographically secure 256-bit (32-byte) key
-        final newKey = encrypt.Key.fromSecureRandom(32);
-        keyB64 = newKey.base64;
-        await _storage.write(key: _keyName, value: keyB64);
+        keyB64 = encrypt.Key.fromSecureRandom(32).base64;
+      } else if (storedKey == null) {
+        debugPrint(
+          backupKey != null
+              ? 'EncryptionService: Restored DB key from ${EncryptionKeyBackup.fileName} after secure-storage miss.'
+              : 'EncryptionService: Migrated DB key from legacy .aura_key.',
+        );
       }
-      
+
       _cryptKey = encrypt.Key.fromBase64(keyB64);
+      await _dualWriteKey(dir, keyB64);
+      await _deleteLegacyPlaintextKey(dir);
     } catch (e) {
       debugPrint("EncryptionService: Secure storage failed ($e). Falling back to PBKDF2 derivation.");
       try {
-        final dir = await getApplicationSupportDirectory();
+        final dir = await EncryptionKeyBackup.supportDirectory();
         
         // Resolve or generate device salt
         final saltFile = File('${dir.path}/.aura_salt');
@@ -148,6 +117,50 @@ class EncryptionService {
         _cryptKey = encrypt.Key(Uint8List.fromList(rawKey));
       }
     }
+  }
+
+  static Future<String?> _readSecureKey() async {
+    try {
+      return await auraSecureStorage.read(key: _keyName);
+    } catch (e) {
+      debugPrint('EncryptionService: Secure storage read failed ($e). Trying backup.');
+      return null;
+    }
+  }
+
+  /// Writes the canonical key to FlutterSecureStorage and the app-support
+  /// backup independently so one failure cannot skip the other — or fall
+  /// through to PBKDF2 and rotate the in-memory key.
+  static Future<void> _dualWriteKey(Directory dir, String keyB64) async {
+    try {
+      await auraSecureStorage.write(key: _keyName, value: keyB64);
+    } catch (e) {
+      debugPrint('EncryptionService: Failed to write key to secure storage ($e).');
+    }
+    try {
+      await EncryptionKeyBackup.writeTo(dir, keyB64);
+    } catch (e) {
+      debugPrint('EncryptionService: Failed to write ${EncryptionKeyBackup.fileName} ($e).');
+    }
+  }
+
+  static Future<String?> _readLegacyPlaintextKey(Directory dir) async {
+    try {
+      final legacyFile = File('${dir.path}/.aura_key');
+      if (!await legacyFile.exists()) return null;
+      return EncryptionKeyBackup.usableKey(await legacyFile.readAsString());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> _deleteLegacyPlaintextKey(Directory dir) async {
+    try {
+      final legacyFile = File('${dir.path}/.aura_key');
+      if (await legacyFile.exists()) {
+        await legacyFile.delete();
+      }
+    } catch (_) {}
   }
 
   /// Derives a 256-bit AES key using PBKDF2-HMAC-SHA256 from user secret and salt details.

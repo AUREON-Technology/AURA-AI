@@ -49,6 +49,8 @@ cd aura_client
 flutter run --dart-define-from-file=config/dev.json
 ```
 
+Physical Android devices must not use localhost: from the repo root run `.\run_client_device.ps1` (or the VS Code "AURA Android device (production)" launch config).
+
 Production builds must inject `https://$AURA_DOMAIN` (from `deploy/.env`) — never a bare IP.
 With no owned domain that is `https://169.58.188.43.nip.io`. From the repo root:
 

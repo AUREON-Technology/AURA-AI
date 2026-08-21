@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:intl/intl.dart';
 import '../data/chat_repository.dart';
+import '../data/chat_connection_error.dart';
 import '../data/agent_config_repository.dart';
 import '../data/agents_repository.dart';
 import '../data/memory_repository.dart';
@@ -17,8 +19,6 @@ import '../../finance/data/finance_repository.dart';
 import '../../health/data/health_repository.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/database/database.dart';
-import 'package:aura_client/core/database/database_provider.dart';
-import 'package:drift/drift.dart' show OrderingTerm, OrderingMode;
 import '../../sync/sync_engine.dart';
 import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
 
@@ -643,6 +643,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   variant: AuraButtonVariant.primary,
                   onPressed: () async {
                     final messenger = ScaffoldMessenger.of(context);
+                    final taskRepo = ref.read(taskRepositoryProvider);
+                    final calendarRepo = ref.read(calendarRepositoryProvider);
+                    final financeRepo = ref.read(financeRepositoryProvider);
+                    final healthRepo = ref.read(healthRepositoryProvider);
+                    final pendingActions = ref.read(pendingActionsProvider.notifier);
+
                     for (final act in actions) {
                       final type = act['type'] ?? '';
                       final params = act['params'] ?? {};
@@ -651,7 +657,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                         if (type == 'add_task') {
                           DateTime? due;
                           if (params['dueDate'] != null) due = DateTime.tryParse(params['dueDate']);
-                          await ref.read(taskRepositoryProvider).addTask(
+                          await taskRepo.addTask(
                                 title: params['title'] ?? 'Task',
                                 priority: params['priority'] ?? 'medium',
                                 category: params['category'] ?? 'personal',
@@ -660,14 +666,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                         } else if (type == 'add_event') {
                           final start = DateTime.tryParse(params['startTime']) ?? DateTime.now();
                           final end = params['endTime'] != null ? DateTime.tryParse(params['endTime']) : start.add(const Duration(hours: 1));
-                          await ref.read(calendarRepositoryProvider).addEvent(
+                          await calendarRepo.addEvent(
                                 title: params['title'] ?? 'Event',
                                 description: params['description'],
                                 startTime: start,
                                 endTime: end ?? start.add(const Duration(hours: 1)),
                               );
                         } else if (type == 'add_expense') {
-                          await ref.read(financeRepositoryProvider).addTransaction(
+                          await financeRepo.addTransaction(
                                 type: 'expense',
                                 amount: (params['amount'] as num).toDouble(),
                                 category: params['category'] ?? 'Other',
@@ -675,7 +681,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                 date: DateTime.now(),
                               );
                         } else if (type == 'add_income') {
-                          await ref.read(financeRepositoryProvider).addTransaction(
+                          await financeRepo.addTransaction(
                                 type: 'income',
                                 amount: (params['amount'] as num).toDouble(),
                                 category: params['category'] ?? 'Other',
@@ -684,21 +690,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                               );
                         } else if (type == 'log_health') {
                           final now = DateTime.now();
-                          final repo = ref.read(healthRepositoryProvider);
                           if (params['waterIntakeMl'] != null) {
-                            await repo.logWater(now, params['waterIntakeMl'] as int);
+                            await healthRepo.logWater(now, params['waterIntakeMl'] as int);
                           }
                           if (params['sleepMinutes'] != null) {
-                            await repo.logSleep(now, params['sleepMinutes'] as int);
+                            await healthRepo.logSleep(now, params['sleepMinutes'] as int);
                           }
                           if (params['caloriesConsumed'] != null) {
-                            await repo.logCalories(now, params['caloriesConsumed'] as int);
+                            await healthRepo.logCalories(now, params['caloriesConsumed'] as int);
                           }
                           if (params['exerciseMinutes'] != null) {
-                            await repo.logExercise(now, params['exerciseMinutes'] as int);
+                            await healthRepo.logExercise(now, params['exerciseMinutes'] as int);
                           }
                           if (params['weight'] != null) {
-                            await repo.logWeight(now, (params['weight'] as num).toDouble());
+                            await healthRepo.logWeight(now, (params['weight'] as num).toDouble());
                           }
                         }
                       } catch (e) {
@@ -706,7 +711,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       }
                     }
 
-                    ref.read(pendingActionsProvider.notifier).clear();
+                    pendingActions.clear();
+                    if (!mounted) return;
                     messenger.showSnackBar(
                       SnackBar(content: const Text("Proposed actions successfully executed!"), backgroundColor: palette.success),
                     );
@@ -778,7 +784,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           onPressed: () async {
                             final fact = factController.text.trim();
                             if (fact.isNotEmpty) {
-                              await ref.read(memoryRepositoryProvider).saveMemory(fact);
+                              final memoryRepo = ref.read(memoryRepositoryProvider);
+                              await memoryRepo.saveMemory(fact);
                               factController.clear();
                             }
                           },
@@ -869,7 +876,7 @@ class MessageBubble extends ConsumerWidget {
     final formattedTime = DateFormat('jm').format(message.createdAt);
     final maxWidthFraction = MediaQuery.of(context).size.width < 768 ? 0.85 : 0.65;
 
-    if (!isUser && message.content.startsWith("Connection Error")) {
+    if (!isUser && isChatConnectionErrorText(message.content)) {
       return Align(
         alignment: Alignment.centerLeft,
         child: Container(
@@ -899,26 +906,12 @@ class MessageBubble extends ConsumerWidget {
                     AuraButton(
                       label: "Retry",
                       icon: Icons.refresh,
-                      onPressed: () async {
-                        final db = ref.read(databaseProvider);
-                        final activeSessionId = ref.read(activeConversationIdProvider);
-                        final messages = await (db.select(db.messages)
-                              ..where((m) => m.conversationId.equals(activeSessionId))
-                              ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
-                            .get();
-
-                        final userMessages = messages.where((m) => m.role == "user").toList();
-                        if (userMessages.isNotEmpty) {
-                          final lastUserMsg = userMessages.last;
-                          await (db.delete(db.messages)..where((m) => m.id.equals(message.id))).go();
-                          await (db.delete(db.messages)..where((m) => m.id.equals(lastUserMsg.id))).go();
-
-                          await ref.read(chatRepositoryProvider).sendChatMessage(
-                                conversationId: activeSessionId,
-                                userContent: lastUserMsg.content,
-                                useRag: true,
-                              );
-                        }
+                      onPressed: () {
+                        final repo = ref.read(chatRepositoryProvider);
+                        unawaited(repo.retryLastFailedTurn(
+                          conversationId: message.conversationId,
+                          errorMessageId: message.id,
+                        ));
                       },
                     ),
                     AuraButton(

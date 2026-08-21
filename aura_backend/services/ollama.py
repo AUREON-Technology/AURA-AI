@@ -2,17 +2,17 @@ import json
 import logging
 from typing import List, Dict, Any, AsyncGenerator
 import httpx
-from config import settings
+from config import native_ollama_base_url, settings
 
 logger = logging.getLogger(__name__)
 
 class OllamaService:
     def __init__(self):
-        self.host = settings.ollama_host.rstrip('/')
+        self.host = native_ollama_base_url(settings.ollama_host)
         self.model = settings.ollama_model
 
     async def check_health(self) -> bool:
-        """Pings local Ollama endpoint to verify if it is running and active."""
+        """Pings the Ollama daemon. Reachable daemon == healthy; model need not be in RAM."""
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(f"{self.host}/api/tags", timeout=2.0)
@@ -27,7 +27,7 @@ class OllamaService:
                     return True
                 return False
         except Exception as e:
-            logger.warning(f"Ollama health check failed: {e}. Ollama is likely not running locally.")
+            logger.warning(f"Ollama health check failed: {e}. Daemon at {self.host} is unreachable.")
             return False
 
     async def generate_chat_stream(

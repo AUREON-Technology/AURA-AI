@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:googleapis/gmail/v1.dart' as gmail;
 import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:http/http.dart' as http;
@@ -8,6 +7,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 import '../../../core/config/config.dart';
 import '../../auth/presentation/auth_provider.dart';
+import '../../../core/security/aura_secure_storage.dart';
 import '../../../core/security/device_validation_service.dart';
 
 // ----------------------------------------------------
@@ -138,7 +138,7 @@ class GitHubIssueItem {
 // ----------------------------------------------------
 
 class AutomationRepository {
-  final _storage = const FlutterSecureStorage();
+  final _storage = auraSecureStorage;
   final Ref _ref;
   final String _backendUrl = AppConfig.backendUrl; // Local FastAPI backend fallback
 

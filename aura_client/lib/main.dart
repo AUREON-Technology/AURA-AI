@@ -15,6 +15,7 @@ void main() async {
   if (kReleaseMode) {
     BackendUrlPolicy.assertSafeForRelease(AppConfig.backendUrl);
   }
+  _warnIfAndroidDebugUsesLoopback();
   await EncryptionService.init();
   
   // Gracefully initialize Firebase for mobile/web,
@@ -32,6 +33,24 @@ void main() async {
       container: container,
       child: const AuraApp(),
     ),
+  );
+}
+
+/// Physical Android treats loopback as the phone, not the PC/VPS.
+/// Do not throw — `adb reverse` workflows still use localhost.
+void _warnIfAndroidDebugUsesLoopback() {
+  if (!kDebugMode) return;
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+
+  final host = Uri.tryParse(AppConfig.backendUrl)?.host.toLowerCase() ?? '';
+  const loopback = {'localhost', '127.0.0.1', '::1'};
+  if (!loopback.contains(host)) return;
+
+  debugPrint(
+    'HARD WARNING: Android debug BACKEND_URL is loopback '
+    '(${AppConfig.backendUrl}). On a physical device that is the phone, '
+    'not the PC or VPS. Use run_client_device.ps1 or the '
+    '"AURA Android device (production)" launch config.',
   );
 }
 
