@@ -1,4 +1,4 @@
-# AURA AI Flutter Client — physical Android debug run
+# AURA AI Flutter Client - physical Android debug run
 # Run from anywhere. Resolves BACKEND_URL from AURA_DOMAIN in deploy/.env
 # (falls back to deploy/.env.example), syncs aura_client/config/device.json,
 # then `flutter run` with that production HTTPS URL.
@@ -31,7 +31,7 @@ Write-Host "Running AURA AI Client on device (production HTTPS)" -ForegroundColo
 Write-Host "   Target Backend: $BACKEND_URL" -ForegroundColor Cyan
 Write-Host "   Synced:         aura_client/config/device.json" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "Do not use a plain ``flutter run`` on a physical phone —" -ForegroundColor Yellow
+Write-Host "Do not use a plain ``flutter run`` on a physical phone -" -ForegroundColor Yellow
 Write-Host "localhost is the device itself, not the PC or VPS." -ForegroundColor Yellow
 Write-Host "==========================================================" -ForegroundColor Cyan
 
