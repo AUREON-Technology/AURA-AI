@@ -15,5 +15,8 @@ import UIKit
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "AppAttestPlugin") {
       AppAttestPlugin.register(with: registrar.messenger())
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "BackupExclusionPlugin") {
+      BackupExclusionPlugin.register(with: registrar.messenger())
+    }
   }
 }
