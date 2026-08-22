@@ -99,12 +99,18 @@ def tool(
     timeout_s: float = 15.0,
     max_result_chars: int = 16_000,
     version: str = "1.0.0",
+    tags: tuple[str, ...] = (),
 ) -> Callable[[Handler], FunctionTool]:
     """Decorator form.
 
         @tool("add", "Add two numbers.", param("a", "number", "First"), param("b", "number", "Second"))
         async def add(a: float, b: float) -> str:
             return str(a + b)
+
+    ``tags`` is free-form metadata read by the registry rather than the policy engine directly --
+    e.g. ``"untrusted_content"`` marks a tool whose *output* is attacker-influenceable external
+    text (registry.execute taints the calling ToolContext when it sees this tag; see
+    tools/registry.py and tools/builtin.py's fetch_url).
     """
 
     def decorate(handler: Handler) -> FunctionTool:
@@ -119,6 +125,7 @@ def tool(
             timeout_s=timeout_s,
             max_result_chars=max_result_chars,
             version=version,
+            tags=tags,
         )
         return FunctionTool(spec, handler)
 

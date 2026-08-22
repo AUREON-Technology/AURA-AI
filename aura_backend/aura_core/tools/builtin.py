@@ -424,6 +424,12 @@ def build_http_tool(*, allowed_hosts: Sequence[str], timeout_s: float = 15.0) ->
         sensitivity=ToolSensitivity.PUBLIC,
         timeout_s=timeout_s,
         max_result_chars=20_000,
+        # Page content is attacker-influenceable and never scanned by
+        # deps.safety.guard_context_items (that only covers RAG retrieval) --
+        # registry.execute() taints the ToolContext on this tag so a
+        # prompt-injection payload here can't get a later PERSONAL-sensitivity
+        # propose_* call auto-approved (M4).
+        tags=("untrusted_content",),
     )
     async def fetch_url(url: str) -> str:
         _assert_public_url(url, allowlist, "fetch_url")
