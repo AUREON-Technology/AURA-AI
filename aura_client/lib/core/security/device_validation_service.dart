@@ -3,7 +3,9 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
+import '../config/config.dart';
 import 'app_attest_client.dart';
 import 'hardware_attestation_client.dart';
 import 'play_integrity_client.dart';
@@ -37,6 +39,7 @@ class DeviceValidationService {
     String? platform,
     HardwareAttestationClient? client,
     String? backendUrl,
+    http.Client? httpClient,
   }) async {
     final isDebug = debugMode ?? kDebugMode;
     final platformName = platform ?? _platformName();
@@ -64,8 +67,13 @@ class DeviceValidationService {
 
     final sdk = client ?? _defaultClient(platformName);
     String? hardwareToken;
+    String? nonce;
     if (sdk != null) {
-      hardwareToken = await sdk.requestToken(nonce: _freshNonce());
+      // Server-issued so the backend's replay-protection cache (H1) has
+      // something to correlate this attestation call against — a
+      // purely client-generated nonce can never be checked server-side.
+      nonce = await _serverNonce(backendUrl: backendUrl, httpClient: httpClient);
+      hardwareToken = await sdk.requestToken(nonce: nonce);
     }
 
     final hasHardware = hardwareToken != null && hardwareToken.isNotEmpty;
@@ -74,28 +82,57 @@ class DeviceValidationService {
       token: hasHardware ? hardwareToken : unsupportedMarker,
       isHardwareAttestation: hasHardware,
       isDebugBypass: false,
+      nonce: hasHardware ? nonce : null,
     );
     _storeCache(attestation, isDebug: isDebug, platformName: platformName);
     return attestation;
   }
 
-  /// Resolves device validation token and platform headers.
+  /// Resolves device validation token, platform, and nonce headers.
   static Future<Map<String, String>> getAttestationHeaders({
     bool? debugMode,
     String? platform,
     HardwareAttestationClient? client,
     String? backendUrl,
+    http.Client? httpClient,
   }) async {
     final attestation = await resolve(
       debugMode: debugMode,
       platform: platform,
       client: client,
       backendUrl: backendUrl,
+      httpClient: httpClient,
     );
-    return {
+    final headers = {
       'X-Device-Platform': attestation.platform,
       'X-Device-Attestation': attestation.token,
     };
+    if (attestation.nonce != null) {
+      headers['X-Device-Attestation-Nonce'] = attestation.nonce!;
+    }
+    return headers;
+  }
+
+  /// Fetches a single-use nonce from POST /api/v3/auth/nonce to bind into
+  /// the attestation SDK call. Falls back to a locally-generated nonce on
+  /// any network failure so a backend hiccup degrades to today's
+  /// (unreplay-protected) behaviour rather than blocking attestation
+  /// entirely -- the server-side check only runs when a nonce is present.
+  static Future<String> _serverNonce({String? backendUrl, http.Client? httpClient}) async {
+    try {
+      final url = "${backendUrl ?? AppConfig.backendUrl}/api/v3/auth/nonce";
+      final uri = Uri.parse(url);
+      final sent = httpClient != null ? httpClient.post(uri) : http.post(uri);
+      final response = await sent.timeout(const Duration(seconds: 5));
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        final nonce = body['nonce'] as String?;
+        if (nonce != null && nonce.isNotEmpty) return nonce;
+      }
+    } catch (_) {
+      // Network error, timeout, or malformed response — fall through.
+    }
+    return _freshNonce();
   }
 
   static HardwareAttestationClient? _defaultClient(String platform) {
@@ -143,10 +180,16 @@ class DeviceAttestation {
   final bool isHardwareAttestation;
   final bool isDebugBypass;
 
+  /// The server-issued nonce bound into [token], when a hardware attestation
+  /// was actually produced. Echoed back as X-Device-Attestation-Nonce so the
+  /// backend's replay-protection cache can check it (H1).
+  final String? nonce;
+
   const DeviceAttestation({
     required this.platform,
     required this.token,
     required this.isHardwareAttestation,
     required this.isDebugBypass,
+    this.nonce,
   });
 }
