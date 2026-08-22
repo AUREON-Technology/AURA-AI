@@ -12,7 +12,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from config import settings
-from services.security import attestation_failure_reason, verify_device_integrity
+from services.security import (
+    _local_nonce_cache,
+    attestation_failure_reason,
+    store_nonce,
+    verify_device_integrity,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -77,3 +82,37 @@ def test_ios_fake_tokens_rejected(_bypass):
     assert verify_device_integrity("ios_app_attest_mock_assertion_token_string", "ios") is False
     assert verify_device_integrity("aura_attestation_unsupported", "ios") is False
     assert verify_device_integrity("not-an-attestation", "ios") is False
+
+
+@patch("services.security.debug_bypass_allowed", return_value=False)
+def test_nonce_rejected_when_never_issued(_bypass):
+    """H1: an expected_nonce that store_nonce() never wrote must fail closed —
+    this is the check that was previously dead code because nothing ever
+    called store_nonce() in production."""
+    _production_mode()
+    _local_nonce_cache.discard("never-issued")
+    assert verify_device_integrity("token", "android", expected_nonce="never-issued") is False
+    assert attestation_failure_reason.get() == "nonce_replay"
+
+
+@patch("services.security.debug_bypass_allowed", return_value=False)
+@patch("services.security._get_play_integrity_service")
+def test_nonce_is_single_use(mock_get_service, _bypass):
+    _production_mode()
+    _local_nonce_cache.discard("n1")
+    store_nonce("n1")
+
+    mock_service = MagicMock()
+    mock_get_service.return_value = mock_service
+    mock_service.v1().decodeIntegrityToken().execute.return_value = {
+        "tokenPayloadExternal": {
+            "requestDetails": {"packageName": settings.android_package_name, "nonce": "n1"},
+            "deviceIntegrity": {"deviceRecognitionVerdict": ["MEETS_DEVICE_INTEGRITY"]},
+        }
+    }
+
+    assert verify_device_integrity("header.payload.sig", "android", expected_nonce="n1") is True
+    # Replaying the same nonce must fail even though the attestation token
+    # itself is still otherwise valid -- the whole point of single-use.
+    assert verify_device_integrity("header.payload.sig", "android", expected_nonce="n1") is False
+    assert attestation_failure_reason.get() == "nonce_replay"
