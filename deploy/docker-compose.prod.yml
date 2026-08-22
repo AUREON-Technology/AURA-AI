@@ -73,6 +73,13 @@ secrets:
   # to be placed here by hand: cp/scp the downloaded key to deploy/secrets/firebase_credentials.json.
   firebase_credentials:
     file: ./secrets/firebase_credentials.json
+  # Alertmanager's own webhook receiver URL. alertmanager-entrypoint.sh already
+  # defaults to reading /run/secrets/alertmanager_webhook_url when
+  # ALERTMANAGER_WEBHOOK_URL[_FILE] is unset -- this was documented in .env.example
+  # but never actually declared/mounted, so a populated deploy/secrets/ file backed
+  # nothing and the receiver stayed silently empty.
+  alertmanager_webhook_url:
+    file: ./secrets/alertmanager_webhook_url
 
 services:
   # ------------------------------------------------------------------ ingress
@@ -437,6 +444,7 @@ services:
     volumes:
       - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - ./scripts/alertmanager-entrypoint.sh:/scripts/alertmanager-entrypoint.sh:ro
+    secrets: [alertmanager_webhook_url]
     networks: [observability]
     deploy:
       resources:

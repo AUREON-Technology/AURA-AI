@@ -2,7 +2,13 @@
 # Restore from a backup. Destructive against the target database.
 #
 # Usage:  docker compose -f deploy/docker-compose.prod.yml run --rm \
-#           -v ./backups:/backups backup /scripts/restore.sh /backups/postgres-<stamp>.dump
+#           --entrypoint /bin/sh backup /scripts/restore.sh /backups/postgres-<stamp>.dump
+#
+# --entrypoint is required: the `backup` service's own compose entrypoint is
+# /scripts/backup.sh, so without this override, `run ... backup /scripts/restore.sh ...`
+# silently runs ANOTHER BACKUP CYCLE and never touches restore.sh -- no error, no output
+# indicating anything went wrong. `docker compose run` overrides the command, not the
+# entrypoint, so the entrypoint script receives restore.sh's path as just another argument.
 #
 # Interactive by default (type the database name). For a staging drill:
 #   RESTORE_CONFIRM=$PGDATABASE /scripts/restore.sh /backups/postgres-<stamp>.dump
