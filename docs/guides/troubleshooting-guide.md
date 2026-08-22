@@ -34,6 +34,30 @@ five files with mode 600, and re-run `./scripts/bootstrap-secrets.sh` (it keeps 
 
 ---
 
+## Every login fails with 403 "Device attestation validation failed"
+
+`POST /api/v3/auth/token` is the only place a session is minted (`services/security.py`'s
+`verify_token`); a device that fails attestation cannot do anything else in the app, including
+sync or chat, so this reads as "the whole app is broken," not a narrow auth bug. The response
+body's parenthetical names the reason, matching `attestation_failure_reason` in the gateway logs
+(search by the request's `X-Correlation-Id`):
+
+| Reason | Meaning | Fix |
+| --- | --- | --- |
+| `play_integrity_unavailable` | The gateway could not build a Google Play Integrity API client at all — no usable service-account credentials were loadable. | Confirm `deploy/secrets/firebase_credentials.json` exists, is a valid service-account key, and that key's Google Cloud project has the Play Integrity API enabled (see [play-store-signing.md](play-store-signing.md)). |
+| `play_integrity_decode` | Credentials loaded, but the `decodeIntegrityToken` API call itself failed. | Usually a project mismatch: the Android app must be registered in Play Console under the *same* Cloud project as the service account (`IntegrityAttestationPlugin.kt`'s `CLOUD_PROJECT_NUMBER` must match `google-services.json`'s `project_number`, and both must match the linked Play Console project). |
+| `package_mismatch` | The token's package name doesn't match `AURA_ANDROID_PACKAGE_NAME`. | Confirm the setting matches the APK's actual `applicationId`. |
+| `device_verdict` | Play Integrity's own device-recognition check failed (rooted/emulated/tampered device, or a legitimate device Google hasn't attested before). | Expected behavior for an untrusted device — not a bug. Verify on a normal, unrooted device. |
+| `nonce_replay` / `nonce_mismatch` | The client didn't bind the server-issued nonce from `POST /api/v3/auth/nonce` into its attestation request, sent a stale one, or reused one already consumed (H1's single-use replay protection). | Confirm the client build includes the nonce-fetch fix — `device_validation_service.dart`'s `_serverNonce()` — and that `/api/v3/auth/nonce` is reachable from the device. An older client without this fix has nothing to send and relies on the check being skipped (no `expected_nonce` header), so this specific reason implies a nonce *was* sent but didn't match. |
+| `missing_token` | No `X-Device-Attestation` header at all. | Client-side bug, or a non-mobile release build (see [platform-support.md](platform-support.md) — expected there, not fixable server-side). |
+| `ios_attest` | App Attest verification failed — see the gateway log line just above this one for the specific reason (`services/attestation/app_attest.py` logs before returning). | Depends on the underlying reason; common causes are an untrusted certificate chain or an App ID mismatch. |
+
+Debug builds bypass this entirely (`aura_dev_attestation`); this table only applies to release
+builds hitting a production-mode backend (`allow_mock_attestation=false`, which is always the
+case in staging/production — see `aura_core/config/settings.py`'s `is_production_like` check).
+
+---
+
 ## `/health/ready` returns 503
 
 Readiness reflects dependencies; liveness does not. A 503 here is *correct* while something is

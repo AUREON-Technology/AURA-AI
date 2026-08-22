@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'core/auth/token_manager.dart';
 import 'core/config/backend_url_policy.dart';
 import 'core/config/config.dart';
 import 'core/theme/theme.dart';
@@ -76,6 +77,34 @@ class AuraApp extends ConsumerWidget {
         GlobalCupertinoLocalizations.delegate,
       ],
       supportedLocales: AppLocalizations.supportedLocales,
+      // C1: a device-attestation 403 during token exchange previously only
+      // hit debugPrint, indistinguishable from a transient network failure
+      // even though it won't self-resolve on retry. Persistent, dismissible,
+      // and never blocking — everything not requiring a backend session
+      // should stay usable.
+      builder: (context, child) {
+        if (child == null) return const SizedBox.shrink();
+        final failure = ref.watch(authExchangeFailureProvider);
+        if (failure != AuthExchangeFailure.deviceAttestationRejected) return child;
+        return Column(
+          children: [
+            MaterialBanner(
+              content: const Text(
+                'This device could not be verified. Some features may be unavailable.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => ref
+                      .read(authExchangeFailureProvider.notifier)
+                      .set(AuthExchangeFailure.none),
+                  child: const Text('Dismiss'),
+                ),
+              ],
+            ),
+            Expanded(child: child),
+          ],
+        );
+      },
     );
   }
 }
