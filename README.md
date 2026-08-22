@@ -106,6 +106,7 @@ Start with the [overview](docs/architecture/00-overview.md).
 [Host migration](docs/guides/host-migration-runbook.md) ·
 [Split inference](docs/guides/split-inference-deployment.md) ·
 [Deployment](docs/guides/deployment-guide.md) ·
+[Platform support](docs/guides/platform-support.md) ·
 [Administration](docs/guides/administrator-guide.md) ·
 [Maintenance](docs/guides/maintenance-guide.md) ·
 [Troubleshooting](docs/guides/troubleshooting-guide.md) ·
