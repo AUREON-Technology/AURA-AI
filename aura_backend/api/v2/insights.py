@@ -20,7 +20,7 @@ from infrastructure.db.user_repo import get_or_create_user
 from services.insights import generate_insights_for_user
 from services.jwt_auth import verify_access_token
 
-router = APIRouter(prefix="/api/v2/insights", tags=["insights (v2)"])
+router = APIRouter(prefix="/api/v3/insights", tags=["insights"])
 
 
 def _require_db_configured():

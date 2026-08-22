@@ -3,9 +3,9 @@ redesign (Doc/V2_BLUEPRINT.md §6/§7). Replaces V1's combination of direct
 client-to-Firestore writes and a 577-line hand-rolled per-table LWW sync
 engine on the Flutter side with two endpoints:
 
-  GET  /api/v2/sync?since=<cursor>  -> every row changed since `since`,
+  GET  /api/v3/sync?since=<cursor>  -> every row changed since `since`,
                                         across every syncable table, in one call
-  POST /api/v2/sync                 -> a batch of client mutations, applied
+  POST /api/v3/sync                 -> a batch of client mutations, applied
                                         with last-write-wins on `updated_at`
 
 Postgres becomes the source of truth; the client's local Drift database is
@@ -25,7 +25,7 @@ from infrastructure.db.models import SYNCABLE_MODELS
 from infrastructure.db.user_repo import get_or_create_user as _get_or_create_user
 from services.jwt_auth import verify_access_token
 
-router = APIRouter(prefix="/api/v2", tags=["sync (v2)"])
+router = APIRouter(prefix="/api/v3", tags=["sync"])
 
 
 def _require_db_configured():

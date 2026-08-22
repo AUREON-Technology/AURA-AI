@@ -4,7 +4,8 @@ import json
 import base64
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
-from main import app, RateLimitMiddleware
+from aura_service import app
+from infrastructure.http_limits import RateLimitMiddleware
 from services.security import verify_device_integrity, verify_token
 from services.rbac import require_role
 from config import settings
@@ -15,16 +16,16 @@ class TestSecurityHardening(unittest.TestCase):
         # Clear rate limiting history before each test to ensure a clean state
         RateLimitMiddleware.request_history.clear()
 
-        # main.py's rate limiter holds its OWN Redis handle (`_rate_limit_redis`),
+        # The IP limiter holds its OWN Redis handle (`_rate_limit_redis`),
         # separate from services.security.redis_client below. Without pinning it
         # to None the limiter takes the Redis path, whose per-IP counter is keyed
         # on a shared 60s window and therefore leaks between tests: once
         # test_rate_limiting deliberately exhausts the window, every later test in
         # that minute gets a 429 instead of its expected status. CI has no Redis
         # service so this passed there and only failed in production-like envs.
-        import main
-        self.orig_rate_limit_redis = main._rate_limit_redis
-        main._rate_limit_redis = None
+        import infrastructure.http_limits as http_limits
+        self.orig_rate_limit_redis = http_limits._rate_limit_redis
+        http_limits._rate_limit_redis = None
 
         # Save original settings
         self.orig_debug_mode = settings.debug_mode
@@ -40,8 +41,8 @@ class TestSecurityHardening(unittest.TestCase):
         settings.debug_mode = self.orig_debug_mode
         settings.allow_mock_attestation = self.orig_allow_mock_attestation
 
-        import main
-        main._rate_limit_redis = self.orig_rate_limit_redis
+        import infrastructure.http_limits as http_limits
+        http_limits._rate_limit_redis = self.orig_rate_limit_redis
 
         # Restore redis_client
         import services.security
@@ -57,18 +58,18 @@ class TestSecurityHardening(unittest.TestCase):
     def test_payload_size_limit_under_5mb(self):
         """Verify that requests under 5MB are allowed through the middleware."""
         response = self.client.post(
-            "/api/memory/save",
+            "/api/v3/learning/log",
             headers={"Content-Length": "100"},
-            json={"fact": "Test memory payload size"}
+            json={"id": "p1", "prompt": "p", "response": "r", "rating": 5, "timestamp": "2026-08-21T00:00:00Z"}
         )
         self.assertNotEqual(response.status_code, 413)
 
     def test_payload_size_limit_exceeded(self):
         """Verify that requests exceeding 5MB are blocked with HTTP 413 Payload Too Large."""
         response = self.client.post(
-            "/api/memory/save",
+            "/api/v3/learning/log",
             headers={"Content-Length": str(6 * 1024 * 1024)},
-            json={"fact": "x" * 100}  # Small payload body, but Content-Length header claims 6MB
+            json={"id": "p1", "prompt": "x" * 100, "response": "r", "rating": 5, "timestamp": "2026-08-21T00:00:00Z"}
         )
         self.assertEqual(response.status_code, 413)
         self.assertIn("Payload Too Large", response.text)
@@ -77,11 +78,11 @@ class TestSecurityHardening(unittest.TestCase):
         """Verify rate limiter blocks request volume exceeding 100 req/min with HTTP 429."""
         # Make 100 requests (the limit)
         for i in range(100):
-            response = self.client.get("/api/memory/list")
+            response = self.client.get("/api/v3/learning/export")
             self.assertNotEqual(response.status_code, 429)
 
         # The 101st request should be rate-limited
-        response = self.client.get("/api/memory/list")
+        response = self.client.get("/api/v3/learning/export")
         self.assertEqual(response.status_code, 429)
         self.assertIn("Rate limit exceeded", response.text)
 
@@ -273,7 +274,7 @@ class TestSecurityHardening(unittest.TestCase):
         os.environ.pop("TESTING", None)
         try:
             with patch("services.security.verify_device_integrity", return_value=True):
-                response = self.client.get("/api/memory/list")
+                response = self.client.get("/api/v3/learning/export")
             self.assertNotIn("mock_user_123", response.text)
             self.assertIn(response.status_code, (401, 403))
         finally:
@@ -318,7 +319,7 @@ class TestSecurityHardening(unittest.TestCase):
             "email": "user@aura.ai",
             "role": "User"
         }
-        response = self.client.get("/api/learning/export")
+        response = self.client.get("/api/v3/learning/export")
         self.assertEqual(response.status_code, 403)
         self.assertIn("Access forbidden", response.text)
 
@@ -331,7 +332,7 @@ class TestSecurityHardening(unittest.TestCase):
         }
         # Calling export will invoke the learning pipeline which might return empty/null or raise an error,
         # but the request should pass the authorization layer (not return 403).
-        response = self.client.get("/api/learning/export")
+        response = self.client.get("/api/v3/learning/export")
         self.assertNotEqual(response.status_code, 403)
 
     def test_rbac_developer_role_allowed_on_developer_endpoints(self):
@@ -341,7 +342,7 @@ class TestSecurityHardening(unittest.TestCase):
             "email": "dev@aura.ai",
             "role": "Developer"
         }
-        response = self.client.get("/api/learning/evaluate")
+        response = self.client.get("/api/v3/learning/evaluate")
         self.assertNotEqual(response.status_code, 403)
 
 if __name__ == "__main__":

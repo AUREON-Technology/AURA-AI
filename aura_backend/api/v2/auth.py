@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from services.jwt_auth import issue_token_pair, refresh_token_pair, revoke_refresh_token
 from services.security import verify_token
 
-router = APIRouter(prefix="/api/v2/auth", tags=["auth (v2)"])
+router = APIRouter(prefix="/api/v3/auth", tags=["auth"])
 
 
 class TokenResponse(BaseModel):

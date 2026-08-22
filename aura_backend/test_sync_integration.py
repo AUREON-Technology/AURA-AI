@@ -1,4 +1,4 @@
-"""Integration test for /api/v2/sync against a REAL Postgres (Doc/
+"""Integration test for /api/v3/sync against a REAL Postgres (Doc/
 V2_BLUEPRINT.md §11: "pytest + testcontainers-python spinning up real
 Postgres/Redis in CI, not mocks"). Every other backend test in this suite
 either needs no database (SSE splitter, JWT auth with the in-process
@@ -104,7 +104,7 @@ class TestSyncApiIntegration(unittest.TestCase):
     def test_push_then_pull_round_trip(self):
         from fastapi.testclient import TestClient
 
-        from main import app
+        from aura_service import app
         from services.jwt_auth import verify_access_token
 
         app.dependency_overrides[verify_access_token] = lambda: {
@@ -125,7 +125,7 @@ class TestSyncApiIntegration(unittest.TestCase):
 
         try:
             push_response = client.post(
-                "/api/v2/sync",
+                "/api/v3/sync",
                 json={
                     "mutations": [
                         {
@@ -149,7 +149,7 @@ class TestSyncApiIntegration(unittest.TestCase):
             self.assertEqual(push_response.status_code, 200)
             self.assertEqual(push_response.json()[0]["status"], "applied")
 
-            pull_response = client.get("/api/v2/sync")
+            pull_response = client.get("/api/v3/sync")
             self.assertEqual(pull_response.status_code, 200)
             tasks = pull_response.json()["data"]["tasks"]
             self.assertEqual(len(tasks), 1)
@@ -163,7 +163,7 @@ class TestSyncApiIntegration(unittest.TestCase):
             # A second push marking it deleted should soft-delete, and the
             # deletion should be visible on the next pull.
             delete_response = client.post(
-                "/api/v2/sync",
+                "/api/v3/sync",
                 json={
                     "mutations": [
                         {
@@ -178,7 +178,7 @@ class TestSyncApiIntegration(unittest.TestCase):
             )
             self.assertEqual(delete_response.status_code, 200)
 
-            pull_after_delete = client.get("/api/v2/sync")
+            pull_after_delete = client.get("/api/v3/sync")
             tasks_after_delete = pull_after_delete.json()["data"]["tasks"]
             self.assertEqual(len(tasks_after_delete), 1)
             self.assertIsNotNone(tasks_after_delete[0]["deleted_at"])
@@ -188,7 +188,7 @@ class TestSyncApiIntegration(unittest.TestCase):
     def test_conflicting_push_is_reported_not_silently_overwritten(self):
         from fastapi.testclient import TestClient
 
-        from main import app
+        from aura_service import app
         from services.jwt_auth import verify_access_token
 
         app.dependency_overrides[verify_access_token] = lambda: {
@@ -224,11 +224,11 @@ class TestSyncApiIntegration(unittest.TestCase):
             }
 
             # First write establishes the row with a later timestamp...
-            client.post("/api/v2/sync", json={"mutations": [{**base_mutation, "client_updated_at": "2026-01-02T00:00:00Z"}]})
+            client.post("/api/v3/sync", json={"mutations": [{**base_mutation, "client_updated_at": "2026-01-02T00:00:00Z"}]})
 
             # ...a second push claiming an EARLIER client clock must be
             # reported as a conflict, not silently accepted and overwritten.
-            stale_response = client.post("/api/v2/sync", json={"mutations": [{**base_mutation, "client_updated_at": "2026-01-01T00:00:00Z"}]})
+            stale_response = client.post("/api/v3/sync", json={"mutations": [{**base_mutation, "client_updated_at": "2026-01-01T00:00:00Z"}]})
             self.assertEqual(stale_response.json()[0]["status"], "conflict")
         finally:
             app.dependency_overrides.clear()

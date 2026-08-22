@@ -1,30 +1,31 @@
 """Production ASGI entry point for the AURA AI platform.
 
-Assembles the v3 gateway on top of the existing v1/v2 application (ADR-002, strangler
-migration). Nothing here contains business logic: it builds the container, resolves an
-authenticator, mounts the router, and wires lifecycle.
+Assembles the v3-only gateway: kernel routes from ``build_app``, plus the
+leftover live platform adapters (auth, sync, insights, automation, learning).
+Production does not load ``main.py`` (ADR-002: aura_core still does not import
+``services/``; those adapters stay outside the core).
 
 Run with::
 
     uvicorn aura_service:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers
-
-The legacy ``main:app`` still works unchanged for deployments mid-migration; this module is
-what ``deploy/docker-compose.prod.yml`` runs.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import HTTPException, Response
+from fastapi import HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from aura_core.api import Principal, build_app, build_router
+from aura_core.api import Principal, build_app
 from aura_core.config import load_settings
 from aura_core.container import build_container
 from aura_core.domain.errors import AuthenticationError, ConfigurationError
 from aura_core.domain.identifiers import UserId
 from aura_core.observability.logging import get_logger
 from aura_core.security import SlidingWindowRateLimiter
+from infrastructure.http_limits import PayloadSizeLimitMiddleware, RateLimitMiddleware
 from infrastructure.secret_hydration import hydrate_secrets_from_files
 
 logger = get_logger("service")
@@ -95,12 +96,64 @@ def _build_authenticator(settings: Any):
     return authenticate
 
 
-def create_app(*, standalone: bool = False):
-    """Build the ASGI application.
+def _mount_platform_routers(app) -> None:
+    from api.automation import router as automation_router
+    from api.learning import router as learning_router
+    from api.v2.auth import router as auth_router
+    from api.v2.insights import router as insights_router
+    from api.v2.sync import router as sync_router
 
-    ``standalone=True`` returns a v3-only app (used by tests and by a deployment that runs the
-    AI gateway as its own service). The default mounts v3 onto the existing application so v1
-    and v2 keep serving the shipped client.
+    app.include_router(auth_router)
+    app.include_router(sync_router)
+    app.include_router(insights_router)
+    app.include_router(automation_router)
+    app.include_router(learning_router)
+
+
+def _register_inference_budget_handler(app) -> None:
+    from services.budget import InferenceBudgetExceededException
+
+    @app.exception_handler(InferenceBudgetExceededException)
+    async def inference_budget_exception_handler(request, exc: InferenceBudgetExceededException):
+        return JSONResponse(
+            status_code=429,
+            content={
+                "success": False,
+                "error": exc.message,
+                "retry_after": exc.retry_after,
+            },
+        )
+
+
+def _apply_http_limits(app) -> None:
+    app.add_middleware(PayloadSizeLimitMiddleware, max_bytes=5 * 1024 * 1024)
+    app.add_middleware(RateLimitMiddleware, requests_per_minute=100)
+
+
+def _apply_cors(app) -> None:
+    from config import settings
+
+    origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
+    allow_all = "*" in origins
+    if allow_all:
+        logger.warning(
+            "ALLOWED_ORIGINS contains '*' — disabling allow_credentials to avoid "
+            "reflecting arbitrary origins. Set an explicit origin list in production."
+        )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=not allow_all,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
+def create_app():
+    """Build the v3-only ASGI application.
+
+    Always uses ``build_app`` (health/live, health/ready, metrics). Does not
+    import or mount ``main.py``.
     """
     hydrate_secrets_from_files()
     settings = load_settings()
@@ -113,63 +166,15 @@ def create_app(*, standalone: bool = False):
             container.cache_backend, settings.security, metrics=container.metrics
         )
 
-    if standalone:
-        return build_app(container, authenticator=authenticator, rate_limiter=rate_limiter)
-
-    try:
-        from main import app as legacy_app  # type: ignore
-    except Exception as exc:  # pragma: no cover - depends on legacy import health
-        logger.error(
-            "the legacy application could not be imported; serving v3 only",
-            extra={"error": type(exc).__name__},
-        )
-        return build_app(container, authenticator=authenticator, rate_limiter=rate_limiter)
-
-    legacy_app.include_router(
-        build_router(container, authenticator=authenticator, rate_limiter=rate_limiter)
-    )
-
-    @legacy_app.get("/health/live", tags=["health"])
-    async def liveness() -> dict[str, str]:
-        """Process liveness only.
-
-        Deliberately checks nothing else: a liveness probe that fails during a dependency
-        outage makes the orchestrator restart a healthy process, turning degradation into an
-        outage.
-        """
-        return {"status": "alive"}
-
-    @legacy_app.get("/health/ready", tags=["health"])
-    async def readiness(response: Response) -> dict[str, Any]:
-        """Dependency readiness. This is what a load balancer should gate traffic on."""
-        health = await container.health()
-        response.status_code = 200 if health["healthy"] else 503
-        return health
-
-    @legacy_app.get(settings.observability.metrics_path, tags=["health"])
-    async def metrics() -> Response:
-        return Response(
-            content=container.metrics.render(), media_type=container.metrics.content_type
-        )
-
-    @legacy_app.on_event("startup")
-    async def _startup() -> None:
-        await container.startup()
-        logger.info(
-            "AURA v3 gateway mounted",
-            extra={
-                "environment": str(settings.environment),
-                "providers": [p.name for p in container.providers],
-            },
-        )
-
-    @legacy_app.on_event("shutdown")
-    async def _shutdown() -> None:
-        await container.shutdown()
+    app = build_app(container, authenticator=authenticator, rate_limiter=rate_limiter)
+    _mount_platform_routers(app)
+    _register_inference_budget_handler(app)
+    _apply_http_limits(app)
+    _apply_cors(app)
 
     # Exposed so Celery tasks and the CLI can reach the same wired graph without rebuilding it.
-    legacy_app.state.aura = container
-    return legacy_app
+    app.state.aura = container
+    return app
 
 
 app = create_app()

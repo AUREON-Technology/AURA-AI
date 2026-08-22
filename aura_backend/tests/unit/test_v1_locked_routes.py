@@ -1,6 +1,6 @@
-"""Phase 4: v1 chat/RAG/memory/telemetry return 410 after the Flutter cutover.
+"""V3-only cutover: unmounted V1/V2/unversioned paths are 404, not 410.
 
-v2 auth/sync/insights and v1 automations/learning stay mounted.
+Platform ``/api/v3/...`` routes stay mounted and must not return 410.
 """
 
 from __future__ import annotations
@@ -8,25 +8,21 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from main import RateLimitMiddleware, app
-from services.security import verify_token
+from aura_service import app
+from infrastructure.http_limits import RateLimitMiddleware
 
 pytest.importorskip("fastapi")
 
 
 def _client() -> TestClient:
     RateLimitMiddleware.request_history.clear()
-    import main as main_mod
+    import infrastructure.http_limits as http_limits
 
-    main_mod._rate_limit_redis = None
-    app.dependency_overrides[verify_token] = lambda: {
-        "uid": "user_123",
-        "email": "user@aura.ai",
-    }
+    http_limits._rate_limit_redis = None
     return TestClient(app)
 
 
-LOCKED = [
+UNMOUNTED = [
     ("POST", "/api/chat/stream", {"messages": [{"role": "user", "content": "hi"}]}),
     ("POST", "/api/chat/agent", {
         "agent_id": "orchestrator",
@@ -47,43 +43,47 @@ LOCKED = [
         "is_offline": False,
         "timestamp": "2026-08-21T00:00:00Z",
     }),
+    ("POST", "/api/v2/auth/token", {}),
+    ("GET", "/api/v2/sync", None),
+    ("GET", "/api/v2/insights", None),
+    ("POST", "/api/automation/analyze-email", {"subject": "s", "sender": "a@b.c", "body": "hello"}),
+    ("POST", "/api/learning/log", {
+        "id": "l1",
+        "prompt": "p",
+        "response": "r",
+        "rating": 5,
+        "timestamp": "2026-08-21T00:00:00Z",
+    }),
 ]
 
 
-@pytest.mark.parametrize("method,path,body", LOCKED)
-def test_locked_v1_ai_routes_return_410(method: str, path: str, body) -> None:
+PLATFORM = [
+    ("POST", "/api/v3/automation/analyze-email", {"subject": "s", "sender": "a@b.c", "body": "hello"}),
+    ("POST", "/api/v3/learning/log", {
+        "id": "l1",
+        "prompt": "p",
+        "response": "r",
+        "rating": 5,
+        "timestamp": "2026-08-21T00:00:00Z",
+    }),
+    ("POST", "/api/v3/chat", {"message": "hi"}),
+    ("GET", "/api/v3/memory", None),
+    ("POST", "/api/v3/auth/token", {}),
+    ("GET", "/api/v3/sync", None),
+    ("GET", "/api/v3/insights", None),
+]
+
+
+@pytest.mark.parametrize("method,path,body", UNMOUNTED)
+def test_unmounted_legacy_routes_return_404(method: str, path: str, body) -> None:
     client = _client()
-    try:
-        response = client.request(method, path, json=body)
-        assert response.status_code == 410
-        detail = response.json()["detail"]
-        assert detail["error"] == "gone"
-        assert "/api/v3/" in detail["message"]
-    finally:
-        app.dependency_overrides.clear()
+    response = client.request(method, path, json=body)
+    assert response.status_code == 404
 
 
-def test_v2_and_automations_are_not_locked() -> None:
-    """Keep /api/v2/* and /api/automation/* and /api/learning/*."""
+@pytest.mark.parametrize("method,path,body", PLATFORM)
+def test_platform_v3_routes_are_not_gone(method: str, path: str, body) -> None:
+    """Keep /api/v3 auth/sync/insights/automation/learning and the kernel surface."""
     client = _client()
-    try:
-        # Unauthenticated-shape requests still must not 410: the route exists.
-        automation = client.post(
-            "/api/automation/analyze-email",
-            json={"subject": "s", "sender": "a@b.c", "body": "hello"},
-        )
-        assert automation.status_code != 410
-
-        learning = client.post(
-            "/api/learning/log",
-            json={
-                "id": "l1",
-                "prompt": "p",
-                "response": "r",
-                "rating": 5,
-                "timestamp": "2026-08-21T00:00:00Z",
-            },
-        )
-        assert learning.status_code != 410
-    finally:
-        app.dependency_overrides.clear()
+    response = client.request(method, path, json=body)
+    assert response.status_code not in (404, 410)

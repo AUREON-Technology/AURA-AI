@@ -1,10 +1,13 @@
-"""AURA-018: retired v1 AI routes must 410 without leaking exception strings."""
+"""AURA-018: live platform routes must not leak exception strings."""
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 
-from main import RateLimitMiddleware, app
+from aura_service import app
+from infrastructure.http_limits import RateLimitMiddleware
 from services.security import verify_token
 
 SECRET = "secret path /tmp/foo"
@@ -12,34 +15,49 @@ SECRET = "secret path /tmp/foo"
 
 def _client() -> TestClient:
     RateLimitMiddleware.request_history.clear()
-    import main as main_mod
+    import infrastructure.http_limits as http_limits
 
-    main_mod._rate_limit_redis = None
+    http_limits._rate_limit_redis = None
     app.dependency_overrides[verify_token] = lambda: {
         "uid": "user_123",
         "email": "user@aura.ai",
+        "role": "Admin",
     }
     return TestClient(app)
 
 
-def test_query_document_is_gone_and_does_not_leak() -> None:
+def test_analyze_email_does_not_leak_exception_strings() -> None:
+    from services.automation import automation_service
+
     client = _client()
     try:
-        response = client.post("/api/rag/query", json={"query": "leave policy", "limit": 4})
-        assert response.status_code == 410
+        with patch.object(
+            automation_service, "analyze_email", side_effect=RuntimeError(SECRET)
+        ):
+            response = client.post(
+                "/api/v3/automation/analyze-email",
+                json={"subject": "s", "sender": "a@b.c", "body": "hello"},
+            )
+        assert response.status_code == 500
         assert SECRET not in response.text
         assert "/tmp/foo" not in response.text
-        assert "gone" in response.text
+        assert response.json()["detail"] == "internal_error"
     finally:
         app.dependency_overrides.clear()
 
 
-def test_save_memory_is_gone_and_does_not_leak() -> None:
+def test_export_learning_does_not_leak_exception_strings() -> None:
+    from services.learning_pipeline import learning_pipeline
+
     client = _client()
     try:
-        response = client.post("/api/memory/save", json={"fact": "I like tea"})
-        assert response.status_code == 410
+        with patch.object(
+            learning_pipeline, "build_lora_dataset", side_effect=RuntimeError(SECRET)
+        ):
+            response = client.get("/api/v3/learning/export")
+        assert response.status_code == 500
         assert SECRET not in response.text
-        assert "gone" in response.text
+        assert "/tmp/foo" not in response.text
+        assert response.json()["detail"] == "internal_error"
     finally:
         app.dependency_overrides.clear()
