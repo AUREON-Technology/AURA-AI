@@ -48,7 +48,7 @@ def test_multiprocess_aggregates_counters_from_two_pids(tmp_path, monkeypatch) -
     if os.name == "nt":
         pytest.skip("prometheus_client mmap files are not reliable on Windows; CI runs this on Linux")
     from prometheus_client import values
-    from prometheus_client.multiprocess import MultiProcessValue
+    from prometheus_client.values import MultiProcessValue
 
     from aura_core.observability.metrics import Metrics, PROMETHEUS_AVAILABLE, reset_metrics
 

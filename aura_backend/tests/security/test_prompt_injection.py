@@ -231,6 +231,86 @@ class TestToolTaint:
         assert result.ok and result.content == "pong"
 
 
+class TestUntrustedContentTaint:
+    """M4: guard_context_items only scans RAG retrieval, run once up front. A
+    tool whose own *output* is attacker-influenceable external content
+    (fetch_url, tagged "untrusted_content") never went through that scan --
+    without registry.execute() also tainting the context on that tag, a
+    prompt-injection payload fetched mid-turn could get a later PERSONAL-
+    sensitivity propose_* call auto-approved instead of requiring
+    confirmation the way a poisoned RAG chunk already does.
+    """
+
+    @staticmethod
+    def _registry() -> ToolRegistry:
+        @tool(
+            "fetch_page", "Fetch a web page.",
+            param("url", "string", "URL"),
+            category=ToolCategory.KNOWLEDGE,
+            sensitivity=ToolSensitivity.PUBLIC,
+            tags=("untrusted_content",),
+        )
+        async def fetch_page(url: str) -> str:
+            return "page content, possibly attacker-controlled"
+
+        @tool(
+            "propose_task", "Propose creating a task.",
+            param("title", "string", "Task title"),
+            category=ToolCategory.PRODUCTIVITY,
+            sensitivity=ToolSensitivity.PERSONAL,
+            side_effecting=True,
+        )
+        async def propose_task(title: str) -> str:
+            return f"proposed: {title}"
+
+        registry = ToolRegistry(policy=ToolPolicy())
+        registry.register(fetch_page)
+        registry.register(propose_task)
+        return registry
+
+    async def test_untrusted_content_tool_taints_the_context(self, user) -> None:
+        registry = self._registry()
+        context = ToolContext(user_id=user, correlation_id="c1", deadline_s=10, tainted=False)
+
+        fetch_result, _ = await registry.execute(
+            ToolCall(id=ToolCallId("t1"), name="fetch_page", arguments={"url": "https://example.com"}),
+            context,
+        )
+        assert fetch_result.ok
+        assert context.tainted, "a successful untrusted_content tool call did not taint the context"
+
+    async def test_a_later_personal_tool_now_requires_confirmation(self, user) -> None:
+        """The actual gap this closes: before the fix, a PERSONAL-sensitivity
+        side-effecting tool was only gated by taint (unlike CONFIDENTIAL tools,
+        which always require confirmation regardless), so with taint never set
+        by fetch_url, propose_task would have auto-approved here."""
+        registry = self._registry()
+        context = ToolContext(user_id=user, correlation_id="c1", deadline_s=10, tainted=False)
+
+        await registry.execute(
+            ToolCall(id=ToolCallId("t1"), name="fetch_page", arguments={"url": "https://example.com"}),
+            context,
+        )
+        result, report = await registry.execute(
+            ToolCall(id=ToolCallId("t2"), name="propose_task", arguments={"title": "do the attacker's bidding"}),
+            context,
+        )
+        assert not result.ok
+        assert report.needs_confirmation
+        assert report.policy_reason == "side_effect_in_tainted_context"
+
+    async def test_a_tool_without_the_tag_does_not_taint(self, user) -> None:
+        registry = self._registry()
+        context = ToolContext(user_id=user, correlation_id="c1", deadline_s=10, tainted=False)
+
+        result, _ = await registry.execute(
+            ToolCall(id=ToolCallId("t1"), name="propose_task", arguments={"title": "buy milk"}),
+            context,
+        )
+        assert result.ok
+        assert not context.tainted
+
+
 class TestEndToEndChain:
     async def test_poisoned_retrieval_taints_the_turn(self, container, user) -> None:
         """Full chain through the kernel.

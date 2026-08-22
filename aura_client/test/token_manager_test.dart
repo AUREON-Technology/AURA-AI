@@ -98,4 +98,34 @@ void main() {
     expect(await tm.getValidAccessToken(), 'access-2');
     expect(refreshCalls, 2);
   });
+
+  group('TokenManager.classifyExchangeFailure', () {
+    test('a 403 matching the backend attestation error is classified distinctly', () {
+      expect(
+        TokenManager.classifyExchangeFailure(
+          403,
+          '{"detail":"Device attestation validation failed. (play_integrity_decode)"}',
+        ),
+        AuthExchangeFailure.deviceAttestationRejected,
+      );
+    });
+
+    test('a 403 for an unrelated reason is not mistaken for attestation rejection', () {
+      expect(
+        TokenManager.classifyExchangeFailure(403, '{"detail":"Forbidden"}'),
+        AuthExchangeFailure.other,
+      );
+    });
+
+    test('a transient failure (network/500) is not mistaken for attestation rejection', () {
+      expect(
+        TokenManager.classifyExchangeFailure(500, 'internal server error'),
+        AuthExchangeFailure.other,
+      );
+      expect(
+        TokenManager.classifyExchangeFailure(0, ''),
+        AuthExchangeFailure.other,
+      );
+    });
+  });
 }

@@ -102,11 +102,17 @@ confirm is allowed only when the env value **equals** the target database name:
 ```bash
 docker compose -f docker-compose.prod.yml stop gateway worker-realtime worker-ingestion beat
 RESTORE_CONFIRM=aura docker compose -f docker-compose.prod.yml run --rm \
-  -e RESTORE_CONFIRM=aura backup \
+  -e RESTORE_CONFIRM=aura --entrypoint /bin/sh backup \
   /scripts/restore.sh /backups/postgres-<stamp>.dump
 docker compose -f docker-compose.prod.yml start gateway worker-realtime worker-ingestion beat
 curl -X POST -H "$AUTH" $AURA/api/v3/admin/index/rebuild
 ```
+
+`--entrypoint /bin/sh` is required. The `backup` service's own compose entrypoint is
+`/scripts/backup.sh`; `docker compose run` overrides the *command*, not the *entrypoint*, so
+without this override the invocation above silently runs `/scripts/backup.sh /scripts/restore.sh
+/backups/postgres-<stamp>.dump` — another backup cycle, with restore.sh's path passed to it as
+an ignored extra argument. No error is printed either way, so this is easy to miss mid-incident.
 
 The final step matters: documents are the source of truth and the vector index is *derived*
 (ADR-007), so a restored database needs its index rebuilt. Skipping it leaves an index describing

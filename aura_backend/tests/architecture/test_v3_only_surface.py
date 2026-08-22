@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from fastapi import routing
+
 from aura_service import app
 
 _UNVERSIONED = (
@@ -15,11 +17,17 @@ _UNVERSIONED = (
 
 
 def _api_paths() -> list[str]:
+    # FastAPI >=0.116 represents an included sub-router as a lazy
+    # _IncludedRouter wrapper on app.routes -- it has no .path attribute, so a
+    # naive `getattr(route, "path", "")` walk silently sees zero routes.
+    # iter_route_contexts is the same resolver FastAPI's own app.openapi()
+    # uses internally; it recurses through nested routers and yields the
+    # fully-prefixed path.
     return sorted(
         {
-            path
-            for route in app.routes
-            if (path := getattr(route, "path", "")).startswith("/api/")
+            ctx.path
+            for ctx in routing.iter_route_contexts(app.routes)
+            if ctx.path and ctx.path.startswith("/api/")
         }
     )
 

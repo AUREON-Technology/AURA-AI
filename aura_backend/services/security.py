@@ -16,6 +16,7 @@ redis_client = get_redis_client()
 
 _local_nonce_cache = set()
 _apple_app_attest_client = None
+_warned_no_redis_nonce = False
 attestation_failure_reason: ContextVar[str] = ContextVar(
     "attestation_failure_reason", default="unknown"
 )
@@ -67,6 +68,31 @@ def _get_play_integrity_service():
 def _reject_attestation(reason: str) -> bool:
     attestation_failure_reason.set(reason)
     return False
+
+
+def store_nonce(value: str, ttl_seconds: int = 300) -> None:
+    """Records a server-issued attestation nonce as usable exactly once.
+
+    Closes the gap where verify_device_integrity's nonce-replay check below
+    was fully built (Redis-backed single-use lookup, Play Integrity/App
+    Attest cross-checks) but never had anything to check against: nothing
+    ever wrote a `nonce:{value}` key, so `expected_nonce` was never truthy
+    for a real client and a captured attestation could be replayed
+    indefinitely. Called from the new POST /api/v3/auth/nonce endpoint
+    (api/v2/auth.py) before the value is handed to a client.
+    """
+    global _warned_no_redis_nonce
+    client = get_redis_client()
+    if client is not None:
+        client.setex(f"nonce:{value}", ttl_seconds, "1")
+        return
+    if not _warned_no_redis_nonce:
+        logger.warning(
+            "Redis unavailable: attestation nonces are stored in-process only "
+            "(lost on restart, not shared across workers)."
+        )
+        _warned_no_redis_nonce = True
+    _local_nonce_cache.add(value)
 
 
 def verify_device_integrity(attestation_token: Optional[str], platform: Optional[str], expected_nonce: Optional[str] = None) -> bool:
@@ -260,7 +286,8 @@ async def verify_token(
     # Device Validation Checking
     attestation_token = request.headers.get("X-Device-Attestation")
     platform = request.headers.get("X-Device-Platform")
-    if not verify_device_integrity(attestation_token, platform):
+    attestation_nonce = request.headers.get("X-Device-Attestation-Nonce")
+    if not verify_device_integrity(attestation_token, platform, attestation_nonce):
         raise HTTPException(
             status_code=403,
             detail=(

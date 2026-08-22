@@ -344,6 +344,19 @@ class ToolRegistry:
                 + f"\n[…truncated at {spec.max_result_chars} characters]"
             )
 
+        if "untrusted_content" in spec.tags:
+            # This tool's output is attacker-influenceable external content that
+            # deps.safety.guard_context_items never scanned (that only covers RAG
+            # retrieval, run once up front) -- taint the shared ToolContext so any
+            # PERSONAL-sensitivity side-effecting tool called later in this same
+            # plan requires confirmation instead of auto-approving (M4). One
+            # residual gap: a step scheduled in the same concurrent execution
+            # batch as this one (no data dependency forcing sequencing) will not
+            # see this mutation before its own policy check -- acceptable because
+            # such a step's arguments cannot have been influenced by this tool's
+            # result in the first place.
+            context.tainted = True
+
         duration = (time.perf_counter() - started) * 1000.0
         self._observe(name, outcome="ok", duration_ms=duration)
         await self._audit_call(name, context, "success", arguments_digest, decision.reason)

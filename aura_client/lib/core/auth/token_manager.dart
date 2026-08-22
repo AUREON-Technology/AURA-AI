@@ -7,6 +7,23 @@ import '../security/device_validation_service.dart';
 import '../../features/auth/presentation/auth_provider.dart';
 import 'refresh_token_store.dart';
 
+/// Why the most recent token exchange failed, so the UI can distinguish "this
+/// device cannot authenticate at all" (won't self-resolve on retry) from a
+/// transient network hiccup (will).
+enum AuthExchangeFailure { none, deviceAttestationRejected, other }
+
+class AuthExchangeFailureNotifier extends Notifier<AuthExchangeFailure> {
+  @override
+  AuthExchangeFailure build() => AuthExchangeFailure.none;
+
+  void set(AuthExchangeFailure value) => state = value;
+}
+
+final authExchangeFailureProvider =
+    NotifierProvider<AuthExchangeFailureNotifier, AuthExchangeFailure>(() {
+  return AuthExchangeFailureNotifier();
+});
+
 /// Manages the backend-issued access/refresh JWT pair (Doc/V2_BLUEPRINT.md
 /// §9), shared by every v3 API client (SyncClient, InsightsClient,
 /// SseAgentClient) so token exchange/caching/refresh logic lives in one
@@ -152,16 +169,37 @@ class TokenManager {
         debugPrint(
           "[TokenManager] token exchange failed: ${response.statusCode} ${response.body}",
         );
+        // A device-attestation 403 won't self-resolve on retry the way a
+        // network hiccup will (C1) — surface it distinctly so the UI can
+        // tell a user "this device could not be verified" instead of
+        // silently degrading to "sync/chat unavailable" forever.
+        _ref.read(authExchangeFailureProvider.notifier).set(
+              classifyExchangeFailure(response.statusCode, response.body),
+            );
         return null;
       }
 
       await _applyTokenResponse(jsonDecode(response.body) as Map<String, dynamic>);
+      _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.none);
       debugPrint("[TokenManager] token exchange succeeded");
       return _accessToken;
     } catch (e) {
       debugPrint("[TokenManager] exchange failed: $e");
+      _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.other);
       return null;
     }
+  }
+
+  /// Pure classification, split out from [_tryExchange] so the C1 fix (does
+  /// a device-attestation rejection get told apart from an ordinary
+  /// transient failure?) is testable without exercising the full Google
+  /// sign-in / HTTP stack.
+  @visibleForTesting
+  static AuthExchangeFailure classifyExchangeFailure(int statusCode, String body) {
+    if (statusCode == 403 && body.contains('Device attestation validation failed')) {
+      return AuthExchangeFailure.deviceAttestationRejected;
+    }
+    return AuthExchangeFailure.other;
   }
 
   Future<void> _applyTokenResponse(Map<String, dynamic> body) async {
