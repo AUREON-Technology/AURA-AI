@@ -190,7 +190,7 @@ class OfflineModelWeights extends Table {
 /// full mutation (table, op, id, JSON payload matching the backend's
 /// Postgres column names, and the client's clock at mutation time for LWW).
 /// `SyncClient.push()` drains this table in one batched call to
-/// `POST /api/v2/sync` instead of five bespoke per-table HTTP loops.
+/// `POST /api/v3/sync` instead of five bespoke per-table HTTP loops.
 class OutboxEntries extends Table {
   TextColumn get id => text()();
   TextColumn get targetTable => text()();
@@ -205,7 +205,7 @@ class OutboxEntries extends Table {
 }
 
 /// Small key/value store for sync bookkeeping -- currently just the last
-/// server cursor returned by `GET /api/v2/sync`, so the next pull only
+/// server cursor returned by `GET /api/v3/sync`, so the next pull only
 /// requests what changed since then.
 class SyncMetadata extends Table {
   TextColumn get key => text()();

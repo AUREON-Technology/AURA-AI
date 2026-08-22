@@ -13,7 +13,7 @@ import 'outbox_ack.dart';
 import 'sync_result.dart';
 
 /// V2 cursor-based sync client (Doc/V2_BLUEPRINT.md §5/§7) — talks to
-/// `/api/v2/sync` on the FastAPI backend, which owns Postgres as the
+/// `/api/v3/sync` on the FastAPI backend, which owns Postgres as the
 /// relational source of truth. Replaces V1's `SyncEngine`, which wrote
 /// directly to Firestore from the client and hand-rolled five nearly
 /// identical last-write-wins comparators (577 lines). Here the server does
@@ -28,12 +28,12 @@ class SyncClient {
   final AppDatabase _db;
   final Ref _ref;
   final http.Client? _http;
-  static const String _syncUrl = "${AppConfig.backendUrl}/api/v2/sync";
+  static const String _syncUrl = "${AppConfig.backendUrl}/api/v3/sync";
 
   SyncClient(this._db, this._ref, {http.Client? httpClient}) : _http = httpClient;
 
-  // v2 endpoints authenticate via TokenManager's backend-issued JWT
-  // (Doc/V2_BLUEPRINT.md §9), not the raw Google ID token v1 endpoints use.
+  // v3 endpoints authenticate via TokenManager's backend-issued JWT
+  // (Doc/V2_BLUEPRINT.md §9), not the raw Google ID token older endpoints used.
   Future<Map<String, String>?> _headers() async {
     final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
     if (token == null) return null;

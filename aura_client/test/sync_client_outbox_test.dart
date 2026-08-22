@@ -66,7 +66,7 @@ void main() {
     );
 
     final httpClient = MockClient((request) async {
-      expect(request.url.path, '/api/v2/sync');
+      expect(request.url.path, '/api/v3/sync');
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       final mutations = body['mutations'] as List;
       return http.Response(
@@ -109,7 +109,7 @@ void main() {
     final contentEnc = EncryptionService.encryptText('synced hello');
     final httpClient = MockClient((request) async {
       expect(request.method, 'GET');
-      expect(request.url.path, '/api/v2/sync');
+      expect(request.url.path, '/api/v3/sync');
       return http.Response(
         jsonEncode({
           'cursor': '2026-01-01T00:00:00Z',

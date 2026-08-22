@@ -15,7 +15,7 @@ final learningStatsProvider = FutureProvider.autoDispose<Map<String, dynamic>>((
   }
   headers.addAll(await DeviceValidationService.getAttestationHeaders());
   
-  final url = Uri.parse("${AppConfig.backendUrl}/api/learning/evaluate");
+  final url = Uri.parse("${AppConfig.backendUrl}/api/v3/learning/evaluate");
   final response = await http.get(url, headers: headers).timeout(const Duration(seconds: 10));
   
   if (response.statusCode == 200) {
@@ -51,7 +51,7 @@ class _LearningDashboardState extends ConsumerState<LearningDashboard> {
       }
       headers.addAll(await DeviceValidationService.getAttestationHeaders());
 
-      final url = Uri.parse("${AppConfig.backendUrl}/api/learning/build_dataset");
+      final url = Uri.parse("${AppConfig.backendUrl}/api/v3/learning/build_dataset");
       final response = await http.post(url, headers: headers).timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
@@ -88,7 +88,7 @@ class _LearningDashboardState extends ConsumerState<LearningDashboard> {
       }
       headers.addAll(await DeviceValidationService.getAttestationHeaders());
 
-      final url = Uri.parse("${AppConfig.backendUrl}/api/learning/export?format=$_selectedFormat");
+      final url = Uri.parse("${AppConfig.backendUrl}/api/v3/learning/export?format=$_selectedFormat");
       final response = await http.get(url, headers: headers).timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {

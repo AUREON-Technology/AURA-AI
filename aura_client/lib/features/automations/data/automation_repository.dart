@@ -218,7 +218,7 @@ class AutomationRepository {
   // Communicate with FastAPI backend to analyze email
   Future<EmailAnalysisResult> analyzeEmail(GmailMessageHeader email) async {
     final token = await _ref.read(authProvider.notifier).getIdToken();
-    final url = Uri.parse("$_backendUrl/api/automation/analyze-email");
+    final url = Uri.parse("$_backendUrl/api/v3/automation/analyze-email");
     final headers = {"Content-Type": "application/json"};
     if (token != null) {
       headers['Authorization'] = 'Bearer $token';
@@ -269,7 +269,7 @@ class AutomationRepository {
   // Call backend to analyze github issue
   Future<GitHubIssueResult> analyzeGitHubIssue(GitHubIssueItem issue) async {
     final token = await _ref.read(authProvider.notifier).getIdToken();
-    final url = Uri.parse("$_backendUrl/api/automation/analyze-issue");
+    final url = Uri.parse("$_backendUrl/api/v3/automation/analyze-issue");
     final headers = {"Content-Type": "application/json"};
     if (token != null) {
       headers['Authorization'] = 'Bearer $token';

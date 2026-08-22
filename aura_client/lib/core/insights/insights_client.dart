@@ -7,7 +7,7 @@ import '../config/config.dart';
 import '../security/device_validation_service.dart';
 
 /// AURA Insights client (Doc/V2_BLUEPRINT.md §8) — talks to the backend's
-/// `/api/v2/insights` endpoints. Additive feature: if Postgres isn't
+/// `/api/v3/insights` endpoints. Additive feature: if Postgres isn't
 /// configured on the backend the endpoints return 503, which this client
 /// treats the same as "no insights right now" rather than surfacing an
 /// error, so the Today screen degrades gracefully on deployments that
@@ -38,7 +38,7 @@ class AppInsight {
 
 class InsightsClient {
   final Ref _ref;
-  static const String _baseUrl = "${AppConfig.backendUrl}/api/v2/insights";
+  static const String _baseUrl = "${AppConfig.backendUrl}/api/v3/insights";
 
   InsightsClient(this._ref);
 

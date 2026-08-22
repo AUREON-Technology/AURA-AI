@@ -8,15 +8,14 @@ import '../../features/auth/presentation/auth_provider.dart';
 import 'refresh_token_store.dart';
 
 /// Manages the backend-issued access/refresh JWT pair (Doc/V2_BLUEPRINT.md
-/// §9), shared by every v2 API client (SyncClient, InsightsClient,
+/// §9), shared by every v3 API client (SyncClient, InsightsClient,
 /// SseAgentClient) so token exchange/caching/refresh logic lives in one
-/// place instead of being duplicated three times. v1 endpoints are
-/// unaffected — they keep sending the raw Google ID token, unchanged.
+/// place instead of being duplicated three times.
 class TokenManager {
   final Ref _ref;
   final http.Client? _http;
   final RefreshTokenStore _store;
-  static const String _authUrl = "${AppConfig.backendUrl}/api/v2/auth";
+  static const String _authUrl = "${AppConfig.backendUrl}/api/v3/auth";
 
   String? _accessToken;
   DateTime? _accessTokenExpiry;
@@ -37,7 +36,7 @@ class TokenManager {
     _refreshToken ??= await _store.read();
   }
 
-  /// True when a v2 refresh token is on disk. Does not hit the network;
+  /// True when a refresh token is on disk. Does not hit the network;
   /// callers that need a live JWT should use [getValidAccessToken].
   Future<bool> hasCachedRefreshToken() async {
     await _loadCachedRefreshToken();
@@ -52,7 +51,7 @@ class TokenManager {
 
   /// Returns a valid access token, transparently refreshing or
   /// re-exchanging as needed. Returns null if no path succeeded (backend
-  /// hasn't deployed /api/v2/auth yet, device offline, etc.) — every v2
+  /// hasn't deployed /api/v3/auth yet, device offline, etc.) — every v3
   /// client already degrades gracefully when its HTTP call fails, so a
   /// null token just becomes "sync/insights/chat unavailable right now"
   /// rather than a crash.
@@ -91,7 +90,7 @@ class TokenManager {
   }
 
   /// Drop the in-memory access token so the next [getValidAccessToken]
-  /// refreshes or re-exchanges. Call this when a v2/v3 endpoint returns 401
+  /// refreshes or re-exchanges. Call this when a v3 endpoint returns 401
   /// "Invalid access token" — otherwise the same rejected JWT is reused
   /// until its local expiry (up to 15 minutes). Does not touch the refresh
   /// token; rotation only happens when `/refresh` itself fails.
