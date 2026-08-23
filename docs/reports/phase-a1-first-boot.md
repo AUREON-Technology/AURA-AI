@@ -51,11 +51,17 @@ traffic to and that reports itself ready, which then fails on the first `/api/v3
 `/api/v3/auth` call. That is precisely the silent-degradation mode the readiness split exists to
 prevent.
 
-Two candidate fixes, neither taken here (this report is evidence, not a change):
-- Add a schema check to readiness — compare `alembic_version` against the packaged head revision.
-- Or correct the runbook's claim, and rely on ordering alone.
+**Resolved.** Readiness now compares the stamped `alembic_version` against the head revision of
+the migrations packaged in the image, and returns 503 with `checks.schema` when they disagree.
+Because the container healthcheck polls that endpoint and nginx declares
+`depends_on: gateway: condition: service_healthy`, an unmigrated schema now stops the edge from
+starting rather than exposing a gateway that cannot serve. The runbook's claim was corrected to
+describe what actually happens.
 
-The first is better: it makes the guarantee true rather than documenting that it is not.
+An unreachable database deliberately does *not* gate: that condition is transient and the chat
+path still serves from Qdrant, Redis and the model, so failing readiness over a blip would turn a
+partial degradation into an outage. A stale schema is operator-caused and persistent, which is
+why only it is treated as fatal.
 
 ## Finding 2 — The gateway image ships 2.7 GB of CUDA libraries it cannot use
 
@@ -142,8 +148,7 @@ covers `secrets/`, which was verified rather than assumed.
 
 ## Recommended order for the real A1
 
-1. Fix Finding 1 — make readiness schema-aware, or correct the runbook. Cheap, and it removes the
-   worst first-deploy failure mode.
+1. ~~Fix Finding 1~~ — done; readiness is schema-aware and the runbook is corrected.
 2. Rebuild the lockfile against the CPU torch index (Finding 2) before shipping 8.88 GB to a VPS
    four times over.
 3. Then follow `provisioning-runbook.md` on the real host, and finish A1 by booting the services
