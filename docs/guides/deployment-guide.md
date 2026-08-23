@@ -209,8 +209,25 @@ docker compose -f docker-compose.prod.yml logs gateway \
 # Restart just the gateway (workers keep draining)
 docker compose -f docker-compose.prod.yml restart gateway
 
-# Update
+# Update (manual). Prefer the GitHub Action: a green Backend CI run on main
+# SSHes here and runs deploy/scripts/vps-update.sh against the tested SHA.
 git pull && docker compose -f docker-compose.prod.yml up -d --build
+```
+
+### Continuous deployment
+
+Pushing to `main` runs **Backend CI**. When that workflow finishes green, **Deploy VPS**
+SSHes to the host as `vars.VPS_USER@vars.VPS_HOST` with `secrets.VPS_SSH_KEY` and runs
+`deploy/scripts/ci-deploy.sh`, pinning `AURA_SHA` to the commit CI tested.
+
+The Flutter APK is not part of this path (`BACKEND_URL` is compile-time). Build a new
+binary with [release-apk.yml](../../.github/workflows/release-apk.yml) when the client
+changes.
+
+Manual deploy from GitHub: Actions → **Deploy VPS** → Run workflow. On the host itself:
+
+```bash
+AURA_SHA=<commit> /opt/aura-stack/deploy/scripts/ci-deploy.sh
 ```
 
 ### Backups

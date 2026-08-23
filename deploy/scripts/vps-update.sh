@@ -33,7 +33,8 @@
 # Environment overrides, for hosts this script cannot work out on its own:
 #   AURA_REPO=/path/to/checkout     AURA_COMPOSE=/path/to/compose.yml
 #   AURA_PROJECT=aura               AURA_BACKEND_SERVICE=backend
-#   AURA_HEALTH_URL=http://localhost:8000/health
+#   AURA_HEALTH_URL=https://$AURA_DOMAIN/health
+#   AURA_SHA=<commit>               pin to the SHA CI tested (must be on origin/main)
 
 set -euo pipefail
 
@@ -109,9 +110,25 @@ if [ "$BRANCH" != "main" ]; then
   run "git -C '$REPO' checkout main"
 fi
 
+TARGET="origin/main"
+if [ -n "${AURA_SHA:-}" ]; then
+  git -C "$REPO" rev-parse --verify "${AURA_SHA}^{commit}" >/dev/null 2>&1 \
+    || die "AURA_SHA=${AURA_SHA} is not a commit this checkout knows after fetch"
+  git -C "$REPO" merge-base --is-ancestor "$AURA_SHA" origin/main \
+    || die "AURA_SHA=${AURA_SHA:0:8} is not on origin/main. Refusing to deploy a commit that is not on the protected branch."
+  HEAD_NOW="$(git -C "$REPO" rev-parse HEAD)"
+  PIN="$(git -C "$REPO" rev-parse "$AURA_SHA")"
+  if [ "$HEAD_NOW" != "$PIN" ] && git -C "$REPO" merge-base --is-ancestor "$AURA_SHA" HEAD; then
+    info "HEAD already contains ${AURA_SHA:0:8} -- a newer deploy won the race, nothing to do"
+    exit 0
+  fi
+  TARGET="$AURA_SHA"
+  info "pinning to AURA_SHA=${AURA_SHA:0:8}"
+fi
+
 # --ff-only so a diverged host stops here rather than creating a surprise merge commit.
-run "git -C '$REPO' merge --ff-only origin/main" \
-  || die "cannot fast-forward: this checkout has diverged from origin/main.
+run "git -C '$REPO' merge --ff-only $TARGET" \
+  || die "cannot fast-forward to $TARGET: this checkout has diverged from origin/main.
        Inspect with:  git -C $REPO log --oneline --graph HEAD...origin/main"
 
 AFTER="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo "$BEFORE")"
@@ -157,10 +174,15 @@ fi
        List running stacks with:  docker compose ls"
 
 PROJECT="${PROJECT:-aura}"
+COMPOSE_DIR="$(cd "$(dirname "$COMPOSE")" && pwd)"
 info "compose file: $COMPOSE"
 info "project:      $PROJECT"
 
 DC=(docker compose -p "$PROJECT" -f "$COMPOSE")
+if [ -f "$COMPOSE_DIR/.env" ]; then
+  DC=(docker compose -p "$PROJECT" -f "$COMPOSE" --env-file "$COMPOSE_DIR/.env")
+  info "env file:     $COMPOSE_DIR/.env"
+fi
 "${DC[@]}" config --services 2>/dev/null | sed 's/^/    service: /' \
   || die "docker compose cannot parse $COMPOSE"
 
@@ -185,8 +207,12 @@ info "postgres in this stack: $([ "$HAS_DB" = 1 ] && echo yes || echo 'no (manag
 # -- 5. build ------------------------------------------------------------------------------
 # Built before anything is stopped, so a build failure costs no downtime at all.
 
-say "Building the new image"
-run "${DC[*]} build --pull $BACKEND_SERVICE" || die "build failed -- nothing was restarted, the
+say "Building application images"
+# `compose build` only builds services with a `build:` key (gateway, workers, beat,
+# backup). Pulled images stay as they are. Building all of them here is what keeps
+# Celery on the same commit as the gateway -- `up -d` will not rebuild an image
+# that was never tagged.
+run "${DC[*]} build --pull" || die "build failed -- nothing was restarted, the
        running stack is untouched. Fix the build and re-run."
 
 # -- 6. migrate ----------------------------------------------------------------------------
@@ -223,7 +249,21 @@ run "${DC[*]} ps"
 say "Verifying"
 if [ "$DRY_RUN" = 1 ]; then info "[dry-run] would poll the health endpoints"; exit 0; fi
 
-HEALTH_URL="${AURA_HEALTH_URL:-http://localhost:8000/health}"
+if [ -n "${AURA_HEALTH_URL:-}" ]; then
+  HEALTH_URL="$AURA_HEALTH_URL"
+elif curl -fsS --max-time 2 http://127.0.0.1:8000/health >/dev/null 2>&1; then
+  HEALTH_URL="http://127.0.0.1:8000/health"
+elif [ -f "$COMPOSE_DIR/.env" ]; then
+  DOMAIN="$(sed -n 's/^AURA_DOMAIN=//p' "$COMPOSE_DIR/.env" | head -1 | tr -d "[:space:]\"'")"
+  if [ -n "$DOMAIN" ]; then
+    HEALTH_URL="https://${DOMAIN}/health"
+  else
+    HEALTH_URL="http://127.0.0.1:8000/health"
+  fi
+else
+  HEALTH_URL="http://127.0.0.1:8000/health"
+fi
+info "health url: $HEALTH_URL"
 READY_URL="${HEALTH_URL%/health}/health/ready"
 
 ok=0

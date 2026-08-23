@@ -21,16 +21,12 @@ on:
     paths:
       - "aura_backend/**"
       - ".github/workflows/backend-ci.yml"
-      - "deploy/monitoring/**"
-      - "deploy/scripts/**"
-      - "deploy/docker-compose.prod.yml"
+      - "deploy/**"
   push:
     branches: [main]
     paths:
       - "aura_backend/**"
-      - "deploy/monitoring/**"
-      - "deploy/scripts/**"
-      - "deploy/docker-compose.prod.yml"
+      - "deploy/**"
 
 jobs:
   test:

@@ -1,59 +1,101 @@
-name: Deploy Backend (Cloud Run)
+name: Deploy VPS
 
-# Doc/V2_BLUEPRINT.md §10 — replaces the manual "commit and redeploy on
-# Hugging Face Spaces" workflow (V1's actual deployment path, confirmed via
-# aura_backend/README.md's HF Spaces YAML front-matter) with an automatic
-# deploy gated on backend-ci.yml passing.
+# After Backend CI succeeds on main, SSH to the Contabo host and run
+# deploy/scripts/vps-update.sh against the tested SHA.
 #
-# Uses Workload Identity Federation, not a downloaded service-account JSON
-# key — the repo never holds a long-lived GCP credential. Requires one-time
-# setup in the target GCP project (not part of this workflow, since it
-# needs real `gcloud` access this sandbox doesn't have):
-#   gcloud iam workload-identity-pools create ... (see infra/terraform/README.md)
-# and these repo variables/secrets:
-#   vars.GCP_PROJECT_ID, vars.GCP_REGION, vars.GCP_WORKLOAD_IDENTITY_PROVIDER,
-#   vars.GCP_SERVICE_ACCOUNT
+# This replaced the unused Cloud Run workflow: the production target is the
+# VPS at vars.VPS_HOST, not GCP.
+#
+# Required (repo Settings → Secrets and variables → Actions, or the
+# `production` environment):
+#   secrets.VPS_SSH_KEY   ed25519 private key; public half is in root's
+#                         authorized_keys on the VPS (comment github-actions-aura-cd)
+#   vars.VPS_HOST         IPv4, currently 169.58.188.43
+#   vars.VPS_USER         root
+#
+# Manual deploy: Actions → Deploy VPS → Run workflow.
+# The Flutter APK is not deployed here -- BACKEND_URL is compile-time;
+# use release-apk.yml when you need a new binary.
 
 on:
   workflow_run:
     workflows: ["Backend CI"]
     branches: [main]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit SHA to deploy (empty = the commit that started this run)"
+        required: false
+        default: ""
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
 
 permissions:
   contents: read
-  id-token: write # required for keyless Workload Identity Federation auth
 
 jobs:
   deploy:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment: production
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
-      - id: auth
-        name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-
-      - uses: google-github-actions/setup-gcloud@v2
-
-      # A hosted-inference API key was mapped into --set-secrets below. Removed: nothing in the
-      # image reads it, and the platform is forbidden from calling hosted inference. The Secret
-      # Manager resource itself is gone from infra/terraform/secrets.tf — read the note there
-      # before applying, since Terraform will want to destroy the secret.
-      - name: Deploy to Cloud Run
+      - name: Resolve target SHA
+        id: target
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_SHA: ${{ github.event.inputs.sha }}
+          RUN_SHA: ${{ github.sha }}
+          WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          gcloud run deploy aura-backend \
-            --project="${{ vars.GCP_PROJECT_ID }}" \
-            --region="${{ vars.GCP_REGION }}" \
-            --source=aura_backend \
-            --allow-unauthenticated \
-            --set-secrets="DATABASE_URL=aura-database-url:latest,JWT_SECRET=aura-jwt-secret:latest,QDRANT_API_KEY=aura-qdrant-api-key:latest,FIREBASE_CREDENTIALS_JSON=aura-firebase-credentials:latest" \
-            --set-env-vars="AURA_ENVIRONMENT=production,REDIS_HOST=${{ vars.GCP_REDIS_HOST }},QDRANT_HOST=${{ vars.GCP_QDRANT_HOST }},ALLOWED_ORIGINS=${{ vars.ALLOWED_ORIGINS }}" \
-            --vpc-connector="${{ vars.GCP_VPC_CONNECTOR }}" \
-            --min-instances=0 \
-            --max-instances=10
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            SHA="${DISPATCH_SHA:-$RUN_SHA}"
+          else
+            SHA="$WORKFLOW_SHA"
+          fi
+          test -n "$SHA"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Deploying $SHA"
+
+      - name: Install SSH key
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          test -n "$VPS_SSH_KEY" || { echo "VPS_SSH_KEY is not set" >&2; exit 1; }
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cp deploy/known_hosts ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          test -n "$VPS_HOST" && test -n "$VPS_USER" && test -n "$TARGET_SHA"
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            "${VPS_USER}@${VPS_HOST}" \
+            env AURA_SHA="$TARGET_SHA" \
+                AURA_REPO=/opt/aura-stack \
+                AURA_COMPOSE=/opt/aura-stack/deploy/docker-compose.prod.yml \
+                AURA_PROJECT=aura \
+                AURA_BACKEND_SERVICE=gateway \
+                bash -s <<'REMOTE'
+          set -euo pipefail
+          git -C /opt/aura-stack fetch origin main
+          if git -C /opt/aura-stack cat-file -e "${AURA_SHA}:deploy/scripts/ci-deploy.sh"; then
+            git -C /opt/aura-stack show "${AURA_SHA}:deploy/scripts/ci-deploy.sh" > /tmp/ci-deploy.sh
+            bash /tmp/ci-deploy.sh
+          else
+            bash /opt/aura-stack/deploy/scripts/vps-update.sh
+          fi
+          REMOTE
