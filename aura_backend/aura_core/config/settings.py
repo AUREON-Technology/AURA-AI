@@ -19,7 +19,7 @@ import os
 from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
 from typing import Any, Mapping, Sequence
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from ..domain.errors import ConfigurationError
 from ..domain.llm import RoutingPolicy
@@ -140,6 +140,32 @@ def _list(key: str, default: Sequence[str] = ()) -> tuple[str, ...]:
     if raw is None:
         return tuple(default)
     return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def _redact_url_userinfo(value: str) -> str:
+    """Replace username/password in a URL so DSNs can be shown without leaking secrets.
+
+    ``postgresql+asyncpg://aura:secret@postgres/aura`` becomes
+    ``postgresql+asyncpg://***@postgres/aura``. Strings that are not URLs, or URLs
+    with no userinfo, are returned unchanged.
+    """
+    if "://" not in value:
+        return value
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return value
+    if parsed.username is None and parsed.password is None:
+        return value
+    hostname = parsed.hostname or ""
+    if ":" in hostname:
+        host = f"[{hostname}]"
+    else:
+        host = hostname
+    if parsed.port:
+        host = f"{host}:{parsed.port}" if host else str(parsed.port)
+    netloc = f"***@{host}" if host else "***"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
 
 
 # --------------------------------------------------------------------------------------
@@ -823,7 +849,9 @@ class AuraSettings:
 
         Secrets are never present: ``ProviderConfig`` stores only the *name* of the environment
         variable holding a key, and ``api_key`` is a property that is not a dataclass field, so
-        it cannot be reached by this walk even accidentally.
+        it cannot be reached by this walk even accidentally. With ``redact=True`` (the default),
+        URL userinfo is stripped so a DSN password cannot appear in ``/admin/status``.
+        Pass ``redact=False`` when a local diff needs the raw URLs.
         """
 
         def encode(value: Any) -> Any:
@@ -835,6 +863,8 @@ class AuraSettings:
                 return [encode(v) for v in value]
             if isinstance(value, Mapping):
                 return {k: encode(v) for k, v in value.items()}
+            if redact and isinstance(value, str):
+                return _redact_url_userinfo(value)
             return value
 
         payload = encode(self)

@@ -56,6 +56,9 @@ def test_compose_and_nginx_serve_the_operator_console() -> None:
     assert "location /console" in nginx
     assert "location = /console" not in nginx
     assert "auth_request /_grafana_auth" in nginx
+    assert "proxy_pass http://aura_grafana;" in nginx
+    assert "proxy_pass http://aura_grafana/;" not in nginx
+    assert 'GF_AUTH_ANONYMOUS_ENABLED: "true"' in compose
     assert "location /metrics" in nginx
     assert "deny all" in nginx
 

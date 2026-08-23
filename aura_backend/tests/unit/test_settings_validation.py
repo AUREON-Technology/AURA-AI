@@ -370,6 +370,24 @@ class TestIntrospection:
         assert "sk-super-secret" not in json.dumps(payload)
         assert payload["llm"]["providers"][0]["api_key_configured"] is True
 
+    def test_as_dict_never_contains_a_dsn_password(self, env) -> None:
+        """Settings claims secrets are redacted; DSN userinfo used to be returned verbatim."""
+        password = "dsn-password-must-not-leak-9f3a"
+        env.setenv(
+            "AURA_DATABASE_URL",
+            f"postgresql+asyncpg://aura:{password}@postgres:5432/aura",
+        )
+        env.setenv("AURA_REDIS_URL", f"redis://:{password}@redis:6379/0")
+
+        payload = AuraSettings.from_env().as_dict()
+        dumped = json.dumps(payload)
+        assert password not in dumped
+        assert "aura:" not in payload["infrastructure"]["database_url"]
+        assert payload["infrastructure"]["database_url"].startswith("postgresql+asyncpg://***@")
+        assert "postgres" in payload["infrastructure"]["database_url"]
+        assert payload["infrastructure"]["redis_url"].startswith("redis://***@")
+        assert "redis" in payload["infrastructure"]["redis_url"]
+
     def test_a_missing_key_is_reported_as_not_configured(self, env) -> None:
         env.setenv("AURA_LLM_PROVIDERS", "cloud")
         env.setenv("AURA_PROVIDER_CLOUD_KIND", "openai_compatible")
@@ -383,8 +401,11 @@ class TestIntrospection:
         json.dumps(AuraSettings.from_env().as_dict())
 
     def test_redaction_can_be_disabled_for_diffing(self, env) -> None:
+        password = "visible-only-when-diffing"
+        env.setenv("AURA_DATABASE_URL", f"postgresql+asyncpg://aura:{password}@postgres/aura")
         payload = AuraSettings.from_env().as_dict(redact=False)
         assert "api_key_configured" not in payload["llm"]["providers"][0]
+        assert password in payload["infrastructure"]["database_url"]
 
 
 class TestCaching:

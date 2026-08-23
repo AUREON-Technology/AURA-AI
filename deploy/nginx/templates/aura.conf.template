@@ -192,6 +192,15 @@ server {
     }
 
     location @grafana_unauth {
+        # Named locations inherit server-level X-Frame-Options DENY /
+        # frame-ancestors 'none', which turns this 302 into a broken iframe
+        # icon. Restate embed-friendly headers so an expired session shows
+        # /console/login inside the frame instead.
+        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+        add_header Content-Security-Policy "default-src 'self'; frame-ancestors 'self'" always;
         return 302 /console/login;
     }
 
@@ -200,7 +209,10 @@ server {
         auth_request /_grafana_auth;
         error_page 401 403 = @grafana_unauth;
 
-        proxy_pass http://aura_grafana/;
+        # No trailing slash — GF_SERVER_SERVE_FROM_SUB_PATH mounts Grafana at
+        # /grafana/. proxy_pass with a trailing slash would strip that prefix; Grafana then 301s
+        # back to ROOT_URL and the console iframe redirect-loops.
+        proxy_pass http://aura_grafana;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;   # Grafana Live uses websockets
         proxy_set_header Connection "upgrade";

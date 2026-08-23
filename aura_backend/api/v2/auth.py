@@ -4,15 +4,19 @@ authenticates with its existing Google/Firebase ID token exactly once
 attestation), then uses the returned access/refresh JWT pair for every v2
 API call going forward instead of re-sending the Google/Firebase token.
 """
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
+from infrastructure.db.user_repo import get_or_create_user
 from services.jwt_auth import issue_token_pair, refresh_token_pair, revoke_refresh_token
 from services.rbac import CONSOLE_MIN_ROLE, is_console_operator, stamp_resolved_role
 from services.security import store_nonce, verify_identity_token, verify_token
+
+logger = logging.getLogger("aura.auth")
 
 router = APIRouter(prefix="/api/v3/auth", tags=["auth"])
 
@@ -49,11 +53,34 @@ async def issue_nonce():
     return {"nonce": nonce}
 
 
+async def _persist_user(user_info: dict) -> None:
+    """Write the verified subject into ``users`` so Access can list operators.
+
+    Token exchange used to issue JWTs only. SuperAdmin then existed solely via
+    ``SUPERADMIN_EMAILS`` and never appeared in ``GET /admin/operators``.
+    Skip when Postgres is unset so unit tests and local-without-DB still login.
+    Persistence failures are logged and do not block token issue.
+    """
+    from infrastructure.db.base import get_session_factory, is_configured
+
+    if not is_configured():
+        return
+    try:
+        factory = get_session_factory()
+        async with factory() as db:
+            await get_or_create_user(db, user_info)
+            await db.commit()
+    except Exception:
+        logger.exception("failed to persist authenticated user")
+
+
 @router.post("/token", response_model=TokenResponse)
 async def exchange_token(user_info: dict = Depends(verify_token)):
     """Exchanges a verified Google/Firebase ID token (+ device attestation,
     both checked by verify_token) for a backend-issued access/refresh pair."""
-    return issue_token_pair(stamp_resolved_role(user_info))
+    stamp_resolved_role(user_info)
+    await _persist_user(user_info)
+    return issue_token_pair(user_info)
 
 
 _web_bearer = HTTPBearer(auto_error=False)
@@ -79,6 +106,7 @@ async def exchange_web_token(
                 f"(resolved {user_info['role']})."
             ),
         )
+    await _persist_user(user_info)
     return issue_token_pair(user_info)
 
 
