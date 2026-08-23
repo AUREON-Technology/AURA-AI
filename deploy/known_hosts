@@ -1,0 +1,15 @@
+# SSH host-key pin for the Contabo VPS, consumed by .github/workflows/deploy-backend.yml.
+#
+# The deploy copies this to ~/.ssh/known_hosts and connects with
+# -o UserKnownHostsFile=~/.ssh/known_hosts, so a host presenting any other key is refused
+# rather than trusted on first use. That is the point of the file: without it the deploy
+# would either fail closed (as it did) or, worse, accept whatever answered on port 22.
+#
+# Captured 2026-08-23 with `ssh-keyscan -t ed25519 169.58.188.43` against
+# OpenSSH_9.6p1 Ubuntu-3ubuntu13.18.
+#   SHA256:asjgJ+le9+HzrSWKzpGyweOAHm4Nf3YhBYmbqmuBAso
+#
+# If the VPS is rebuilt its host key changes and every deploy will fail on a host-key
+# mismatch. That is correct behaviour, not a bug -- re-scan and update this line, and
+# confirm the fingerprint out of band before you do.
+169.58.188.43 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIANy19LXPxnju78d3DayMQOvEcz3jAK+4rlLw717Jwmq
