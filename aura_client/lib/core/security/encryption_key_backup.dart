@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'encryption_key_policy.dart';
+
 /// App-support file that mirrors the Drift DB encryption key.
 ///
 /// Same directory family as the legacy `.aura_key` migration
@@ -13,9 +15,6 @@ class EncryptionKeyBackup {
   EncryptionKeyBackup._();
 
   static const fileName = '.aura_db_key';
-
-  /// Hardcoded key from very old builds — never restore or persist it.
-  static const _rejectedLegacyKey = 'aura_ai_secure_db_encryption_key';
 
   static const _backupExclusionChannel =
       MethodChannel('com.auraai.aura_client/backup_exclusion');
@@ -60,10 +59,5 @@ class EncryptionKeyBackup {
   }
 
   /// Returns [raw] if it is a persistable key, otherwise null.
-  static String? usableKey(String? raw) {
-    if (raw == null) return null;
-    final trimmed = raw.trim();
-    if (trimmed.isEmpty || trimmed == _rejectedLegacyKey) return null;
-    return trimmed;
-  }
+  static String? usableKey(String? raw) => EncryptionKeyPolicy.usableKey(raw);
 }

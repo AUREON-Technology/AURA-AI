@@ -1,16 +1,9 @@
 import 'package:flutter/foundation.dart';
-import 'dart:convert';
-import 'dart:io';
 import 'package:encrypt/encrypt.dart' as encrypt;
-import 'package:uuid/uuid.dart';
-import 'package:crypto/crypto.dart';
-import 'package:pointycastle/key_derivators/api.dart';
-import 'package:pointycastle/key_derivators/pbkdf2.dart';
-import 'package:pointycastle/digests/sha256.dart';
-import 'package:pointycastle/macs/hmac.dart';
 
 import 'aura_secure_storage.dart';
-import 'encryption_key_backup.dart';
+import 'encryption_key_policy.dart';
+import 'encryption_runtime.dart';
 
 /// Thrown when [EncryptionService.encryptText] cannot produce ciphertext.
 ///
@@ -60,30 +53,29 @@ class EncryptionService {
     if (_cryptKey != null) return;
 
     try {
-      final dir = await EncryptionKeyBackup.supportDirectory();
-      final storedKey = EncryptionKeyBackup.usableKey(await _readSecureKey());
-      final backupKey = await EncryptionKeyBackup.readFrom(dir);
-      final legacyKey = await _readLegacyPlaintextKey(dir);
+      final storedKey = EncryptionKeyPolicy.usableKey(await _readSecureKey());
+      final backupKey = await readEncryptionBackupKey();
+      final legacyKey = await readEncryptionLegacyKey();
 
       var keyB64 = storedKey ?? backupKey ?? legacyKey;
       if (keyB64 == null) {
         keyB64 = encrypt.Key.fromSecureRandom(32).base64;
         _cryptKey = encrypt.Key.fromBase64(keyB64);
-        await _dualWriteKey(dir, keyB64);
+        await _dualWriteKey(keyB64);
       } else if (storedKey == null) {
         debugPrint(
           backupKey != null
-              ? 'EncryptionService: Restored DB key from ${EncryptionKeyBackup.fileName} after secure-storage miss.'
+              ? 'EncryptionService: Restored DB key from backup after secure-storage miss.'
               : 'EncryptionService: Migrated DB key from legacy .aura_key.',
         );
         _cryptKey = encrypt.Key.fromBase64(keyB64);
-        await _dualWriteKey(dir, keyB64);
+        await _dualWriteKey(keyB64);
       } else if (backupKey != null && backupKey != storedKey) {
         // A newly generated stored key must not overwrite the backup until
         // the DB integrity check proves the stored key can decrypt rows.
         debugPrint(
           'EncryptionService: Stored key differs from backup; preserving '
-          '${EncryptionKeyBackup.fileName} until DB integrity check.',
+          'backup until DB integrity check.',
         );
         _cryptKey = encrypt.Key.fromBase64(storedKey);
         try {
@@ -93,46 +85,14 @@ class EncryptionService {
         }
       } else {
         _cryptKey = encrypt.Key.fromBase64(keyB64);
-        await _dualWriteKey(dir, keyB64);
+        await _dualWriteKey(keyB64);
       }
-      await _deleteLegacyPlaintextKey(dir);
+      await deleteEncryptionLegacyKey();
     } catch (e) {
-      debugPrint("EncryptionService: Secure storage failed ($e). Falling back to PBKDF2 derivation.");
-      try {
-        final dir = await EncryptionKeyBackup.supportDirectory();
-        
-        // Resolve or generate device salt
-        final saltFile = File('${dir.path}/.aura_salt');
-        String salt;
-        if (await saltFile.exists()) {
-          salt = (await saltFile.readAsString()).trim();
-        } else {
-          final secureRandomBytes = encrypt.IV.fromSecureRandom(32).bytes;
-          salt = base64Encode(secureRandomBytes);
-          await saltFile.writeAsString(salt);
-        }
-
-        // Resolve or generate installation ID
-        final installFile = File('${dir.path}/.aura_install');
-        String installId;
-        if (await installFile.exists()) {
-          installId = (await installFile.readAsString()).trim();
-        } else {
-          installId = const Uuid().v4();
-          await installFile.writeAsString(installId);
-        }
-
-        final username = Platform.environment['USERNAME'] ?? Platform.environment['USER'] ?? 'default_user';
-        final userSecret = '$username:${Platform.localHostname}:${Platform.operatingSystem}';
-
-        _cryptKey = _deriveFallbackKey(userSecret, salt, installId);
-        debugPrint("EncryptionService: Successfully initialized PBKDF2 derived key.");
-      } catch (deriveErr) {
-        debugPrint("EncryptionService: PBKDF2 key derivation failed ($deriveErr). Using environmental hash.");
-        final username = Platform.environment['USERNAME'] ?? Platform.environment['USER'] ?? 'default_user';
-        final rawKey = sha256.convert(utf8.encode('$username:${Platform.localHostname}')).bytes;
-        _cryptKey = encrypt.Key(Uint8List.fromList(rawKey));
-      }
+      debugPrint(
+        'EncryptionService: Secure storage failed ($e). Falling back to platform derivation.',
+      );
+      _cryptKey = await deriveEncryptionFallbackKey();
     }
   }
 
@@ -145,39 +105,20 @@ class EncryptionService {
     }
   }
 
-  /// Writes the canonical key to FlutterSecureStorage and the app-support
+  /// Writes the canonical key to FlutterSecureStorage and the platform
   /// backup independently so one failure cannot skip the other — or fall
-  /// through to PBKDF2 and rotate the in-memory key.
-  static Future<void> _dualWriteKey(Directory dir, String keyB64) async {
+  /// through to derivation and rotate the in-memory key.
+  static Future<void> _dualWriteKey(String keyB64) async {
     try {
       await auraSecureStorage.write(key: _keyName, value: keyB64);
     } catch (e) {
       debugPrint('EncryptionService: Failed to write key to secure storage ($e).');
     }
     try {
-      await EncryptionKeyBackup.writeTo(dir, keyB64);
+      await writeEncryptionBackupKey(keyB64);
     } catch (e) {
-      debugPrint('EncryptionService: Failed to write ${EncryptionKeyBackup.fileName} ($e).');
+      debugPrint('EncryptionService: Failed to write encryption key backup ($e).');
     }
-  }
-
-  static Future<String?> _readLegacyPlaintextKey(Directory dir) async {
-    try {
-      final legacyFile = File('${dir.path}/.aura_key');
-      if (!await legacyFile.exists()) return null;
-      return EncryptionKeyBackup.usableKey(await legacyFile.readAsString());
-    } catch (_) {
-      return null;
-    }
-  }
-
-  static Future<void> _deleteLegacyPlaintextKey(Directory dir) async {
-    try {
-      final legacyFile = File('${dir.path}/.aura_key');
-      if (await legacyFile.exists()) {
-        await legacyFile.delete();
-      }
-    } catch (_) {}
   }
 
   static String? _keyBeforeBackupRestore;
@@ -187,14 +128,13 @@ class EncryptionService {
   /// [persistCurrentKey] or [revertBackupKeyRestore].
   static Future<bool> tryRestoreBackupKey() async {
     try {
-      final dir = await EncryptionKeyBackup.supportDirectory();
-      final backupKey = await EncryptionKeyBackup.readFrom(dir);
+      final backupKey = await readEncryptionBackupKey();
       if (backupKey == null) return false;
       if (_cryptKey != null && backupKey == _cryptKey!.base64) return false;
       _keyBeforeBackupRestore = _cryptKey?.base64;
       _cryptKey = encrypt.Key.fromBase64(backupKey);
       debugPrint(
-        'EncryptionService: Trying backup DB key from ${EncryptionKeyBackup.fileName} after decrypt mismatch.',
+        'EncryptionService: Trying backup DB key after decrypt mismatch.',
       );
       return true;
     } catch (e) {
@@ -215,20 +155,7 @@ class EncryptionService {
     final key = _cryptKey;
     if (key == null) return;
     _keyBeforeBackupRestore = null;
-    final dir = await EncryptionKeyBackup.supportDirectory();
-    await _dualWriteKey(dir, key.base64);
-  }
-
-  /// Derives a 256-bit AES key using PBKDF2-HMAC-SHA256 from user secret and salt details.
-  static encrypt.Key _deriveFallbackKey(String userSecret, String saltStr, String installId) {
-    final passwordBytes = utf8.encode(userSecret);
-    final saltBytes = utf8.encode('$saltStr:$installId');
-
-    final derivator = PBKDF2KeyDerivator(HMac(SHA256Digest(), 64))
-      ..init(Pbkdf2Parameters(Uint8List.fromList(saltBytes), 10000, 32));
-
-    final derivedKeyBytes = derivator.process(Uint8List.fromList(passwordBytes));
-    return encrypt.Key(derivedKeyBytes);
+    await _dualWriteKey(key.base64);
   }
 
   /// Encrypts plain text using AES-256 (GCM mode).
