@@ -141,7 +141,7 @@ aura_backend/aura_core/
               ┌────────▼────────┐
               │      nginx      │  TLS · HSTS · rate limit · gzip · buffering off for SSE
               └────┬───────┬────┘
-        /api/v3    │       │  /grafana (admin, basic-auth + IP allowlist)
+        /api/v3    │       │  /console · /grafana (operator session)
               ┌────▼────┐  └──────────────┐
               │  aura   │                 │
               │ gateway │◄─── metrics ────┤

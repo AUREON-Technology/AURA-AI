@@ -8,8 +8,8 @@ AURA=https://aura.example.com
 AUTH="Authorization: Bearer $TOKEN"
 ```
 
-v1 and v2 remain mounted during the migration ([ADR-002](../architecture/002-strangler-migration.md)).
-They are not documented here; new work should target v3.
+Production (`aura_service`) serves `/api/v3` only. Unversioned and `/api/v2` paths are not
+mounted. New work must target v3.
 
 ---
 
@@ -121,17 +121,18 @@ string-split a marker out of a token stream.
 data: {"type":"citations","citations":["handbook@v1 (…)"]}
 data: {"type":"token","text":"Permanent "}
 data: {"type":"token","text":"staff receive "}
-data: {"type":"done","tainted":false,"guards_complete":true,"citations":[…]}
+data: {"type":"done","tainted":false,"guards_complete":true,"citations":[…],"turn_id":"t-9b21…","correlation_id":"c-7f3a…","confidence":null,"degraded":false,"usage":{"prompt_tokens":412,"completion_tokens":38,"cost_usd":0.0},"needs_confirmation":[]}
 ```
 
 | Frame | Fields | Meaning |
 | --- | --- | --- |
 | `citations` | `citations` | Emitted before the first token, so sources can render immediately |
 | `token` | `text` | Append |
-| `tool_calls` | `tools` | Tools the model selected |
+| `tool_calls` | `calls` | Tools the model selected (informational; not executed) |
 | `step` | `step_id`, `status`, `description` | Plan progress on an agentic turn |
+| `actions` | `actions` | Personal-OS proposals (`add_task`, `add_event`, …) for client confirmation |
 | `revision` | `reason`, `text` | The answer was redacted *after* streaming — replace what you displayed |
-| `done` | `tainted`, `guards_complete`, `citations` | Terminal, success |
+| `done` | `tainted`, `guards_complete`, `citations`, `needs_confirmation`, `turn_id`, `correlation_id`, `confidence`, `degraded`, `usage` | Terminal, success. `confidence` is null on the stream path (the reasoner does not run). Use `turn_id` for `POST /feedback`. |
 | `error` | `error`, `message`, `retryable`, `post_hoc` | Terminal, failure |
 
 > **A limitation stated in the contract, not hidden.** Guards that need the complete answer —
@@ -151,7 +152,7 @@ data: {"type":"done","tainted":false,"guards_complete":true,"citations":[…]}
 { "title": "Employee Handbook", "content": "# Leave\n…", "document_id": "handbook" }
 ```
 
-Returns `{ "document_id", "version", "chunks", "created", "quarantined" }`.
+Returns `{ "document_id", "version", "chunks", "created", "quarantined_chunks", "skipped_reason" }`.
 
 `created: false` with `chunks: 0` means identical content was already ingested — re-ingestion is
 a no-op keyed on a content hash, which keeps nightly refreshes from churning the index.
@@ -179,6 +180,15 @@ side-effecting tool unconfirmed.
 nothing cleared the relevance floor. Render it as "not found", not as an error. `strategy:
 "unavailable"` with an empty list is different — nothing was searched, because no index was
 ready.
+
+### `GET /api/v3/knowledge/documents`
+
+Owner-scoped library. Query: `limit` (1–100, default 50), `offset`.
+
+```json
+{ "documents": [ { "document_id": "handbook", "title": "Employee Handbook",
+                   "version": 1, "status": "active", "created_at": "2026-08-23T08:00:00+00:00" } ] }
+```
 
 ### `DELETE /api/v3/knowledge/documents/{id}`
 
@@ -236,14 +246,41 @@ without a recorded human approval.
 
 ## Admin
 
-All require an `Admin` or `SuperAdmin` role and write an audit record.
+Admin+ routes require `Admin` or `SuperAdmin`. SuperAdmin-only routes require `SuperAdmin`.
+Mutations write an audit record.
 
-| Route | Purpose |
-| --- | --- |
-| `GET /admin/status` | Provider health and circuit state, prompt versions, tool registry, effective settings |
-| `POST /admin/index/rebuild` | Build a candidate index and promote it if the gates pass |
-| `POST /admin/prompts/{id}/pin` | Pin a prompt version — the fastest rollback in the system, no deploy |
-| `POST /admin/providers/{name}/reset-circuit` | Close a circuit breaker after fixing the cause |
+Browser operators exchange a Google ID token at `POST /api/v3/auth/web/token` (no device
+attestation). That path is fail-closed: only Developer+ receive a session. Mobile
+`POST /api/v3/auth/token` still requires Play Integrity / App Attest.
+
+| Route | Role | Purpose |
+| --- | --- | --- |
+| `GET /admin/status` | Admin+ | Health, providers, prompts, tools, settings, learning slice, last refresh |
+| `POST /admin/index/rebuild` | Admin+ | Build a candidate index and promote it if the gates pass |
+| `POST /admin/index/rollback` | Admin+ | O(1) alias repoint to a previous generation |
+| `GET /admin/indexes` | Admin+ | Listed generations and the active alias |
+| `POST /admin/prompts/{id}/pin` | Admin+ | Pin a prompt version |
+| `POST /admin/providers/{name}/reset-circuit` | Admin+ | Close a circuit breaker |
+| `GET /admin/sources` | Admin+ | Approved knowledge sources |
+| `PATCH /admin/sources/{id}` | Admin+ | Enable or disable a source |
+| `POST /admin/sources` | SuperAdmin | Register a source |
+| `DELETE /admin/sources/{id}` | SuperAdmin | Remove a source |
+| `GET /admin/approvals` | Admin+ | Pending and historical approvals |
+| `POST /admin/approvals/{id}/decide` | Admin+ | Approve or reject |
+| `GET /admin/models` | Admin+ | Model registry |
+| `POST /admin/models/{id}/transition` | Admin+ | Stage change (production still needs an approval) |
+| `POST /admin/models/{id}/rollback` | Admin+ | Restore a previous production version |
+| `GET /admin/local-models` | Admin+ | Installed Ollama weights |
+| `POST /admin/local-models/pull` | SuperAdmin | Allowlisted pull |
+| `DELETE /admin/local-models/{name}` | SuperAdmin | Delete installed weights |
+| `GET /admin/audit` | Admin+ | Append-only audit browser |
+| `GET /admin/refresh/latest` | Admin+ | Last nightly `RefreshReport` |
+| `GET /admin/jobs/{task_id}` | Admin+ | Celery task state |
+| `GET /admin/operators` | Admin+ | Operator directory (read) |
+| `PATCH /admin/operators/{email}/role` | SuperAdmin | Assign a role |
+| `POST /admin/operators/{email}/revoke-sessions` | SuperAdmin | Drop refresh tokens |
+| `POST /admin/users/{subject}/forget` | SuperAdmin | GDPR erase; returns counts only |
+| `GET /admin/me` | Developer+ | Resolved role for the console chrome |
 
 `/admin/status` never contains an API key: `ProviderConfig` stores only the *name* of the
 environment variable holding one, and `api_key` is a property rather than a field, so the

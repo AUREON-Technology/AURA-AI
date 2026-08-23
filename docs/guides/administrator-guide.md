@@ -3,7 +3,18 @@
 Day-to-day operation of a running AURA deployment: knowledge, indexes, prompts, models,
 approvals, and the security posture.
 
-Every endpoint here requires an `Admin` or `SuperAdmin` role and writes an audit record.
+Day-to-day ops use the **AURA Console** at `https://$AURA_DOMAIN/console/` (Google sign-in via
+`POST /api/v3/auth/web/token`) or curl with a Bearer token.
+
+Two operator roles:
+
+- **Admin** — status, rebuild/rollback, prompt pin, circuit reset, source list/enable, approvals,
+  model promote/rollback, learning export/build, audit read. Access is read-only.
+- **SuperAdmin** — everything Admin can do, plus role assignment, session revoke, GDPR forget,
+  source register/delete, and allowlisted Ollama pull/delete. `ADMIN_EMAILS` mints Admin only;
+  SuperAdmin is assigned via `SUPERADMIN_EMAILS` or the Access page.
+
+Mutations write an audit record.
 
 ```bash
 AURA=https://aura.example.com

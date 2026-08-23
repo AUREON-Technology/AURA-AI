@@ -263,16 +263,14 @@ The final step matters: documents are the source of truth and the vector index i
 
 ### Monitoring
 
-Grafana is at `https://$AURA_DOMAIN/grafana/`, restricted to private address ranges by Nginx.
-Tunnel in rather than opening it:
-
-```bash
-ssh -L 3000:localhost:3000 user@vps
-```
+The operator console is at `https://$AURA_DOMAIN/console/`. Grafana is at
+`https://$AURA_DOMAIN/grafana/` and is gated by an Nginx `auth_request` against the console
+session (Developer+). `/metrics` stays denied on the public edge.
 
 Three provisioned dashboards: **Overview** (throughput, latency, cost), **AI Quality**
 (retrieval, groundedness, confidence, freshness), **Security** (guards, taint, rate limits,
-insecure mode).
+insecure mode). The console Overview page embeds them after `GF_SECURITY_ALLOW_EMBEDDING` is
+enabled.
 
 ---
 
