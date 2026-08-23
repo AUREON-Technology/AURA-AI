@@ -84,16 +84,27 @@ class PostgresSourceRegistry:
         self._schema_ready = True
 
     async def list_enabled(self) -> Sequence[KnowledgeSource]:
-        return [source for source in await self.list_all() if source.enabled]
+        """Enabled sources only, filtered in SQL rather than in Python.
+
+        The predicate belongs in the query: ingestion calls this every cycle, and reading every
+        disabled row back only to drop it costs more the more sources are registered. Filtering
+        here also keeps the disabled rows off the wire, which a comprehension over ``list_all``
+        cannot do however cheap it looks.
+        """
+        return await self._fetch_sources(
+            "SELECT * FROM aura_knowledge_sources WHERE enabled = TRUE ORDER BY id"
+        )
 
     async def list_all(self) -> Sequence[KnowledgeSource]:
+        return await self._fetch_sources("SELECT * FROM aura_knowledge_sources ORDER BY id")
+
+    async def _fetch_sources(self, sql: str) -> Sequence[KnowledgeSource]:
+        """Shared read path. ``sql`` is always a literal from this module, never caller input."""
         await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
-                rows = await conn.fetch(
-                    "SELECT * FROM aura_knowledge_sources ORDER BY id"
-                )
+                rows = await conn.fetch(sql)
         except Exception as exc:
             raise _unavailable(f"could not list knowledge sources: {exc}") from exc
         return [self._source(row) for row in rows]
