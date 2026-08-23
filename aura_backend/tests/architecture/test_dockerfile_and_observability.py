@@ -49,8 +49,12 @@ def test_compose_and_nginx_serve_the_operator_console() -> None:
     compose = (REPO / "deploy/docker-compose.prod.yml").read_text(encoding="utf-8")
     nginx = (REPO / "deploy/nginx/templates/aura.conf.template").read_text(encoding="utf-8")
     assert "context: ../aura_admin" in compose
+    assert "SUPERADMIN_EMAILS: ${SUPERADMIN_EMAILS:-}" in compose
+    assert "ADMIN_EMAILS: ${ADMIN_EMAILS:-}" in compose
+    assert "DEVELOPER_EMAILS: ${DEVELOPER_EMAILS:-}" in compose
     assert "GF_SECURITY_ALLOW_EMBEDDING" in compose
-    assert "location /console/" in nginx
+    assert "location /console" in nginx
+    assert "location = /console" not in nginx
     assert "auth_request /_grafana_auth" in nginx
     assert "location /metrics" in nginx
     assert "deny all" in nginx

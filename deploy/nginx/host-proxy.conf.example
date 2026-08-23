@@ -137,11 +137,9 @@ server {
 
     # Operator console. Publish the console container on loopback in
     # docker-compose.override.yml as 127.0.0.1:__CONSOLE_PORT__:3000.
-    location = /console {
-        return 302 /console/;
-    }
-
-    location /console/ {
+    # Prefix match — do not 302 /console → /console/. Next 308s the other
+    # way and the pair loops (ERR_TOO_MANY_REDIRECTS) after console login.
+    location /console {
         proxy_pass http://127.0.0.1:__CONSOLE_PORT__;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;

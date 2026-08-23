@@ -161,11 +161,11 @@ server {
     # Location-level add_header replaces the server-level set, so HSTS/CSP are
     # restated here. /console and /grafana may be framed by each other; /api/
     # keeps the server-level X-Frame-Options DENY.
-    location = /console {
-        return 302 /console/;
-    }
-
-    location /console/ {
+    # Prefix match — do not 302 /console → /console/. Next (trailingSlash:
+    # false) 308s the other way, and the two redirects loop until the browser
+    # raises ERR_TOO_MANY_REDIRECTS. Both /console and /console/ must be
+    # proxied through to the console container.
+    location /console {
         proxy_pass http://aura_console;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;

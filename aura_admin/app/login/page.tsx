@@ -29,7 +29,8 @@ export default function LoginPage() {
       setError(body.detail || body.message || "Sign-in was refused");
       return;
     }
-    window.location.assign(`${process.env.NEXT_PUBLIC_BASE_PATH || ""}/`);
+    const base = process.env.NEXT_PUBLIC_BASE_PATH || "";
+    window.location.assign(base || "/");
   }
 
   useEffect(() => {
