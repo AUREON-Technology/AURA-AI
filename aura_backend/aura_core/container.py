@@ -93,6 +93,9 @@ class Container:
         # ask for it.
         self._pg_pool: Any = None
 
+        # Extra readiness probes contributed by the layer above (see register_readiness_check).
+        self._readiness_checks: dict[str, Any] = {}
+
         self.cache_backend = self._build_cache()
         self.embedder = self._build_embedder()
         self.vectors = self._build_vector_store()
@@ -496,18 +499,60 @@ class Container:
             mark_dead()
         logger.info("container shutdown complete")
 
+    def postgres_pool(self) -> Any:
+        """The shared Postgres pool, for callers above this package.
+
+        Public so the layer above can probe the database without standing up a second pool --
+        the connection budget this pool is memoised to protect is a global, not a per-caller one.
+        Valid only when a Postgres backend is configured.
+        """
+        return self._postgres_pool()
+
+    def register_readiness_check(self, name: str, check: Any) -> None:
+        """Contribute an extra probe to ``health()``.
+
+        The extension point exists so the layer above can gate readiness on things this package
+        must not know about. The concrete case is the Alembic schema (ADR-002): the platform
+        tables belong to the legacy tree, `aura_core` has no view of its migrations, and yet a
+        gateway serving `/api/v3/sync` against an unmigrated database is not ready.
+
+        ``check`` is an awaitable returning a mapping. A falsey ``healthy`` key makes the whole
+        probe unhealthy; anything else in the mapping is passed through for the operator to read.
+        """
+        self._readiness_checks[name] = check
+
     async def health(self) -> dict[str, Any]:
         """Dependency health, for the readiness probe."""
         providers = await self.router.health()
         index = await self.index_manager.active_identity()
-        return {
+        healthy = any(p["healthy"] for p in providers.values())
+
+        checks: dict[str, Any] = {}
+        for name, check in self._readiness_checks.items():
+            try:
+                result = dict(await check())
+            except Exception as exc:
+                # A probe that throws is a defect in the probe, not evidence about the
+                # dependency, so it is reported and does not gate. The alternative -- letting a
+                # buggy check evict a working gateway from the load balancer -- is the same
+                # trade the liveness probe refuses to make.
+                logger.exception("readiness check failed", extra={"check": name})
+                result = {"healthy": True, "detail": f"check raised {type(exc).__name__}: {exc}"}
+            checks[name] = result
+            if not result.get("healthy", True):
+                healthy = False
+
+        payload = {
             "providers": providers,
             "index": index.physical_name if index else None,
             "tools": len(self.tools),
             "prompts": len(self.prompts),
             "environment": str(self.settings.environment),
-            "healthy": any(p["healthy"] for p in providers.values()),
+            "healthy": healthy,
         }
+        if checks:
+            payload["checks"] = checks
+        return payload
 
 
 def build_container(settings: AuraSettings | None = None) -> Container:

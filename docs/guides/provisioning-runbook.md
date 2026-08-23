@@ -162,7 +162,18 @@ that gets killed.
 
 ## 6. Bring up the data tier, then migrate, then the app
 
-Order matters. The gateway will not start cleanly against an unmigrated database.
+Order matters. The gateway process *will* start against an unmigrated database — it is the
+readiness probe that refuses, returning 503 with `checks.schema` naming the revision it expected
+and the one it found. That is deliberate: a container that exits on a missing schema restarts
+forever and tells you nothing, while a container that stays up and reports itself unready keeps
+its logs and its `/health/ready` body available for you to read. The container healthcheck polls
+that same endpoint, and nginx declares `depends_on: gateway: condition: service_healthy`, so an
+unmigrated schema stops the edge from starting at all rather than exposing a gateway that cannot
+serve. Run 6b before 6c and this never arises.
+
+Note that three tables — `aura_documents`, `aura_chunks`, `aura_memories` — are created by the
+application itself on first connect, so their presence is not evidence that migrations have run.
+Check `alembic_version`.
 
 ```bash
 cd /opt/aura-stack/deploy
@@ -172,7 +183,7 @@ DC="docker compose -f docker-compose.prod.yml --env-file .env"
 $DC up -d postgres redis qdrant
 $DC ps                       # all three healthy before continuing
 
-# 6b. Schema. Forward-only; both migrations are additive.
+# 6b. Schema. Forward-only; the migrations are additive.
 $DC run --rm --no-deps -T gateway alembic upgrade head
 
 # 6c. Application tier

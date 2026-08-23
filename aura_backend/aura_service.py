@@ -149,6 +149,25 @@ def _apply_cors(app) -> None:
     )
 
 
+def _register_schema_readiness(container) -> None:
+    """Gate readiness on the Alembic schema when the platform tables are actually in play.
+
+    Only for Postgres deployments: with the in-memory backends there are no migrations to be
+    behind, and the routers that need them are not serving real data. See
+    ``services/schema_readiness`` for why an unmigrated database otherwise reports ready.
+
+    Reads the container's own settings rather than taking them as an argument, so the backend
+    this consults and the pool it probes can never come from two different configurations.
+    """
+    infra = container.settings.infrastructure
+    if "postgres" not in (infra.document_backend, infra.memory_backend):
+        return
+
+    from services.schema_readiness import build_schema_check
+
+    container.register_readiness_check("schema", build_schema_check(container.postgres_pool()))
+
+
 def create_app():
     """Build the v3-only ASGI application.
 
@@ -165,6 +184,8 @@ def create_app():
         rate_limiter = SlidingWindowRateLimiter.from_settings(
             container.cache_backend, settings.security, metrics=container.metrics
         )
+
+    _register_schema_readiness(container)
 
     app = build_app(container, authenticator=authenticator, rate_limiter=rate_limiter)
     _mount_platform_routers(app)
