@@ -214,7 +214,18 @@ class IndexIdentity:
         )
 
     def matches_embedding(self, model_id: str, dimension: int) -> bool:
-        return self.embedding_model_id == model_id and self.dimension == dimension
+        # Compare slugged forms, not raw ones: an identity read back through
+        # ``_parse_physical_name`` never has its original casing or punctuation (the round trip
+        # is deliberately lossy -- see that function's docstring), so ``self.embedding_model_id``
+        # here may already be a slug (e.g. "baai-bge-small-en-v1-5") while ``model_id`` is the
+        # embedder's raw id ("BAAI/bge-small-en-v1.5"). A raw comparison would then be false for
+        # every real HuggingFace-style model id, permanently failing ``resolve_for_read`` and
+        # silently returning empty retrieval on every query -- a real-model deployment never
+        # actually retrieves anything, though HashEmbeddingProvider's plain "local-embeddings"
+        # id happens to already be its own slug, which is why no existing test caught this.
+        # ``_slug`` is idempotent, so this is exact for an already-slugged value and correct for
+        # a raw one either side of the comparison.
+        return _slug(self.embedding_model_id) == _slug(model_id) and self.dimension == dimension
 
     def for_model(self, model_id: str, dimension: int) -> "IndexIdentity":
         return replace(self, embedding_model_id=model_id, dimension=dimension)

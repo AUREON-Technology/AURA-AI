@@ -294,6 +294,25 @@ class TestAliases:
         store, _ = _store()
         assert await store.resolve_alias("nope") is None
 
+    async def test_resolved_identity_matches_the_raw_embedder_id_that_produced_it(self) -> None:
+        """A real HuggingFace-style model id (uppercase, '/', '.') must still match after the
+        lossy physical-name round trip -- this is exactly what production's sentence-transformers
+        embedder uses (``BAAI/bge-small-en-v1.5``), and what ``HashEmbeddingProvider``'s plain
+        ``local-embeddings`` id -- already its own slug -- never exercised. Before the fix, this
+        assertion failed for every real model id: resolve_for_read would raise IndexNotReadyError
+        on every query, forever, and retrieval would silently return nothing."""
+        identity = IndexIdentity(
+            logical_name="aura-knowledge", schema_version=1,
+            embedding_model_id="BAAI/bge-small-en-v1.5", dimension=384,
+        )
+        store, _ = _store(
+            collections=[identity.physical_name],
+            aliases=[FakeAliasDescription("knowledge", identity.physical_name)],
+        )
+        resolved = await store.resolve_alias("knowledge")
+        assert resolved is not None
+        assert resolved.matches_embedding("BAAI/bge-small-en-v1.5", 384)
+
     async def test_rollback_is_the_same_operation_as_promotion(self) -> None:
         """ADR-007's claim, exercised: pointing back at the previous generation is one alias
         update, no data movement."""
