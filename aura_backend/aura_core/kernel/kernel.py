@@ -475,6 +475,7 @@ class AIKernel:
                     yield {"type": "citations", "citations": list(assembled.citations)}
 
                 collected: list[str] = []
+                last_usage = None
                 completion = CompletionRequest(
                     conversation=assembled.conversation,
                     sampling=SamplingParams(
@@ -487,6 +488,8 @@ class AIKernel:
                 )
 
                 async for chunk in deps.router.stream(completion):
+                    if chunk.usage is not None:
+                        last_usage = chunk.usage
                     if chunk.delta:
                         collected.append(chunk.delta)
                         yield {"type": "token", "text": chunk.delta}
@@ -541,12 +544,27 @@ class AIKernel:
                     except Exception:
                         logger.warning("failed to persist session state")
 
+                searched_empty = bool(
+                    retrieval is not None and retrieval.is_empty_but_searched
+                )
                 yield {
                     "type": "done",
                     "tainted": tainted,
                     "guards_complete": guards_complete,
                     "citations": list(assembled.citations),
                     "needs_confirmation": list(dict.fromkeys(needs_confirmation)),
+                    "turn_id": turn_id.value,
+                    "correlation_id": correlation.value,
+                    # Stream does not run the reasoner; null is honest, not a fake score.
+                    "confidence": None,
+                    "degraded": bool(tainted or searched_empty),
+                    "usage": {
+                        "prompt_tokens": last_usage.prompt_tokens if last_usage else 0,
+                        "completion_tokens": (
+                            last_usage.completion_tokens if last_usage else len(collected)
+                        ),
+                        "cost_usd": 0.0,
+                    },
                 }
             except AuraError as exc:
                 yield {"type": "error", "error": exc.kind, "message": exc.message,

@@ -136,6 +136,12 @@ class TestStreaming:
         done = frames[-1]
         assert "guards_complete" in done
         assert done["guards_complete"] is True
+        assert done["turn_id"]
+        assert done["correlation_id"]
+        assert "confidence" in done
+        assert "degraded" in done
+        assert "usage" in done
+        assert "prompt_tokens" in done["usage"]
 
 
 class TestErrorHandling:

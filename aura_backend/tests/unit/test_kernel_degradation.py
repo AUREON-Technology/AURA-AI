@@ -369,6 +369,12 @@ class TestStreamToolExecution:
         assert "step" in types
         assert "token" in types
         assert types[-1] == "done"
+        done = frames[-1]
+        assert done["turn_id"]
+        assert done["correlation_id"]
+        assert "confidence" in done
+        assert "degraded" in done
+        assert "usage" in done
         echo = container.router.get("echo")
         blob = "\n".join(m.content for m in echo.calls[-1].conversation)
         assert "2+2 = 4" in blob
