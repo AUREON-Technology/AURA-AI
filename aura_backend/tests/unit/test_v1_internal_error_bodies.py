@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from aura_service import app
 from infrastructure.http_limits import RateLimitMiddleware
-from services.security import verify_token
+from services.jwt_auth import verify_access_token
 
 SECRET = "secret path /tmp/foo"
 
@@ -18,7 +18,7 @@ def _client() -> TestClient:
     import infrastructure.http_limits as http_limits
 
     http_limits._rate_limit_redis = None
-    app.dependency_overrides[verify_token] = lambda: {
+    app.dependency_overrides[verify_access_token] = lambda: {
         "uid": "user_123",
         "email": "user@aura.ai",
         "role": "Admin",

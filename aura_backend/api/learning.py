@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from api.http_errors import http_internal_error
 from services.learning_pipeline import learning_pipeline
 from services.rbac import require_role
-from services.security import verify_token
+from services.jwt_auth import verify_access_token
 
 router = APIRouter(prefix="/api/v3/learning", tags=["learning"])
 
@@ -24,7 +24,7 @@ class LearningLogSchema(BaseModel):
 
 
 @router.post("/log")
-async def log_learning_record(request: LearningLogSchema, user_info: dict = Depends(verify_token)):
+async def log_learning_record(request: LearningLogSchema, user_info: dict = Depends(verify_access_token)):
     """Logs a learning record on the backend."""
     success = learning_pipeline.log_feedback_record(request.dict())
     if not success:

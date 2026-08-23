@@ -83,20 +83,26 @@ def _build_authenticator(settings: Any):
         if not subject:
             raise AuthenticationError("token carries no subject claim")
 
-        role = claims.get("role") or "User"
+        from services.rbac import get_user_role  # type: ignore
+
+        role = get_user_role(claims)
+        capabilities: list[str] = []
+        if role in settings.security.admin_roles:
+            capabilities.append("admin.act")
+        if role == "SuperAdmin":
+            capabilities.append("admin.super")
         return Principal(
             user_id=UserId(str(subject)),
             email=claims.get("email") or "",
             role=role,
-            # Capability grants are role-derived for now. When per-user grants land they are
-            # read here; the tool policy already fails closed on a missing capability.
-            capabilities=("admin.act",) if role in settings.security.admin_roles else (),
+            capabilities=tuple(capabilities),
         )
 
     return authenticate
 
 
 def _mount_platform_routers(app) -> None:
+    from api.admin_platform import router as admin_platform_router
     from api.automation import router as automation_router
     from api.learning import router as learning_router
     from api.v2.auth import router as auth_router
@@ -108,6 +114,7 @@ def _mount_platform_routers(app) -> None:
     app.include_router(insights_router)
     app.include_router(automation_router)
     app.include_router(learning_router)
+    app.include_router(admin_platform_router)
 
 
 def _register_inference_budget_handler(app) -> None:
@@ -186,6 +193,16 @@ def create_app():
         )
 
     _register_schema_readiness(container)
+
+    def _status_extras() -> dict:
+        try:
+            from services.learning_pipeline import learning_pipeline
+
+            return {"learning": learning_pipeline.evaluate_metrics()}
+        except Exception:
+            return {"learning": {}}
+
+    container.status_extras = _status_extras
 
     app = build_app(container, authenticator=authenticator, rate_limiter=rate_limiter)
     _mount_platform_routers(app)

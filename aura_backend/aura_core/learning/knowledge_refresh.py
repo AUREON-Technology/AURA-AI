@@ -145,6 +145,7 @@ class KnowledgeRefreshPipeline:
         self._max_concurrent = max(1, max_concurrent_sources)
         self._require_gates = promote_requires_gates
         self._retention_days = index_retention_days
+        self.last_report: RefreshReport | None = None
 
     async def run(self, *, dry_run: bool = False) -> RefreshReport:
         """Execute one refresh cycle."""
@@ -158,10 +159,12 @@ class KnowledgeRefreshPipeline:
             sources = [s for s in await self._registry.list_enabled()]
             if not sources:
                 logger.info("no enabled knowledge sources; nothing to refresh")
-                return RefreshReport(
+                report = RefreshReport(
                     generation=generation, started_at=started_at,
                     duration_ms=(time.perf_counter() - started) * 1000.0,
                 )
+                self.last_report = report
+                return report
 
             # Steps 1-6: fetch, validate, dedupe, clean, ingest (which embeds and updates the
             # graph). Sources run concurrently but bounded -- an unbounded fan-out over a
@@ -213,6 +216,7 @@ class KnowledgeRefreshPipeline:
                 )
             )
             logger.info("knowledge refresh complete", extra=report.as_dict()["totals"])
+            self.last_report = report
             return report
 
     # -- per-source --------------------------------------------------------------------

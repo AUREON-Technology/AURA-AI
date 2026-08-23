@@ -285,6 +285,20 @@ class Container:
             event_bus=self.events,
         )
 
+        from .learning.approval import ApprovalService, InMemoryApprovalStore
+        from .mlops.model_registry import InMemoryModelStore, ModelRegistry
+
+        self.approvals = ApprovalService(
+            store=InMemoryApprovalStore(), audit=self.audit, event_bus=self.events
+        )
+        self.models = ModelRegistry(
+            store=InMemoryModelStore(),
+            approvals=self.approvals,
+            audit=self.audit,
+            event_bus=self.events,
+            metrics=self.metrics,
+        )
+
         self.kernel = AIKernel(
             KernelDependencies(
                 router=self.router,

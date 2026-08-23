@@ -6,11 +6,13 @@ API call going forward instead of re-sending the Google/Firebase token.
 """
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from services.jwt_auth import issue_token_pair, refresh_token_pair, revoke_refresh_token
-from services.security import store_nonce, verify_token
+from services.rbac import CONSOLE_MIN_ROLE, is_console_operator, stamp_resolved_role
+from services.security import store_nonce, verify_identity_token, verify_token
 
 router = APIRouter(prefix="/api/v3/auth", tags=["auth"])
 
@@ -51,6 +53,32 @@ async def issue_nonce():
 async def exchange_token(user_info: dict = Depends(verify_token)):
     """Exchanges a verified Google/Firebase ID token (+ device attestation,
     both checked by verify_token) for a backend-issued access/refresh pair."""
+    return issue_token_pair(stamp_resolved_role(user_info))
+
+
+_web_bearer = HTTPBearer(auto_error=False)
+
+
+@router.post("/web/token", response_model=TokenResponse)
+async def exchange_web_token(
+    request: Request,
+    authorization: HTTPAuthorizationCredentials | None = Depends(_web_bearer),
+):
+    """Browser operator login. Google/Firebase ID token only — no Play Integrity.
+
+    Fail-closed: only Developer+ receive a session. Consumers cannot use this
+    path as a mobile-attestation bypass.
+    """
+    user_info = await verify_identity_token(request, authorization)
+    stamp_resolved_role(user_info)
+    if not is_console_operator(user_info["role"]):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Access forbidden: console login requires at least {CONSOLE_MIN_ROLE} "
+                f"(resolved {user_info['role']})."
+            ),
+        )
     return issue_token_pair(user_info)
 
 

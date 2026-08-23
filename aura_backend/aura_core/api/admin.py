@@ -1,0 +1,338 @@
+"""Operator HTTP surface for kernel services already on the container.
+
+Kept out of ``v3.py`` so the gateway adapter does not become a monolith.
+Every mutating handler writes an audit event. SuperAdmin-only routes are
+marked with ``require_super_admin``.
+"""
+
+from typing import Any, Callable
+
+from ..domain.errors import AuthorizationError, ValidationError
+from ..domain.knowledge import IndexIdentity, KnowledgeSource, SourceType, TrustTier
+from ..mlops.model_registry import ModelStage
+from ..observability.logging import get_logger
+
+logger = get_logger("api.v3.admin")
+
+
+def _source_payload(source: KnowledgeSource) -> dict[str, Any]:
+    return {
+        "id": source.id,
+        "type": str(source.type),
+        "uri": source.uri,
+        "enabled": source.enabled,
+        "trust_tier": int(source.trust_tier),
+        "schedule_cron": source.schedule_cron,
+        "max_documents": source.max_documents,
+        "max_bytes_per_document": source.max_bytes_per_document,
+        "last_success_at": source.last_success_at.isoformat() if source.last_success_at else None,
+        "last_cursor": source.last_cursor,
+    }
+
+
+def _parse_index_name(physical_name: str, fallback: IndexIdentity) -> IndexIdentity:
+    parts = physical_name.rsplit("__", 3)
+    if len(parts) != 4 or not parts[1].startswith("v"):
+        raise ValidationError(
+            "physical_name must look like logical__vN__model__dimension",
+            details={"physical_name": physical_name},
+        )
+    logical, version, model, dimension = parts
+    return IndexIdentity(
+        logical_name=logical,
+        schema_version=int(version[1:]),
+        embedding_model_id=model,
+        dimension=int(dimension),
+        distance=fallback.distance,
+    )
+
+
+def _ollama(container: Any) -> Any:
+    from ..llm.providers.ollama import OllamaProvider
+
+    for provider in container.providers:
+        if isinstance(provider, OllamaProvider):
+            return provider
+    return None
+
+
+def register_admin_ops(
+    router: Any,
+    container: Any,
+    *,
+    principal: Callable,
+    require_admin: Callable,
+    require_super_admin: Callable,
+    audit_admin: Callable,
+    Body: Any,
+    Depends: Any,
+    HTTPException: Any,
+    JSONResponse: Any,
+    Query: Any,
+    Request: Any,
+) -> None:
+    from pydantic import BaseModel, Field
+
+    class SourceCreateRequest(BaseModel):
+        id: str = Field(min_length=1, max_length=128)
+        type: str = "web"
+        uri: str = Field(min_length=8, max_length=2000)
+        trust_tier: int = 2
+        enabled: bool = True
+        max_documents: int = Field(default=1000, ge=1, le=50_000)
+        max_bytes_per_document: int = Field(default=5 * 1024 * 1024, ge=1024)
+        schedule_cron: str = "0 2 * * *"
+
+    class SourceEnableRequest(BaseModel):
+        enabled: bool
+
+    class IndexRollbackRequest(BaseModel):
+        physical_name: str = Field(min_length=1, max_length=512)
+
+    class ApprovalDecideRequest(BaseModel):
+        approved: bool
+        note: str = ""
+
+    class ModelTransitionRequest(BaseModel):
+        to: str
+        approval_id: str | None = None
+        canary_percent: int = Field(default=0, ge=0, le=100)
+        force: bool = False
+
+    class ModelRollbackRequest(BaseModel):
+        to_version: str = Field(min_length=1, max_length=64)
+
+    class LocalModelPullRequest(BaseModel):
+        name: str = Field(min_length=1, max_length=200)
+
+    @router.get("/admin/audit")
+    async def list_audit(
+        caller=Depends(principal),
+        actor: str | None = Query(default=None),
+        action: str | None = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> JSONResponse:
+        require_admin(caller)
+        events = await container.audit.query(actor=actor, action=action, limit=limit)
+        return JSONResponse(content={"events": [event.as_dict() for event in events]})
+
+    @router.get("/admin/sources")
+    async def list_sources(caller=Depends(principal)) -> JSONResponse:
+        require_admin(caller)
+        registry = container.sources
+        listing = getattr(registry, "list_all", None)
+        sources = await listing() if listing else await registry.list_enabled()
+        return JSONResponse(content={"sources": [_source_payload(s) for s in sources]})
+
+    @router.post("/admin/sources")
+    async def create_source(
+        request: Request, payload: SourceCreateRequest, caller=Depends(principal)
+    ) -> JSONResponse:
+        require_super_admin(caller)
+        source = KnowledgeSource(
+            id=payload.id,
+            type=SourceType(payload.type),
+            uri=payload.uri,
+            enabled=payload.enabled,
+            trust_tier=TrustTier(payload.trust_tier),
+            max_documents=payload.max_documents,
+            max_bytes_per_document=payload.max_bytes_per_document,
+            schedule_cron=payload.schedule_cron,
+        )
+        await container.sources.register(source)
+        await audit_admin(request, caller, "admin.source.register", source.id, "ok")
+        return JSONResponse(content={"source": _source_payload(source)})
+
+    @router.patch("/admin/sources/{source_id}")
+    async def enable_source(
+        request: Request,
+        source_id: str,
+        payload: SourceEnableRequest,
+        caller=Depends(principal),
+    ) -> JSONResponse:
+        require_admin(caller)
+        await container.sources.set_enabled(source_id, payload.enabled)
+        await audit_admin(
+            request, caller, "admin.source.enable", source_id, "ok",
+            detail={"enabled": payload.enabled},
+        )
+        source = await container.sources.get(source_id)
+        return JSONResponse(content={"source": _source_payload(source) if source else {"id": source_id}})
+
+    @router.delete("/admin/sources/{source_id}")
+    async def delete_source(
+        request: Request, source_id: str, caller=Depends(principal)
+    ) -> JSONResponse:
+        require_super_admin(caller)
+        removed = await container.sources.remove(source_id)
+        await audit_admin(request, caller, "admin.source.delete", source_id, "ok" if removed else "missing")
+        return JSONResponse(content={"deleted": bool(removed)})
+
+    @router.get("/admin/indexes")
+    async def list_indexes(caller=Depends(principal)) -> JSONResponse:
+        require_admin(caller)
+        active = await container.index_manager.active_identity()
+        names_fn = getattr(container.vectors, "index_names", None)
+        names = list(names_fn()) if names_fn else []
+        if active and active.physical_name not in names:
+            names.append(active.physical_name)
+        return JSONResponse(
+            content={
+                "active": active.physical_name if active else None,
+                "indexes": [
+                    {"physical_name": name, "active": active is not None and name == active.physical_name}
+                    for name in names
+                ],
+            }
+        )
+
+    @router.post("/admin/index/rollback")
+    async def rollback_index(
+        request: Request, payload: IndexRollbackRequest, caller=Depends(principal)
+    ) -> JSONResponse:
+        require_admin(caller)
+        current = container.index_manager.identity_for_current_embedder()
+        target = _parse_index_name(payload.physical_name, current)
+        restored = await container.index_manager.rollback(target)
+        await audit_admin(request, caller, "admin.index.rollback", restored.physical_name, "ok")
+        return JSONResponse(content={"index": restored.physical_name, "rolled_back": True})
+
+    @router.get("/admin/refresh/latest")
+    async def latest_refresh(caller=Depends(principal)) -> JSONResponse:
+        require_admin(caller)
+        report = getattr(container.refresh_pipeline, "last_report", None)
+        return JSONResponse(content={"report": report.as_dict() if report else None})
+
+    @router.get("/admin/approvals")
+    async def list_approvals(
+        caller=Depends(principal),
+        status: str | None = Query(default=None),
+        kind: str | None = Query(default=None),
+    ) -> JSONResponse:
+        require_admin(caller)
+        from ..learning.approval import ApprovalKind, ApprovalStatus
+
+        status_enum = ApprovalStatus(status) if status else None
+        kind_enum = ApprovalKind(kind) if kind else None
+        rows = await container.approvals._store.list(status=status_enum, kind=kind_enum)
+        return JSONResponse(content={"approvals": [row.as_dict() for row in rows]})
+
+    @router.post("/admin/approvals/{approval_id}/decide")
+    async def decide_approval(
+        request: Request,
+        approval_id: str,
+        payload: ApprovalDecideRequest,
+        caller=Depends(principal),
+    ) -> JSONResponse:
+        require_admin(caller)
+        decided = await container.approvals.decide(
+            approval_id,
+            approved=payload.approved,
+            by=caller.email or caller.user_id.value,
+            note=payload.note,
+        )
+        await audit_admin(
+            request, caller, "admin.approval.decide", approval_id,
+            "approved" if payload.approved else "rejected",
+        )
+        return JSONResponse(content={"approval": decided.as_dict()})
+
+    @router.get("/admin/models")
+    async def list_models(caller=Depends(principal)) -> JSONResponse:
+        require_admin(caller)
+        versions = await container.models.list_versions()
+        return JSONResponse(content={"models": [version.as_dict() for version in versions]})
+
+    @router.post("/admin/models/{model_id}/transition")
+    async def transition_model(
+        request: Request,
+        model_id: str,
+        payload: ModelTransitionRequest,
+        caller=Depends(principal),
+        version: str = Query(min_length=1),
+    ) -> JSONResponse:
+        require_admin(caller)
+        promoted = await container.models.transition(
+            model_id,
+            version,
+            to=ModelStage(payload.to),
+            approval_id=payload.approval_id,
+            canary_percent=payload.canary_percent,
+            actor=caller.email or caller.user_id.value,
+            force=payload.force,
+        )
+        await audit_admin(request, caller, "admin.model.transition", promoted.key, "ok")
+        return JSONResponse(content={"model": promoted.as_dict()})
+
+    @router.post("/admin/models/{model_id}/rollback")
+    async def rollback_model(
+        request: Request,
+        model_id: str,
+        payload: ModelRollbackRequest,
+        caller=Depends(principal),
+    ) -> JSONResponse:
+        require_admin(caller)
+        restored = await container.models.rollback(
+            model_id,
+            to_version=payload.to_version,
+            actor=caller.email or caller.user_id.value,
+        )
+        await audit_admin(request, caller, "admin.model.rollback", restored.key, "ok")
+        return JSONResponse(content={"model": restored.as_dict()})
+
+    @router.get("/admin/local-models")
+    async def list_local_models(caller=Depends(principal)) -> JSONResponse:
+        require_admin(caller)
+        provider = _ollama(container)
+        if provider is None:
+            return JSONResponse(content={"models": [], "available": False})
+        models = await provider.list_models()
+        return JSONResponse(
+            content={
+                "available": True,
+                "models": [
+                    {
+                        "name": m.name,
+                        "size_bytes": m.size_bytes,
+                        "parameter_size": m.parameter_size,
+                        "quantization": m.quantization,
+                        "family": m.family,
+                        "loaded": m.loaded,
+                    }
+                    for m in models
+                ],
+            }
+        )
+
+    @router.post("/admin/local-models/pull")
+    async def pull_local_model(
+        request: Request, payload: LocalModelPullRequest, caller=Depends(principal)
+    ) -> JSONResponse:
+        require_super_admin(caller)
+        provider = _ollama(container)
+        if provider is None:
+            raise HTTPException(
+                status_code=503,
+                detail=AuthorizationError("no local Ollama provider is configured").to_dict(),
+            )
+        last: dict[str, Any] = {}
+        async for event in provider.pull_model(payload.name):
+            last = dict(event)
+        await audit_admin(request, caller, "admin.local_model.pull", payload.name, "ok")
+        return JSONResponse(content={"pulled": payload.name, "progress": last})
+
+    @router.delete("/admin/local-models/{name}")
+    async def delete_local_model(
+        request: Request, name: str, caller=Depends(principal)
+    ) -> JSONResponse:
+        require_super_admin(caller)
+        provider = _ollama(container)
+        if provider is None:
+            raise HTTPException(
+                status_code=503,
+                detail=AuthorizationError("no local Ollama provider is configured").to_dict(),
+            )
+        deleted = await provider.delete_model(name)
+        await audit_admin(request, caller, "admin.local_model.delete", name, "ok")
+        return JSONResponse(content={"deleted": bool(deleted)})
+

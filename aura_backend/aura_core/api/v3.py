@@ -24,7 +24,9 @@ from ..domain.memory import MemoryKind, MemoryQuery
 from ..domain.reasoning import ReasoningStrategy
 from ..kernel.kernel import TurnRequest
 from ..observability.logging import get_logger
+from ..ports.runtime import AuditEvent
 from ..security.rate_limit import extract_client_ip
+from .admin import register_admin_ops
 
 __all__ = ["build_router", "build_app", "Principal"]
 
@@ -57,6 +59,10 @@ class Principal:
     @property
     def is_admin(self) -> bool:
         return self.role in ("Admin", "SuperAdmin")
+
+    @property
+    def is_super_admin(self) -> bool:
+        return self.role == "SuperAdmin"
 
 
 def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None) -> Any:
@@ -154,6 +160,39 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 ).to_dict(),
             )
 
+    def require_super_admin(caller: Principal) -> None:
+        if not caller.is_super_admin:
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError(
+                    "this endpoint requires a SuperAdmin role"
+                ).to_dict(),
+            )
+
+    async def audit_admin(
+        request: Request,
+        caller: Principal,
+        action: str,
+        resource: str,
+        outcome: str,
+        detail: Mapping[str, Any] | None = None,
+    ) -> None:
+        try:
+            await container.audit.record(
+                AuditEvent(
+                    action=action,
+                    actor=caller.email or caller.user_id.value,
+                    actor_role=caller.role,
+                    resource=resource,
+                    outcome=outcome,
+                    correlation_id=request.headers.get("x-correlation-id") or "",
+                    source_ip=request.client.host if request.client else None,
+                    detail=detail,
+                )
+            )
+        except Exception:
+            logger.debug("admin audit write failed", extra={"action": action}, exc_info=True)
+
     def to_turn(payload: ChatRequest, caller: Principal, request: Request) -> TurnRequest:
         return TurnRequest(
             message=payload.message,
@@ -197,7 +236,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             return JSONResponse(
                 status_code=status,
                 content={
-                    "error": result.telemetry.error_kind,
+                    "error": result.telemetry.error_kind or "turn_failed",
+                    "message": "The turn did not complete.",
+                    "retryable": status in (429, 503),
+                    "details": {},
                     "correlation_id": result.telemetry.correlation_id.value,
                 },
             )
@@ -324,6 +366,32 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             DocumentId(document_id), owner_id=caller.user_id
         )
         return JSONResponse(content={"deleted": True, "chunks_removed": removed})
+
+    @router.get("/knowledge/documents")
+    async def list_documents(
+        request: Request,
+        caller: Principal = Depends(principal),
+        limit: int = Query(default=50, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+    ) -> JSONResponse:
+        await enforce_rate_limit(request, caller, "read")
+        documents = await container.documents.list_active(
+            owner_id=caller.user_id, limit=limit, offset=offset
+        )
+        return JSONResponse(
+            content={
+                "documents": [
+                    {
+                        "document_id": d.id.value,
+                        "title": d.title,
+                        "version": d.version,
+                        "status": str(d.status),
+                        "created_at": d.created_at.isoformat(),
+                    }
+                    for d in documents
+                ]
+            }
+        )
 
     # -- memory ------------------------------------------------------------------------
 
@@ -475,6 +543,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     @router.get("/admin/status")
     async def admin_status(caller: Principal = Depends(principal)) -> JSONResponse:
         require_admin(caller)
+        report = getattr(container.refresh_pipeline, "last_report", None)
+        extras = getattr(container, "status_extras", None)
+        extra_payload = extras() if callable(extras) else {}
         return JSONResponse(
             content={
                 "health": await container.health(),
@@ -482,11 +553,15 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "prompts": container.prompts.describe(),
                 "tools": container.tools.describe(),
                 "settings": container.settings.as_dict(),
+                "learning": extra_payload.get("learning") or {},
+                "refresh": report.as_dict() if report else None,
             }
         )
 
     @router.post("/admin/index/rebuild")
-    async def rebuild_index(caller: Principal = Depends(principal)) -> JSONResponse:
+    async def rebuild_index(
+        request: Request, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
         """Build a candidate index and promote it if the gates pass (ADR-007)."""
         require_admin(caller)
         identity = container.index_manager.identity_for_current_embedder()
@@ -496,6 +571,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         if gate.passed:
             await container.index_manager.promote(identity, gate=gate, reason="manual_rebuild")
             promoted = True
+        await audit_admin(
+            request, caller, "admin.index.rebuild", identity.physical_name,
+            "promoted" if promoted else "gated",
+            detail={"gate_failures": list(gate.failures)},
+        )
         return JSONResponse(
             content={
                 "index": identity.physical_name,
@@ -510,18 +590,40 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     @router.post("/admin/prompts/{template_id}/pin")
     async def pin_prompt(
-        template_id: str, version: str = Body(embed=True), caller: Principal = Depends(principal)
+        request: Request,
+        template_id: str,
+        version: str = Body(embed=True),
+        caller: Principal = Depends(principal),
     ) -> JSONResponse:
         """Pin a prompt version -- the rollback mechanism for a bad prompt change (TD-11)."""
         require_admin(caller)
         container.prompts.pin(template_id, version)
+        await audit_admin(request, caller, "admin.prompt.pin", f"{template_id}@{version}", "ok")
         return JSONResponse(content={"pinned": f"{template_id}@{version}"})
 
     @router.post("/admin/providers/{name}/reset-circuit")
-    async def reset_circuit(name: str, caller: Principal = Depends(principal)) -> JSONResponse:
+    async def reset_circuit(
+        request: Request, name: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
         require_admin(caller)
         container.router.reset_circuit(name)
+        await audit_admin(request, caller, "admin.provider.reset_circuit", name, "ok")
         return JSONResponse(content={"reset": name})
+
+    register_admin_ops(
+        router,
+        container,
+        principal=principal,
+        require_admin=require_admin,
+        require_super_admin=require_super_admin,
+        audit_admin=audit_admin,
+        Body=Body,
+        Depends=Depends,
+        HTTPException=HTTPException,
+        JSONResponse=JSONResponse,
+        Query=Query,
+        Request=Request,
+    )
 
     return router
 

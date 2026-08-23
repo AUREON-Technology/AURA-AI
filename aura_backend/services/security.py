@@ -272,6 +272,82 @@ except Exception as init_err:
     logger.error(f"Error during Firebase Admin SDK initialization: {init_err}")
 
 
+async def verify_identity_token(
+    request: Request,
+    authorization: Optional[HTTPAuthorizationCredentials] = Security(security_scheme),
+) -> Dict[str, Any]:
+    """Verify a Google or Firebase ID token. Does **not** check device attestation.
+
+    Used by the operator web console. Mobile session exchange must go through
+    :func:`verify_token`, which still requires Play Integrity / App Attest.
+    """
+    is_testing = debug_bypass_allowed(settings.debug_mode)
+
+    if not authorization:
+        if is_testing:
+            logger.debug("No auth header provided, returning mock user in testing/debug mode.")
+            return {
+                "uid": "mock_user_123",
+                "email": "mock_user@aura.ai",
+                "name": "Mock Developer",
+                "picture": "https://api.dicebear.com/7.x/bottts/png?seed=mock",
+            }
+        raise HTTPException(
+            status_code=401,
+            detail="Authorization header is required.",
+        )
+
+    token = authorization.credentials
+
+    try:
+        id_info = await anyio.to_thread.run_sync(
+            lambda: id_token.verify_oauth2_token(
+                token,
+                google_requests.Request(),
+                settings.google_client_id,
+            )
+        )
+        logger.debug(f"Google ID token verified successfully for: {id_info.get('email')}")
+        return {
+            "uid": id_info.get("sub"),
+            "email": id_info.get("email"),
+            "name": id_info.get("name"),
+            "picture": id_info.get("picture"),
+        }
+    except Exception as google_err:
+        logger.warning(f"Token is not a valid Google ID token: {google_err}. Trying Firebase...")
+
+    if firebase_app:
+        try:
+            from firebase_admin import auth
+            decoded_token = await anyio.to_thread.run_sync(
+                auth.verify_id_token,
+                token,
+            )
+            logger.debug(f"Firebase ID token verified successfully for: {decoded_token.get('email')}")
+            return {
+                "uid": decoded_token.get("uid"),
+                "email": decoded_token.get("email"),
+                "name": decoded_token.get("name"),
+                "picture": decoded_token.get("picture"),
+            }
+        except Exception as firebase_err:
+            logger.error(f"Firebase verification failed: {firebase_err}")
+
+    if is_testing and token == "mock_token":
+        return {
+            "uid": "mock_user_123",
+            "email": "mock_user@aura.ai",
+            "name": "Mock Developer",
+            "picture": "https://api.dicebear.com/7.x/bottts/png?seed=mock",
+        }
+
+    raise HTTPException(
+        status_code=401,
+        detail="Invalid or expired credentials.",
+    )
+
+
 async def verify_token(
     request: Request,
     authorization: Optional[HTTPAuthorizationCredentials] = Security(security_scheme)
@@ -282,8 +358,9 @@ async def verify_token(
     1. Google Sign-In ID tokens (via google-auth)
     2. Firebase ID tokens (via firebase-admin)
     3. Mock authentication in debug/test mode
+
+    Device attestation is required here. Browser operators use /api/v3/auth/web/token.
     """
-    # Device Validation Checking
     attestation_token = request.headers.get("X-Device-Attestation")
     platform = request.headers.get("X-Device-Platform")
     attestation_nonce = request.headers.get("X-Device-Attestation-Nonce")
@@ -296,75 +373,4 @@ async def verify_token(
             ),
         )
 
-    # 1. Check for mock/bypass mode in unit testing/development.
-    # Production-like env never mints mock_user even if DEBUG_MODE was flipped.
-    is_testing = debug_bypass_allowed(settings.debug_mode)
-    
-    if not authorization:
-        if is_testing:
-            logger.debug("No auth header provided, returning mock user in testing/debug mode.")
-            return {
-                "uid": "mock_user_123",
-                "email": "mock_user@aura.ai",
-                "name": "Mock Developer",
-                "picture": "https://api.dicebear.com/7.x/bottts/png?seed=mock"
-            }
-        raise HTTPException(
-            status_code=401,
-            detail="Authorization header is required."
-        )
-
-    token = authorization.credentials
-
-    # 2. Try verifying as Google Sign-In ID Token
-    try:
-        # Run blocking verify call in standard execution threadpool to keep FastAPI async loop non-blocking
-        id_info = await anyio.to_thread.run_sync(
-            lambda: id_token.verify_oauth2_token(
-                token,
-                google_requests.Request(),
-                settings.google_client_id
-            )
-        )
-        logger.debug(f"Google ID token verified successfully for: {id_info.get('email')}")
-        return {
-            "uid": id_info.get("sub"),
-            "email": id_info.get("email"),
-            "name": id_info.get("name"),
-            "picture": id_info.get("picture")
-        }
-    except Exception as google_err:
-        logger.warning(f"Token is not a valid Google ID token: {google_err}. Trying Firebase...")
-
-    # 3. Try verifying as Firebase ID Token (if configured)
-    if firebase_app:
-        try:
-            from firebase_admin import auth
-            decoded_token = await anyio.to_thread.run_sync(
-                auth.verify_id_token,
-                token
-            )
-            logger.debug(f"Firebase ID token verified successfully for: {decoded_token.get('email')}")
-            return {
-                "uid": decoded_token.get("uid"),
-                "email": decoded_token.get("email"),
-                "name": decoded_token.get("name"),
-                "picture": decoded_token.get("picture")
-            }
-        except Exception as firebase_err:
-            logger.error(f"Firebase verification failed: {firebase_err}")
-
-    # 4. Fallback for testing mode with an explicit mock token
-    if is_testing and token == "mock_token":
-        return {
-            "uid": "mock_user_123",
-            "email": "mock_user@aura.ai",
-            "name": "Mock Developer",
-            "picture": "https://api.dicebear.com/7.x/bottts/png?seed=mock"
-        }
-
-    # If all verifications fail
-    raise HTTPException(
-        status_code=401,
-        detail="Invalid or expired credentials."
-    )
+    return await verify_identity_token(request, authorization)

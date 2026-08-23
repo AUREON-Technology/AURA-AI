@@ -1,7 +1,7 @@
 import os
 import json
 from fastapi import HTTPException, Depends
-from services.security import verify_token
+from services.jwt_auth import verify_access_token
 
 ROLE_HIERARCHY = {
     "User": 0,
@@ -12,37 +12,68 @@ ROLE_HIERARCHY = {
     "SuperAdmin": 5
 }
 
-def get_user_role(user_info: dict) -> str:
-    """Extracts and resolves user role using claims, config lists, and local overrides."""
-    # 1. Custom Claims from Token
-    role = user_info.get("role")
-    if role and role in ROLE_HIERARCHY:
-        return role
+CONSOLE_MIN_ROLE = "Developer"
 
-    email = user_info.get("email", "")
-    uid = user_info.get("uid", "")
 
-    # 2. Configured env list overrides
-    admin_emails = [e.strip() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()]
-    dev_emails = [e.strip() for e in os.getenv("DEVELOPER_EMAILS", "").split(",") if e.strip()]
+def _email_list(name: str) -> list[str]:
+    return [e.strip() for e in os.getenv(name, "").split(",") if e.strip()]
 
-    if email in admin_emails:
-        return "Admin"
-    if email in dev_emails:
-        return "Developer"
 
-    # 3. Roles configuration file mapping
+def _roles_file_role(email: str, uid: str) -> str | None:
     roles_file = "roles.json"
-    if os.path.exists(roles_file):
-        try:
-            with open(roles_file, "r", encoding="utf-8") as f:
-                roles_map = json.load(f)
-            # Match by email or UID
-            return roles_map.get(email, roles_map.get(uid, "User"))
-        except Exception:
-            pass
+    if not os.path.exists(roles_file):
+        return None
+    try:
+        with open(roles_file, "r", encoding="utf-8") as f:
+            roles_map = json.load(f)
+        mapped = roles_map.get(email, roles_map.get(uid))
+        if mapped in ROLE_HIERARCHY:
+            return mapped
+    except Exception:
+        return None
+    return None
 
-    return "User"
+
+def get_user_role(user_info: dict) -> str:
+    """Resolve the highest applicable role from env lists, persisted role, JWT, and roles.json.
+
+    ``SUPERADMIN_EMAILS`` is the only env list that can mint SuperAdmin. ``ADMIN_EMAILS``
+    never auto-upgrades to SuperAdmin.
+    """
+    email = (user_info.get("email") or "").strip()
+    uid = str(user_info.get("uid") or user_info.get("sub") or "")
+
+    if email and email in _email_list("SUPERADMIN_EMAILS"):
+        return "SuperAdmin"
+
+    candidates: list[str] = []
+    persisted = user_info.get("db_role") or user_info.get("persisted_role")
+    if persisted in ROLE_HIERARCHY:
+        candidates.append(persisted)
+    claimed = user_info.get("role")
+    if claimed in ROLE_HIERARCHY:
+        candidates.append(claimed)
+    if email and email in _email_list("ADMIN_EMAILS"):
+        candidates.append("Admin")
+    if email and email in _email_list("DEVELOPER_EMAILS"):
+        candidates.append("Developer")
+    mapped = _roles_file_role(email, uid)
+    if mapped:
+        candidates.append(mapped)
+
+    if not candidates:
+        return "User"
+    return max(candidates, key=lambda role: ROLE_HIERARCHY[role])
+
+
+def stamp_resolved_role(user_info: dict) -> dict:
+    """Mutate and return user_info with a resolved ``role`` claim."""
+    user_info["role"] = get_user_role(user_info)
+    return user_info
+
+
+def is_console_operator(role: str) -> bool:
+    return ROLE_HIERARCHY.get(role, 0) >= ROLE_HIERARCHY[CONSOLE_MIN_ROLE]
 
 
 def require_role(required_role: str):
@@ -53,7 +84,7 @@ def require_role(required_role: str):
         async def admin_route(user_info: dict = Depends(require_role("Admin"))):
             ...
     """
-    def dependency(user_info: dict = Depends(verify_token)) -> dict:
+    def dependency(user_info: dict = Depends(verify_access_token)) -> dict:
         user_role = get_user_role(user_info)
         user_info["role"] = user_role
 

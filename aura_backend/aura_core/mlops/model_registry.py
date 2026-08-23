@@ -193,6 +193,11 @@ class ModelRegistry:
         versions = await self._store.list(model_id=model_id, stage=ModelStage.PRODUCTION)
         return versions[0] if versions else None
 
+    async def list_versions(
+        self, *, model_id: str | None = None, stage: ModelStage | None = None
+    ) -> Sequence[ModelVersion]:
+        return await self._store.list(model_id=model_id, stage=stage)
+
     # -- transitions -------------------------------------------------------------------
 
     async def transition(

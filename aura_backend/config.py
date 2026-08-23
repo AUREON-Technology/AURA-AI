@@ -69,7 +69,8 @@ class Settings(BaseSettings):
     # https://$AURA_DOMAIN) does not. Compose overrides this with ALLOWED_ORIGINS.
     allowed_origins: str = (
         "http://localhost,http://127.0.0.1,"
-        "http://localhost:8080,http://127.0.0.1:8080"
+        "http://localhost:8080,http://127.0.0.1:8080,"
+        "http://localhost:3000,http://127.0.0.1:3000"
     )
     
     # Production Authentication Settings

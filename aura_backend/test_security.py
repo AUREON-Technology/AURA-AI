@@ -6,7 +6,8 @@ from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 from aura_service import app
 from infrastructure.http_limits import RateLimitMiddleware
-from services.security import verify_device_integrity, verify_token
+from services.security import verify_device_integrity
+from services.jwt_auth import verify_access_token
 from services.rbac import require_role
 from config import settings
 
@@ -314,7 +315,7 @@ class TestSecurityHardening(unittest.TestCase):
 
     def test_rbac_user_role_forbidden_on_admin_endpoints(self):
         """Verify standard users cannot access admin endpoints."""
-        app.dependency_overrides[verify_token] = lambda: {
+        app.dependency_overrides[verify_access_token] = lambda: {
             "uid": "user_123",
             "email": "user@aura.ai",
             "role": "User"
@@ -325,7 +326,7 @@ class TestSecurityHardening(unittest.TestCase):
 
     def test_rbac_admin_role_allowed_on_admin_endpoints(self):
         """Verify admin users can access admin endpoints."""
-        app.dependency_overrides[verify_token] = lambda: {
+        app.dependency_overrides[verify_access_token] = lambda: {
             "uid": "admin_123",
             "email": "admin@aura.ai",
             "role": "Admin"
@@ -337,7 +338,7 @@ class TestSecurityHardening(unittest.TestCase):
 
     def test_rbac_developer_role_allowed_on_developer_endpoints(self):
         """Verify developer users can access developer endpoints."""
-        app.dependency_overrides[verify_token] = lambda: {
+        app.dependency_overrides[verify_access_token] = lambda: {
             "uid": "dev_123",
             "email": "dev@aura.ai",
             "role": "Developer"

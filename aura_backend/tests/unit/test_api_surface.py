@@ -44,6 +44,14 @@ def admin_client(container):
         yield client
 
 
+@pytest.fixture
+def super_admin_client(container):
+    with _client(
+        container, role="SuperAdmin", capabilities=("admin.act", "admin.super")
+    ) as client:
+        yield client
+
+
 class TestAuthentication:
     def test_a_rejected_credential_becomes_its_typed_status(self, container) -> None:
         """Not a 500: the client needs to know to re-authenticate rather than retry."""
@@ -73,6 +81,14 @@ class TestAuthorisation:
         ("post", "/api/v3/admin/index/rebuild", None),
         ("post", "/api/v3/admin/providers/local/reset-circuit", None),
         ("post", "/api/v3/admin/prompts/system.orchestrator/pin", {"version": "1.1.0"}),
+        ("get", "/api/v3/admin/audit", None),
+        ("get", "/api/v3/admin/sources", None),
+        ("get", "/api/v3/admin/approvals", None),
+        ("get", "/api/v3/admin/indexes", None),
+        ("get", "/api/v3/admin/models", None),
+        ("get", "/api/v3/admin/local-models", None),
+        ("post", "/api/v3/admin/sources", {"id": "handbook", "type": "web", "uri": "https://example.com"}),
+        ("post", "/api/v3/admin/local-models/pull", {"name": "llama3.1:8b"}),
     ]
 
     @pytest.mark.parametrize("method,path,body", ADMIN_ROUTES)
@@ -87,6 +103,7 @@ class TestAuthorisation:
         assert "providers" in body
         assert "prompts" in body
         assert "settings" in body
+        assert "learning" in body
 
     def test_status_never_leaks_a_key(self, admin_client) -> None:
         assert "api_key" not in admin_client.get("/api/v3/admin/status").text.replace(
@@ -124,6 +141,16 @@ class TestKnowledgeRoutes:
             "title": "T", "content": "", "document_id": "empty",
         })
         assert response.status_code == 422
+
+    def test_ingested_documents_can_be_listed(self, user_client) -> None:
+        user_client.post("/api/v3/knowledge/documents", json={
+            "title": "Policy", "content": "The expense cap is 250 dollars.",
+            "document_id": "policy",
+        })
+        listed = user_client.get("/api/v3/knowledge/documents")
+        assert listed.status_code == 200
+        docs = listed.json()["documents"]
+        assert any(d["document_id"] == "policy" and d["title"] == "Policy" for d in docs)
 
 
 class TestMemoryRoutes:
@@ -211,6 +238,49 @@ class TestAdminOperations:
         response = admin_client.post("/api/v3/admin/providers/echo/reset-circuit")
         assert response.status_code == 200
         assert response.json()["reset"] == "echo"
+
+    def test_admin_can_list_sources_but_cannot_register(
+        self, admin_client, super_admin_client
+    ) -> None:
+        listed = admin_client.get("/api/v3/admin/sources")
+        assert listed.status_code == 200
+        assert listed.json()["sources"] == []
+
+        refused = admin_client.post(
+            "/api/v3/admin/sources",
+            json={"id": "handbook", "type": "web", "uri": "https://example.com/kb"},
+        )
+        assert refused.status_code == 403
+
+        created = super_admin_client.post(
+            "/api/v3/admin/sources",
+            json={"id": "handbook", "type": "web", "uri": "https://example.com/kb"},
+        )
+        assert created.status_code == 200
+        assert created.json()["source"]["id"] == "handbook"
+
+        removed = super_admin_client.delete("/api/v3/admin/sources/handbook")
+        assert removed.status_code == 200
+        assert admin_client.delete("/api/v3/admin/sources/handbook").status_code == 403
+
+    def test_admin_can_read_audit_after_a_mutation(self, admin_client) -> None:
+        admin_client.post("/api/v3/admin/providers/echo/reset-circuit")
+        body = admin_client.get("/api/v3/admin/audit").json()
+        actions = [event["action"] for event in body["events"]]
+        assert "admin.provider.reset_circuit" in actions
+
+    def test_admin_can_list_approvals_and_indexes(self, admin_client) -> None:
+        assert admin_client.get("/api/v3/admin/approvals").status_code == 200
+        assert admin_client.get("/api/v3/admin/indexes").status_code == 200
+        assert admin_client.get("/api/v3/admin/models").status_code == 200
+        assert admin_client.get("/api/v3/admin/local-models").status_code == 200
+        assert admin_client.get("/api/v3/admin/refresh/latest").status_code == 200
+
+    def test_admin_cannot_pull_local_models(self, admin_client) -> None:
+        response = admin_client.post(
+            "/api/v3/admin/local-models/pull", json={"name": "llama3.1:8b"}
+        )
+        assert response.status_code == 403
 
 
 class TestRateLimiting:

@@ -130,11 +130,40 @@ def refresh_token_pair(refresh_token: str) -> Optional[Dict[str, Any]]:
     if user_info is None:
         return None
     _refresh_store_delete(refresh_token)
-    return issue_token_pair(user_info)
+    from services.rbac import stamp_resolved_role
+
+    return issue_token_pair(stamp_resolved_role(dict(user_info)))
 
 
 def revoke_refresh_token(refresh_token: str) -> None:
     _refresh_store_delete(refresh_token)
+
+
+def revoke_all_for_uid(uid: str) -> int:
+    """Drop every refresh token belonging to ``uid``. Returns how many were removed."""
+    revoked = 0
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        for key in redis_client.scan_iter(f"{_REFRESH_PREFIX}*"):
+            raw = redis_client.get(key)
+            if not raw:
+                continue
+            try:
+                stored = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if stored.get("uid") == uid:
+                redis_client.delete(key)
+                revoked += 1
+    stale = [
+        token
+        for token, entry in _local_refresh_store.items()
+        if entry.get("user_info", {}).get("uid") == uid
+    ]
+    for token in stale:
+        _local_refresh_store.pop(token, None)
+        revoked += 1
+    return revoked
 
 
 _bearer_scheme = HTTPBearer(auto_error=False)

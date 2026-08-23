@@ -84,12 +84,15 @@ class PostgresSourceRegistry:
         self._schema_ready = True
 
     async def list_enabled(self) -> Sequence[KnowledgeSource]:
+        return [source for source in await self.list_all() if source.enabled]
+
+    async def list_all(self) -> Sequence[KnowledgeSource]:
         await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
                 rows = await conn.fetch(
-                    "SELECT * FROM aura_knowledge_sources WHERE enabled = TRUE ORDER BY id"
+                    "SELECT * FROM aura_knowledge_sources ORDER BY id"
                 )
         except Exception as exc:
             raise _unavailable(f"could not list knowledge sources: {exc}") from exc

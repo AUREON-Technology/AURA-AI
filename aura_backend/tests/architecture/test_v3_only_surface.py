@@ -40,6 +40,15 @@ _REQUIRED_PREFIXES = (
     "/api/v3/learning",
     "/api/v3/chat",
     "/api/v3/memory",
+    "/api/v3/admin",
+)
+
+_FORBIDDEN_ADMIN_FRAGMENTS = (
+    "/chats",
+    "/messages",
+    "/memories",
+    "/life-data",
+    "/life_data",
 )
 
 
@@ -68,3 +77,13 @@ def test_legacy_api_prefixes_are_not_registered() -> None:
             if path == prefix or path.startswith(prefix + "/")
         ]
         assert leftover == [], leftover
+
+
+def test_admin_surface_has_no_user_content_browser() -> None:
+    """Ops console may erase a subject; it must not list another user's content."""
+    for path in _api_paths():
+        if "/admin/" not in path:
+            continue
+        lowered = path.lower()
+        for fragment in _FORBIDDEN_ADMIN_FRAGMENTS:
+            assert fragment not in lowered, path
