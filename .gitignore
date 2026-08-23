@@ -30,6 +30,12 @@ id_*[!.]
 *_deploy
 !*.pub
 known_hosts
+# ...but deploy/known_hosts is the VPS host-key pin the deploy workflow copies into
+# ~/.ssh before it will SSH anywhere. A host key is public by construction -- pinning it
+# is what stops the deploy trusting an impostor -- so it must be committed. The rule above
+# is about a developer's personal known_hosts, and it silently swallowed this file: the
+# workflow failed 25 consecutive times on `cp: cannot stat 'deploy/known_hosts'`.
+!deploy/known_hosts
 
 # ==========================================
 # Python (aura_backend)
