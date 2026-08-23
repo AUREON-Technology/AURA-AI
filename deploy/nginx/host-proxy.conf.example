@@ -14,9 +14,17 @@
 #          gateway:
 #            ports:
 #              - "127.0.0.1:${GATEWAY_PORT}:8000"
+#          nginx:
+#            profiles: ["bundled-edge"]
 #      then `docker compose -f docker-compose.prod.yml -f docker-compose.override.yml
-#      up -d gateway` (pick a free ${GATEWAY_PORT} via `ss -tlnp` / `nginx -T` --
-#      not 80, 443, or Velvet's 8000).
+#      up -d` (pick a free ${GATEWAY_PORT} via `ss -tlnp` / `nginx -T` -- not 80,
+#      443, or Velvet's 8000).
+#
+#      The `profiles` entry is what keeps the bundled nginx off this box. Naming a
+#      profile the stack never enables excludes the service from `up` without
+#      deleting it, so `docker compose config --services` returns gateway alone and
+#      nothing contends for 80/443. Set COMPOSE_PROFILES=bundled-edge to bring it
+#      back on a host that does own the edge.
 #   3. Replace __GATEWAY_PORT__ below with that same port.
 #   4. ln -s /etc/nginx/sites-available/aura /etc/nginx/sites-enabled/aura
 #   5. nginx -t && systemctl reload nginx
@@ -26,8 +34,15 @@
 # name, then rebuild the client:
 #   ./deploy_client.sh
 #
-# Remove the `nginx` service from docker-compose.prod.yml when using this file;
-# the compose stack must not publish 80/443.
+# Do NOT delete the `nginx` service from docker-compose.prod.yml to achieve this.
+# That edit leaves the checkout dirty, and deploy/scripts/vps-update.sh refuses to
+# run against a modified tree -- so hand-editing the tracked file does not merely
+# risk being overwritten, it blocks every future automated deploy. The profile in the
+# override above does the same job and leaves the tree clean.
+#
+# vps-update.sh passes the override through automatically: it picks up a
+# docker-compose.override.yml sitting beside the compose file, and preserves every
+# file a running stack reports. AURA_COMPOSE_OVERRIDE names one kept elsewhere.
 #
 # The security headers, rate limiting, and TLS hardening below mirror
 # deploy/nginx/templates/aura.conf.template (the bundled-nginx equivalent) --

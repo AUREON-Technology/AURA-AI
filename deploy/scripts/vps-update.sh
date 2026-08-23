@@ -33,6 +33,9 @@
 # Environment overrides, for hosts this script cannot work out on its own:
 #   AURA_REPO=/path/to/checkout     AURA_COMPOSE=/path/to/compose.yml
 #   AURA_PROJECT=aura               AURA_BACKEND_SERVICE=backend
+#   AURA_COMPOSE_OVERRIDE=/path/to/override.yml[:/more.yml]
+#                                   extra -f files merged over AURA_COMPOSE. Defaults to a
+#                                   docker-compose.override.yml sitting next to it.
 #   AURA_HEALTH_URL=https://$AURA_DOMAIN/health
 #   AURA_SHA=<commit>               pin to the SHA CI tested (must be on origin/main)
 
@@ -44,7 +47,9 @@ for arg in "$@"; do
   case "$arg" in
     --dry-run)    DRY_RUN=1 ;;
     --no-migrate) RUN_MIGRATIONS=0 ;;
-    -h|--help)    sed -n '2,36p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    # Print the whole header block rather than a hardcoded line range, which silently
+    # truncated --help every time the header grew.
+    -h|--help)    awk 'NR>1 && !/^#/{exit} NR>1' "$0" | sed 's/^# \?//'; exit 0 ;;
     *) echo "unknown argument: $arg (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -148,6 +153,9 @@ docker compose version >/dev/null 2>&1 || die "docker compose v2 not available o
 
 COMPOSE="${AURA_COMPOSE:-}"
 PROJECT="${AURA_PROJECT:-}"
+# Extra files passed after $COMPOSE, in order. Compose merges later -f files over earlier
+# ones, so these are overrides.
+COMPOSE_EXTRA=()
 
 if [ -z "$COMPOSE" ]; then
   # `docker compose ls` reports the config file(s) of every running project, which is the only
@@ -158,7 +166,21 @@ if [ -z "$COMPOSE" ]; then
     case "$name" in
       aura*|AURA*)
         PROJECT="${PROJECT:-$name}"
-        COMPOSE="${COMPOSE:-${files%%,*}}"
+        if [ -z "$COMPOSE" ]; then
+          # A stack started with several -f files is reported here as a comma-separated
+          # list. Keep all of them. Taking only the first silently restarts the stack
+          # without its overrides, which is how a host that deliberately runs no bundled
+          # nginx (see deploy/nginx/host-proxy.conf.example) gets one back, fighting the
+          # host nginx for 80/443.
+          COMPOSE="${files%%,*}"
+          rest="${files#*,}"
+          if [ "$rest" != "$files" ]; then
+            IFS=',' read -r -a _reported <<< "$rest"
+            for _f in "${_reported[@]}"; do
+              [ -n "$_f" ] && COMPOSE_EXTRA+=("$_f")
+            done
+          fi
+        fi
         ;;
     esac
   done < <(docker compose ls --format table 2>/dev/null | tail -n +2)
@@ -178,9 +200,34 @@ COMPOSE_DIR="$(cd "$(dirname "$COMPOSE")" && pwd)"
 info "compose file: $COMPOSE"
 info "project:      $PROJECT"
 
+# Compose auto-loads docker-compose.override.yml only when no -f is given. This script always
+# passes -f, so without adding it explicitly the override is ignored -- including the one
+# deploy/nginx/host-proxy.conf.example instructs operators to write on a shared host, which is
+# what binds the gateway to a loopback port instead of publishing 80/443.
+if [ ${#COMPOSE_EXTRA[@]} -eq 0 ]; then
+  for _candidate in "$COMPOSE_DIR/docker-compose.override.yml" \
+                    "$COMPOSE_DIR/docker-compose.override.yaml"; do
+    [ -f "$_candidate" ] && { COMPOSE_EXTRA+=("$_candidate"); break; }
+  done
+fi
+# An explicit list always wins, so a host with an override kept elsewhere can name it.
+if [ -n "${AURA_COMPOSE_OVERRIDE:-}" ]; then
+  COMPOSE_EXTRA=()
+  IFS=':' read -r -a _explicit <<< "$AURA_COMPOSE_OVERRIDE"
+  for _f in "${_explicit[@]}"; do
+    [ -n "$_f" ] || continue
+    [ -f "$_f" ] || die "AURA_COMPOSE_OVERRIDE names a file that does not exist: $_f"
+    COMPOSE_EXTRA+=("$_f")
+  done
+fi
+
 DC=(docker compose -p "$PROJECT" -f "$COMPOSE")
+for _f in ${COMPOSE_EXTRA[@]+"${COMPOSE_EXTRA[@]}"}; do
+  DC+=(-f "$_f")
+  info "override:     $_f"
+done
 if [ -f "$COMPOSE_DIR/.env" ]; then
-  DC=(docker compose -p "$PROJECT" -f "$COMPOSE" --env-file "$COMPOSE_DIR/.env")
+  DC+=(--env-file "$COMPOSE_DIR/.env")
   info "env file:     $COMPOSE_DIR/.env"
 fi
 "${DC[@]}" config --services 2>/dev/null | sed 's/^/    service: /' \
