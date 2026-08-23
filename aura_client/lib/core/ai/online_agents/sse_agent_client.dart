@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:uuid/uuid.dart';
 import '../../auth/token_manager.dart';
 import '../../config/config.dart';
+import '../../network/aura_api_error.dart';
 import '../../security/device_validation_service.dart';
+import '../../../features/chat/data/turn_meta.dart';
 import 'llm_timeouts.dart';
 
 enum SseEventKind { token, toolCalls, step, actions, citations, revision, done, error, unknown }
@@ -16,11 +19,9 @@ class SseChatEvent {
   final List<dynamic>? actions;
   final String? message;
   final List<dynamic>? citations;
-
-  /// The raw `event:` name, populated only when [kind] is
-  /// [SseEventKind.unknown] — lets a caller log/ignore a frame type this
-  /// client doesn't know about yet without misreading it as [SseEventKind.done].
   final String? unknownType;
+  final TurnMeta? turnMeta;
+  final TurnStep? step;
 
   const SseChatEvent._({
     required this.kind,
@@ -29,6 +30,8 @@ class SseChatEvent {
     this.message,
     this.citations,
     this.unknownType,
+    this.turnMeta,
+    this.step,
   });
 
   factory SseChatEvent.fromWire(String eventType, Map<String, dynamic> data) {
@@ -38,7 +41,7 @@ class SseChatEvent {
       case 'tool_calls':
         return SseChatEvent._(kind: SseEventKind.toolCalls, actions: data['calls'] as List<dynamic>?);
       case 'step':
-        return SseChatEvent._(kind: SseEventKind.step);
+        return SseChatEvent._(kind: SseEventKind.step, step: TurnStep.fromJson(data));
       case 'actions':
         return SseChatEvent._(kind: SseEventKind.actions, actions: data['actions'] as List<dynamic>?);
       case 'citations':
@@ -48,22 +51,19 @@ class SseChatEvent {
       case 'error':
         return SseChatEvent._(kind: SseEventKind.error, message: data['message'] as String?);
       case 'done':
-        // citations is repeated here as a safety net by the backend in case the
-        // earlier dedicated `citations` frame was missed.
-        return SseChatEvent._(kind: SseEventKind.done, citations: data['citations'] as List<dynamic>?);
+        return SseChatEvent._(
+          kind: SseEventKind.done,
+          citations: data['citations'] as List<dynamic>?,
+          turnMeta: TurnMeta.fromJson(data),
+        );
       default:
-        // Anything not recognised above must NOT fall through to `done` --
-        // that used to silently discard `citations`/`revision` frames by
-        // misreading them as stream completion. Callers ignore `unknown`.
         return SseChatEvent._(kind: SseEventKind.unknown, unknownType: eventType);
     }
   }
 }
 
-/// Parses a `text/event-stream` body delivered as arbitrary chunks (an
-/// HTTP chunk boundary can land anywhere, including mid-frame) into
-/// complete [SseChatEvent]s. Pure/stateful-but-network-free so it's unit
-/// tested directly in test/sse_frame_parser_test.dart without a server.
+/// Parses a `text/event-stream` body delivered as arbitrary chunks into
+/// complete [SseChatEvent]s.
 class SseFrameParser {
   final StringBuffer _buffer = StringBuffer();
 
@@ -72,8 +72,6 @@ class SseFrameParser {
     final text = _buffer.toString();
     final frames = text.split('\n\n');
 
-    // The last split segment is either empty (chunk ended exactly on a
-    // frame boundary) or an incomplete frame — hold it back either way.
     final complete = frames.sublist(0, frames.length - 1);
     _buffer
       ..clear()
@@ -100,10 +98,7 @@ class SseFrameParser {
     try {
       final decoded = jsonDecode(dataLine);
       if (decoded is Map<String, dynamic>) data = decoded;
-    } catch (_) {
-      // Malformed data payload — treat as an empty-data event of this type
-      // rather than dropping it silently or throwing mid-stream.
-    }
+    } catch (_) {}
     return SseChatEvent.fromWire(eventType, data);
   }
 }
@@ -111,13 +106,10 @@ class SseFrameParser {
 class SseAgentClient {
   final Ref _ref;
   static const String _url = "${AppConfig.backendUrl}/api/v3/chat/stream";
+  final _uuid = const Uuid();
 
   SseAgentClient(this._ref);
 
-  /// Streams one chat turn from the v3 kernel (`aura_core/api/v3.py`'s
-  /// `ChatRequest`). Conversation history is loaded server-side from
-  /// episodic memory keyed by [sessionId] -- unlike the legacy v1/v2 path,
-  /// the client does not send a message history array.
   Stream<SseChatEvent> streamAgentEvents({
     required String message,
     required String sessionId,
@@ -125,14 +117,18 @@ class SseAgentClient {
     bool useKnowledge = true,
     bool useMemory = true,
     bool useTools = true,
+    List<String> confirmedTools = const [],
+    String? correlationId,
     int maxOutputTokens = 1024,
     double temperature = 0.3,
   }) async* {
     final client = http.Client();
+    final cid = correlationId ?? _uuid.v4();
     try {
       final request = http.Request('POST', Uri.parse(_url));
       Future<void> applyAuth(http.Request req) async {
         req.headers['Content-Type'] = 'application/json';
+        req.headers['X-Correlation-Id'] = cid;
         final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
         if (token != null) req.headers['Authorization'] = 'Bearer $token';
         req.headers.addAll(await DeviceValidationService.getAttestationHeaders());
@@ -146,6 +142,7 @@ class SseAgentClient {
         "use_knowledge": useKnowledge,
         "use_memory": useMemory,
         "use_tools": useTools,
+        "confirmed_tools": confirmedTools,
         "max_output_tokens": maxOutputTokens,
         "temperature": temperature,
       });
@@ -160,7 +157,12 @@ class SseAgentClient {
       }
       if (response.statusCode != 200) {
         final body = await response.stream.bytesToString();
-        throw Exception("SSE chat request failed with status ${response.statusCode}: $body");
+        throw AuraApiError.fromResponse(
+          statusCode: response.statusCode,
+          body: body,
+          retryAfterHeader: response.headers['retry-after'],
+          correlationId: response.headers['x-correlation-id'] ?? cid,
+        );
       }
 
       final parser = SseFrameParser();

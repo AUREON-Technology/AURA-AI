@@ -7,10 +7,18 @@ import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/ai/online_agents/sse_agent_client.dart';
 import 'package:aura_client/core/sync/sync_payloads.dart';
+import 'package:aura_client/core/network/aura_api_error.dart';
 import 'agent_config_repository.dart';
 import 'chat_connection_error.dart';
+import 'turn_meta.dart';
 
 enum _SseSendOutcome { succeeded, failed }
+
+class _SseResult {
+  final _SseSendOutcome outcome;
+  final String? message;
+  const _SseResult(this.outcome, [this.message]);
+}
 
 class PendingActions extends Notifier<List<dynamic>> {
   @override
@@ -23,6 +31,17 @@ class PendingActions extends Notifier<List<dynamic>> {
 final pendingActionsProvider = NotifierProvider<PendingActions, List<dynamic>>(() {
   return PendingActions();
 });
+
+class PendingConfirmation extends Notifier<List<String>> {
+  @override
+  List<String> build() => [];
+
+  void setTools(List<String> names) => state = names;
+  void clear() => state = [];
+}
+
+final pendingConfirmationProvider =
+    NotifierProvider<PendingConfirmation, List<String>>(PendingConfirmation.new);
 
 /// The id of the assistant message currently receiving a stream, or null
 /// when nothing is in flight. Distinct from "content is empty" -- lets the
@@ -83,28 +102,33 @@ class ChatRepository {
     required String conversationId,
     required String userContent,
     bool useRag = true,
+    bool useMemory = true,
+    bool useTools = true,
+    List<String> confirmedTools = const [],
+    bool persistUserMessage = true,
   }) async {
     if (_ref.read(streamingMessageIdProvider) != null) {
       debugPrint("[ChatRepository] ignoring send while a stream is already in flight");
       return;
     }
 
-    // Clear any previous pending actions first
     _ref.read(pendingActionsProvider.notifier).clear();
+    _ref.read(pendingConfirmationProvider.notifier).clear();
 
-    // 1. Save User Message
-    final userMsgId = _uuid.v4();
-    await _db.into(_db.messages).insert(
-      MessagesCompanion.insert(
-        id: userMsgId,
-        conversationId: conversationId,
-        role: "user",
-        content: userContent,
-        createdAt: DateTime.now(),
-        updatedAt: Value(DateTime.now()),
-      ),
-    );
-    await _enqueueUpsert(userMsgId);
+    if (persistUserMessage) {
+      final userMsgId = _uuid.v4();
+      await _db.into(_db.messages).insert(
+        MessagesCompanion.insert(
+          id: userMsgId,
+          conversationId: conversationId,
+          role: "user",
+          content: userContent,
+          createdAt: DateTime.now(),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+      await _enqueueUpsert(userMsgId);
+    }
 
     // 2. Save Placeholder Assistant Message
     final assistantMsgId = _uuid.v4();
@@ -133,10 +157,18 @@ class ChatRepository {
         sessionId: conversationId,
         agentId: activeAgentId,
         useRag: useRag,
+        useMemory: useMemory,
+        useTools: useTools,
+        confirmedTools: confirmedTools,
         assistantMsgId: assistantMsgId,
       );
 
-      if (sseOutcome == _SseSendOutcome.failed) {
+      if (sseOutcome.message != null) {
+        await _updateMessageText(
+          assistantMsgId,
+          '$kChatConnectionErrorPrefix: ${sseOutcome.message}',
+        );
+      } else if (sseOutcome.outcome == _SseSendOutcome.failed) {
         await _updateMessageText(assistantMsgId, kChatConnectionErrorMessage);
       }
     } finally {
@@ -173,15 +205,33 @@ class ChatRepository {
     );
   }
 
-  /// Returns [_SseSendOutcome.succeeded] if the SSE stream completed
-  /// without an `error` frame. Any connection failure or `error` frame is
-  /// [_SseSendOutcome.failed] — the UI shows a retry bubble. There is no
-  /// orchestrator fallback.
-  Future<_SseSendOutcome> _sendViaSse({
+  Future<void> confirmTaintedTools({
+    required String conversationId,
+    required List<String> confirmedTools,
+  }) async {
+    final messages = await (_db.select(_db.messages)
+          ..where((m) => m.conversationId.equals(conversationId))
+          ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
+        .get();
+    final userMessages = messages.where((m) => m.role == 'user').toList();
+    if (userMessages.isEmpty) return;
+    _ref.read(pendingConfirmationProvider.notifier).clear();
+    await sendChatMessage(
+      conversationId: conversationId,
+      userContent: userMessages.last.content,
+      confirmedTools: confirmedTools,
+      persistUserMessage: false,
+    );
+  }
+
+  Future<_SseResult> _sendViaSse({
     required String message,
     required String sessionId,
     required String agentId,
     required bool useRag,
+    required bool useMemory,
+    required bool useTools,
+    required List<String> confirmedTools,
     required String assistantMsgId,
   }) async {
     final stopwatch = Stopwatch()..start();
@@ -189,6 +239,8 @@ class ChatRepository {
     DateTime lastDbUpdate = DateTime.now();
     final citations = <String>[];
     final toolCalls = <Map<String, dynamic>>[];
+    var meta = const TurnMeta();
+    final steps = <TurnStep>[];
 
     try {
       final client = _ref.read(sseAgentClientProvider);
@@ -197,6 +249,9 @@ class ChatRepository {
         sessionId: sessionId,
         agentId: agentId,
         useKnowledge: useRag,
+        useMemory: useMemory,
+        useTools: useTools,
+        confirmedTools: confirmedTools,
       );
 
       await for (final event in stream) {
@@ -218,6 +273,11 @@ class ChatRepository {
             await _updateMessageToolCalls(assistantMsgId, toolCalls);
             break;
           case SseEventKind.step:
+            if (event.step != null) {
+              steps.add(event.step!);
+              meta = meta.copyWith(steps: List.of(steps));
+              await _updateMessageTurnMeta(assistantMsgId, meta);
+            }
             break;
           case SseEventKind.actions:
             _ref.read(pendingActionsProvider.notifier).setActions(event.actions ?? []);
@@ -230,7 +290,9 @@ class ChatRepository {
             break;
           case SseEventKind.revision:
             displayText = event.text ?? displayText;
+            meta = meta.copyWith(revised: true);
             await _updateMessageText(assistantMsgId, displayText);
+            await _updateMessageTurnMeta(assistantMsgId, meta);
             break;
           case SseEventKind.error:
             debugPrint("[ChatRepository] SSE stream error event: ${event.message}");
@@ -241,7 +303,7 @@ class ChatRepository {
               modelUsed: "server-sse",
               errorMessage: event.message,
             );
-            return _SseSendOutcome.failed;
+            return _SseResult(_SseSendOutcome.failed, event.message);
           case SseEventKind.done:
             if (citations.isEmpty && (event.citations ?? []).isNotEmpty) {
               citations.addAll(event.citations!.map((c) => c.toString()));
@@ -253,6 +315,17 @@ class ChatRepository {
             if (toolCalls.isNotEmpty) {
               await _updateMessageToolCalls(assistantMsgId, toolCalls);
             }
+            final done = event.turnMeta ?? const TurnMeta();
+            meta = done.copyWith(revised: meta.revised, steps: steps);
+            await _updateMessageTurnMeta(assistantMsgId, meta);
+            if (meta.needsConfirmation) {
+              final names = toolCalls
+                  .map((c) => c['name']?.toString())
+                  .whereType<String>()
+                  .where((n) => n.isNotEmpty)
+                  .toList();
+              _ref.read(pendingConfirmationProvider.notifier).setTools(names);
+            }
             break;
           case SseEventKind.unknown:
             debugPrint("[ChatRepository] ignoring unrecognised SSE frame type: ${event.unknownType}");
@@ -262,7 +335,17 @@ class ChatRepository {
 
       await _updateMessageText(assistantMsgId, displayText);
       await _logTelemetry(eventType: "request", isOffline: false, latencyMs: stopwatch.elapsedMilliseconds.toDouble(), modelUsed: "server-sse");
-      return _SseSendOutcome.succeeded;
+      return const _SseResult(_SseSendOutcome.succeeded);
+    } on AuraApiError catch (e) {
+      debugPrint("[ChatRepository] SSE path failed: $e");
+      await _logTelemetry(
+        eventType: "failover",
+        isOffline: false,
+        latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
+        modelUsed: "server-sse",
+        errorMessage: e.message,
+      );
+      return _SseResult(_SseSendOutcome.failed, e.message);
     } catch (e) {
       debugPrint("[ChatRepository] SSE path failed: $e");
       await _logTelemetry(
@@ -272,7 +355,7 @@ class ChatRepository {
         modelUsed: "server-sse",
         errorMessage: e.toString(),
       );
-      return _SseSendOutcome.failed;
+      return const _SseResult(_SseSendOutcome.failed);
     }
   }
 
@@ -341,6 +424,17 @@ class ChatRepository {
   // (so a chip appears while the turn is still streaming) and once more on `done` to flip
   // every call's `settled` flag -- there is no per-tool completion signal to key off of, so
   // "settled" means "the turn finished", not "this specific call finished".
+  Future<void> _updateMessageTurnMeta(String messageId, TurnMeta meta) async {
+    await (_db.update(_db.messages)..where((m) => m.id.equals(messageId))).write(
+      MessagesCompanion(
+        turnId: Value(meta.turnId),
+        turnMetaJson: Value(meta.encode()),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+    await _enqueueUpsert(messageId);
+  }
+
   Future<void> _updateMessageToolCalls(String messageId, List<Map<String, dynamic>> toolCalls) async {
     await (_db.update(_db.messages)..where((m) => m.id.equals(messageId))).write(
       MessagesCompanion(

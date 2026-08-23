@@ -219,6 +219,20 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count} unread notifications'**
   String unreadNotifications(int count);
+
+  String get navToday;
+  String get navCopilot;
+  String get navLifeHub;
+  String get navYou;
+  String get lifeHubTitle;
+  String get youTitle;
+  String get knowledgeTitle;
+  String get memoryTitle;
+  String get feedbackTitle;
+  String get appearanceTitle;
+  String get engineStatusTitle;
+  String get onboardingNext;
+  String get onboardingGetStarted;
 }
 
 class _AppLocalizationsDelegate

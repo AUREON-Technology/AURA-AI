@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 
-import '../chat_view_model.dart';
 import 'chat_sync_indicator.dart';
 import 'persona_picker.dart';
-import 'memory_bank_dialog.dart';
 
 class ChatHeader extends ConsumerWidget {
   final bool isMobile;
@@ -22,7 +21,6 @@ class ChatHeader extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = AuraPalette.of(context);
-    final chat = ref.watch(chatViewModelProvider);
     final routerStatus = ref.watch(aiRouterStatusProvider);
 
     return Container(
@@ -85,24 +83,11 @@ class ChatHeader extends ConsumerWidget {
           ),
           IconButton(
             icon: Icon(Icons.psychology_outlined, color: palette.warning, size: 20),
-            tooltip: 'Memory Bank',
-            onPressed: () => showMemoryBankDialog(context),
+            tooltip: 'Memory',
+            onPressed: () => context.go('/memory'),
           ),
-          if (!isMobile) ...[
-            const SizedBox(width: AuraSpacing.sm),
-            const PersonaChip(),
-            const SizedBox(width: AuraSpacing.md),
-            Row(
-              children: [
-                Text('RAG', style: TextStyle(fontSize: 12, color: palette.textSecondary)),
-                Switch(
-                  value: chat.useRag,
-                  activeTrackColor: palette.brand,
-                  onChanged: ref.read(chatViewModelProvider.notifier).setUseRag,
-                ),
-              ],
-            ),
-          ],
+          const SizedBox(width: AuraSpacing.sm),
+          const PersonaChip(),
           const SizedBox(width: AuraSpacing.sm),
           ChatSyncIndicator(isMobile: isMobile),
         ],

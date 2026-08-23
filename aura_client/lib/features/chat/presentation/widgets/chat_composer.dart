@@ -28,28 +28,60 @@ class ChatComposer extends ConsumerWidget {
     return Container(
       padding: const EdgeInsets.all(AuraSpacing.xl),
       decoration: BoxDecoration(border: Border(top: BorderSide(color: palette.border, width: 1))),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: TextField(
-              controller: controller,
-              enabled: !locked,
-              decoration: InputDecoration(
-                hintText: locked
-                    ? 'Waiting for Copilot...'
-                    : (isMobile ? 'Ask Copilot...' : 'Ask Copilot anything...'),
+          Wrap(
+            spacing: AuraSpacing.sm,
+            children: [
+              FilterChip(
+                label: const Text('Knowledge'),
+                selected: chat.useRag,
+                onSelected: locked
+                    ? null
+                    : (v) => ref.read(chatViewModelProvider.notifier).setUseRag(v),
               ),
-              style: TextStyle(color: palette.textPrimary),
-              onSubmitted: locked ? null : (_) => onSend(),
-            ),
+              FilterChip(
+                label: const Text('Memory'),
+                selected: chat.useMemory,
+                onSelected: locked
+                    ? null
+                    : (v) => ref.read(chatViewModelProvider.notifier).setUseMemory(v),
+              ),
+              FilterChip(
+                label: const Text('Tools'),
+                selected: chat.useTools,
+                onSelected: locked
+                    ? null
+                    : (v) => ref.read(chatViewModelProvider.notifier).setUseTools(v),
+              ),
+            ],
           ),
-          const SizedBox(width: AuraSpacing.lg),
-          Container(
-            decoration: BoxDecoration(gradient: palette.brandGradient, borderRadius: BorderRadius.circular(AuraRadius.md)),
-            child: IconButton(
-              icon: Icon(Icons.send, color: palette.onBrand),
-              onPressed: locked ? null : onSend,
-            ),
+          const SizedBox(height: AuraSpacing.md),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: controller,
+                  enabled: !locked,
+                  decoration: InputDecoration(
+                    hintText: locked
+                        ? 'Waiting for Copilot...'
+                        : (isMobile ? 'Ask Copilot...' : 'Ask Copilot anything...'),
+                  ),
+                  style: TextStyle(color: palette.textPrimary),
+                  onSubmitted: locked ? null : (_) => onSend(),
+                ),
+              ),
+              const SizedBox(width: AuraSpacing.lg),
+              Container(
+                decoration: BoxDecoration(gradient: palette.brandGradient, borderRadius: BorderRadius.circular(AuraRadius.md)),
+                child: IconButton(
+                  icon: Icon(Icons.send, color: palette.onBrand),
+                  onPressed: locked ? null : onSend,
+                ),
+              ),
+            ],
           ),
         ],
       ),

@@ -13,8 +13,19 @@ import 'package:aura_client/core/security/deterministic_id.dart';
 class MemoryItem {
   final String id;
   final String content;
+  final String kind;
+  final String? subject;
+  final double? confidence;
+  final String? source;
 
-  MemoryItem({required this.id, required this.content});
+  MemoryItem({
+    required this.id,
+    required this.content,
+    this.kind = 'semantic',
+    this.subject,
+    this.confidence,
+    this.source,
+  });
 }
 
 class MemoryRepository {
@@ -71,6 +82,10 @@ class MemoryRepository {
       return MemoryItem(
         id: map['id']?.toString() ?? '',
         content: map['content']?.toString() ?? '',
+        kind: map['kind']?.toString() ?? 'semantic',
+        subject: map['subject']?.toString(),
+        confidence: map['confidence'] is num ? (map['confidence'] as num).toDouble() : null,
+        source: map['source']?.toString(),
       );
     }).where((item) => item.id.isNotEmpty).toList();
   }
@@ -133,7 +148,11 @@ class MemoryRepository {
   }
 
   // Manually add memory fact to server and local Drift cache
-  Future<void> saveMemory(String fact) async {
+  Future<void> saveMemory(
+    String fact, {
+    String kind = 'semantic',
+    String? subject,
+  }) async {
     final id = getDeterministicId(fact);
     await _db.into(_db.userMemories).insertOnConflictUpdate(
       UserMemoriesCompanion.insert(
@@ -147,7 +166,11 @@ class MemoryRepository {
       final uri = Uri.parse(_backendUrl);
       final response = await _send((headers) {
         final client = _http;
-        final body = jsonEncode({"content": fact});
+        final body = jsonEncode({
+          "content": fact,
+          "kind": kind,
+          if (subject != null && subject.isNotEmpty) "subject": subject,
+        });
         return client != null
             ? client.post(uri, headers: headers, body: body)
             : http.post(uri, headers: headers, body: body);

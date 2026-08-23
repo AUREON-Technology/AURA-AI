@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:aura_client/core/theme/theme.dart';
-import 'package:aura_client/core/ai/knowledge/knowledge_center.dart';
+
+import 'package:aura_client/core/design_system/design_system.dart';
+
+import 'knowledge_view_model.dart';
 
 class KnowledgeCenterPage extends ConsumerStatefulWidget {
   const KnowledgeCenterPage({super.key});
@@ -10,310 +12,157 @@ class KnowledgeCenterPage extends ConsumerStatefulWidget {
   ConsumerState<KnowledgeCenterPage> createState() => _KnowledgeCenterPageState();
 }
 
-class _LearningState {
-  final bool isLoading;
-  final String? message;
-  final bool isError;
-
-  _LearningState({required this.isLoading, this.message, this.isError = false});
-}
-
 class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
-  final _docIdController = TextEditingController();
-  final _contentController = TextEditingController();
-  final _searchController = TextEditingController();
+  final _title = TextEditingController();
+  final _content = TextEditingController();
+  final _search = TextEditingController();
 
-  _LearningState _ingestState = _LearningState(isLoading: false);
-  _LearningState _searchState = _LearningState(isLoading: false);
-  List<Map<String, dynamic>> _searchResults = [];
-
-  Future<void> _ingestDoc() async {
-    final docId = _docIdController.text.trim();
-    final content = _contentController.text.trim();
-
-    if (docId.isEmpty || content.isEmpty) {
-      setState(() {
-        _ingestState = _LearningState(
-          isLoading: false,
-          message: "Document ID and Content cannot be empty.",
-          isError: true,
-        );
-      });
-      return;
-    }
-
-    setState(() {
-      _ingestState = _LearningState(isLoading: true);
-    });
-
-    final success = await ref.read(knowledgeCenterProvider).ingestDocument(
-          docId: docId,
-          content: content,
-          metadata: {
-            "source": "knowledge_center_ui",
-            "timestamp": DateTime.now().toIso8601String(),
-          },
-        );
-
-    if (success) {
-      setState(() {
-        _ingestState = _LearningState(
-          isLoading: false,
-          message: "Document successfully ingested and vectorized in Qdrant!",
-        );
-        _docIdController.clear();
-        _contentController.clear();
-      });
-    } else {
-      setState(() {
-        _ingestState = _LearningState(
-          isLoading: false,
-          message: "Failed to ingest document. Verify backend connection.",
-          isError: true,
-        );
-      });
-    }
-  }
-
-  Future<void> _searchRAG() async {
-    final query = _searchController.text.trim();
-    if (query.isEmpty) return;
-
-    setState(() {
-      _searchState = _LearningState(isLoading: true);
-      _searchResults = [];
-    });
-
-    final results = await ref.read(knowledgeCenterProvider).queryKnowledge(query);
-
-    setState(() {
-      _searchResults = results;
-      _searchState = _LearningState(
-        isLoading: false,
-        message: results.isEmpty ? "No matching contexts found." : null,
-      );
-    });
+  @override
+  void dispose() {
+    _title.dispose();
+    _content.dispose();
+    _search.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final state = ref.watch(knowledgeViewModelProvider);
+    final palette = AuraPalette.of(context);
+
     return Scaffold(
-      backgroundColor: AuraTheme.background,
+      backgroundColor: palette.background,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text(
-          "RAG Knowledge Center",
-          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
-        ),
+        title: Text('Knowledge', style: Theme.of(context).textTheme.headlineMedium),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _buildIngestCard(),
-              const SizedBox(height: 24),
-              _buildSearchCard(),
-            ],
+      body: ListView(
+        padding: const EdgeInsets.all(AuraSpacing.lg),
+        children: [
+          AuraCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('Add a document', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: AuraSpacing.md),
+                AuraTextField(controller: _title, label: 'Title'),
+                const SizedBox(height: AuraSpacing.md),
+                AuraTextField(controller: _content, label: 'Content', maxLines: 5),
+                const SizedBox(height: AuraSpacing.md),
+                AuraButton(
+                  label: 'Save',
+                  expand: true,
+                  onPressed: () {
+                    final title = _title.text.trim();
+                    final content = _content.text.trim();
+                    if (title.isEmpty || content.isEmpty) {
+                      AuraSnackbar.show(
+                        context,
+                        message: 'Title and content are required.',
+                        kind: AuraSnackbarKind.error,
+                      );
+                      return;
+                    }
+                    ref.read(knowledgeViewModelProvider.notifier).ingest(
+                          title: title,
+                          content: content,
+                        );
+                    _title.clear();
+                    _content.clear();
+                  },
+                ),
+                if (state.ingestMessage != null) ...[
+                  const SizedBox(height: AuraSpacing.sm),
+                  Text(
+                    state.ingestMessage!,
+                    style: TextStyle(
+                      color: state.ingestError ? palette.danger : palette.success,
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildIngestCard() {
-    return Card(
-      color: AuraTheme.cardBg,
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Row(
+          const SizedBox(height: AuraSpacing.xl),
+          AuraCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Icon(Icons.cloud_upload_outlined, color: AuraTheme.accentIndigo, size: 24),
-                SizedBox(width: 12),
-                Text(
-                  "Ingest Document to Vector DB",
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+                Text('Search', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: AuraSpacing.md),
+                AuraTextField(
+                  controller: _search,
+                  label: 'Look up a passage',
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: (q) =>
+                      ref.read(knowledgeViewModelProvider.notifier).search(q),
                 ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _docIdController,
-              decoration: const InputDecoration(
-                labelText: "Document Unique ID (e.g. project_proposal_v1)",
-                border: OutlineInputBorder(),
-              ),
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _contentController,
-              maxLines: 4,
-              decoration: const InputDecoration(
-                labelText: "Document Text / Context Content",
-                border: OutlineInputBorder(),
-              ),
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _ingestState.isLoading ? null : _ingestDoc,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AuraTheme.accentIndigo,
-                    ),
-                    child: _ingestState.isLoading
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                          )
-                        : const Text("Vectorize & Ingest"),
-                  ),
+                const SizedBox(height: AuraSpacing.md),
+                AuraButton(
+                  label: 'Search',
+                  variant: AuraButtonVariant.secondary,
+                  onPressed: () => ref
+                      .read(knowledgeViewModelProvider.notifier)
+                      .search(_search.text.trim()),
                 ),
-              ],
-            ),
-            if (_ingestState.message != null) ...[
-              const SizedBox(height: 12),
-              Center(
-                child: Text(
-                  _ingestState.message!,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: _ingestState.isError ? Colors.redAccent : AuraTheme.accentTeal,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ]
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSearchCard() {
-    return Card(
-      color: AuraTheme.cardBg,
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Row(
-              children: [
-                Icon(Icons.saved_search, color: AuraTheme.accentAmber, size: 24),
-                SizedBox(width: 12),
-                Text(
-                  "Query Knowledge Context",
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: const InputDecoration(
-                      labelText: "Search knowledge base...",
-                      border: OutlineInputBorder(),
-                    ),
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                    onSubmitted: (_) => _searchRAG(),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                ElevatedButton(
-                  onPressed: _searchState.isLoading ? null : _searchRAG,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AuraTheme.accentAmber,
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                  ),
-                  child: _searchState.isLoading
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
-                        )
-                      : const Icon(Icons.search, color: Colors.black),
-                )
-              ],
-            ),
-            if (_searchState.message != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                _searchState.message!,
-                style: const TextStyle(color: Colors.white54, fontSize: 12),
-              ),
-            ],
-            if (_searchResults.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              const Text(
-                "Matching Contexts",
-                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white70, fontSize: 13),
-              ),
-              const SizedBox(height: 8),
-              ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: _searchResults.length,
-                itemBuilder: (context, index) {
-                  final result = _searchResults[index];
-                  // Context matches list
-                  final content = result["content"] ?? result["text"] ?? "";
-                  final score = result["score"] ?? 0.0;
-                  final docId = result["document_id"] ??
-                      result["metadata"]?["doc_id"] ??
-                      result["citation"] ??
-                      "unknown_doc";
-
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.black26,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.white10),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              "Doc: $docId",
-                              style: const TextStyle(color: AuraTheme.accentAmber, fontSize: 11, fontWeight: FontWeight.bold),
-                            ),
-                            Text(
-                              "Score: ${(score * 100).toStringAsFixed(1)}%",
-                              style: const TextStyle(color: AuraTheme.accentTeal, fontSize: 11, fontWeight: FontWeight.bold),
-                            ),
-                          ],
+                if (state.search != null) ...[
+                  const SizedBox(height: AuraSpacing.md),
+                  if (state.search!.searchedButEmpty || state.search!.results.isEmpty)
+                    const Text('Searched your library — nothing relevant turned up.')
+                  else
+                    for (final hit in state.search!.results)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: AuraSpacing.sm),
+                        child: Text(
+                          (hit['citation'] ?? hit['content'] ?? '').toString(),
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          content,
-                          style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 12),
-                        ),
-                      ],
+                      ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: AuraSpacing.xl),
+          Text('Library', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: AuraSpacing.md),
+          if (state.loading)
+            const AuraSkeletonCard()
+          else if (state.error != null)
+            AuraEmptyState(
+              icon: Icons.error_outline,
+              title: 'Could not load documents',
+              message: state.error,
+            )
+          else if (state.documents.isEmpty)
+            const AuraEmptyState(
+              icon: Icons.folder_open_outlined,
+              title: 'No documents yet',
+              message: 'Save a title and some text to build your library.',
+            )
+          else
+            for (final doc in state.documents)
+              Padding(
+                padding: const EdgeInsets.only(bottom: AuraSpacing.sm),
+                child: AuraCard(
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(doc.title),
+                    subtitle: Text('v${doc.version} · ${doc.status}'),
+                    leading: doc.isQuarantined
+                        ? Icon(Icons.shield_outlined, color: palette.warning)
+                        : Icon(Icons.description_outlined, color: palette.textSecondary),
+                    trailing: IconButton(
+                      tooltip: 'Delete',
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: () => ref
+                          .read(knowledgeViewModelProvider.notifier)
+                          .remove(doc.id),
                     ),
-                  );
-                },
-              )
-            ]
-          ],
-        ),
+                  ),
+                ),
+              ),
+        ],
       ),
     );
   }

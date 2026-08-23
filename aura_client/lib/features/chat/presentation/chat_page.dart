@@ -13,6 +13,7 @@ import 'widgets/chat_header.dart';
 import 'widgets/chat_sidebar.dart';
 import 'widgets/empty_state_chat.dart';
 import 'widgets/message_bubble.dart';
+import 'widgets/confirmation_sheet.dart';
 import 'widgets/pending_actions_card.dart';
 
 /// "Copilot" -- chat, rebuilt on the V2 design system.
@@ -91,10 +92,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Theme(
-      data: AuraThemeV2.dark,
-      child: Builder(builder: (context) => _buildScaffold(context)),
-    );
+    return _buildScaffold(context);
   }
 
   Widget _buildScaffold(BuildContext context) {
@@ -165,6 +163,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       ),
                     ),
                   ),
+                  const ConfirmationCard(),
                   const PendingActionsCard(),
                   ChatComposer(
                     controller: _messageController,

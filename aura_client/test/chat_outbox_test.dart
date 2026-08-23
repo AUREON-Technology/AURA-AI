@@ -23,6 +23,8 @@ class _FailingSseClient extends SseAgentClient {
     bool useKnowledge = true,
     bool useMemory = true,
     bool useTools = true,
+    List<String> confirmedTools = const [],
+    String? correlationId,
     int maxOutputTokens = 1024,
     double temperature = 0.3,
   }) async* {

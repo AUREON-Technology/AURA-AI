@@ -62,6 +62,7 @@ void main() {
     expect(items, hasLength(1));
     expect(items.first.id, 'mem-1');
     expect(items.first.content, 'User likes tea');
+    expect(items.first.kind, 'semantic');
     expect(recorded!.method, 'GET');
     expect(recorded!.url.path, '/api/v3/memory');
     expect(recorded!.headers['Authorization'], 'Bearer jwt-test');

@@ -2,87 +2,94 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../../features/command_palette/command_palette.dart';
-import '../../features/auth/presentation/login_page.dart';
+
+import '../../features/analytics/presentation/analytics_page.dart';
 import '../../features/auth/presentation/auth_provider.dart';
-import '../../features/home/presentation/home_page.dart';
-import '../../features/tasks/presentation/tasks_page.dart';
-import '../../features/calendar/presentation/calendar_page.dart';
-import '../../features/finance/presentation/finance_page.dart';
-import '../../features/health/presentation/health_page.dart';
+import '../../features/auth/presentation/login_page.dart';
+import '../../features/auth/presentation/profile_page.dart';
 import '../../features/automations/presentation/automations_page.dart';
 import '../../features/chat/presentation/chat_page.dart';
 import '../../features/chat/presentation/chat_route_extra.dart';
-import '../../features/settings/presentation/settings_page.dart';
-import '../../features/auth/presentation/profile_page.dart';
+import '../../features/chat/presentation/widgets/capture_sheet.dart';
+import '../../features/command_palette/command_palette.dart';
+import '../../features/feedback/presentation/feedback_page.dart';
+import '../../features/home/presentation/home_page.dart';
 import '../../features/knowledge/presentation/knowledge_center_page.dart';
-import '../../features/analytics/presentation/analytics_page.dart';
+import '../../features/life_hub/presentation/life_hub_page.dart';
+import '../../features/memory/presentation/memory_page.dart';
 import '../../features/models/presentation/model_manager_page.dart';
-import '../../features/learning/presentation/learning_dashboard.dart';
+import '../../features/onboarding/presentation/onboarding_gate.dart';
+import '../../features/onboarding/presentation/onboarding_page.dart';
+import '../../features/settings/presentation/appearance_page.dart';
+import '../../features/settings/presentation/settings_page.dart';
+import '../../l10n/generated/app_localizations.dart';
+import '../design_system/design_system.dart';
 
-// Navigation Shell synchronized with GoRouter paths
 class ShellLayout extends ConsumerWidget {
   final Widget child;
   const ShellLayout({super.key, required this.child});
 
-  // Copilot (chat) sits at index 1, promoted from its old position 6/6 per
-  // Doc/V2_BLUEPRINT.md §3 -- position and rename only, not the full
-  // Today/Copilot/Life Hub/You restructuring the blueprint also describes.
   int _calculateSelectedIndex(BuildContext context) {
-    final location = GoRouterState.of(context).uri.toString();
-    if (location.startsWith('/home')) return 0;
-    if (location.startsWith('/chat')) return 1;
-    if (location.startsWith('/tasks')) return 2;
-    if (location.startsWith('/calendar')) return 3;
-    if (location.startsWith('/finance')) return 4;
-    if (location.startsWith('/health')) return 5;
+    final path = GoRouterState.of(context).uri.path;
+    if (path.startsWith('/chat')) return 1;
+    if (path.startsWith('/life')) return 2;
+    if (path.startsWith('/you') ||
+        path.startsWith('/profile') ||
+        path.startsWith('/knowledge') ||
+        path.startsWith('/memory') ||
+        path.startsWith('/feedback') ||
+        path.startsWith('/models') ||
+        path.startsWith('/analytics') ||
+        path.startsWith('/automations') ||
+        path.startsWith('/appearance') ||
+        path.startsWith('/settings')) {
+      return 3;
+    }
     return 0;
   }
 
   void _onDestinationSelected(BuildContext context, int index) {
     switch (index) {
       case 0:
-        context.go('/home');
-        break;
+        context.go('/today');
       case 1:
         context.go('/chat');
-        break;
       case 2:
-        context.go('/tasks');
-        break;
+        context.go('/life');
       case 3:
-        context.go('/calendar');
-        break;
-      case 4:
-        context.go('/finance');
-        break;
-      case 5:
-        context.go('/health');
-        break;
+        context.go('/you');
     }
   }
 
-  // Global command palette FAB, reachable from every screen inside this
-  // shell (Doc/V2_BLUEPRINT.md §3) — see command_palette.dart's doc comment
-  // for why it isn't a 7th bottom-nav tab.
-  Widget _buildPaletteFab(BuildContext context, WidgetRef ref) {
-    return FloatingActionButton.small(
-      heroTag: 'command_palette_fab',
-      tooltip: 'Search / Command palette (Ctrl+K)',
-      onPressed: () => showCommandPalette(context, ref),
-      child: const Icon(Icons.search),
-    );
+  bool _showCaptureFab(BuildContext context) {
+    final path = GoRouterState.of(context).uri.path;
+    return !path.startsWith('/chat') && !path.startsWith('/life');
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final selectedIndex = _calculateSelectedIndex(context);
     final isMobile = MediaQuery.of(context).size.width < 768;
+    final palette = AuraPalette.of(context);
+    final l10n = AppLocalizations.of(context);
 
     final shortcuts = <ShortcutActivator, VoidCallback>{
-      const SingleActivator(LogicalKeyboardKey.keyK, control: true): () => showCommandPalette(context, ref),
-      const SingleActivator(LogicalKeyboardKey.keyK, meta: true): () => showCommandPalette(context, ref),
+      const SingleActivator(LogicalKeyboardKey.keyK, control: true):
+          () => showCommandPalette(context, ref),
+      const SingleActivator(LogicalKeyboardKey.keyK, meta: true):
+          () => showCommandPalette(context, ref),
     };
+
+    final fab = _showCaptureFab(context)
+        ? FloatingActionButton(
+            heroTag: 'capture_fab',
+            tooltip: 'Ask Copilot',
+            backgroundColor: palette.brand,
+            foregroundColor: palette.onBrand,
+            onPressed: () => showCaptureSheet(context),
+            child: const Icon(Icons.auto_awesome),
+          )
+        : null;
 
     if (isMobile) {
       return CallbackShortcuts(
@@ -90,52 +97,35 @@ class ShellLayout extends ConsumerWidget {
         child: Focus(
           autofocus: true,
           child: Scaffold(
-        floatingActionButton: _buildPaletteFab(context, ref),
-        body: SafeArea(child: child),
-        bottomNavigationBar: BottomNavigationBar(
-          backgroundColor: const Color(0xFF0F0C1B),
-          selectedItemColor: const Color(0xFF6366F1),
-          unselectedItemColor: const Color(0xFF94A3B8),
-          currentIndex: selectedIndex,
-          type: BottomNavigationBarType.fixed,
-          selectedFontSize: 11,
-          unselectedFontSize: 11,
-          selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600),
-          unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.normal),
-          onTap: (index) => _onDestinationSelected(context, index),
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.home_outlined),
-              activeIcon: Icon(Icons.home),
-              label: 'Home',
+            floatingActionButton: fab,
+            body: SafeArea(child: child),
+            bottomNavigationBar: NavigationBar(
+              selectedIndex: selectedIndex,
+              onDestinationSelected: (index) =>
+                  _onDestinationSelected(context, index),
+              destinations: [
+                NavigationDestination(
+                  icon: const Icon(Icons.today_outlined),
+                  selectedIcon: const Icon(Icons.today),
+                  label: l10n?.navToday ?? 'Today',
+                ),
+                NavigationDestination(
+                  icon: const Icon(Icons.auto_awesome_outlined),
+                  selectedIcon: const Icon(Icons.auto_awesome),
+                  label: l10n?.navCopilot ?? 'Copilot',
+                ),
+                NavigationDestination(
+                  icon: const Icon(Icons.view_week_outlined),
+                  selectedIcon: const Icon(Icons.view_week),
+                  label: l10n?.navLifeHub ?? 'Life Hub',
+                ),
+                NavigationDestination(
+                  icon: const Icon(Icons.person_outline),
+                  selectedIcon: const Icon(Icons.person),
+                  label: l10n?.navYou ?? 'You',
+                ),
+              ],
             ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.auto_awesome_outlined),
-              activeIcon: Icon(Icons.auto_awesome),
-              label: 'Copilot',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.check_circle_outline),
-              activeIcon: Icon(Icons.check_circle),
-              label: 'Tasks',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.calendar_month_outlined),
-              activeIcon: Icon(Icons.calendar_month),
-              label: 'Calendar',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.monetization_on_outlined),
-              activeIcon: Icon(Icons.monetization_on),
-              label: 'Finance',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.favorite_outline),
-              activeIcon: Icon(Icons.favorite),
-              label: 'Health',
-            ),
-          ],
-        ),
           ),
         ),
       );
@@ -146,92 +136,65 @@ class ShellLayout extends ConsumerWidget {
       child: Focus(
         autofocus: true,
         child: Scaffold(
-      floatingActionButton: _buildPaletteFab(context, ref),
-      body: Row(
-        children: [
-          NavigationRail(
-            backgroundColor: const Color(0xFF0F0C1B),
-            selectedIconTheme: const IconThemeData(color: Color(0xFF6366F1)),
-            unselectedIconTheme: const IconThemeData(color: Color(0xFF94A3B8)),
-            selectedLabelTextStyle: const TextStyle(color: Color(0xFF6366F1)),
-            unselectedLabelTextStyle: const TextStyle(color: Color(0xFF94A3B8)),
-            leading: Column(
-              children: [
-                const SizedBox(height: 16),
-                Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(10),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF6366F1).withValues(alpha: 0.3),
-                        blurRadius: 8,
-                        offset: const Offset(0, 3),
+          floatingActionButton: fab,
+          body: Row(
+            children: [
+              NavigationRail(
+                selectedIndex: selectedIndex,
+                onDestinationSelected: (index) =>
+                    _onDestinationSelected(context, index),
+                labelType: NavigationRailLabelType.all,
+                leading: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: AuraSpacing.lg),
+                  child: Column(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(AuraRadius.sm),
+                        child: Image.asset(
+                          'assets/app_icon.png',
+                          width: 42,
+                          height: 42,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                      const SizedBox(height: AuraSpacing.sm),
+                      Text(
+                        'AURA',
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1.0,
+                            ),
                       ),
                     ],
                   ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: Image.asset(
-                      'assets/app_icon.png',
-                      fit: BoxFit.contain,
-                    ),
-                  ),
                 ),
-                const SizedBox(height: 8),
-                const Text(
-                  'AURA AI',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white,
-                    letterSpacing: 1.0,
+                destinations: [
+                  NavigationRailDestination(
+                    icon: const Icon(Icons.today_outlined),
+                    selectedIcon: const Icon(Icons.today),
+                    label: Text(l10n?.navToday ?? 'Today'),
                   ),
-                ),
-                const SizedBox(height: 16),
-              ],
-            ),
-            destinations: const [
-              NavigationRailDestination(
-                icon: Icon(Icons.home_outlined),
-                selectedIcon: Icon(Icons.home),
-                label: Text('Home'),
+                  NavigationRailDestination(
+                    icon: const Icon(Icons.auto_awesome_outlined),
+                    selectedIcon: const Icon(Icons.auto_awesome),
+                    label: Text(l10n?.navCopilot ?? 'Copilot'),
+                  ),
+                  NavigationRailDestination(
+                    icon: const Icon(Icons.view_week_outlined),
+                    selectedIcon: const Icon(Icons.view_week),
+                    label: Text(l10n?.navLifeHub ?? 'Life Hub'),
+                  ),
+                  NavigationRailDestination(
+                    icon: const Icon(Icons.person_outline),
+                    selectedIcon: const Icon(Icons.person),
+                    label: Text(l10n?.navYou ?? 'You'),
+                  ),
+                ],
               ),
-              NavigationRailDestination(
-                icon: Icon(Icons.auto_awesome_outlined),
-                selectedIcon: Icon(Icons.auto_awesome),
-                label: Text('Copilot'),
-              ),
-              NavigationRailDestination(
-                icon: Icon(Icons.check_circle_outline),
-                selectedIcon: Icon(Icons.check_circle),
-                label: Text('Tasks'),
-              ),
-              NavigationRailDestination(
-                icon: Icon(Icons.calendar_month_outlined),
-                selectedIcon: Icon(Icons.calendar_month),
-                label: Text('Calendar'),
-              ),
-              NavigationRailDestination(
-                icon: Icon(Icons.monetization_on_outlined),
-                selectedIcon: Icon(Icons.monetization_on),
-                label: Text('Finance'),
-              ),
-              NavigationRailDestination(
-                icon: Icon(Icons.favorite_outline),
-                selectedIcon: Icon(Icons.favorite),
-                label: Text('Health'),
-              ),
+              VerticalDivider(thickness: 1, width: 1, color: palette.border),
+              Expanded(child: child),
             ],
-            selectedIndex: selectedIndex,
-            onDestinationSelected: (index) => _onDestinationSelected(context, index),
-            labelType: NavigationRailLabelType.all,
           ),
-          const VerticalDivider(thickness: 1, width: 1, color: Color(0x1F94A3B8)),
-          Expanded(child: child),
-        ],
-      ),
         ),
       ),
     );
@@ -245,6 +208,9 @@ class RouterTransitionNotifier extends ChangeNotifier {
     _ref.listen(authProvider, (previous, next) {
       notifyListeners();
     });
+    _ref.listen(onboardingGateProvider, (previous, next) {
+      notifyListeners();
+    });
   }
 }
 
@@ -252,18 +218,25 @@ final routerProvider = Provider<GoRouter>((ref) {
   final notifier = RouterTransitionNotifier(ref);
 
   return GoRouter(
-    initialLocation: '/home',
+    initialLocation: '/today',
     refreshListenable: notifier,
     redirect: (context, state) {
       final authState = ref.read(authProvider);
       final isLoggedIn = authState.value != null;
-      final isLoggingIn = state.matchedLocation == '/login';
+      final location = state.matchedLocation;
+      final isLoggingIn = location == '/login';
+      final isOnboarding = location == '/onboarding';
+      final onboarded = ref.read(onboardingGateProvider);
 
-      if (!isLoggedIn && !isLoggingIn) {
-        return '/login';
-      }
+      if (!isLoggedIn && !isLoggingIn) return '/login';
       if (isLoggedIn && isLoggingIn) {
-        return '/home';
+        return onboarded == false ? '/onboarding' : '/today';
+      }
+      if (isLoggedIn && onboarded == false && !isOnboarding) {
+        return '/onboarding';
+      }
+      if (isLoggedIn && onboarded == true && isOnboarding) {
+        return '/today';
       }
       return null;
     },
@@ -272,28 +245,33 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/login',
         builder: (context, state) => const LoginPage(),
       ),
+      GoRoute(
+        path: '/onboarding',
+        builder: (context, state) => const OnboardingPage(),
+      ),
+      GoRoute(path: '/home', redirect: (context, state) => '/today'),
+      GoRoute(path: '/tasks', redirect: (context, state) => '/life?type=tasks'),
+      GoRoute(
+        path: '/calendar',
+        redirect: (context, state) => '/life?type=calendar',
+      ),
+      GoRoute(
+        path: '/finance',
+        redirect: (context, state) => '/life?type=finance',
+      ),
+      GoRoute(path: '/health', redirect: (context, state) => '/life?type=health'),
+      GoRoute(path: '/settings', redirect: (context, state) => '/you'),
+      GoRoute(path: '/learning', redirect: (context, state) => '/feedback'),
       ShellRoute(
         builder: (context, state, child) => ShellLayout(child: child),
         routes: [
           GoRoute(
-            path: '/home',
+            path: '/today',
             builder: (context, state) => const HomePage(),
           ),
           GoRoute(
-            path: '/tasks',
-            builder: (context, state) => const TasksPage(),
-          ),
-          GoRoute(
-            path: '/calendar',
-            builder: (context, state) => const CalendarPage(),
-          ),
-          GoRoute(
-            path: '/finance',
-            builder: (context, state) => const FinancePage(),
-          ),
-          GoRoute(
-            path: '/health',
-            builder: (context, state) => const HealthPage(),
+            path: '/life',
+            builder: (context, state) => const LifeHubPage(),
           ),
           GoRoute(
             path: '/automations',
@@ -306,7 +284,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ),
           GoRoute(
-            path: '/settings',
+            path: '/you',
             builder: (context, state) => const SettingsPage(),
           ),
           GoRoute(
@@ -318,16 +296,24 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (context, state) => const KnowledgeCenterPage(),
           ),
           GoRoute(
+            path: '/memory',
+            builder: (context, state) => const MemoryPage(),
+          ),
+          GoRoute(
+            path: '/feedback',
+            builder: (context, state) => const FeedbackPage(),
+          ),
+          GoRoute(
+            path: '/appearance',
+            builder: (context, state) => const AppearancePage(),
+          ),
+          GoRoute(
             path: '/analytics',
             builder: (context, state) => const AnalyticsPage(),
           ),
           GoRoute(
             path: '/models',
             builder: (context, state) => const ModelManagerPage(),
-          ),
-          GoRoute(
-            path: '/learning',
-            builder: (context, state) => const LearningDashboard(),
           ),
         ],
       ),

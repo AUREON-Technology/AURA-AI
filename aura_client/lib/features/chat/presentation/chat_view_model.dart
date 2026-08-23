@@ -12,11 +12,15 @@ import 'pending_actions_executor.dart';
 @immutable
 class ChatUiState {
   final bool useRag;
+  final bool useMemory;
+  final bool useTools;
   final bool sendInFlight;
   final bool consumedInitialQuery;
 
   const ChatUiState({
     this.useRag = true,
+    this.useMemory = true,
+    this.useTools = true,
     this.sendInFlight = false,
     this.consumedInitialQuery = false,
   });
@@ -36,11 +40,15 @@ class ChatUiState {
 
   ChatUiState copyWith({
     bool? useRag,
+    bool? useMemory,
+    bool? useTools,
     bool? sendInFlight,
     bool? consumedInitialQuery,
   }) {
     return ChatUiState(
       useRag: useRag ?? this.useRag,
+      useMemory: useMemory ?? this.useMemory,
+      useTools: useTools ?? this.useTools,
       sendInFlight: sendInFlight ?? this.sendInFlight,
       consumedInitialQuery: consumedInitialQuery ?? this.consumedInitialQuery,
     );
@@ -53,6 +61,14 @@ class ChatViewModel extends Notifier<ChatUiState> {
 
   void setUseRag(bool value) {
     state = state.copyWith(useRag: value);
+  }
+
+  void setUseMemory(bool value) {
+    state = state.copyWith(useMemory: value);
+  }
+
+  void setUseTools(bool value) {
+    state = state.copyWith(useTools: value);
   }
 
   void startNewSession() {
@@ -83,6 +99,8 @@ class ChatViewModel extends Notifier<ChatUiState> {
             conversationId: sessionId,
             userContent: query.trim(),
             useRag: state.useRag,
+            useMemory: state.useMemory,
+            useTools: state.useTools,
           );
       return true;
     } finally {
@@ -102,11 +120,22 @@ class ChatViewModel extends Notifier<ChatUiState> {
             conversationId: sessionId,
             userContent: text.trim(),
             useRag: state.useRag,
+            useMemory: state.useMemory,
+            useTools: state.useTools,
           );
       return true;
     } finally {
       state = state.copyWith(sendInFlight: false);
     }
+  }
+
+  Future<void> confirmTools() {
+    final tools = ref.read(pendingConfirmationProvider);
+    final sessionId = ref.read(activeConversationIdProvider);
+    return ref.read(chatRepositoryProvider).confirmTaintedTools(
+          conversationId: sessionId,
+          confirmedTools: tools,
+        );
   }
 
   void rejectPendingActions() {

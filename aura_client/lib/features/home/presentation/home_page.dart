@@ -31,10 +31,7 @@ class HomePage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Theme(
-      data: AuraThemeV2.dark,
-      child: Builder(builder: (context) => _TodayScaffold(ref: ref)),
-    );
+    return _TodayScaffold(ref: ref);
   }
 }
 
@@ -62,7 +59,7 @@ class _TodayScaffold extends StatelessWidget {
           IconButton(
             tooltip: AppLocalizations.of(context)!.settingsTooltip,
             icon: Icon(Icons.settings_outlined, color: palette.textSecondary),
-            onPressed: () => context.go('/settings'),
+            onPressed: () => context.go('/you'),
           ),
           const SizedBox(width: AuraSpacing.sm),
         ],
@@ -74,17 +71,7 @@ class _TodayScaffold extends StatelessWidget {
           ref.invalidate(financeTransactionsStreamProvider);
           ref.invalidate(dailyHealthStreamProvider(DateTime.now()));
           ref.invalidate(insightsProvider);
-          final reachable = await ref.read(aiRouter).checkConnectivity();
-          if (!reachable) {
-            ref.read(aiRouterStatusProvider.notifier).updateStatus(
-                  AIRouterStatus(
-                    activeModel: 'server',
-                    latencyMs: ref.read(aiRouterStatusProvider).latencyMs,
-                    status: 'AURA unreachable',
-                    isOffline: true,
-                  ),
-                );
-          }
+          await ref.read(aiRouter).probeGateway();
         },
         child: ListView(
           padding: const EdgeInsets.all(AuraSpacing.lg),
@@ -213,8 +200,18 @@ class _InsightsSection extends ConsumerWidget {
           ),
         );
       },
-      loading: () => const SizedBox.shrink(),
-      error: (_, _) => const SizedBox.shrink(),
+      loading: () => Padding(
+        padding: const EdgeInsets.only(bottom: AuraSpacing.lg),
+        child: AuraSkeleton(height: 72, width: double.infinity),
+      ),
+      error: (_, _) => Padding(
+        padding: const EdgeInsets.only(bottom: AuraSpacing.lg),
+        child: AuraEmptyState(
+          icon: Icons.cloud_off_outlined,
+          title: 'Could not load insights',
+          message: 'Pull to refresh when you are back online.',
+        ),
+      ),
     );
   }
 }
@@ -302,7 +299,7 @@ class _DueTodayCard extends StatelessWidget {
           AuraSectionHeader(
             title: l10n.dueToday,
             actionLabel: l10n.viewAll,
-            onAction: () => context.go('/tasks'),
+            onAction: () => context.go('/life?type=tasks'),
           ),
           const SizedBox(height: AuraSpacing.md),
           if (loading)

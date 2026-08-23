@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import '../../config/config.dart';
 import '../../auth/token_manager.dart';
+import '../../network/aura_api_error.dart';
 import '../../security/device_validation_service.dart';
+import '../../../features/knowledge/domain/knowledge_document.dart';
 
 /// Client for the v3 knowledge APIs (`/api/v3/knowledge/*`). New writes go
 /// to the kernel RAG index (the one Copilot retrieval uses). Legacy v1
@@ -30,6 +32,40 @@ class KnowledgeCenter {
         ? client.post(uri, headers: headers, body: body)
         : http.post(uri, headers: headers, body: body);
     return sent.timeout(const Duration(seconds: 10));
+  }
+
+  Future<http.Response> _send(
+    String method,
+    String path, {
+    String? body,
+  }) async {
+    final tokens = _ref.read(tokenManagerProvider);
+    Future<http.Response> once() async {
+      final token = await tokens.getValidAccessToken();
+      final headers = await _headers(token);
+      if (body == null) headers.remove('Content-Type');
+      final uri = Uri.parse("$_backendUrl$path");
+      final client = _http;
+      switch (method) {
+        case 'GET':
+          return client != null
+              ? client.get(uri, headers: headers)
+              : http.get(uri, headers: headers);
+        case 'DELETE':
+          return client != null
+              ? client.delete(uri, headers: headers)
+              : http.delete(uri, headers: headers);
+        default:
+          return _post(path, body: body ?? '{}', headers: headers);
+      }
+    }
+
+    var response = await once();
+    if (response.statusCode == 401) {
+      tokens.invalidateAccessToken();
+      response = await once();
+    }
+    return response;
   }
 
   /// One 401 retry after dropping the cached access token, matching
@@ -88,6 +124,86 @@ class KnowledgeCenter {
       debugPrint("KnowledgeCenter: Query failed: $e");
     }
     return [];
+  }
+
+  Future<KnowledgeIngestResult> ingestDocumentResult({
+    required String title,
+    required String content,
+    String? documentId,
+  }) async {
+    try {
+      final response = await _sendAuthenticated("/documents", {
+        "title": title,
+        "content": content,
+        if (documentId != null && documentId.isNotEmpty) "document_id": documentId,
+        "metadata": {"source": "knowledge_center_ui"},
+      });
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return const KnowledgeIngestResult(ok: false);
+      }
+      final parsed = jsonDecode(response.body);
+      final map = parsed is Map<String, dynamic> ? parsed : <String, dynamic>{};
+      return KnowledgeIngestResult(
+        ok: true,
+        quarantinedChunks: map['quarantined_chunks'] is num
+            ? (map['quarantined_chunks'] as num).toInt()
+            : 0,
+        skippedReason: map['skipped_reason']?.toString(),
+        documentId: map['document_id']?.toString(),
+      );
+    } catch (e) {
+      debugPrint("KnowledgeCenter: Ingestion failed: $e");
+      return const KnowledgeIngestResult(ok: false);
+    }
+  }
+
+  Future<KnowledgeSearchResult> searchKnowledge(String query, {int limit = 6}) async {
+    try {
+      final response = await _sendAuthenticated("/search", {
+        "query": query,
+        "limit": limit,
+      });
+      if (response.statusCode != 200) {
+        return const KnowledgeSearchResult(results: [], searchedButEmpty: false);
+      }
+      final parsed = jsonDecode(response.body);
+      final results = parsed["results"] as List?;
+      return KnowledgeSearchResult(
+        results: results == null ? const [] : List<Map<String, dynamic>>.from(results),
+        searchedButEmpty: parsed["searched_but_empty"] == true,
+      );
+    } catch (e) {
+      debugPrint("KnowledgeCenter: Query failed: $e");
+      return const KnowledgeSearchResult(results: [], searchedButEmpty: false);
+    }
+  }
+
+  Future<List<KnowledgeDocument>> listDocuments() async {
+    final response = await _send('GET', '/documents');
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw AuraApiError.fromResponse(
+        statusCode: response.statusCode,
+        body: response.body,
+      );
+    }
+    final parsed = jsonDecode(response.body);
+    final list = parsed is Map ? parsed['documents'] : parsed;
+    if (list is! List) return const [];
+    return list
+        .whereType<Map>()
+        .map((item) => KnowledgeDocument.fromJson(Map<String, dynamic>.from(item)))
+        .where((d) => d.id.isNotEmpty)
+        .toList();
+  }
+
+  Future<void> deleteDocument(String documentId) async {
+    final response = await _send('DELETE', '/documents/$documentId');
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw AuraApiError.fromResponse(
+        statusCode: response.statusCode,
+        body: response.body,
+      );
+    }
   }
 }
 

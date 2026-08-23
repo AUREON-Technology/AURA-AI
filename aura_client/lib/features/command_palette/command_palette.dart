@@ -19,19 +19,22 @@ class _Destination {
 }
 
 const _destinations = [
-  _Destination('Today', Icons.today_outlined, '/home'),
-  _Destination('Tasks', Icons.check_circle_outline, '/tasks'),
-  _Destination('Calendar', Icons.calendar_month_outlined, '/calendar'),
-  _Destination('Finance', Icons.monetization_on_outlined, '/finance'),
-  _Destination('Health', Icons.favorite_outline, '/health'),
+  _Destination('Today', Icons.today_outlined, '/today'),
   _Destination('Copilot', Icons.auto_awesome_outlined, '/chat'),
+  _Destination('Life Hub', Icons.view_week_outlined, '/life'),
+  _Destination('Tasks', Icons.check_circle_outline, '/life?type=tasks'),
+  _Destination('Calendar', Icons.calendar_month_outlined, '/life?type=calendar'),
+  _Destination('Finance', Icons.monetization_on_outlined, '/life?type=finance'),
+  _Destination('Health', Icons.favorite_outline, '/life?type=health'),
+  _Destination('You', Icons.person_outline, '/you'),
+  _Destination('Knowledge', Icons.folder_shared_outlined, '/knowledge'),
+  _Destination('Memory', Icons.psychology_outlined, '/memory'),
+  _Destination('Feedback', Icons.rate_review_outlined, '/feedback'),
+  _Destination('Appearance', Icons.palette_outlined, '/appearance'),
+  _Destination('Engine status', Icons.cloud_outlined, '/models'),
   _Destination('Automations', Icons.bolt_outlined, '/automations'),
-  _Destination('Knowledge Center', Icons.folder_shared_outlined, '/knowledge'),
-  _Destination('System Analytics', Icons.bar_chart_outlined, '/analytics'),
-  _Destination('AI Engine', Icons.cloud_outlined, '/models'),
-  _Destination('Continuous Learning', Icons.psychology_outlined, '/learning'),
+  _Destination('Usage on this device', Icons.phone_iphone_outlined, '/analytics'),
   _Destination('Profile', Icons.person_outline, '/profile'),
-  _Destination('Settings', Icons.settings_outlined, '/settings'),
 ];
 
 Future<void> showCommandPalette(BuildContext context, WidgetRef ref) {
@@ -177,7 +180,7 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
                         _ResultTile(
                           icon: Icons.circle_outlined,
                           label: t.title,
-                          onTap: () => _go('/tasks'),
+                          onTap: () => _go('/life?type=tasks'),
                         ),
                     ],
                     if (_matchingEvents.isNotEmpty) ...[
@@ -186,7 +189,7 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
                         _ResultTile(
                           icon: Icons.event_outlined,
                           label: e.title,
-                          onTap: () => _go('/calendar'),
+                          onTap: () => _go('/life?type=calendar'),
                         ),
                     ],
                     if (destinations.isNotEmpty) ...[

@@ -63,7 +63,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get encryptedAesGcm => 'Encrypted (AES-256-GCM)';
 
   @override
-  String get settingsTooltip => 'Settings';
+  String get settingsTooltip => 'You';
 
   @override
   String get notificationsTooltip => 'Notifications';
@@ -72,4 +72,43 @@ class AppLocalizationsEn extends AppLocalizations {
   String unreadNotifications(int count) {
     return '$count unread notifications';
   }
+
+  @override
+  String get navToday => 'Today';
+
+  @override
+  String get navCopilot => 'Copilot';
+
+  @override
+  String get navLifeHub => 'Life Hub';
+
+  @override
+  String get navYou => 'You';
+
+  @override
+  String get lifeHubTitle => 'Life Hub';
+
+  @override
+  String get youTitle => 'You';
+
+  @override
+  String get knowledgeTitle => 'Knowledge';
+
+  @override
+  String get memoryTitle => 'Memory';
+
+  @override
+  String get feedbackTitle => 'Feedback';
+
+  @override
+  String get appearanceTitle => 'Appearance';
+
+  @override
+  String get engineStatusTitle => 'Engine status';
+
+  @override
+  String get onboardingNext => 'Next';
+
+  @override
+  String get onboardingGetStarted => 'Get started';
 }

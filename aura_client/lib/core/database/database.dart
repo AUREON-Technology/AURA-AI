@@ -124,6 +124,11 @@ class Messages extends Table {
   // Cursor-sync clock (AURA-014). Tombstones are not stored locally —
   // a pull row with `deleted_at` deletes this row, same as tasks.
   DateTimeColumn get updatedAt => dateTime().nullable()();
+  // Server turn id from the stream `done` frame — required to POST feedback.
+  TextColumn get turnId => text().nullable()();
+  // Encrypted JSON: confidence, degraded, needs_confirmation, tainted,
+  // guards_complete, revised, steps, correlation_id, usage.
+  TextColumn get turnMetaJson => text().map(const EncryptedTextConverter()).nullable()();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -242,7 +247,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 9;
+  int get schemaVersion => 10;
 
   Future<List<TelemetryLog>> getTelemetry() => select(telemetryLogs).get();
   Future<void> insertTelemetry(TelemetryLogsCompanion log) => into(telemetryLogs).insert(log);
@@ -366,6 +371,10 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 9) {
             await m.addColumn(messages, messages.updatedAt);
+          }
+          if (from < 10) {
+            await m.addColumn(messages, messages.turnId);
+            await m.addColumn(messages, messages.turnMetaJson);
           }
         },
         beforeOpen: (details) async {

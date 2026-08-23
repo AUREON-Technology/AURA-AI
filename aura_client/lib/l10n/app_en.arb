@@ -55,8 +55,47 @@
   "encryptedAesGcm": "Encrypted (AES-256-GCM)",
   "@encryptedAesGcm": {"description": "Status row value describing local storage encryption"},
 
-  "settingsTooltip": "Settings",
-  "@settingsTooltip": {"description": "Icon button tooltip"},
+  "settingsTooltip": "You",
+  "@settingsTooltip": {"description": "Icon button tooltip for the You destination"},
+
+  "navToday": "Today",
+  "@navToday": {"description": "Bottom navigation label"},
+
+  "navCopilot": "Copilot",
+  "@navCopilot": {"description": "Bottom navigation label"},
+
+  "navLifeHub": "Life Hub",
+  "@navLifeHub": {"description": "Bottom navigation label"},
+
+  "navYou": "You",
+  "@navYou": {"description": "Bottom navigation label"},
+
+  "lifeHubTitle": "Life Hub",
+  "@lifeHubTitle": {"description": "Life Hub screen title"},
+
+  "youTitle": "You",
+  "@youTitle": {"description": "You screen title"},
+
+  "knowledgeTitle": "Knowledge",
+  "@knowledgeTitle": {"description": "Knowledge library title"},
+
+  "memoryTitle": "Memory",
+  "@memoryTitle": {"description": "Memory screen title"},
+
+  "feedbackTitle": "Feedback",
+  "@feedbackTitle": {"description": "Feedback screen title"},
+
+  "appearanceTitle": "Appearance",
+  "@appearanceTitle": {"description": "Appearance screen title"},
+
+  "engineStatusTitle": "Engine status",
+  "@engineStatusTitle": {"description": "Engine status screen title"},
+
+  "onboardingNext": "Next",
+  "@onboardingNext": {"description": "Onboarding next button"},
+
+  "onboardingGetStarted": "Get started",
+  "@onboardingGetStarted": {"description": "Onboarding finish button"}
 
   "notificationsTooltip": "Notifications",
   "@notificationsTooltip": {"description": "Bell icon tooltip when there are no unread items"},

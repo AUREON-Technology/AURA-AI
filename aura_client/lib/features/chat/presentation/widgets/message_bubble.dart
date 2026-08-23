@@ -12,10 +12,13 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import '../../data/agents_repository.dart';
 import '../../data/chat_connection_error.dart';
 import '../../data/chat_repository.dart';
+import '../../data/turn_meta.dart';
 import 'citation_chip.dart';
+import 'feedback_sheet.dart';
 import 'persona_badge.dart';
 import 'streaming_message_skeleton.dart';
 import 'tool_call_chip.dart';
+import 'turn_status_row.dart';
 
 class MessageBubble extends ConsumerWidget {
   final Message message;
@@ -147,6 +150,7 @@ class MessageBubble extends ConsumerWidget {
         : _decodeToolCalls();
     final agentId = message.agentId;
     final personaInfo = agentId != null ? personaDisplay(agentId) : null;
+    final turnMeta = TurnMeta.decode(message.turnMetaJson);
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -234,16 +238,32 @@ class MessageBubble extends ConsumerWidget {
                       const SizedBox(height: AuraSpacing.sm),
                       CitationChips(citations: citations),
                     ],
+                    if (!isStreaming)
+                      TurnStatusRow(meta: turnMeta, hasCitations: citations.isNotEmpty),
                     const SizedBox(height: AuraSpacing.sm),
-                    Align(
-                      alignment: Alignment.bottomRight,
-                      child: Text(
-                        formattedTime,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: palette.textSecondary,
+                    Row(
+                      children: [
+                        if (turnMeta.turnId != null && !isStreaming)
+                          IconButton(
+                            tooltip: 'Rate this answer',
+                            visualDensity: VisualDensity.compact,
+                            icon: Icon(Icons.thumb_up_outlined, size: 18, color: palette.textSecondary),
+                            onPressed: () => showFeedbackSheet(
+                              context: context,
+                              ref: ref,
+                              turnId: turnMeta.turnId!,
+                              response: message.content,
+                            ),
+                          ),
+                        const Spacer(),
+                        Text(
+                          formattedTime,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: palette.textSecondary,
+                          ),
                         ),
-                      ),
+                      ],
                     ),
                   ],
                 ),

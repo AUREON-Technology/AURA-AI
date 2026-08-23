@@ -2619,6 +2619,24 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
     type: DriftSqlType.dateTime,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _turnIdMeta = const VerificationMeta('turnId');
+  @override
+  late final GeneratedColumn<String> turnId = GeneratedColumn<String>(
+    'turn_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<String?, String> turnMetaJson =
+      GeneratedColumn<String>(
+        'turn_meta_json',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      ).withConverter<String?>($MessagesTable.$converterturnMetaJsonn);
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -2632,6 +2650,8 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
     toolCallsJson,
     agentId,
     updatedAt,
+    turnId,
+    turnMetaJson,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2701,6 +2721,12 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
         updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
       );
     }
+    if (data.containsKey('turn_id')) {
+      context.handle(
+        _turnIdMeta,
+        turnId.isAcceptableOrUnknown(data['turn_id']!, _turnIdMeta),
+      );
+    }
     return context;
   }
 
@@ -2760,6 +2786,16 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
         DriftSqlType.dateTime,
         data['${effectivePrefix}updated_at'],
       ),
+      turnId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}turn_id'],
+      ),
+      turnMetaJson: $MessagesTable.$converterturnMetaJsonn.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}turn_meta_json'],
+        ),
+      ),
     );
   }
 
@@ -2778,6 +2814,10 @@ class $MessagesTable extends Messages with TableInfo<$MessagesTable, Message> {
       const EncryptedTextConverter();
   static TypeConverter<String?, String?> $convertertoolCallsJsonn =
       NullAwareTypeConverter.wrap($convertertoolCallsJson);
+  static TypeConverter<String, String> $converterturnMetaJson =
+      const EncryptedTextConverter();
+  static TypeConverter<String?, String?> $converterturnMetaJsonn =
+      NullAwareTypeConverter.wrap($converterturnMetaJson);
 }
 
 class Message extends DataClass implements Insertable<Message> {
@@ -2792,6 +2832,8 @@ class Message extends DataClass implements Insertable<Message> {
   final String? toolCallsJson;
   final String? agentId;
   final DateTime? updatedAt;
+  final String? turnId;
+  final String? turnMetaJson;
   const Message({
     required this.id,
     required this.conversationId,
@@ -2804,6 +2846,8 @@ class Message extends DataClass implements Insertable<Message> {
     this.toolCallsJson,
     this.agentId,
     this.updatedAt,
+    this.turnId,
+    this.turnMetaJson,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -2839,6 +2883,14 @@ class Message extends DataClass implements Insertable<Message> {
     if (!nullToAbsent || updatedAt != null) {
       map['updated_at'] = Variable<DateTime>(updatedAt);
     }
+    if (!nullToAbsent || turnId != null) {
+      map['turn_id'] = Variable<String>(turnId);
+    }
+    if (!nullToAbsent || turnMetaJson != null) {
+      map['turn_meta_json'] = Variable<String>(
+        $MessagesTable.$converterturnMetaJsonn.toSql(turnMetaJson),
+      );
+    }
     return map;
   }
 
@@ -2867,6 +2919,12 @@ class Message extends DataClass implements Insertable<Message> {
       updatedAt: updatedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(updatedAt),
+      turnId: turnId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(turnId),
+      turnMetaJson: turnMetaJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(turnMetaJson),
     );
   }
 
@@ -2887,6 +2945,8 @@ class Message extends DataClass implements Insertable<Message> {
       toolCallsJson: serializer.fromJson<String?>(json['toolCallsJson']),
       agentId: serializer.fromJson<String?>(json['agentId']),
       updatedAt: serializer.fromJson<DateTime?>(json['updatedAt']),
+      turnId: serializer.fromJson<String?>(json['turnId']),
+      turnMetaJson: serializer.fromJson<String?>(json['turnMetaJson']),
     );
   }
   @override
@@ -2904,6 +2964,8 @@ class Message extends DataClass implements Insertable<Message> {
       'toolCallsJson': serializer.toJson<String?>(toolCallsJson),
       'agentId': serializer.toJson<String?>(agentId),
       'updatedAt': serializer.toJson<DateTime?>(updatedAt),
+      'turnId': serializer.toJson<String?>(turnId),
+      'turnMetaJson': serializer.toJson<String?>(turnMetaJson),
     };
   }
 
@@ -2919,6 +2981,8 @@ class Message extends DataClass implements Insertable<Message> {
     Value<String?> toolCallsJson = const Value.absent(),
     Value<String?> agentId = const Value.absent(),
     Value<DateTime?> updatedAt = const Value.absent(),
+    Value<String?> turnId = const Value.absent(),
+    Value<String?> turnMetaJson = const Value.absent(),
   }) => Message(
     id: id ?? this.id,
     conversationId: conversationId ?? this.conversationId,
@@ -2935,6 +2999,8 @@ class Message extends DataClass implements Insertable<Message> {
         : this.toolCallsJson,
     agentId: agentId.present ? agentId.value : this.agentId,
     updatedAt: updatedAt.present ? updatedAt.value : this.updatedAt,
+    turnId: turnId.present ? turnId.value : this.turnId,
+    turnMetaJson: turnMetaJson.present ? turnMetaJson.value : this.turnMetaJson,
   );
   Message copyWithCompanion(MessagesCompanion data) {
     return Message(
@@ -2957,6 +3023,10 @@ class Message extends DataClass implements Insertable<Message> {
           : this.toolCallsJson,
       agentId: data.agentId.present ? data.agentId.value : this.agentId,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+      turnId: data.turnId.present ? data.turnId.value : this.turnId,
+      turnMetaJson: data.turnMetaJson.present
+          ? data.turnMetaJson.value
+          : this.turnMetaJson,
     );
   }
 
@@ -2973,7 +3043,9 @@ class Message extends DataClass implements Insertable<Message> {
           ..write('citationsJson: $citationsJson, ')
           ..write('toolCallsJson: $toolCallsJson, ')
           ..write('agentId: $agentId, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('turnId: $turnId, ')
+          ..write('turnMetaJson: $turnMetaJson')
           ..write(')'))
         .toString();
   }
@@ -2991,6 +3063,8 @@ class Message extends DataClass implements Insertable<Message> {
     toolCallsJson,
     agentId,
     updatedAt,
+    turnId,
+    turnMetaJson,
   );
   @override
   bool operator ==(Object other) =>
@@ -3006,7 +3080,9 @@ class Message extends DataClass implements Insertable<Message> {
           other.citationsJson == this.citationsJson &&
           other.toolCallsJson == this.toolCallsJson &&
           other.agentId == this.agentId &&
-          other.updatedAt == this.updatedAt);
+          other.updatedAt == this.updatedAt &&
+          other.turnId == this.turnId &&
+          other.turnMetaJson == this.turnMetaJson);
 }
 
 class MessagesCompanion extends UpdateCompanion<Message> {
@@ -3021,6 +3097,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
   final Value<String?> toolCallsJson;
   final Value<String?> agentId;
   final Value<DateTime?> updatedAt;
+  final Value<String?> turnId;
+  final Value<String?> turnMetaJson;
   final Value<int> rowid;
   const MessagesCompanion({
     this.id = const Value.absent(),
@@ -3034,6 +3112,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.toolCallsJson = const Value.absent(),
     this.agentId = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.turnId = const Value.absent(),
+    this.turnMetaJson = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   MessagesCompanion.insert({
@@ -3048,6 +3128,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     this.toolCallsJson = const Value.absent(),
     this.agentId = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.turnId = const Value.absent(),
+    this.turnMetaJson = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        conversationId = Value(conversationId),
@@ -3066,6 +3148,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     Expression<String>? toolCallsJson,
     Expression<String>? agentId,
     Expression<DateTime>? updatedAt,
+    Expression<String>? turnId,
+    Expression<String>? turnMetaJson,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -3080,6 +3164,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       if (toolCallsJson != null) 'tool_calls_json': toolCallsJson,
       if (agentId != null) 'agent_id': agentId,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (turnId != null) 'turn_id': turnId,
+      if (turnMetaJson != null) 'turn_meta_json': turnMetaJson,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -3096,6 +3182,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     Value<String?>? toolCallsJson,
     Value<String?>? agentId,
     Value<DateTime?>? updatedAt,
+    Value<String?>? turnId,
+    Value<String?>? turnMetaJson,
     Value<int>? rowid,
   }) {
     return MessagesCompanion(
@@ -3110,6 +3198,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
       toolCallsJson: toolCallsJson ?? this.toolCallsJson,
       agentId: agentId ?? this.agentId,
       updatedAt: updatedAt ?? this.updatedAt,
+      turnId: turnId ?? this.turnId,
+      turnMetaJson: turnMetaJson ?? this.turnMetaJson,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -3156,6 +3246,14 @@ class MessagesCompanion extends UpdateCompanion<Message> {
     if (updatedAt.present) {
       map['updated_at'] = Variable<DateTime>(updatedAt.value);
     }
+    if (turnId.present) {
+      map['turn_id'] = Variable<String>(turnId.value);
+    }
+    if (turnMetaJson.present) {
+      map['turn_meta_json'] = Variable<String>(
+        $MessagesTable.$converterturnMetaJsonn.toSql(turnMetaJson.value),
+      );
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -3176,6 +3274,8 @@ class MessagesCompanion extends UpdateCompanion<Message> {
           ..write('toolCallsJson: $toolCallsJson, ')
           ..write('agentId: $agentId, ')
           ..write('updatedAt: $updatedAt, ')
+          ..write('turnId: $turnId, ')
+          ..write('turnMetaJson: $turnMetaJson, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -7563,6 +7663,8 @@ typedef $$MessagesTableCreateCompanionBuilder =
       Value<String?> toolCallsJson,
       Value<String?> agentId,
       Value<DateTime?> updatedAt,
+      Value<String?> turnId,
+      Value<String?> turnMetaJson,
       Value<int> rowid,
     });
 typedef $$MessagesTableUpdateCompanionBuilder =
@@ -7578,6 +7680,8 @@ typedef $$MessagesTableUpdateCompanionBuilder =
       Value<String?> toolCallsJson,
       Value<String?> agentId,
       Value<DateTime?> updatedAt,
+      Value<String?> turnId,
+      Value<String?> turnMetaJson,
       Value<int> rowid,
     });
 
@@ -7647,6 +7751,17 @@ class $$MessagesTableFilterComposer
     column: $table.updatedAt,
     builder: (column) => ColumnFilters(column),
   );
+
+  ColumnFilters<String> get turnId => $composableBuilder(
+    column: $table.turnId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<String?, String, String> get turnMetaJson =>
+      $composableBuilder(
+        column: $table.turnMetaJson,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
 }
 
 class $$MessagesTableOrderingComposer
@@ -7712,6 +7827,16 @@ class $$MessagesTableOrderingComposer
     column: $table.updatedAt,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get turnId => $composableBuilder(
+    column: $table.turnId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get turnMetaJson => $composableBuilder(
+    column: $table.turnMetaJson,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$MessagesTableAnnotationComposer
@@ -7765,6 +7890,15 @@ class $$MessagesTableAnnotationComposer
 
   GeneratedColumn<DateTime> get updatedAt =>
       $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get turnId =>
+      $composableBuilder(column: $table.turnId, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<String?, String> get turnMetaJson =>
+      $composableBuilder(
+        column: $table.turnMetaJson,
+        builder: (column) => column,
+      );
 }
 
 class $$MessagesTableTableManager
@@ -7806,6 +7940,8 @@ class $$MessagesTableTableManager
                 Value<String?> toolCallsJson = const Value.absent(),
                 Value<String?> agentId = const Value.absent(),
                 Value<DateTime?> updatedAt = const Value.absent(),
+                Value<String?> turnId = const Value.absent(),
+                Value<String?> turnMetaJson = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MessagesCompanion(
                 id: id,
@@ -7819,6 +7955,8 @@ class $$MessagesTableTableManager
                 toolCallsJson: toolCallsJson,
                 agentId: agentId,
                 updatedAt: updatedAt,
+                turnId: turnId,
+                turnMetaJson: turnMetaJson,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -7834,6 +7972,8 @@ class $$MessagesTableTableManager
                 Value<String?> toolCallsJson = const Value.absent(),
                 Value<String?> agentId = const Value.absent(),
                 Value<DateTime?> updatedAt = const Value.absent(),
+                Value<String?> turnId = const Value.absent(),
+                Value<String?> turnMetaJson = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MessagesCompanion.insert(
                 id: id,
@@ -7847,6 +7987,8 @@ class $$MessagesTableTableManager
                 toolCallsJson: toolCallsJson,
                 agentId: agentId,
                 updatedAt: updatedAt,
+                turnId: turnId,
+                turnMetaJson: turnMetaJson,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

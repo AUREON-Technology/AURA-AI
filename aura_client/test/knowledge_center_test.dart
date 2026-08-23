@@ -85,4 +85,66 @@ void main() {
     expect(body['query'], 'alpha');
     expect(body['limit'], 3);
   });
+
+  test('searchKnowledge reports searched_but_empty', () async {
+    final httpClient = MockClient((request) async {
+      return http.Response(
+        jsonEncode({
+          'query': 'zzz',
+          'results': [],
+          'searched_but_empty': true,
+        }),
+        200,
+      );
+    });
+
+    final container = ProviderContainer(
+      overrides: [
+        tokenManagerProvider.overrideWith((ref) => _StubTokenManager(ref)),
+        knowledgeCenterProvider.overrideWith(
+          (ref) => KnowledgeCenter(ref, httpClient: httpClient),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final result = await container.read(knowledgeCenterProvider).searchKnowledge('zzz');
+    expect(result.results, isEmpty);
+    expect(result.searchedButEmpty, isTrue);
+  });
+
+  test('listDocuments maps the library envelope', () async {
+    final httpClient = MockClient((request) async {
+      expect(request.method, 'GET');
+      return http.Response(
+        jsonEncode({
+          'documents': [
+            {
+              'document_id': 'doc-9',
+              'title': 'Notes',
+              'version': 2,
+              'status': 'quarantined',
+              'created_at': '2026-01-01T00:00:00Z',
+            },
+          ],
+        }),
+        200,
+      );
+    });
+
+    final container = ProviderContainer(
+      overrides: [
+        tokenManagerProvider.overrideWith((ref) => _StubTokenManager(ref)),
+        knowledgeCenterProvider.overrideWith(
+          (ref) => KnowledgeCenter(ref, httpClient: httpClient),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final docs = await container.read(knowledgeCenterProvider).listDocuments();
+    expect(docs, hasLength(1));
+    expect(docs.first.id, 'doc-9');
+    expect(docs.first.isQuarantined, isTrue);
+  });
 }

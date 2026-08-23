@@ -17,8 +17,8 @@ class LoginPage extends ConsumerStatefulWidget {
 }
 
 class _LoginPageState extends ConsumerState<LoginPage> {
-  final _nameController = TextEditingController(text: 'Anas Ibrahim');
-  final _emailController = TextEditingController(text: 'anas.ibrahim.gnedy@gmail.com');
+  final _nameController = TextEditingController();
+  final _emailController = TextEditingController();
   bool _showDeveloperPanel = false;
 
   final LocalAuthentication _localAuth = LocalAuthentication();
@@ -81,10 +81,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       }
     });
 
-    return Theme(
-      data: AuraThemeV2.dark,
-      child: Builder(builder: (context) => _buildBody(context)),
-    );
+    return _buildBody(context);
   }
 
   Widget _buildBody(BuildContext context) {

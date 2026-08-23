@@ -6,7 +6,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'core/auth/token_manager.dart';
 import 'core/config/backend_url_policy.dart';
 import 'core/config/config.dart';
-import 'core/theme/theme.dart';
+import 'core/design_system/design_system.dart';
+import 'core/theme/theme_mode_controller.dart';
 import 'core/routing/router.dart';
 import 'core/security/encryption_service.dart';
 import 'l10n/generated/app_localizations.dart';
@@ -62,10 +63,14 @@ class AuraApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(routerProvider);
 
+    final themeMode = ref.watch(themeModeProvider);
+
     return MaterialApp.router(
       title: 'AURA AI',
       debugShowCheckedModeBanner: false,
-      theme: AuraTheme.darkTheme,
+      theme: AuraThemeV2.light,
+      darkTheme: AuraThemeV2.dark,
+      themeMode: themeMode,
       routerConfig: router,
       // V2 i18n scaffold (Doc/V2_BLUEPRINT.md §12) — only English shipped
       // so far (see lib/l10n/app_en.arb); this wiring is what makes adding

@@ -109,6 +109,28 @@ void main() {
       expect(events[0].citations, ['docA']);
     });
 
+    test('done event maps turn_id, confidence, degraded, and confirmation', () {
+      final events = feedAll([
+        'event: done\ndata: {"turn_id":"t-1","confidence":0.2,"degraded":true,"needs_confirmation":true,"tainted":true,"guards_complete":true,"usage":{"tokens":12}}\n\n',
+      ]);
+      final meta = events[0].turnMeta;
+      expect(meta, isNotNull);
+      expect(meta!.turnId, 't-1');
+      expect(meta.confidence, 0.2);
+      expect(meta.degraded, isTrue);
+      expect(meta.needsConfirmation, isTrue);
+      expect(meta.tainted, isTrue);
+      expect(meta.showLowConfidence, isTrue);
+    });
+
+    test('step frame carries a label', () {
+      final events = feedAll([
+        'event: step\ndata: {"step_id": "s1", "kind": "tool", "status": "running", "label": "search"}\n\n',
+      ]);
+      expect(events[0].step?.label, 'search');
+      expect(events[0].step?.status, 'running');
+    });
+
     test('an unrecognised event type is reported as unknown, never as done', () {
       final events = feedAll(['event: some_future_frame\ndata: {"foo": "bar"}\n\n']);
       expect(events.length, 1);
