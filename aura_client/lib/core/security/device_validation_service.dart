@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import '../config/backend_url_policy.dart';
 import '../config/config.dart';
 import 'app_attest_client.dart';
 import 'hardware_attestation_client.dart';
@@ -11,10 +12,9 @@ import 'play_integrity_client.dart';
 
 /// Honest device-attestation headers for backend `X-Device-Attestation`.
 ///
-/// Debug/dev builds send `aura_dev_attestation`. Play Integrity cannot be
-/// decoded for this package until it exists in Play Console under the same
-/// Cloud project as the VPS service account. Release builds request a real
-/// Play Integrity / App Attest token when the platform SDK can produce one.
+/// Debug builds talking to a local gateway send `aura_dev_attestation`.
+/// A debug APK aimed at production (`run_client_device.ps1`) must request
+/// real Play Integrity / App Attest — staging/production refuse mock tokens.
 class DeviceValidationService {
   static const String devToken = 'aura_dev_attestation';
   static const String unsupportedMarker = 'aura_attestation_unsupported';
@@ -42,7 +42,9 @@ class DeviceValidationService {
   }) async {
     final isDebug = debugMode ?? kDebugMode;
     final platformName = platform ?? _platformName();
-    final useDebugMock = isDebug;
+    final targetUrl = backendUrl ?? AppConfig.backendUrl;
+    final useDebugMock =
+        isDebug && !BackendUrlPolicy.isSafeForRelease(targetUrl);
 
     if (!useDebugMock &&
         _cached != null &&
