@@ -76,21 +76,68 @@ One detail worth recording: the restored database reports `alembic_version = 000
 pointed at a restored backup therefore satisfies the schema readiness probe added for A1's
 Finding 1, rather than being quarantined by it. The two phases agree.
 
-## Not covered
+## Second pass — the `backup` service itself
 
-The script says so itself, and it remains true:
+Run the same day, after the above. The compose `backup` service had also never started. Unlike the
+compose file and the drill, **it works exactly as written**: no defects found in any path
+exercised.
 
-- **Qdrant snapshots and the Redis RDB are not applied.** Different engines; the drill is Postgres
-  only. A full recovery rehearsal still needs the manual checklist in
-  `docs/guides/maintenance-guide.md`.
-- **No backup produced by the running `backup` service was tested.** The archive here was
-  generated with the same `pg_dump` invocation `backup.sh` uses, but the compose `backup` service
-  itself has still never run — it was among the services A1 could not start.
-- **Restore-into-production was not rehearsed.** `deploy/scripts/restore.sh` is a separate script
-  and, like this one was until today, has never been executed.
+One cycle against a seeded data tier produced all three artifacts and verified its own Postgres
+dump before declaring success:
 
-## Recommended next
+```
+[backup] postgres ok: 9 tables, 20.0K
+[backup] qdrant snapshot copied: drill_probe (drill_probe-…-2026-08-23-07-10-18.snapshot)
+[backup] redis ok: 4.0K
+[backup] pruning backups older than 14d
+[backup] cycle complete
+```
 
-Run the compose `backup` service once and drill its actual output. That closes the last gap
-between "the drill works" and "our backups restore", and it is now cheap: the gateway image that
-blocked A1 from starting the auxiliary services is 2.34 GB rather than 8.88 GB.
+It also writes the Prometheus textfile the monitoring stack alerts on —
+`aura_backup_last_success_timestamp_seconds` advanced, and `aura_backup_offsite_configured 0`
+correctly reflected an unset `BACKUP_S3_URI`.
+
+### All three stores restore from that output
+
+Postgres was drilled through `restore-drill.sh` (9 `TABLE DATA` entries, 9 tables, 3 rows), and
+the two stores the drill deliberately does not cover were verified by hand — which had never been
+done:
+
+| Store | Restored into | Result |
+| --- | --- | --- |
+| Postgres | throwaway `postgres:16-alpine` | 9 tables, 7 FK constraints, `alembic_version` 0003 |
+| Qdrant | empty `qdrant` via `snapshots/recover` | collection back, point 1 with its payload |
+| Redis | empty `redis:7-alpine` loading the RDB | `drill:token` = `abc123` |
+
+Data integrity was checked independently of any script's own assertion. The `users` row returns
+with its `email` and `display_name`; `tasks.title_enc` returns byte-identical, so the
+application-layer ciphertext survives the round trip intact. The restored Qdrant vector is
+L2-normalised relative to what was inserted, which is Qdrant storing a cosine-distance vector
+rather than data loss.
+
+### Retention pruning
+
+The only destructive path in the script, so it was tested rather than assumed. Against a 14-day
+retention with backdated artifacts: the three 20-day-old files and directories were deleted, and
+the 5-day-old and current ones survived. Correct.
+
+Worth knowing rather than fixing: the two `find` calls for dumps and RDBs pass `-print`, so
+deletions appear in the log, while the `qdrant-*` directory prune does not. The directory *is*
+removed — it simply does so silently.
+
+## Still not covered
+
+- **Offsite copy (`rclone` to S3).** Deliberately not exercised: `BACKUP_S3_URI` was left unset,
+  because triggering it would ship data to external storage. The code path is untested.
+- **`deploy/scripts/restore.sh`.** A separate script for restoring *into* a running stack, which,
+  like `restore-drill.sh` was until today, has never been executed.
+- **A full recovery rehearsal.** The three stores were restored in isolation, not as one coherent
+  system with an application on top. The manual checklist in
+  `docs/guides/maintenance-guide.md` still applies.
+
+## Environment caveat
+
+Building the backup image needed the same proxy-CA workaround as A1: Alpine's `apk` failed with
+`TLS: server certificate not trusted` against the sandbox's intercepting proxy. Resolved by
+trusting the CA in a locally retagged `postgres:16-alpine` base. No Dockerfile change, and TLS
+verification was never disabled. This is a property of the sandbox, not of the repository.
