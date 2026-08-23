@@ -95,7 +95,7 @@
   "@onboardingNext": {"description": "Onboarding next button"},
 
   "onboardingGetStarted": "Get started",
-  "@onboardingGetStarted": {"description": "Onboarding finish button"}
+  "@onboardingGetStarted": {"description": "Onboarding finish button"},
 
   "notificationsTooltip": "Notifications",
   "@notificationsTooltip": {"description": "Bell icon tooltip when there are no unread items"},

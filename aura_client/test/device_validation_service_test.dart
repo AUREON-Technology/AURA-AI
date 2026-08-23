@@ -76,6 +76,12 @@ void main() {
       expect(headers['X-Device-Platform'], 'android');
       expect(headers['X-Device-Attestation-Nonce'], 'server-nonce-1');
 
+      // getAttestationHeaders above already resolved and cached an attestation for this
+      // (release, android) pair, and the cache holds for tokenCacheTtl. Without clearing it the
+      // resolve below is served from that cache and never reaches fakeClient, so lastNonce stays
+      // null and the binding assertion cannot mean anything.
+      DeviceValidationService.clearCache();
+
       final fakeClient = _FakeAttestationClient(token: jws);
       final resolved = await DeviceValidationService.resolve(
         debugMode: false,
