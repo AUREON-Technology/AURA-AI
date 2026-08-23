@@ -13,9 +13,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Pin the runtime set. requirements.lock is compiled from requirements.txt
-# (`uv pip compile --python-version 3.11 --python-platform linux`). Test/dev
-# extras stay in requirements-dev.txt and never land here.
+# Pin the runtime set. requirements.lock is compiled from requirements.txt with the
+# command recorded in its own header. Test/dev extras stay in requirements-dev.txt and
+# never land here.
+#
+# The lock resolves torch from PyTorch's CPU index, and carries both index URLs itself so
+# this install needs no extra flags. That is deliberate and worth keeping: the default
+# Linux torch wheel drags in the nvidia-*, cuda-* and triton packages, which is 6.5 GB of
+# CUDA runtime that a CPU-only host can never execute. Four services build from this
+# context, so the cost is paid four times over. Re-compiling without the CPU index will
+# silently put all of it back.
 COPY requirements.lock .
 
 RUN pip install --no-cache-dir --user -r requirements.lock
