@@ -66,14 +66,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsTooltip => 'You';
 
   @override
-  String get notificationsTooltip => 'Notifications';
-
-  @override
-  String unreadNotifications(int count) {
-    return '$count unread notifications';
-  }
-
-  @override
   String get navToday => 'Today';
 
   @override
@@ -111,4 +103,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get onboardingGetStarted => 'Get started';
+
+  @override
+  String get notificationsTooltip => 'Notifications';
+
+  @override
+  String unreadNotifications(int count) {
+    return '$count unread notifications';
+  }
 }

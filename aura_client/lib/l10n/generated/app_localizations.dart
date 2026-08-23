@@ -202,11 +202,89 @@ abstract class AppLocalizations {
   /// **'Encrypted (AES-256-GCM)'**
   String get encryptedAesGcm;
 
-  /// Icon button tooltip
+  /// Icon button tooltip for the You destination
   ///
   /// In en, this message translates to:
-  /// **'Settings'**
+  /// **'You'**
   String get settingsTooltip;
+
+  /// Bottom navigation label
+  ///
+  /// In en, this message translates to:
+  /// **'Today'**
+  String get navToday;
+
+  /// Bottom navigation label
+  ///
+  /// In en, this message translates to:
+  /// **'Copilot'**
+  String get navCopilot;
+
+  /// Bottom navigation label
+  ///
+  /// In en, this message translates to:
+  /// **'Life Hub'**
+  String get navLifeHub;
+
+  /// Bottom navigation label
+  ///
+  /// In en, this message translates to:
+  /// **'You'**
+  String get navYou;
+
+  /// Life Hub screen title
+  ///
+  /// In en, this message translates to:
+  /// **'Life Hub'**
+  String get lifeHubTitle;
+
+  /// You screen title
+  ///
+  /// In en, this message translates to:
+  /// **'You'**
+  String get youTitle;
+
+  /// Knowledge library title
+  ///
+  /// In en, this message translates to:
+  /// **'Knowledge'**
+  String get knowledgeTitle;
+
+  /// Memory screen title
+  ///
+  /// In en, this message translates to:
+  /// **'Memory'**
+  String get memoryTitle;
+
+  /// Feedback screen title
+  ///
+  /// In en, this message translates to:
+  /// **'Feedback'**
+  String get feedbackTitle;
+
+  /// Appearance screen title
+  ///
+  /// In en, this message translates to:
+  /// **'Appearance'**
+  String get appearanceTitle;
+
+  /// Engine status screen title
+  ///
+  /// In en, this message translates to:
+  /// **'Engine status'**
+  String get engineStatusTitle;
+
+  /// Onboarding next button
+  ///
+  /// In en, this message translates to:
+  /// **'Next'**
+  String get onboardingNext;
+
+  /// Onboarding finish button
+  ///
+  /// In en, this message translates to:
+  /// **'Get started'**
+  String get onboardingGetStarted;
 
   /// Bell icon tooltip when there are no unread items
   ///
@@ -219,20 +297,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count} unread notifications'**
   String unreadNotifications(int count);
-
-  String get navToday;
-  String get navCopilot;
-  String get navLifeHub;
-  String get navYou;
-  String get lifeHubTitle;
-  String get youTitle;
-  String get knowledgeTitle;
-  String get memoryTitle;
-  String get feedbackTitle;
-  String get appearanceTitle;
-  String get engineStatusTitle;
-  String get onboardingNext;
-  String get onboardingGetStarted;
 }
 
 class _AppLocalizationsDelegate
