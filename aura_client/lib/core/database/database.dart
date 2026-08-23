@@ -1,11 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
-import 'dart:io';
 import 'package:drift/drift.dart';
-import 'package:drift/native.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 
+import 'package:aura_client/core/database/connection/open_connection.dart';
 import 'package:aura_client/core/security/encryption_service.dart';
 
 part 'database.g.dart';
@@ -241,9 +238,9 @@ class TelemetryLogs extends Table {
 
 @DriftDatabase(tables: [Tasks, CalendarEvents, FinanceRecords, HealthRecords, Messages, AgentConfigurations, UserMemories, PendingDeletes, LearningLogs, OfflineModelWeights, TelemetryLogs, OutboxEntries, SyncMetadata])
 class AppDatabase extends _$AppDatabase {
-  AppDatabase() : super(_openConnection());
+  AppDatabase() : super(openConnection());
 
-  /// In-memory / test executor. Production uses [_openConnection].
+  /// In-memory / test executor. Production uses [openConnection].
   AppDatabase.forTesting(super.e);
 
   @override
@@ -429,12 +426,4 @@ class AppDatabase extends _$AppDatabase {
           }
         },
       );
-}
-
-LazyDatabase _openConnection() {
-  return LazyDatabase(() async {
-    final dbFolder = await getApplicationDocumentsDirectory();
-    final file = File(p.join(dbFolder.path, 'aura_db.sqlite'));
-    return NativeDatabase.createInBackground(file);
-  });
 }
