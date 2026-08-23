@@ -90,7 +90,7 @@ features.
 | # | Work | Reuse |
 | --- | --- | --- |
 | A1 | Deploy `deploy/docker-compose.prod.yml` for real. **In progress** — first-ever build and boot completed in a disposable sandbox on 2026-08-23, surfacing four defects; see [phase-a1-first-boot.md](reports/phase-a1-first-boot.md). The deploy on the real host is still open. | `deploy/scripts/bootstrap-host.sh`, `bootstrap-secrets.sh`, `vps-update.sh` |
-| A2 | Execute one restore drill against a staging copy. | `deploy/scripts/restore-drill.sh` (written, never run) |
+| A2 | Execute one restore drill against a staging copy. **Done** — first execution on 2026-08-23 failed on a defect that made the script unable to succeed at all; fixed, and its assertion tightened to check rows rather than table count. See [phase-a2-restore-drill.md](reports/phase-a2-restore-drill.md). Qdrant, Redis and the `backup` service's own output remain undrilled. | `deploy/scripts/restore-drill.sh` |
 | A3 | Build a labelled retrieval/answer corpus and gate CI on it. | `EvalSuite.from_jsonl` (`aura_core/evaluation/harness.py:77`) already reads `query`, `relevant_documents`, `expected_answer`, `expected_substrings`, `forbidden_substrings`, `should_refuse`, `owner_id`, `tags`. Add suites under `aura_backend/evaluation/suites/`; wire `RegressionGate` into the `test` job of `.github/workflows/backend-ci.yml`. Write no new metrics — recall@k, MRR, nDCG, citation precision and groundedness are implemented. |
 | A4 | Load test with the real data tier. Add `aura_backend/tests/load/` (referenced by the missing-components report, absent from the tree), running against Postgres, Qdrant, Redis and Ollama in path. | Extend the harness in `tests/benchmarks/bench_pipeline.py` — its conditions, not its numbers. |
 
@@ -197,7 +197,7 @@ Phase A, not by an estimate.
 | Gateway image size | **2.34 GB**, down from 8.88 GB once CUDA was dropped ([A1 report](reports/phase-a1-first-boot.md)) | Phase A1 finding 2 |
 | Tool success rate | Unmeasured | Phase C + `ToolTelemetry` |
 | Task completion rate | Unmeasured | Phase C |
-| Restore verified | Never executed | Phase A2 |
+| Restore verified | **Postgres yes** — 9 tables and their data restored from a `backup.sh`-format archive ([A2 report](reports/phase-a2-restore-drill.md)); Qdrant and Redis still never drilled | Phase A2 |
 | Production deployments | 0 (stack booted end-to-end in a sandbox, [A1 report](reports/phase-a1-first-boot.md)) | Phase A1 |
 
 ---
