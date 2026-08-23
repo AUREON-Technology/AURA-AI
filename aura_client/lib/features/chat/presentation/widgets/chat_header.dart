@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 
+import 'chat_header_action_button.dart';
 import 'chat_sync_indicator.dart';
 import 'persona_picker.dart';
 
@@ -24,16 +25,20 @@ class ChatHeader extends ConsumerWidget {
     final routerStatus = ref.watch(aiRouterStatusProvider);
 
     return Container(
-      padding: const EdgeInsets.all(AuraSpacing.xl),
+      padding: EdgeInsets.symmetric(
+        horizontal: isMobile ? AuraSpacing.md : AuraSpacing.xl,
+        vertical: AuraSpacing.lg,
+      ),
       decoration: BoxDecoration(border: Border(bottom: BorderSide(color: palette.border, width: 1))),
       child: Row(
         children: [
           if (isMobile) ...[
-            IconButton(
-              icon: Icon(Icons.menu, color: palette.textPrimary),
+            ChatHeaderActionButton(
+              icon: Icons.menu,
+              color: palette.textPrimary,
               onPressed: onOpenDrawer,
             ),
-            const SizedBox(width: AuraSpacing.sm),
+            const SizedBox(width: AuraSpacing.xs),
           ],
           Container(
             width: 32,
@@ -44,7 +49,7 @@ class ChatHeader extends ConsumerWidget {
               child: Image.asset('assets/app_icon.png', fit: BoxFit.contain),
             ),
           ),
-          const SizedBox(width: AuraSpacing.md),
+          const SizedBox(width: AuraSpacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -81,14 +86,15 @@ class ChatHeader extends ConsumerWidget {
               ],
             ),
           ),
-          IconButton(
-            icon: Icon(Icons.psychology_outlined, color: palette.warning, size: 20),
+          ChatHeaderActionButton(
+            icon: Icons.psychology_outlined,
+            color: palette.warning,
             tooltip: 'Memory',
             onPressed: () => context.go('/memory'),
           ),
-          const SizedBox(width: AuraSpacing.sm),
-          const PersonaChip(),
-          const SizedBox(width: AuraSpacing.sm),
+          const SizedBox(width: AuraSpacing.xs),
+          const PersonaChip(shrink: true),
+          const SizedBox(width: AuraSpacing.xs),
           ChatSyncIndicator(isMobile: isMobile),
         ],
       ),

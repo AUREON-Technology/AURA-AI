@@ -7,7 +7,10 @@ import '../../data/agent_config_repository.dart';
 import '../../data/agents_repository.dart';
 
 class PersonaChip extends ConsumerWidget {
-  const PersonaChip({super.key});
+  /// When true, the label ellipsizes instead of forcing the parent Row wider.
+  final bool shrink;
+
+  const PersonaChip({super.key, this.shrink = false});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -15,12 +18,25 @@ class PersonaChip extends ConsumerWidget {
     final activeId = ref.watch(activeAgentIdProvider);
     final (label, icon) = personaDisplay(activeId);
 
+    final labelStyle = TextStyle(fontSize: 13, color: palette.textPrimary);
+    final labelChild = shrink
+        ? ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 96),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: labelStyle,
+            ),
+          )
+        : Text(label, style: labelStyle);
+
     return InkWell(
       borderRadius: BorderRadius.circular(AuraRadius.pill),
       onTap: () => showPersonaPicker(context),
       child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AuraSpacing.md,
+        padding: EdgeInsets.symmetric(
+          horizontal: shrink ? AuraSpacing.sm : AuraSpacing.md,
           vertical: 6,
         ),
         decoration: BoxDecoration(
@@ -33,10 +49,7 @@ class PersonaChip extends ConsumerWidget {
           children: [
             Icon(icon, size: 16, color: palette.brandOnSurfaceText),
             const SizedBox(width: AuraSpacing.xs),
-            Text(
-              label,
-              style: TextStyle(fontSize: 13, color: palette.textPrimary),
-            ),
+            labelChild,
             const SizedBox(width: AuraSpacing.xs),
             Icon(Icons.expand_more, size: 16, color: palette.textSecondary),
           ],

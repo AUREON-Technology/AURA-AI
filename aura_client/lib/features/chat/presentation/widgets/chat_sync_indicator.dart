@@ -57,16 +57,22 @@ class ChatSyncIndicator extends ConsumerWidget {
           const SizedBox(width: 4),
           isSyncing
               ? SizedBox(
-                  width: 12,
-                  height: 12,
+                  width: 14,
+                  height: 14,
                   child: CircularProgressIndicator(strokeWidth: 1.5, valueColor: AlwaysStoppedAnimation<Color>(palette.warning)),
                 )
               : IconButton(
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  icon: Icon(syncIcon, color: indicatorColor, size: 12),
                   tooltip: 'Sync Now',
-                  onPressed: isSyncing ? null : () => ref.read(chatViewModelProvider.notifier).synchronize(),
+                  onPressed: isSyncing
+                      ? null
+                      : () => ref.read(chatViewModelProvider.notifier).synchronize(),
+                  style: IconButton.styleFrom(
+                    minimumSize: const Size(28, 28),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  icon: Icon(syncIcon, color: indicatorColor, size: 14),
                 ),
         ],
       ),
