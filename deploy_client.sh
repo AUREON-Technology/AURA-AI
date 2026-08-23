@@ -31,6 +31,11 @@ flutter clean
 echo "Resolving dependencies..."
 flutter pub get
 
+if [ -f android/gradlew ]; then
+  echo "Stopping leftover Gradle daemons..."
+  (cd android && ./gradlew --stop) || true
+fi
+
 echo "Building production Android APK (Obfuscated & Split)..."
 flutter build apk --release \
   --obfuscate \
@@ -50,7 +55,6 @@ fi
 
 echo "Building production Web bundle..."
 flutter build web --release \
-  --web-renderer canvaskit \
   --no-source-maps \
   --dart-define=BACKEND_URL="$BACKEND_URL"
 

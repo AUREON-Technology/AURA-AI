@@ -10,6 +10,31 @@ $EnvFile = Join-Path $ScriptDir "deploy\.env"
 
 . (Join-Path $ScriptDir "deploy\scripts\client_backend_url.ps1")
 
+function Invoke-Flutter {
+  param([Parameter(Mandatory = $true)][string[]]$FlutterArgs)
+
+  & flutter @FlutterArgs
+  if ($LASTEXITCODE -ne 0) {
+    throw "flutter $($FlutterArgs -join ' ') failed with exit code $LASTEXITCODE"
+  }
+}
+
+function Stop-AuraGradleDaemons {
+  $androidDir = Join-Path $ClientDir "android"
+  $gradlew = Join-Path $androidDir "gradlew.bat"
+  if (-not (Test-Path $gradlew)) {
+    return
+  }
+
+  Write-Host "Stopping leftover Gradle daemons..." -ForegroundColor Yellow
+  Push-Location $androidDir
+  try {
+    & $gradlew --stop
+  } finally {
+    Pop-Location
+  }
+}
+
 $BACKEND_URL = Get-AuraClientBackendUrl -EnvFile $EnvFile
 Assert-AuraReleaseBackendUrl -Url $BACKEND_URL
 
@@ -24,33 +49,40 @@ Write-Host "==========================================================" -Foregro
 Set-Location $ClientDir
 
 Write-Host "Cleaning Flutter build cache..." -ForegroundColor Yellow
-flutter clean
+Invoke-Flutter -FlutterArgs @("clean")
 
 Write-Host "Resolving dependencies..." -ForegroundColor Yellow
-flutter pub get
+Invoke-Flutter -FlutterArgs @("pub", "get")
+
+Stop-AuraGradleDaemons
 
 Write-Host "Building production Android APK (Obfuscated & Split)..." -ForegroundColor Yellow
-flutter build apk --release `
-  --obfuscate `
-  --split-debug-info=build/app/outputs/symbols `
-  --split-per-abi `
-  --dart-define=BACKEND_URL=$BACKEND_URL
+Invoke-Flutter -FlutterArgs @(
+  "build", "apk", "--release",
+  "--obfuscate",
+  "--split-debug-info=build/app/outputs/symbols",
+  "--split-per-abi",
+  "--dart-define=BACKEND_URL=$BACKEND_URL"
+)
 
 if ($IsMacOS) {
   Write-Host "Building production iOS IPA (Obfuscated)..." -ForegroundColor Yellow
-  flutter build ipa --release `
-    --obfuscate `
-    --split-debug-info=build/ios/outputs/symbols `
-    --dart-define=BACKEND_URL=$BACKEND_URL
+  Invoke-Flutter -FlutterArgs @(
+    "build", "ipa", "--release",
+    "--obfuscate",
+    "--split-debug-info=build/ios/outputs/symbols",
+    "--dart-define=BACKEND_URL=$BACKEND_URL"
+  )
 } else {
   Write-Host "Skipping iOS build (current platform is not macOS)." -ForegroundColor Gray
 }
 
 Write-Host "Building production Web bundle..." -ForegroundColor Yellow
-flutter build web --release `
-  --web-renderer canvaskit `
-  --no-source-maps `
-  --dart-define=BACKEND_URL=$BACKEND_URL
+Invoke-Flutter -FlutterArgs @(
+  "build", "web", "--release",
+  "--no-source-maps",
+  "--dart-define=BACKEND_URL=$BACKEND_URL"
+)
 
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host "Production builds generated." -ForegroundColor Green
