@@ -231,6 +231,12 @@ services:
       # App Attest app ID is APPLE_TEAM_ID + '.' + ios bundle id.
       APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
       AURA_IOS_BUNDLE_ID: ${AURA_IOS_BUNDLE_ID:-com.auraai.auraClient}
+      # Role allowlists for services.rbac.get_user_role. Unset means nobody is
+      # minted Admin/Developer/SuperAdmin from env; consumers stay User.
+      # SUPERADMIN_EMAILS is the only list that can mint SuperAdmin.
+      SUPERADMIN_EMAILS: ${SUPERADMIN_EMAILS:-}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      DEVELOPER_EMAILS: ${DEVELOPER_EMAILS:-}
       # Shared workspace for staged Drive PDFs (API downloads, Celery ingests).
       DATA_DIR: /var/lib/aura/workspace
     secrets: [postgres_password, redis_password, qdrant_api_key, jwt_secret, firebase_credentials]
