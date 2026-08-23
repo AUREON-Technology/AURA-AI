@@ -13,5 +13,5 @@ String getDeterministicId(String value) {
     id = (id << 8) | first8Bytes[i];
   }
   
-  return (id & 0xFFFFFFFFFFFFFFFF).toString();
+  return id.toUnsigned(64).toString();
 }
