@@ -27,7 +27,7 @@ x-restart: &restart
   restart: unless-stopped
 
 networks:
-  # Ingress-facing. Only nginx and the gateway attach.
+  # Ingress-facing. nginx, the gateway, and the operator console attach.
   edge:
     driver: bridge
   # Data tier. internal=true means no route to the host or the internet at all, so a
@@ -111,6 +111,8 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+      console:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
       interval: 30s
@@ -119,6 +121,46 @@ services:
     deploy:
       resources:
         limits: {cpus: "0.5", memory: 256M}
+
+  console:
+    build:
+      context: ../aura_admin
+      dockerfile: Dockerfile
+      args:
+        NEXT_BASE_PATH: /console
+        NEXT_PUBLIC_BASE_PATH: /console
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com}
+        NEXT_PUBLIC_GRAFANA_EMBED: "1"
+    <<: *restart
+    logging: *logging
+    environment:
+      AURA_API_URL: http://gateway:8000
+      NEXT_BASE_PATH: /console
+      NEXT_PUBLIC_BASE_PATH: /console
+      NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      NEXT_PUBLIC_GRAFANA_EMBED: "1"
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+    networks: [edge]
+    depends_on:
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/console/login').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 512M}
 
   # ------------------------------------------------------------------ application
   gateway:
@@ -458,6 +500,8 @@ services:
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_SECURITY_COOKIE_SAMESITE: strict
       GF_SERVER_ROOT_URL: https://${AURA_DOMAIN:-localhost}/grafana/
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_ANALYTICS_REPORTING_ENABLED: "false"

@@ -45,6 +45,17 @@ def test_alertmanager_routes_critical_without_committed_webhook() -> None:
     assert "webhook_configs:" not in text
 
 
+def test_compose_and_nginx_serve_the_operator_console() -> None:
+    compose = (REPO / "deploy/docker-compose.prod.yml").read_text(encoding="utf-8")
+    nginx = (REPO / "deploy/nginx/templates/aura.conf.template").read_text(encoding="utf-8")
+    assert "context: ../aura_admin" in compose
+    assert "GF_SECURITY_ALLOW_EMBEDDING" in compose
+    assert "location /console/" in nginx
+    assert "auth_request /_grafana_auth" in nginx
+    assert "location /metrics" in nginx
+    assert "deny all" in nginx
+
+
 def test_compose_sets_prometheus_multiproc_dir_on_gateway() -> None:
     text = (REPO / "deploy/docker-compose.prod.yml").read_text(encoding="utf-8")
     assert "PROMETHEUS_MULTIPROC_DIR:" in text
