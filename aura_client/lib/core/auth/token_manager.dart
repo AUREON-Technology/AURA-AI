@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import '../config/backend_url_policy.dart';
 import '../config/config.dart';
 import '../security/device_validation_service.dart';
 import '../../features/auth/presentation/auth_provider.dart';
@@ -169,13 +170,17 @@ class TokenManager {
         debugPrint(
           "[TokenManager] token exchange failed: ${response.statusCode} ${response.body}",
         );
+        DeviceValidationService.clearCache();
+        final failure = classifyExchangeFailure(response.statusCode, response.body);
+        if (failure == AuthExchangeFailure.deviceAttestationRejected) {
+          final fallback = await _tryDebugOperatorExchange(idToken);
+          if (fallback != null) return fallback;
+        }
         // A device-attestation 403 won't self-resolve on retry the way a
         // network hiccup will (C1) — surface it distinctly so the UI can
         // tell a user "this device could not be verified" instead of
         // silently degrading to "sync/chat unavailable" forever.
-        _ref.read(authExchangeFailureProvider.notifier).set(
-              classifyExchangeFailure(response.statusCode, response.body),
-            );
+        _ref.read(authExchangeFailureProvider.notifier).set(failure);
         return null;
       }
 
@@ -186,6 +191,27 @@ class TokenManager {
     } catch (e) {
       debugPrint("[TokenManager] exchange failed: $e");
       _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.other);
+      return null;
+    }
+  }
+
+  /// Debug APKs are debug-signed and cannot satisfy production Play Integrity.
+  /// Operators can still mint a session via `/web/token` (role-gated).
+  Future<String?> _tryDebugOperatorExchange(String idToken) async {
+    if (!kDebugMode) return null;
+    if (!BackendUrlPolicy.isSafeForRelease(AppConfig.backendUrl)) return null;
+    try {
+      final response = await _post(
+        "$_authUrl/web/token",
+        headers: {"Authorization": "Bearer $idToken"},
+      );
+      if (response.statusCode != 200) return null;
+      await _applyTokenResponse(jsonDecode(response.body) as Map<String, dynamic>);
+      _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.none);
+      debugPrint("[TokenManager] debug operator web/token succeeded");
+      return _accessToken;
+    } catch (e) {
+      debugPrint("[TokenManager] debug operator web/token failed: $e");
       return null;
     }
   }

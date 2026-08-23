@@ -66,7 +66,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       // Attempt silently restoring session
       await _googleSignIn.attemptLightweightAuthentication();
     } catch (e) {
-      // Ignore if initialization fails (e.g. running on unsupported platform)
+      debugPrint("[AuthNotifier] Google init or lightweight auth failed: $e");
     }
 
     return null; // Require biometric/google sign-in explicitly at launch
@@ -134,7 +134,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       final googleUser = await _googleSignIn.authenticate();
       _currentAccount = googleUser;
       final idToken = googleUser.authentication.idToken;
-      
+
       final profile = UserProfile(
         id: googleUser.id,
         email: googleUser.email,
@@ -225,7 +225,8 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       }
 
       // Fallback: cached Google ID token or mock token. Not claimed as fresh.
-      return await _storage.read(key: 'auth_token');
+      final cached = await _storage.read(key: 'auth_token');
+      return cached;
     } catch (e) {
       debugPrint("[AuthNotifier] Error refreshing or reading ID Token: $e");
       try {
