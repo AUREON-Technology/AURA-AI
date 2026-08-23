@@ -75,7 +75,7 @@ fi
 
 echo "creating empty database drill_restore and restoring..."
 docker exec "$CID" psql -U drill -d postgres -c 'CREATE DATABASE drill_restore;'
-docker exec "$CID" pg_restore --no-owner --no-privileges --dbname=drill_restore "$INNER"
+docker exec "$CID" pg_restore -U drill --no-owner --no-privileges --dbname=drill_restore "$INNER"
 
 restored=$(docker exec "$CID" psql -U drill -d drill_restore -Atc \
     "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';")
@@ -84,5 +84,24 @@ if [ "${restored:-0}" -lt 1 ]; then
     exit 1
 fi
 
-echo "OK: listed $tables TABLE DATA entries, restored $restored public table(s) into throwaway Postgres."
+# Counting tables is not enough: an archive whose every COPY silently restored nothing still
+# leaves the full schema behind, so the check above passes while the backup is worthless. Count
+# the actual rows. query_to_xml is the portable way to run count(*) over a dynamic table list
+# without a DO block or a second round trip.
+rows=$(docker exec "$CID" psql -U drill -d drill_restore -Atc "
+    SELECT coalesce(sum(n), 0) FROM (
+        SELECT (xpath('/row/c/text()',
+                      query_to_xml(format('SELECT count(*) AS c FROM %I.%I', table_schema, table_name),
+                                   false, true, '')))[1]::text::bigint AS n
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+    ) counts;")
+if [ "${rows:-0}" -lt 1 ]; then
+    echo "FAIL: restored $restored table(s) but 0 rows -- the schema came back and the data did not." >&2
+    echo "If you are deliberately drilling a backup of an empty database, that is the one case" >&2
+    echo "where this failure is expected rather than a broken backup." >&2
+    exit 1
+fi
+
+echo "OK: listed $tables TABLE DATA entries, restored $restored public table(s) and $rows row(s) into throwaway Postgres."
 echo "Manual (not this script): copy qdrant-<stamp>/ snapshots back and redis-*.rdb if you are rehearsing a full recovery."
