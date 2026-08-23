@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -16,13 +15,7 @@ bool isChatConnectionErrorText(String text) =>
 /// True when [error] means the host was unreachable (socket, TLS handshake,
 /// connect timeout, or an [http.ClientException] wrapping the same).
 bool isUnreachableBackendError(Object error) {
-  if (error is SocketException ||
-      error is HandshakeException ||
-      error is TlsException ||
-      error is TimeoutException) {
-    return true;
-  }
-  if (error is http.ClientException) {
+  if (error is TimeoutException || error is http.ClientException) {
     return true;
   }
   return _messageLooksLikeUnreachable(error.toString());

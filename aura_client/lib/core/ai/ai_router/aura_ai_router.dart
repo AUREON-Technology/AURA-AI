@@ -1,6 +1,3 @@
-import 'dart:async';
-import 'dart:io';
-
 import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -64,11 +61,11 @@ class AuraAIRouter {
 
   Future<bool> checkConnectivity() async {
     try {
-      final result = await InternetAddress.lookup('one.one.one.one')
+      final response = await _ref
+          .read(auraApiClientProvider)
+          .probeHealth()
           .timeout(const Duration(seconds: 2));
-      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
-    } on SocketException catch (_) {
-      return false;
+      return response.statusCode == 200;
     } catch (_) {
       return false;
     }
