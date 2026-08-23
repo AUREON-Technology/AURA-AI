@@ -194,7 +194,7 @@ Phase A, not by an estimate.
 | Groundedness / citation precision | Unmeasured | Phase A3 suites |
 | Single-turn latency, real data tier | **~5.3 s warm / 20.2 s cold**, 2 output tokens, 3 CPU cores ([A1 report](reports/phase-a1-first-boot.md)) | Phase A4 for p95 under load |
 | Concurrency ceiling | Unmeasured (478 turns/s is an echo provider) | Phase A4 |
-| Gateway image size | **8.88 GB**, of which 2.7 GB is unusable CUDA | Phase A1 finding 2 |
+| Gateway image size | **2.34 GB**, down from 8.88 GB once CUDA was dropped ([A1 report](reports/phase-a1-first-boot.md)) | Phase A1 finding 2 |
 | Tool success rate | Unmeasured | Phase C + `ToolTelemetry` |
 | Task completion rate | Unmeasured | Phase C |
 | Restore verified | Never executed | Phase A2 |

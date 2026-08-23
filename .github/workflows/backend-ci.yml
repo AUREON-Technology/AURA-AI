@@ -109,12 +109,28 @@ jobs:
           cache-dependency-path: aura_backend/requirements.lock
 
       - name: Audit lockfile (AURA-020)
-        # --disable-pip: audit the pins as written. Installing the lockfile
-        # would pull Linux CUDA wheels (torch) which the scan does not need.
+        # --disable-pip: audit the pins as written rather than installing them.
         # Fail on known CVEs. Do not mass-upgrade here: scan first, upgrade with tests later.
+        #
+        # torch is pinned to the CPU wheel (2.13.0+cpu, see requirements.lock). A local
+        # version specifier has no PyPI entry, and pip-audit silently *skips* what it cannot
+        # resolve -- which would drop torch out of the scan while still reporting success.
+        # Strip the local segment for the scan only: the CPU wheel is built from the same
+        # source as the PyPI release, so upstream advisories apply unchanged.
         run: |
           pip install pip-audit
-          pip-audit --disable-pip --no-deps -r requirements.lock
+          sed -E 's/^([A-Za-z0-9._-]+==[^+]+)\+[A-Za-z0-9.]+$/\1/' requirements.lock > /tmp/audit.lock
+          # No pipe here: the default shell has no pipefail, so `pip-audit | tee` would
+          # report tee's status and swallow a CVE finding.
+          pip-audit --disable-pip --no-deps -r /tmp/audit.lock > /tmp/audit.out 2>&1 || {
+            cat /tmp/audit.out
+            exit 1
+          }
+          cat /tmp/audit.out
+          if grep -q "could not be audited" /tmp/audit.out; then
+            echo "::error::pip-audit skipped a pinned package, so it was not scanned"
+            exit 1
+          fi
 
   docker-build:
     runs-on: ubuntu-latest

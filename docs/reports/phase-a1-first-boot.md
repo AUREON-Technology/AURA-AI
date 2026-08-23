@@ -63,7 +63,7 @@ path still serves from Qdrant, Redis and the model, so failing readiness over a 
 partial degradation into an outage. A stale schema is operator-caused and persistent, which is
 why only it is treated as fatal.
 
-## Finding 2 — The gateway image ships 2.7 GB of CUDA libraries it cannot use
+## Finding 2 — The gateway image ships CUDA libraries it cannot use
 
 The built image is **8.88 GB**. Inside it:
 
@@ -73,18 +73,39 @@ The built image is **8.88 GB**. Inside it:
 | `site-packages/torch` | 1.2 GB |
 | `/root/.local` total | 5.4 GB |
 
-`requirements.lock` pins 22 `nvidia-*` packages. They arrive as transitive dependencies of the
+`requirements.lock` pinned 15 `nvidia-*` packages (an earlier count of 22 in this report
+included comment lines, not distributions). They arrived as transitive dependencies of the
 default (CUDA) torch wheel, which itself comes from `sentence-transformers` — the configured
 embedding provider (`BAAI/bge-small-en-v1.5`). Torch is genuinely needed; the CUDA build is not,
 on a CPU-only VPS.
 
-Compiling the lockfile against `https://download.pytorch.org/whl/cpu` would drop the `nvidia-*`
-set and roughly 2.7 GB. This matters more than image hygiene: four services
-(`gateway`, `worker-realtime`, `worker-ingestion`, `beat`) build from this context, and with
-`ollama/ollama` at 8.44 GB the stack needs well over 17 GB of images before any data.
+This matters more than image hygiene: four services (`gateway`, `worker-realtime`,
+`worker-ingestion`, `beat`) build from this context, so the cost is paid four times over, and
+disk exhaustion during the worker image export is what stopped this run from booting
+`worker-realtime` and `beat`.
 
-Disk exhaustion during the worker image export is what stopped this run from booting
-`worker-realtime` and `beat` — see Not Verified below.
+**Resolved.** The lockfile is now compiled against `https://download.pytorch.org/whl/cpu`, which
+drops 19 distributions — the 15 `nvidia-*`, three `cuda-*`, and `triton` — and swaps `torch`
+for the same version's CPU wheel. No other pin moved.
+
+| | Before | After |
+| --- | --- | --- |
+| Image | **8.88 GB** | **2.34 GB** |
+| `site-packages/nvidia/*` | 2.7 GB | absent |
+| `site-packages/torch` | 1.2 GB | 754 MB |
+| `/root/.local` | 5.4 GB | 1.6 GB |
+
+**6.54 GB smaller, a 74% reduction** — more than the 2.7 GB first estimated here, because the
+CUDA removal also takes `triton` and the `cuda-*` set with it and the CPU wheel is itself
+smaller. Verified functionally, not just by size: `BAAI/bge-small-en-v1.5` loads and returns
+384-dimension vectors matching the configured `AURA_EMBEDDING_DIMENSION`, with sane semantics
+(0.63 cosine for a related pair against 0.45 for an unrelated one), and `aura_service:app`
+imports inside the image with all 31 documented routes present.
+
+One consequence worth recording: a local version specifier like `2.13.0+cpu` has no PyPI entry,
+and `pip-audit` *skips* what it cannot resolve while still reporting success — so the change
+would have quietly dropped torch out of the CVE scan. The audit job now strips the local segment
+before scanning and fails if any pin is skipped.
 
 ## Finding 3 — First real latency numbers
 
@@ -149,7 +170,6 @@ covers `secrets/`, which was verified rather than assumed.
 ## Recommended order for the real A1
 
 1. ~~Fix Finding 1~~ — done; readiness is schema-aware and the runbook is corrected.
-2. Rebuild the lockfile against the CPU torch index (Finding 2) before shipping 8.88 GB to a VPS
-   four times over.
+2. ~~Rebuild the lockfile against the CPU torch index~~ — done; the image is 2.34 GB.
 3. Then follow `provisioning-runbook.md` on the real host, and finish A1 by booting the services
    this run could not reach.
