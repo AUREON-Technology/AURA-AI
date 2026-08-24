@@ -19,11 +19,18 @@ from .adapters.memory_stores import (
     InMemoryDocumentStore,
     InMemoryGoalsPort,
     InMemoryGraphStore,
+    InMemoryInsightSink,
     InMemoryMemoryStore,
     InMemoryPersonalOsStore,
     InMemoryVectorStore,
 )
-from .adapters.runtime import InMemoryAuditSink, InMemoryEventBus, SystemClock
+from .adapters.runtime import (
+    DurableEventBus,
+    InMemoryAuditSink,
+    InMemoryEventBus,
+    InMemoryEventOutbox,
+    SystemClock,
+)
 from .config.settings import AuraSettings, load_settings
 from .context.engine import ContextEngine
 from .context.tokenizer import get_tokenizer
@@ -53,6 +60,7 @@ from .safety.pipeline import SafetyPipeline
 from .tools.builtin import default_tools
 from .tools.policy import ToolPolicy
 from .tools.registry import ToolRegistry
+from .triggers import DEFAULT_TRIGGER_SPECS, DURABLE_EVENT_TYPES, TriggerContext, TriggerEngine
 
 __all__ = ["Container", "build_container"]
 
@@ -90,14 +98,29 @@ class Container:
         )
 
         self.clock = SystemClock()
-        self.events = InMemoryEventBus(metrics=self.metrics)
 
-        # Memoised by _postgres_pool(); declared before the stores are built because both of them
-        # ask for it.
+        # Memoised by _postgres_pool(); declared before anything below asks for it.
         self._pg_pool: Any = None
 
         # Extra readiness probes contributed by the layer above (see register_readiness_check).
         self._readiness_checks: dict[str, Any] = {}
+
+        # Phase E1/E2: a durable outbox for event types a live handler failure must not lose, and
+        # the trigger engine -- the first real subscriber the event bus has ever had (every other
+        # engine below only ever publishes to it). Wiring order matters: the trigger engine has to
+        # exist before `self.events` does, since the durable bus wraps the same inner bus the
+        # trigger engine subscribes to.
+        self.event_outbox = self._build_event_outbox()
+        self.insight_sink = self._build_insight_sink()
+        self.triggers = TriggerEngine(DEFAULT_TRIGGER_SPECS)
+        self.trigger_context = TriggerContext(insight_sink=self.insight_sink)
+        events_inner = InMemoryEventBus(metrics=self.metrics)
+        events_inner.subscribe_all(
+            lambda event: self.triggers.handle(event, context=self.trigger_context)
+        )
+        self.events = DurableEventBus(
+            inner=events_inner, outbox=self.event_outbox, durable_event_types=DURABLE_EVENT_TYPES,
+        )
 
         self.cache_backend = self._build_cache()
         self.embedder = self._build_embedder()
@@ -466,6 +489,28 @@ class Container:
                 self.settings.infrastructure.database_url, pool=self._postgres_pool()
             )
         return InMemoryGoalsPort()
+
+    def _build_event_outbox(self) -> Any:
+        """The `EventOutbox` (Phase E1): a new, aura_core-owned table -- gated the same way as
+        the audit sink, since both need a real Postgres to survive a restart."""
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_outbox import PostgresEventOutbox
+
+            return PostgresEventOutbox(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        return InMemoryEventOutbox()
+
+    def _build_insight_sink(self) -> Any:
+        """The `InsightSink` (Phase E2): writes into the legacy `insights` table, the same
+        read-a-legacy-table-via-raw-SQL pattern `_build_goals_port` uses to read `goals`."""
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_insights import PostgresInsightSink
+
+            return PostgresInsightSink(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        return InMemoryInsightSink()
 
     def _build_graph_store(self) -> Any:
         if self.settings.infrastructure.document_backend == "postgres":

@@ -15,15 +15,24 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Sequence
 
 from ..domain.events import DomainEvent
+from ..domain.outbox import OutboxEntry
 from ..observability.logging import get_logger
 from ..ports.runtime import AuditEvent
 
-__all__ = ["InMemoryEventBus", "SystemClock", "FrozenClock", "InMemoryAuditSink"]
+__all__ = [
+    "InMemoryEventBus",
+    "InMemoryEventOutbox",
+    "DurableEventBus",
+    "SystemClock",
+    "FrozenClock",
+    "InMemoryAuditSink",
+]
 
 logger = get_logger("adapters.runtime")
 
@@ -77,6 +86,101 @@ class InMemoryEventBus:
     @property
     def published_count(self) -> int:
         return self._published
+
+
+class InMemoryEventOutbox:
+    """Reference implementation of :class:`~aura_core.ports.storage.EventOutbox` (Phase E1).
+
+    Test/local-dev only, same reasoning as every other ``InMemory*`` adapter here: correct, but
+    loses everything on restart, which is the one property an *outbox* cannot have in production.
+    """
+
+    def __init__(self) -> None:
+        self._entries: dict[str, dict] = {}
+        self._lock = asyncio.Lock()
+
+    async def enqueue(self, event: DomainEvent) -> str:
+        entry_id = uuid.uuid4().hex
+        async with self._lock:
+            self._entries[entry_id] = {
+                "event_name": event.name,
+                "payload": event.as_dict(),
+                "created_at": event.occurred_at,
+                "attempts": 0,
+                "claimed": False,
+                "dead_lettered": False,
+            }
+        return entry_id
+
+    async def claim_batch(self, *, limit: int = 50) -> Sequence[OutboxEntry]:
+        async with self._lock:
+            claimable = [
+                (entry_id, row) for entry_id, row in self._entries.items()
+                if not row["claimed"] and not row["dead_lettered"]
+            ]
+            claimable.sort(key=lambda pair: pair[1]["created_at"])
+            batch = claimable[:limit]
+            for entry_id, row in batch:
+                row["claimed"] = True
+            return [
+                OutboxEntry(
+                    id=entry_id, event_name=row["event_name"], payload=row["payload"],
+                    created_at=row["created_at"], attempts=row["attempts"],
+                )
+                for entry_id, row in batch
+            ]
+
+    async def mark_processed(self, entry_id: str) -> None:
+        async with self._lock:
+            self._entries.pop(entry_id, None)
+
+    async def mark_failed(self, entry_id: str, *, error: str, max_attempts: int = 5) -> None:
+        async with self._lock:
+            row = self._entries.get(entry_id)
+            if row is None:
+                return
+            row["attempts"] += 1
+            row["claimed"] = False
+            row["last_error"] = error
+            if row["attempts"] >= max_attempts:
+                row["dead_lettered"] = True
+
+    def __len__(self) -> int:
+        """Pending (claimable or claimed, not yet processed/dead-lettered) entry count."""
+        return sum(1 for row in self._entries.values() if not row["dead_lettered"])
+
+
+class DurableEventBus:
+    """Wraps an event bus so a chosen subset of event types survive a handler failure or a crash
+    between publish and dispatch (Phase E1).
+
+    ``durable_event_types`` opts specific event types *out* of the inner bus's live, best-effort
+    dispatch and into the outbox instead -- one delivery path per event, not two racing ones (see
+    :class:`~aura_core.ports.storage.EventOutbox`). Every other event type is published to
+    ``inner`` exactly as before: this wrapper changes nothing about the event bus's existing
+    behaviour for the reactions it already serves.
+    """
+
+    def __init__(self, *, inner, outbox, durable_event_types: frozenset[type[DomainEvent]]) -> None:
+        self._inner = inner
+        self._outbox = outbox
+        self._durable_types = durable_event_types
+
+    def subscribe(self, event_type: type[DomainEvent], handler) -> None:
+        self._inner.subscribe(event_type, handler)
+
+    def subscribe_all(self, handler) -> None:
+        self._inner.subscribe_all(handler)
+
+    async def publish(self, event: DomainEvent) -> None:
+        if type(event) in self._durable_types:
+            await self._outbox.enqueue(event)
+            return
+        await self._inner.publish(event)
+
+    @property
+    def published_count(self) -> int:
+        return self._inner.published_count
 
 
 class SystemClock:

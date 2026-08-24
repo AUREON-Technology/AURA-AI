@@ -34,6 +34,10 @@ class InsightResponse(BaseModel):
     message: str
     explanation: str
     created_at: str
+    #: Record ids (task/health/finance/goal/event) grounding this insight (Phase E3). Empty for
+    #: any insight generated before this field existed -- `payload.get` defaults it, not a
+    #: migration, since it lives in the JSON blob, not a column.
+    citations: list[str] = []
 
 
 def _to_response(row: Insight) -> InsightResponse:
@@ -44,6 +48,7 @@ def _to_response(row: Insight) -> InsightResponse:
         message=payload.get("message", ""),
         explanation=payload.get("explanation", ""),
         created_at=row.created_at.isoformat(),
+        citations=payload.get("citations", []),
     )
 
 

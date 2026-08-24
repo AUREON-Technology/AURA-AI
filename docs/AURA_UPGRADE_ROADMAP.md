@@ -238,13 +238,79 @@ needs them to answer "what should I work on"; leads and revenue do not (see §4)
 
 ### Phase E — Proactive intelligence
 
-- **E1.** Durable event delivery for reactions that must not be lost: a Postgres outbox drained by
-  Celery. `InMemoryEventBus` stays for metrics, audit and cache invalidation — that is what its
-  docstring scopes it to, and it is correct for those.
-- **E2.** A trigger engine over domain events, plus a daily briefing.
-- **E3.** Upgrade `services/insights.py` from fixed rules to kernel-generated insights with
-  citations — gated by the Phase A corpus, so the upgrade is provably not a regression. Rules beat
-  a model call on cost, latency and reliability today; the burden of proof is on the replacement.
+**Done**, 2026-08-24.
+
+Investigated before implementing (per the roadmap's own standing rule) and found a real
+discrepancy between this codebase's own docstring and its behaviour: `InMemoryEventBus`'s module
+docstring claims "audit logging, metric updates, and cache invalidation subscribe to domain
+events." A full-repo search for `.subscribe(`/`.subscribe_all(` outside that file itself and its
+own test fixture returned nothing — every engine publishes to the bus, nothing has ever consumed
+it. Audit writes happen through direct `audit.record(...)` calls threaded through each engine
+independently. That reframes what "proactive intelligence" means here: it is not upgrading an
+existing reactive layer, it is building this system's first one.
+
+- **E1. Done.** A durable outbox for event types a live handler failure must not lose
+  (`aura_core/adapters/postgres_outbox.py`'s `PostgresEventOutbox`, `aura_event_outbox` table,
+  `FOR UPDATE SKIP LOCKED` + a `claimed_at` lease so a crashed drain worker's claim expires rather
+  than stranding the row forever). `DurableEventBus` (`aura_core/adapters/runtime.py`) wraps the
+  existing `InMemoryEventBus` unchanged for every non-durable event type; a durable-marked type is
+  enqueued instead of live-dispatched, so there is exactly one delivery path per event, not two
+  racing ones. Drained by `tasks.drain_event_outbox_task`, scheduled every 60s (`celery_app.py`) —
+  `aura_core/learning/jobs.py`'s `run_outbox_drain`. Verified end to end against a real (throwaway)
+  Postgres instance: concurrent `claim_batch` calls never double-claim the same row, a
+  dead-lettered entry (5 failed attempts) is never reclaimed, and `PostgresInsightSink.surface`'s
+  `ON CONFLICT DO NOTHING` makes a redelivered event's action a true no-op, not a duplicate.
+  Found and fixed a real bug while building this: `DomainEvent.as_dict()` used
+  `dataclasses.asdict()`, which recursively flattens every nested dataclass — including each
+  identifier field, itself a frozen dataclass — into a plain `{"value": ...}` dict *before* the
+  method's own flattening check ever ran, silently defeating it for every event with an identifier
+  field. Nothing had round-tripped an event through `as_dict()` before this phase, so nothing had
+  ever exercised the bug.
+- **E2. Done.** `aura_core/triggers/`: `TriggerEngine` is the event bus's first real subscriber,
+  wired via `subscribe_all` in `container.py` (so future non-durable, low-latency triggers work
+  without new plumbing) and, for durable types, via the outbox drain. One real trigger ships:
+  `document_quarantined` reacts to `DocumentIngested(quarantined=True)` — genuinely published
+  today (`aura_core/knowledge/engine.py`, both the fully- and partially-quarantined ingestion
+  paths) and, per the same subscriber search above, never previously consumed by anything. A
+  document a user uploaded could be silently short of the content they expect with no record
+  anywhere saying so; the trigger surfaces a per-user `Insight` (`kind="document_quarantined"`)
+  through the same `InsightSink` port the daily briefing uses. The daily briefing itself
+  (`aura_core/triggers/briefing.py`'s pure `build_daily_briefing`, same caller-supplies-the-data
+  design as Phase D3's tools; `services/daily_briefing.py` supplies real counts from Postgres) runs
+  once a day via `tasks.generate_daily_briefings_task` and writes an ordinary `kind="daily_briefing"`
+  insight — no client change needed, it renders on the existing Today-screen feed
+  `services/insights.py` already populates. 46 new tests, plus a container-wiring integration test
+  proving the whole pipeline (publish → outbox → drain → decode → trigger → surfaced insight)
+  end to end on the in-memory stack the full suite runs on. (38 tests across the four new files,
+  5 more added to `test_beat_schedule.py` for the drain job and its beat entry.)
+- **E3. Corrected scope, done within it.** The roadmap's own text sets the bar precisely: "the
+  burden of proof is on the replacement," proof meaning the Phase A eval harness
+  (`aura_core/evaluation/harness.py`'s `AnswerEvaluator`/`RegressionGate`) shows no regression
+  against a real model. That harness scores free-text kernel answers against a query; this
+  environment has no real (non-echo) model to generate an answer worth scoring — Phase A4's real
+  load test required standing up a live Ollama container with a pulled model, infrastructure this
+  session did not reconstruct for one eval run. Building and shipping a model-generated replacement
+  without that proof would be exactly the thing the roadmap's own gate exists to prevent, so the
+  rule engine stays the production insight generator. What *is* real and shipped: every rule-based
+  candidate (`services/insights.py`'s `overdue_tasks`/`hydration`/`high_spend`, and the new
+  `daily_briefing`) now carries `citations` — the actual record ids (task/health/finance/goal/event)
+  that produced it — alongside `message`/`explanation`, surfaced through `api/v3/insights`'s
+  `InsightResponse.citations`. This is the grounding half of "insights with citations": a future
+  model-phrased version needs the same evidence to cite from, and capturing it now costs no model
+  call and is fully backward compatible (an unrecognised JSON key was already ignored by the
+  client's `payload.get(...)` reads). Verified against a real Postgres via a new, permanent,
+  CI-running integration test (`test_insights_integration.py`, the same testcontainers pattern as
+  `test_sync_integration.py`) — which, while being written, found that pattern's pre-existing
+  standalone-run fragility (it only passed as part of a full `unittest discover` run, which
+  happened to import `infrastructure.db.models` via some earlier module first) and fixed it in both
+  files with the missing explicit import.
+
+**Exit criteria.** A domain event reaches a real reaction without being lost to a swallowed handler
+exception or a mid-dispatch crash — **done**, proven against a real Postgres outbox with concurrent
+claims and a dead-letter path. A proactive surface exists that nothing published before this phase
+consumed — **done** (`document_quarantined`, `daily_briefing`). Kernel-generated insights with
+citations, gated by the eval corpus — **citations done; generation correctly not attempted**
+without the real-model eval infrastructure the gate requires to mean anything.
 
 ### Phase F — Multimodal and voice
 

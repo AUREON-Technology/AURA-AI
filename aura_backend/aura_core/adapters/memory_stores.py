@@ -48,6 +48,7 @@ __all__ = [
     "InMemoryPersonalOsStore",
     "InMemoryGraphStore",
     "InMemoryGoalsPort",
+    "InMemoryInsightSink",
 ]
 
 
@@ -424,6 +425,30 @@ class InMemoryGoalsPort:
             )
         )
         return goals[:limit]
+
+
+class InMemoryInsightSink:
+    """Reference implementation of :class:`~aura_core.ports.storage.InsightSink` (Phase E2).
+
+    ``surfaced`` is a plain list, most recent last -- tests read it directly rather than through
+    a query method, since the only real consumer of this port's *output* is the Flutter Today
+    screen reading the legacy ``insights`` table via :class:`PostgresInsightSink`.
+    """
+
+    def __init__(self) -> None:
+        self.surfaced: list[dict] = []
+        self._seen_ids: set[str] = set()
+
+    async def surface(
+        self, owner_id: UserId, *, insight_id: str, kind: str, message: str, explanation: str,
+    ) -> None:
+        if insight_id in self._seen_ids:
+            return
+        self._seen_ids.add(insight_id)
+        self.surfaced.append({
+            "owner_id": owner_id, "insight_id": insight_id, "kind": kind,
+            "message": message, "explanation": explanation,
+        })
 
 
 class InMemoryGraphStore:

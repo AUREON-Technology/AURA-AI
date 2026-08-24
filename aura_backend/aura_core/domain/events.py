@@ -70,7 +70,18 @@ class DomainEvent:
         return type(self).__name__
 
     def as_dict(self) -> dict[str, Any]:
-        from dataclasses import asdict
+        """Flatten to JSON-safe primitives: identifier fields become their bare ``.value``
+        string, datetimes become ISO 8601.
+
+        Deliberately walks ``dataclasses.fields(self)`` rather than calling
+        ``dataclasses.asdict()``: ``asdict`` recursively converts *every* nested dataclass --
+        including each identifier field, itself a frozen dataclass -- into a plain dict before
+        this method ever sees it, which silently defeats the ``hasattr(value, "value")`` check
+        below for every event with an identifier field (e.g. ``document_id={"value": "doc1"}``
+        instead of ``document_id="doc1"``). Reading each field's live value directly keeps the
+        identifier objects intact until the check below actually runs.
+        """
+        from dataclasses import fields
 
         def _encode(value: Any) -> Any:
             if isinstance(value, datetime):
@@ -79,7 +90,7 @@ class DomainEvent:
                 return value.value
             return value
 
-        payload = {k: _encode(v) for k, v in asdict(self).items()}
+        payload = {f.name: _encode(getattr(self, f.name)) for f in fields(self)}
         payload["event"] = self.name
         return payload
 
