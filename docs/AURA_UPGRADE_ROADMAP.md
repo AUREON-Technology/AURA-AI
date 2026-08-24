@@ -143,18 +143,45 @@ Small, and it removes ambiguity that Phase C would otherwise inherit. **Done**, 
 
 ### Phase C — Agent platform
 
-- **C1.** Replace the `AGENT_PROMPT_IDS` dict with an agent registry: identity, prompt, allowed
-  tools, required capabilities, risk ceiling, memory scope. Bind it through the existing
-  `aura_core/tools/policy.py` and the risk/confirmation machinery in `aura_core/tools/registry.py`.
-  Do not introduce a second permission model beside the one the tool registry already enforces.
-- **C2.** Add server-side CRUD tools for tasks, calendar, finance and health against Postgres, so
-  the kernel can act rather than only propose. Keep `propose_*` for high-risk writes: the
-  confirmation path through `personal_os.py` and the client's `pending_actions_card.dart` works
-  and should not be rebuilt.
+**Done**, 2026-08-24.
 
-**Exit criteria.** An agent's tool set is data, not code. A tool call outside an agent's grant
-fails closed and is visible in `PostgresAuditSink`. Task-completion rate is measurable through the
-Phase A harness.
+- **C1. Done.** `aura_core/agents/registry.py`'s `AgentSpec`/`AgentRegistry` replace
+  `AGENT_PROMPT_IDS`. Confirmed by reading the kernel before touching it: every one of the seven
+  personas previously shared the exact same tool universe — `agent` only selected a system prompt
+  template, `_tool_declarations()` filtered solely by the caller's own capabilities, never by
+  which persona was asking. Now each `AgentSpec` carries `allowed_tools`, `required_capabilities`,
+  a `risk_ceiling` (`ToolSensitivity`), and a `memory_scope`, and the grant is enforced through the
+  *existing* machinery, not a new one: `allowed_tools`/`risk_ceiling` ride through
+  `ToolContext` into `ToolPolicy.evaluate()`, which gained one new rule (`outside_agent_grant`)
+  denying and auditing a call outside the resolved agent's set — the identical
+  `_audit_call` → `AuditSink.record` path every other policy refusal already uses.
+  `GET /api/v3/agents` now returns each persona's real grant, not just its prompt id. 14 new
+  tests, including one that asserts every persona's grant is a real, registered tool name (catches
+  drift between the registry and `tools/`).
+- **C2. Done, with a corrected scope.** Investigated before implementing (per the roadmap's own
+  standing rule) and found the literal wording — CRUD against the `tasks`/`calendar_events`/
+  `finance_records`/`health_records` Postgres tables — describes something that cannot be built
+  safely: those tables are zero-knowledge encrypted client-side
+  (`aura_client/lib/core/security/encryption_service.dart`), and the server holds no key to
+  produce valid ciphertext with. Writing plaintext into a column the whole architecture promises
+  never contains any would not degrade that guarantee, it would invert it. Raised with the user
+  mid-task; decision: build the CRUD tools against a new, aura_core-owned table instead
+  (`aura_personal_os_records`, via `PostgresPersonalOsStore` — same raw-asyncpg pattern
+  `aura_memories`/`aura_documents` already use, sharing the connection pool), leaving the legacy
+  encrypted tables and their guarantee completely untouched. Eight new tools
+  (`create_task`/`list_tasks` and the calendar/finance/health equivalents,
+  `aura_core/tools/records.py`) reach real, persisted, listable storage the kernel itself can read
+  back — proven end to end against a real (throwaway) Postgres instance, not only the in-memory
+  adapter. **Still open, named rather than silently dropped:** update/delete tools (create+list
+  only so far); syncing these new records to the Flutter client's existing UI (they are currently
+  server-visible only — no new client work was in this PR's scope).
+
+**Exit criteria.** An agent's tool set is data, not code — **done** (C1). A tool call outside an
+agent's grant fails closed and is visible in the audit sink — **done**, proven against both a
+synthetic tool (C1) and a real C2 tool (`create_health_record` denied for `finance_advisor`).
+Task-completion rate is measurable through the Phase A harness — **still open**: the harness has
+no task-completion evaluator today, and building one is a Phase-A-shaped follow-up, not implied by
+having something to measure.
 
 ### Phase D — Projects, Goals, and prioritisation
 

@@ -24,7 +24,7 @@ import asyncio
 from typing import Any, AsyncIterator, Mapping, Sequence
 
 from ..domain.errors import ConflictError, ValidationError
-from ..domain.identifiers import DocumentId, MemoryId, UserId
+from ..domain.identifiers import DocumentId, MemoryId, PersonalOsRecordId, UserId
 from ..domain.knowledge import (
     Chunk,
     Document,
@@ -35,6 +35,7 @@ from ..domain.knowledge import (
     Relation,
 )
 from ..domain.memory import MemoryKind, MemoryRecord
+from ..domain.personal_os import PersonalOsRecord, RecordKind
 from ..llm.embeddings import cosine_similarity
 from ..ports.storage import VectorPoint
 
@@ -42,6 +43,7 @@ __all__ = [
     "InMemoryVectorStore",
     "InMemoryDocumentStore",
     "InMemoryMemoryStore",
+    "InMemoryPersonalOsStore",
     "InMemoryGraphStore",
 ]
 
@@ -346,6 +348,48 @@ class InMemoryMemoryStore:
             1 for r in self._records.values()
             if r.owner_id == owner_id and (kind is None or r.kind == kind)
         )
+
+
+class InMemoryPersonalOsStore:
+    """Reference implementation of :class:`~aura_core.ports.storage.PersonalOsStore` (Phase C2)."""
+
+    def __init__(self) -> None:
+        self._records: dict[str, PersonalOsRecord] = {}
+        self._lock = asyncio.Lock()
+
+    async def put(self, record: PersonalOsRecord) -> None:
+        async with self._lock:
+            self._records[record.id.value] = record
+
+    async def get(
+        self, record_id: PersonalOsRecordId, *, owner_id: UserId
+    ) -> PersonalOsRecord | None:
+        record = self._records.get(record_id.value)
+        if record is None or record.owner_id != owner_id:
+            return None
+        return record
+
+    async def list_for_owner(
+        self, owner_id: UserId, *, kind: RecordKind | None = None, limit: int = 100,
+    ) -> list[PersonalOsRecord]:
+        matches = [
+            r for r in self._records.values()
+            if r.owner_id == owner_id and (kind is None or r.kind == kind)
+        ]
+        matches.sort(key=lambda r: r.created_at, reverse=True)
+        return matches[:limit]
+
+    async def update(self, record: PersonalOsRecord) -> None:
+        async with self._lock:
+            self._records[record.id.value] = record
+
+    async def delete(self, record_id: PersonalOsRecordId, *, owner_id: UserId) -> bool:
+        record = self._records.get(record_id.value)
+        if record is None or record.owner_id != owner_id:
+            return False
+        async with self._lock:
+            self._records.pop(record_id.value, None)
+        return True
 
 
 class InMemoryGraphStore:

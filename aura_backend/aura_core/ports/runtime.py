@@ -19,7 +19,7 @@ from typing import Any, Awaitable, Callable, Mapping, Protocol, Sequence, runtim
 from ..domain.events import DomainEvent
 from ..domain.identifiers import UserId
 from ..domain.telemetry import TurnTelemetry
-from ..domain.tools import ToolSpec
+from ..domain.tools import ToolSensitivity, ToolSpec
 
 __all__ = [
     "Tool",
@@ -41,9 +41,20 @@ class ToolContext:
     explicit credential resolver -- never the raw request, never the conversation, never other
     users' data. Passing the whole request object into tools is how a tool ends up reading the
     system prompt.
+
+    ``agent_id``, ``allowed_tools``, ``max_sensitivity`` and ``memory_scope`` are the one
+    exception to "narrow": they are policy inputs, not caller data, carried here because
+    :class:`ToolContext` is the one object that already flows unchanged from the kernel through
+    the executor into :meth:`ToolPolicy.evaluate` (Phase C1, ``aura_core/agents/registry.py``).
+    ``allowed_tools=None``/``max_sensitivity=None`` mean "no agent-level restriction beyond the
+    caller's own capability grants" -- the pre-Phase-C1 behaviour, so every existing caller that
+    builds a ``ToolContext`` without them is unaffected.
     """
 
-    __slots__ = ("user_id", "correlation_id", "deadline_s", "tainted", "credentials", "metadata")
+    __slots__ = (
+        "user_id", "correlation_id", "deadline_s", "tainted", "credentials", "metadata",
+        "agent_id", "allowed_tools", "max_sensitivity", "memory_scope",
+    )
 
     def __init__(
         self,
@@ -54,6 +65,10 @@ class ToolContext:
         tainted: bool = False,
         credentials: Mapping[str, str] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        agent_id: str | None = None,
+        allowed_tools: frozenset[str] | None = None,
+        max_sensitivity: ToolSensitivity | None = None,
+        memory_scope: str = "shared",
     ) -> None:
         self.user_id = user_id
         self.correlation_id = correlation_id
@@ -63,6 +78,10 @@ class ToolContext:
         self.tainted = tainted
         self.credentials = dict(credentials or {})
         self.metadata = dict(metadata or {})
+        self.agent_id = agent_id
+        self.allowed_tools = allowed_tools
+        self.max_sensitivity = max_sensitivity
+        self.memory_scope = memory_scope
 
 
 @runtime_checkable

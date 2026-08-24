@@ -63,7 +63,20 @@ class ToolPolicy:
         if self._allowlist and spec.name not in self._allowlist:
             return ToolPolicyDecision.deny("not_in_allowlist", **audit)
 
-        if spec.sensitivity > self._max_sensitivity:
+        # Agent-level grant (Phase C1). ``allowed_tools=None`` means the caller set no
+        # restriction beyond its own capabilities -- the orchestrator persona and every caller
+        # that predates the agent registry. A non-None set is an allowlist scoped to one turn's
+        # resolved agent, enforced here rather than only at declaration time so a call that
+        # somehow reaches dispatch outside what was ever offered (a hallucinated tool name, a
+        # future non-conforming caller) still fails closed and is audited like any other denial.
+        if context.allowed_tools is not None and spec.name not in context.allowed_tools:
+            return ToolPolicyDecision.deny("outside_agent_grant", **audit)
+
+        effective_max_sensitivity = (
+            self._max_sensitivity if context.max_sensitivity is None
+            else min(self._max_sensitivity, context.max_sensitivity)
+        )
+        if spec.sensitivity > effective_max_sensitivity:
             return ToolPolicyDecision.deny("sensitivity_exceeds_policy", **audit)
 
         if spec.required_capability and spec.required_capability not in set(capabilities):

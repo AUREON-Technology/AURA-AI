@@ -9,6 +9,7 @@ from .memory_stores import (
     InMemoryDocumentStore,
     InMemoryGraphStore,
     InMemoryMemoryStore,
+    InMemoryPersonalOsStore,
     InMemoryVectorStore,
 )
 from .runtime import InMemoryAuditSink, InMemoryEventBus, SystemClock
@@ -17,6 +18,7 @@ __all__ = [
     "InMemoryVectorStore",
     "InMemoryDocumentStore",
     "InMemoryMemoryStore",
+    "InMemoryPersonalOsStore",
     "InMemoryGraphStore",
     "InMemoryEventBus",
     "InMemoryAuditSink",

@@ -50,6 +50,7 @@ from .identifiers import (
     DocumentId,
     GenerationId,
     MemoryId,
+    PersonalOsRecordId,
     PlanId,
     SessionId,
     StepId,
@@ -95,6 +96,7 @@ from .memory import (
     Provenance,
 )
 from .messages import Conversation, Message, Role, ToolCall, ToolResult, TrustChannel
+from .personal_os import PersonalOsRecord, RecordKind
 from .planning import Goal, Plan, PlanStep, Priority, StepKind, StepStatus
 from .reasoning import (
     ConfidenceAssessment,
@@ -117,10 +119,13 @@ from .telemetry import (
 
 __all__ = [
     # identifiers
-    "ChunkId", "CorrelationId", "DocumentId", "GenerationId", "MemoryId", "PlanId",
+    "ChunkId", "CorrelationId", "DocumentId", "GenerationId", "MemoryId",
+    "PersonalOsRecordId", "PlanId",
     "SessionId", "StepId", "ToolCallId", "TurnId", "UserId", "deterministic_uuid",
     # messages
     "Conversation", "Message", "Role", "ToolCall", "ToolResult", "TrustChannel",
+    # personal_os
+    "PersonalOsRecord", "RecordKind",
     # llm
     "CompletionRequest", "CompletionResponse", "EmbeddingResult", "FinishReason",
     "ProviderCapabilities", "RoutingPolicy", "SamplingParams", "StreamChunk", "TokenUsage",

@@ -522,18 +522,30 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     @router.get("/agents")
     async def list_agents(caller: Principal = Depends(principal)) -> JSONResponse:
-        from ..prompts.library import AGENT_PROMPT_IDS
-
+        granted = frozenset(caller.capabilities)
         return JSONResponse(
             content={
                 "agents": [
                     {
-                        "id": agent,
-                        "prompt": template,
-                        "version": container.prompts.get(template).version,
-                        "description": container.prompts.get(template).description,
+                        "id": spec.id,
+                        "name": spec.name,
+                        "prompt": spec.prompt_template_id,
+                        "version": container.prompts.get(spec.prompt_template_id).version,
+                        "description": container.prompts.get(spec.prompt_template_id).description,
+                        # None means "no restriction beyond your own capabilities" (the
+                        # orchestrator); a list is this persona's actual tool grant (Phase C1).
+                        "allowed_tools": (
+                            sorted(spec.allowed_tools) if spec.allowed_tools is not None else None
+                        ),
+                        "risk_ceiling": spec.risk_ceiling.name,
+                        "required_capabilities": sorted(spec.required_capabilities),
+                        # Whether *this* caller can actually select this persona -- a persona
+                        # under-privileged for the caller silently resolves to the orchestrator
+                        # at turn time (AgentRegistry.resolve), so surfacing it here lets a client
+                        # grey it out instead of offering a choice that quietly does something else.
+                        "usable": spec.required_capabilities.issubset(granted),
                     }
-                    for agent, template in AGENT_PROMPT_IDS.items()
+                    for spec in container.agents
                 ]
             }
         )
