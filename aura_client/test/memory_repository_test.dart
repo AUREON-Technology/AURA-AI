@@ -67,6 +67,11 @@ void main() {
     expect(recorded!.url.path, '/api/v3/memory');
     expect(recorded!.headers['Authorization'], 'Bearer jwt-test');
     expect(recorded!.url.path.contains('/api/memory'), isFalse);
+    // Regression: this call replaces the *entire* local cache below, so it must ask for the
+    // server's max rather than falling through to GET /memory's own default of 20 -- which
+    // silently dropped every memory past the 20 most recent on every sync for any user with
+    // more than 20 (Phase B2).
+    expect(recorded!.url.queryParameters['limit'], '100');
   });
 
   test('saveMemory POSTs JWT content to /api/v3/memory', () async {

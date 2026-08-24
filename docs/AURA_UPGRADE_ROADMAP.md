@@ -106,20 +106,40 @@ binding constraint — **done**, flat throughput 1→8 concurrent (A4). One succ
 
 ### Phase B — Close the last legacy seams
 
-Small, and it removes ambiguity that Phase C would otherwise inherit.
+Small, and it removes ambiguity that Phase C would otherwise inherit. **Done**, 2026-08-24.
 
-- **B1.** Delete `aura_backend/main.py` and the dead client path at
-  `aura_client/lib/core/ai/online_agents/online_agent_manager.dart:48`, which posts to
-  `/api/chat/agent` — a route `aura_service.py` does not mount and
-  `tests/unit/test_v1_locked_routes.py` asserts returns 404. The routes are already unreachable;
-  this deletes the code that still pretends otherwise. Confirm no test or script imports them
-  first, and keep the lock test.
-- **B2.** Move `UserMemories` onto the `/api/v3/sync` cursor protocol. This is the known gap
-  deliberately deferred in `Doc/V2_BLUEPRINT.md` Phase 1 and documented in
-  `core/sync/sync_client.dart`; it is the last table on a bespoke protocol.
-- **B3.** Record a decision on `api/v2/{auth,sync,insights}`. They are mounted by `aura_service.py`
-  as platform adapters outside the core. Either fold them into `/api/v3` or document the boundary
-  as permanent — do not leave it implicit, because Phase C needs to know where new endpoints go.
+- **B1. Done.** Deleted `aura_backend/main.py` — confirmed unused by `aura_service.py` (which
+  never imported it) before removal, full test suites (pytest + legacy unittest) green after.
+  Its removal orphaned `api/v2/chat.py` (`main.py` was its only caller), deleted with it. The
+  dead client path at `online_agent_manager.dart` had already been retired to a stub that always
+  throws rather than actually calling `/api/chat/agent` — nothing imported it, so the whole file
+  was deleted rather than left as an inert stub. `migration-guide.md` corrected: it previously
+  described `main.py` as still mounting `/api/v3` and a `create_app(standalone=True)` parameter
+  that does not exist in the current signature.
+- **B2. Investigated, corrected, and fixed the real bug — not the one originally described.**
+  The premise was stale: `UserMemories` was never stuck on a bespoke protocol needing to move to
+  `/api/v3/sync`'s cursor semantics — `core/sync/sync_client.dart`'s own docstring already
+  documents deliberately keeping memories off that CRUD-row protocol, because memory data is
+  embedding-shaped (kind, decay, provenance) and already has its own purpose-built kernel route,
+  `/api/v3/memory` (`aura_core/api/v3.py`), which `MemoryRepository` already correctly calls.
+  Moving it onto the generic sync protocol would have been a regression, not a fix. What
+  investigation found instead: `MemoryRepository.syncMemories()` wipes the entire local memory
+  cache and refetches with no `limit` param, silently falling through to the route's own default
+  of 20 — any user with more than 20 memories lost the rest from local view on every sync. Fixed
+  by requesting the route's actual maximum (`limit=100`), with a regression test. 100 remains a
+  hard ceiling, not real pagination; a user past that count still loses the tail — named as
+  follow-up, not fixed here, by explicit scope decision. Also found and left as follow-up: no
+  outbox-backed retry for offline memory writes/deletes (unlike Tasks/Messages), and memory
+  content is not encrypted client-side before transmission the way task/message content is.
+- **B3. Done.** Recorded in [ADR-002's 2026-08-24 update](architecture/002-strangler-migration.md#update--2026-08-24-phase-b1b3):
+  `api/v2/{auth,sync,insights}` are not legacy code awaiting removal — every one of their routers
+  already declares `APIRouter(prefix="/api/v3/...")`, so by URL they already are `/api/v3`. The
+  `v2` in the directory path is a stale name, not a live API version. Decision: the architectural
+  boundary (direct SQLAlchemy, outside `aura_core`'s hexagonal ports) is **permanent**, for the
+  same reason ADR-002 already gives for not rewriting `services/` — the code is correct and
+  efficient as written, and rewriting it would be churn. Phase C's new endpoints go through
+  `aura_core`'s kernel/tool path, not this layer. Renaming `api/v2/` to stop the name overstating
+  its legacy status is named as a correct, low-risk, non-gating follow-up.
 
 ### Phase C — Agent platform
 

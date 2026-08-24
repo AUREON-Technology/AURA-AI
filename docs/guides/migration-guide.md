@@ -25,14 +25,20 @@ what makes it finite rather than permanent.
 ## Current state
 
 ```
-main:app  (aura_backend/main.py)         v1/v2 routes, unchanged except SEC-01
+aura_service:app  (aura_backend/aura_service.py)
    │
-   └── includes ──▶  /api/v3 router      aura_core, via aura_service.create_app()
+   ├── build_app()            aura_core, the v3-only kernel routes + health/metrics
+   └── _mount_platform_routers()
+         api.v2.auth, api.v2.sync, api.v2.insights, automation, learning, admin_platform
 ```
 
-`aura_service.py` is what production runs. It builds the container, resolves an authenticator,
-mounts the v3 router onto the legacy app, and adds split health endpoints. `main:app` still works
-unchanged for a deployment mid-migration.
+`aura_service.py` is what production runs, and is the *only* thing production runs.
+`aura_backend/main.py` — the legacy v1/v2 standalone app — has been deleted (Phase B, this guide's
+own removal checklist below covered it first). `aura_service.create_app()` builds the container,
+resolves an authenticator, mounts the v3 kernel routes and the surviving `api/v2/*` platform
+routers directly, and adds split health endpoints. It never imported or mounted `main.py`, even
+before the file was removed — `tests/architecture/test_dockerfile_and_observability.py` already
+asserted `main:app` never appears in the Dockerfile's `CMD`.
 
 **The dependency is one-directional and enforced.** `aura_core` never imports from `services/` or
 `api/`; `tests/architecture/test_dependency_rules.py` inspects imports with the AST and fails the
@@ -142,16 +148,19 @@ orchestrator restarts a healthy process during one.
 
 ## Running v3 standalone
 
-For a deployment that wants the AI gateway as its own service:
+`aura_service.create_app()` takes no arguments — there is no legacy app left to opt out of, so
+this is simply what running the gateway *is* now:
 
 ```python
 from aura_service import create_app
-app = create_app(standalone=True)   # no legacy routes mounted
+app = create_app()
 ```
 
-`standalone=True` requires an authenticator that does not depend on `services.jwt_auth` —
-configure one in `_build_authenticator`, or the container raises `ConfigurationError` naming the
-problem rather than starting without authentication.
+It still mounts the surviving `api/v2/{auth,sync,insights}` platform routers (see "What has not
+moved, and why" below) and still authenticates through `services.jwt_auth` by default — that
+coupling did not go away with `main.py`. A deployment that wants an authenticator not backed by
+`services.jwt_auth` configures one in `_build_authenticator`; the container raises
+`ConfigurationError` naming the problem rather than starting without authentication.
 
 ---
 
@@ -167,8 +176,12 @@ judgement call.
 - [ ] **Authentication no longer routes through `services/jwt_auth`.** Replace
       `_build_authenticator` with a direct implementation. Until then, deleting `services/` breaks
       v3.
-- [ ] **`api/v2/sync.py` has a v3 equivalent, or offline sync is confirmed unused.** This is the
-      largest remaining gap — v3 has no sync endpoint.
+- [x] **`api/v2/sync.py` *is* the v3 sync endpoint.** Despite its directory, its router is mounted
+      at `/api/v3/sync` (`router = APIRouter(prefix="/api/v3", ...)`), and `SYNCABLE_MODELS`
+      already covers tasks, calendar events, finance, health, messages, and memories. What
+      remains is the client side: not every local Drift table goes through it yet — see Phase B2.
+      Renaming the module out of `api/v2/` to stop the directory name overstating what is
+      actually still legacy is a good small follow-up, not gating.
 - [ ] **Celery tasks import from `aura_core`, not `services/`.** Check `learning_pipeline` and any
       scheduled job.
 - [ ] **Database models are owned by one layer.** v1/v2 SQLAlchemy models and the v3 storage
@@ -176,12 +189,16 @@ judgement call.
 - [ ] **The Phase 1 technical-debt items scoped to `services/` are closed or moot.** Deleting the
       code closes most of them; confirm none describe behaviour v3 still relies on.
 
-When all are true:
+`aura_backend/main.py` itself is already gone (Phase B) — it was never on this checklist's
+critical path, since `aura_service.py` never imported it. Its removal took `api/v2/chat.py` with
+it: that router had exactly one caller, `main.py`, and is now dead by the same argument. Neither
+touched `services/` or the rest of `api/` — `api/v2/{auth,sync,insights}` and `services/rbac.py`,
+`services/jwt_auth.py` are live production code reached from `aura_service.py`, not legacy
+survivors, and stay until the checklist above is actually all true:
 
 ```bash
-git rm -r aura_backend/services aura_backend/api aura_backend/main.py
-# aura_service.create_app() already falls back to v3-only when main cannot be imported;
-# after removal, make standalone the default rather than the fallback.
+git rm -r aura_backend/services aura_backend/api/v2
+# api/automation.py, api/admin_platform.py, api/learning.py are v3-native, not legacy -- keep them.
 pytest   # the architecture tests already forbid any dependency on the removed tree
 ```
 
@@ -192,9 +209,11 @@ The fitness tests are what make this safe: if anything in `aura_core` had grown 
 
 ## What has not moved, and why
 
-**Offline sync (`api/v2/sync.py`).** Correct and efficient as written — `WHERE user_id = ? AND
-updated_at > ?` over composite indexes. Rewriting it would be churn, not improvement. It is the
-main reason the legacy tree still exists.
+**`api/v2/sync.py`'s directory name.** The endpoint itself already moved — it serves `/api/v3/sync`
+and is correct and efficient as written (`WHERE user_id = ? AND updated_at > ?` over composite
+indexes; rewriting it would be churn, not improvement). What has not moved is the module out of
+`api/v2/`, and every Drift table onto it client-side (Phase B2). Renaming the module is cosmetic
+and not gating; the client migration is the real remaining work.
 
 **Firebase auth.** Works, and the shipped client depends on it. Replacing an identity provider is
 its own project with its own migration; bundling it into this one would have made both harder.

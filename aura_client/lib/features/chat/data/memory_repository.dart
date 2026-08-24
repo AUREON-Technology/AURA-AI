@@ -90,10 +90,18 @@ class MemoryRepository {
     }).where((item) => item.id.isNotEmpty).toList();
   }
 
-  // Fetch all memories from backend and sync to local Drift database
+  // Fetch all memories from backend and sync to local Drift database.
+  //
+  // `limit` is explicit and set to the server's maximum (`GET /memory` clamps it at 100,
+  // aura_core/api/v3.py) because this call wipes and replaces the *entire* local cache below —
+  // omitting it meant the route's own default of 20 silently dropped every memory past the 20
+  // most recent on every sync, for any user who had more than 20. 100 is still a ceiling, not
+  // real pagination; a user with more memories than that still loses the tail here. Full
+  // incremental sync (a cursor, so this stops being a full-table replace) is the real fix and is
+  // tracked as follow-up, not attempted in this pass.
   Future<List<MemoryItem>> syncMemories() async {
     try {
-      final uri = Uri.parse(_backendUrl);
+      final uri = Uri.parse(_backendUrl).replace(queryParameters: {"limit": "100"});
       final response = await _send((headers) {
         final client = _http;
         return client != null
