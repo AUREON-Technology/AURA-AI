@@ -50,3 +50,27 @@ a collection and the old data can be reindexed on a schedule rather than migrate
 
 **Impact:** maintainability temporarily worse (duplication), risk substantially lower, cost of the
 transition spread over releases.
+
+## Update — 2026-08-24 (Phase B1/B3)
+
+`aura_backend/main.py` — the legacy v1/v2 standalone app decision 3 describes above — is deleted.
+It was never what production ran: `aura_service.py` is the sole entry point (`Dockerfile`'s `CMD`,
+enforced by `tests/architecture/test_dockerfile_and_observability.py`), and never imported
+`main.py`. Its removal took `api/v2/chat.py` with it — that router had exactly one caller.
+
+**B3's question — fold `api/v2/{auth,sync,insights}` into `/api/v3`, or document the boundary as
+permanent — turns out to have a narrower answer than it looked.** By URL, they already are
+`/api/v3`: every one of `api/v2/auth.py`, `api/v2/sync.py`, `api/v2/insights.py` declares
+`APIRouter(prefix="/api/v3/...")`. There is no live `/api/v2/*` surface left to fold in; the
+`v2` in the directory path is a stale name from before the routers were repointed, not a live
+API version. **Decision:** the architectural boundary these three modules sit behind — direct
+SQLAlchemy against `infrastructure/db/models.py`, outside `aura_core`'s hexagonal ports, per this
+ADR's rule 1 — is **permanent**, for the same reason decision 1 gives: `api/v2/sync.py`'s cursor
+queries are correct and efficient as written, and rewriting them into a port/adapter would be
+churn, not improvement. They are not "legacy code awaiting removal"; they are the platform-adapter
+layer ADR-002 always intended `aura_service.py` to mount alongside the kernel. Phase C's new
+endpoints go through `aura_core`'s tool/kernel path, not this layer.
+
+Renaming `api/v2/` to something that does not claim legacy status (`api/platform/`, say) is a
+correct, low-risk cleanup — five files import `api.v2.*` — but cosmetic and not gating; left as
+optional follow-up rather than done here, so this update stays a decision record, not a refactor.

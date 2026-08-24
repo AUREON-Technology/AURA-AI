@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
-import 'package:aura_client/core/ai/online_agents/online_agent_manager.dart';
+import 'package:aura_client/core/network/aura_api_error.dart';
 
 /// The router no longer chooses between engines, so the old tests -- which asserted that each
 /// setting selected a particular model -- describe behaviour that has been removed. What matters
