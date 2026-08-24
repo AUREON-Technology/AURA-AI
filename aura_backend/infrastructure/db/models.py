@@ -138,6 +138,44 @@ class HealthRecord(Base, SyncableMixin):
     exercise_minutes: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class Project(Base, SyncableMixin):
+    """A container for tasks toward some outcome (Phase D1). ``status``/``target_date`` are
+    plaintext -- unlike ``title_enc``/``description_enc`` -- so the kernel can reason about
+    deadlines and state without ever decrypting a project's name (ADR: see
+    ``aura_core/domain/personal_os.py`` for why the same split exists there)."""
+
+    __tablename__ = "projects"
+    __table_args__ = (Index("ix_projects_user_updated", "user_id", "updated_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    title_enc: Mapped[str] = mapped_column(Text)
+    description_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active|completed|archived|on_hold
+    target_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Goal(Base, SyncableMixin):
+    """A user's aspiration, optionally under a :class:`Project` (Phase D1/D2). ``category``,
+    ``status``, ``target_date``, ``progress_pct`` and ``priority`` are plaintext by the same
+    reasoning as ``Project``'s -- structural fields the context engine and the prioritisation
+    tool (Phase D2/D3) can read without decrypting a goal's actual text."""
+
+    __tablename__ = "goals"
+    __table_args__ = (Index("ix_goals_user_updated", "user_id", "updated_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    title_enc: Mapped[str] = mapped_column(Text)
+    description_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+    )
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active|achieved|abandoned
+    priority: Mapped[str] = mapped_column(String(16), default="medium")  # low|medium|high
+    target_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    progress_pct: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class Memory(Base, SyncableMixin):
     __tablename__ = "memories"
     __table_args__ = (Index("ix_memories_user_updated", "user_id", "updated_at"),)
@@ -196,4 +234,6 @@ SYNCABLE_MODELS: dict[str, type[Base]] = {
     "health_records": HealthRecord,
     "memories": Memory,
     "messages": Message,
+    "projects": Project,
+    "goals": Goal,
 }

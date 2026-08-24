@@ -118,6 +118,7 @@ def build_default_agent_registry() -> AgentRegistry:
                 allowed_tools=_READ_TOOLS | {
                     "propose_task", "propose_event",
                     "create_task", "list_tasks", "create_calendar_event", "list_calendar_events",
+                    "prioritize_tasks", "find_calendar_slots",
                 },
                 risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="shared",
             ),

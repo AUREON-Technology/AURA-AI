@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from ..domain.context import ContextBudget, ContextBundle, ContextItem, ContextSection, pack
+from ..domain.goals import GoalSnapshot
 from ..domain.knowledge import RetrievalResult
 from ..domain.memory import MemoryHit
 from ..domain.messages import Conversation, Message, Role, TrustChannel
@@ -57,6 +58,7 @@ class ContextRequest:
     user_message: str
     history: Conversation = Conversation()
     memories: Sequence[MemoryHit] = ()
+    goals: Sequence[GoalSnapshot] = ()
     retrieval: RetrievalResult | None = None
     tool_results: Sequence[tuple[str, str]] = ()
     scratchpad: Sequence[str] = ()
@@ -189,6 +191,40 @@ class ContextEngine:
             )
         return items
 
+    def _goal_items(self, request: ContextRequest) -> list[ContextItem]:
+        """Active goals as persistent facts about the user (Phase D2).
+
+        Content is built entirely from :class:`~aura_core.domain.goals.GoalSnapshot`'s plaintext
+        fields -- no title or description, which are zero-knowledge ciphertext this process
+        cannot read (see ``infrastructure/db/models.py``'s ``Goal``). A goal a model cannot name
+        is still worth knowing the shape of: how urgent, how important, how far along.
+        """
+        items = []
+        for goal in request.goals:
+            parts = [f"priority={goal.priority}"]
+            if goal.category:
+                parts.append(f"category={goal.category}")
+            if goal.target_date is not None:
+                parts.append(f"target_date={goal.target_date.date().isoformat()}")
+            parts.append(f"progress={goal.progress_pct}%")
+            content = "Active goal (" + ", ".join(parts) + ")"
+            items.append(
+                ContextItem(
+                    content=content,
+                    section=ContextSection.MEMORY,
+                    channel=TrustChannel.DATA,
+                    # Same tier as recalled memory: a persistent fact about the user, not
+                    # freshly retrieved and not as valuable per token as an exact preference.
+                    relevance=0.6,
+                    priority=18,
+                    tokens=self._tokenizer.count(content),
+                    provenance=f"goal:{goal.id[:8]}",
+                    item_id=f"goal:{goal.id}",
+                    metadata={"status": goal.status},
+                )
+            )
+        return items
+
     def _knowledge_items(self, request: ContextRequest) -> list[ContextItem]:
         if request.retrieval is None:
             return []
@@ -305,6 +341,7 @@ class ContextEngine:
         candidates: list[ContextItem] = []
         candidates += self._instruction_items(request, fence_rules)
         candidates += self._memory_items(request)
+        candidates += self._goal_items(request)
         candidates += self._knowledge_items(request)
         candidates += self._tool_items(request)
         candidates += self._scratchpad_items(request)

@@ -33,6 +33,7 @@ from ..domain.tools import ToolCategory, ToolSensitivity
 from ..ports.runtime import Tool, ToolContext
 from .base import param, tool
 from .personal_os import personal_os_tools
+from .planning import find_calendar_slots, prioritize_tasks
 from .records import build_personal_os_crud_tools
 
 __all__ = [
@@ -550,7 +551,10 @@ def default_tools(
     server-side writes an agent's grant permits without a client-side approval card, against
     aura_core's own table, never the client's zero-knowledge encrypted one.
     """
-    tools: list[Tool] = [calculator, current_datetime, *personal_os_tools()]
+    tools: list[Tool] = [
+        calculator, current_datetime, prioritize_tasks, find_calendar_slots,
+        *personal_os_tools(),
+    ]
     if knowledge_engine is not None:
         tools += build_knowledge_tools(knowledge_engine)
     if memory_engine is not None:
