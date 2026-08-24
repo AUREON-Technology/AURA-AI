@@ -287,8 +287,8 @@ class _CountingTools:
         self._inner = inner
         self.names: list[str] = []
 
-    def declarations(self, capabilities=()):  # noqa: ANN001
-        return self._inner.declarations(capabilities=capabilities)
+    def declarations(self, capabilities=(), **kwargs):  # noqa: ANN001
+        return self._inner.declarations(capabilities=capabilities, **kwargs)
 
     def spec(self, name):  # noqa: ANN001
         return self._inner.spec(name)

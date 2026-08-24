@@ -19,6 +19,7 @@ from .adapters.memory_stores import (
     InMemoryDocumentStore,
     InMemoryGraphStore,
     InMemoryMemoryStore,
+    InMemoryPersonalOsStore,
     InMemoryVectorStore,
 )
 from .adapters.runtime import InMemoryAuditSink, InMemoryEventBus, SystemClock
@@ -37,6 +38,7 @@ from .llm.cache import InMemoryCache, LLMCache
 from .llm.embeddings import HashEmbeddingProvider
 from .llm.registry import build_providers
 from .llm.router import ProviderRouter
+from .agents import build_default_agent_registry
 from .memory.engine import MemoryEngine
 from .memory.session import EpisodicMemory, build_session_summariser
 from .observability.logging import configure_logging, get_logger
@@ -101,6 +103,7 @@ class Container:
         self.vectors = self._build_vector_store()
         self.documents = self._build_document_store()
         self.memory_store = self._build_memory_store()
+        self.personal_os_store = self._build_personal_os_store()
         self.graph = self._build_graph_store()
         self.feedback = self._build_feedback_store()
         self.audit = self._build_audit_sink()
@@ -131,6 +134,7 @@ class Container:
         )
 
         self.prompts = build_default_registry()
+        self.agents = build_default_agent_registry()
         self.safety = SafetyPipeline.from_settings(
             settings.safety, metrics=self.metrics, event_bus=self.events, audit=self.audit
         )
@@ -304,6 +308,7 @@ class Container:
                 router=self.router,
                 prompts=self.prompts,
                 context=self.context,
+                agents=self.agents,
                 safety=self.safety if settings.safety.enabled else None,
                 memory=self.memory,
                 knowledge=self.knowledge,
@@ -328,6 +333,7 @@ class Container:
                 "embedder": self.embedder.model_id,
                 "tools": len(self.tools),
                 "prompts": len(self.prompts),
+                "agents": len(self.agents),
             },
         )
 
@@ -432,6 +438,18 @@ class Container:
             raise ConfigurationError(f"unknown memory backend {backend!r}")
         return InMemoryMemoryStore()
 
+    def _build_personal_os_store(self) -> Any:
+        backend = self.settings.infrastructure.memory_backend
+        if backend == "postgres":
+            from .adapters.postgres_personal_os import PostgresPersonalOsStore
+
+            return PostgresPersonalOsStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        if backend != "memory":
+            raise ConfigurationError(f"unknown memory backend {backend!r}")
+        return InMemoryPersonalOsStore()
+
     def _build_graph_store(self) -> Any:
         if self.settings.infrastructure.document_backend == "postgres":
             from .adapters.postgres_graph import PostgresGraphStore
@@ -485,7 +503,10 @@ class Container:
             audit=self.audit,
         )
         registry.register_all(
-            default_tools(knowledge_engine=self.knowledge, memory_engine=self.memory)
+            default_tools(
+                knowledge_engine=self.knowledge, memory_engine=self.memory,
+                personal_os_store=self.personal_os_store,
+            )
         )
         return registry
 
@@ -561,6 +582,7 @@ class Container:
             "index": index.physical_name if index else None,
             "tools": len(self.tools),
             "prompts": len(self.prompts),
+            "agents": len(self.agents),
             "environment": str(self.settings.environment),
             "healthy": healthy,
         }

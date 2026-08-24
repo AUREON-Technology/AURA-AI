@@ -29,6 +29,7 @@ __all__ = [
     "StepId",
     "ToolCallId",
     "GenerationId",
+    "PersonalOsRecordId",
     "deterministic_uuid",
 ]
 
@@ -122,6 +123,16 @@ class ToolCallId(Identifier):
 @dataclass(frozen=True, slots=True)
 class GenerationId(Identifier):
     """A numbered knowledge-refresh generation (ADR-008). Rollback targets one of these."""
+
+
+@dataclass(frozen=True, slots=True)
+class PersonalOsRecordId(Identifier):
+    """A task, calendar event, finance record, or health record the kernel itself wrote
+
+    (Phase C2). Deliberately its own id type, not shared with the legacy encrypted tables of the
+    same name: this is a different table with a different visibility contract -- see
+    ``aura_core/domain/personal_os.py``.
+    """
 
 
 def deterministic_uuid(*parts: str, namespace: str = "aura") -> uuid.UUID:

@@ -51,6 +51,7 @@ from ..domain.memory import MemoryHit, MemoryKind, MemoryQuery
 from ..domain.messages import Conversation, Message
 from ..domain.planning import StepKind
 from ..domain.reasoning import ReasoningStrategy
+from ..domain.tools import ToolSensitivity
 from ..domain.telemetry import (
     CacheOutcome,
     RetrievalTelemetry,
@@ -64,6 +65,7 @@ from ..llm.router import TurnBudget
 from ..observability.logging import LogContext, get_logger
 from ..ports.runtime import ToolContext
 from ..prompts.library import AGENT_PROMPT_IDS
+from ..agents.registry import AgentRegistry, AgentSpec
 from ..reasoning.engine import ReasoningRequest
 from ..tools.personal_os import actions_from_tool_results
 
@@ -124,6 +126,7 @@ class KernelDependencies:
     router: Any
     prompts: Any
     context: ContextEngine
+    agents: AgentRegistry | None = None
     safety: Any = None
     memory: Any = None
     knowledge: Any = None
@@ -630,11 +633,32 @@ class AIKernel:
         )
         return memories, retrieval, history, summary
 
+    def _resolve_agent(self, request: TurnRequest) -> AgentSpec | None:
+        """The turn's resolved persona (Phase C1), or ``None`` with no registry configured.
+
+        ``None`` preserves the pre-Phase-C1 behaviour exactly: every tool the caller's
+        capabilities allow, gated only by :data:`AGENT_PROMPT_IDS` for the prompt text. A
+        registry turns that into a real per-agent grant everywhere this is consulted.
+        """
+        if self._deps.agents is None:
+            return None
+        return self._deps.agents.resolve(request.agent, capabilities=request.capabilities)
+
     def _tool_declarations(self, request: TurnRequest) -> tuple[Mapping[str, Any], ...]:
         deps = self._deps
         if not (request.use_tools and deps.tools is not None):
             return ()
-        return deps.tools.declarations(capabilities=request.capabilities)
+        agent = self._resolve_agent(request)
+        max_sensitivity = agent.risk_ceiling if agent is not None else ToolSensitivity.SYSTEM
+        declarations = deps.tools.declarations(
+            capabilities=request.capabilities, max_sensitivity=max_sensitivity
+        )
+        if agent is None or agent.allowed_tools is None:
+            return declarations
+        # Not advertised, not requested: a tool outside the agent's grant should not appear in
+        # the model's tool list, same reasoning as ToolRegistry.available()'s own capability
+        # filter -- offering it only produces a call that policy.evaluate() then refuses.
+        return tuple(d for d in declarations if d.get("name") in agent.allowed_tools)
 
     def _should_plan(self, request: TurnRequest, tools: Sequence[Mapping[str, Any]]) -> bool:
         deps = self._deps
@@ -645,11 +669,16 @@ class AIKernel:
         )
 
     def _tool_context(self, request: TurnRequest, tainted: bool) -> ToolContext:
+        agent = self._resolve_agent(request)
         return ToolContext(
             user_id=request.user_id,
             correlation_id=(request.correlation_id or CorrelationId.new()).value,
             deadline_s=60.0,
             tainted=tainted,
+            agent_id=agent.id if agent is not None else None,
+            allowed_tools=agent.allowed_tools if agent is not None else None,
+            max_sensitivity=agent.risk_ceiling if agent is not None else None,
+            memory_scope=agent.memory_scope if agent is not None else "shared",
         )
 
     async def _compose_plan(
@@ -728,7 +757,11 @@ class AIKernel:
     def _render_system_prompt(
         self, request: TurnRequest, tools: Sequence[Mapping[str, Any]]
     ) -> str:
-        template_id = AGENT_PROMPT_IDS.get(request.agent, AGENT_PROMPT_IDS["orchestrator"])
+        agent = self._resolve_agent(request)
+        template_id = (
+            agent.prompt_template_id if agent is not None
+            else AGENT_PROMPT_IDS.get(request.agent, AGENT_PROMPT_IDS["orchestrator"])
+        )
         clock = self._deps.clock
         now = clock.now() if clock is not None else datetime.now(timezone.utc)
         try:

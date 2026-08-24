@@ -33,6 +33,7 @@ from ..domain.tools import ToolCategory, ToolSensitivity
 from ..ports.runtime import Tool, ToolContext
 from .base import param, tool
 from .personal_os import personal_os_tools
+from .records import build_personal_os_crud_tools
 
 __all__ = [
     "calculator",
@@ -535,6 +536,7 @@ def default_tools(
     *,
     knowledge_engine: Any = None,
     memory_engine: Any = None,
+    personal_os_store: Any = None,
     workspace: str | Path | None = None,
     allowed_http_hosts: Sequence[str] = (),
     enable_weather: bool = False,
@@ -544,12 +546,17 @@ def default_tools(
     Everything that touches the network or the filesystem is opt-in and requires explicit
     configuration. A default install has arithmetic, the clock, and personal-OS proposals
     (client-applied JSON; no server writes): useful, and incapable of reaching anything.
+    ``personal_os_store`` additionally wires the create/list CRUD tools (Phase C2) -- real
+    server-side writes an agent's grant permits without a client-side approval card, against
+    aura_core's own table, never the client's zero-knowledge encrypted one.
     """
     tools: list[Tool] = [calculator, current_datetime, *personal_os_tools()]
     if knowledge_engine is not None:
         tools += build_knowledge_tools(knowledge_engine)
     if memory_engine is not None:
         tools += build_memory_tools(memory_engine)
+    if personal_os_store is not None:
+        tools += build_personal_os_crud_tools(personal_os_store)
     if workspace is not None:
         tools += build_file_tools(workspace)
     if allowed_http_hosts:

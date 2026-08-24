@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
-from ..domain.identifiers import DocumentId, MemoryId, UserId
+from ..domain.identifiers import DocumentId, MemoryId, PersonalOsRecordId, UserId
 from ..domain.knowledge import (
     Chunk,
     Document,
@@ -21,11 +21,13 @@ from ..domain.knowledge import (
     RetrievedChunk,
 )
 from ..domain.memory import MemoryKind, MemoryRecord
+from ..domain.personal_os import PersonalOsRecord, RecordKind
 
 __all__ = [
     "VectorStore",
     "DocumentStore",
     "MemoryStore",
+    "PersonalOsStore",
     "GraphStore",
     "Cache",
     "VectorPoint",
@@ -198,6 +200,34 @@ class MemoryStore(Protocol):
         ...
 
     async def count(self, owner_id: UserId, *, kind: MemoryKind | None = None) -> int:
+        ...
+
+
+@runtime_checkable
+class PersonalOsStore(Protocol):
+    """Persistence for server-authored :class:`PersonalOsRecord` rows (Phase C2).
+
+    Deliberately one port for all four kinds (task, calendar event, finance record, health
+    record) rather than four: they differ in ``fields``, not in how they are stored, listed, or
+    torn down, and a caller filters by ``kind`` the same way it filters :class:`MemoryStore` by
+    :class:`MemoryKind`.
+    """
+
+    async def put(self, record: PersonalOsRecord) -> None:
+        ...
+
+    async def get(self, record_id: PersonalOsRecordId, *, owner_id: UserId) -> PersonalOsRecord | None:
+        ...
+
+    async def list_for_owner(
+        self, owner_id: UserId, *, kind: RecordKind | None = None, limit: int = 100,
+    ) -> Sequence[PersonalOsRecord]:
+        ...
+
+    async def update(self, record: PersonalOsRecord) -> None:
+        ...
+
+    async def delete(self, record_id: PersonalOsRecordId, *, owner_id: UserId) -> bool:
         ...
 
 

@@ -184,7 +184,15 @@ class TestIntrospection:
         assert any(t["name"] == "calculator" for t in tools)
 
     def test_agents_are_listed(self, user_client) -> None:
-        assert user_client.get("/api/v3/agents").status_code == 200
+        response = user_client.get("/api/v3/agents")
+        assert response.status_code == 200
+        agents = {a["id"]: a for a in response.json()["agents"]}
+        assert "orchestrator" in agents and agents["orchestrator"]["allowed_tools"] is None
+        # A scoped persona's tool set is visible over the API, not just internal to the kernel
+        # (Phase C1's "an agent's tool set is data, not code").
+        finance = agents["finance_advisor"]
+        assert finance["allowed_tools"] and "propose_health_log" not in finance["allowed_tools"]
+        assert finance["risk_ceiling"] == "PERSONAL"
 
     def test_feedback_is_accepted(self, user_client) -> None:
         """A correction is the highest-signal training example the system can obtain."""
