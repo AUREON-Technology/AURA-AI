@@ -114,6 +114,43 @@ def generate_insights_for_all_users_task() -> dict:
         return {"status": "error", "message": str(e)}
 
 
+async def _generate_daily_briefings_for_all_users() -> int:
+    from sqlalchemy import select
+    from infrastructure.db.base import get_session_factory, is_configured
+    from infrastructure.db.models import User
+    from services.daily_briefing import generate_daily_briefing_for_user
+
+    if not is_configured():
+        logger.info("Skipping daily briefing generation: DATABASE_URL not configured.")
+        return 0
+
+    session_factory = get_session_factory()
+    count = 0
+    async with session_factory() as db:
+        users = (await db.execute(select(User))).scalars().all()
+        for user in users:
+            try:
+                await generate_daily_briefing_for_user(db, user.id)
+                count += 1
+            except Exception as e:
+                logger.error(f"Daily briefing generation failed for user {user.id}: {e}")
+        await db.commit()
+    return count
+
+
+@celery_app.task(name="tasks.generate_daily_briefings_task", queue="realtime")
+def generate_daily_briefings_task() -> dict:
+    """Beat-scheduled, once a day (see celery_app.py). Same sync-Celery-calls-async-service
+    bridging as generate_insights_for_all_users_task."""
+    logger.info("Celery task: Generating daily briefings for all users...")
+    try:
+        count = asyncio.run(_generate_daily_briefings_for_all_users())
+        return {"status": "success", "users_processed": count}
+    except Exception as e:
+        logger.error(f"Failed to generate daily briefings for all users: {e}")
+        return {"status": "error", "message": str(e)}
+
+
 _worker_container = None
 _worker_started = False
 
@@ -199,4 +236,28 @@ def memory_consolidate_task() -> dict:
         return asyncio.run(_run_memory_consolidate())
     except Exception as e:
         logger.error("Memory consolidate task failed: %s", e, exc_info=True)
+        return {"status": "error", "error": type(e).__name__}
+
+
+async def _run_outbox_drain() -> dict:
+    from aura_core.learning.jobs import run_outbox_drain
+    from aura_core.triggers import decode_durable_event
+
+    container = await _ensure_worker_container()
+    return await run_outbox_drain(
+        container.event_outbox, decode_durable_event,
+        lambda event: container.triggers.handle(event, context=container.trigger_context),
+    )
+
+
+@celery_app.task(name="tasks.drain_event_outbox_task", queue="realtime")
+def drain_event_outbox_task() -> dict:
+    """Phase E1: deliver durable events (Phase E2's triggers) that a live handler failure, or a
+    crash between publish and dispatch, must not lose. Runs frequently (see celery_app.py's beat
+    schedule) since delivery latency here is this trigger's whole user-visible lag."""
+    logger.info("Celery task: Draining event outbox...")
+    try:
+        return asyncio.run(_run_outbox_drain())
+    except Exception as e:
+        logger.error("Outbox drain task failed: %s", e, exc_info=True)
         return {"status": "error", "error": type(e).__name__}

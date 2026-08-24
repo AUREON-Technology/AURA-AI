@@ -22,7 +22,7 @@ from .curation import (
 )
 from .feedback import FeedbackStore, InMemoryFeedbackStore
 from .knowledge_refresh import KnowledgeRefreshPipeline, RefreshReport, SourceOutcome
-from .jobs import run_knowledge_refresh, run_memory_consolidate
+from .jobs import run_knowledge_refresh, run_memory_consolidate, run_outbox_drain
 from .sources import (
     CompositeFetcher,
     FetchedDocument,
@@ -46,6 +46,7 @@ __all__ = [
     "FetchedDocument",
     "run_knowledge_refresh",
     "run_memory_consolidate",
+    "run_outbox_drain",
     "DatasetCurator",
     "FeedbackRecord",
     "FeedbackStore",

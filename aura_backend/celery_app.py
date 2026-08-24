@@ -76,6 +76,18 @@ _beat_schedule = {
         "schedule": crontab(minute=30, hour=2),
         "options": {"queue": "learning"},
     },
+    # Phase E1: drains frequently -- this interval *is* a durable trigger's delivery latency.
+    "drain-event-outbox": {
+        "task": "tasks.drain_event_outbox_task",
+        "schedule": 60.0,
+        "options": {"queue": "realtime"},
+    },
+    # Phase E2: once a day, well before a typical morning check-in.
+    "daily-briefing": {
+        "task": "tasks.generate_daily_briefings_task",
+        "schedule": crontab(minute=0, hour=6),
+        "options": {"queue": "realtime"},
+    },
 }
 
 if _truthy(os.environ.get("AURA_LEARNING_REFRESH_ENABLED"), default=True):

@@ -88,6 +88,13 @@ class TestSyncApiIntegration(unittest.TestCase):
         import asyncio
 
         import infrastructure.db.base as db_base
+        # Registers every model class onto Base.metadata -- without this import, create_all()
+        # below has nothing to create. This test previously only passed as part of a full
+        # `unittest discover` run, which happened to import infrastructure.db.models via some
+        # earlier test module first; run standalone (`python -m unittest test_sync_integration`)
+        # it failed with "relation users does not exist" (found while adding
+        # test_insights_integration.py, Phase E3, which hit the identical bug).
+        import infrastructure.db.models  # noqa: F401
         from infrastructure.db.base import Base, get_engine
 
         db_base._engine = None

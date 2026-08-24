@@ -11,6 +11,18 @@ rule beats an API call on cost, latency, and reliability — and the
 project's Gemini key was found suspended during Phase 0 verification, so a
 Gemini-dependent-only implementation would ship broken. Phrasing/ranking
 via Gemini is a natural follow-up enhancement, not a hard requirement.
+
+Each candidate carries ``citations`` -- the record ids that produced it --
+alongside ``message``/``explanation`` (Phase E3). This is the grounding half
+of "kernel-generated insights with citations": a future model-phrased
+version needs the same evidence to cite from, and capturing it now is real,
+free of a model call, and fully backward compatible (an unknown JSON key is
+never a breaking change for ``api/v2/insights.py``'s ``payload.get(...)``
+reads). The *generation* half -- replacing this rule engine with a kernel
+call -- stays out of scope until it clears the eval gate the roadmap
+requires: this environment has no real (non-echo) model to run that eval
+against, so the honest state is "grounding is ready, replacement is not
+proven," not "replaced."
 """
 import json
 import logging
@@ -53,6 +65,7 @@ async def generate_insights_for_user(db: AsyncSession, user_id: uuid.UUID) -> li
             "severity": min(len(overdue), 5),
             "message": f"You have {len(overdue)} overdue task{'s' if len(overdue) != 1 else ''}.",
             "explanation": f"{len(overdue)} task(s) passed their due date and aren't marked complete.",
+            "citations": [str(t.id) for t in overdue],
         })
 
     # 2. Hydration vs. goal (today's record, if any)
@@ -73,6 +86,7 @@ async def generate_insights_for_user(db: AsyncSession, user_id: uuid.UUID) -> li
             "severity": 2,
             "message": f"Only {current}ml of water logged today.",
             "explanation": f"Goal is {WATER_GOAL_ML}ml/day; it's past 3pm and you're under halfway there.",
+            "citations": [str(today_health.id)] if today_health else [],
         })
 
     # 3. High spend this week
@@ -93,6 +107,7 @@ async def generate_insights_for_user(db: AsyncSession, user_id: uuid.UUID) -> li
             "severity": 3,
             "message": f"${total_spent:.0f} spent in the last 7 days.",
             "explanation": f"{len(week_expenses)} expense record(s) totaling ${total_spent:.2f} this week.",
+            "citations": [str(r.id) for r in week_expenses],
         })
 
     # Rank by severity, keep top 3 (blueprint §8: "rank the top 1-3 worth surfacing").
@@ -113,7 +128,10 @@ async def generate_insights_for_user(db: AsyncSession, user_id: uuid.UUID) -> li
             id=uuid.uuid4(),
             user_id=user_id,
             kind=c["kind"],
-            payload_json=json.dumps({"message": c["message"], "explanation": c["explanation"]}),
+            payload_json=json.dumps({
+                "message": c["message"], "explanation": c["explanation"],
+                "citations": c.get("citations", []),
+            }),
         )
         db.add(row)
         created.append(row)
