@@ -24,6 +24,7 @@ from .personal_os import (
     parse_proposed_action,
     personal_os_tools,
 )
+from .planning import find_calendar_slots, prioritize_tasks
 from .policy import ToolPolicy
 from .registry import ToolExecutionReport, ToolRegistry
 from .schema import validate_arguments
@@ -49,4 +50,6 @@ __all__ = [
     "parse_proposed_action",
     "actions_from_tool_results",
     "matching_personal_os_tool",
+    "prioritize_tasks",
+    "find_calendar_slots",
 ]

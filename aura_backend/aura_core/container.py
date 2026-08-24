@@ -17,6 +17,7 @@ from typing import Any
 
 from .adapters.memory_stores import (
     InMemoryDocumentStore,
+    InMemoryGoalsPort,
     InMemoryGraphStore,
     InMemoryMemoryStore,
     InMemoryPersonalOsStore,
@@ -104,6 +105,7 @@ class Container:
         self.documents = self._build_document_store()
         self.memory_store = self._build_memory_store()
         self.personal_os_store = self._build_personal_os_store()
+        self.goals = self._build_goals_port()
         self.graph = self._build_graph_store()
         self.feedback = self._build_feedback_store()
         self.audit = self._build_audit_sink()
@@ -312,6 +314,7 @@ class Container:
                 safety=self.safety if settings.safety.enabled else None,
                 memory=self.memory,
                 knowledge=self.knowledge,
+                goals=self.goals,
                 tools=self.tools if settings.tools.enabled else None,
                 planner=self.planner,
                 reasoner=self.reasoner,
@@ -449,6 +452,20 @@ class Container:
         if backend != "memory":
             raise ConfigurationError(f"unknown memory backend {backend!r}")
         return InMemoryPersonalOsStore()
+
+    def _build_goals_port(self) -> Any:
+        """The `GoalsPort` (Phase D2): reads the legacy `goals` table's plaintext columns.
+
+        Gated on `document_backend` like `_build_graph_store` -- both are optional read paths
+        against the same Postgres database, not a backend of their own.
+        """
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_goals import PostgresGoalsPort
+
+            return PostgresGoalsPort(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        return InMemoryGoalsPort()
 
     def _build_graph_store(self) -> Any:
         if self.settings.infrastructure.document_backend == "postgres":

@@ -185,16 +185,56 @@ having something to measure.
 
 ### Phase D — Projects, Goals, and prioritisation
 
+**Backend done**, 2026-08-24. Client work explicitly deferred — see below.
+
 The deliberately scoped-down Business OS. These two domains earn their place because the kernel
 needs them to answer "what should I work on"; leads and revenue do not (see §4).
 
-- **D1.** `Project` and `Goal` in `infrastructure/db/models.py` with `SyncableMixin`, matching Drift
-  tables in `aura_client/lib/core/database/database.dart`, carried by the existing cursor sync.
-  Flutter feature modules follow the `features/tasks/` layout.
-- **D2.** Teach `aura_core/context/engine.py` to read goals into the context snapshot.
-- **D3.** A prioritisation tool ranking tasks by deadline, goal alignment, effort and dependencies,
-  and a calendar slot-finding tool. Both as registry tools, so the kernel plans *with* them rather
-  than around them.
+- **D1. Backend done; Flutter client deferred.** `Project` and `Goal` added to
+  `infrastructure/db/models.py` with `SyncableMixin`, and to the `SYNCABLE_MODELS` dict that
+  drives `api/v2/sync.py`'s generic cursor pull/push — confirmed no other change to `sync.py` was
+  needed, exactly as its own reflection-based design promises. New migration
+  `alembic/versions/0004_projects_and_goals.py` creates both tables (`goals.project_id` is a
+  nullable FK to `projects.id` with `ON DELETE SET NULL`, so archiving a project never deletes a
+  goal) and was verified end to end against a real (throwaway) Postgres instance: applied,
+  downgraded, and re-applied cleanly; an ORM round trip confirmed every column including the FK;
+  a live delete of the parent row confirmed the child's `project_id` actually becomes `NULL`, not
+  just that the migration's SQL text says it should. Column split follows every other syncable
+  table exactly — `title_enc`/`description_enc` ciphertext the backend cannot read, plaintext
+  `status`/`priority`/`category`/`target_date`/`progress_pct` it can. **Still open, named rather
+  than silently dropped:** the Flutter half (Drift tables in
+  `aura_client/lib/core/database/database.dart`, feature modules under `features/projects/` and
+  `features/goals/` following the `features/tasks/` layout). This sandbox has no Flutter/Dart
+  toolchain and insufficient disk headroom for one (`database.g.dart` is 8,000+ generated lines
+  that cannot be hand-edited safely), so the schema and sync protocol are ready and waiting but no
+  device can write to them yet. A session with real Flutter tooling is a direct follow-up, not a
+  redesign.
+- **D2. Done.** `aura_core/domain/goals.py`'s `GoalSnapshot` carries only the plaintext columns
+  above — no title or description, because those are the same zero-knowledge ciphertext D1
+  couldn't touch either. `aura_core/adapters/postgres_goals.py`'s `PostgresGoalsPort` reads the
+  legacy `goals` table directly (raw `asyncpg`, joined through `users.auth_subject` since
+  `UserId` is the auth-subject claim, not the table's internal UUID) — it never issues
+  `CREATE TABLE`, unlike every other `postgres_*.py` adapter, because this table is owned by D1's
+  migration, not by this port. `aura_core/kernel/kernel.py`'s `_gather_context` fetches active
+  goals concurrently with memory recall, retrieval, and history load (the same
+  `asyncio.gather` that already made those three concurrent); `ContextEngine._goal_items` renders
+  each as a `MEMORY`-section item ("persistent facts about the user", per that section's own
+  ordering rationale) such as `Active goal (priority=high, category=fitness, target_date=2026-09-01,
+  progress=40%)`. `InMemoryGoalsPort` backs the default in-memory container and test suite.
+  18 new tests across `test_context_goals.py` and `test_kernel_goals.py`, including a full-turn
+  test that a seeded goal does not break the ordinary pipeline.
+- **D3. Done.** Two new registry tools in `aura_core/tools/planning.py`, both pure computation —
+  caller supplies task/goal/busy-interval descriptors as tool arguments (gathered via
+  `list_tasks`/`list_calendar_events` or conversation context); neither reads or writes any store,
+  so neither needed a port or a capability grant beyond the tool itself. `prioritize_tasks` scores
+  each task by deadline urgency (overdue outranks due-soon), goal-priority alignment, a small
+  quick-win tilt for lower effort, and a bonus for unblocking other listed tasks; a task whose
+  `depends_on` names another task id still present in the list is held out of the ranking and
+  reported separately as blocked, rather than mis-scored. `find_calendar_slots` merges supplied
+  busy intervals and walks the search window (optionally confined to daily working hours) for
+  gaps of the requested length, capped at 400 search days to bound the scan the same way
+  `calculator`'s exponent cap bounds arithmetic. Granted to `task_planner` alongside the existing
+  task/calendar tools. 14 new tests in `test_planning_tools.py`.
 
 ### Phase E — Proactive intelligence
 

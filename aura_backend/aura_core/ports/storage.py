@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
+from ..domain.goals import GoalSnapshot
 from ..domain.identifiers import DocumentId, MemoryId, PersonalOsRecordId, UserId
 from ..domain.knowledge import (
     Chunk,
@@ -30,6 +31,7 @@ __all__ = [
     "PersonalOsStore",
     "GraphStore",
     "Cache",
+    "GoalsPort",
     "VectorPoint",
 ]
 
@@ -258,6 +260,21 @@ class GraphStore(Protocol):
 
     async def revert(self, source: str, *, owner_id: UserId | None) -> int:
         """Undo everything a given source contributed. Required for ADR-008 rollback."""
+        ...
+
+
+@runtime_checkable
+class GoalsPort(Protocol):
+    """Read-only access to a user's active goals, plaintext fields only (Phase D2).
+
+    Deliberately narrower than :class:`PersonalOsStore`: this port never writes, and never
+    returns ``title_enc``/``description_enc`` -- callers (the context engine, Phase D3's
+    prioritisation tool) need to reason about goals, not display them.
+    """
+
+    async def active_summaries(
+        self, owner_id: UserId, *, limit: int = 5
+    ) -> Sequence[GoalSnapshot]:
         ...
 
 

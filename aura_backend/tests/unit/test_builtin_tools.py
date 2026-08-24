@@ -396,7 +396,7 @@ class TestAssembly:
     def test_a_default_install_can_reach_nothing(self) -> None:
         names = {t.spec.name for t in default_tools()}
         assert names == {
-            "calculator", "current_datetime",
+            "calculator", "current_datetime", "prioritize_tasks", "find_calendar_slots",
             "propose_task", "propose_event", "propose_expense",
             "propose_income", "propose_health_log",
         }
@@ -413,7 +413,8 @@ class TestAssembly:
             )
         }
         assert names == {
-            "calculator", "current_datetime", "search_knowledge", "recall_memory",
+            "calculator", "current_datetime", "prioritize_tasks", "find_calendar_slots",
+            "search_knowledge", "recall_memory",
             "remember_fact", "list_files", "read_file", "fetch_url", "get_weather",
             "propose_task", "propose_event", "propose_expense", "propose_income",
             "propose_health_log",

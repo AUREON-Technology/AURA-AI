@@ -38,6 +38,7 @@ from ..domain.errors import (
     SafetyViolationError,
 )
 from ..domain.events import TurnCompleted, TurnFailed, TurnStarted
+from ..domain.goals import GoalSnapshot
 from ..domain.identifiers import CorrelationId, SessionId, TurnId, UserId
 from ..domain.knowledge import RetrievalResult
 from ..domain.llm import (
@@ -130,6 +131,7 @@ class KernelDependencies:
     safety: Any = None
     memory: Any = None
     knowledge: Any = None
+    goals: Any = None
     tools: Any = None
     planner: Any = None
     reasoner: Any = None
@@ -218,7 +220,9 @@ class AIKernel:
 
         # 2-4. Memory, retrieval, and history concurrently ---------------------------
         stage_start = time.perf_counter()
-        memories, retrieval, history, history_summary = await self._gather_context(request, message)
+        memories, retrieval, history, history_summary, goals = await self._gather_context(
+            request, message
+        )
         timings["memory"] = timings["retrieval"] = (time.perf_counter() - stage_start) * 1000.0
 
         # 5. Guard retrieved content -------------------------------------------------
@@ -289,6 +293,7 @@ class AIKernel:
                 user_message=message,
                 history=history,
                 memories=memories,
+                goals=goals,
                 retrieval=retrieval,
                 tool_results=tool_results,
                 history_summary=history_summary,
@@ -408,7 +413,7 @@ class AIKernel:
                     )
                     message = decision.text
 
-                memories, retrieval, history, history_summary = await self._gather_context(
+                memories, retrieval, history, history_summary, goals = await self._gather_context(
                     request, message
                 )
 
@@ -465,6 +470,7 @@ class AIKernel:
                         user_message=message,
                         history=history,
                         memories=memories,
+                        goals=goals,
                         retrieval=retrieval,
                         tool_results=tool_results,
                         history_summary=history_summary,
@@ -581,12 +587,12 @@ class AIKernel:
 
     async def _gather_context(
         self, request: TurnRequest, message: str
-    ) -> tuple[list[MemoryHit], RetrievalResult | None, Conversation, str]:
-        """Run memory recall, knowledge retrieval, and history load concurrently.
+    ) -> tuple[list[MemoryHit], RetrievalResult | None, Conversation, str, Sequence[GoalSnapshot]]:
+        """Run memory recall, knowledge retrieval, history load, and goal lookup concurrently.
 
-        These three are independent. Running them in sequence is the single largest avoidable
-        latency in the legacy pipeline, which additionally embeds the same message four separate
-        times (Performance Report §1).
+        These are independent. Running them in sequence is the single largest avoidable latency
+        in the legacy pipeline, which additionally embeds the same message four separate times
+        (Performance Report §1).
         """
         deps = self._deps
 
@@ -628,10 +634,19 @@ class AIKernel:
                 logger.warning("session history load failed; continuing without it")
                 return Conversation(), ""
 
-        memories, retrieval, (history, summary) = await asyncio.gather(
-            recall(), retrieve(), load_history()
+        async def load_goals() -> Sequence[GoalSnapshot]:
+            if deps.goals is None:
+                return ()
+            try:
+                return await deps.goals.active_summaries(request.user_id)
+            except Exception:
+                logger.warning("goal lookup failed; continuing without it")
+                return ()
+
+        memories, retrieval, (history, summary), goals = await asyncio.gather(
+            recall(), retrieve(), load_history(), load_goals()
         )
-        return memories, retrieval, history, summary
+        return memories, retrieval, history, summary, goals
 
     def _resolve_agent(self, request: TurnRequest) -> AgentSpec | None:
         """The turn's resolved persona (Phase C1), or ``None`` with no registry configured.

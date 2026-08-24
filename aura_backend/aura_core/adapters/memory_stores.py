@@ -21,9 +21,11 @@ Single-process asyncio does not need a lock for atomic dict operations, but ``up
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Mapping, Sequence
 
 from ..domain.errors import ConflictError, ValidationError
+from ..domain.goals import GoalSnapshot
 from ..domain.identifiers import DocumentId, MemoryId, PersonalOsRecordId, UserId
 from ..domain.knowledge import (
     Chunk,
@@ -45,6 +47,7 @@ __all__ = [
     "InMemoryMemoryStore",
     "InMemoryPersonalOsStore",
     "InMemoryGraphStore",
+    "InMemoryGoalsPort",
 ]
 
 
@@ -390,6 +393,37 @@ class InMemoryPersonalOsStore:
         async with self._lock:
             self._records.pop(record_id.value, None)
         return True
+
+
+_FAR_FUTURE = datetime(9999, 12, 31, tzinfo=timezone.utc)
+
+
+class InMemoryGoalsPort:
+    """Reference implementation of :class:`~aura_core.ports.storage.GoalsPort` (Phase D2).
+
+    Test/local-dev only: the real source of truth is the legacy ``goals`` table synced from the
+    Flutter client, which only :class:`~aura_core.adapters.postgres_goals.PostgresGoalsPort`
+    can see. ``seed`` lets a test populate goals directly, since there is no write path here.
+    """
+
+    def __init__(self) -> None:
+        self._by_owner: dict[str, list[GoalSnapshot]] = {}
+
+    def seed(self, owner_id: UserId, snapshots: Sequence[GoalSnapshot]) -> None:
+        self._by_owner.setdefault(owner_id.value, []).extend(snapshots)
+
+    async def active_summaries(
+        self, owner_id: UserId, *, limit: int = 5
+    ) -> Sequence[GoalSnapshot]:
+        goals = [g for g in self._by_owner.get(owner_id.value, []) if g.status == "active"]
+        priority_rank = {"high": 0, "medium": 1, "low": 2}
+        goals.sort(
+            key=lambda g: (
+                priority_rank.get(g.priority, 1),
+                g.target_date or _FAR_FUTURE,
+            )
+        )
+        return goals[:limit]
 
 
 class InMemoryGraphStore:
