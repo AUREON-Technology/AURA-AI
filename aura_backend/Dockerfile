@@ -38,6 +38,13 @@ ENV PATH=/root/.local/bin:$PATH
 
 WORKDIR /app
 
+# Phase F1/F2: the system binaries pytesseract and the espeak-ng TTS adapter shell out to.
+# Runtime-only, so these belong in the runner stage, not the builder.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    espeak-ng \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy installed python packages from builder stage
 COPY --from=builder /root/.local /root/.local
 

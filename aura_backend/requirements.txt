@@ -32,3 +32,11 @@ opentelemetry-api>=1.24.0
 opentelemetry-sdk>=1.24.0
 opentelemetry-instrumentation-fastapi>=0.45b0
 opentelemetry-exporter-otlp-proto-http>=1.24.0
+# Phase F1: OCR for scanned PDF pages (aura_core/adapters/tesseract_ocr.py). Needs the
+# `tesseract-ocr` system binary too -- see the Dockerfile's runner stage.
+pytesseract>=0.3.10
+pillow>=10.0.0
+# Phase F2: self-hosted speech-to-text (aura_core/adapters/whisper_stt.py), CPU-only via
+# CTranslate2. TTS (aura_core/adapters/espeak_tts.py) needs no package here -- it shells out to
+# the `espeak-ng` system binary, also added in the Dockerfile's runner stage.
+faster-whisper>=1.0.0

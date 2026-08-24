@@ -203,6 +203,45 @@ def register_admin_ops(
         report = getattr(container.refresh_pipeline, "last_report", None)
         return JSONResponse(content={"report": report.as_dict() if report else None})
 
+    @router.get("/admin/scorecard")
+    async def scorecard(
+        caller=Depends(principal), hours: int = Query(default=24, ge=1, le=24 * 30),
+    ) -> JSONResponse:
+        """Phase G1: the roadmap's own scorecard, live -- real turns from
+        `container.telemetry_sink` over the trailing window, plus whatever eval suites have a
+        recorded baseline (`evaluation/suites/*_baseline.json`, `RegressionGate.save_baseline`'s
+        own format). Retrieval quality numbers are only as fresh as the last time someone ran
+        that suite and saved its baseline; this endpoint reads what is on disk, it does not
+        re-run the suite itself -- that stays a deliberate, explicit CI/operator action.
+        """
+        require_admin(caller)
+        import json
+        from datetime import datetime, timedelta, timezone
+        from pathlib import Path
+
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        turns = await container.telemetry_sink.recent_summary(since=since)
+
+        suites_dir = Path(__file__).resolve().parents[2] / "evaluation" / "suites"
+        retrieval: dict[str, Any] = {}
+        if suites_dir.is_dir():
+            for baseline_path in sorted(suites_dir.glob("*_baseline.json")):
+                try:
+                    payload = json.loads(baseline_path.read_text())
+                except (OSError, ValueError):
+                    continue
+                suite = payload.get("suite", baseline_path.stem)
+                retrieval[suite] = payload.get("metrics", {})
+
+        return JSONResponse(
+            content={
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "window_hours": hours,
+                "turns": turns,
+                "retrieval": retrieval,
+            }
+        )
+
     @router.get("/admin/approvals")
     async def list_approvals(
         caller=Depends(principal),

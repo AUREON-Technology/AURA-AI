@@ -44,6 +44,7 @@ __all__ = [
     "SecuritySettings",
     "InfrastructureSettings",
     "LearningSettings",
+    "VoiceSettings",
     "load_settings",
 ]
 
@@ -406,6 +407,11 @@ class KnowledgeSettings:
     retrieval_max_generations: int = 2
     #: How many strategies the adaptive router may run in parallel for an ambiguous query.
     retrieval_max_parallel: int = 2
+    #: Phase F1. The engine itself is only built when the `tesseract` binary is actually on
+    #: PATH -- this flag lets an operator opt out even when it is, e.g. to keep CPU free for the
+    #: generator; it can never opt *in* to an engine that was never present.
+    ocr_enabled: bool = True
+    ocr_lang: str = "eng"
 
     @classmethod
     def from_env(cls) -> "KnowledgeSettings":
@@ -431,6 +437,8 @@ class KnowledgeSettings:
             graph_enabled=_bool("KNOWLEDGE_GRAPH_ENABLED", True),
             max_document_bytes=_int("KNOWLEDGE_MAX_DOC_BYTES", 8 * 1024 * 1024, minimum=1024),
             prompt_chunk_max_chars=_int("KNOWLEDGE_PROMPT_CHUNK_CHARS", 280, minimum=64, maximum=4000),
+            ocr_enabled=_bool("KNOWLEDGE_OCR_ENABLED", True),
+            ocr_lang=_env("KNOWLEDGE_OCR_LANG", "eng") or "eng",
         )
 
     def __post_init__(self) -> None:
@@ -693,6 +701,26 @@ class LearningSettings:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class VoiceSettings:
+    """Self-hosted speech recognition and synthesis (Phase F2) -- both engines are only ever
+    built when their binary/package is actually present (see
+    `Container._build_stt_engine`/`_build_tts_engine`); these flags let an operator opt out of
+    an engine that is present, never opt into one that is not."""
+
+    stt_enabled: bool = True
+    stt_model: str = "tiny.en"
+    tts_enabled: bool = True
+
+    @classmethod
+    def from_env(cls) -> "VoiceSettings":
+        return cls(
+            stt_enabled=_bool("VOICE_STT_ENABLED", True),
+            stt_model=_env("VOICE_STT_MODEL", "tiny.en") or "tiny.en",
+            tts_enabled=_bool("VOICE_TTS_ENABLED", True),
+        )
+
+
 # --------------------------------------------------------------------------------------
 # Root
 # --------------------------------------------------------------------------------------
@@ -712,6 +740,7 @@ class AuraSettings:
     security: SecuritySettings = field(default_factory=SecuritySettings)
     infrastructure: InfrastructureSettings = field(default_factory=InfrastructureSettings)
     learning: LearningSettings = field(default_factory=LearningSettings)
+    voice: VoiceSettings = field(default_factory=VoiceSettings)
 
     @classmethod
     def from_env(cls) -> "AuraSettings":
@@ -740,6 +769,7 @@ class AuraSettings:
             security=SecuritySettings.from_env(),
             infrastructure=InfrastructureSettings.from_env(),
             learning=LearningSettings.from_env(),
+            voice=VoiceSettings.from_env(),
         )
 
     # -- validation --------------------------------------------------------------------
