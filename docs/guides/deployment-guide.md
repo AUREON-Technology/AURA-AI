@@ -218,7 +218,11 @@ git pull && docker compose -f docker-compose.prod.yml up -d --build
 
 Pushing to `main` runs **Backend CI**. When that workflow finishes green, **Deploy VPS**
 SSHes to the host as `vars.VPS_USER@vars.VPS_HOST` with `secrets.VPS_SSH_KEY` and runs
-`deploy/scripts/ci-deploy.sh`, pinning `AURA_SHA` to the commit CI tested.
+`deploy/scripts/ci-deploy.sh`, pinning `AURA_SHA` to the commit CI tested. That entry
+point loads `vps-update.sh` from the same SHA (not the host working tree) and sets
+`AURA_STASH_DIRTY=1` so leftover tracked edits on `/opt/aura-stack` are stashed as
+`cd-pre-deploy-<UTC>` instead of failing the job. Untracked files are ignored.
+Recover a stash with `git -C /opt/aura-stack stash list`.
 
 The Flutter APK is not part of this path (`BACKEND_URL` is compile-time). Build a new
 binary with [release-apk.yml](../../.github/workflows/release-apk.yml) when the client

@@ -16,6 +16,11 @@ name: Deploy VPS
 # Manual deploy: Actions → Deploy VPS → Run workflow.
 # The Flutter APK is not deployed here -- BACKEND_URL is compile-time;
 # use release-apk.yml when you need a new binary.
+#
+# The host checkout is often dirty (hotfixes, CRLF, leftover console edits).
+# ci-deploy.sh sets AURA_STASH_DIRTY=1 so those tracked files are stashed
+# rather than failing the job. Untracked files are ignored. The scripts
+# executed on the host are taken from AURA_SHA, not from the stale tree.
 
 on:
   workflow_run:
@@ -41,7 +46,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment: production
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -89,6 +94,7 @@ jobs:
                 AURA_COMPOSE=/opt/aura-stack/deploy/docker-compose.prod.yml \
                 AURA_PROJECT=aura \
                 AURA_BACKEND_SERVICE=gateway \
+                AURA_STASH_DIRTY=1 \
                 bash -s <<'REMOTE'
           set -euo pipefail
           git -C /opt/aura-stack fetch origin main

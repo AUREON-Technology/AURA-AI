@@ -15,8 +15,9 @@
 # Design rules, all of which exist because the alternative bites during an outage:
 #
 #   * Nothing is inferred silently. Every discovered path is printed before it is used.
-#   * `git pull --ff-only`, never `reset --hard`. A host with local edits stops with an
-#     explanation instead of having them destroyed.
+#   * `git merge --ff-only`, never `reset --hard`. Untracked files are ignored (logs, tmp).
+#     Tracked local edits: interactive runs stop; CI sets AURA_STASH_DIRTY=1 and stashes
+#     them with a timestamped message so a leftover hotfix cannot block every auto-deploy.
 #   * The pre-update commit is recorded and the rollback command is printed on failure. It is
 #     not run automatically -- an automatic rollback on a health-check flake is its own outage.
 #   * Migrations run before the new code starts, and only forward. `0002_client_updated_at`
@@ -38,6 +39,7 @@
 #                                   docker-compose.override.yml sitting next to it.
 #   AURA_HEALTH_URL=https://$AURA_DOMAIN/health
 #   AURA_SHA=<commit>               pin to the SHA CI tested (must be on origin/main)
+#   AURA_STASH_DIRTY=1              stash tracked local edits instead of aborting (CI default)
 
 set -euo pipefail
 
@@ -92,13 +94,24 @@ BEFORE="$(git -C "$REPO" rev-parse HEAD)"
 BRANCH="$(git -C "$REPO" rev-parse --abbrev-ref HEAD)"
 info "currently on $BRANCH at ${BEFORE:0:8}"
 
-if [ -n "$(git -C "$REPO" status --porcelain)" ]; then
-  say "Uncommitted changes present"
-  git -C "$REPO" status --short | sed 's/^/    /'
-  die "this host has local modifications. Committing or stashing them is a decision for you,
+TRACKED_DIRTY="$(git -C "$REPO" status --porcelain --untracked-files=no)"
+if [ -n "$TRACKED_DIRTY" ]; then
+  say "Uncommitted tracked changes present"
+  git -C "$REPO" status --short --untracked-files=no | sed 's/^/    /'
+  if [ "${AURA_STASH_DIRTY:-0}" = "1" ]; then
+    STASH_MSG="cd-pre-deploy-$(date -u +%Y%m%dT%H%M%SZ)"
+    info "AURA_STASH_DIRTY=1 -- stashing as '$STASH_MSG' so fast-forward can proceed"
+    info "recover with: git -C $REPO stash list"
+    run "git -C '$REPO' stash push -m '$STASH_MSG'"
+    if [ "$DRY_RUN" != "1" ] && [ -n "$(git -C "$REPO" status --porcelain --untracked-files=no)" ]; then
+      die "stash did not clear tracked modifications; refusing to continue"
+    fi
+  else
+    die "this host has local modifications. Committing or stashing them is a decision for you,
        not for a deploy script. Review the list above, then either:
          git -C $REPO stash push -m pre-deploy
-       or commit them, and re-run."
+       or re-run with AURA_STASH_DIRTY=1 (what Deploy VPS does)."
+  fi
 fi
 
 # -- 3. pull ------------------------------------------------------------------------------
