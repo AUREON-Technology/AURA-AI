@@ -727,6 +727,10 @@ class VoiceSettings:
     piper_en_model: str = "/opt/piper/voices/en_US-lessac-medium.onnx"
     piper_ar_model: str = "/opt/piper/voices/ar_JO-kareem-medium.onnx"
     piper_length_scale: float = 1.08
+    piper_noise_scale: float = 0.72
+    piper_noise_w: float = 0.9
+    piper_sentence_silence: float = 0.45
+    piper_tashkeel_model: str = "/opt/piper/libtashkeel_model.ort"
 
     @classmethod
     def from_env(cls) -> "VoiceSettings":
@@ -754,6 +758,20 @@ class VoiceSettings:
             piper_length_scale=_float(
                 "VOICE_PIPER_LENGTH_SCALE", 1.08, minimum=0.5, maximum=2.0,
             ),
+            # Bounds, not preferences: past roughly 1.0 noise_w slurs and past 0.8 noise_scale
+            # artefacts, so an operator tuning by ear cannot reach a voice that is worse than
+            # the stock one in a new way.
+            piper_noise_scale=_float(
+                "VOICE_PIPER_NOISE_SCALE", 0.72, minimum=0.0, maximum=1.0,
+            ),
+            piper_noise_w=_float("VOICE_PIPER_NOISE_W", 0.9, minimum=0.0, maximum=1.5),
+            piper_sentence_silence=_float(
+                "VOICE_PIPER_SENTENCE_SILENCE", 0.45, minimum=0.0, maximum=2.0,
+            ),
+            piper_tashkeel_model=_env(
+                "VOICE_PIPER_TASHKEEL_MODEL", "/opt/piper/libtashkeel_model.ort",
+            )
+            or "/opt/piper/libtashkeel_model.ort",
         )
 
 

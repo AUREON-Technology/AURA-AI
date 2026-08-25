@@ -75,7 +75,7 @@ void main() {
     final container = _containerFor(httpClient);
     addTearDown(container.dispose);
 
-    await container.read(voiceClientProvider).speak('${'Hello world. ' * 500}');
+    await container.read(voiceClientProvider).speak('Hello world. ' * 500);
     final body = jsonDecode(recorded!.body) as Map<String, dynamic>;
     expect((body['text'] as String).length, lessThanOrEqualTo(maxSpeakChars));
   });

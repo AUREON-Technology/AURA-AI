@@ -26,9 +26,13 @@ from aura_core.adapters.piper_tts import (
     DEFAULT_PIPER_EN_MODEL,
     DEFAULT_PIPER_LENGTH_SCALE,
     PiperTtsEngine,
+    DEFAULT_PIPER_NOISE_SCALE,
+    DEFAULT_PIPER_NOISE_W,
+    DEFAULT_PIPER_SENTENCE_SILENCE,
     build_piper_command,
     piper_available,
     piper_voice_name,
+    tashkeel_model_for,
 )
 from aura_core.adapters.whisper_stt import FasterWhisperEngine, faster_whisper_available
 from aura_core.domain.errors import DependencyUnavailableError
@@ -267,6 +271,76 @@ class TestPiperCommand:
     def test_voice_name_follows_the_model_filename(self) -> None:
         assert piper_voice_name(DEFAULT_PIPER_EN_MODEL) == "piper-en"
         assert piper_voice_name(DEFAULT_PIPER_AR_MODEL) == "piper-ar"
+
+    def test_every_prosody_flag_reaches_the_argv(self) -> None:
+        # Piper silently ignores flags it does not recognise, so a typo here would leave the
+        # voice at stock prosody with nothing in the logs to say so. These spellings are the
+        # ones `piper --help` lists for the 2023.11.14 binary.
+        args = build_piper_command("speech.wav", model_path=DEFAULT_PIPER_EN_MODEL)
+        assert args[args.index("--noise-scale") + 1] == str(DEFAULT_PIPER_NOISE_SCALE)
+        assert args[args.index("--noise-w") + 1] == str(DEFAULT_PIPER_NOISE_W)
+        assert args[args.index("--sentence-silence") + 1] == str(
+            DEFAULT_PIPER_SENTENCE_SILENCE
+        )
+
+    def test_prosody_defaults_move_away_from_piper_stock(self) -> None:
+        # Stock, per the voice's own .onnx.json and `piper --help`: 0.667 / 0.8 / 0.2s.
+        # If these ever equal stock again the whole change has silently reverted.
+        assert DEFAULT_PIPER_NOISE_SCALE != 0.667
+        assert DEFAULT_PIPER_NOISE_W > 0.8
+        assert DEFAULT_PIPER_SENTENCE_SILENCE > 0.2
+        # Guard rails: past these the voice slurs / artefacts rather than sounding natural.
+        assert DEFAULT_PIPER_NOISE_SCALE <= 0.8
+        assert DEFAULT_PIPER_NOISE_W <= 1.0
+
+    def test_prosody_is_overridable(self) -> None:
+        args = build_piper_command(
+            "speech.wav",
+            model_path=DEFAULT_PIPER_EN_MODEL,
+            noise_scale=0.5,
+            noise_w=0.6,
+            sentence_silence=0.1,
+        )
+        assert args[args.index("--noise-scale") + 1] == "0.5"
+        assert args[args.index("--noise-w") + 1] == "0.6"
+        assert args[args.index("--sentence-silence") + 1] == "0.1"
+
+    def test_tashkeel_is_absent_unless_asked_for(self) -> None:
+        args = build_piper_command("speech.wav", model_path=DEFAULT_PIPER_EN_MODEL)
+        assert "--tashkeel-model" not in args
+
+    def test_tashkeel_is_passed_when_supplied(self) -> None:
+        args = build_piper_command(
+            "speech.wav",
+            model_path=DEFAULT_PIPER_AR_MODEL,
+            tashkeel_model="/opt/piper/libtashkeel_model.ort",
+        )
+        assert args[args.index("--tashkeel-model") + 1] == (
+            "/opt/piper/libtashkeel_model.ort"
+        )
+
+
+class TestTashkeelSelection:
+    """Arabic only, and only when the file is really there -- Piper fails outright on a
+    missing tashkeel model, so a partial image must lose diacritics, not lose speech."""
+
+    def test_english_voice_never_gets_a_tashkeel_model(self, tmp_path) -> None:
+        present = tmp_path / "libtashkeel_model.ort"
+        present.write_bytes(b"stub")
+        assert tashkeel_model_for(DEFAULT_PIPER_EN_MODEL, str(present)) is None
+
+    def test_arabic_voice_gets_it_when_the_file_exists(self, tmp_path) -> None:
+        present = tmp_path / "libtashkeel_model.ort"
+        present.write_bytes(b"stub")
+        assert tashkeel_model_for(DEFAULT_PIPER_AR_MODEL, str(present)) == str(present)
+
+    def test_missing_file_degrades_to_no_tashkeel(self, tmp_path) -> None:
+        missing = tmp_path / "absent.ort"
+        assert tashkeel_model_for(DEFAULT_PIPER_AR_MODEL, str(missing)) is None
+
+    def test_unset_path_is_not_an_error(self) -> None:
+        assert tashkeel_model_for(DEFAULT_PIPER_AR_MODEL, None) is None
+        assert tashkeel_model_for(DEFAULT_PIPER_AR_MODEL, "") is None
 
 
 class TestPiperUnavailable:
