@@ -40,10 +40,41 @@ WORKDIR /app
 
 # Phase F1/F2: the system binaries pytesseract and the espeak-ng TTS adapter shell out to.
 # Runtime-only, so these belong in the runner stage, not the builder.
+#
+# Piper 2023.11.14-2 linux x86_64 is the last rhasspy binary release (repo archived).
+# SHA256 of piper_linux_x86_64.tar.gz was computed from the GitHub release asset.
+# ar_JO-kareem-medium is pinned to huggingface.co/rhasspy/piper-voices v1.0.0:
+#   onnx SHA256 from the Hugging Face LFS pointer; json SHA256 from the resolve URL.
+ARG PIPER_URL=https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz
+ARG PIPER_SHA256=a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992
+ARG PIPER_VOICE_ONNX_URL=https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/ar/ar_JO/kareem/medium/ar_JO-kareem-medium.onnx
+ARG PIPER_VOICE_ONNX_SHA256=9e95cab07b679da603bba17c4dec7ab3111320571964ee95c0379603c086491e
+ARG PIPER_VOICE_JSON_URL=https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/ar/ar_JO/kareem/medium/ar_JO-kareem-medium.onnx.json
+ARG PIPER_VOICE_JSON_SHA256=ea6d9b9d9076dbdb6bf5c98c6a141ef154959d2359709b37855727964e7d6c4d
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     espeak-ng \
+    ca-certificates \
+    curl \
+    && curl -fsSL --retry 3 --retry-delay 2 "${PIPER_URL}" -o /tmp/piper.tar.gz \
+    && echo "${PIPER_SHA256}  /tmp/piper.tar.gz" | sha256sum -c - \
+    && mkdir -p /opt/piper /opt/piper/voices \
+    && tar -xzf /tmp/piper.tar.gz -C /opt/piper --strip-components=1 \
+    && chmod +x /opt/piper/piper \
+    && curl -fsSL --retry 3 --retry-delay 2 "${PIPER_VOICE_ONNX_URL}" \
+        -o /opt/piper/voices/ar_JO-kareem-medium.onnx \
+    && echo "${PIPER_VOICE_ONNX_SHA256}  /opt/piper/voices/ar_JO-kareem-medium.onnx" | sha256sum -c - \
+    && curl -fsSL --retry 3 --retry-delay 2 "${PIPER_VOICE_JSON_URL}" \
+        -o /opt/piper/voices/ar_JO-kareem-medium.onnx.json \
+    && echo "${PIPER_VOICE_JSON_SHA256}  /opt/piper/voices/ar_JO-kareem-medium.onnx.json" | sha256sum -c - \
+    && rm -f /tmp/piper.tar.gz \
+    && apt-get purge -y curl \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
+
+ENV PATH="/opt/piper:${PATH}" \
+    LD_LIBRARY_PATH="/opt/piper"
 
 # Copy installed python packages from builder stage
 COPY --from=builder /root/.local /root/.local
