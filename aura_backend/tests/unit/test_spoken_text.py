@@ -37,3 +37,30 @@ class TestPrepareSpokenText:
 
     def test_blank_is_empty(self) -> None:
         assert prepare_spoken_text("   ") == ""
+
+    def test_arabic_question_mark_is_kept_as_the_sentence_ending(self) -> None:
+        spoken = prepare_spoken_text("مرحبا، كيف حالك؟")
+        assert spoken == "مرحبا، كيف حالك؟"
+        assert spoken.endswith("؟")
+        assert not spoken.endswith(".")
+
+    def test_arabic_semicolon_is_a_valid_ending(self) -> None:
+        spoken = prepare_spoken_text("الجواب جاهز؛")
+        assert spoken.endswith("؛")
+        assert not spoken.endswith(".")
+
+    def test_arabic_skips_english_abbreviation_expansions(self) -> None:
+        spoken = prepare_spoken_text("النسبة 50% جاهزة؟")
+        assert "percent" not in spoken
+        assert "50%" in spoken
+        assert spoken.endswith("؟")
+
+    def test_keeps_tashkeel(self) -> None:
+        spoken = prepare_spoken_text("مَرْحَبًا")
+        assert "َ" in spoken
+        assert "ْ" in spoken
+
+    def test_english_expansions_still_apply_to_english(self) -> None:
+        spoken = prepare_spoken_text("Ship it, e.g. overnight vs. ground.")
+        assert "for example" in spoken
+        assert "versus" in spoken

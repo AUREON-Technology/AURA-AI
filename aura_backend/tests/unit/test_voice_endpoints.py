@@ -32,7 +32,7 @@ class TestSpeakEndpoint:
         assert response.status_code == 200
         assert response.headers["content-type"] == "audio/wav"
         assert response.content[:4] == b"RIFF"
-        assert response.headers["x-engine"] == "espeak-ng"
+        assert response.headers["x-engine"] in {"espeak-ng", "piper-ar+espeak-ng"}
 
     async def test_blank_text_is_rejected_by_request_validation(self, container) -> None:
         await container.startup()

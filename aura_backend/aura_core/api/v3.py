@@ -497,9 +497,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         payload: SpeakRequest,
         caller: Principal = Depends(principal),
     ) -> Response:
-        """Text to speech via the container's `TextToSpeech` engine (self-hosted `espeak-ng`,
-        Phase F2). Returns WAV bytes directly rather than base64-in-JSON -- the client plays the
-        response body as-is."""
+        """Text to speech via the container's `TextToSpeech` engine (self-hosted Piper
+        Arabic + espeak-ng English, Phase F2). Returns WAV bytes directly rather than
+        base64-in-JSON -- the client plays the response body as-is."""
         await enforce_rate_limit(request, caller, "voice")
         if container.tts_engine is None:
             raise DependencyUnavailableError(
