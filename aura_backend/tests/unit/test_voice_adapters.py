@@ -16,12 +16,19 @@ from aura_core.adapters.espeak_tts import (
     espeak_available,
     resolve_espeak_voice,
 )
-from aura_core.adapters.language_aware_tts import LanguageAwareTtsEngine, select_tts_route
+from aura_core.adapters.language_aware_tts import (
+    LanguageAwareTtsEngine,
+    select_tts_route,
+    tts_engine_name,
+)
 from aura_core.adapters.piper_tts import (
     DEFAULT_PIPER_AR_MODEL,
+    DEFAULT_PIPER_EN_MODEL,
+    DEFAULT_PIPER_LENGTH_SCALE,
     PiperTtsEngine,
     build_piper_command,
     piper_available,
+    piper_voice_name,
 )
 from aura_core.adapters.whisper_stt import FasterWhisperEngine, faster_whisper_available
 from aura_core.domain.errors import DependencyUnavailableError
@@ -156,29 +163,56 @@ class _RecordingEngine:
 
 class TestLanguageAwareRouting:
     def test_arabic_without_piper_selects_espeak_ar(self) -> None:
-        route = select_tts_route("مرحبا بالعالم", voice=None, piper_ready=False)
+        route = select_tts_route(
+            "مرحبا بالعالم", voice=None, piper_en_ready=False, piper_ar_ready=False,
+        )
         assert route.backend == "espeak"
+        assert route.language == "ar"
         assert route.espeak_voice == "ar"
         assert route.rate_wpm == 130
 
     def test_arabic_with_piper_selects_piper(self) -> None:
-        route = select_tts_route("مرحبا بالعالم", voice=None, piper_ready=True)
+        route = select_tts_route(
+            "مرحبا بالعالم", voice=None, piper_en_ready=True, piper_ar_ready=True,
+        )
         assert route.backend == "piper"
+        assert route.language == "ar"
 
-    def test_english_selects_us_english_at_one_hundred_forty_two_wpm(self) -> None:
-        route = select_tts_route("The report is ready.", voice=None, piper_ready=True)
+    def test_english_with_piper_selects_piper(self) -> None:
+        route = select_tts_route(
+            "The report is ready.", voice=None, piper_en_ready=True, piper_ar_ready=True,
+        )
+        assert route.backend == "piper"
+        assert route.language == "en"
+
+    def test_english_without_piper_selects_espeak_en_us(self) -> None:
+        route = select_tts_route(
+            "The report is ready.", voice=None, piper_en_ready=False, piper_ar_ready=True,
+        )
         assert route.backend == "espeak"
+        assert route.language == "en"
         assert route.espeak_voice == "en-us"
         assert route.rate_wpm == 142
 
     def test_explicit_english_voice_wins_on_arabic_text(self) -> None:
-        route = select_tts_route("مرحبا", voice="en-us", piper_ready=True)
-        assert route.backend == "espeak"
-        assert route.espeak_voice == "en-us"
+        route = select_tts_route(
+            "مرحبا", voice="en-us", piper_en_ready=True, piper_ar_ready=True,
+        )
+        assert route.backend == "piper"
+        assert route.language == "en"
 
     def test_unsafe_voice_falls_through_to_auto_select(self) -> None:
-        route = select_tts_route("مرحبا", voice="-w /tmp/x", piper_ready=False)
+        route = select_tts_route(
+            "مرحبا", voice="-w /tmp/x", piper_en_ready=False, piper_ar_ready=False,
+        )
+        assert route.language == "ar"
         assert route.espeak_voice == "ar"
+
+    def test_health_name_lists_piper_voices_that_exist(self) -> None:
+        assert tts_engine_name(piper_en=True, piper_ar=True) == "piper-en+piper-ar"
+        assert tts_engine_name(piper_en=True, piper_ar=False) == "piper-en"
+        assert tts_engine_name(piper_en=False, piper_ar=True) == "piper-ar"
+        assert tts_engine_name(piper_en=False, piper_ar=False) == "espeak-ng"
 
     async def test_arabic_text_is_sent_to_the_arabic_espeak_engine(self) -> None:
         english, arabic = _RecordingEngine(), _RecordingEngine()
@@ -196,45 +230,84 @@ class TestLanguageAwareRouting:
         assert english.calls[0][1] == "en-us"
 
     async def test_arabic_text_is_sent_to_piper_when_present(self) -> None:
-        english, arabic, piper = _RecordingEngine(), _RecordingEngine(), _RecordingEngine()
+        english, arabic, piper_ar = _RecordingEngine(), _RecordingEngine(), _RecordingEngine()
         engine = LanguageAwareTtsEngine(
-            english=english, arabic_fallback=arabic, piper=piper,
+            english=english, arabic_fallback=arabic, piper_ar=piper_ar,
         )
-        assert engine.name == "piper-ar+espeak-ng"
+        assert engine.name == "piper-ar"
         await engine.synthesize("مرحبا بالعالم")
-        assert piper.calls and not english.calls and not arabic.calls
+        assert piper_ar.calls and not english.calls and not arabic.calls
+
+    async def test_english_text_is_sent_to_piper_when_present(self) -> None:
+        english, arabic, piper_en = _RecordingEngine(), _RecordingEngine(), _RecordingEngine()
+        engine = LanguageAwareTtsEngine(
+            english=english, arabic_fallback=arabic, piper_en=piper_en,
+        )
+        assert engine.name == "piper-en"
+        await engine.synthesize("The report is ready.")
+        assert piper_en.calls and not english.calls and not arabic.calls
 
 
 class TestPiperCommand:
-    def test_model_and_wav_path_are_flags_not_positional_text(self) -> None:
-        args = build_piper_command("speech.wav", model_path=DEFAULT_PIPER_AR_MODEL)
+    def test_model_length_scale_and_wav_path_are_flags_not_positional_text(self) -> None:
+        args = build_piper_command("speech.wav", model_path=DEFAULT_PIPER_EN_MODEL)
         assert args[0] == "piper"
-        assert args[args.index("--model") + 1] == DEFAULT_PIPER_AR_MODEL
+        assert args[args.index("--model") + 1] == DEFAULT_PIPER_EN_MODEL
         assert args[args.index("--output_file") + 1] == "speech.wav"
+        assert args[args.index("--length-scale") + 1] == str(DEFAULT_PIPER_LENGTH_SCALE)
+        assert DEFAULT_PIPER_LENGTH_SCALE == 1.08
+
+    def test_arabic_model_path_is_on_the_argv(self) -> None:
+        args = build_piper_command(
+            "speech.wav", model_path=DEFAULT_PIPER_AR_MODEL, length_scale=1.08,
+        )
+        assert args[args.index("--model") + 1] == DEFAULT_PIPER_AR_MODEL
+        assert args[args.index("--length-scale") + 1] == "1.08"
+
+    def test_voice_name_follows_the_model_filename(self) -> None:
+        assert piper_voice_name(DEFAULT_PIPER_EN_MODEL) == "piper-en"
+        assert piper_voice_name(DEFAULT_PIPER_AR_MODEL) == "piper-ar"
 
 
 class TestPiperUnavailable:
     def test_missing_binary_or_model_raises_dependency_unavailable(self, monkeypatch) -> None:
         import aura_core.adapters.piper_tts as mod
 
-        monkeypatch.setattr(mod, "piper_available", lambda model_path=None: False)
+        monkeypatch.setattr(mod, "piper_available", lambda model_path: False)
         with pytest.raises(DependencyUnavailableError):
-            mod.PiperTtsEngine()
+            mod.PiperTtsEngine(model_path=DEFAULT_PIPER_EN_MODEL)
 
 
 @pytest.mark.skipif(
-    not piper_available(),
+    not piper_available(DEFAULT_PIPER_AR_MODEL),
     reason="piper binary and ar_JO-kareem-medium model not present",
 )
-class TestPiperTtsEngine:
+class TestPiperArabicTtsEngine:
     def test_satisfies_the_text_to_speech_port(self) -> None:
-        assert isinstance(PiperTtsEngine(), TextToSpeech)
+        assert isinstance(PiperTtsEngine(model_path=DEFAULT_PIPER_AR_MODEL), TextToSpeech)
 
     def test_name(self) -> None:
-        assert PiperTtsEngine().name == "piper-ar"
+        assert PiperTtsEngine(model_path=DEFAULT_PIPER_AR_MODEL).name == "piper-ar"
 
     async def test_synthesizes_real_wav_bytes(self) -> None:
-        audio = await PiperTtsEngine().synthesize("مرحبا")
+        audio = await PiperTtsEngine(model_path=DEFAULT_PIPER_AR_MODEL).synthesize("مرحبا")
+        assert audio[:4] == b"RIFF"
+        assert audio[8:12] == b"WAVE"
+        assert len(audio) > 1000
+
+
+@pytest.mark.skipif(
+    not piper_available(DEFAULT_PIPER_EN_MODEL),
+    reason="piper binary and en_US-lessac-medium model not present",
+)
+class TestPiperEnglishTtsEngine:
+    def test_name(self) -> None:
+        assert PiperTtsEngine(model_path=DEFAULT_PIPER_EN_MODEL).name == "piper-en"
+
+    async def test_synthesizes_real_wav_bytes(self) -> None:
+        audio = await PiperTtsEngine(model_path=DEFAULT_PIPER_EN_MODEL).synthesize(
+            "The report is ready.",
+        )
         assert audio[:4] == b"RIFF"
         assert audio[8:12] == b"WAVE"
         assert len(audio) > 1000

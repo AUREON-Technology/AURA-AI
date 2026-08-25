@@ -29,9 +29,9 @@ class VoiceSpeakResult {
 
 /// Client for the v3 voice APIs (`/api/v3/voice/*`, Phase F2). Both endpoints keep inference on
 /// our own infrastructure -- `transcribe` calls the server's self-hosted `faster-whisper` engine,
-/// `speak` calls its self-hosted `espeak-ng` engine -- so this class never touches a hosted
-/// vendor API, matching the same self-hosting guarantee [KnowledgeCenter] and the chat client
-/// already hold to.
+/// `speak` calls its self-hosted Piper (espeak-ng fallback) engine -- so this class never
+/// touches a hosted vendor API, matching the same self-hosting guarantee [KnowledgeCenter]
+/// and the chat client already hold to.
 class VoiceClient {
   final Ref _ref;
   final http.Client? _http;

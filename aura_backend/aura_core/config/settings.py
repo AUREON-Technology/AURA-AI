@@ -708,10 +708,10 @@ class VoiceSettings:
     `Container._build_stt_engine`/`_build_tts_engine`); these flags let an operator opt out of
     an engine that is present, never opt into one that is not.
 
-    TTS rate/gap/pitch default to a slower, clearer narration than espeak-ng stock (175 wpm,
-    no word gap). Formant speech needs the extra space; operators can still raise the rate.
-    Arabic replies use Piper when the baked model is present, otherwise espeak ``-v ar``
-    at ``tts_ar_rate_wpm``.
+    TTS rate/gap/pitch apply only to the espeak-ng last-resort fallback (stock is 175 wpm,
+    no word gap). Primary speech is Piper: ``en_US-lessac-medium`` / ``ar_JO-kareem-medium``
+    with ``piper_length_scale`` (slightly slower than Piper's stock 1.0). Missing a language's
+    ONNX falls through to espeak ``en-us`` / ``ar``.
     """
 
     stt_enabled: bool = True
@@ -724,7 +724,9 @@ class VoiceSettings:
     tts_amplitude: int = 88
     tts_ar_voice: str = "ar"
     tts_ar_rate_wpm: int = 130
+    piper_en_model: str = "/opt/piper/voices/en_US-lessac-medium.onnx"
     piper_ar_model: str = "/opt/piper/voices/ar_JO-kareem-medium.onnx"
+    piper_length_scale: float = 1.08
 
     @classmethod
     def from_env(cls) -> "VoiceSettings":
@@ -739,11 +741,19 @@ class VoiceSettings:
             tts_amplitude=_int("VOICE_TTS_AMPLITUDE", 88, minimum=20, maximum=200),
             tts_ar_voice=_env("VOICE_TTS_AR_VOICE", "ar") or "ar",
             tts_ar_rate_wpm=_int("VOICE_TTS_AR_RATE_WPM", 130, minimum=80, maximum=250),
+            piper_en_model=_env(
+                "VOICE_PIPER_EN_MODEL",
+                "/opt/piper/voices/en_US-lessac-medium.onnx",
+            )
+            or "/opt/piper/voices/en_US-lessac-medium.onnx",
             piper_ar_model=_env(
                 "VOICE_PIPER_AR_MODEL",
                 "/opt/piper/voices/ar_JO-kareem-medium.onnx",
             )
             or "/opt/piper/voices/ar_JO-kareem-medium.onnx",
+            piper_length_scale=_float(
+                "VOICE_PIPER_LENGTH_SCALE", 1.08, minimum=0.5, maximum=2.0,
+            ),
         )
 
 

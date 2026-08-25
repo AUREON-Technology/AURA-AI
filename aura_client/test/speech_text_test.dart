@@ -35,10 +35,20 @@ The **invoice** is ready. See [the report](https://example.com/r) and `total`.
     expect(prepared, isNot(contains('More')));
   });
 
+  test('detects Arabic vs English from script counts', () {
+    expect(detectSpeechLanguage('مرحبا، كيف حالك؟'), 'ar');
+    expect(detectSpeechLanguage('The quarterly report is ready.'), 'en');
+    expect(detectSpeechLanguage('مرحبا hello'), 'ar');
+    expect(detectSpeechLanguage('Hello there مرحبا'), 'en');
+    expect(detectSpeechLanguage(''), 'en');
+    expect(detectSpeechLanguage('...'), 'en');
+  });
+
   test('does not rewrite an Arabic reply into English', () {
     expect(prepareSpeechText('مرحبا، كيف حالك؟'), 'مرحبا، كيف حالك؟');
     expect(prepareSpeechText('النسبة 50% جاهزة؟'), isNot(contains('percent')));
     expect(prepareSpeechText('مَرْحَبًا'), contains('َ'));
+    expect(prepareSpeechText('الجواب جاهز؛'), endsWith('؛'));
   });
 
   test('still expands English abbreviations on English replies', () {

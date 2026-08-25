@@ -1,15 +1,11 @@
-"""``espeak-ng`` implementation of the ``TextToSpeech`` port (Phase F2).
+"""``espeak-ng`` last-resort implementation of the ``TextToSpeech`` port (Phase F2).
 
-Self-hosted, real synthesis via the ``espeak-ng`` binary -- no vendor API. The voice is
-unmistakably synthetic (a formant synthesizer, not a neural TTS model); that is an honest
-tradeoff for a deployment that cannot spare the disk or CPU budget a neural voice model needs. A
-deployment that can afford one plugs it in behind this same port -- nothing above this adapter
-knows or cares which kind of synthesizer produced the bytes.
-
-Defaults are chosen for comprehension, not espeak's stock "as fast as a formant can go":
-US English, ~142 wpm (stock is 175), a short gap between words, and a slightly lower pitch.
-Operators override those via ``VoiceSettings``; a request may name a voice but cannot change
-rate -- rushed speech was the defect, not a feature.
+Self-hosted, real synthesis via the ``espeak-ng`` binary -- no vendor API. This is a formant
+synthesizer, not a neural model; ``LanguageAwareTtsEngine`` uses it only when Piper's ONNX
+for that language is missing. Defaults are chosen for comprehension, not espeak's stock
+"as fast as a formant can go": US English ~142 wpm (stock is 175), Arabic ~130 wpm, a short
+gap between words, and a slightly lower pitch. Operators override those via ``VoiceSettings``;
+a request may name a voice but cannot change rate.
 """
 
 from __future__ import annotations

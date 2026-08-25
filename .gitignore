@@ -83,3 +83,6 @@ Thumbs.db
 .coverage.*
 htmlcov/
 .pytest_cache/
+
+# Neural TTS voices — baked into the gateway image, never committed
+*.onnx
