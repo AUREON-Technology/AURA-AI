@@ -540,18 +540,22 @@ class Container:
             pitch=voice.tts_pitch,
             amplitude=voice.tts_amplitude,
         )
+        prosody = {
+            "length_scale": voice.piper_length_scale,
+            "noise_scale": voice.piper_noise_scale,
+            "noise_w": voice.piper_noise_w,
+            "sentence_silence": voice.piper_sentence_silence,
+        }
         piper_en = (
-            PiperTtsEngine(
-                model_path=voice.piper_en_model,
-                length_scale=voice.piper_length_scale,
-            )
+            PiperTtsEngine(model_path=voice.piper_en_model, **prosody)
             if piper_available(voice.piper_en_model)
             else None
         )
         piper_ar = (
             PiperTtsEngine(
                 model_path=voice.piper_ar_model,
-                length_scale=voice.piper_length_scale,
+                tashkeel_model=voice.piper_tashkeel_model,
+                **prosody,
             )
             if piper_available(voice.piper_ar_model)
             else None
