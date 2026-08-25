@@ -38,6 +38,7 @@ ROUTE_COSTS: Mapping[str, int] = {
     "read": 1,
     "search": 3,
     "ingest": 5,
+    "voice": 5,      # a Whisper forward pass or a synthesis subprocess, real CPU either way
     "chat": 10,
     "agent": 20,     # planning and tool execution can multiply generations
     "admin": 2,

@@ -17,7 +17,14 @@ a time behind a flag.
 import json
 from typing import Any, AsyncIterator, Mapping
 
-from ..domain.errors import AuraError, AuthenticationError, AuthorizationError, RateLimitedError
+from ..domain.errors import (
+    AuraError,
+    AuthenticationError,
+    AuthorizationError,
+    DependencyUnavailableError,
+    RateLimitedError,
+    ValidationError,
+)
 from ..domain.identifiers import CorrelationId, DocumentId, SessionId, UserId
 from ..domain.llm import RoutingPolicy
 from ..domain.memory import MemoryKind, MemoryQuery
@@ -73,7 +80,18 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     whatever replaces it afterwards.
     """
     try:
-        from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
+        from fastapi import (
+            APIRouter,
+            Body,
+            Depends,
+            File,
+            Form,
+            HTTPException,
+            Query,
+            Request,
+            Response,
+            UploadFile,
+        )
         from fastapi.responses import JSONResponse, StreamingResponse
         from pydantic import BaseModel, Field
     except ImportError as exc:  # pragma: no cover
@@ -104,6 +122,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         content: str = Field(min_length=1)
         document_id: str | None = None
         metadata: dict[str, Any] = Field(default_factory=dict)
+
+    class SpeakRequest(BaseModel):
+        text: str = Field(min_length=1, max_length=4000)
+        voice: str | None = None
 
     class SearchRequest(BaseModel):
         query: str = Field(min_length=1, max_length=1000)
@@ -328,6 +350,55 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
+    @router.post("/knowledge/documents/upload")
+    async def upload_document(
+        request: Request,
+        file: UploadFile = File(...),
+        title: str = Form(..., min_length=1, max_length=500),
+        caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Accept a raw PDF upload -- text and scanned pages alike (Phase F1).
+
+        The one HTTP entry point that was missing to reach `knowledge/documents.py`'s
+        page-aware extraction (`extract_pdf` already tells a text page from a scanned one and
+        keeps page numbers) and `apply_ocr`: both existed and were tested, but nothing in this
+        router ever called them. `keep_images` is only requested when Pillow is actually present
+        (`image_extraction_available()`), and OCR only runs when the container built a real
+        `OcrEngine`; a deployment with neither still ingests every text page and marks scanned
+        ones with the same honest "OCR is not configured" note `extract_pdf` always produces.
+        """
+        await enforce_rate_limit(request, caller, "ingest")
+        data = await file.read()
+        if len(data) > settings.knowledge.max_document_bytes:
+            raise ValidationError(
+                "uploaded file exceeds the configured size limit",
+                details={"limit_bytes": settings.knowledge.max_document_bytes},
+            )
+
+        from ..knowledge.documents import apply_ocr, extract_pdf, image_extraction_available
+
+        extraction = extract_pdf(data, title=title, keep_images=image_extraction_available())
+        if extraction.unreadable_pages and container.ocr_engine is not None:
+            extraction = await apply_ocr(extraction, container.ocr_engine)
+
+        result = await container.knowledge.ingest(
+            title=title, owner_id=caller.user_id, segments=extraction.blocks,
+        )
+        return JSONResponse(
+            content={
+                "document_id": result.document.id.value if result.document else None,
+                "version": result.document.version if result.document else None,
+                "chunks": result.chunks,
+                "created": result.created,
+                "quarantined_chunks": result.quarantined,
+                "skipped_reason": result.skipped_reason,
+                "pages": extraction.pages,
+                "unreadable_pages": list(extraction.unreadable_pages),
+                "blank_pages": list(extraction.blank_pages),
+                "ocr_used": container.ocr_engine.name if container.ocr_engine is not None else None,
+            }
+        )
+
     @router.post("/knowledge/search")
     async def search(
         request: Request, payload: SearchRequest, caller: Principal = Depends(principal)
@@ -391,6 +462,53 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                     for d in documents
                 ]
             }
+        )
+
+    # -- voice (Phase F2) ----------------------------------------------------------------
+
+    #: A voice note is short by nature; this is generous headroom, not a target -- unlike
+    #: `knowledge.max_document_bytes` there is no per-deployment setting for it yet.
+    MAX_AUDIO_BYTES = 25 * 1024 * 1024
+
+    @router.post("/voice/transcribe")
+    async def transcribe_audio(
+        request: Request, file: UploadFile = File(...), caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """Speech to text via the container's `SpeechToText` engine (self-hosted
+        `faster-whisper`, Phase F2). 503s with a clear `dependency_unavailable` body when no
+        engine is configured, rather than pretending an empty transcript is a real answer."""
+        await enforce_rate_limit(request, caller, "voice")
+        if container.stt_engine is None:
+            raise DependencyUnavailableError(
+                "no speech-to-text engine is configured on this deployment",
+                dependency="faster-whisper",
+            )
+        data = await file.read()
+        if len(data) > MAX_AUDIO_BYTES:
+            raise ValidationError(
+                "uploaded audio exceeds the size limit", details={"limit_bytes": MAX_AUDIO_BYTES}
+            )
+        text = await container.stt_engine.transcribe(data)
+        return JSONResponse(content={"text": text, "engine": container.stt_engine.name})
+
+    @router.post("/voice/speak")
+    async def synthesize_speech(
+        request: Request,
+        payload: SpeakRequest,
+        caller: Principal = Depends(principal),
+    ) -> Response:
+        """Text to speech via the container's `TextToSpeech` engine (self-hosted `espeak-ng`,
+        Phase F2). Returns WAV bytes directly rather than base64-in-JSON -- the client plays the
+        response body as-is."""
+        await enforce_rate_limit(request, caller, "voice")
+        if container.tts_engine is None:
+            raise DependencyUnavailableError(
+                "no text-to-speech engine is configured on this deployment", dependency="espeak-ng",
+            )
+        audio = await container.tts_engine.synthesize(payload.text, voice=payload.voice)
+        return Response(
+            content=audio, media_type="audio/wav",
+            headers={"X-Engine": container.tts_engine.name},
         )
 
     # -- memory ------------------------------------------------------------------------

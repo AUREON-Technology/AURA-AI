@@ -51,8 +51,8 @@ rest of the document can be trusted; if it drifts, re-verify before planning aga
 - **Proactivity is rule-based.** `aura_backend/services/insights.py` is fixed rules by deliberate
   choice; `InMemoryEventBus` (`aura_core/adapters/runtime.py:33`) documents itself as at-most-once
   and non-durable.
-- **No OCR, no vision, no voice.** Scanned pages are indexed as honest placeholders naming the
-  reason they could not be read. Audio and video have no extraction at all.
+- ~~No OCR, no vision, no voice.~~ **Partly closed by Phase F.** OCR and self-hosted STT/TTS are
+  real and wired; no vision model exists, and video has no extraction at all.
 - **No evidence.** No labelled evaluation suite exists. No `tests/load/` exists. The 4.56 ms p95
   and 478 turns/s figures describe in-memory adapters and an echo provider. The production compose
   file has been deployed zero times.
@@ -314,19 +314,95 @@ without the real-model eval infrastructure the gate requires to mean anything.
 
 ### Phase F — Multimodal and voice
 
-- **F1.** OCR and a vision model, replacing the placeholder chunks in
-  `aura_core/knowledge/documents.py`. This is the one capability the readiness report states
-  outright does not exist, and the `multimodal` retrieval strategy currently filters page
-  structure rather than image content.
-- **F2.** Server-side STT/TTS, keeping inference on our own infrastructure per the self-hosting
-  guarantee.
+**Done within corrected scope**, 2026-08-24.
+
+Investigated first: `aura_core/ports/documents.py`'s `OcrEngine` protocol and
+`aura_core/knowledge/documents.py`'s `extract_pdf`/`apply_ocr` pipeline were already fully built
+and unit-tested (`test_document_extraction.py`) — page-aware, honest about what it cannot read
+(`needs_ocr=True` plus a placeholder note naming the reason), and carrying image bytes when
+Pillow is available. But a full search of `aura_core/api/v3.py` found **zero callers**: the only
+existing `/knowledge/documents` route took plain-text `content: str` and never touched raw PDF
+bytes. The pipeline was structurally dead from the API's perspective — the same "built but never
+wired" shape as Phase E's event bus.
+
+- **F1. Done, scope-corrected.** Added `TesseractOcrEngine`
+  (`aura_core/adapters/tesseract_ocr.py`, `pytesseract` over the system `tesseract-ocr` binary,
+  fails fast in its constructor rather than on first use) and wired it into a genuinely new
+  endpoint, `POST /api/v3/knowledge/documents/upload` (multipart PDF), which is the first real
+  caller `extract_pdf`/`apply_ocr` have ever had. `KnowledgeSettings.ocr_enabled`/`ocr_lang` gate
+  it; `container.py` only builds the engine when both the setting and the binary are present, the
+  same lazy/optional pattern as every other adapter. Proven end to end with no mocks: a
+  Pillow-rendered scanned PDF (`Image.save(buf, format="PDF")` produces a real JPEG image
+  XObject `pypdf` extracts and Tesseract opens) is uploaded through the full HTTP stack and its
+  OCR'd text becomes genuinely searchable. **A vision model was not added.** OCR resolves the
+  specific gap the readiness report names — scanned pages indexed as placeholders — but a vision
+  model (describing a chart, reading a diagram) is a different capability with no self-hosted
+  candidate verified in this environment, and per the same standard Phase E3 applied ("burden of
+  proof is on the addition"), it is left out rather than added unproven. The `multimodal` RAG
+  strategy now has real OCR'd text to retrieve from PDFs uploaded through the new endpoint; it
+  still has no image-understanding signal, unchanged from before this phase.
+- **F2. Done.** Built from scratch — a repo-wide search for whisper/STT/TTS returned nothing, so
+  this is genuinely new infrastructure, not a rewire. `aura_core/ports/speech.py` defines
+  `SpeechToText`/`TextToSpeech`; `FasterWhisperEngine` (`adapters/whisper_stt.py`, CPU-friendly
+  CTranslate2 Whisper, `tiny.en` by default) loads its model lazily on first `transcribe()` call
+  behind an `asyncio.Lock` — matching `PostgresPool`'s "every connection is lazy" discipline, so
+  constructing the adapter never makes a network call. `EspeakTtsEngine`
+  (`adapters/espeak_tts.py`) shells out to the system `espeak-ng` binary — chosen specifically
+  because it needs no model weights and no extra pip dependencies, an explicit
+  disk/CPU-budget tradeoff for a synthetic-sounding but fully self-hosted voice, documented as
+  such in the adapter's own docstring. Both keep inference on our own infrastructure; no hosted
+  vendor branch exists anywhere in `aura_core/llm/registry.py`, and none was added here either.
+  Wired through `VoiceSettings` and two new endpoints, `POST /api/v3/voice/transcribe` and
+  `POST /api/v3/voice/speak`, both returning 503 rather than silently degrading when the engine
+  is unavailable. Proven with a real, no-mocks round trip: `espeak-ng` synthesises "one hundred
+  dollars" to WAV, `faster-whisper` transcribes it back, at three levels — direct adapter calls,
+  the wired `Container`, and full HTTP through `TestClient`.
 
 ### Phase G — Continuous intelligence
 
-- **G1.** The scorecard below as a live dashboard fed by real evaluation runs and `TurnTelemetry`,
-  not hand-maintained numbers.
-- **G2.** Multi-model routing. `aura_core/llm/router.py` implements five policies but has only ever
-  run against Ollama and an echo provider — serve a second model before claiming routing works.
+**Done**, 2026-08-24.
+
+- **G1. Done.** Before this phase, `KernelDependencies.telemetry_sink` was never wired anywhere in
+  `container.py` — every turn built a complete `TurnTelemetry` record and nothing kept it past the
+  request. Added `PostgresTelemetrySink` (`adapters/postgres_telemetry.py`, self-managed
+  `aura_turn_telemetry` table, same `CREATE TABLE IF NOT EXISTS` pattern as
+  `postgres_audit.py`/`postgres_outbox.py`) and `InMemoryTelemetrySink` as its in-memory twin, both
+  behind the pre-existing `TelemetrySink` port. `GET /api/v3/admin/scorecard` combines
+  `telemetry_sink.recent_summary(since=...)` — real p50/p95 via Postgres `percentile_cont`, error
+  rate, cache-hit rate, tool success rate, average groundedness — with the static baselines Phase
+  A3's `RegressionGate.save_baseline()` already writes under `evaluation/suites/*_baseline.json`.
+  It reads what evaluation runs left on disk rather than re-running suites itself, so it is live
+  over turns and current-as-of-last-run over evaluation. Verified against a real Postgres instance,
+  which caught a genuine production-blocking bug the in-memory sink could never surface: `avg()`
+  over an integer column returns `Decimal` via asyncpg, and `json.dumps` cannot serialise a
+  `Decimal` — every real deployment's `/admin/scorecard` call would have 500'd. Fixed by casting to
+  `float` before rounding; the same class of bug as Phase E1's `DomainEvent.as_dict()` finding,
+  caught for the same reason: this session's standing rule to verify against real Postgres, not
+  just the in-memory adapter every other suite runs on.
+- **G2. Done.** `tests/unit/test_llm_routing.py` already tests `ProviderRouter`'s scoring,
+  capability filtering, failover, and circuit-breaker logic thoroughly — but only against
+  synthetic/scripted providers. The specific, narrower gap this roadmap named was two
+  *real* backends running at once; every prior real run (including Phase A4's load test) used
+  exactly one real provider (Ollama) plus the echo provider. Reused Phase A4's cached
+  `ollama/ollama` image and model volume to stand up one Ollama server with two real,
+  differently-sized models (`smollm2:135m`, 135M params; `qwen2.5:3b-instruct-q4_K_M`, 3B params)
+  loaded simultaneously, then built two real `OllamaProvider` instances against it — no mocks, no
+  injected timing. Result, measured: `FASTEST` correctly ordered the smaller model first from real
+  observed latency (~130ms vs ~480ms per completion); `QUALITY_FIRST` and `BALANCED` correctly
+  ordered the larger, higher-`quality_tier` model first; failover from an unreachable provider
+  (connection refused, not a bad request) correctly reached the second real provider and returned
+  real generated text. `CHEAPEST` does not distinguish the two — both are local models with a real
+  cost of `$0`, so the router's own name-order tie-break decides, which is the honest behaviour of
+  a "cheapest" policy when nothing actually costs anything, not a bug. Written up as a permanent,
+  opt-in test, `tests/load/test_multi_model_routing.py`, following `test_real_data_tier.py`'s exact
+  pattern: skipped cleanly without `AURA_ROUTING_TEST_*` env vars, excluded from the default
+  `pytest tests` run by the same `load` marker. Ran clean (4/4) against the real two-model server
+  before it was torn down.
+
+**Exit criteria.** Scorecard fed by real telemetry and real eval baselines, not hand-maintained
+numbers — **done**, and verified against real Postgres closely enough to catch a real
+serialisation bug. Multi-model routing proven against two real, simultaneously-running backends,
+not Ollama-plus-echo — **done**, with a permanent opt-in test reproducing the proof.
 
 ## 4. Scope decisions
 
@@ -352,8 +428,11 @@ Phase A, not by an estimate.
 | Single-turn latency, real data tier | **p50 56.3 s / p95 70.5 s**, full free-text answer, 3 CPU cores, `qwen2.5:3b-instruct-q4_K_M` ([A4 report](reports/phase-a4-load-test.md)) — not comparable to A1's 2-output-token warm/cold figures | Phase A4, measured |
 | Concurrency ceiling | **Flat throughput (~0.04–0.06 turns/s) from 1 to 8 concurrent requests** — `OLLAMA_NUM_PARALLEL=1` is the binding constraint, confirmed rather than assumed ([A4 report](reports/phase-a4-load-test.md)); 478 turns/s remains an echo-provider artifact, not this number | Phase A4, measured |
 | Gateway image size | **2.34 GB**, down from 8.88 GB once CUDA was dropped ([A1 report](reports/phase-a1-first-boot.md)) | Phase A1 finding 2 |
-| Tool success rate | Unmeasured | Phase C + `ToolTelemetry` |
+| Tool success rate | **Live** via `GET /api/v3/admin/scorecard` (`TelemetrySink.recent_summary`); no real production traffic yet to report a baseline number from | Phase G1, mechanism done |
 | Task completion rate | Unmeasured | Phase C |
+| Scanned-document OCR | **Real**, Tesseract, proven on a genuinely scanned PDF end to end through `POST /knowledge/documents/upload`; no vision model (image/chart understanding) | Phase F1 |
+| Voice (STT/TTS) | **Real**, self-hosted (`faster-whisper` / `espeak-ng`), proven with a real synthesize→transcribe round trip through `POST /voice/speak` and `/voice/transcribe` | Phase F2 |
+| Multi-model routing | **Proven** against two real, simultaneously-running local models (135M and 3B params) — `FASTEST`/`QUALITY_FIRST`/`BALANCED`/failover all route on real measured behaviour; `CHEAPEST` ties (both cost `$0`) | Phase G2, `tests/load/test_multi_model_routing.py` |
 | Restore verified | **Yes for all three stores** — Postgres, Qdrant and Redis each restored from the `backup` service's own output ([A2 report](reports/phase-a2-restore-drill.md)); offsite copy and `restore.sh` still unexercised | Phase A2 |
 | Production deployments | **1 and counting** — the real VPS, 17 services, verified live over HTTPS on 2026-08-23 | Phase A1 |
 

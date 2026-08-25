@@ -2,10 +2,11 @@
 
 Small, but two of them carry a rule worth stating explicitly.
 
-**The event bus never propagates a handler failure.** Audit logging, metric updates, and cache
-invalidation subscribe to domain events. If a broken subscriber could raise into the publisher,
-a failing audit sink would fail a user's request -- turning an observability problem into an
-availability problem.
+**The event bus never propagates a handler failure.** A broken subscriber must not raise into
+the publisher -- that would turn an observability problem into an availability problem. (Audit
+writes and metric updates, in this codebase, actually happen via direct calls threaded through
+each engine, not by subscribing to this bus -- Phase E2's `aura_core/triggers/` is the bus's
+first real subscriber. This rule matters anyway, for that subscriber and the next one.)
 
 **The clock is injected.** Memory decay, TTLs, budget windows, and scheduling all depend on
 time; injecting it is what makes those testable without ``sleep`` or monkey-patching.
@@ -22,6 +23,7 @@ from typing import Awaitable, Callable, Sequence
 
 from ..domain.events import DomainEvent
 from ..domain.outbox import OutboxEntry
+from ..domain.telemetry import TurnTelemetry
 from ..observability.logging import get_logger
 from ..ports.runtime import AuditEvent
 
@@ -32,6 +34,7 @@ __all__ = [
     "SystemClock",
     "FrozenClock",
     "InMemoryAuditSink",
+    "InMemoryTelemetrySink",
 ]
 
 logger = get_logger("adapters.runtime")
@@ -260,3 +263,61 @@ class InMemoryAuditSink:
 
     def __len__(self) -> int:
         return len(self._events)
+
+
+class InMemoryTelemetrySink:
+    """Bounded ring-buffer implementation of ``TelemetrySink`` (Phase G1).
+
+    Reference implementation and test substrate, same reasoning as :class:`InMemoryAuditSink`:
+    production wants :class:`~aura_core.adapters.postgres_telemetry.PostgresTelemetrySink`, whose
+    history must survive a restart, which a ring buffer cannot.
+    """
+
+    def __init__(self, *, max_turns: int = 10_000) -> None:
+        self._turns: deque[TurnTelemetry] = deque(maxlen=max_turns)
+
+    async def record_turn(self, telemetry: TurnTelemetry) -> None:
+        self._turns.append(telemetry)
+
+    async def recent_summary(self, *, since: datetime) -> dict:
+        turns = [t for t in self._turns if t.started_at >= since]
+        if not turns:
+            return {
+                "turns": 0, "since": since.astimezone(timezone.utc).isoformat(),
+                "error_rate": None, "degraded_rate": None, "cache_hit_rate": None,
+                "p50_latency_ms": None, "p95_latency_ms": None, "avg_prompt_tokens": None,
+                "avg_completion_tokens": None, "avg_cost_usd": None, "tool_success_rate": None,
+                "avg_groundedness": None,
+            }
+        latencies = sorted(t.total_ms for t in turns)
+        groundedness = [t.groundedness for t in turns if t.groundedness is not None]
+        tool_calls = sum(len(t.tools) for t in turns)
+        tool_failures = sum(1 for t in turns for tc in t.tools if not tc.ok)
+        return {
+            "turns": len(turns),
+            "since": since.astimezone(timezone.utc).isoformat(),
+            "error_rate": round(sum(1 for t in turns if str(t.outcome) != "success") / len(turns), 4),
+            "degraded_rate": round(sum(1 for t in turns if t.degraded) / len(turns), 4),
+            "cache_hit_rate": round(sum(1 for t in turns if t.cache.hit) / len(turns), 4),
+            "p50_latency_ms": round(_percentile(latencies, 0.5), 2),
+            "p95_latency_ms": round(_percentile(latencies, 0.95), 2),
+            "avg_prompt_tokens": round(sum(t.prompt_tokens for t in turns) / len(turns), 2),
+            "avg_completion_tokens": round(sum(t.completion_tokens for t in turns) / len(turns), 2),
+            "avg_cost_usd": round(sum(t.cost_usd for t in turns) / len(turns), 6),
+            "tool_success_rate": (
+                round(1 - tool_failures / tool_calls, 4) if tool_calls else None
+            ),
+            "avg_groundedness": (
+                round(sum(groundedness) / len(groundedness), 4) if groundedness else None
+            ),
+        }
+
+    def __len__(self) -> int:
+        return len(self._turns)
+
+
+def _percentile(sorted_values: list[float], fraction: float) -> float:
+    if not sorted_values:
+        return 0.0
+    index = min(len(sorted_values) - 1, int(round(fraction * (len(sorted_values) - 1))))
+    return sorted_values[index]

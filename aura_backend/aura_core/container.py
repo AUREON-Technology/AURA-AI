@@ -29,6 +29,7 @@ from .adapters.runtime import (
     InMemoryAuditSink,
     InMemoryEventBus,
     InMemoryEventOutbox,
+    InMemoryTelemetrySink,
     SystemClock,
 )
 from .config.settings import AuraSettings, load_settings
@@ -132,6 +133,7 @@ class Container:
         self.graph = self._build_graph_store()
         self.feedback = self._build_feedback_store()
         self.audit = self._build_audit_sink()
+        self.telemetry_sink = self._build_telemetry_sink()
         self.sources = self._build_source_registry()
 
         self.providers = build_providers(
@@ -217,6 +219,14 @@ class Container:
             metrics=self.metrics,
             event_bus=self.events,
         )
+        # Phase F1: `OcrEngine` is applied at the extraction step, before `ingest()` -- see
+        # `api/v3.py`'s `/knowledge/documents/upload` -- so it lives here as its own attribute
+        # rather than as a `KnowledgeEngine` constructor argument.
+        self.ocr_engine = self._build_ocr_engine()
+        # Phase F2: neither speech port feeds an engine constructor either -- both are reached
+        # directly from `api/v3.py`'s `/voice/*` routes.
+        self.stt_engine = self._build_stt_engine()
+        self.tts_engine = self._build_tts_engine()
 
         learning = settings.learning
         from .learning.knowledge_refresh import KnowledgeRefreshPipeline
@@ -346,6 +356,7 @@ class Container:
                 cache=self.llm_cache,
                 metrics=self.metrics,
                 event_bus=self.events,
+                telemetry_sink=self.telemetry_sink,
                 clock=self.clock,
                 settings=settings,
             )
@@ -476,6 +487,41 @@ class Container:
             raise ConfigurationError(f"unknown memory backend {backend!r}")
         return InMemoryPersonalOsStore()
 
+    def _build_ocr_engine(self) -> Any:
+        """`None` unless both the operator opted in (`ocr_enabled`) and the `tesseract` binary is
+        actually on PATH -- `ports/documents.py`'s "sensible default is nothing" stays true
+        wherever the binary genuinely is not there, e.g. this platform's own CI image."""
+        if not self.settings.knowledge.ocr_enabled:
+            return None
+        from .adapters.tesseract_ocr import TesseractOcrEngine, tesseract_available
+
+        if not tesseract_available():
+            return None
+        return TesseractOcrEngine(lang=self.settings.knowledge.ocr_lang)
+
+    def _build_stt_engine(self) -> Any:
+        """`None` unless both opted in (`voice.stt_enabled`) and the `faster-whisper` package is
+        actually importable -- the model itself loads lazily on first real call, so this check
+        costs nothing at container-build time."""
+        if not self.settings.voice.stt_enabled:
+            return None
+        from .adapters.whisper_stt import FasterWhisperEngine, faster_whisper_available
+
+        if not faster_whisper_available():
+            return None
+        return FasterWhisperEngine(model_size=self.settings.voice.stt_model)
+
+    def _build_tts_engine(self) -> Any:
+        """`None` unless both opted in (`voice.tts_enabled`) and the `espeak-ng` binary is
+        actually on PATH."""
+        if not self.settings.voice.tts_enabled:
+            return None
+        from .adapters.espeak_tts import EspeakTtsEngine, espeak_available
+
+        if not espeak_available():
+            return None
+        return EspeakTtsEngine()
+
     def _build_goals_port(self) -> Any:
         """The `GoalsPort` (Phase D2): reads the legacy `goals` table's plaintext columns.
 
@@ -541,6 +587,18 @@ class Container:
                 clock=self.clock,
             )
         return InMemoryAuditSink(clock=self.clock)
+
+    def _build_telemetry_sink(self) -> Any:
+        """Phase G1: `KernelDependencies.telemetry_sink` was wired nowhere before this -- every
+        turn built a `TurnTelemetry` record and nothing kept it. Without a real history, "a live
+        dashboard fed by real evaluation runs and TurnTelemetry" had nothing to read from."""
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_telemetry import PostgresTelemetrySink
+
+            return PostgresTelemetrySink(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        return InMemoryTelemetrySink()
 
     def _build_source_registry(self) -> Any:
         if self.settings.infrastructure.document_backend == "postgres":
