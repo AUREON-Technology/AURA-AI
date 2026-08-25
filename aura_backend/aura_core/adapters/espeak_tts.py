@@ -36,6 +36,8 @@ __all__ = [
     "DEFAULT_TTS_WORD_GAP",
     "DEFAULT_TTS_PITCH",
     "DEFAULT_TTS_AMPLITUDE",
+    "DEFAULT_TTS_AR_VOICE",
+    "DEFAULT_TTS_AR_RATE_WPM",
 ]
 
 _BINARY = "espeak-ng"
@@ -49,6 +51,10 @@ DEFAULT_TTS_RATE_WPM = 142
 DEFAULT_TTS_WORD_GAP = 6
 DEFAULT_TTS_PITCH = 45
 DEFAULT_TTS_AMPLITUDE = 88
+# Arabic espeak fallback when Piper is absent. Slower than the English profile: Arabic
+# formant speech is denser per syllable, and 175 wpm (espeak stock) is unusable.
+DEFAULT_TTS_AR_VOICE = "ar"
+DEFAULT_TTS_AR_RATE_WPM = 130
 
 
 def espeak_available() -> bool:

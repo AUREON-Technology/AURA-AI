@@ -513,20 +513,45 @@ class Container:
 
     def _build_tts_engine(self) -> Any:
         """`None` unless both opted in (`voice.tts_enabled`) and the `espeak-ng` binary is
-        actually on PATH."""
+        actually on PATH. Piper is additive: Arabic neural TTS when the binary and ONNX
+        sit on disk, otherwise espeak `-v ar` for Arabic and the US English profile for
+        everything else."""
         if not self.settings.voice.tts_enabled:
             return None
         from .adapters.espeak_tts import EspeakTtsEngine, espeak_available
+        from .adapters.language_aware_tts import LanguageAwareTtsEngine
+        from .adapters.piper_tts import PiperTtsEngine, piper_available
 
         if not espeak_available():
             return None
         voice = self.settings.voice
-        return EspeakTtsEngine(
+        english = EspeakTtsEngine(
             voice=voice.tts_voice,
             rate_wpm=voice.tts_rate_wpm,
             word_gap=voice.tts_word_gap,
             pitch=voice.tts_pitch,
             amplitude=voice.tts_amplitude,
+        )
+        arabic_fallback = EspeakTtsEngine(
+            voice=voice.tts_ar_voice,
+            rate_wpm=voice.tts_ar_rate_wpm,
+            word_gap=voice.tts_word_gap,
+            pitch=voice.tts_pitch,
+            amplitude=voice.tts_amplitude,
+        )
+        piper = (
+            PiperTtsEngine(model_path=voice.piper_ar_model)
+            if piper_available(voice.piper_ar_model)
+            else None
+        )
+        return LanguageAwareTtsEngine(
+            english=english,
+            arabic_fallback=arabic_fallback,
+            piper=piper,
+            english_voice=voice.tts_voice,
+            english_rate_wpm=voice.tts_rate_wpm,
+            arabic_voice=voice.tts_ar_voice,
+            arabic_rate_wpm=voice.tts_ar_rate_wpm,
         )
 
     def _build_goals_port(self) -> Any:

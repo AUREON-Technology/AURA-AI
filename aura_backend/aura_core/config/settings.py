@@ -710,6 +710,8 @@ class VoiceSettings:
 
     TTS rate/gap/pitch default to a slower, clearer narration than espeak-ng stock (175 wpm,
     no word gap). Formant speech needs the extra space; operators can still raise the rate.
+    Arabic replies use Piper when the baked model is present, otherwise espeak ``-v ar``
+    at ``tts_ar_rate_wpm``.
     """
 
     stt_enabled: bool = True
@@ -720,6 +722,9 @@ class VoiceSettings:
     tts_word_gap: int = 6
     tts_pitch: int = 45
     tts_amplitude: int = 88
+    tts_ar_voice: str = "ar"
+    tts_ar_rate_wpm: int = 130
+    piper_ar_model: str = "/opt/piper/voices/ar_JO-kareem-medium.onnx"
 
     @classmethod
     def from_env(cls) -> "VoiceSettings":
@@ -732,6 +737,13 @@ class VoiceSettings:
             tts_word_gap=_int("VOICE_TTS_WORD_GAP", 6, minimum=0, maximum=20),
             tts_pitch=_int("VOICE_TTS_PITCH", 45, minimum=0, maximum=99),
             tts_amplitude=_int("VOICE_TTS_AMPLITUDE", 88, minimum=20, maximum=200),
+            tts_ar_voice=_env("VOICE_TTS_AR_VOICE", "ar") or "ar",
+            tts_ar_rate_wpm=_int("VOICE_TTS_AR_RATE_WPM", 130, minimum=80, maximum=250),
+            piper_ar_model=_env(
+                "VOICE_PIPER_AR_MODEL",
+                "/opt/piper/voices/ar_JO-kareem-medium.onnx",
+            )
+            or "/opt/piper/voices/ar_JO-kareem-medium.onnx",
         )
 
 
