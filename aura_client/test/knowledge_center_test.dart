@@ -113,6 +113,64 @@ void main() {
     expect(result.searchedButEmpty, isTrue);
   });
 
+  test('uploadPdf() POSTs multipart form data to /api/v3/knowledge/documents/upload', () async {
+    http.Request? recorded;
+    final httpClient = MockClient((request) async {
+      recorded = request;
+      return http.Response(
+        jsonEncode({'document_id': 'doc-2', 'chunks': 3, 'created': true, 'quarantined_chunks': 0}),
+        200,
+      );
+    });
+
+    final container = ProviderContainer(
+      overrides: [
+        tokenManagerProvider.overrideWith((ref) => _StubTokenManager(ref)),
+        knowledgeCenterProvider.overrideWith(
+          (ref) => KnowledgeCenter(ref, httpClient: httpClient),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final result = await container.read(knowledgeCenterProvider).uploadPdf(
+          title: 'Handbook',
+          bytes: [37, 80, 68, 70],
+          filename: 'handbook.pdf',
+        );
+
+    expect(result.ok, isTrue);
+    expect(result.documentId, 'doc-2');
+    expect(recorded, isNotNull);
+    expect(recorded!.method, 'POST');
+    expect(recorded!.url.path, '/api/v3/knowledge/documents/upload');
+    expect(recorded!.headers['Authorization'], 'Bearer jwt-test');
+    expect(recorded!.bodyBytes, isNotEmpty);
+  });
+
+  test('uploadPdf() reports failure on a non-2xx response', () async {
+    final httpClient = MockClient((request) async {
+      return http.Response(jsonEncode({'error': 'validation_error'}), 400);
+    });
+
+    final container = ProviderContainer(
+      overrides: [
+        tokenManagerProvider.overrideWith((ref) => _StubTokenManager(ref)),
+        knowledgeCenterProvider.overrideWith(
+          (ref) => KnowledgeCenter(ref, httpClient: httpClient),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final result = await container.read(knowledgeCenterProvider).uploadPdf(
+          title: 'Bad file',
+          bytes: [1, 2, 3],
+        );
+
+    expect(result.ok, isFalse);
+  });
+
   test('listDocuments maps the library envelope', () async {
     final httpClient = MockClient((request) async {
       expect(request.method, 'GET');

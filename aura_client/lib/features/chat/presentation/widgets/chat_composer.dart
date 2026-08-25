@@ -5,6 +5,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 
 import '../../data/chat_repository.dart';
 import '../chat_view_model.dart';
+import 'voice_recorder_button.dart';
 
 class ChatComposer extends ConsumerWidget {
   final TextEditingController controller;
@@ -72,6 +73,14 @@ class ChatComposer extends ConsumerWidget {
                   style: TextStyle(color: palette.textPrimary),
                   onSubmitted: locked ? null : (_) => onSend(),
                 ),
+              ),
+              VoiceRecorderButton(
+                enabled: !locked,
+                onTranscribed: (text) {
+                  final existing = controller.text;
+                  controller.text = existing.isEmpty ? text : '$existing $text';
+                  controller.selection = TextSelection.collapsed(offset: controller.text.length);
+                },
               ),
               const SizedBox(width: AuraSpacing.lg),
               Container(

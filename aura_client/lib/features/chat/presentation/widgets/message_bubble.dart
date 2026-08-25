@@ -19,6 +19,7 @@ import 'persona_badge.dart';
 import 'streaming_message_skeleton.dart';
 import 'tool_call_chip.dart';
 import 'turn_status_row.dart';
+import 'voice_playback_button.dart';
 
 class MessageBubble extends ConsumerWidget {
   final Message message;
@@ -255,6 +256,8 @@ class MessageBubble extends ConsumerWidget {
                               response: message.content,
                             ),
                           ),
+                        if (!isStreaming && message.content.trim().isNotEmpty)
+                          VoicePlaybackButton(text: message.content),
                         const Spacer(),
                         Text(
                           formattedTime,

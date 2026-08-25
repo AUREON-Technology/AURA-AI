@@ -89,6 +89,33 @@ class KnowledgeViewModel extends Notifier<KnowledgeUiState> {
     await refresh();
   }
 
+  Future<void> uploadPdf({
+    required String title,
+    required List<int> bytes,
+    String filename = 'document.pdf',
+  }) async {
+    final result = await ref.read(knowledgeCenterProvider).uploadPdf(
+          title: title,
+          bytes: bytes,
+          filename: filename,
+        );
+    if (!result.ok) {
+      state = state.copyWith(
+        ingestMessage: 'Could not upload this PDF.',
+        ingestError: true,
+      );
+      return;
+    }
+    final quarantine = result.quarantinedChunks > 0
+        ? ' ${result.quarantinedChunks} passage(s) were held back.'
+        : '';
+    state = state.copyWith(
+      ingestMessage: 'Uploaded.$quarantine',
+      ingestError: false,
+    );
+    await refresh();
+  }
+
   Future<void> search(String query) async {
     final result = await ref.read(knowledgeCenterProvider).searchKnowledge(query);
     state = state.copyWith(search: result);
