@@ -1,12 +1,31 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
-import '../../config/config.dart';
 import '../../auth/token_manager.dart';
+import '../../config/config.dart';
 import '../../security/device_validation_service.dart';
+import 'speech_text.dart';
+
+/// Outcome of `POST /api/v3/voice/speak`. [audio] is WAV bytes on success;
+/// [errorMessage] is a short, user-facing reason on failure.
+class VoiceSpeakResult {
+  const VoiceSpeakResult._({this.audio, this.errorMessage});
+
+  factory VoiceSpeakResult.success(Uint8List audio) =>
+      VoiceSpeakResult._(audio: audio);
+
+  factory VoiceSpeakResult.failure(String errorMessage) =>
+      VoiceSpeakResult._(errorMessage: errorMessage);
+
+  final Uint8List? audio;
+  final String? errorMessage;
+
+  bool get ok => audio != null && audio!.isNotEmpty;
+}
 
 /// Client for the v3 voice APIs (`/api/v3/voice/*`, Phase F2). Both endpoints keep inference on
 /// our own infrastructure -- `transcribe` calls the server's self-hosted `faster-whisper` engine,
@@ -55,20 +74,25 @@ class VoiceClient {
       final text = parsed['text']?.toString();
       return (text == null || text.trim().isEmpty) ? null : text;
     } catch (e) {
-      debugPrint("VoiceClient: transcribe failed: $e");
+      debugPrint("[VoiceClient] transcribe failed: $e");
       return null;
     }
   }
 
-  /// Synthesizes `text` to WAV bytes for playback, or `null` on any failure.
-  Future<Uint8List?> speak(String text, {String? voice}) async {
+  /// Synthesizes a reply to WAV bytes for playback.
+  Future<VoiceSpeakResult> speak(String text, {String? voice}) async {
+    final spoken = prepareSpeechText(text);
+    if (spoken.isEmpty) {
+      return VoiceSpeakResult.failure('Nothing to read in this reply.');
+    }
+
     final tokens = _ref.read(tokenManagerProvider);
     Future<http.Response> send() async {
       final token = await tokens.getValidAccessToken();
       final uri = Uri.parse("$_backendUrl/speak");
       final headers = await _headers(token);
       headers['Content-Type'] = 'application/json';
-      final payload = jsonEncode({'text': text, 'voice': ?voice});
+      final payload = jsonEncode({'text': spoken, 'voice': ?voice});
       final client = _http;
       final sent = client != null
           ? client.post(uri, headers: headers, body: payload)
@@ -82,12 +106,33 @@ class VoiceClient {
         tokens.invalidateAccessToken();
         response = await send();
       }
-      if (response.statusCode < 200 || response.statusCode >= 300) return null;
-      return response.bodyBytes;
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint(
+          "[VoiceClient] speak failed: ${response.statusCode} ${response.body}",
+        );
+        return VoiceSpeakResult.failure(_speakFailureMessage(response.statusCode));
+      }
+      final audio = response.bodyBytes;
+      if (audio.isEmpty) {
+        debugPrint("[VoiceClient] speak returned an empty body");
+        return VoiceSpeakResult.failure('Could not generate speech for this reply.');
+      }
+      return VoiceSpeakResult.success(audio);
     } catch (e) {
-      debugPrint("VoiceClient: speak failed: $e");
-      return null;
+      debugPrint("[VoiceClient] speak failed: $e");
+      return VoiceSpeakResult.failure('Could not reach AURA to generate speech.');
     }
+  }
+
+  static String _speakFailureMessage(int statusCode) {
+    return switch (statusCode) {
+      401 => 'Sign in again to continue.',
+      404 => 'Speech playback is not available on this server.',
+      422 => 'This reply is too long to read aloud.',
+      429 => 'Too many speech requests. Try again shortly.',
+      503 => 'This server has no speech engine configured.',
+      _ => 'Could not generate speech for this reply.',
+    };
   }
 }
 
