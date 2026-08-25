@@ -703,6 +703,10 @@ class Container:
             "tools": len(self.tools),
             "prompts": len(self.prompts),
             "agents": len(self.agents),
+            "voice": {
+                "tts": getattr(self.tts_engine, "name", None) if self.tts_engine else None,
+                "stt": getattr(self.stt_engine, "name", None) if self.stt_engine else None,
+            },
             "environment": str(self.settings.environment),
             "healthy": healthy,
         }

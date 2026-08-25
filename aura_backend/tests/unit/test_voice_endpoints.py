@@ -50,6 +50,16 @@ class TestSpeakEndpointNoEngine:
         assert response.status_code == 503
         assert response.json()["error"] == "dependency_unavailable"
 
+    async def test_readiness_reports_whether_tts_is_wired(self, container) -> None:
+        await container.startup()
+        health = await container.health()
+        assert "voice" in health
+        assert "tts" in health["voice"]
+        assert "stt" in health["voice"]
+        container.tts_engine = None
+        health = await container.health()
+        assert health["voice"]["tts"] is None
+
 
 @pytest.mark.skipif(
     not (espeak_available() and faster_whisper_available()),

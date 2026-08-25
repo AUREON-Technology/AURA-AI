@@ -205,6 +205,7 @@ class TestHttpGateway:
     def test_readiness_reports_dependencies(self, client) -> None:
         body = client.get("/health/ready").json()
         assert "providers" in body and "index" in body
+        assert "voice" in body and "tts" in body["voice"] and "stt" in body["voice"]
 
     def test_ingest_search_and_chat(self, client) -> None:
         ingest = client.post(
