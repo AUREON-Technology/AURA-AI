@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
+    <!-- Phase F2: recording a voice note for POST /api/v3/voice/transcribe. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <application
         android:label="AURA AI"
         android:name="${applicationName}"

@@ -59,6 +59,13 @@ dependencies:
   flutter_markdown: ^0.7.7+1
   http: ^1.6.0
   local_auth: ^2.3.0
+  # Client-side halves of Phase F (multimodal/voice): file_picker lets the Knowledge Center
+  # attach a PDF to POST /api/v3/knowledge/documents/upload; record and audioplayers capture a
+  # voice note for POST /api/v3/voice/transcribe and play back POST /api/v3/voice/speak's WAV
+  # response. All three keep processing server-side -- nothing here runs local inference.
+  file_picker: ^8.1.2
+  record: ^5.2.1
+  audioplayers: ^6.1.0
   # flutter_llama deliberately absent: no inference runs on the device. It also could not build --
   # its CMake 3.18.1 requirement failed the release APK gate on every run.
 

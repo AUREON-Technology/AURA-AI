@@ -357,6 +357,30 @@ wired" shape as Phase E's event bus.
   is unavailable. Proven with a real, no-mocks round trip: `espeak-ng` synthesises "one hundred
   dollars" to WAV, `faster-whisper` transcribes it back, at three levels — direct adapter calls,
   the wired `Container`, and full HTTP through `TestClient`.
+- **F3. Done (client wiring), added after F1/F2 shipped.** Both endpoints landed with no client
+  path to reach them: the Knowledge Center screen only had a paste-text form (no file picker
+  dependency, no multipart request code anywhere in `KnowledgeCenter`), and there was no voice
+  code in `aura_client` at all — no mic button, no recording package, no playback package, a
+  gap confirmed by a full-repo search before writing anything. Closed both. `KnowledgeCenter`
+  gained `uploadPdf()` (real `http.MultipartRequest`, not JSON) wired to an "Upload a PDF
+  instead" button on the Knowledge Center screen (`file_picker`, PDF-filtered, `withData: true`
+  so bytes are available on every platform, not just where a file path exists). A new
+  `VoiceClient` wraps `/voice/transcribe` (multipart) and `/voice/speak` (JSON in, WAV bytes
+  out); `VoiceRecorderButton` (mic, `record` package, WAV output to match what `faster-whisper`
+  expects) sits next to the chat composer's send button and drops the transcript into the
+  existing text field rather than auto-sending, so the user still reviews before it goes out;
+  `VoicePlaybackButton` (speaker icon, `audioplayers`) sits on every non-streaming assistant
+  reply. Microphone permission entries added for Android (`RECORD_AUDIO`), iOS and macOS
+  (`NSMicrophoneUsageDescription`), and macOS's sandboxed entitlements
+  (`com.apple.security.device.audio-input`). Unit tests added for both new API-client methods
+  (`voice_client_test.dart`, `KnowledgeCenter.uploadPdf` cases in `knowledge_center_test.dart`)
+  following the existing `MockClient` pattern. No Flutter toolchain exists in this environment —
+  the same constraint every other client-only commit this session has carried — so this is
+  reasoned through against the existing code's conventions and left for Client CI's `flutter
+  analyze`/`flutter test`/Android build gate to confirm, not claimed as locally verified.
+  Deliberately not built: an admin-scorecard screen for `GET /admin/scorecard` — the client has
+  no admin-role concept anywhere in its auth model, and a live ops dashboard fits an internal
+  tool more than the consumer app.
 
 ### Phase G — Continuous intelligence
 

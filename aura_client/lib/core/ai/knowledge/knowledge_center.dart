@@ -178,6 +178,54 @@ class KnowledgeCenter {
     }
   }
 
+  /// Uploads a raw PDF to `/documents/upload` (Phase F1) -- text and scanned pages alike, with
+  /// OCR applied server-side when the deployment has an OCR engine configured. Unlike
+  /// [ingestDocumentResult], this sends bytes as multipart form data, not JSON, so it builds its
+  /// own request rather than going through [_sendAuthenticated].
+  Future<KnowledgeIngestResult> uploadPdf({
+    required String title,
+    required List<int> bytes,
+    String filename = 'document.pdf',
+  }) async {
+    final tokens = _ref.read(tokenManagerProvider);
+    Future<http.StreamedResponse> send() async {
+      final token = await tokens.getValidAccessToken();
+      final uri = Uri.parse("$_backendUrl/documents/upload");
+      final request = http.MultipartRequest('POST', uri)
+        ..fields['title'] = title
+        ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
+      if (token != null) request.headers['Authorization'] = 'Bearer $token';
+      request.headers.addAll(await DeviceValidationService.getAttestationHeaders());
+      final client = _http;
+      return client != null ? client.send(request) : http.Client().send(request);
+    }
+
+    try {
+      var streamed = await send();
+      if (streamed.statusCode == 401) {
+        tokens.invalidateAccessToken();
+        streamed = await send();
+      }
+      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return const KnowledgeIngestResult(ok: false);
+      }
+      final parsed = jsonDecode(response.body);
+      final map = parsed is Map<String, dynamic> ? parsed : <String, dynamic>{};
+      return KnowledgeIngestResult(
+        ok: true,
+        quarantinedChunks: map['quarantined_chunks'] is num
+            ? (map['quarantined_chunks'] as num).toInt()
+            : 0,
+        skippedReason: map['skipped_reason']?.toString(),
+        documentId: map['document_id']?.toString(),
+      );
+    } catch (e) {
+      debugPrint("KnowledgeCenter: PDF upload failed: $e");
+      return const KnowledgeIngestResult(ok: false);
+    }
+  }
+
   Future<List<KnowledgeDocument>> listDocuments() async {
     final response = await _send('GET', '/documents');
     if (response.statusCode < 200 || response.statusCode >= 300) {

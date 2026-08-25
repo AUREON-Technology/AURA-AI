@@ -26,6 +26,9 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Phase F2: recording a voice note for POST /api/v3/voice/transcribe. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>AURA needs microphone access to record voice notes for transcription.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -16,6 +17,7 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
   final _title = TextEditingController();
   final _content = TextEditingController();
   final _search = TextEditingController();
+  bool _uploading = false;
 
   @override
   void dispose() {
@@ -23,6 +25,41 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
     _content.dispose();
     _search.dispose();
     super.dispose();
+  }
+
+  /// Attaches a PDF and sends it to `/knowledge/documents/upload` -- scanned pages go through
+  /// server-side OCR when the deployment has an engine configured (Phase F1). The title field
+  /// doubles as the upload's title when filled in; otherwise the file name is used.
+  Future<void> _pickAndUploadPdf() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+      withData: true,
+    );
+    final files = picked?.files ?? const <PlatformFile>[];
+    if (files.isEmpty) return;
+    final file = files.first;
+    final bytes = file.bytes;
+    if (bytes == null) {
+      if (mounted) {
+        AuraSnackbar.show(
+          context,
+          message: 'Could not read that file.',
+          kind: AuraSnackbarKind.error,
+        );
+      }
+      return;
+    }
+
+    setState(() => _uploading = true);
+    final title = _title.text.trim().isNotEmpty ? _title.text.trim() : file.name;
+    await ref.read(knowledgeViewModelProvider.notifier).uploadPdf(
+          title: title,
+          bytes: bytes,
+          filename: file.name,
+        );
+    if (mounted) setState(() => _uploading = false);
+    _title.clear();
   }
 
   @override
@@ -71,6 +108,15 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
                     _title.clear();
                     _content.clear();
                   },
+                ),
+                const SizedBox(height: AuraSpacing.sm),
+                AuraButton(
+                  label: _uploading ? 'Uploading…' : 'Upload a PDF instead',
+                  icon: Icons.attach_file,
+                  variant: AuraButtonVariant.secondary,
+                  expand: true,
+                  loading: _uploading,
+                  onPressed: _uploading ? null : _pickAndUploadPdf,
                 ),
                 if (state.ingestMessage != null) ...[
                   const SizedBox(height: AuraSpacing.sm),
