@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -69,7 +68,7 @@ class VoiceClient {
       final uri = Uri.parse("$_backendUrl/speak");
       final headers = await _headers(token);
       headers['Content-Type'] = 'application/json';
-      final payload = jsonEncode({'text': text, if (voice != null) 'voice': voice});
+      final payload = jsonEncode({'text': text, 'voice': ?voice});
       final client = _http;
       final sent = client != null
           ? client.post(uri, headers: headers, body: payload)
