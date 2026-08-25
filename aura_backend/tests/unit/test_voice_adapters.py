@@ -8,10 +8,33 @@ from __future__ import annotations
 
 import pytest
 
-from aura_core.adapters.espeak_tts import EspeakTtsEngine, espeak_available
+from aura_core.adapters.espeak_tts import (
+    DEFAULT_TTS_RATE_WPM,
+    DEFAULT_TTS_VOICE,
+    EspeakTtsEngine,
+    build_espeak_command,
+    espeak_available,
+    resolve_espeak_voice,
+)
 from aura_core.adapters.whisper_stt import FasterWhisperEngine, faster_whisper_available
 from aura_core.domain.errors import DependencyUnavailableError
 from aura_core.ports.speech import SpeechToText, TextToSpeech
+
+
+class TestEspeakCommand:
+    def test_narration_flags_are_slower_and_us_english(self) -> None:
+        args = build_espeak_command("speech.wav", "Hello there.")
+        assert args[0] == "espeak-ng"
+        assert "-v" in args and args[args.index("-v") + 1] == DEFAULT_TTS_VOICE
+        assert "-s" in args and args[args.index("-s") + 1] == str(DEFAULT_TTS_RATE_WPM)
+        assert int(args[args.index("-s") + 1]) < 175
+        assert "-g" in args
+        assert "-p" in args
+        assert args[-1] == "Hello there."
+
+    def test_rejects_a_voice_that_looks_like_a_shell_flag(self) -> None:
+        assert resolve_espeak_voice("-w /tmp/x") == DEFAULT_TTS_VOICE
+        assert resolve_espeak_voice("en-us+m3") == "en-us+m3"
 
 
 @pytest.mark.skipif(not espeak_available(), reason="espeak-ng binary not on PATH")
@@ -38,6 +61,12 @@ class TestEspeakTtsEngine:
         short = await engine.synthesize("Hello.")
         long = await engine.synthesize("Hello. " * 20)
         assert len(long) > len(short)
+
+    async def test_a_slower_rate_produces_longer_audio(self) -> None:
+        text = "The quarterly report is ready for review by the finance team."
+        fast = await EspeakTtsEngine(rate_wpm=200).synthesize(text)
+        slow = await EspeakTtsEngine(rate_wpm=110).synthesize(text)
+        assert len(slow) > len(fast)
 
 
 class TestEspeakUnavailable:

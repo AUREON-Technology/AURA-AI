@@ -706,11 +706,20 @@ class VoiceSettings:
     """Self-hosted speech recognition and synthesis (Phase F2) -- both engines are only ever
     built when their binary/package is actually present (see
     `Container._build_stt_engine`/`_build_tts_engine`); these flags let an operator opt out of
-    an engine that is present, never opt into one that is not."""
+    an engine that is present, never opt into one that is not.
+
+    TTS rate/gap/pitch default to a slower, clearer narration than espeak-ng stock (175 wpm,
+    no word gap). Formant speech needs the extra space; operators can still raise the rate.
+    """
 
     stt_enabled: bool = True
     stt_model: str = "tiny.en"
     tts_enabled: bool = True
+    tts_voice: str = "en-us"
+    tts_rate_wpm: int = 142
+    tts_word_gap: int = 6
+    tts_pitch: int = 45
+    tts_amplitude: int = 88
 
     @classmethod
     def from_env(cls) -> "VoiceSettings":
@@ -718,6 +727,11 @@ class VoiceSettings:
             stt_enabled=_bool("VOICE_STT_ENABLED", True),
             stt_model=_env("VOICE_STT_MODEL", "tiny.en") or "tiny.en",
             tts_enabled=_bool("VOICE_TTS_ENABLED", True),
+            tts_voice=_env("VOICE_TTS_VOICE", "en-us") or "en-us",
+            tts_rate_wpm=_int("VOICE_TTS_RATE_WPM", 142, minimum=80, maximum=250),
+            tts_word_gap=_int("VOICE_TTS_WORD_GAP", 6, minimum=0, maximum=20),
+            tts_pitch=_int("VOICE_TTS_PITCH", 45, minimum=0, maximum=99),
+            tts_amplitude=_int("VOICE_TTS_AMPLITUDE", 88, minimum=20, maximum=200),
         )
 
 

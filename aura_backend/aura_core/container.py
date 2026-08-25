@@ -520,7 +520,14 @@ class Container:
 
         if not espeak_available():
             return None
-        return EspeakTtsEngine()
+        voice = self.settings.voice
+        return EspeakTtsEngine(
+            voice=voice.tts_voice,
+            rate_wpm=voice.tts_rate_wpm,
+            word_gap=voice.tts_word_gap,
+            pitch=voice.tts_pitch,
+            amplitude=voice.tts_amplitude,
+        )
 
     def _build_goals_port(self) -> Any:
         """The `GoalsPort` (Phase D2): reads the legacy `goals` table's plaintext columns.

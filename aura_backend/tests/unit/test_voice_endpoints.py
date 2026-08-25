@@ -40,6 +40,14 @@ class TestSpeakEndpoint:
             response = client.post("/api/v3/voice/speak", json={"text": ""})
         assert response.status_code == 422
 
+    async def test_url_only_text_is_rejected_as_unspeakable(self, container) -> None:
+        await container.startup()
+        with _client(container) as client:
+            response = client.post(
+                "/api/v3/voice/speak", json={"text": "https://example.com/silent"},
+            )
+        assert response.status_code == 422
+
 
 class TestSpeakEndpointNoEngine:
     async def test_503_when_no_tts_engine_is_configured(self, container) -> None:

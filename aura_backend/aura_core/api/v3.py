@@ -506,6 +506,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "no text-to-speech engine is configured on this deployment", dependency="espeak-ng",
             )
         audio = await container.tts_engine.synthesize(payload.text, voice=payload.voice)
+        if not audio:
+            raise ValidationError("text contains nothing speakable")
         return Response(
             content=audio, media_type="audio/wav",
             headers={"X-Engine": container.tts_engine.name},
