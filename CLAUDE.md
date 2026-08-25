@@ -1,0 +1,150 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Repository shape
+
+Three independent apps in one repo:
+
+- **`aura_backend/`** — Python/FastAPI. The actual product: a self-hosted AI platform (hybrid
+  retrieval, memory, tools, planning) behind a v3 HTTP gateway. Read `README.md` and
+  `docs/guides/developer-guide.md` before making non-trivial changes here — they cover the
+  layering rules and extension points in depth; this file only summarizes what's operationally
+  essential.
+- **`aura_client/`** — Flutter app (Android/iOS/macOS/web/desktop) that talks to the backend's
+  `/api/v3/*` routes.
+- **`aura_admin/`** — Next.js admin dashboard (lightly used so far; `npm run dev|build|lint`,
+  `npm run test:e2e` for Playwright).
+
+`docs/AURA_UPGRADE_ROADMAP.md` is the current source of truth for what's actually built vs. only
+claimed — it's baselined against a specific commit and corrects stale claims with file:line
+citations. Check it before assuming a capability does or doesn't exist. Its standing rule also
+applies to any work you do here: **don't mark something done without the evidence its exit
+criteria name** — "built" and "tested" are not "proven."
+
+## Commands
+
+### Backend (`cd aura_backend` first)
+
+```bash
+pip install -r requirements.lock -r requirements-dev.txt
+
+pytest                                   # aura_core suite — no Docker, no network, no model
+pytest tests/some_test.py::TestClass::test_name   # single test
+pytest tests/architecture -q             # layering fitness functions, on their own for signal
+
+TESTING=True python -m unittest discover -p "test_*.py"   # legacy tree — separate suite, also gated in CI
+
+pytest tests/load -m load -s             # opt-in; needs a real Postgres/Qdrant/Redis/Ollama stack
+pytest tests/benchmarks -m bench         # opt-in; wall-clock, excluded from default run
+
+alembic upgrade head                     # migrations, against AURA_DATABASE_URL
+```
+
+Both suites (`pytest` and the legacy `unittest`) run in CI and both must pass — they cover
+different trees (ADR-002 strangler migration) and neither substitutes for the other.
+
+Regenerate the lockfile with the exact command in `requirements.lock`'s own header comment (uses
+`uv pip compile` with a CPU-only PyTorch index — don't hand-edit pins).
+
+### Client (`cd aura_client` first)
+
+```bash
+flutter pub get
+dart run build_runner build --delete-conflicting-outputs   # Drift codegen; needed after touching
+                                                             # database.dart or anything it generates from
+flutter analyze                          # fails the CI gate on info-level lints too, not just warnings/errors
+flutter test
+flutter test test/some_test.dart         # single file
+flutter build apk --release --dart-define=BACKEND_URL=<url>
+```
+
+There is often no Flutter/Dart toolchain available in the environment a change is written in.
+Write Dart carefully against the existing code's conventions and let Client CI (`flutter
+analyze` + `flutter test` + the Android build) be the actual verification — don't claim a client
+change is confirmed working unless you watched it pass CI.
+
+## Backend architecture — the parts that span files
+
+**Hexagonal layering, enforced by AST-based fitness tests in `tests/architecture/`, not just
+documented:**
+
+```
+domain/  ports/          stdlib only — entities, value objects, Protocols
+engines                  domain + ports only (prompts, context, memory, knowledge, tools,
+                         safety, planning, reasoning, execution, llm)
+adapters/  api/          vendor SDKs, imported lazily inside functions, not at module scope
+container.py             the only place concrete meets abstract
+```
+
+The arrow never reverses. `container.py` is the single wiring point — every adapter is
+constructed lazily (a class's `__init__` never makes a network call; the first real use does,
+behind an `asyncio.Lock` when concurrent callers could race). `PostgresPool._get_pool()` is the
+canonical example; match that pattern for any new adapter.
+
+**Self-hosting is a fitness-tested invariant, not a preference.** `aura_core/llm/registry.py`
+only builds `echo`, `openai_compatible` (vLLM/llama.cpp/TGI/Ollama's `/v1`), and `ollama`
+providers. There is no hosted-vendor branch anywhere — adding one fails
+`tests/architecture/test_no_external_inference.py`. The Flutter client is checked too.
+
+**`AIKernel` (`aura_core/kernel/kernel.py`) is the only execution path.** It plans, then executes
+tools, then generates. A model's own emitted `tool_calls` frames are informational only — they do
+not execute anything (ADR-006); planning/execution is what runs tools, behind capability grants
+and taint checks.
+
+**`ProviderRouter` (`aura_core/llm/router.py`)** implements five routing policies (`LOCAL_FIRST`,
+`CHEAPEST`, `FASTEST`, `QUALITY_FIRST`, `BALANCED`) over providers declared as data
+(`ProviderCapabilities`), with per-provider circuit breakers and failover — but **only before the
+first streamed token**; once output has reached the caller, a stream failure surfaces as an error
+rather than silently retrying elsewhere, because failover after that point would duplicate or
+contradict what the user already saw.
+
+**Trust channels (SYSTEM/USER/DATA) gate what content can do.** Retrieved knowledge and tool
+output travel on `DATA`, fenced with a per-turn nonce; a turn whose context was quarantined
+cannot run a `side_effecting` tool without explicit confirmation (ADR-006). This is the mechanism
+that stops a poisoned document from silently triggering a write.
+
+**Every storage port has a real in-memory adapter**, not a mock — this is why the default
+`pytest` run needs no infrastructure at all, and why `tests/conftest.py`'s `container` fixture is
+pinned to the in-memory substrate on purpose (see its own docstring). Real Postgres/Qdrant/Redis
+adapters exist for production and are only exercised by the opt-in `tests/load` suite and
+targeted integration tests using `testcontainers`.
+
+**v3 is the only live HTTP surface.** `aura_service.py` is a v3-only gateway that never imports
+the legacy `main.py`-era app. `api/v2/{auth,sync,insights}` are a deliberate exception —
+permanent platform adapters mounted outside `aura_core` (ADR-002), not legacy code awaiting
+removal.
+
+Full ADR list and the ten essential decisions are in `docs/architecture/00-overview.md` and
+`docs/architecture/001-*.md`–`009-*.md`; read the relevant one before touching retrieval, memory,
+routing, safety, or indexing — each encodes a reason something is shaped the way it is, not just
+what it does.
+
+## Client architecture — the parts that span files
+
+- State via Riverpod (`Notifier`/`ConsumerWidget`), routing via `go_router`, local persistence via
+  Drift (SQLite) synced against `/api/v3/sync` through a generic cursor protocol
+  (`SYNCABLE_MODELS` in `core/database/database.dart`).
+- `core/design_system/` (`AuraButton`, `AuraTextField`, `AuraCard`, `AuraSnackbar`, `AuraSpacing`,
+  etc.) is the UI kit — use it for new screens rather than raw `Material` widgets, to stay visually
+  and behaviorally consistent with the rest of the app.
+- **A backend endpoint shipping does not mean the client can reach it.** This codebase's history
+  has repeatedly shipped a v3 API and left it with zero client callers for a while — check whether
+  a feature you're asked to touch actually has client-side plumbing before assuming it does.
+- Each API area gets its own thin client class under `core/ai/*` or `core/*` (e.g.
+  `KnowledgeCenter`, `VoiceClient`) wrapping `package:http`, attaching the JWT and device
+  attestation headers (`DeviceValidationService.getAttestationHeaders()`) the same way every other
+  client does — copy an existing one's shape rather than inventing a new auth pattern.
+
+## Testing conventions worth knowing before writing a test
+
+- Tests assert **behavior**, not call choreography — nothing internal is mocked; the in-memory
+  adapters are the real substrate, so a test exercises the same engine code production runs.
+- Useful backend fixtures (`aura_backend/tests/conftest.py`): `container` (fully wired, in-memory),
+  `knowledge`, `memory`, `tools`, `router`, `safety`, `echo` (deterministic provider), `clock`
+  (`FrozenClock` — decay/circuit-breaker timing is testable without sleeping).
+- A change that makes the default `pytest` suite need Docker, network, or a real model is wrong by
+  construction — that capability belongs in `tests/load` (opt-in, `-m load`) instead.
+- When a change touches a Postgres-backed adapter, verify it against a real (even throwaway)
+  Postgres instance before considering it done — asyncpg's type mapping (e.g. `Decimal` from
+  `avg()`/`percentile_cont`) has caused real bugs the in-memory adapter can't surface.
