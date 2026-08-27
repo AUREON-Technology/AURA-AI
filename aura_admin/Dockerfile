@@ -17,6 +17,8 @@ ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
 ENV NEXT_PUBLIC_GRAFANA_EMBED=$NEXT_PUBLIC_GRAFANA_EMBED
 RUN npm run build
 
+# Runner expects Next `output: "standalone"` (see next.config.ts). That emits
+# .next/standalone (server.js + traced deps); static assets still copy separately.
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
