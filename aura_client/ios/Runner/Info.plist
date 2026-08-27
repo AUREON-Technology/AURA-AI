@@ -28,7 +28,7 @@
 	<true/>
 	<!-- Phase F2: recording a voice note for POST /api/v3/voice/transcribe. -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>AURA needs microphone access to record voice notes for transcription.</string>
+	<string>AURA needs microphone access for voice notes and live voice chat.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

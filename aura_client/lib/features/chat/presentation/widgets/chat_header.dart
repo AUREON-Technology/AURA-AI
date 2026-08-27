@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -92,6 +93,17 @@ class ChatHeader extends ConsumerWidget {
             tooltip: 'Memory',
             onPressed: () => context.go('/memory'),
           ),
+          if (!kIsWeb &&
+              (defaultTargetPlatform == TargetPlatform.android ||
+                  defaultTargetPlatform == TargetPlatform.iOS)) ...[
+            const SizedBox(width: AuraSpacing.xs),
+            ChatHeaderActionButton(
+              icon: Icons.graphic_eq,
+              color: palette.brand,
+              tooltip: 'Live voice',
+              onPressed: () => context.push('/voice'),
+            ),
+          ],
           const SizedBox(width: AuraSpacing.xs),
           const PersonaChip(shrink: true),
           const SizedBox(width: AuraSpacing.xs),

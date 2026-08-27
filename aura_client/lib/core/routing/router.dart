@@ -23,6 +23,7 @@ import '../../features/onboarding/presentation/onboarding_page.dart';
 import '../../features/settings/presentation/appearance_page.dart';
 import '../../features/settings/presentation/settings_page.dart';
 import '../../l10n/generated/app_localizations.dart';
+import '../../features/voice_live/presentation/live_voice_page.dart';
 import '../design_system/design_system.dart';
 
 class ShellLayout extends ConsumerWidget {
@@ -262,6 +263,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/health', redirect: (context, state) => '/life?type=health'),
       GoRoute(path: '/settings', redirect: (context, state) => '/you'),
       GoRoute(path: '/learning', redirect: (context, state) => '/feedback'),
+      GoRoute(
+        path: '/voice',
+        builder: (context, state) => const LiveVoicePage(),
+      ),
       ShellRoute(
         builder: (context, state, child) => ShellLayout(child: child),
         routes: [

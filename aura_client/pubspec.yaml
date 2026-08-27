@@ -72,6 +72,10 @@ dependencies:
   # start(RecordConfig(encoder: ...), path: ...), stop(), dispose()) is unchanged across 5.x-7.x.
   record: ^7.1.1
   audioplayers: ^6.1.0
+  # Phase H live duplex: direct dep (may already be transitive). flutter_soloud is the
+  # preferred streaming PCM sink behind LiveAudioSink; CI/device fallback stays null/audioplayers.
+  web_socket_channel: ^3.0.2
+  flutter_soloud: ^3.1.0
   # flutter_llama deliberately absent: no inference runs on the device. It also could not build --
   # its CMake 3.18.1 requirement failed the release APK gate on every run.
 
