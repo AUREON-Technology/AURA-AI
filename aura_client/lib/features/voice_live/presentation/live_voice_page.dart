@@ -91,11 +91,16 @@ class _LiveVoicePageState extends ConsumerState<LiveVoicePage>
                   draft: voice.assistantDraft,
                 ),
               ),
-            const ConfirmationSheet(),
+            ConfirmationCard(
+              onConfirm: () =>
+                  ref.read(liveVoiceViewModelProvider.notifier).confirmPending(),
+              onCancel: () =>
+                  ref.read(liveVoiceViewModelProvider.notifier).rejectPending(),
+            ),
             LiveVoiceControls(
               phase: voice.phase,
               transcriptVisible: voice.transcriptVisible,
-              hasPendingConfirmation: voice.pendingTools.isNotEmpty,
+              hasPendingConfirmation: false,
               onToggleTranscript: () =>
                   ref.read(liveVoiceViewModelProvider.notifier).toggleTranscript(),
               onEnd: () async {
@@ -104,10 +109,6 @@ class _LiveVoicePageState extends ConsumerState<LiveVoicePage>
               },
               onBargeIn: () =>
                   ref.read(liveVoiceViewModelProvider.notifier).bargeIn(),
-              onConfirm: () =>
-                  ref.read(liveVoiceViewModelProvider.notifier).confirmPending(),
-              onReject: () =>
-                  ref.read(liveVoiceViewModelProvider.notifier).rejectPending(),
             ),
             const SizedBox(height: AuraSpacing.lg),
           ],

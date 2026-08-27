@@ -6,7 +6,17 @@ import 'package:aura_client/features/chat/data/chat_repository.dart';
 import 'package:aura_client/features/chat/presentation/chat_view_model.dart';
 
 class ConfirmationCard extends ConsumerWidget {
-  const ConfirmationCard({super.key});
+  const ConfirmationCard({
+    super.key,
+    this.onConfirm,
+    this.onCancel,
+  });
+
+  /// When set, used instead of [chatViewModelProvider.confirmTools].
+  final VoidCallback? onConfirm;
+
+  /// When set, used instead of clearing [pendingConfirmationProvider] alone.
+  final VoidCallback? onCancel;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -40,16 +50,16 @@ class ConfirmationCard extends ConsumerWidget {
                   child: AuraButton(
                     label: 'Cancel',
                     variant: AuraButtonVariant.secondary,
-                    onPressed: () =>
-                        ref.read(pendingConfirmationProvider.notifier).clear(),
+                    onPressed: onCancel ??
+                        () => ref.read(pendingConfirmationProvider.notifier).clear(),
                   ),
                 ),
                 const SizedBox(width: AuraSpacing.md),
                 Expanded(
                   child: AuraButton(
                     label: 'Confirm',
-                    onPressed: () =>
-                        ref.read(chatViewModelProvider.notifier).confirmTools(),
+                    onPressed: onConfirm ??
+                        () => ref.read(chatViewModelProvider.notifier).confirmTools(),
                   ),
                 ),
               ],

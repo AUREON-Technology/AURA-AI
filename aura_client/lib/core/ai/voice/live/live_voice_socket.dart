@@ -15,7 +15,8 @@ import 'live_voice_protocol.dart';
 /// Auth mirrors [VoiceClient]: bearer token + attestation inside the `auth` /
 /// `reauth` frames (WS clients cannot always set HTTP Authorization).
 class LiveVoiceSocket {
-  LiveVoiceSocket(this._ref, {WebSocketChannel Function(Uri uri)? connect});
+  LiveVoiceSocket(this._ref, {WebSocketChannel Function(Uri uri)? connect})
+      : _connect = connect;
 
   final Ref _ref;
   final WebSocketChannel Function(Uri uri)? _connect;

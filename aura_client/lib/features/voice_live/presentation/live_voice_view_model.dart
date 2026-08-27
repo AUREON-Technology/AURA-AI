@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
@@ -37,10 +36,10 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
     await _teardown();
     state = state.copyWith(phase: 'connecting', clearError: true);
 
-    final sessionId = conversationId ??
-        (ref.read(activeConversationIdProvider).isEmpty
-            ? 'voice_${_uuid.v4()}'
-            : ref.read(activeConversationIdProvider));
+    final activeId = ref.read(activeConversationIdProvider);
+    final String sessionId = conversationId?.isNotEmpty == true
+        ? conversationId!
+        : (activeId.isEmpty ? 'voice_${_uuid.v4()}' : activeId);
     ref.read(activeConversationIdProvider.notifier).setSession(sessionId);
 
     _socket = LiveVoiceSocket(ref);
@@ -106,13 +105,13 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
     switch (frame) {
       case LiveReadyFrame(:final playback):
         unawaited(_sink?.start(sampleRate: playback.sampleRate));
-      case LiveStateFrame(:final state):
-        this.state = this.state.copyWith(phase: state.toLowerCase());
+      case LiveStateFrame(state: final phaseName):
+        state = state.copyWith(phase: phaseName.toLowerCase());
       case LiveTranscriptFrame(:final text, :final final_):
         if (final_ && text.isNotEmpty) {
-          final lines = [...this.state.lines, LiveTranscriptLine(role: 'user', text: text)];
-          this.state = this.state.copyWith(lines: lines);
-          final sid = this.state.sessionId;
+          final lines = [...state.lines, LiveTranscriptLine(role: 'user', text: text)];
+          state = state.copyWith(lines: lines);
+          final sid = state.sessionId;
           if (sid != null) {
             unawaited(
               ref.read(liveVoiceHistoryProvider).appendTurn(
@@ -124,22 +123,22 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
           }
         }
       case LiveTokenFrame(:final text):
-        this.state = this.state.copyWith(assistantDraft: this.state.assistantDraft + text);
+        state = state.copyWith(assistantDraft: state.assistantDraft + text);
       case LiveConfirmationFrame(:final tools):
         ref.read(pendingConfirmationProvider.notifier).setTools(tools);
-        this.state = this.state.copyWith(
+        state = state.copyWith(
           pendingTools: tools,
           phase: 'awaiting_confirmation',
         );
       case LiveDoneFrame():
-        final draft = this.state.assistantDraft.trim();
+        final draft = state.assistantDraft.trim();
         if (draft.isNotEmpty) {
           final lines = [
-            ...this.state.lines,
+            ...state.lines,
             LiveTranscriptLine(role: 'assistant', text: draft),
           ];
-          this.state = this.state.copyWith(lines: lines, assistantDraft: '');
-          final sid = this.state.sessionId;
+          state = state.copyWith(lines: lines, assistantDraft: '');
+          final sid = state.sessionId;
           if (sid != null) {
             unawaited(
               ref.read(liveVoiceHistoryProvider).appendTurn(
@@ -152,9 +151,9 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
         }
         unawaited(_socket?.reauth());
       case LiveCancelledFrame():
-        this.state = this.state.copyWith(phase: 'listening', assistantDraft: '');
+        state = state.copyWith(phase: 'listening', assistantDraft: '');
       case LiveErrorFrame(:final message):
-        this.state = this.state.copyWith(error: message);
+        state = state.copyWith(error: message);
       case LivePlaybackHintFrame(:final sampleRate):
         unawaited(_sink?.start(sampleRate: sampleRate));
       default:
