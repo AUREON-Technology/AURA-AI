@@ -346,17 +346,17 @@ wired" shape as Phase E's event bus.
   `SpeechToText`/`TextToSpeech`; `FasterWhisperEngine` (`adapters/whisper_stt.py`, CPU-friendly
   CTranslate2 Whisper, `tiny.en` by default) loads its model lazily on first `transcribe()` call
   behind an `asyncio.Lock` — matching `PostgresPool`'s "every connection is lazy" discipline, so
-  constructing the adapter never makes a network call. `EspeakTtsEngine`
-  (`adapters/espeak_tts.py`) shells out to the system `espeak-ng` binary — chosen specifically
-  because it needs no model weights and no extra pip dependencies, an explicit
-  disk/CPU-budget tradeoff for a synthetic-sounding but fully self-hosted voice, documented as
-  such in the adapter's own docstring. Both keep inference on our own infrastructure; no hosted
-  vendor branch exists anywhere in `aura_core/llm/registry.py`, and none was added here either.
-  Wired through `VoiceSettings` and two new endpoints, `POST /api/v3/voice/transcribe` and
+  constructing the adapter never makes a network call. Primary TTS is Piper
+  (`adapters/piper_tts.py`, `en_US-lessac-medium` / `ar_JO-kareem-medium` with prosody tuning via
+  `VoiceSettings`); `EspeakTtsEngine` (`adapters/espeak_tts.py`) remains the last-resort fallback
+  when a language's ONNX is missing — chosen because it needs no model weights and no extra pip
+  dependencies. Both keep inference on our own infrastructure; no hosted vendor branch exists
+  anywhere in `aura_core/llm/registry.py`, and none was added here either.
+  Wired through `VoiceSettings` and two endpoints, `POST /api/v3/voice/transcribe` and
   `POST /api/v3/voice/speak`, both returning 503 rather than silently degrading when the engine
-  is unavailable. Proven with a real, no-mocks round trip: `espeak-ng` synthesises "one hundred
-  dollars" to WAV, `faster-whisper` transcribes it back, at three levels — direct adapter calls,
-  the wired `Container`, and full HTTP through `TestClient`.
+  is unavailable. Proven with a real, no-mocks round trip: synthesis of "one hundred dollars" to
+  WAV, `faster-whisper` transcribes it back, at three levels — direct adapter calls, the wired
+  `Container`, and full HTTP through `TestClient`.
 - **F3. Done (client wiring), added after F1/F2 shipped.** Both endpoints landed with no client
   path to reach them: the Knowledge Center screen only had a paste-text form (no file picker
   dependency, no multipart request code anywhere in `KnowledgeCenter`), and there was no voice
@@ -381,6 +381,23 @@ wired" shape as Phase E's event bus.
   Deliberately not built: an admin-scorecard screen for `GET /admin/scorecard` — the client has
   no admin-role concept anywhere in its auth model, and a live ops dashboard fits an internal
   tool more than the consumer app.
+
+### Phase H — Live voice chat
+
+**Status: scaffolding landed; not proven.** Design: [`docs/plans/phase-h-live-voice-chat.md`](plans/phase-h-live-voice-chat.md).
+Analysis: [`docs/reports/voice-nlp-analysis.md`](reports/voice-nlp-analysis.md).
+
+Full-duplex WebSocket session (`/api/v3/voice/live`) that endpoints mic PCM with energy VAD,
+wraps segments as WAV for existing batch STT, runs `TurnRequest(route="voice_live")` through
+`AIKernel.stream()`, synthesizes per sentence (held until `done` when confirmation/guards apply),
+and streams PCM back. Flutter full-screen `/voice` entry (mobile only) plus protocol/socket/UI
+scaffolding. In-memory speech adapters close the house-rule gap for default pytest.
+
+**Not claimed done.** Exit gates still open: real Piper→Whisper load round-trip
+(`tests/load/test_live_voice_roundtrip.py`), on-device AEC/barge-in feel (Android **and** iOS),
+first-PCM-after-`speech_ended` latency under a named model, Arabic live STT on multilingual
+Whisper, Redis-backed exact multi-worker session caps. Client CI is the Dart gate — no Flutter
+toolchain in this environment; audio is not exercised there.
 
 ### Phase I — Transcript / text NLP
 
@@ -465,7 +482,8 @@ Phase A, not by an estimate.
 | Tool success rate | **Live** via `GET /api/v3/admin/scorecard` (`TelemetrySink.recent_summary`); no real production traffic yet to report a baseline number from | Phase G1, mechanism done |
 | Task completion rate | Unmeasured | Phase C |
 | Scanned-document OCR | **Real**, Tesseract, proven on a genuinely scanned PDF end to end through `POST /knowledge/documents/upload`; no vision model (image/chart understanding) | Phase F1 |
-| Voice (STT/TTS) | **Real**, self-hosted (`faster-whisper` / `espeak-ng`), proven with a real synthesize→transcribe round trip through `POST /voice/speak` and `/voice/transcribe` | Phase F2 |
+| Voice (STT/TTS) | **Real**, self-hosted (`faster-whisper` / Piper primary, espeak-ng fallback), proven with a real synthesize→transcribe round trip through `POST /voice/speak` and `/voice/transcribe` | Phase F2 |
+| Live voice duplex | **Scaffolding** — WS session + engine + Flutter `/voice`; not device-proven; load round-trip open | Phase H |
 | Transcript NLP | **Scaffolding** — `aura_core/nlp/` normalize + shallow intent; quality on real ASR unproven | Phase I |
 | Multi-model routing | **Proven** against two real, simultaneously-running local models (135M and 3B params) — `FASTEST`/`QUALITY_FIRST`/`BALANCED`/failover all route on real measured behaviour; `CHEAPEST` ties (both cost `$0`) | Phase G2, `tests/load/test_multi_model_routing.py` |
 | Restore verified | **Yes for all three stores** — Postgres, Qdrant and Redis each restored from the `backup` service's own output ([A2 report](reports/phase-a2-restore-drill.md)); offsite copy and `restore.sh` still unexercised | Phase A2 |

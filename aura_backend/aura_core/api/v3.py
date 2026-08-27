@@ -763,6 +763,15 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         Request=Request,
     )
 
+    from .voice_live import register_voice_live
+
+    register_voice_live(
+        router,
+        container,
+        authenticator=authenticator,
+        rate_limiter=rate_limiter,
+    )
+
     return router
 
 

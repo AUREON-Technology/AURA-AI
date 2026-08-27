@@ -1,7 +1,9 @@
 # Phase H — Live Voice Chat
 
-**Status: planned, not started.** Nothing in this document is built. It is a design record
-written against commit `bac3110` (backend citations re-checked at `93a4ac5`), following the
+**Status: scaffolding landed; not proven.** Engine, in-memory speech adapters, WebSocket
+adapter, Flutter `/voice` surface, and default-pytest coverage exist. Do not mark the phase
+done without the load round-trip and device evidence named under [Will not claim](#will-not-claim).
+Written against commit `bac3110` (backend citations re-checked at `93a4ac5`), following the
 same standing rule the roadmap sets out (`docs/AURA_UPGRADE_ROADMAP.md:19-21`): a phase may not
 be marked complete without the evidence its exit criteria name, and "built" and "tested" are
 not "proven."

@@ -108,6 +108,20 @@ server {
     gzip_types application/json text/plain;
     gzip_min_length 1024;
 
+    # ------------------------------------------------------------ live voice (WebSocket)
+    # Must sit before the generic /api/ location: that block sets Connection "" and would
+    # kill the Upgrade handshake. Modelled on the Grafana Live block below.
+    location /api/v3/voice/live {
+        proxy_pass http://aura_gateway;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        include /etc/nginx/conf.d/proxy_headers.inc;
+    }
+
     # ------------------------------------------------------------ streaming chat
     location /api/v3/chat/stream {
         limit_req zone=aura_chat burst=5 nodelay;

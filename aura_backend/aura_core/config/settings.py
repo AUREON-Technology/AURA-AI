@@ -712,6 +712,9 @@ class VoiceSettings:
     no word gap). Primary speech is Piper: ``en_US-lessac-medium`` / ``ar_JO-kareem-medium``
     with ``piper_length_scale`` (slightly slower than Piper's stock 1.0). Missing a language's
     ONNX falls through to espeak ``en-us`` / ``ar``.
+
+    Phase H live-voice fields gate the WebSocket session. ``live_enabled`` alone is not enough
+    -- both STT and TTS engines must also exist or the session factory returns ``None``.
     """
 
     stt_enabled: bool = True
@@ -731,6 +734,17 @@ class VoiceSettings:
     piper_noise_w: float = 0.9
     piper_sentence_silence: float = 0.45
     piper_tashkeel_model: str = "/opt/piper/libtashkeel_model.ort"
+    # Phase H live duplex
+    live_enabled: bool = False
+    live_max_sessions: int = 8
+    live_sample_rate: int = 16_000
+    live_frame_ms: int = 20
+    live_silence_hangover_ms: int = 600
+    live_min_speech_ms: int = 240
+    live_barge_in_ms: int = 280
+    live_max_utterance_ms: int = 15_000
+    live_max_output_tokens: int = 400
+    live_playback_sample_rate: int = 22_050
 
     @classmethod
     def from_env(cls) -> "VoiceSettings":
@@ -772,6 +786,24 @@ class VoiceSettings:
                 "VOICE_PIPER_TASHKEEL_MODEL", "/opt/piper/libtashkeel_model.ort",
             )
             or "/opt/piper/libtashkeel_model.ort",
+            live_enabled=_bool("VOICE_LIVE_ENABLED", False),
+            live_max_sessions=_int("VOICE_LIVE_MAX_SESSIONS", 8, minimum=1, maximum=64),
+            live_sample_rate=_int("VOICE_LIVE_SAMPLE_RATE", 16_000, minimum=8_000, maximum=48_000),
+            live_frame_ms=_int("VOICE_LIVE_FRAME_MS", 20, minimum=10, maximum=60),
+            live_silence_hangover_ms=_int(
+                "VOICE_LIVE_SILENCE_HANGOVER_MS", 600, minimum=100, maximum=3_000,
+            ),
+            live_min_speech_ms=_int("VOICE_LIVE_MIN_SPEECH_MS", 240, minimum=60, maximum=2_000),
+            live_barge_in_ms=_int("VOICE_LIVE_BARGE_IN_MS", 280, minimum=80, maximum=2_000),
+            live_max_utterance_ms=_int(
+                "VOICE_LIVE_MAX_UTTERANCE_MS", 15_000, minimum=1_000, maximum=60_000,
+            ),
+            live_max_output_tokens=_int(
+                "VOICE_LIVE_MAX_OUTPUT_TOKENS", 400, minimum=64, maximum=2_048,
+            ),
+            live_playback_sample_rate=_int(
+                "VOICE_LIVE_PLAYBACK_SAMPLE_RATE", 22_050, minimum=8_000, maximum=48_000,
+            ),
         )
 
 

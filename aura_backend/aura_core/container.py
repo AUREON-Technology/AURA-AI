@@ -231,6 +231,8 @@ class Container:
         from .nlp import NlpEngine
 
         self.nlp = NlpEngine()
+        # Phase H live-voice info is built after `self.kernel` exists (see below).
+        self.live_voice = None
 
         learning = settings.learning
         from .learning.knowledge_refresh import KnowledgeRefreshPipeline
@@ -365,6 +367,8 @@ class Container:
                 settings=settings,
             )
         )
+        # Phase H: after kernel exists so the live session can stream through it.
+        self.live_voice = self._build_live_voice()
 
         logger.info(
             "container built",
@@ -575,6 +579,43 @@ class Container:
             arabic_rate_wpm=voice.tts_ar_rate_wpm,
         )
 
+    def _build_live_voice(self) -> Any | None:
+        """Return a factory callable ``() -> LiveVoiceSession kwargs dict`` or ``None``.
+
+        Live voice is refused unless ``live_enabled`` and both speech engines exist — matching
+        the HTTP routes' refusal to silently degrade.
+        """
+        voice = self.settings.voice
+        if not voice.live_enabled:
+            return None
+        if self.stt_engine is None or self.tts_engine is None:
+            return None
+
+        from .voice import LiveVoiceConfig
+
+        cfg = LiveVoiceConfig(
+            sample_rate=voice.live_sample_rate,
+            frame_ms=voice.live_frame_ms,
+            silence_hangover_ms=voice.live_silence_hangover_ms,
+            min_speech_ms=voice.live_min_speech_ms,
+            barge_in_ms=voice.live_barge_in_ms,
+            max_utterance_ms=voice.live_max_utterance_ms,
+            max_output_tokens=voice.live_max_output_tokens,
+            playback_sample_rate_hint=voice.live_playback_sample_rate,
+            english_only_stt=voice.stt_model.endswith(".en"),
+        )
+        return {
+            "enabled": True,
+            "config": cfg,
+            "stt": self.stt_engine,
+            "tts": self.tts_engine,
+            "nlp": self.nlp,
+            "max_sessions": voice.live_max_sessions,
+            "kernel": self.kernel,
+            "cache": self.cache_backend,
+            "safety_guards_enabled": self.settings.safety.output_guards_enabled,
+        }
+
     def _build_goals_port(self) -> Any:
         """The `GoalsPort` (Phase D2): reads the legacy `goals` table's plaintext columns.
 
@@ -759,6 +800,7 @@ class Container:
             "voice": {
                 "tts": getattr(self.tts_engine, "name", None) if self.tts_engine else None,
                 "stt": getattr(self.stt_engine, "name", None) if self.stt_engine else None,
+                "live": bool(self.live_voice),
             },
             "environment": str(self.settings.environment),
             "healthy": healthy,
