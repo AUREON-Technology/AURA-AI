@@ -227,6 +227,10 @@ class Container:
         # directly from `api/v3.py`'s `/voice/*` routes.
         self.stt_engine = self._build_stt_engine()
         self.tts_engine = self._build_tts_engine()
+        # Phase I: pure text NLP (normalize / shallow intent). Always on; no binary gate.
+        from .nlp import NlpEngine
+
+        self.nlp = NlpEngine()
 
         learning = settings.learning
         from .learning.knowledge_refresh import KnowledgeRefreshPipeline

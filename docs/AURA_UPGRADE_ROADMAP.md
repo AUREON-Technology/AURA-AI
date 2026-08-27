@@ -382,6 +382,16 @@ wired" shape as Phase E's event bus.
   no admin-role concept anywhere in its auth model, and a live ops dashboard fits an internal
   tool more than the consumer app.
 
+### Phase I — Transcript / text NLP
+
+**Status: scaffolding / partial.** Design: [`docs/plans/phase-i-nlp.md`](plans/phase-i-nlp.md).
+
+Stdlib-first `aura_core/nlp/` (`NlpEngine`) normalizes chat messages and STT transcripts before
+`TurnRequest` construction; optional shallow intent + `RuleEntityExtractor` metadata (not written
+to the graph). Wired through `container.nlp` and chat `to_turn`; live voice calls the same
+`normalize_for_turn` extension point. **Not** a spaCy stack; no hosted NLP. Proven quality gains
+on real ASR transcripts are still required before marking the phase done.
+
 ### Phase G — Continuous intelligence
 
 **Done**, 2026-08-24.
@@ -456,6 +466,7 @@ Phase A, not by an estimate.
 | Task completion rate | Unmeasured | Phase C |
 | Scanned-document OCR | **Real**, Tesseract, proven on a genuinely scanned PDF end to end through `POST /knowledge/documents/upload`; no vision model (image/chart understanding) | Phase F1 |
 | Voice (STT/TTS) | **Real**, self-hosted (`faster-whisper` / `espeak-ng`), proven with a real synthesize→transcribe round trip through `POST /voice/speak` and `/voice/transcribe` | Phase F2 |
+| Transcript NLP | **Scaffolding** — `aura_core/nlp/` normalize + shallow intent; quality on real ASR unproven | Phase I |
 | Multi-model routing | **Proven** against two real, simultaneously-running local models (135M and 3B params) — `FASTEST`/`QUALITY_FIRST`/`BALANCED`/failover all route on real measured behaviour; `CHEAPEST` ties (both cost `$0`) | Phase G2, `tests/load/test_multi_model_routing.py` |
 | Restore verified | **Yes for all three stores** — Postgres, Qdrant and Redis each restored from the `backup` service's own output ([A2 report](reports/phase-a2-restore-drill.md)); offsite copy and `restore.sh` still unexercised | Phase A2 |
 | Production deployments | **1 and counting** — the real VPS, 17 services, verified live over HTTPS on 2026-08-23 | Phase A1 |

@@ -215,9 +215,15 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         except Exception:
             logger.debug("admin audit write failed", extra={"action": action}, exc_info=True)
 
-    def to_turn(payload: ChatRequest, caller: Principal, request: Request) -> TurnRequest:
+    async def to_turn(payload: ChatRequest, caller: Principal, request: Request) -> TurnRequest:
+        # Phase I: shared transcript/message normalize before the kernel (same path live voice uses).
+        from ..nlp import normalize_for_turn
+
+        message = await normalize_for_turn(payload.message, engine=getattr(container, "nlp", None))
+        if not message.strip():
+            raise ValidationError("message contains nothing usable after normalization")
         return TurnRequest(
-            message=payload.message,
+            message=message,
             user_id=caller.user_id,
             session_id=SessionId(payload.session_id) if payload.session_id else None,
             agent=payload.agent,
@@ -247,7 +253,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     ) -> JSONResponse:
         """One complete turn. Use ``/chat/stream`` for incremental output."""
         await enforce_rate_limit(request, caller, "chat")
-        result = await container.kernel.run(to_turn(payload, caller, request))
+        result = await container.kernel.run(await to_turn(payload, caller, request))
 
         if result.telemetry.outcome.value != "success":
             # The kernel already produced telemetry for the failure; surface the domain error's
@@ -302,7 +308,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         string-split for an ``[ACTIONS]`` marker, which is the v1 protocol's fragility (TD-12).
         """
         await enforce_rate_limit(request, caller, "chat")
-        turn = to_turn(payload, caller, request)
+        turn = await to_turn(payload, caller, request)
 
         async def events() -> AsyncIterator[bytes]:
             try:

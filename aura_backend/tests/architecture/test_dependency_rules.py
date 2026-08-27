@@ -32,7 +32,7 @@ STDLIB = set(sys.stdlib_module_names) | {"__future__"}
 ENGINE_PACKAGES = (
     "prompts", "context", "memory", "knowledge", "tools", "safety",
     "planning", "reasoning", "execution", "kernel", "evaluation", "learning",
-    "mlops", "security", "rag",
+    "mlops", "security", "rag", "nlp",
 )
 
 #: Where vendor SDKs are permitted.
