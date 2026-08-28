@@ -300,6 +300,14 @@ fi
 
 say "Restarting the stack"
 run "${DC[*]} up -d --remove-orphans"
+# Nginx's official entrypoint only envsubst's /etc/nginx/templates → conf.d at
+# *container start*. A bind-mounted template change (e.g. Phase H /api/v3/voice/live)
+# is invisible to a long-lived nginx that `up -d` leaves "Running". Without recreate,
+# the generic /api/ location keeps Connection "" and WebSocket upgrades 404.
+if echo "$SERVICES" | grep -qx nginx; then
+  info "force-recreating nginx so templates/*.template re-render"
+  run "${DC[*]} up -d --force-recreate --no-deps nginx"
+fi
 run "${DC[*]} ps"
 
 # -- 8. verify -----------------------------------------------------------------------------
@@ -358,6 +366,24 @@ else
   info "readiness: not OK or not present at $READY_URL"
   curl -sS --max-time 10 "$READY_URL" 2>&1 | head -20 | sed 's/^/      /' || true
 fi
+
+# Phase H: confirm the edge still upgrades /api/v3/voice/live. A 404 here usually means
+# nginx is serving a stale conf (Connection "") rather than the dedicated WS location.
+WS_URL="${HEALTH_URL%/health}/api/v3/voice/live"
+WS_CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
+  -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+  "$WS_URL" 2>/dev/null || echo '000')"
+case "$WS_CODE" in
+  101) info "voice live WS: OK  (101 Switching Protocols)" ;;
+  404)
+    info "voice live WS: HTTP $WS_CODE at $WS_URL -- nginx likely missing Upgrade location"
+    ;;
+  *)
+    # Auth/feature-off closes after accept often surface as non-101; not fatal for deploy.
+    info "voice live WS: HTTP $WS_CODE at $WS_URL (expect 101 when live is enabled)"
+    ;;
+esac
 
 say "Deployed ${AFTER:0:8}"
 info "previous commit was ${BEFORE:0:8} -- keep it, that is your rollback target"

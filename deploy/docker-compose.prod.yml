@@ -239,6 +239,11 @@ services:
       DEVELOPER_EMAILS: ${DEVELOPER_EMAILS:-}
       # Shared workspace for staged Drive PDFs (API downloads, Celery ingests).
       DATA_DIR: /var/lib/aura/workspace
+      # Phase H live duplex WebSocket. Default on for this stack (STT/TTS are baked
+      # into the image); set false in deploy/.env to refuse sessions. Local/dev
+      # AuraSettings still default live_enabled=false unless this env is set.
+      AURA_VOICE_LIVE_ENABLED: ${AURA_VOICE_LIVE_ENABLED:-true}
+      AURA_VOICE_LIVE_MAX_SESSIONS: ${AURA_VOICE_LIVE_MAX_SESSIONS:-8}
     secrets: [postgres_password, redis_password, qdrant_api_key, jwt_secret, firebase_credentials]
     volumes:
       - aura_workspace:/var/lib/aura/workspace

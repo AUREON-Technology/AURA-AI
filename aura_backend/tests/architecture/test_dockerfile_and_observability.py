@@ -48,6 +48,7 @@ def test_alertmanager_routes_critical_without_committed_webhook() -> None:
 def test_compose_and_nginx_serve_the_operator_console() -> None:
     compose = (REPO / "deploy/docker-compose.prod.yml").read_text(encoding="utf-8")
     nginx = (REPO / "deploy/nginx/templates/aura.conf.template").read_text(encoding="utf-8")
+    host_proxy = (REPO / "deploy/nginx/host-proxy.conf.example").read_text(encoding="utf-8")
     assert "context: ../aura_admin" in compose
     assert "SUPERADMIN_EMAILS: ${SUPERADMIN_EMAILS:-}" in compose
     assert "ADMIN_EMAILS: ${ADMIN_EMAILS:-}" in compose
@@ -61,6 +62,17 @@ def test_compose_and_nginx_serve_the_operator_console() -> None:
     assert 'GF_AUTH_ANONYMOUS_ENABLED: "true"' in compose
     assert "location /metrics" in nginx
     assert "deny all" in nginx
+    # Phase H live voice: dedicated Upgrade location before /api/ (and host-proxy mirror).
+    assert "location /api/v3/voice/live" in nginx
+    assert 'proxy_set_header Connection "upgrade"' in nginx
+    assert "location /api/v3/voice/live" in host_proxy
+    assert "AURA_VOICE_LIVE_ENABLED:" in compose
+
+
+def test_vps_update_force_recreates_nginx_for_template_rerender() -> None:
+    text = (REPO / "deploy/scripts/vps-update.sh").read_text(encoding="utf-8")
+    assert "--force-recreate --no-deps nginx" in text
+    assert "api/v3/voice/live" in text
 
 
 def test_compose_sets_prometheus_multiproc_dir_on_gateway() -> None:
