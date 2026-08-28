@@ -369,11 +369,19 @@ fi
 
 # Phase H: confirm the edge still upgrades /api/v3/voice/live. A 404 here usually means
 # nginx is serving a stale conf (Connection "") rather than the dedicated WS location.
+# Retried: force-recreate leaves nginx briefly unready and a single probe can false-alarm.
 WS_URL="${HEALTH_URL%/health}/api/v3/voice/live"
-WS_CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
-  -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
-  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
-  "$WS_URL" 2>/dev/null || echo '000')"
+WS_CODE="000"
+for _ws_try in $(seq 1 15); do
+  WS_CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
+    -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+    -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+    "$WS_URL" 2>/dev/null || echo '000')"
+  case "$WS_CODE" in
+    101|4??) break ;;  # 101 success; 4xx is a real edge/app answer (not startup flake)
+  esac
+  sleep 2
+done
 case "$WS_CODE" in
   101) info "voice live WS: OK  (101 Switching Protocols)" ;;
   404)
