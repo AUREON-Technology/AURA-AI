@@ -420,11 +420,35 @@ class TestExecution:
         self, tools, tool_context
     ) -> None:
         """A configuration gap must not present as a user-visible plan failure."""
+        seen: list[StepEvent] = []
         plan = _plan(PlanStep(id=StepId("s1"), kind=StepKind.RESPOND, description="Answer"))
-        outcome = await ExecutionEngine(tools=tools).execute(plan, context=tool_context)
+        outcome = await ExecutionEngine(tools=tools).execute(
+            plan, context=tool_context, on_event=seen.append
+        )
 
-        assert outcome.succeeded is False
-        assert outcome.plan.steps[0].status is StepStatus.FAILED
+        assert outcome.succeeded is True
+        assert outcome.plan.steps[0].status is StepStatus.SKIPPED
+        assert "No handler" in (outcome.plan.steps[0].result or "")
+        assert [e.status for e in seen] == ["running", "skipped"]
+
+    async def test_an_unhandled_generate_step_is_skipped_not_failed(
+        self, tools, tool_context
+    ) -> None:
+        """The kernel never passes GENERATE handlers; a missing one must skip, not fail/retry."""
+        seen: list[StepEvent] = []
+        plan = _plan(
+            PlanStep(kind=StepKind.GENERATE, id=StepId("s1"), description="Draft the answer"),
+        )
+        outcome = await ExecutionEngine(tools=tools).execute(
+            plan, context=tool_context, handlers=None, on_event=seen.append
+        )
+
+        step = outcome.plan.steps[0]
+        assert step.status is StepStatus.SKIPPED
+        assert outcome.succeeded is True
+        assert step.attempts == 1
+        assert [e.status for e in seen] == ["running", "skipped"]
+        assert not any(e.status == "failed" for e in seen)
 
     async def test_a_raising_handler_fails_only_its_own_step(self, tools, tool_context) -> None:
         async def handler(step: PlanStep) -> str:

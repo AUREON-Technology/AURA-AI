@@ -36,6 +36,9 @@ __all__ = ["ExecutionEngine", "ExecutionOutcome", "StepEvent"]
 
 logger = get_logger("execution")
 
+# Returned as the 4th `_run_step` slot when a kind has no handler. Not a tool report.
+_NO_HANDLER = object()
+
 
 class StepEvent:
     """A plan-progress notification, streamed to the caller."""
@@ -202,6 +205,19 @@ class ExecutionEngine:
                     continue
 
                 text, ok, elapsed, report = outcome
+                if report is _NO_HANDLER:
+                    # Configuration gap: skip, do not fail or retry, and do not count as a
+                    # tool report. SKIPPED is terminal and treated as success for the plan.
+                    updated.append(step.skipped(text))
+                    await self._emit(
+                        on_event,
+                        StepEvent(
+                            step_id=step.id.value, kind=str(step.kind), status="skipped",
+                            description=step.description, detail=text[:200],
+                            elapsed_ms=elapsed,
+                        ),
+                    )
+                    continue
                 if report is not None:
                     tool_reports.append(report)
                 if ok:
@@ -288,9 +304,9 @@ class ExecutionEngine:
             # skip it with an explanation rather than failing the whole plan.
             return (
                 f"No handler is configured for {step.kind} steps.",
-                False,
+                True,
                 (time.perf_counter() - started) * 1000.0,
-                None,
+                _NO_HANDLER,
             )
 
         try:
