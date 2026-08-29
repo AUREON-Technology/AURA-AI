@@ -170,6 +170,37 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
             ),
           ),
           const SizedBox(height: AuraSpacing.xl),
+          if (state.cag != null && state.cag!.enabled)
+            Padding(
+              padding: const EdgeInsets.only(bottom: AuraSpacing.xl),
+              child: AuraCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Always in context (CAG)',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: AuraSpacing.sm),
+                    Text(
+                      'Budget ${state.cag!.tokens} / ${state.cag!.budget} tokens'
+                      '${state.cag!.documents.isEmpty ? ' · nothing pinned yet' : ''}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    if (state.cag!.documents.isNotEmpty) ...[
+                      const SizedBox(height: AuraSpacing.sm),
+                      for (final d in state.cag!.documents)
+                        Text(
+                          '• ${d['title'] ?? d['document_id']} '
+                          '(${d['is_global'] == true ? 'handbook' : 'yours'}, '
+                          '${d['tokens'] ?? 0} tok)',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
           Text('Library', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: AuraSpacing.md),
           if (state.loading)
@@ -194,16 +225,44 @@ class _KnowledgeCenterPageState extends ConsumerState<KnowledgeCenterPage> {
                   child: ListTile(
                     contentPadding: EdgeInsets.zero,
                     title: Text(doc.title),
-                    subtitle: Text('v${doc.version} · ${doc.status}'),
+                    subtitle: Text(
+                      'v${doc.version} · ${doc.status}'
+                      '${doc.cagPinned ? ' · Always in context' : ''}',
+                    ),
                     leading: doc.isQuarantined
                         ? Icon(Icons.shield_outlined, color: palette.warning)
-                        : Icon(Icons.description_outlined, color: palette.textSecondary),
-                    trailing: IconButton(
-                      tooltip: 'Delete',
-                      icon: const Icon(Icons.delete_outline),
-                      onPressed: () => ref
-                          .read(knowledgeViewModelProvider.notifier)
-                          .remove(doc.id),
+                        : Icon(
+                            doc.cagPinned
+                                ? Icons.push_pin
+                                : Icons.description_outlined,
+                            color: doc.cagPinned
+                                ? palette.brand
+                                : palette.textSecondary,
+                          ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: doc.cagPinned
+                              ? 'Remove from always-in-context'
+                              : 'Keep always in context',
+                          icon: Icon(
+                            doc.cagPinned
+                                ? Icons.push_pin
+                                : Icons.push_pin_outlined,
+                          ),
+                          onPressed: () => ref
+                              .read(knowledgeViewModelProvider.notifier)
+                              .toggleCagPin(doc),
+                        ),
+                        IconButton(
+                          tooltip: 'Delete',
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () => ref
+                              .read(knowledgeViewModelProvider.notifier)
+                              .remove(doc.id),
+                        ),
+                      ],
                     ),
                   ),
                 ),

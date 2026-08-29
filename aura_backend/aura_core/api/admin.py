@@ -168,6 +168,52 @@ def register_admin_ops(
         await audit_admin(request, caller, "admin.source.delete", source_id, "ok" if removed else "missing")
         return JSONResponse(content={"deleted": bool(removed)})
 
+    @router.post("/admin/knowledge/documents/{document_id}/cag-pin")
+    async def admin_pin_cag(
+        request: Request, document_id: str, caller=Depends(principal)
+    ) -> JSONResponse:
+        """Pin a global INTERNAL/VERIFIED document into every user's CAG handbook."""
+        require_admin(caller)
+        if container.cag is None:
+            raise HTTPException(status_code=503, detail="CAG is disabled")
+        from ..domain.identifiers import DocumentId
+
+        document = await container.cag.set_pin(
+            DocumentId(document_id), owner_id=None, pinned=True
+        )
+        await audit_admin(
+            request, caller, "admin.cag.pin", document_id, "ok",
+            detail={"version": document.version},
+        )
+        return JSONResponse(
+            content={
+                "document_id": document.id.value,
+                "version": document.version,
+                "cag_pinned": document.cag_pinned,
+            }
+        )
+
+    @router.delete("/admin/knowledge/documents/{document_id}/cag-pin")
+    async def admin_unpin_cag(
+        request: Request, document_id: str, caller=Depends(principal)
+    ) -> JSONResponse:
+        require_admin(caller)
+        if container.cag is None:
+            raise HTTPException(status_code=503, detail="CAG is disabled")
+        from ..domain.identifiers import DocumentId
+
+        document = await container.cag.set_pin(
+            DocumentId(document_id), owner_id=None, pinned=False
+        )
+        await audit_admin(request, caller, "admin.cag.unpin", document_id, "ok")
+        return JSONResponse(
+            content={
+                "document_id": document.id.value,
+                "version": document.version,
+                "cag_pinned": document.cag_pinned,
+            }
+        )
+
     @router.get("/admin/indexes")
     async def list_indexes(caller=Depends(principal)) -> JSONResponse:
         require_admin(caller)

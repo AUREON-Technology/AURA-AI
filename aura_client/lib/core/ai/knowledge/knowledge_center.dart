@@ -253,6 +253,35 @@ class KnowledgeCenter {
       );
     }
   }
+
+  /// Pin a document into the always-on CAG prefix (ADR-010).
+  Future<void> setCagPin(String documentId, {required bool pinned}) async {
+    final response = await _send(
+      pinned ? 'POST' : 'DELETE',
+      '/documents/$documentId/cag-pin',
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw AuraApiError.fromResponse(
+        statusCode: response.statusCode,
+        body: response.body,
+      );
+    }
+  }
+
+  Future<CagPreview> fetchCagPreview() async {
+    final response = await _send('GET', '/cag');
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw AuraApiError.fromResponse(
+        statusCode: response.statusCode,
+        body: response.body,
+      );
+    }
+    final parsed = jsonDecode(response.body);
+    if (parsed is! Map) {
+      return const CagPreview(enabled: false, tokens: 0, budget: 0);
+    }
+    return CagPreview.fromJson(Map<String, dynamic>.from(parsed));
+  }
 }
 
 final knowledgeCenterProvider = Provider<KnowledgeCenter>((ref) {

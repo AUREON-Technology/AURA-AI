@@ -345,6 +345,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             owner_id=caller.user_id,
             metadata=payload.metadata,
         )
+        if container.cag is not None and result.document is not None:
+            await container.cag.on_document_changed(
+                result.document.id, owner_id=caller.user_id
+            )
         return JSONResponse(
             content={
                 "document_id": result.document.id.value if result.document else None,
@@ -390,6 +394,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         result = await container.knowledge.ingest(
             title=title, owner_id=caller.user_id, segments=extraction.blocks,
         )
+        if container.cag is not None and result.document is not None:
+            await container.cag.on_document_changed(
+                result.document.id, owner_id=caller.user_id
+            )
         return JSONResponse(
             content={
                 "document_id": result.document.id.value if result.document else None,
@@ -439,10 +447,88 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         request: Request, document_id: str, caller: Principal = Depends(principal)
     ) -> JSONResponse:
         await enforce_rate_limit(request, caller, "ingest")
+        doc_id = DocumentId(document_id)
         removed = await container.knowledge.delete_document(
-            DocumentId(document_id), owner_id=caller.user_id
+            doc_id, owner_id=caller.user_id
         )
+        if container.cag is not None:
+            await container.cag.on_document_changed(doc_id, owner_id=caller.user_id)
         return JSONResponse(content={"deleted": True, "chunks_removed": removed})
+
+    @router.post("/knowledge/documents/{document_id}/cag-pin")
+    async def pin_cag_document(
+        request: Request, document_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Pin a user-owned document into the CAG prefix (ADR-010)."""
+        await enforce_rate_limit(request, caller, "ingest")
+        if container.cag is None:
+            raise DependencyUnavailableError(
+                "CAG is disabled on this deployment",
+                dependency="cag",
+            )
+        document = await container.cag.set_pin(
+            DocumentId(document_id), owner_id=caller.user_id, pinned=True
+        )
+        return JSONResponse(
+            content={
+                "document_id": document.id.value,
+                "version": document.version,
+                "cag_pinned": document.cag_pinned,
+            }
+        )
+
+    @router.delete("/knowledge/documents/{document_id}/cag-pin")
+    async def unpin_cag_document(
+        request: Request, document_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Remove a document from the CAG prefix."""
+        await enforce_rate_limit(request, caller, "ingest")
+        if container.cag is None:
+            raise DependencyUnavailableError(
+                "CAG is disabled on this deployment",
+                dependency="cag",
+            )
+        document = await container.cag.set_pin(
+            DocumentId(document_id), owner_id=caller.user_id, pinned=False
+        )
+        return JSONResponse(
+            content={
+                "document_id": document.id.value,
+                "version": document.version,
+                "cag_pinned": document.cag_pinned,
+            }
+        )
+
+    @router.get("/knowledge/cag")
+    async def cag_preview(
+        request: Request, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Preview the caller's current CAG prefix (budget, docs, clipped text)."""
+        await enforce_rate_limit(request, caller, "read")
+        if container.cag is None:
+            return JSONResponse(
+                content={
+                    "enabled": False,
+                    "tokens": 0,
+                    "budget": 0,
+                    "documents": [],
+                }
+            )
+        prefix = await container.cag.prefix_for(caller.user_id)
+        if prefix is None:
+            return JSONResponse(
+                content={
+                    "enabled": True,
+                    "tokens": 0,
+                    "budget": container.cag.max_tokens,
+                    "global_budget": container.cag.global_tokens,
+                    "user_budget": container.cag.user_tokens,
+                    "documents": [],
+                    "identity": None,
+                    "text": "",
+                }
+            )
+        return JSONResponse(content={"enabled": True, **prefix.preview()})
 
     @router.get("/knowledge/documents")
     async def list_documents(
@@ -463,6 +549,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                         "title": d.title,
                         "version": d.version,
                         "status": str(d.status),
+                        "cag_pinned": d.cag_pinned,
                         "created_at": d.created_at.isoformat(),
                     }
                     for d in documents

@@ -11,6 +11,7 @@ class KnowledgeUiState {
   final KnowledgeSearchResult? search;
   final String? ingestMessage;
   final bool ingestError;
+  final CagPreview? cag;
 
   const KnowledgeUiState({
     this.loading = false,
@@ -19,6 +20,7 @@ class KnowledgeUiState {
     this.search,
     this.ingestMessage,
     this.ingestError = false,
+    this.cag,
   });
 
   KnowledgeUiState copyWith({
@@ -31,6 +33,7 @@ class KnowledgeUiState {
     String? ingestMessage,
     bool clearIngest = false,
     bool? ingestError,
+    CagPreview? cag,
   }) {
     return KnowledgeUiState(
       loading: loading ?? this.loading,
@@ -39,6 +42,7 @@ class KnowledgeUiState {
       search: clearSearch ? null : (search ?? this.search),
       ingestMessage: clearIngest ? null : (ingestMessage ?? this.ingestMessage),
       ingestError: ingestError ?? this.ingestError,
+      cag: cag ?? this.cag,
     );
   }
 }
@@ -53,8 +57,15 @@ class KnowledgeViewModel extends Notifier<KnowledgeUiState> {
   Future<void> refresh() async {
     state = state.copyWith(loading: true, clearError: true);
     try {
-      final docs = await ref.read(knowledgeCenterProvider).listDocuments();
-      state = state.copyWith(loading: false, documents: docs);
+      final center = ref.read(knowledgeCenterProvider);
+      final docs = await center.listDocuments();
+      CagPreview? cag;
+      try {
+        cag = await center.fetchCagPreview();
+      } catch (_) {
+        cag = null;
+      }
+      state = state.copyWith(loading: false, documents: docs, cag: cag);
     } on AuraApiError catch (e) {
       state = state.copyWith(loading: false, error: e.message);
     } catch (e) {
@@ -124,6 +135,18 @@ class KnowledgeViewModel extends Notifier<KnowledgeUiState> {
   Future<void> remove(String documentId) async {
     await ref.read(knowledgeCenterProvider).deleteDocument(documentId);
     await refresh();
+  }
+
+  Future<void> toggleCagPin(KnowledgeDocument doc) async {
+    try {
+      await ref.read(knowledgeCenterProvider).setCagPin(
+            doc.id,
+            pinned: !doc.cagPinned,
+          );
+      await refresh();
+    } on AuraApiError catch (e) {
+      state = state.copyWith(error: e.message);
+    }
   }
 }
 
