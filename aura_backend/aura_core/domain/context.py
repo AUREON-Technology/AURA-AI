@@ -24,6 +24,7 @@ __all__ = [
     "ContextItem",
     "ContextBudget",
     "ContextBundle",
+    "user_facing_citations",
 ]
 
 
@@ -48,6 +49,22 @@ class ContextSection(str, enum.Enum):
 
     def __str__(self) -> str:
         return self.value
+
+
+# Provenances that are packing/telemetry bookkeeping, not documents the user cited.
+_USER_CITATION_DROP_EXACT = frozenset({"episodic_summary", "working_memory", "cag"})
+_USER_CITATION_DROP_PREFIXES = ("memory:", "goal:", "tool:")
+
+
+def user_facing_citations(citations: Sequence[str]) -> tuple[str, ...]:
+    """Drop internal provenances; keep real RAG/CAG document citations (``handbook@v1``)."""
+    return tuple(c for c in citations if _is_user_facing_citation(c))
+
+
+def _is_user_facing_citation(provenance: str) -> bool:
+    if provenance in _USER_CITATION_DROP_EXACT:
+        return False
+    return not provenance.startswith(_USER_CITATION_DROP_PREFIXES)
 
 
 _SECTION_ORDER = (
@@ -198,6 +215,15 @@ class ContextBundle:
             if item.provenance:
                 seen.setdefault(item.provenance, None)
         return tuple(seen)
+
+    @property
+    def user_citations(self) -> tuple[str, ...]:
+        """Document provenances safe to show as source chips.
+
+        :attr:`citations` stays the full packing/telemetry set. This drops bookkeeping
+        labels (history compress, memory, goals, tools, a bare CAG slot).
+        """
+        return user_facing_citations(self.citations)
 
     def _nonce_for(self, section: ContextSection) -> str:
         if section is ContextSection.CAG and self.prefix_nonce:

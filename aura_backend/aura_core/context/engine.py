@@ -22,7 +22,14 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from ..domain.cag import CagPrefix
-from ..domain.context import ContextBudget, ContextBundle, ContextItem, ContextSection, pack
+from ..domain.context import (
+    ContextBudget,
+    ContextBundle,
+    ContextItem,
+    ContextSection,
+    pack,
+    user_facing_citations,
+)
 from ..domain.goals import GoalSnapshot
 from ..domain.knowledge import RetrievalResult
 from ..domain.memory import MemoryHit
@@ -88,6 +95,11 @@ class AssembledContext:
     @property
     def utilisation(self) -> float:
         return self.bundle.utilisation
+
+    @property
+    def user_citations(self) -> tuple[str, ...]:
+        """Document citations for the client; excludes packing/telemetry bookkeeping."""
+        return user_facing_citations(self.citations)
 
 
 class ContextEngine:

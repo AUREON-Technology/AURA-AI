@@ -119,7 +119,29 @@ class TestStreaming:
             document_id=DocumentId("handbook"), owner_id=user,
         )
         frames = [frame async for frame in container.kernel.stream(_request())]
-        assert frames[-1]["citations"]
+        done = frames[-1]
+        assert done["citations"]
+        assert any("handbook@v1" in c for c in done["citations"])
+        assert "episodic_summary" not in done["citations"]
+        assert done["searched_but_empty"] is False
+
+    async def test_a_stream_reports_searched_but_empty_on_done(
+        self, container, user, handbook
+    ) -> None:
+        await container.startup()
+        await container.knowledge.ingest(
+            content=handbook, title="Handbook",
+            document_id=DocumentId("handbook"), owner_id=user,
+        )
+        frames = [
+            frame async for frame in container.kernel.stream(
+                _request("the melting point of tungsten")
+            )
+        ]
+        done = frames[-1]
+        assert done["type"] == "done"
+        assert done["searched_but_empty"] is True
+        assert done["degraded"] is True
 
     async def test_a_provider_outage_mid_stream_yields_an_error_frame(
         self, container
@@ -374,6 +396,7 @@ class TestStreamToolExecution:
         assert done["correlation_id"]
         assert "confidence" in done
         assert "degraded" in done
+        assert "searched_but_empty" in done
         assert "usage" in done
         echo = container.router.get("echo")
         blob = "\n".join(m.content for m in echo.calls[-1].conversation)

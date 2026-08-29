@@ -503,8 +503,9 @@ class AIKernel:
                     )
                 )
 
-                if assembled.citations:
-                    yield {"type": "citations", "citations": list(assembled.citations)}
+                visible_citations = list(assembled.user_citations)
+                if visible_citations:
+                    yield {"type": "citations", "citations": visible_citations}
 
                 collected: list[str] = []
                 last_usage = None
@@ -591,13 +592,14 @@ class AIKernel:
                     "type": "done",
                     "tainted": tainted,
                     "guards_complete": guards_complete,
-                    "citations": list(assembled.citations),
+                    "citations": visible_citations,
                     "needs_confirmation": list(dict.fromkeys(needs_confirmation)),
                     "turn_id": turn_id.value,
                     "correlation_id": correlation.value,
                     # Stream does not run the reasoner; null is honest, not a fake score.
                     "confidence": None,
                     "degraded": bool(tainted or searched_empty),
+                    "searched_but_empty": searched_empty,
                     "usage": {
                         "prompt_tokens": last_usage.prompt_tokens if last_usage else 0,
                         "completion_tokens": (

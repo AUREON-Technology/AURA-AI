@@ -17,7 +17,12 @@ from aura_core.context import (
 )
 from aura_core.domain import Conversation, Message
 from aura_core.domain.messages import Role
-from aura_core.domain.context import ContextSection
+from aura_core.domain.context import (
+    ContextBundle,
+    ContextItem,
+    ContextSection,
+    user_facing_citations,
+)
 from aura_core.domain.identifiers import DocumentId, MemoryId, UserId
 from aura_core.domain.knowledge import Chunk, ChunkId, RetrievalResult, RetrievedChunk
 from aura_core.domain.memory import MemoryHit, MemoryKind, MemoryRecord, Provenance
@@ -151,3 +156,64 @@ class TestCpuPrefillBudget:
         assert f"<<<END-AURA-DATA:{nonce}>>>" in assembled.system_text
         assert assembled.citations
         assert any("handbook@v1" in citation for citation in assembled.citations)
+
+
+class TestUserFacingCitations:
+    def test_handbook_survives_and_bookkeeping_is_dropped(self) -> None:
+        """Packing/telemetry keeps every provenance; chips only show real documents."""
+        bundle = ContextBundle(
+            items=(
+                ContextItem(
+                    content="Annual leave is 21 days.",
+                    section=ContextSection.KNOWLEDGE,
+                    provenance="handbook@v1",
+                ),
+                ContextItem(
+                    content="Earlier we discussed leave.",
+                    section=ContextSection.HISTORY,
+                    provenance="episodic_summary",
+                ),
+                ContextItem(
+                    content="scratch",
+                    section=ContextSection.SCRATCHPAD,
+                    provenance="working_memory",
+                ),
+                ContextItem(
+                    content="pinned prefix",
+                    section=ContextSection.CAG,
+                    provenance="cag",
+                ),
+                ContextItem(
+                    content="prefers concise answers",
+                    section=ContextSection.MEMORY,
+                    provenance="memory:semantic:abcd1234",
+                ),
+                ContextItem(
+                    content="Active goal",
+                    section=ContextSection.MEMORY,
+                    provenance="goal:abcd1234",
+                ),
+                ContextItem(
+                    content="2+2 = 4",
+                    section=ContextSection.TOOL_OUTPUT,
+                    provenance="tool:calculator",
+                ),
+            )
+        )
+        assert "handbook@v1" in bundle.citations
+        assert "episodic_summary" in bundle.citations
+        assert bundle.user_citations == ("handbook@v1",)
+        assert user_facing_citations(bundle.citations) == ("handbook@v1",)
+
+    def test_assembled_user_citations_keep_handbook_drop_episodic_summary(self) -> None:
+        assembled = ContextEngine().assemble(
+            _typical_request(
+                history_summary="We discussed the leave policy last week.",
+                max_prompt_tokens=0,
+            )
+        )
+        assert any("handbook@v1" in citation for citation in assembled.citations)
+        assert "episodic_summary" in assembled.citations
+        assert any("handbook@v1" in citation for citation in assembled.user_citations)
+        assert "episodic_summary" not in assembled.user_citations
+        assert not any(c.startswith("memory:") for c in assembled.user_citations)
