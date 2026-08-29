@@ -147,6 +147,9 @@ class ProviderCapabilities:
     supports_json_mode: bool = False
     supports_vision: bool = False
     supports_embeddings: bool = False
+    #: Whether the serving stack can reuse a KV prefix for a stable prompt head (ADR-010).
+    #: Declared for a later vLLM/llama.cpp adapter; unused on the current Ollama path.
+    supports_prefix_cache: bool = False
     embedding_dimension: int | None = None
     is_local: bool = False
     quality_tier: int = 2  # 1 = small/fast, 2 = mid, 3 = frontier
@@ -217,6 +220,11 @@ class CompletionRequest:
     require_local: bool = False
     timeout_s: float = 60.0
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    #: Token count of a stable prompt prefix (CAG). Unused until a provider with
+    #: ``supports_prefix_cache`` is wired; kept so adapters need no domain change.
+    prefix_tokens: int | None = None
+    #: Provider-specific cache-control hint (e.g. OpenAI/Anthropic/vLLM). Unused today.
+    cache_control: Mapping[str, Any] | None = None
 
     def with_conversation(self, conversation: Conversation) -> "CompletionRequest":
         return replace(self, conversation=conversation)
