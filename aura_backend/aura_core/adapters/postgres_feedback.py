@@ -38,6 +38,10 @@ _SCHEMA = (
     CREATE INDEX IF NOT EXISTS ix_aura_feedback_owner
         ON aura_feedback (owner_id, created_at DESC)
     """,
+    """
+    CREATE INDEX IF NOT EXISTS ix_aura_feedback_created
+        ON aura_feedback (created_at DESC)
+    """,
 )
 
 
@@ -126,6 +130,42 @@ class PostgresFeedbackStore:
                 )
         except Exception as exc:
             raise _unavailable(f"could not list feedback: {exc}") from exc
+        return [self._record(row) for row in rows]
+
+    async def list_for_curation(
+        self, *, since: datetime | None = None, limit: int = 10_000
+    ) -> Sequence[FeedbackRecord]:
+        """Cross-tenant feed for Loop B. Admin/curator paths only."""
+        await self._ensure_schema()
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                if since is not None:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id, owner_id, turn_id, rating, correction, comment,
+                               prompt, response, created_at
+                        FROM aura_feedback
+                        WHERE created_at >= $1
+                        ORDER BY created_at DESC
+                        LIMIT $2
+                        """,
+                        since,
+                        limit,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id, owner_id, turn_id, rating, correction, comment,
+                               prompt, response, created_at
+                        FROM aura_feedback
+                        ORDER BY created_at DESC
+                        LIMIT $1
+                        """,
+                        limit,
+                    )
+        except Exception as exc:
+            raise _unavailable(f"could not list feedback for curation: {exc}") from exc
         return [self._record(row) for row in rows]
 
     @staticmethod

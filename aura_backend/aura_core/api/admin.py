@@ -105,6 +105,29 @@ def register_admin_ops(
     class LocalModelPullRequest(BaseModel):
         name: str = Field(min_length=1, max_length=200)
 
+    class LearningApprovalRequest(BaseModel):
+        base_model: str = ""
+
+    class FineTuneJobRequest(BaseModel):
+        approval_id: str = Field(min_length=1, max_length=128)
+        base_model: str = ""
+        run_inline: bool = True
+
+    class ModelImportRequest(BaseModel):
+        model_id: str = Field(default="aura-ft", min_length=1, max_length=128)
+        version: str = Field(min_length=1, max_length=64)
+        artefact_uri: str = Field(min_length=1, max_length=512)
+        approval_id: str = Field(min_length=1, max_length=128)
+        dataset_digest: str = Field(min_length=1, max_length=128)
+        provider_kind: str = "ollama"
+        base_model: str = ""
+        notes: str = ""
+
+    class PromotionApprovalRequest(BaseModel):
+        model_id: str = Field(min_length=1, max_length=128)
+        version: str = Field(min_length=1, max_length=64)
+        summary: str = ""
+
     @router.get("/admin/audit")
     async def list_audit(
         caller=Depends(principal),
@@ -364,6 +387,154 @@ def register_admin_ops(
         )
         await audit_admin(request, caller, "admin.model.rollback", restored.key, "ok")
         return JSONResponse(content={"model": restored.as_dict()})
+
+    @router.get("/admin/learning/recommendation")
+    async def learning_recommendation(caller=Depends(principal)) -> JSONResponse:
+        require_admin(caller)
+        recommendation, stored = await container.finetune.recommend(persist=True)
+        payload = recommendation.as_dict()
+        if stored is not None:
+            payload["dataset"] = stored.as_dict()
+        return JSONResponse(content={"recommendation": payload})
+
+    @router.post("/admin/learning/request-approval")
+    async def learning_request_approval(
+        request: Request,
+        payload: LearningApprovalRequest,
+        caller=Depends(principal),
+    ) -> JSONResponse:
+        require_admin(caller)
+        approval, recommendation = await container.finetune.request_approval(
+            base_model=payload.base_model or None,
+        )
+        await audit_admin(
+            request, caller, "admin.learning.request_approval", approval.id, "ok",
+            detail={"digest": approval.artefact_digest},
+        )
+        return JSONResponse(
+            content={
+                "approval": approval.as_dict(),
+                "recommendation": recommendation.as_dict(),
+            }
+        )
+
+    @router.get("/admin/learning/datasets/{digest}")
+    async def learning_export_dataset(
+        digest: str,
+        caller=Depends(principal),
+        format: str = Query(default="chatml"),
+    ) -> JSONResponse:
+        require_admin(caller)
+        text = await container.datasets.export(digest, fmt=format)
+        return JSONResponse(
+            content={"digest": digest, "format": format, "jsonl": text}
+        )
+
+    @router.post("/admin/learning/jobs")
+    async def launch_finetune_job(
+        request: Request,
+        payload: FineTuneJobRequest,
+        caller=Depends(principal),
+    ) -> JSONResponse:
+        require_super_admin(caller)
+        job = await container.finetune_jobs.enqueue(
+            approval_id=payload.approval_id,
+            base_model=payload.base_model,
+        )
+        await audit_admin(
+            request, caller, "admin.learning.job_enqueue", job.id, "ok",
+            detail={"approval": payload.approval_id, "digest": job.dataset_digest},
+        )
+        if payload.run_inline:
+            # Gateway-inline for ScriptedTrainer / tests. Heavy LocalLoraTrainer
+            # should set run_inline=false; the learning Celery worker runs
+            # tasks.finetune_job_task against the queued job id (outside aura_core).
+            job = await container.finetune_jobs.run(job.id)
+        else:
+            logger.info(
+                "fine-tune job queued for learning worker",
+                extra={"job": job.id},
+            )
+        return JSONResponse(content={"job": job.as_dict()})
+
+    @router.get("/admin/learning/jobs")
+    async def list_finetune_jobs(caller=Depends(principal)) -> JSONResponse:
+        require_admin(caller)
+        rows = await container.finetune_jobs.list()
+        return JSONResponse(content={"jobs": [j.as_dict() for j in rows]})
+
+    @router.get("/admin/learning/jobs/{job_id}")
+    async def get_finetune_job(job_id: str, caller=Depends(principal)) -> JSONResponse:
+        require_admin(caller)
+        job = await container.finetune_jobs.get(job_id)
+        return JSONResponse(content={"job": job.as_dict()})
+
+    @router.post("/admin/models/import")
+    async def import_model_artefact(
+        request: Request,
+        payload: ModelImportRequest,
+        caller=Depends(principal),
+    ) -> JSONResponse:
+        """Register a locally available Ollama/GGUF tag as CANDIDATE without training.
+
+        Escape hatch for CPU VPS: train on a GPU box, import the tag here, then
+        promote through the same approval gates.
+        """
+        require_super_admin(caller)
+        await container.approvals.require(
+            payload.approval_id, expected_digest=payload.dataset_digest
+        )
+        from ..mlops.model_registry import ModelStage, ModelVersion
+
+        version = ModelVersion(
+            model_id=payload.model_id,
+            version=payload.version,
+            provider_kind=payload.provider_kind,
+            base_model=payload.base_model,
+            stage=ModelStage.CANDIDATE,
+            artefact_uri=payload.artefact_uri,
+            dataset_digest=payload.dataset_digest,
+            approval_id=payload.approval_id,
+            notes=payload.notes or "imported artefact",
+        )
+        registered = await container.models.register(version)
+        await audit_admin(
+            request, caller, "admin.model.import", registered.key, "ok",
+            detail={"artefact": payload.artefact_uri, "digest": payload.dataset_digest},
+        )
+        return JSONResponse(content={"model": registered.as_dict()})
+
+    @router.post("/admin/models/{model_id}/request-promotion")
+    async def request_model_promotion(
+        request: Request,
+        model_id: str,
+        payload: PromotionApprovalRequest,
+        caller=Depends(principal),
+        version: str = Query(min_length=1),
+    ) -> JSONResponse:
+        """Create a MODEL_PROMOTION approval bound to model_id@version."""
+        require_admin(caller)
+        from ..learning.approval import ApprovalKind
+
+        current = await container.models.get(model_id, version)
+        summary = payload.summary or f"Promote {current.key} to production"
+        approval = await container.approvals.request(
+            kind=ApprovalKind.MODEL_PROMOTION,
+            summary=summary,
+            artefact_digest=current.key,
+            payload={
+                "model_id": model_id,
+                "version": version,
+                "artefact_uri": current.artefact_uri,
+                "dataset_digest": current.dataset_digest,
+                "metrics": dict(current.metrics),
+            },
+        )
+        await audit_admin(
+            request, caller, "admin.model.request_promotion", current.key, "ok",
+            detail={"approval": approval.id},
+        )
+        return JSONResponse(content={"approval": approval.as_dict(), "model": current.as_dict()})
 
     @router.get("/admin/local-models")
     async def list_local_models(caller=Depends(principal)) -> JSONResponse:

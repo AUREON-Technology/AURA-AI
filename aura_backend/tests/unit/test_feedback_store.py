@@ -49,6 +49,13 @@ class TestInMemoryFeedbackStore:
         assert len(examples) == 1
         assert examples[0].was_corrected
 
+    async def test_list_for_curation_crosses_owners(self) -> None:
+        store = InMemoryFeedbackStore()
+        await store.put(_record(owner="alice", ident="a"), owner_id=UserId("alice"))
+        await store.put(_record(owner="bob", ident="b"), owner_id=UserId("bob"))
+        rows = await store.list_for_curation(limit=10)
+        assert {r.id for r in rows} == {"a", "b"}
+
 
 class TestPostgresFeedbackSql:
     """SQL shape against a fake connection, matching the document-store tests."""
@@ -79,6 +86,23 @@ class TestPostgresFeedbackSql:
         inserts = [c for c in conn.calls if c[0] == "execute" and "INSERT INTO aura_feedback" in c[1]]
         assert inserts
         assert "alice" in inserts[0][2]
+
+
+class TestPostgresFeedbackCurationSql:
+    async def test_list_for_curation_has_no_owner_predicate(self) -> None:
+        from aura_core.adapters.postgres_feedback import PostgresFeedbackStore
+
+        conn = _FakePgConn()
+        conn.rows = []
+        store = PostgresFeedbackStore("postgresql://u:p@h/db")
+        store._pool = _FakePgPool(conn)
+        store._schema_ready = True
+
+        await store.list_for_curation(limit=100)
+        fetches = [c for c in conn.calls if c[0] == "fetch"]
+        assert fetches
+        assert "owner_id =" not in fetches[0][1]
+        assert "ORDER BY created_at DESC" in fetches[0][1]
 
 
 class _FakeTransaction:

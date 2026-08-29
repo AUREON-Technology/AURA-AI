@@ -20,7 +20,21 @@ from .curation import (
     FineTuneRecommendation,
     dataset_digest,
 )
+from .datasets import (
+    DatasetStore,
+    FileDatasetStore,
+    InMemoryDatasetStore,
+    StoredDataset,
+)
 from .feedback import FeedbackStore, InMemoryFeedbackStore
+from .finetune import (
+    FineTuneJob,
+    FineTuneJobEngine,
+    FineTuneJobStatus,
+    FineTuneService,
+    InMemoryJobStore,
+    ScriptedTrainer,
+)
 from .knowledge_refresh import KnowledgeRefreshPipeline, RefreshReport, SourceOutcome
 from .jobs import run_knowledge_refresh, run_memory_consolidate, run_outbox_drain
 from .sources import (
@@ -55,6 +69,16 @@ __all__ = [
     "DatasetStatistics",
     "FineTuneRecommendation",
     "dataset_digest",
+    "DatasetStore",
+    "InMemoryDatasetStore",
+    "FileDatasetStore",
+    "StoredDataset",
+    "FineTuneService",
+    "FineTuneJob",
+    "FineTuneJobEngine",
+    "FineTuneJobStatus",
+    "InMemoryJobStore",
+    "ScriptedTrainer",
     "ApprovalService",
     "ApprovalRequest",
     "ApprovalKind",

@@ -721,9 +721,26 @@ class LearningSettings:
     finetune_min_examples: int = 500
     finetune_min_distinct_users: int = 5
     finetune_auto_launch: bool = False  # never true; see validate()
+    #: Where digest-addressed ChatML datasets are written (volume in production).
+    dataset_dir: str = "/var/lib/aura/datasets"
+    #: Registry model_id used for LoRA artefacts (Ollama tag prefix aura-ft:vN).
+    finetune_model_id: str = "aura-ft"
+    #: Allow LocalLoraTrainer on CPU — still limited to a small-model allowlist.
+    finetune_allow_cpu: bool = False
+    finetune_cpu_base_allowlist: tuple[str, ...] = (
+        "smollm2:135m",
+        "qwen2.5:3b-instruct-q4_K_M",
+        "qwen2.5:3b",
+    )
+    #: Soft estimate shown in the recommendation packet (hours on CPU).
+    finetune_estimated_cpu_hours: float | None = None
+    #: Max substring-coverage drop vs base before canary is blocked.
+    finetune_canary_max_coverage_drop: float = 0.05
 
     @classmethod
     def from_env(cls) -> "LearningSettings":
+        cpu_hours_raw = _env("LEARNING_FINETUNE_CPU_HOURS", "")
+        cpu_hours = float(cpu_hours_raw) if cpu_hours_raw else None
         return cls(
             refresh_enabled=_bool("LEARNING_REFRESH_ENABLED", True),
             refresh_cron=_env("LEARNING_REFRESH_CRON", "0 2 * * *") or "0 2 * * *",
@@ -737,6 +754,22 @@ class LearningSettings:
             finetune_min_examples=_int("LEARNING_FINETUNE_MIN_EXAMPLES", 500, minimum=1),
             finetune_min_distinct_users=_int("LEARNING_FINETUNE_MIN_USERS", 5, minimum=1),
             finetune_auto_launch=_bool("LEARNING_FINETUNE_AUTO_LAUNCH", False),
+            dataset_dir=_env("LEARNING_DATASET_DIR", "/var/lib/aura/datasets")
+            or "/var/lib/aura/datasets",
+            finetune_model_id=_env("LEARNING_FINETUNE_MODEL_ID", "aura-ft") or "aura-ft",
+            finetune_allow_cpu=_bool("LEARNING_FINETUNE_ALLOW_CPU", False),
+            finetune_cpu_base_allowlist=tuple(
+                _list("LEARNING_FINETUNE_CPU_BASES")
+                or (
+                    "smollm2:135m",
+                    "qwen2.5:3b-instruct-q4_K_M",
+                    "qwen2.5:3b",
+                )
+            ),
+            finetune_estimated_cpu_hours=cpu_hours,
+            finetune_canary_max_coverage_drop=_float(
+                "LEARNING_FINETUNE_CANARY_MAX_COVERAGE_DROP", 0.05, minimum=0.0, maximum=1.0
+            ),
         )
 
 

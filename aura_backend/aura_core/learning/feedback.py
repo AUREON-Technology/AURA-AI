@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from datetime import datetime
 from typing import Protocol, Sequence, runtime_checkable
 
 from ..domain.identifiers import UserId
@@ -30,6 +31,16 @@ class FeedbackStore(Protocol):
         """Return this owner's rows only. There is no unscoped list."""
         ...
 
+    async def list_for_curation(
+        self, *, since: datetime | None = None, limit: int = 10_000
+    ) -> Sequence[FeedbackRecord]:
+        """Cross-tenant feed for Loop B curation.
+
+        ``user_ref`` is already pseudonymous. Call only from admin/curator
+        paths — never from a user-facing endpoint.
+        """
+        ...
+
 
 class InMemoryFeedbackStore:
     def __init__(self) -> None:
@@ -47,5 +58,14 @@ class InMemoryFeedbackStore:
     ) -> list[FeedbackRecord]:
         owner = owner_id.value
         matches = [r for (o, _), r in self._records.items() if o == owner]
+        matches.sort(key=lambda r: r.created_at, reverse=True)
+        return matches[:limit]
+
+    async def list_for_curation(
+        self, *, since: datetime | None = None, limit: int = 10_000
+    ) -> list[FeedbackRecord]:
+        matches = list(self._records.values())
+        if since is not None:
+            matches = [r for r in matches if r.created_at >= since]
         matches.sort(key=lambda r: r.created_at, reverse=True)
         return matches[:limit]

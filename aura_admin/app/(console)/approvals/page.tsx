@@ -28,51 +28,72 @@ export default function ApprovalsPage() {
           <tr>
             <th>Summary</th>
             <th>Kind</th>
+            <th>Digest</th>
             <th>Status</th>
+            <th>Reasons</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row.id}>
-              <td>{row.summary}</td>
-              <td>{row.kind}</td>
-              <td>{row.status}</td>
-              <td>
-                {row.status === "pending" ? (
-                  <>
-                    <ConfirmDialog
-                      title="Approve"
-                      confirmText="approve"
-                      onConfirm={async () => {
-                        await api(`/admin/approvals/${row.id}/decide`, {
-                          method: "POST",
-                          body: JSON.stringify({ approved: true }),
-                        });
-                        load();
-                      }}
-                    >
-                      Approve
-                    </ConfirmDialog>
-                    <ConfirmDialog
-                      danger
-                      title="Reject"
-                      confirmText="reject"
-                      onConfirm={async () => {
-                        await api(`/admin/approvals/${row.id}/decide`, {
-                          method: "POST",
-                          body: JSON.stringify({ approved: false }),
-                        });
-                        load();
-                      }}
-                    >
-                      Reject
-                    </ConfirmDialog>
-                  </>
-                ) : null}
-              </td>
-            </tr>
-          ))}
+          {rows.map((row) => {
+            const reasons = Array.isArray(row.payload?.reasons)
+              ? (row.payload?.reasons as string[])
+              : [];
+            return (
+              <tr key={row.id}>
+                <td>{row.summary}</td>
+                <td>{row.kind}</td>
+                <td>
+                  <code>{row.artefact_digest}</code>
+                </td>
+                <td>{row.status}</td>
+                <td>
+                  {reasons.length ? (
+                    <ul>
+                      {reasons.slice(0, 3).map((reason) => (
+                        <li key={reason}>{reason}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    "—"
+                  )}
+                </td>
+                <td>
+                  {row.status === "pending" ? (
+                    <>
+                      <ConfirmDialog
+                        title="Approve"
+                        confirmText="approve"
+                        onConfirm={async () => {
+                          await api(`/admin/approvals/${row.id}/decide`, {
+                            method: "POST",
+                            body: JSON.stringify({ approved: true }),
+                          });
+                          load();
+                        }}
+                      >
+                        Approve
+                      </ConfirmDialog>
+                      <ConfirmDialog
+                        danger
+                        title="Reject"
+                        confirmText="reject"
+                        onConfirm={async () => {
+                          await api(`/admin/approvals/${row.id}/decide`, {
+                            method: "POST",
+                            body: JSON.stringify({ approved: false }),
+                          });
+                          load();
+                        }}
+                      >
+                        Reject
+                      </ConfirmDialog>
+                    </>
+                  ) : null}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </>

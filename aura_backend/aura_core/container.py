@@ -350,17 +350,78 @@ class Container:
         )
 
         from .learning.approval import ApprovalService, InMemoryApprovalStore
+        from .learning.curation import DatasetCurator
+        from .learning.datasets import FileDatasetStore, InMemoryDatasetStore
+        from .learning.finetune import (
+            FineTuneJobEngine,
+            FineTuneService,
+            InMemoryJobStore,
+            ScriptedTrainer,
+        )
+        from .mlops.experiments import ExperimentTracker, InMemoryExperimentStore
         from .mlops.model_registry import InMemoryModelStore, ModelRegistry
 
+        use_postgres = settings.infrastructure.document_backend == "postgres"
+        if use_postgres:
+            from .adapters.postgres_approvals import PostgresApprovalStore
+            from .adapters.postgres_experiments import PostgresExperimentStore
+            from .adapters.postgres_jobs import PostgresJobStore
+            from .adapters.postgres_models import PostgresModelStore
+
+            approval_store = PostgresApprovalStore(
+                settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+            model_store = PostgresModelStore(
+                settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+            experiment_store = PostgresExperimentStore(
+                settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+            job_store = PostgresJobStore(
+                settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+            self.datasets = FileDatasetStore(settings.learning.dataset_dir)
+        else:
+            approval_store = InMemoryApprovalStore()
+            model_store = InMemoryModelStore()
+            experiment_store = InMemoryExperimentStore()
+            job_store = InMemoryJobStore()
+            self.datasets = InMemoryDatasetStore()
+
         self.approvals = ApprovalService(
-            store=InMemoryApprovalStore(), audit=self.audit, event_bus=self.events
+            store=approval_store, audit=self.audit, event_bus=self.events
         )
         self.models = ModelRegistry(
-            store=InMemoryModelStore(),
+            store=model_store,
             approvals=self.approvals,
             audit=self.audit,
             event_bus=self.events,
             metrics=self.metrics,
+        )
+        self.experiments = ExperimentTracker(store=experiment_store, metrics=self.metrics)
+
+        base_model = self._primary_model() or ""
+        self.finetune = FineTuneService(
+            feedback=self.feedback,
+            datasets=self.datasets,
+            approvals=self.approvals,
+            curator=DatasetCurator(
+                min_examples=settings.learning.finetune_min_examples,
+                min_distinct_users=settings.learning.finetune_min_distinct_users,
+            ),
+            base_model=base_model,
+            estimated_train_hours_cpu=settings.learning.finetune_estimated_cpu_hours,
+        )
+        trainer = self._build_finetune_trainer()
+        self.finetune_jobs = FineTuneJobEngine(
+            approvals=self.approvals,
+            datasets=self.datasets,
+            models=self.models,
+            trainer=trainer,
+            jobs=job_store,
+            experiments=self.experiments,
+            model_id=settings.learning.finetune_model_id,
+            allow_cpu=settings.learning.finetune_allow_cpu,
         )
 
         self.kernel = AIKernel(
@@ -385,6 +446,7 @@ class Container:
                 telemetry_sink=self.telemetry_sink,
                 clock=self.clock,
                 settings=settings,
+                models=self.models,
             )
         )
         # Phase H: after kernel exists so the live session can stream through it.
@@ -407,6 +469,35 @@ class Container:
     def _primary_model(self) -> str | None:
         enabled = self.settings.llm.enabled_providers
         return enabled[0].model if enabled else None
+
+    def _ollama_provider(self) -> Any:
+        from .llm.providers.ollama import OllamaProvider
+
+        for provider in self.providers:
+            if isinstance(provider, OllamaProvider):
+                return provider
+        return None
+
+    def _build_finetune_trainer(self) -> Any:
+        """Default to ScriptedTrainer in the gateway; LocalLoraTrainer only when opted in.
+
+        Keeping torch out of the gateway image is a Phase A1 invariant. The training
+        worker compose profile swaps ``AURA_FINETUNE_TRAINER=local``.
+        """
+        import os
+
+        kind = (os.environ.get("AURA_FINETUNE_TRAINER") or "scripted").strip().lower()
+        if kind == "local":
+            from .adapters.local_lora_trainer import LocalLoraTrainer
+
+            return LocalLoraTrainer(
+                ollama=self._ollama_provider(),
+                allow_cpu=self.settings.learning.finetune_allow_cpu,
+                cpu_base_allowlist=self.settings.learning.finetune_cpu_base_allowlist,
+            )
+        from .learning.finetune import ScriptedTrainer
+
+        return ScriptedTrainer()
 
     def _build_cache(self) -> Any:
         backend = self.settings.infrastructure.cache_backend

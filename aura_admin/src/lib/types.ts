@@ -58,6 +58,7 @@ export type Approval = {
   artefact_digest: string;
   expires_at: string | null;
   decided_by: string | null;
+  payload?: Record<string, unknown>;
 };
 
 export type ModelVersion = {
@@ -65,6 +66,7 @@ export type ModelVersion = {
   version: string;
   stage: string;
   dataset_digest: string;
+  artefact_uri?: string;
   canary_percent: number;
   approval_id: string | null;
 };
