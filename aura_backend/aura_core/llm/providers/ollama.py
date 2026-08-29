@@ -319,6 +319,32 @@ class OllamaProvider(BaseProvider):
         except Exception as exc:
             raise self._translate(exc, operation="delete_model") from exc
 
+    async def create_model(self, name: str, *, modelfile: str) -> bool:
+        """Create a local Ollama model from a Modelfile.
+
+        Unlike ``pull_model``, this does not fetch third-party weights — it tags a
+        local base (and optional adapter). The pull allowlist therefore does not
+        apply; the operator already decided the base via Loop B approval.
+        """
+        client = await self._get_client()
+        try:
+            context = client.stream(
+                "POST",
+                "/api/create",
+                json={"name": name, "modelfile": modelfile, "stream": True},
+                timeout=3600.0,
+            )
+            response = await context.__aenter__()
+        except Exception as exc:
+            raise self._translate(exc, operation="create_model") from exc
+        try:
+            await self._raise_for_status(response, operation="create_model")
+            async for _line in response.aiter_lines():
+                pass
+            return True
+        finally:
+            await context.__aexit__(None, None, None)
+
     async def warm_model(self, model: str | None = None) -> bool:
         """Load weights into memory without generating.
 
