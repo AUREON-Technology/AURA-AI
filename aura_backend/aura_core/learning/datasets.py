@@ -77,10 +77,17 @@ class InMemoryDatasetStore:
 
 
 class FileDatasetStore:
-    """Persist JSONL under ``root/{digest}.jsonl`` plus a sidecar metadata file."""
+    """Persist JSONL under ``root/{digest}.jsonl`` plus a sidecar metadata file.
+
+    Construction is side-effect free: the root directory is created on first write, matching
+    the lazy-adapter contract (``Container.__init__`` must not require a writable production
+    path such as ``/var/lib/aura/datasets``).
+    """
 
     def __init__(self, root: str | Path) -> None:
         self._root = Path(root)
+
+    def _ensure_root(self) -> None:
         self._root.mkdir(parents=True, exist_ok=True)
 
     def _jsonl_path(self, digest: str) -> Path:
@@ -90,6 +97,7 @@ class FileDatasetStore:
         return self._root / f"{digest}.meta.json"
 
     async def put(self, dataset: StoredDataset) -> None:
+        self._ensure_root()
         self._jsonl_path(dataset.digest).write_text(dataset.jsonl, encoding="utf-8")
         meta = {
             "digest": dataset.digest,

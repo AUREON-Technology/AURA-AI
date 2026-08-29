@@ -34,9 +34,14 @@ class TestGoalsFlowIntoContext:
         await container.startup()
         container.goals.seed(user, [_goal()])
 
-        _memories, _retrieval, _history, _summary, goals = await container.kernel._gather_context(
-            _request(user_id=user), "hello"
-        )
+        (
+            _memories,
+            _retrieval,
+            _history,
+            _summary,
+            goals,
+            _cag_prefix,
+        ) = await container.kernel._gather_context(_request(user_id=user), "hello")
         assert len(goals) == 1
         assert goals[0].category == "fitness" and goals[0].priority == "high"
 
@@ -44,9 +49,14 @@ class TestGoalsFlowIntoContext:
         await container.startup()
         container.goals.seed(user, [_goal(status="achieved")])
 
-        _memories, _retrieval, _history, _summary, goals = await container.kernel._gather_context(
-            _request(user_id=user), "hello"
-        )
+        (
+            _memories,
+            _retrieval,
+            _history,
+            _summary,
+            goals,
+            _cag_prefix,
+        ) = await container.kernel._gather_context(_request(user_id=user), "hello")
         assert len(goals) == 0
 
     async def test_a_turn_with_no_goals_backend_degrades_to_empty(self, container, user) -> None:
@@ -54,9 +64,14 @@ class TestGoalsFlowIntoContext:
         await container.startup()
         container.kernel._deps.goals = None
 
-        _memories, _retrieval, _history, _summary, goals = await container.kernel._gather_context(
-            _request(user_id=user), "hello"
-        )
+        (
+            _memories,
+            _retrieval,
+            _history,
+            _summary,
+            goals,
+            _cag_prefix,
+        ) = await container.kernel._gather_context(_request(user_id=user), "hello")
         assert len(goals) == 0
 
     async def test_a_full_turn_succeeds_with_active_goals_present(self, container, user) -> None:

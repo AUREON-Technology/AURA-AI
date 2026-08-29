@@ -322,6 +322,9 @@ def pack(
         if item.is_pinned:
             # Pinned items bypass the section cap but not the global budget; a pinned item that
             # cannot fit at all is a configuration error surfaced as a dropped pinned item.
+            # They also do not consume the section budget: structural pins that share a section
+            # label with variable content (e.g. turn-fence rules in MEMORY) must not starve
+            # goals/memories under a tight MEMORY cap.
             allowance = remaining_global
         else:
             allowance = min(remaining_global, remaining_section)
@@ -333,7 +336,8 @@ def pack(
         if item.tokens <= allowance:
             selected.append(item)
             used += item.tokens
-            section_used[item.section] = section_total + item.tokens
+            if not item.is_pinned:
+                section_used[item.section] = section_total + item.tokens
             continue
 
         if allow_truncation and allowance >= 24 and not item.is_pinned:
