@@ -24,7 +24,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Mapping, Sequence
 
-from ..domain.errors import ConflictError, ValidationError
+from ..domain.errors import ConflictError, NotFoundError, ValidationError
 from ..domain.goals import GoalSnapshot
 from ..domain.identifiers import DocumentId, MemoryId, PersonalOsRecordId, UserId
 from ..domain.knowledge import (
@@ -38,6 +38,7 @@ from ..domain.knowledge import (
 )
 from ..domain.memory import MemoryKind, MemoryRecord
 from ..domain.personal_os import PersonalOsRecord, RecordKind
+from dataclasses import replace as _dc_replace
 from ..llm.embeddings import cosine_similarity
 from ..ports.storage import VectorPoint
 
@@ -248,6 +249,50 @@ class InMemoryDocumentStore:
         active.sort(key=lambda d: (d.id.value, -d.version))
         return active[offset : offset + limit]
 
+    async def set_cag_pin(
+        self, document_id: DocumentId, *, owner_id: UserId | None, pinned: bool
+    ) -> Document:
+        async with self._lock:
+            document = await self.get(document_id)
+            if document is None:
+                raise NotFoundError(
+                    f"document {document_id.value!r} not found",
+                    details={"document_id": document_id.value},
+                )
+            doc_owner = document.owner_id.value if document.owner_id else None
+            caller = owner_id.value if owner_id else None
+            if doc_owner != caller:
+                raise NotFoundError(
+                    f"document {document_id.value!r} not found",
+                    details={"document_id": document_id.value},
+                )
+            updated = _dc_replace(document, cag_pinned=pinned)
+            self._documents[(document.id.value, document.version)] = updated
+            return updated
+
+    async def list_cag_pinned(self, *, owner_id: UserId | None) -> list[Document]:
+        owner = owner_id.value if owner_id else None
+        matches = [
+            d for d in self._documents.values()
+            if d.status is DocumentStatus.ACTIVE
+            and d.cag_pinned
+            and (
+                (d.owner_id is None)
+                or (owner is not None and d.owner_id is not None and d.owner_id.value == owner)
+            )
+        ]
+        # Deduplicate to active version only (get already prefers active, but put may have
+        # multiple versions; keep highest version per id).
+        by_id: dict[str, Document] = {}
+        for doc in matches:
+            prev = by_id.get(doc.id.value)
+            if prev is None or doc.version > prev.version:
+                by_id[doc.id.value] = doc
+        return sorted(
+            by_id.values(),
+            key=lambda d: (d.owner_id is not None, -int(d.trust_tier), d.id.value, -d.version),
+        )
+
     async def iter_all_chunks(self, *, batch_size: int = 500) -> AsyncIterator[list[Chunk]]:
         """Stream chunks for index rebuilds.
 
@@ -281,9 +326,7 @@ class InMemoryDocumentStore:
                     continue
                 if (document.owner_id.value if document.owner_id else None) != owner:
                     continue
-                from dataclasses import replace
-
-                self._documents[key] = replace(document, status=DocumentStatus.TOMBSTONED)
+                self._documents[key] = _dc_replace(document, status=DocumentStatus.TOMBSTONED)
                 removed += len(self._chunks.get(key, []))
         return removed
 

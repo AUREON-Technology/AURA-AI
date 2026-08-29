@@ -28,10 +28,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Mapping, Sequence
 
-from ..domain.errors import ConfigurationError, DependencyUnavailableError
+from ..domain.errors import ConfigurationError, DependencyUnavailableError, NotFoundError
 from ..domain.identifiers import ChunkId, DocumentId, MemoryId, SessionId, TurnId, UserId
 from ..domain.knowledge import Chunk, Document, DocumentStatus, SourceType, TrustTier
 from ..domain.memory import MemoryKind, MemoryRecord, Provenance
+from dataclasses import replace as _replace
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,17 @@ class PostgresPool:
             CREATE INDEX IF NOT EXISTS ix_aura_documents_hash
                 ON aura_documents (content_hash, owner_id)
             """,
+            # CAG pin flag (ADR-010). Added via ALTER so existing deployments pick it up
+            # without a separate migration step.
+            """
+            ALTER TABLE aura_documents
+                ADD COLUMN IF NOT EXISTS cag_pinned BOOLEAN NOT NULL DEFAULT false
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS ix_aura_documents_cag_pinned
+                ON aura_documents (owner_id)
+                WHERE cag_pinned AND status = 'active'
+            """,
             """
             CREATE TABLE IF NOT EXISTS aura_chunks (
                 id                TEXT        PRIMARY KEY,
@@ -256,13 +268,15 @@ class PostgresDocumentStore:
                         """
                         INSERT INTO aura_documents (
                             id, version, title, content, content_hash, source_type, source_uri,
-                            owner_id, trust_tier, status, language, created_at, updated_at, metadata
-                        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                            owner_id, trust_tier, status, language, cag_pinned,
+                            created_at, updated_at, metadata
+                        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
                         ON CONFLICT (id, version) DO UPDATE SET
                             title = EXCLUDED.title,
                             content = EXCLUDED.content,
                             content_hash = EXCLUDED.content_hash,
                             status = EXCLUDED.status,
+                            cag_pinned = EXCLUDED.cag_pinned,
                             updated_at = EXCLUDED.updated_at,
                             metadata = EXCLUDED.metadata
                         """,
@@ -277,6 +291,7 @@ class PostgresDocumentStore:
                         int(document.trust_tier),
                         document.status.value,
                         document.language,
+                        bool(document.cag_pinned),
                         document.created_at,
                         document.updated_at,
                         json.dumps(dict(document.metadata)),
@@ -337,6 +352,7 @@ class PostgresDocumentStore:
             trust_tier=TrustTier(row["trust_tier"]),
             status=DocumentStatus(row["status"]),
             language=row["language"],
+            cag_pinned=bool(row.get("cag_pinned", False)),
             created_at=_utc(row["created_at"]),
             updated_at=_utc(row["updated_at"]),
             metadata=json.loads(row["metadata"]) if isinstance(row["metadata"], str) else dict(row["metadata"] or {}),
@@ -462,6 +478,84 @@ class PostgresDocumentStore:
         except Exception as exc:
             raise _unavailable(f"could not list documents: {exc}") from exc
         return [self._document(row) for row in rows]
+
+    async def set_cag_pin(
+        self, document_id: DocumentId, *, owner_id: UserId | None, pinned: bool
+    ) -> Document:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        """
+                        SELECT * FROM aura_documents
+                        WHERE id = $1 AND status = 'active'
+                        ORDER BY version DESC LIMIT 1
+                        """,
+                        document_id.value,
+                    )
+                    if row is None:
+                        raise NotFoundError(
+                            f"document {document_id.value!r} not found",
+                            details={"document_id": document_id.value},
+                        )
+                    doc = self._document(row)
+                    doc_owner = doc.owner_id.value if doc.owner_id else None
+                    caller = owner_id.value if owner_id else None
+                    if doc_owner != caller:
+                        raise NotFoundError(
+                            f"document {document_id.value!r} not found",
+                            details={"document_id": document_id.value},
+                        )
+                    await conn.execute(
+                        """
+                        UPDATE aura_documents
+                        SET cag_pinned = $1, updated_at = now()
+                        WHERE id = $2 AND version = $3
+                        """,
+                        pinned,
+                        document_id.value,
+                        doc.version,
+                    )
+                    return _replace(doc, cag_pinned=pinned)
+        except NotFoundError:
+            raise
+        except Exception as exc:
+            raise _unavailable(
+                f"could not set cag pin on {document_id.value!r}: {exc}"
+            ) from exc
+
+    async def list_cag_pinned(self, *, owner_id: UserId | None) -> Sequence[Document]:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                if owner_id is None:
+                    rows = await conn.fetch(
+                        """
+                        SELECT DISTINCT ON (id) *
+                        FROM aura_documents
+                        WHERE status = 'active' AND cag_pinned AND owner_id IS NULL
+                        ORDER BY id, version DESC
+                        """
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT DISTINCT ON (id) *
+                        FROM aura_documents
+                        WHERE status = 'active' AND cag_pinned
+                          AND (owner_id = $1 OR owner_id IS NULL)
+                        ORDER BY id, version DESC
+                        """,
+                        owner_id.value,
+                    )
+        except Exception as exc:
+            raise _unavailable(f"could not list cag-pinned documents: {exc}") from exc
+        docs = [self._document(row) for row in rows]
+        docs.sort(
+            key=lambda d: (d.owner_id is not None, -int(d.trust_tier), d.id.value, -d.version)
+        )
+        return docs
 
     async def iter_all_chunks(self, *, batch_size: int = 500) -> AsyncIterator[list[Chunk]]:
         """Stream every chunk belonging to an active document version.

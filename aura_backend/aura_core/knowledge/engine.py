@@ -185,7 +185,12 @@ class KnowledgeEngine:
 
         previous = await self._documents.get(doc_id)
         document = (
-            previous.next_version(text, title=title, metadata=dict(metadata or {}))
+            previous.next_version(
+                text,
+                title=title,
+                metadata=dict(metadata or {}),
+                cag_pinned=previous.cag_pinned,
+            )
             if previous is not None
             else candidate
         )

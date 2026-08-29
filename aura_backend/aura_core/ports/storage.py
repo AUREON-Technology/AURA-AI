@@ -149,6 +149,24 @@ class DocumentStore(Protocol):
     ) -> Sequence[Document]:
         ...
 
+    async def set_cag_pin(
+        self, document_id: DocumentId, *, owner_id: UserId | None, pinned: bool
+    ) -> Document:
+        """Toggle CAG pin on the active version. Pinning is not a new version.
+
+        ``owner_id=None`` means the document must be global (admin path). A user may only
+        pin documents they own. Raises :class:`~aura_core.domain.errors.NotFoundError` when
+        the document is missing or not visible to the caller.
+        """
+        ...
+
+    async def list_cag_pinned(self, *, owner_id: UserId | None) -> Sequence[Document]:
+        """Active pinned documents: the caller's own pins plus every global pin.
+
+        ``owner_id=None`` returns global pins only.
+        """
+        ...
+
     async def iter_all_chunks(self, *, batch_size: int = 500):
         """Async iterator over every active chunk, for index rebuilds.
 

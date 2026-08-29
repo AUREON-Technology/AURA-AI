@@ -12,6 +12,7 @@ that is described in a README.
 See ``docs/architecture/001-hexagonal-core.md``.
 """
 
+from .cag import CagDocRef, CagPrefix, CagPrefixIdentity
 from .context import ContextBudget, ContextBundle, ContextItem, ContextSection, pack
 from .errors import (
     AllProvidersFailedError,
@@ -132,6 +133,8 @@ __all__ = [
     "ToolChoice",
     # context
     "ContextBudget", "ContextBundle", "ContextItem", "ContextSection", "pack",
+    # cag
+    "CagDocRef", "CagPrefix", "CagPrefixIdentity",
     # memory
     "MEMORY_POLICIES", "ConsolidationOutcome", "MemoryHit", "MemoryKind", "MemoryPolicy",
     "MemoryQuery", "MemoryRecord", "Provenance",

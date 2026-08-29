@@ -106,6 +106,9 @@ class Document:
     trust_tier: TrustTier = TrustTier.COMMUNITY
     status: DocumentStatus = DocumentStatus.ACTIVE
     language: str | None = None
+    #: When true, this document is always packed into the CAG prefix (ADR-010). Pinning is
+    #: a flag, not a new version -- re-ingesting the same content keeps the pin.
+    cag_pinned: bool = False
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
     metadata: Mapping[str, Any] = field(default_factory=dict)
