@@ -7,7 +7,8 @@ import '../../data/agent_config_repository.dart';
 import '../../data/agents_repository.dart';
 
 class PersonaChip extends ConsumerWidget {
-  /// When true, the label ellipsizes instead of forcing the parent Row wider.
+  /// When true, the label may ellipsize if a parent [Flexible] is tight.
+  /// Do not apply a fixed max width — wrap the chip instead.
   final bool shrink;
 
   const PersonaChip({super.key, this.shrink = false});
@@ -19,17 +20,12 @@ class PersonaChip extends ConsumerWidget {
     final (label, icon) = personaDisplay(activeId);
 
     final labelStyle = TextStyle(fontSize: 13, color: palette.textPrimary);
-    final labelChild = shrink
-        ? ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 96),
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: labelStyle,
-            ),
-          )
-        : Text(label, style: labelStyle);
+    final labelText = Text(
+      label,
+      maxLines: 1,
+      overflow: shrink ? TextOverflow.ellipsis : TextOverflow.visible,
+      style: labelStyle,
+    );
 
     return InkWell(
       borderRadius: BorderRadius.circular(AuraRadius.pill),
@@ -49,7 +45,7 @@ class PersonaChip extends ConsumerWidget {
           children: [
             Icon(icon, size: 16, color: palette.brandOnSurfaceText),
             const SizedBox(width: AuraSpacing.xs),
-            labelChild,
+            if (shrink) Flexible(child: labelText) else labelText,
             const SizedBox(width: AuraSpacing.xs),
             Icon(Icons.expand_more, size: 16, color: palette.textSecondary),
           ],

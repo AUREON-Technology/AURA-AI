@@ -1,13 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:aura_client/core/database/database.dart';
+import 'package:aura_client/features/chat/data/turn_meta.dart';
 import 'package:aura_client/features/chat/presentation/widgets/citation_chip.dart';
+import 'package:aura_client/features/chat/presentation/widgets/message_bubble.dart';
 import 'package:aura_client/features/chat/presentation/widgets/tool_call_chip.dart';
 import 'package:aura_client/features/chat/presentation/widgets/persona_badge.dart';
 import 'package:aura_client/features/chat/presentation/widgets/streaming_message_skeleton.dart';
+import 'package:aura_client/features/chat/presentation/widgets/turn_status_row.dart';
+import 'package:aura_client/features/chat/presentation/widgets/user_facing_citations.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 
 Widget _wrap(Widget child) {
-  return MaterialApp(home: Scaffold(body: child));
+  return MaterialApp(
+    theme: AuraThemeV2.light,
+    home: Scaffold(body: child),
+  );
 }
 
 void main() {
@@ -22,6 +32,98 @@ void main() {
       expect(find.text('doc-a (page 1)'), findsOneWidget);
       expect(find.text('doc-b (page 4 > Heading)'), findsOneWidget);
       expect(find.byIcon(Icons.description_outlined), findsNWidgets(2));
+    });
+
+    testWidgets('hides internal provenances and keeps document citations', (tester) async {
+      await tester.pumpWidget(_wrap(const CitationChips(citations: [
+        'episodic_summary',
+        'working_memory',
+        'cag',
+        'memory:session',
+        'goal:hydrate',
+        'tool:search_knowledge',
+        'handbook@v1',
+      ])));
+      expect(find.text('handbook@v1'), findsOneWidget);
+      expect(find.text('episodic_summary'), findsNothing);
+      expect(find.text('working_memory'), findsNothing);
+      expect(find.text('cag'), findsNothing);
+      expect(find.text('memory:session'), findsNothing);
+      expect(find.text('goal:hydrate'), findsNothing);
+      expect(find.text('tool:search_knowledge'), findsNothing);
+      expect(find.byIcon(Icons.description_outlined), findsOneWidget);
+    });
+  });
+
+  group('userFacingCitations', () {
+    test('drops bookkeeping labels and prefix provenances', () {
+      expect(
+        userFacingCitations([
+          'episodic_summary',
+          'working_memory',
+          'cag',
+          'memory:x',
+          'goal:y',
+          'tool:z',
+          'handbook@v1',
+        ]),
+        ['handbook@v1'],
+      );
+    });
+  });
+
+  group('TurnStatusRow', () {
+    testWidgets('does not list raw step kind/status lines', (tester) async {
+      await tester.pumpWidget(_wrap(TurnStatusRow(
+        meta: const TurnMeta(
+          steps: [
+            TurnStep(kind: 'generate', status: 'failed', label: 'generate'),
+            TurnStep(kind: 'generate', status: 'running', label: 'generate'),
+          ],
+        ),
+        hasCitations: false,
+      )));
+      expect(find.textContaining('generate'), findsNothing);
+      expect(find.textContaining('failed'), findsNothing);
+      expect(find.textContaining('running'), findsNothing);
+    });
+
+    testWidgets('degraded and empty search uses library-empty copy', (tester) async {
+      await tester.pumpWidget(_wrap(const TurnStatusRow(
+        meta: TurnMeta(degraded: true, searchedButEmpty: true),
+        hasCitations: true,
+      )));
+      expect(find.text(TurnStatusRow.libraryEmptyCopy), findsOneWidget);
+      expect(find.text(TurnStatusRow.reducedModeCopy), findsNothing);
+    });
+
+    testWidgets('degraded only shows a short reduced-mode line', (tester) async {
+      await tester.pumpWidget(_wrap(const TurnStatusRow(
+        meta: TurnMeta(degraded: true),
+        hasCitations: true,
+      )));
+      expect(find.text(TurnStatusRow.reducedModeCopy), findsOneWidget);
+      expect(find.text(TurnStatusRow.libraryEmptyCopy), findsNothing);
+    });
+  });
+
+  group('MessageBubble', () {
+    testWidgets('empty finished assistant turn shows a retry card', (tester) async {
+      final message = Message(
+        id: 'asst-empty',
+        conversationId: 'conv-1',
+        role: 'assistant',
+        content: '   ',
+        createdAt: DateTime.utc(2026, 1, 1),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          child: _wrap(MessageBubble(message: message, isUser: false)),
+        ),
+      );
+      expect(find.text('No reply this turn'), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+      expect(find.byType(MarkdownBody), findsNothing);
     });
   });
 

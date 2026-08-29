@@ -14,11 +14,13 @@ import '../../data/chat_connection_error.dart';
 import '../../data/chat_repository.dart';
 import '../../data/turn_meta.dart';
 import 'citation_chip.dart';
+import 'empty_answer_retry_card.dart';
 import 'feedback_sheet.dart';
 import 'persona_badge.dart';
 import 'streaming_message_skeleton.dart';
 import 'tool_call_chip.dart';
 import 'turn_status_row.dart';
+import 'user_facing_citations.dart';
 import 'voice_playback_button.dart';
 
 class MessageBubble extends ConsumerWidget {
@@ -145,7 +147,9 @@ class MessageBubble extends ConsumerWidget {
     final isStreaming =
         !isUser && ref.watch(streamingMessageIdProvider) == message.id;
     final showSkeleton = isStreaming && message.content.isEmpty;
-    final citations = isUser ? const <String>[] : _decodeCitations();
+    final citations = isUser
+        ? const <String>[]
+        : userFacingCitations(_decodeCitations());
     final toolCalls = isUser
         ? const <Map<String, dynamic>>[]
         : _decodeToolCalls();
@@ -209,6 +213,18 @@ class MessageBubble extends ConsumerWidget {
                     ],
                     if (showSkeleton)
                       const StreamingMessageSkeleton()
+                    else if (!isStreaming && message.content.trim().isEmpty)
+                      EmptyAnswerRetryCard(
+                        onRetry: () {
+                          final repo = ref.read(chatRepositoryProvider);
+                          unawaited(
+                            repo.retryLastFailedTurn(
+                              conversationId: message.conversationId,
+                              errorMessageId: message.id,
+                            ),
+                          );
+                        },
+                      )
                     else
                       MarkdownBody(
                         data: message.content,

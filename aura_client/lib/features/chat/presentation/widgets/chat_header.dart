@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,6 +6,7 @@ import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 
 import 'chat_header_action_button.dart';
+import 'chat_header_overflow_menu.dart';
 import 'chat_sync_indicator.dart';
 import 'persona_picker.dart';
 
@@ -23,7 +23,6 @@ class ChatHeader extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = AuraPalette.of(context);
-    final routerStatus = ref.watch(aiRouterStatusProvider);
 
     return Container(
       padding: EdgeInsets.symmetric(
@@ -41,75 +40,118 @@ class ChatHeader extends ConsumerWidget {
             ),
             const SizedBox(width: AuraSpacing.xs),
           ],
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(AuraRadius.sm)),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(AuraRadius.sm),
-              child: Image.asset('assets/app_icon.png', fit: BoxFit.contain),
-            ),
-          ),
+          _HeaderAvatar(palette: palette),
           const SizedBox(width: AuraSpacing.sm),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Copilot',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: palette.textPrimary),
-                ),
-                Row(
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: routerStatus.isOffline ? palette.warning : palette.success,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        isMobile
-                            ? 'Active • ${routerStatus.activeModel}'
-                            : 'Active • ${routerStatus.activeModel} (${routerStatus.status}) • ${routerStatus.latencyMs.toStringAsFixed(0)}ms',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 11, color: palette.textSecondary),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+          if (isMobile)
+            const Flexible(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: PersonaChip(shrink: true),
+              ),
+            )
+          else
+            Expanded(
+              child: _DesktopTitle(
+                palette: palette,
+                status: ref.watch(aiRouterStatusProvider),
+              ),
             ),
-          ),
-          ChatHeaderActionButton(
-            icon: Icons.psychology_outlined,
-            color: palette.warning,
-            tooltip: 'Memory',
-            onPressed: () => context.go('/memory'),
-          ),
-          if (!kIsWeb &&
-              (defaultTargetPlatform == TargetPlatform.android ||
-                  defaultTargetPlatform == TargetPlatform.iOS)) ...[
+          if (isMobile) ...[
             const SizedBox(width: AuraSpacing.xs),
+            const ChatHeaderOverflowMenu(),
+          ] else ...[
             ChatHeaderActionButton(
-              icon: Icons.graphic_eq,
-              color: palette.brand,
-              tooltip: 'Live voice',
-              onPressed: () => context.push('/voice'),
+              icon: Icons.psychology_outlined,
+              color: palette.warning,
+              tooltip: 'Memory',
+              onPressed: () => context.go('/memory'),
             ),
+            if (chatHeaderShowsLiveVoice()) ...[
+              const SizedBox(width: AuraSpacing.xs),
+              ChatHeaderActionButton(
+                icon: Icons.graphic_eq,
+                color: palette.brand,
+                tooltip: 'Live voice',
+                onPressed: () => context.push('/voice'),
+              ),
+            ],
+            const SizedBox(width: AuraSpacing.xs),
+            const PersonaChip(),
           ],
-          const SizedBox(width: AuraSpacing.xs),
-          const PersonaChip(shrink: true),
           const SizedBox(width: AuraSpacing.xs),
           ChatSyncIndicator(isMobile: isMobile),
         ],
       ),
+    );
+  }
+}
+
+class _HeaderAvatar extends StatelessWidget {
+  final AuraPalette palette;
+
+  const _HeaderAvatar({required this.palette});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(AuraRadius.sm)),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AuraRadius.sm),
+        child: Image.asset(
+          'assets/app_icon.png',
+          fit: BoxFit.contain,
+          errorBuilder: (_, _, _) => Icon(
+            Icons.auto_awesome,
+            size: 20,
+            color: palette.brand,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopTitle extends StatelessWidget {
+  final AuraPalette palette;
+  final AIRouterStatus status;
+
+  const _DesktopTitle({required this.palette, required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Copilot',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: palette.textPrimary),
+        ),
+        Row(
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: status.isOffline ? palette.warning : palette.success,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'Active • ${status.activeModel} (${status.status}) • ${status.latencyMs.toStringAsFixed(0)}ms',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11, color: palette.textSecondary),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

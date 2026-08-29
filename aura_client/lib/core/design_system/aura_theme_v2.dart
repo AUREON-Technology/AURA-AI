@@ -125,6 +125,17 @@ class AuraThemeV2 {
           TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
         },
       ),
+      navigationBarTheme: NavigationBarThemeData(
+        indicatorColor: palette.brand.withValues(alpha: 0.20),
+        indicatorShape: const StadiumBorder(),
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return IconThemeData(
+            size: 24,
+            color: selected ? palette.brand : palette.textSecondary,
+          );
+        }),
+      ),
     );
   }
 }

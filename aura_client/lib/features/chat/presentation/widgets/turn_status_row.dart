@@ -13,6 +13,11 @@ class TurnStatusRow extends StatelessWidget {
     required this.hasCitations,
   });
 
+  static const libraryEmptyCopy =
+      'Searched your library — nothing relevant was found.';
+  static const reducedModeCopy = 'AURA ran this turn in a reduced mode.';
+  static const ungroundedCopy = 'Ungrounded — no sources attached.';
+
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
@@ -31,31 +36,24 @@ class TurnStatusRow extends StatelessWidget {
             color: palette.warning,
             text: 'Low confidence (${(meta.confidence! * 100).round()}%).',
           ),
-        if (meta.degraded)
-          _Note(
-            icon: Icons.cloud_queue,
-            color: palette.textSecondary,
-            text: 'AURA ran this turn in a reduced mode.',
-          ),
-        if (!hasCitations)
+        if (meta.degraded && meta.searchedButEmpty)
           _Note(
             icon: Icons.link_off,
             color: palette.textSecondary,
-            text: meta.searchedButEmpty
-                ? 'Searched your library — nothing relevant was found.'
-                : 'Ungrounded — no sources attached.',
+            text: libraryEmptyCopy,
+          )
+        else if (meta.degraded)
+          _Note(
+            icon: Icons.cloud_queue,
+            color: palette.textSecondary,
+            text: reducedModeCopy,
+          )
+        else if (!hasCitations)
+          _Note(
+            icon: Icons.link_off,
+            color: palette.textSecondary,
+            text: meta.searchedButEmpty ? libraryEmptyCopy : ungroundedCopy,
           ),
-        if (meta.steps.isNotEmpty) ...[
-          const SizedBox(height: AuraSpacing.sm),
-          for (final step in meta.steps)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text(
-                '• ${step.label ?? step.kind ?? 'step'} (${step.status ?? 'done'})',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-        ],
       ],
     );
   }

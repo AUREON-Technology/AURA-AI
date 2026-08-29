@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../core/design_system/design_system.dart';
+import 'user_facing_citations.dart';
 
 /// Renders the RAG citation labels attached to an assistant message, sourced
 /// from the v3 kernel's `citations`/`done` SSE frames
@@ -15,13 +16,14 @@ class CitationChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (citations.isEmpty) return const SizedBox.shrink();
+    final visible = userFacingCitations(citations);
+    if (visible.isEmpty) return const SizedBox.shrink();
     final palette = AuraPalette.of(context);
 
     return Wrap(
       spacing: AuraSpacing.sm,
       runSpacing: AuraSpacing.sm,
-      children: citations.map((citation) {
+      children: visible.map((citation) {
         return Tooltip(
           message: citation,
           child: Container(
