@@ -88,6 +88,12 @@ _beat_schedule = {
         "schedule": crontab(minute=0, hour=6),
         "options": {"queue": "realtime"},
     },
+    # Loop B: pick up fine-tune jobs left QUEUED when launch used run_inline=false.
+    "drain-finetune-queue": {
+        "task": "tasks.drain_finetune_queue_task",
+        "schedule": 120.0,
+        "options": {"queue": "learning"},
+    },
 }
 
 if _truthy(os.environ.get("AURA_LEARNING_REFRESH_ENABLED"), default=True):

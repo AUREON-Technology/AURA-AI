@@ -75,6 +75,49 @@ def build_lora_dataset_task(user_id: str) -> dict:
         return {"status": "error", "message": str(e)}
 
 
+@celery_app.task(name="tasks.finetune_job_task", queue="learning")
+def finetune_job_task(job_id: str) -> dict:
+    """Run an approved Loop B fine-tune job on the learning worker."""
+    logger.info("Celery task: Running fine-tune job %s", job_id)
+    try:
+        return asyncio.run(_run_finetune_job(job_id))
+    except Exception as e:
+        logger.error("Fine-tune job task failed: %s", e, exc_info=True)
+        return {"status": "error", "error": type(e).__name__, "message": str(e)}
+
+
+@celery_app.task(name="tasks.drain_finetune_queue_task", queue="learning")
+def drain_finetune_queue_task() -> dict:
+    """Pick up QUEUED Loop B jobs left by the gateway (ADR-002: aura_core never imports tasks)."""
+    logger.info("Celery task: Draining fine-tune queue...")
+    try:
+        return asyncio.run(_drain_finetune_queue())
+    except Exception as e:
+        logger.error("Fine-tune drain failed: %s", e, exc_info=True)
+        return {"status": "error", "error": type(e).__name__}
+
+
+async def _run_finetune_job(job_id: str) -> dict:
+    from aura_core.container import build_container
+
+    container = build_container()
+    job = await container.finetune_jobs.run(job_id)
+    return {"status": str(job.status), "job": job.as_dict()}
+
+
+async def _drain_finetune_queue() -> dict:
+    from aura_core.container import build_container
+    from aura_core.learning.finetune import FineTuneJobStatus
+
+    container = build_container()
+    ran = []
+    for job in await container.finetune_jobs.list(limit=20):
+        if job.status is FineTuneJobStatus.QUEUED:
+            done = await container.finetune_jobs.run(job.id)
+            ran.append(done.as_dict())
+    return {"status": "success", "ran": len(ran), "jobs": ran}
+
+
 async def _generate_insights_for_all_users() -> int:
     from sqlalchemy import select
     from infrastructure.db.base import get_session_factory, is_configured

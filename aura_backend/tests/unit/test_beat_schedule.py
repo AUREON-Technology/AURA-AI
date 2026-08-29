@@ -32,6 +32,7 @@ class TestBeatSchedule:
         assert "tasks.generate_insights_for_all_users_task" in names
         assert "tasks.drain_event_outbox_task" in names
         assert "tasks.generate_daily_briefings_task" in names
+        assert "tasks.drain_finetune_queue_task" in names
 
     def test_refresh_runs_on_the_learning_queue(self) -> None:
         from celery_app import celery_app
@@ -40,6 +41,8 @@ class TestBeatSchedule:
         assert refresh["options"]["queue"] == "learning"
         consolidate = celery_app.conf.beat_schedule["memory-consolidate-daily"]
         assert consolidate["options"]["queue"] == "learning"
+        finetune = celery_app.conf.beat_schedule["drain-finetune-queue"]
+        assert finetune["options"]["queue"] == "learning"
 
     def test_outbox_drain_runs_frequently_on_the_realtime_queue(self) -> None:
         from celery_app import celery_app
