@@ -32,6 +32,7 @@ from .adapters.runtime import (
     InMemoryTelemetrySink,
     SystemClock,
 )
+from .cag import CagEngine
 from .config.settings import AuraSettings, load_settings
 from .context.engine import ContextEngine
 from .context.tokenizer import get_tokenizer
@@ -219,6 +220,24 @@ class Container:
             metrics=self.metrics,
             event_bus=self.events,
         )
+        cag_settings = settings.cag
+        self.cag = (
+            CagEngine(
+                documents=self.documents,
+                cache=self.cache_backend,
+                llm_cache=self.llm_cache,
+                tokenizer=get_tokenizer(model=self._primary_model()),
+                enabled=cag_settings.enabled,
+                max_tokens=cag_settings.max_tokens,
+                global_tokens=cag_settings.global_tokens,
+                user_tokens=cag_settings.user_tokens,
+                max_global_docs=cag_settings.max_global_docs,
+                max_user_docs=cag_settings.max_user_docs,
+                metrics=self.metrics,
+            )
+            if cag_settings.enabled
+            else None
+        )
         # Phase F1: `OcrEngine` is applied at the extraction step, before `ingest()` -- see
         # `api/v3.py`'s `/knowledge/documents/upload` -- so it lives here as its own attribute
         # rather than as a `KnowledgeEngine` constructor argument.
@@ -353,6 +372,7 @@ class Container:
                 safety=self.safety if settings.safety.enabled else None,
                 memory=self.memory,
                 knowledge=self.knowledge,
+                cag=self.cag,
                 goals=self.goals,
                 tools=self.tools if settings.tools.enabled else None,
                 planner=self.planner,

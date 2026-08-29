@@ -36,6 +36,7 @@ __all__ = [
     "LLMSettings",
     "ProviderConfig",
     "KnowledgeSettings",
+    "CagSettings",
     "MemorySettings",
     "SafetySettings",
     "ToolSettings",
@@ -456,6 +457,44 @@ class KnowledgeSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class CagSettings:
+    """Cache-Augmented Generation prefix (ADR-010).
+
+    Reserves a slice of the 400-token prefill budget for a byte-stable knowledge prefix.
+    Does not raise ``max_prompt_tokens``.
+    """
+
+    enabled: bool = True
+    max_tokens: int = 80
+    global_tokens: int = 40
+    user_tokens: int = 40
+    max_global_docs: int = 2
+    max_user_docs: int = 3
+
+    @classmethod
+    def from_env(cls) -> "CagSettings":
+        return cls(
+            enabled=_bool("CAG_ENABLED", True),
+            max_tokens=_int("CAG_MAX_TOKENS", 80, minimum=0, maximum=400),
+            global_tokens=_int("CAG_GLOBAL_TOKENS", 40, minimum=0, maximum=400),
+            user_tokens=_int("CAG_USER_TOKENS", 40, minimum=0, maximum=400),
+            max_global_docs=_int("CAG_MAX_GLOBAL_DOCS", 2, minimum=0, maximum=10),
+            max_user_docs=_int("CAG_MAX_USER_DOCS", 3, minimum=0, maximum=10),
+        )
+
+    def __post_init__(self) -> None:
+        if self.global_tokens + self.user_tokens > self.max_tokens and self.max_tokens > 0:
+            raise ConfigurationError(
+                "cag global_tokens + user_tokens cannot exceed max_tokens",
+                details={
+                    "global_tokens": self.global_tokens,
+                    "user_tokens": self.user_tokens,
+                    "max_tokens": self.max_tokens,
+                },
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class MemorySettings:
     enabled: bool = True
     recall_limit: int = 3
@@ -818,6 +857,7 @@ class AuraSettings:
     debug: bool = False
     llm: LLMSettings = field(default_factory=LLMSettings)
     knowledge: KnowledgeSettings = field(default_factory=KnowledgeSettings)
+    cag: CagSettings = field(default_factory=CagSettings)
     memory: MemorySettings = field(default_factory=MemorySettings)
     safety: SafetySettings = field(default_factory=SafetySettings)
     tools: ToolSettings = field(default_factory=ToolSettings)
@@ -847,6 +887,7 @@ class AuraSettings:
             debug=_bool("DEBUG", False) or _bool_aliased("DEBUG_MODE", False),
             llm=LLMSettings.from_env(),
             knowledge=KnowledgeSettings.from_env(),
+            cag=CagSettings.from_env(),
             memory=MemorySettings.from_env(),
             safety=SafetySettings.from_env(),
             tools=ToolSettings.from_env(),
