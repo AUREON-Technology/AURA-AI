@@ -131,6 +131,7 @@ class KernelDependencies:
     safety: Any = None
     memory: Any = None
     knowledge: Any = None
+    cag: Any = None
     goals: Any = None
     tools: Any = None
     planner: Any = None
@@ -143,6 +144,7 @@ class KernelDependencies:
     telemetry_sink: Any = None
     clock: Any = None
     settings: Any = None
+    models: Any = None
 
 
 class AIKernel:
@@ -220,7 +222,7 @@ class AIKernel:
 
         # 2-4. Memory, retrieval, and history concurrently ---------------------------
         stage_start = time.perf_counter()
-        memories, retrieval, history, history_summary, goals = await self._gather_context(
+        memories, retrieval, history, history_summary, goals, cag_prefix = await self._gather_context(
             request, message
         )
         timings["memory"] = timings["retrieval"] = (time.perf_counter() - stage_start) * 1000.0
@@ -295,6 +297,7 @@ class AIKernel:
                 memories=memories,
                 goals=goals,
                 retrieval=retrieval,
+                cag_prefix=cag_prefix,
                 tool_results=tool_results,
                 history_summary=history_summary,
                 context_window=self._context_window(),
@@ -311,6 +314,21 @@ class AIKernel:
             await self._generate(request, assembled, retrieval, budget, tool_declarations)
         )
         timings["generation"] = (time.perf_counter() - stage_start) * 1000.0
+
+        try:
+            # Rebuild the completion shape for shadow (model override only).
+            shadow_completion = CompletionRequest(
+                conversation=assembled.conversation,
+                sampling=SamplingParams(
+                    temperature=request.temperature,
+                    max_output_tokens=request.max_output_tokens,
+                ),
+                policy=request.routing_policy,
+                require_local=request.require_local,
+            )
+            await self._run_shadow(request, shadow_completion)
+        except Exception:
+            logger.debug("shadow dispatch failed", exc_info=True)
 
         # 9. Output guards -----------------------------------------------------------
         groundedness = None
@@ -361,6 +379,10 @@ class AIKernel:
             timings=StageTiming(**timings),
             retrieval=self._retrieval_telemetry(retrieval, quarantined_count),
             memories_recalled=len(memories),
+            cag_tokens=cag_prefix.tokens if cag_prefix is not None else 0,
+            cag_docs=len(cag_prefix.docs) if cag_prefix is not None else 0,
+            cag_identity=cag_prefix.identity.value if cag_prefix is not None else None,
+            cag_cache_hit=bool(cag_prefix.cache_hit) if cag_prefix is not None else False,
             context_tokens=assembled.prompt_tokens,
             context_dropped=assembled.dropped,
             guards=tuple(guard_records),
@@ -413,7 +435,7 @@ class AIKernel:
                     )
                     message = decision.text
 
-                memories, retrieval, history, history_summary, goals = await self._gather_context(
+                memories, retrieval, history, history_summary, goals, cag_prefix = await self._gather_context(
                     request, message
                 )
 
@@ -472,6 +494,7 @@ class AIKernel:
                         memories=memories,
                         goals=goals,
                         retrieval=retrieval,
+                        cag_prefix=cag_prefix,
                         tool_results=tool_results,
                         history_summary=history_summary,
                         context_window=self._context_window(),
@@ -485,8 +508,10 @@ class AIKernel:
 
                 collected: list[str] = []
                 last_usage = None
+                assigned = await self._assigned_model(request)
                 completion = CompletionRequest(
                     conversation=assembled.conversation,
+                    model=assigned,
                     sampling=SamplingParams(
                         temperature=request.temperature,
                         max_output_tokens=request.max_output_tokens,
@@ -553,6 +578,12 @@ class AIKernel:
                     except Exception:
                         logger.warning("failed to persist session state")
 
+                # Fire-and-forget shadow; failures must not fail the turn.
+                try:
+                    await self._run_shadow(request, completion)
+                except Exception:
+                    logger.debug("shadow dispatch failed", exc_info=True)
+
                 searched_empty = bool(
                     retrieval is not None and retrieval.is_empty_but_searched
                 )
@@ -587,8 +618,15 @@ class AIKernel:
 
     async def _gather_context(
         self, request: TurnRequest, message: str
-    ) -> tuple[list[MemoryHit], RetrievalResult | None, Conversation, str, Sequence[GoalSnapshot]]:
-        """Run memory recall, knowledge retrieval, history load, and goal lookup concurrently.
+    ) -> tuple[
+        list[MemoryHit],
+        RetrievalResult | None,
+        Conversation,
+        str,
+        Sequence[GoalSnapshot],
+        Any,
+    ]:
+        """Run memory recall, knowledge retrieval, history, goals, and CAG concurrently.
 
         These are independent. Running them in sequence is the single largest avoidable latency
         in the legacy pipeline, which additionally embeds the same message four separate times
@@ -643,10 +681,19 @@ class AIKernel:
                 logger.warning("goal lookup failed; continuing without it")
                 return ()
 
-        memories, retrieval, (history, summary), goals = await asyncio.gather(
-            recall(), retrieve(), load_history(), load_goals()
+        async def load_cag() -> Any:
+            if deps.cag is None:
+                return None
+            try:
+                return await deps.cag.prefix_for(request.user_id)
+            except Exception:
+                logger.warning("cag prefix load failed; continuing without it")
+                return None
+
+        memories, retrieval, (history, summary), goals, cag_prefix = await asyncio.gather(
+            recall(), retrieve(), load_history(), load_goals(), load_cag()
         )
-        return memories, retrieval, history, summary, goals
+        return memories, retrieval, history, summary, goals, cag_prefix
 
     def _resolve_agent(self, request: TurnRequest) -> AgentSpec | None:
         """The turn's resolved persona (Phase C1), or ``None`` with no registry configured.
@@ -818,6 +865,75 @@ class AIKernel:
         llm = getattr(self._deps.settings, "llm", None) if self._deps.settings is not None else None
         return int(getattr(llm, "max_prompt_tokens", 400) or 400)
 
+    def _registry_model_id(self) -> str:
+        learning = getattr(self._deps.settings, "learning", None) if self._deps.settings else None
+        return str(getattr(learning, "finetune_model_id", "aura-ft") or "aura-ft")
+
+    async def _assigned_model(self, request: TurnRequest) -> str | None:
+        """Resolve a registry canary/production artefact for this user, if any."""
+        deps = self._deps
+        if deps.models is None:
+            return None
+        try:
+            assignment = await deps.models.assign(
+                self._registry_model_id(), subject=request.user_id.value
+            )
+        except Exception:
+            logger.debug("model registry assign failed", exc_info=True)
+            return None
+        if assignment is None:
+            return None
+        try:
+            version = await deps.models.get(assignment.model_id, assignment.version)
+        except Exception:
+            return None
+        return version.artefact_uri or None
+
+    async def _run_shadow(
+        self, request: TurnRequest, completion: CompletionRequest
+    ) -> None:
+        """Mirror traffic to shadow versions; never surface their output."""
+        deps = self._deps
+        if deps.models is None or deps.router is None:
+            return
+        try:
+            shadows = await deps.models.shadow_versions(self._registry_model_id())
+        except Exception:
+            return
+        for shadow in shadows:
+            if not shadow.artefact_uri:
+                continue
+            try:
+                started = time.perf_counter()
+                shadow_req = CompletionRequest(
+                    conversation=completion.conversation,
+                    model=shadow.artefact_uri,
+                    sampling=completion.sampling,
+                    policy=completion.policy,
+                    require_local=completion.require_local,
+                    tools=(),
+                )
+                await deps.router.complete(shadow_req)
+                elapsed = (time.perf_counter() - started) * 1000.0
+                await deps.models.record_metrics(
+                    shadow.model_id,
+                    shadow.version,
+                    {"shadow_latency_ms": elapsed, "shadow_ok": 1.0},
+                )
+            except Exception as exc:
+                try:
+                    await deps.models.record_metrics(
+                        shadow.model_id,
+                        shadow.version,
+                        {"shadow_ok": 0.0},
+                    )
+                except Exception:
+                    pass
+                logger.debug(
+                    "shadow generation failed",
+                    extra={"model": shadow.key, "error": type(exc).__name__},
+                )
+
     async def _generate(
         self,
         request: TurnRequest,
@@ -829,8 +945,10 @@ class AIKernel:
         deps = self._deps
         namespace = request.user_id.value
 
+        assigned = await self._assigned_model(request)
         completion = CompletionRequest(
             conversation=assembled.conversation,
+            model=assigned,
             sampling=SamplingParams(
                 temperature=request.temperature, max_output_tokens=request.max_output_tokens
             ),

@@ -147,6 +147,10 @@ class TurnTelemetry:
 
     retrieval: RetrievalTelemetry = field(default_factory=RetrievalTelemetry)
     memories_recalled: int = 0
+    cag_tokens: int = 0
+    cag_docs: int = 0
+    cag_identity: str | None = None
+    cag_cache_hit: bool = False
     context_tokens: int = 0
     context_dropped: int = 0
 
@@ -221,6 +225,12 @@ class TurnTelemetry:
                 "strategy": self.retrieval.strategy,
             },
             "memories_recalled": self.memories_recalled,
+            "cag": {
+                "tokens": self.cag_tokens,
+                "docs": self.cag_docs,
+                "identity": self.cag_identity,
+                "cache_hit": self.cag_cache_hit,
+            },
             "context": {"tokens": self.context_tokens, "dropped": self.context_dropped},
             "guards": list(self.guards),
             "tainted": self.tainted,

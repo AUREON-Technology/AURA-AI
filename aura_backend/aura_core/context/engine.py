@@ -21,6 +21,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Sequence
 
+from ..domain.cag import CagPrefix
 from ..domain.context import ContextBudget, ContextBundle, ContextItem, ContextSection, pack
 from ..domain.goals import GoalSnapshot
 from ..domain.knowledge import RetrievalResult
@@ -41,7 +42,7 @@ __all__ = [
 
 logger = get_logger("context")
 
-#: Hard cap on the assembled completion prompt (system + RAG + memory + history + user).
+#: Hard cap on the assembled completion prompt (system + CAG + RAG + memory + history + user).
 #: CPU-only qwen2.5 7B prompt-eval is ~11 tok/s; 400 tokens keeps prefill under ~40s.
 DEFAULT_MAX_PROMPT_TOKENS = 400
 DEFAULT_HISTORY_TURNS = 4
@@ -60,6 +61,7 @@ class ContextRequest:
     memories: Sequence[MemoryHit] = ()
     goals: Sequence[GoalSnapshot] = ()
     retrieval: RetrievalResult | None = None
+    cag_prefix: CagPrefix | None = None
     tool_results: Sequence[tuple[str, str]] = ()
     scratchpad: Sequence[str] = ()
     history_summary: str = ""
@@ -139,13 +141,14 @@ class ContextEngine:
 
     # -- candidate construction --------------------------------------------------------
 
-    def _instruction_items(self, request: ContextRequest, bundle_nonce_rules: str) -> list[ContextItem]:
-        """The system prompt and the fence rules -- pinned, never evicted.
+    def _instruction_items(self, request: ContextRequest) -> list[ContextItem]:
+        """The system prompt -- pinned, never evicted.
 
-        Priority 100+ bypasses section caps in :func:`pack`. If the operator's instructions can
-        be dropped to make room for a document, the safety rules go with them.
+        Fence rules are not here: a per-turn nonce in instructions would make every prompt
+        unique and poison a later KV-prefix cache of the CAG slot (ADR-010). Prefix fence
+        rules live inside the CAG section; turn fence rules are injected after it.
         """
-        items = [
+        return [
             ContextItem(
                 content=request.system_prompt,
                 section=ContextSection.INSTRUCTIONS,
@@ -156,19 +159,53 @@ class ContextEngine:
                 item_id="system_prompt",
             )
         ]
-        if bundle_nonce_rules:
+
+    def _cag_items(
+        self, request: ContextRequest, *, prefix_fence_rules: str
+    ) -> list[ContextItem]:
+        """Byte-stable CAG prefix: fence rules + fenced knowledge (ADR-010)."""
+        prefix = request.cag_prefix
+        if prefix is None or not prefix.text.strip():
+            return []
+        items: list[ContextItem] = []
+        if prefix_fence_rules:
             items.append(
                 ContextItem(
-                    content=bundle_nonce_rules,
-                    section=ContextSection.INSTRUCTIONS,
+                    content=prefix_fence_rules,
+                    section=ContextSection.CAG,
                     channel=TrustChannel.SYSTEM,
-                    priority=210,
+                    priority=190,
                     relevance=1.0,
-                    tokens=self._tokenizer.count(bundle_nonce_rules),
-                    item_id="fence_rules",
+                    tokens=self._tokenizer.count(prefix_fence_rules),
+                    item_id="cag_fence_rules",
                 )
             )
+        provenance = "; ".join(prefix.citations) if prefix.citations else "cag"
+        items.append(
+            ContextItem(
+                content=prefix.text,
+                section=ContextSection.CAG,
+                channel=TrustChannel.DATA,
+                priority=180,
+                relevance=1.0,
+                tokens=prefix.tokens or self._tokenizer.count(prefix.text),
+                provenance=provenance,
+                item_id=f"cag:{prefix.identity.value[:12]}",
+            )
+        )
         return items
+
+    def _turn_fence_item(self, fence_rules: str) -> ContextItem:
+        """Turn-nonce fence rules, placed after CAG so they do not destabilise the prefix."""
+        return ContextItem(
+            content=fence_rules,
+            section=ContextSection.MEMORY,
+            channel=TrustChannel.SYSTEM,
+            priority=170,
+            relevance=1.0,
+            tokens=self._tokenizer.count(fence_rules),
+            item_id="turn_fence_rules",
+        )
 
     def _memory_items(self, request: ContextRequest) -> list[ContextItem]:
         items = []
@@ -228,12 +265,16 @@ class ContextEngine:
     def _knowledge_items(self, request: ContextRequest) -> list[ContextItem]:
         if request.retrieval is None:
             return []
+        pinned_ids = request.cag_prefix.document_ids if request.cag_prefix else frozenset()
         items = []
         kept = 0
         for index, retrieved in enumerate(request.retrieval.chunks):
             if retrieved.quarantined:
                 # Quarantined chunks never reach the model, even fenced. The taint flag on the
                 # turn is what the rest of the pipeline reacts to.
+                continue
+            # Dedup: a chunk already in the CAG prefix would waste the 280-char RAG clip.
+            if retrieved.chunk.document_id.value in pinned_ids:
                 continue
             if kept >= self._max_knowledge_items:
                 break
@@ -333,13 +374,23 @@ class ContextEngine:
         started = time.perf_counter()
         budget = self.budget_for(request)
 
-        # The nonce is generated with the bundle, and the fence rules must reference it, so an
-        # empty bundle is created first purely to obtain one.
+        # Turn nonce for variable DATA; prefix nonce for the CAG slot (ADR-010).
         seed = ContextBundle.empty()
-        fence_rules = seed.fence_instructions()
+        prefix_nonce = request.cag_prefix.prefix_nonce if request.cag_prefix else None
+        seed_with_prefix = ContextBundle(
+            fence_nonce=seed.fence_nonce,
+            prefix_nonce=prefix_nonce,
+        )
+        turn_fence_rules = seed_with_prefix.fence_instructions(for_prefix=False)
+        prefix_fence_rules = (
+            seed_with_prefix.fence_instructions(for_prefix=True) if prefix_nonce else ""
+        )
 
         candidates: list[ContextItem] = []
-        candidates += self._instruction_items(request, fence_rules)
+        candidates += self._instruction_items(request)
+        cag_items = self._cag_items(request, prefix_fence_rules=prefix_fence_rules)
+        candidates += cag_items
+        candidates.append(self._turn_fence_item(turn_fence_rules))
         candidates += self._memory_items(request)
         candidates += self._goal_items(request)
         candidates += self._knowledge_items(request)
@@ -371,19 +422,19 @@ class ContextEngine:
                 )
             )
 
-        # Reserve what history will actually consume so the packer cannot spend it.
+        # Reserve CAG tokens before packing the variable tail so the 400-token cap still holds.
+        cag_reserved = sum(i.tokens for i in cag_items)
         history_tokens = sum(self._tokenizer.count(m.content) + 4 for m in history)
         user_tokens = self._tokenizer.count(request.user_message) + 4
-        remaining = budget.total - history_tokens - user_tokens
+        remaining = budget.total - history_tokens - user_tokens - cag_reserved
         packing_budget = ContextBudget(
-            total=max(budget.reserved_for_output + 64, remaining),
+            total=max(budget.reserved_for_output + 64, remaining + cag_reserved),
             reserved_for_output=budget.reserved_for_output,
             section_caps=budget.section_caps,
         )
 
         bundle = pack(candidates, packing_budget)
-        # Carry the seed's nonce onto the packed bundle so the rendered fences match the rules
-        # text that was already pinned into the instruction items.
+        # Carry both nonces onto the packed bundle so rendered fences match the rules text.
         bundle = ContextBundle(
             items=bundle.items,
             dropped=bundle.dropped,
@@ -391,11 +442,13 @@ class ContextEngine:
             budget_total=bundle.budget_total,
             tokens_used=bundle.tokens_used,
             fence_nonce=seed.fence_nonce,
+            prefix_nonce=prefix_nonce,
         )
 
         system_text = bundle.render(
             include_sections=(
                 ContextSection.INSTRUCTIONS,
+                ContextSection.CAG,
                 ContextSection.MEMORY,
                 ContextSection.KNOWLEDGE,
                 ContextSection.TOOL_OUTPUT,
@@ -413,10 +466,11 @@ class ContextEngine:
             cap=cap,
         )
         if cap and prompt_tokens > cap and bundle.by_section(ContextSection.MEMORY):
-            # Memory lost the budget fight: keep instructions + citations.
+            # Memory lost the budget fight: keep instructions + CAG + citations.
             system_text = bundle.render(
                 include_sections=(
                     ContextSection.INSTRUCTIONS,
+                    ContextSection.CAG,
                     ContextSection.KNOWLEDGE,
                     ContextSection.TOOL_OUTPUT,
                     ContextSection.SCRATCHPAD,
