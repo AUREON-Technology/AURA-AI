@@ -296,6 +296,9 @@ class ChatRepository {
             break;
           case SseEventKind.error:
             debugPrint("[ChatRepository] SSE stream error event: ${event.message}");
+            if (event.details != null) {
+              debugPrint("[ChatRepository] SSE stream error details: ${event.details}");
+            }
             await _logTelemetry(
               eventType: "error",
               isOffline: false,

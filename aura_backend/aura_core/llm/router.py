@@ -51,6 +51,18 @@ __all__ = ["ProviderRouter", "RoutingDecision", "TurnBudget"]
 _LATENCY_PRIOR_MS = 1500.0
 
 
+def _attempt_summary(attempts: Sequence[Mapping[str, Any]]) -> str:
+    """Compact `` (name:error, ...)`` suffix so SSE error text names the failure, not just the count."""
+    if not attempts:
+        return ""
+    parts: list[str] = []
+    for attempt in attempts:
+        name = attempt.get("provider") or "?"
+        error = attempt.get("error") or attempt.get("reason") or "unknown"
+        parts.append(f"{name}:{error}")
+    return f" ({', '.join(parts)})"
+
+
 @dataclass(frozen=True, slots=True)
 class RoutingDecision:
     """Why this ordering was chosen -- surfaced in telemetry and the admin API."""
@@ -363,7 +375,9 @@ class ProviderRouter:
                     self._metrics.llm_inflight.labels(provider=name).set(stats.inflight)
 
         raise AllProvidersFailedError(
-            f"all {len(attempts)} provider attempt(s) failed", attempts=attempts
+            f"all {len(attempts)} provider attempt(s) failed"
+            + _attempt_summary(attempts),
+            attempts=attempts,
         )
 
     def _note_fallback(self, failed_provider: str, attempts: Sequence[Mapping[str, Any]]) -> None:
@@ -492,7 +506,8 @@ class ProviderRouter:
                     self._metrics.llm_inflight.labels(provider=name).set(stats.inflight)
 
         raise AllProvidersFailedError(
-            f"all {len(attempts)} provider attempt(s) failed before streaming began",
+            f"all {len(attempts)} provider attempt(s) failed before streaming began"
+            + _attempt_summary(attempts),
             attempts=attempts,
         )
 

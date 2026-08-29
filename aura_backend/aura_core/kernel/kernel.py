@@ -520,6 +520,7 @@ class AIKernel:
                     policy=request.routing_policy,
                     require_local=request.require_local,
                     tools=tool_declarations,
+                    timeout_s=self._completion_timeout_s(),
                 )
 
                 async for chunk in deps.router.stream(completion):
@@ -609,8 +610,15 @@ class AIKernel:
                     },
                 }
             except AuraError as exc:
-                yield {"type": "error", "error": exc.kind, "message": exc.message,
-                       "retryable": exc.retryable}
+                frame: dict[str, Any] = {
+                    "type": "error",
+                    "error": exc.kind,
+                    "message": exc.message,
+                    "retryable": exc.retryable,
+                }
+                if exc.details:
+                    frame["details"] = exc.details
+                yield frame
             except Exception as exc:  # pragma: no cover - defensive
                 logger.exception("unhandled error during stream")
                 yield {"type": "error", "error": "internal_error",
@@ -867,6 +875,23 @@ class AIKernel:
         llm = getattr(self._deps.settings, "llm", None) if self._deps.settings is not None else None
         return int(getattr(llm, "max_prompt_tokens", 400) or 400)
 
+    def _completion_timeout_s(self) -> float:
+        """Router first-token deadline. Must match ``AURA_LLM_TIMEOUT_S``.
+
+        ``CompletionRequest.timeout_s`` defaults to 60s. The CPU Ollama stack is configured
+        for 180s (``AURA_PROVIDER_LOCAL_TIMEOUT_S``), but that only covers the HTTP client.
+        The router wraps the first streamed chunk in ``asyncio.wait_for(..., timeout=request.timeout_s)``,
+        so leaving the dataclass default in place kills a cold 3B prefill and surfaces as
+        ``all 1 provider attempt(s) failed before streaming began``.
+        """
+        llm = getattr(self._deps.settings, "llm", None) if self._deps.settings is not None else None
+        raw = getattr(llm, "request_timeout_s", 60.0) if llm is not None else 60.0
+        try:
+            timeout = float(raw)
+        except (TypeError, ValueError):
+            return 60.0
+        return timeout if timeout > 0 else 60.0
+
     def _registry_model_id(self) -> str:
         learning = getattr(self._deps.settings, "learning", None) if self._deps.settings else None
         return str(getattr(learning, "finetune_model_id", "aura-ft") or "aura-ft")
@@ -889,7 +914,24 @@ class AIKernel:
             version = await deps.models.get(assignment.model_id, assignment.version)
         except Exception:
             return None
-        return version.artefact_uri or None
+        return self._servable_model_tag(version.artefact_uri)
+
+    @staticmethod
+    def _servable_model_tag(artefact_uri: str | None) -> str | None:
+        """Use a registry artefact only when it is an inference tag, not a file URI.
+
+        ScriptedTrainer writes ``scripted://...`` placeholders. Sending those as
+        ``CompletionRequest.model`` makes Ollama 404 before the first token.
+        """
+        if not artefact_uri or not artefact_uri.strip():
+            return None
+        uri = artefact_uri.strip()
+        if "://" in uri or uri.startswith(("/", "\\")):
+            logger.warning(
+                "registry artefact is not a servable model tag; using the provider default"
+            )
+            return None
+        return uri
 
     async def _run_shadow(
         self, request: TurnRequest, completion: CompletionRequest
@@ -957,6 +999,7 @@ class AIKernel:
             policy=request.routing_policy,
             require_local=request.require_local,
             tools=tuple(tools),
+            timeout_s=self._completion_timeout_s(),
         )
 
         if deps.cache is not None:

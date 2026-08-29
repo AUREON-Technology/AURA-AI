@@ -17,7 +17,7 @@ from aura_core.domain.errors import AllProvidersFailedError, ProviderError
 from aura_core.domain.identifiers import DocumentId, SessionId
 from aura_core.domain.llm import ProviderCapabilities, RoutingPolicy
 from aura_core.domain.telemetry import TurnOutcome
-from aura_core.kernel import TurnRequest
+from aura_core.kernel import AIKernel, TurnRequest
 from aura_core.llm import ProviderRouter
 from aura_core.llm.providers.echo import EchoProvider, ScriptedTurn
 
@@ -102,6 +102,18 @@ class TestDegradation:
         assert result.telemetry.outcome is TurnOutcome.SUCCESS
 
 
+class TestServableModelTag:
+    def test_ollama_tags_pass_through(self) -> None:
+        assert AIKernel._servable_model_tag("qwen2.5:3b-instruct-q4_K_M") == (
+            "qwen2.5:3b-instruct-q4_K_M"
+        )
+
+    def test_scripted_and_path_artefacts_are_ignored(self) -> None:
+        assert AIKernel._servable_model_tag("scripted://aura-ft/v1") is None
+        assert AIKernel._servable_model_tag("/var/lib/aura/datasets/x") is None
+        assert AIKernel._servable_model_tag("") is None
+
+
 class TestStreaming:
     async def test_a_stream_emits_deltas_and_a_terminal_frame(self, container) -> None:
         await container.startup()
@@ -153,6 +165,33 @@ class TestStreaming:
         frames = [frame async for frame in container.kernel.stream(_request())]
         assert frames[-1]["type"] == "error"
         assert frames[-1]["error"]
+        assert "details" in frames[-1]
+
+    async def test_generation_uses_the_configured_llm_timeout(
+        self, container
+    ) -> None:
+        """AURA_LLM_TIMEOUT_S must reach CompletionRequest.timeout_s.
+
+        The router first-token wait uses that field, not the provider HTTP client timeout.
+        Leaving the 60s dataclass default is what surfaces as
+        ``all 1 provider attempt(s) failed before streaming began`` on CPU Ollama.
+        """
+        from dataclasses import replace
+
+        await container.startup()
+        container.kernel._deps.settings = replace(
+            container.settings,
+            llm=replace(container.settings.llm, request_timeout_s=180.0),
+        )
+        echo = next(
+            provider for provider in container.providers if hasattr(provider, "calls")
+        )
+        echo.calls.clear()
+
+        frames = [frame async for frame in container.kernel.stream(_request())]
+        assert frames[-1]["type"] == "done"
+        assert echo.calls
+        assert echo.calls[-1].timeout_s == 180.0
 
 
 class TestRouterFailover:
@@ -196,6 +235,8 @@ class TestRouterFailover:
         with pytest.raises(AllProvidersFailedError) as excinfo:
             await router.complete(self._completion())
         assert len(excinfo.value.details["attempts"]) == 2
+        assert "a:provider_error" in excinfo.value.message
+        assert "b:provider_error" in excinfo.value.message
 
     async def test_a_non_retryable_error_stops_the_ladder(self, clock) -> None:
         """Trying every provider against a malformed request wastes the whole budget."""

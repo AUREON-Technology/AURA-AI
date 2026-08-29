@@ -18,6 +18,7 @@ class SseChatEvent {
   final String? text;
   final List<dynamic>? actions;
   final String? message;
+  final Object? details;
   final List<dynamic>? citations;
   final String? unknownType;
   final TurnMeta? turnMeta;
@@ -28,6 +29,7 @@ class SseChatEvent {
     this.text,
     this.actions,
     this.message,
+    this.details,
     this.citations,
     this.unknownType,
     this.turnMeta,
@@ -49,7 +51,11 @@ class SseChatEvent {
       case 'revision':
         return SseChatEvent._(kind: SseEventKind.revision, text: data['text'] as String?);
       case 'error':
-        return SseChatEvent._(kind: SseEventKind.error, message: data['message'] as String?);
+        return SseChatEvent._(
+          kind: SseEventKind.error,
+          message: data['message'] as String?,
+          details: data['details'],
+        );
       case 'done':
         return SseChatEvent._(
           kind: SseEventKind.done,
