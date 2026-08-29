@@ -223,14 +223,32 @@ class ModelRegistry:
         if to is ModelStage.PRODUCTION:
             # The gate. Refusing here rather than trusting the caller is what makes ADR-008
             # structural: no code path reaches production without a recorded human decision.
+            # Promotion approvals bind to the model version key (model_id@version), not the
+            # training dataset digest — a FINETUNE approval must not be reused as a silent
+            # promote-to-production token.
             if self._approvals is None:
                 raise ApprovalRequiredError(
                     "promotion to production requires an approval service",
                     details={"model": current.key},
                 )
             await self._approvals.require(
-                approval_id, expected_digest=current.dataset_digest or current.key
+                approval_id, expected_digest=current.key
             )
+
+        if to is ModelStage.CANARY:
+            # Soft eval gate: if prior metrics recorded a coverage drop beyond tolerance,
+            # refuse canary. Missing metrics do not block (ScriptedTrainer / import paths).
+            drop = current.metrics.get("coverage_drop")
+            max_drop = current.metrics.get("max_coverage_drop")
+            if drop is not None and max_drop is not None and drop > max_drop:
+                raise ConflictError(
+                    "canary blocked: answer coverage regressed beyond tolerance",
+                    details={
+                        "coverage_drop": drop,
+                        "max_coverage_drop": max_drop,
+                        "model": current.key,
+                    },
+                )
 
         promoted = replace(
             current,

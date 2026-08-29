@@ -325,7 +325,9 @@ class TestApprovalGate:
             ModelVersion(model_id="m", version="2.0.0", provider_kind="ollama", dataset_digest="d")
         )
         request = await approvals.request(
-            kind=ApprovalKind.MODEL_PROMOTION, summary="promote 2.0.0", artefact_digest="d"
+            kind=ApprovalKind.MODEL_PROMOTION,
+            summary="promote 2.0.0",
+            artefact_digest="m@2.0.0",
         )
         await approvals.decide(request.id, approved=True, by="reviewer@example.com")
         await registry.transition("m", "2.0.0", to=ModelStage.CANARY, canary_percent=10)

@@ -136,8 +136,31 @@ The approval binds **person + time + artefact digest**. Consequences:
 
 ### 4. Train
 
-Training runs outside the gateway — it needs a GPU and hours, neither of which belongs in a
-request path. The platform records the run rather than executing it:
+Training runs outside the request path (Celery ``learning`` queue or an optional
+``worker-training`` compose profile). The gateway only enqueues.
+
+```python
+job = await finetune_jobs.enqueue(approval_id=approval.id)
+done = await finetune_jobs.run(job.id)  # or tasks.finetune_job_task.delay(job.id)
+```
+
+``enqueue`` / ``run`` both call ``ApprovalService.require(approval_id,
+expected_digest=dataset_digest)`` **before** the trainer. A pending approval, an
+expired approval, or a digest mismatch raises — this is the ADR-008 gate.
+
+Trainers implement ``FineTuneTrainer``:
+
+| Adapter | When |
+| --- | --- |
+| ``ScriptedTrainer`` | Default in the gateway and in pytest — no torch, deterministic artefact |
+| ``LocalLoraTrainer`` | ``AURA_FINETUNE_TRAINER=local`` on the training worker; imports torch only inside ``train()`` |
+
+CPU-only hosts refuse ``LocalLoraTrainer`` unless ``AURA_FINETUNE_ALLOW_CPU=true`` and the
+base is on the small-model allowlist. Contabo-style VPS deployments should train elsewhere
+and use ``POST /api/v3/admin/models/import`` to register a local Ollama tag as ``CANDIDATE``.
+
+On success the job registers a ``ModelVersion`` at stage ``CANDIDATE`` with the dataset
+digest and training approval id.
 
 ```python
 experiment = await tracker.experiment("finetune-qwen")
@@ -188,18 +211,26 @@ against real inputs, which a static evaluation set cannot.
 **Canary** assigns by a stable hash of the user id, so a user does not flip between models mid
 conversation — which would look like the assistant losing its mind rather than an experiment.
 
-**Production** requires the approval. Exactly one production version exists per model: the
-previous one is archived in the same operation, so there is never an ambiguous "which model is
-live?".
+**Production** requires a **MODEL_PROMOTION** approval bound to ``model_id@version``
+(not the training dataset digest). Reusing a FINETUNE approval as a production
+token is refused. Exactly one production version exists per model: the previous one
+is archived in the same operation.
 
 ```python
-await registry.transition(
-    "qwen2.5-7b-aura", "v3", to=ModelStage.CANARY, canary_percent=10
+promo = await approvals.request(
+    kind=ApprovalKind.MODEL_PROMOTION,
+    summary=f"Promote {version.key}",
+    artefact_digest=version.key,  # aura-ft@v3
 )
+await approvals.decide(promo.id, approved=True, by="ops@example.com")
 await registry.transition(
-    "qwen2.5-7b-aura", "v3", to=ModelStage.PRODUCTION, approval_id=approval.id
+    "aura-ft", "v3", to=ModelStage.PRODUCTION, approval_id=promo.id
 )
 ```
+
+The kernel resolves ``CompletionRequest.model`` from ``ModelRegistry.assign`` when
+unset, so canary/production artefacts serve traffic. Shadow versions receive a
+fire-and-forget mirrored completion whose tokens are never returned to the user.
 
 ### 7. Roll back
 
