@@ -1,4 +1,4 @@
-name: Deploy VPS
+﻿name: Deploy VPS
 
 # After Backend CI succeeds on main, SSH to the Contabo host and run
 # deploy/scripts/vps-update.sh against the tested SHA.
@@ -6,14 +6,14 @@ name: Deploy VPS
 # This replaced the unused Cloud Run workflow: the production target is the
 # VPS at vars.VPS_HOST, not GCP.
 #
-# Required (repo Settings → Secrets and variables → Actions, or the
+# Required (repo Settings â†’ Secrets and variables â†’ Actions, or the
 # `production` environment):
 #   secrets.VPS_SSH_KEY   ed25519 private key; public half is in root's
 #                         authorized_keys on the VPS (comment github-actions-aura-cd)
 #   vars.VPS_HOST         IPv4, currently 169.58.188.43
 #   vars.VPS_USER         root
 #
-# Manual deploy: Actions → Deploy VPS → Run workflow.
+# Manual deploy: Actions â†’ Deploy VPS â†’ Run workflow.
 # The Flutter APK is not deployed here -- BACKEND_URL is compile-time;
 # use release-apk.yml when you need a new binary.
 #
@@ -33,6 +33,10 @@ on:
         description: "Commit SHA to deploy (empty = the commit that started this run)"
         required: false
         default: ""
+      dev_ops:
+        description: "Run vps-dev-bring-up after prod deploy (TLS/dev stack; not for routine CI deploy)"
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-vps
@@ -84,12 +88,14 @@ jobs:
           VPS_HOST: ${{ vars.VPS_HOST }}
           VPS_USER: ${{ vars.VPS_USER }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
+          DEV_OPS: ${{ github.event_name == 'workflow_dispatch' && inputs.dev_ops }}
         run: |
           test -n "$VPS_HOST" && test -n "$VPS_USER" && test -n "$TARGET_SHA"
           ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
             -o UserKnownHostsFile=~/.ssh/known_hosts \
             "${VPS_USER}@${VPS_HOST}" \
             env AURA_SHA="$TARGET_SHA" \
+                AURA_DEV_OPS="$([ "$DEV_OPS" = "true" ] && echo 1 || echo 0)" \
                 AURA_REPO=/opt/aura-stack \
                 AURA_COMPOSE=/opt/aura-stack/deploy/docker-compose.prod.yml \
                 AURA_PROJECT=aura \

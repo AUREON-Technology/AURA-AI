@@ -31,8 +31,8 @@ COMPOSE=(docker compose -p "$PROJECT" -f "$COMPOSE_FILE" --env-file "$ENV_FILE")
 
 say() { printf '\n==> %s\n' "$*"; }
 
-say "Building dev gateway (seed script + deps)"
-"${COMPOSE[@]}" build gateway
+say "Building dev gateway and worker-training (seed + Celery fixes)"
+"${COMPOSE[@]}" build gateway worker-training
 
 say "Recreating worker-training with dev env (CPU LoRA flag)"
 "${COMPOSE[@]}" --profile training up -d --force-recreate worker-training

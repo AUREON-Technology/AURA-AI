@@ -10,6 +10,7 @@ root (`deploy_client.sh`, `deploy_client.ps1`, etc.).
 | `run_client_device.ps1` | Physical Android debug run against production HTTPS |
 | `deploy_rules.ps1` | Deploy Firebase rules from `firebase/` |
 | `init_infra.ps1` | Legacy GCP/Firebase bootstrap (historical) |
+| `collect-vps-logs.ps1` | Pull last N days of VPS logs into `docs/reports/` (Windows) |
 
 ## Dual-environment VPS
 

@@ -124,7 +124,7 @@ info "cert volume: $CERT_VOLUME"
 mkdir -p "$DEPLOY_DIR/nginx/www"
 
 if pem_has_dev_san; then
-  info "certificate already includes $AURA_DEV_DOMAIN â€” skipping certbot"
+  info "certificate already includes $AURA_DEV_DOMAIN — skipping certbot"
 elif run_webroot; then
   info "webroot issuance succeeded"
 else

@@ -1,9 +1,9 @@
-name: VPS Dev Ops
+﻿name: VPS Dev Ops
 
 # One-shot operator tasks on the Contabo host via the same SSH path as Deploy VPS.
 # Use when local SSH to port 22 is blocked but GitHub Actions can still reach the VPS.
 #
-# Actions → VPS Dev Ops → Run workflow
+# Actions â†’ VPS Dev Ops â†’ Run workflow
 #
 # Required: secrets.VPS_SSH_KEY, vars.VPS_HOST, vars.VPS_USER (production environment)
 
@@ -22,6 +22,10 @@ on:
         description: "Run seed-dev.sh after dev gateway is up"
         type: boolean
         default: true
+      console_only:
+        description: "Only start dev gateway + console (fix nginx 502 on /console)"
+        type: boolean
+        default: false
 
 concurrency:
   group: vps-dev-ops
@@ -57,6 +61,7 @@ jobs:
           RENEW_TLS: ${{ inputs.renew_tls }}
           BRING_UP_DEV: ${{ inputs.bring_up_dev }}
           RUN_SEED: ${{ inputs.run_seed }}
+          CONSOLE_ONLY: ${{ inputs.console_only }}
         run: |
           test -n "$VPS_HOST" && test -n "$VPS_USER"
           ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
@@ -65,6 +70,7 @@ jobs:
             env RENEW_TLS="$RENEW_TLS" \
                 BRING_UP_DEV="$BRING_UP_DEV" \
                 RUN_SEED="$RUN_SEED" \
+                CONSOLE_ONLY="$CONSOLE_ONLY" \
                 bash -s <<'REMOTE'
           set -euo pipefail
 
@@ -84,27 +90,20 @@ jobs:
             say "Created .env.development from example"
           fi
 
-          if [ "$RENEW_TLS" = "true" ]; then
-            say "Dual-SAN TLS renewal"
-            chmod +x scripts/renew-tls-dual-san.sh
-            ./scripts/renew-tls-dual-san.sh
+                    if [ "$CONSOLE_ONLY" = "true" ]; then
+            say "Starting dev gateway + console only"
+            chmod +x scripts/dev-console-up.sh
+            ./scripts/dev-console-up.sh
+            curl -fsSk "https://dev.169.58.188.43.nip.io/console/login" | head -c 200 || echo "dev console check failed"
+            echo ""
+            exit 0
           fi
 
-          if [ "$BRING_UP_DEV" = "true" ]; then
-            say "Starting aura-dev stack"
-            docker compose -p aura-dev -f docker-compose.dev.yml \
-              --env-file .env.development --profile training up -d
-
-            say "Alembic migrate (dev)"
-            docker compose -p aura-dev -f docker-compose.dev.yml \
-              --env-file .env.development run --rm gateway alembic upgrade head
-          fi
-
-          if [ "$RUN_SEED" = "true" ] && [ "$BRING_UP_DEV" = "true" ]; then
-            say "Seeding dev console (Loop B)"
-            chmod +x scripts/seed-dev.sh
-            ./scripts/seed-dev.sh
-          fi
+          export AURA_DEV_OPS_TLS="$([ "$RENEW_TLS" = "true" ] && echo 1 || echo 0)"
+          export AURA_DEV_OPS_UP="$([ "$BRING_UP_DEV" = "true" ] && echo 1 || echo 0)"
+          export AURA_DEV_OPS_SEED="$([ "$RUN_SEED" = "true" ] && echo 1 || echo 0)"
+          chmod +x scripts/vps-dev-bring-up.sh
+          bash scripts/vps-dev-bring-up.sh
 
           say "Health checks"
           curl -fsS "https://169.58.188.43.nip.io/health/ready" | head -c 500

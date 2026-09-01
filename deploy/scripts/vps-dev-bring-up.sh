@@ -134,7 +134,7 @@ if [ "$SEED" = "1" ]; then
   say "Seeding dev console (Loop B)"
   chmod +x scripts/seed-dev.sh
   if ! ./scripts/seed-dev.sh; then
-    info "WARN: dev seed failed â€” gateway and console stay up; re-run seed-dev.sh on VPS"
+    info "WARN: dev seed failed — gateway and console stay up; re-run seed-dev.sh on VPS"
   fi
 fi
 
