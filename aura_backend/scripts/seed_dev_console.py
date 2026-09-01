@@ -3,8 +3,8 @@
 
 Wipes Loop B tables (feedback, approvals, jobs, models, experiments) while keeping
 knowledge sources and documents, inserts curated feedback, then runs the full pipeline:
-recommend → FINETUNE approval → LocalLora job (via Celery worker-training) →
-CANDIDATE → SHADOW → CANARY → pending MODEL_PROMOTION approval.
+recommend â†’ FINETUNE approval â†’ LocalLora job (via Celery worker-training) â†’
+CANDIDATE â†’ SHADOW â†’ CANARY â†’ pending MODEL_PROMOTION approval.
 
 Refuses production/staging ``AURA_ENVIRONMENT``. Intended to run inside the dev gateway
 container via ``deploy/scripts/seed-dev.sh``.
@@ -18,7 +18,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# Loop B tables only — knowledge / documents / memories are untouched.
+# Loop B tables only â€” knowledge / documents / memories are untouched.
 _WIPE_TABLES = (
     "aura_experiment_runs",
     "aura_experiments",
@@ -46,7 +46,7 @@ _SCENARIOS: tuple[tuple[str, str, str], ...] = (
     (
         "When is the benefits enrollment window?",
         "Enrollment dates depend on your start date.",
-        "Open enrollment runs November 1–15; new hires enroll within 30 days of start.",
+        "Open enrollment runs November 1â€“15; new hires enroll within 30 days of start.",
     ),
     (
         "Can I work remotely from another country?",
@@ -211,6 +211,10 @@ async def _run_pipeline(container: object) -> dict[str, str]:
 
 async def _main() -> int:
     _assert_dev_only()
+
+    from infrastructure.secret_hydration import hydrate_secrets_from_files
+
+    hydrate_secrets_from_files()
 
     from aura_core.config.settings import load_settings
     from aura_core.container import build_container
