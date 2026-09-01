@@ -6,6 +6,7 @@ credentials.json
 *.env
 .env
 .env.*
+!deploy/.env.development.example
 !.env.example
 Deployment_info.txt
 **/Deployment_info.txt
@@ -36,6 +37,9 @@ known_hosts
 # is about a developer's personal known_hosts, and it silently swallowed this file: the
 # workflow failed 25 consecutive times on `cp: cannot stat 'deploy/known_hosts'`.
 !deploy/known_hosts
+
+# VPS log exports (operational dumps — large, may contain sensitive runtime data)
+docs/reports/vps-logs-*.log
 
 # ==========================================
 # Python (aura_backend)

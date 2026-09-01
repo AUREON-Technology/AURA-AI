@@ -11,4 +11,31 @@ root (`deploy_client.sh`, `deploy_client.ps1`, etc.).
 | `deploy_rules.ps1` | Deploy Firebase rules from `firebase/` |
 | `init_infra.ps1` | Legacy GCP/Firebase bootstrap (historical) |
 
-Firebase rules live in `firebase/` and are referenced by `firebase.json` at the repo root.
+## Dual-environment VPS
+
+Production (`aura` compose project) and development (`aura-dev`) run in parallel on the same
+host. Prod nginx routes `dev.<ip>.nip.io` to the dev gateway/console over the shared Docker
+network `aura_edge`; Ollama stays on prod to save RAM.
+
+| Script / file | Purpose |
+| --- | --- |
+| `deploy/docker-compose.dev.yml` | Dev stack — isolated Postgres/Qdrant/Redis, shared Ollama |
+| `deploy/.env.development.example` | Template for `deploy/.env.development` |
+| `deploy/scripts/seed-dev.sh` | Seed Loop B console data on `aura-dev` only (refuses prod) |
+| `aura_backend/scripts/seed_dev_console.py` | Wipes Loop B tables, inserts feedback, runs fine-tune pipeline |
+
+Typical dev bring-up (on the VPS, after prod is running):
+
+```bash
+cp deploy/.env.development.example deploy/.env.development
+docker compose -p aura-dev -f deploy/docker-compose.dev.yml \
+  --env-file deploy/.env.development --profile training up -d
+docker compose -p aura-dev -f deploy/docker-compose.dev.yml \
+  --env-file deploy/.env.development run --rm gateway alembic upgrade head
+./deploy/scripts/seed-dev.sh
+```
+
+The Flutter app can switch between prod and dev URLs in **Settings → Server environment**
+without rebuilding the APK.
+
+See `docs/guides/deployment-guide.md` § Dual-environment VPS for TLS and Google OAuth steps.

@@ -110,6 +110,50 @@ invisible partly because nothing reported it.
 
 ---
 
+## Dual-environment VPS
+
+Run **production and development in parallel** on one host: prod at `https://169.x.x.x.nip.io`,
+dev at `https://dev.169.x.x.x.nip.io`. Prod stays on the existing `aura` compose project;
+dev uses a separate `aura-dev` project with its own Postgres, Qdrant, and Redis volumes.
+Prod nginx terminates TLS for both hostnames and proxies dev traffic to `aura-dev-gateway` /
+`aura-dev-console` over the shared Docker network `aura_edge`. Ollama remains on prod only.
+
+### Apply on an existing VPS
+
+1. Deploy code (prod unchanged): `./deploy/scripts/vps-update.sh`
+2. Add `AURA_DEV_DOMAIN=dev.<your-ip>.nip.io` to `deploy/.env` and reload nginx
+3. Re-issue TLS with both SANs (preferred):
+   ```bash
+   certbot certonly --standalone \
+     -d "$AURA_DOMAIN" \
+     -d "$AURA_DEV_DOMAIN"
+   docker compose -f deploy/docker-compose.prod.yml exec nginx nginx -s reload
+   ```
+4. Create dev config: `cp deploy/.env.development.example deploy/.env.development`
+5. Start dev stack:
+   ```bash
+   docker compose -p aura-dev -f deploy/docker-compose.dev.yml \
+     --env-file deploy/.env.development --profile training up -d
+   ```
+6. Migrate dev DB:
+   ```bash
+   docker compose -p aura-dev -f deploy/docker-compose.dev.yml \
+     --env-file deploy/.env.development run --rm gateway alembic upgrade head
+   ```
+7. Seed Loop B console data: `./deploy/scripts/seed-dev.sh`
+8. Add `https://dev.<your-ip>.nip.io` to Google Cloud Console **Authorized JavaScript origins**
+   for the console OAuth client
+9. Verify:
+   ```bash
+   curl -s https://$AURA_DOMAIN/health/ready | jq .healthy
+   curl -s https://$AURA_DEV_DOMAIN/health/ready | jq .healthy
+   ```
+
+The Flutter client switches between prod and dev in **Settings → Server environment** without
+rebuilding. Switching clears JWTs — sign in again after changing environments.
+
+---
+
 ## Configuration
 
 Everything is `AURA_`-prefixed environment variables, validated at startup. An invalid or
