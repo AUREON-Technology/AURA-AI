@@ -31,14 +31,12 @@ COMPOSE=(docker compose -p "$PROJECT" -f "$COMPOSE_FILE" --env-file "$ENV_FILE")
 
 say() { printf '\n==> %s\n' "$*"; }
 
-say "Ensuring aura-dev gateway is up"
-"${COMPOSE[@]}" up -d gateway
-
-say "Starting worker-training profile (LocalLoraTrainer)"
-"${COMPOSE[@]}" --profile training up -d worker-training
+say "Building dev gateway (seed script + deps)"
+"${COMPOSE[@]}" build gateway
 
 say "Running seed_dev_console.py in gateway"
-"${COMPOSE[@]}" exec \
+"${COMPOSE[@]}" run --rm \
+  --no-deps \
   -e COMPOSE_PROJECT_NAME="$PROJECT" \
   -e PYTHONPATH=/app \
   gateway python scripts/seed_dev_console.py
