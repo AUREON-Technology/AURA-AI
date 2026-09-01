@@ -34,6 +34,10 @@ say() { printf '\n==> %s\n' "$*"; }
 say "Building dev gateway (seed script + deps)"
 "${COMPOSE[@]}" build gateway
 
+say "Recreating worker-training with dev env (CPU LoRA flag)"
+"${COMPOSE[@]}" --profile training up -d --force-recreate worker-training
+sleep 10
+
 say "Running seed_dev_console.py in gateway"
 "${COMPOSE[@]}" run --rm \
   --no-deps \
