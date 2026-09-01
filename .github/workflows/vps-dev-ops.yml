@@ -1,0 +1,114 @@
+name: VPS Dev Ops
+
+# One-shot operator tasks on the Contabo host via the same SSH path as Deploy VPS.
+# Use when local SSH to port 22 is blocked but GitHub Actions can still reach the VPS.
+#
+# Actions → VPS Dev Ops → Run workflow
+#
+# Required: secrets.VPS_SSH_KEY, vars.VPS_HOST, vars.VPS_USER (production environment)
+
+on:
+  workflow_dispatch:
+    inputs:
+      renew_tls:
+        description: "Expand TLS cert to include AURA_DEV_DOMAIN (renew-tls-dual-san.sh)"
+        type: boolean
+        default: true
+      bring_up_dev:
+        description: "Start aura-dev stack (docker-compose.dev.yml + training profile)"
+        type: boolean
+        default: true
+      run_seed:
+        description: "Run seed-dev.sh after dev gateway is up"
+        type: boolean
+        default: true
+
+concurrency:
+  group: vps-dev-ops
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ops:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SSH key
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          test -n "$VPS_SSH_KEY" || { echo "VPS_SSH_KEY is not set" >&2; exit 1; }
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cp deploy/known_hosts ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Run dev TLS + stack on VPS
+        env:
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+          RENEW_TLS: ${{ inputs.renew_tls }}
+          BRING_UP_DEV: ${{ inputs.bring_up_dev }}
+          RUN_SEED: ${{ inputs.run_seed }}
+        run: |
+          test -n "$VPS_HOST" && test -n "$VPS_USER"
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            "${VPS_USER}@${VPS_HOST}" \
+            env RENEW_TLS="$RENEW_TLS" \
+                BRING_UP_DEV="$BRING_UP_DEV" \
+                RUN_SEED="$RUN_SEED" \
+                bash -s <<'REMOTE'
+          set -euo pipefail
+
+          REPO="/opt/aura-stack"
+          DEPLOY="$REPO/deploy"
+          cd "$DEPLOY"
+
+          say() { printf '\n==> %s\n' "$*"; }
+
+          say "Syncing repo on VPS"
+          git -C "$REPO" fetch origin main
+          git -C "$REPO" checkout main
+          git -C "$REPO" pull --ff-only origin main
+
+          if [ ! -f .env.development ] && [ -f .env.development.example ]; then
+            cp .env.development.example .env.development
+            say "Created .env.development from example"
+          fi
+
+          if [ "$RENEW_TLS" = "true" ]; then
+            say "Dual-SAN TLS renewal"
+            chmod +x scripts/renew-tls-dual-san.sh
+            ./scripts/renew-tls-dual-san.sh
+          fi
+
+          if [ "$BRING_UP_DEV" = "true" ]; then
+            say "Starting aura-dev stack"
+            docker compose -p aura-dev -f docker-compose.dev.yml \
+              --env-file .env.development --profile training up -d
+
+            say "Alembic migrate (dev)"
+            docker compose -p aura-dev -f docker-compose.dev.yml \
+              --env-file .env.development run --rm gateway alembic upgrade head
+          fi
+
+          if [ "$RUN_SEED" = "true" ] && [ "$BRING_UP_DEV" = "true" ]; then
+            say "Seeding dev console (Loop B)"
+            chmod +x scripts/seed-dev.sh
+            ./scripts/seed-dev.sh
+          fi
+
+          say "Health checks"
+          curl -fsS "https://169.58.188.43.nip.io/health/ready" | head -c 500
+          echo ""
+          curl -fsSk "https://dev.169.58.188.43.nip.io/health/ready" | head -c 500 || echo "dev health check failed"
+          echo ""
+          REMOTE

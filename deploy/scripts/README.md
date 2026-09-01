@@ -31,4 +31,4 @@ docker compose -p aura-dev -f deploy/docker-compose.dev.yml \
 
 Renew dual-hostname TLS on the VPS: `cd deploy && ./scripts/renew-tls-dual-san.sh` (see `docs/guides/deployment-guide.md`). Google OAuth dev origin setup is documented there too.
 
-When local SSH to the VPS (port 22) is blocked, use **GitHub Actions â†’ VPS Dev Ops** (`workflow_dispatch`) â€” same `VPS_SSH_KEY` as Deploy VPS â€” to run TLS renewal, dev stack bring-up, alembic, and seed.
+When local SSH to the VPS (port 22) is blocked, use **GitHub Actions → VPS Dev Ops** (`workflow_dispatch`) — same `VPS_SSH_KEY` as Deploy VPS — to run TLS renewal, dev stack bring-up, alembic, and seed.
