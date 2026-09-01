@@ -14,8 +14,12 @@ class BackendUrlNotifier extends Notifier<String> {
   }
 
   Future<void> _loadPersistedUrl() async {
-    final url = await BackendUrlSettings.resolveInitialUrl();
-    if (state != url) state = url;
+    try {
+      final url = await BackendUrlSettings.resolveInitialUrl();
+      if (state != url) state = url;
+    } on Object {
+      // Unit tests may initialize bindings without secure-storage plugins.
+    }
   }
 
   BackendEnvironment get currentEnvironment =>

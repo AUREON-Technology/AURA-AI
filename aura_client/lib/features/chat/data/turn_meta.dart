@@ -81,7 +81,7 @@ class TurnMeta {
       correlationId: json['correlation_id']?.toString(),
       confidence: _asDouble(json['confidence']),
       degraded: json['degraded'] == true,
-      needsConfirmation: (json['needs_confirmation'] as List? ?? const []).isNotEmpty,
+      needsConfirmation: _readNeedsConfirmation(json['needs_confirmation']),
       tainted: json['tainted'] == true,
       guardsComplete: json['guards_complete'] == true,
       revised: json['revised'] == true,
@@ -113,6 +113,12 @@ class TurnMeta {
   static double? _asDouble(Object? value) {
     if (value is num) return value.toDouble();
     return null;
+  }
+
+  static bool _readNeedsConfirmation(Object? raw) {
+    if (raw == true) return true;
+    if (raw is List) return raw.isNotEmpty;
+    return false;
   }
 }
 

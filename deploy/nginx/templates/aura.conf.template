@@ -45,15 +45,8 @@ upstream aura_console {
     keepalive 8;
 }
 
-upstream aura_gateway_dev {
-    server aura-dev-gateway:8000 max_fails=3 fail_timeout=15s;
-    keepalive 16;
-}
-
-upstream aura_console_dev {
-    server aura-dev-console:3000;
-    keepalive 8;
-}
+# Dev upstreams use variable proxy_pass + resolver in the dev server block so nginx
+# can start before the aura-dev stack exists (hostname resolved per request).
 
 # ---------------------------------------------------------------- HTTP: redirect + ACME
 server {
@@ -313,8 +306,12 @@ server {
     gzip_types application/json text/plain;
     gzip_min_length 1024;
 
+    # Dynamic upstream — avoids [emerg] when aura-dev-gateway is not on the network yet.
+    set $aura_dev_gateway aura-dev-gateway:8000;
+    set $aura_dev_console aura-dev-console:3000;
+
     location /api/v3/voice/live {
-        proxy_pass http://aura_gateway_dev;
+        proxy_pass http://$aura_dev_gateway;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -327,7 +324,7 @@ server {
     location /api/v3/chat/stream {
         limit_req zone=aura_chat burst=5 nodelay;
 
-        proxy_pass http://aura_gateway_dev;
+        proxy_pass http://$aura_dev_gateway;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
 
@@ -345,7 +342,7 @@ server {
     location /api/ {
         limit_req zone=aura_general burst=20 nodelay;
 
-        proxy_pass http://aura_gateway_dev;
+        proxy_pass http://$aura_dev_gateway;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_read_timeout 120s;
@@ -356,7 +353,7 @@ server {
 
     location /health/ {
         access_log off;
-        proxy_pass http://aura_gateway_dev;
+        proxy_pass http://$aura_dev_gateway;
         include /etc/nginx/conf.d/proxy_headers.inc;
     }
 
@@ -366,7 +363,7 @@ server {
     }
 
     location /console {
-        proxy_pass http://aura_console_dev;
+        proxy_pass http://$aura_dev_console;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";

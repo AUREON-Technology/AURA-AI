@@ -1,3 +1,6 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+
 import 'package:aura_client/core/config/backend_url_policy.dart';
 import 'package:aura_client/core/config/config.dart';
 import 'package:aura_client/core/security/aura_secure_storage.dart';
@@ -48,15 +51,21 @@ class BackendUrlSettings {
   static bool isAllowed(String url) => validationError(url) == null;
 
   static Future<BackendEnvironment?> loadSavedEnvironment() async {
-    final raw = await auraSecureStorage.read(key: storageKey);
-    return switch (raw) {
-      'production' => BackendEnvironment.production,
-      'development' => BackendEnvironment.development,
-      _ => null,
-    };
+    if (!_secureStorageAvailable) return null;
+    try {
+      final raw = await auraSecureStorage.read(key: storageKey);
+      return switch (raw) {
+        'production' => BackendEnvironment.production,
+        'development' => BackendEnvironment.development,
+        _ => null,
+      };
+    } on Object {
+      return null;
+    }
   }
 
   static Future<void> saveEnvironment(BackendEnvironment environment) async {
+    if (!_secureStorageAvailable) return;
     final value = switch (environment) {
       BackendEnvironment.production => 'production',
       BackendEnvironment.development => 'development',
@@ -69,18 +78,28 @@ class BackendUrlSettings {
   static Future<String> resolveInitialUrl() async {
     final saved = await loadSavedEnvironment();
     if (saved != null) return urlFor(saved);
-
-    final compileTime = _normalizeUrl(AppConfig.backendUrl);
-    if (isPresetUrl(compileTime)) return compileTime;
-    if (isAllowed(compileTime)) return compileTime;
-    return productionUrl;
+    return initialUrlSync();
   }
 
   static String initialUrlSync() {
     final compileTime = _normalizeUrl(AppConfig.backendUrl);
     if (isPresetUrl(compileTime)) return compileTime;
     if (isAllowed(compileTime)) return compileTime;
+    // `flutter test` / `flutter run` default to localhost — do not map that to the
+    // production preset or unit tests will take the release attestation path.
+    if (!kReleaseMode && !BackendUrlPolicy.isSafeForRelease(compileTime)) {
+      return compileTime;
+    }
     return productionUrl;
+  }
+
+  static bool get _secureStorageAvailable {
+    try {
+      ServicesBinding.instance;
+      return true;
+    } on Object {
+      return false;
+    }
   }
 
   static String _normalizeUrl(String url) {
