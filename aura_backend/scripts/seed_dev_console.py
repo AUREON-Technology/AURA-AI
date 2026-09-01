@@ -113,6 +113,16 @@ def _feedback_rows() -> list[tuple[str, str, str, str, str, datetime]]:
     return rows
 
 
+async def _ensure_loop_b_schema(container: object) -> None:
+    """Loop B tables are created by Postgres adapters on first use, not Alembic."""
+    c = container  # type: ignore[attr-defined]
+    await c.feedback._ensure_schema()
+    await c.approvals._store._ensure_schema()
+    await c.finetune_jobs._jobs._ensure_schema()
+    await c.models._store._ensure_schema()
+    await c.experiments._store._ensure_schema()
+
+
 async def _wipe_loop_b(pool: object, dataset_dir: Path) -> None:
     conn_cm = await pool.acquire()  # type: ignore[attr-defined]
     async with conn_cm as conn:
@@ -224,6 +234,7 @@ async def _main() -> int:
 
     pool = container.postgres_pool()
     dataset_dir = Path(settings.learning.dataset_dir)
+    await _ensure_loop_b_schema(container)
     await _wipe_loop_b(pool, dataset_dir)
 
     inserted = await _seed_feedback(container)
