@@ -8,12 +8,14 @@ export function ConfirmDialog({
   onConfirm,
   children,
   danger = false,
+  disabled = false,
 }: {
   title: string;
   confirmText: string;
   onConfirm: () => Promise<void> | void;
   children: ReactNode;
   danger?: boolean;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
@@ -40,7 +42,12 @@ export function ConfirmDialog({
 
   return (
     <>
-      <button className={`btn ${danger ? "danger" : ""}`} type="button" onClick={() => setOpen(true)}>
+      <button
+        className={`btn ${danger ? "danger" : ""}`}
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen(true)}
+      >
         {children}
       </button>
       {open ? (
