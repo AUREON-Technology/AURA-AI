@@ -76,12 +76,19 @@ class TurnMeta {
 
   factory TurnMeta.fromJson(Map<String, dynamic> json) {
     final rawSteps = json['steps'];
+    // The wire format (the backend's `done` frame) sends a list of pending tool names; the
+    // locally persisted cache (TurnMeta.encode -> Message.turnMetaJson) round-trips it as the
+    // plain bool this class exposes. Accept either so decoding a cached message doesn't lose it.
+    final rawNeedsConfirmation = json['needs_confirmation'];
+    final needsConfirmation = rawNeedsConfirmation is List
+        ? rawNeedsConfirmation.isNotEmpty
+        : rawNeedsConfirmation == true;
     return TurnMeta(
       turnId: json['turn_id']?.toString(),
       correlationId: json['correlation_id']?.toString(),
       confidence: _asDouble(json['confidence']),
       degraded: json['degraded'] == true,
-      needsConfirmation: (json['needs_confirmation'] as List? ?? const []).isNotEmpty,
+      needsConfirmation: needsConfirmation,
       tainted: json['tainted'] == true,
       guardsComplete: json['guards_complete'] == true,
       revised: json['revised'] == true,
