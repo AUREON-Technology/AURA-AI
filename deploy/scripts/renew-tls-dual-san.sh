@@ -89,10 +89,12 @@ run_standalone() {
 verify_dev_san() {
   say "Verifying certificate SAN for $AURA_DEV_DOMAIN"
   local cert
-  cert="$(echo | openssl s_client -servername "$AURA_DEV_DOMAIN" -connect 127.0.0.1:443 2>/dev/null \
-    | openssl x509 -noout -text 2>/dev/null || true)"
+  cert="$(docker run --rm \
+    -v "${CERT_VOLUME}:/etc/letsencrypt" \
+    alpine/openssl:latest \
+    x509 -in "/etc/letsencrypt/live/$AURA_DOMAIN/fullchain.pem" -noout -text 2>/dev/null || true)"
   if [ -z "$cert" ]; then
-    die "could not read a certificate from 127.0.0.1:443 (is nginx up?)"
+    die "could not read fullchain.pem for $AURA_DOMAIN from cert volume $CERT_VOLUME"
   fi
   echo "$cert" | grep -E "Subject:|DNS:" || true
   if ! echo "$cert" | grep -F "DNS:$AURA_DEV_DOMAIN" >/dev/null; then
@@ -117,7 +119,8 @@ else
 fi
 
 say "Reloading nginx"
-"${DC[@]}" exec nginx nginx -s reload
+"${DC[@]}" up -d --force-recreate --no-deps nginx
+sleep 3
 
 verify_dev_san
 
