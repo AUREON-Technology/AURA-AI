@@ -49,13 +49,26 @@ if [ "$TLS" = "1" ]; then
 fi
 
 if [ "$UP" = "1" ]; then
-  say "Starting aura-dev stack"
+  say "Starting aura-dev data layer"
   docker compose -p aura-dev -f docker-compose.dev.yml \
-    --env-file .env.development --profile training up -d
+    --env-file .env.development up -d postgres redis qdrant
+
+  say "Waiting for postgres"
+  for attempt in $(seq 1 30); do
+    if docker compose -p aura-dev -f docker-compose.dev.yml \
+      --env-file .env.development exec -T postgres pg_isready -U aura >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
 
   say "Alembic migrate (dev)"
   docker compose -p aura-dev -f docker-compose.dev.yml \
     --env-file .env.development run --rm gateway alembic upgrade head
+
+  say "Starting aura-dev app layer"
+  docker compose -p aura-dev -f docker-compose.dev.yml \
+    --env-file .env.development --profile training up -d
 fi
 
 if [ "$SEED" = "1" ]; then
