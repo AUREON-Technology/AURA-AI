@@ -153,7 +153,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           itemCount: messages.length,
                           itemBuilder: (context, index) {
                             final msg = messages[index];
-                            return MessageBubble(message: msg, isUser: msg.role == 'user');
+                            String? userPrompt;
+                            if (msg.role != 'user') {
+                              for (var i = index - 1; i >= 0; i--) {
+                                if (messages[i].role == 'user') {
+                                  userPrompt = messages[i].content;
+                                  break;
+                                }
+                              }
+                            }
+                            return MessageBubble(
+                              message: msg,
+                              isUser: msg.role == 'user',
+                              userPrompt: userPrompt,
+                            );
                           },
                         );
                       },

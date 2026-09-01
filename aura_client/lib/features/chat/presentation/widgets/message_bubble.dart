@@ -26,7 +26,13 @@ import 'voice_playback_button.dart';
 class MessageBubble extends ConsumerWidget {
   final Message message;
   final bool isUser;
-  const MessageBubble({super.key, required this.message, required this.isUser});
+  final String? userPrompt;
+  const MessageBubble({
+    super.key,
+    required this.message,
+    required this.isUser,
+    this.userPrompt,
+  });
 
   List<String> _decodeCitations() {
     final raw = message.citationsJson;
@@ -273,6 +279,7 @@ class MessageBubble extends ConsumerWidget {
                               context: context,
                               ref: ref,
                               turnId: turnMeta.turnId!,
+                              prompt: userPrompt,
                               response: message.content,
                             ),
                           ),
