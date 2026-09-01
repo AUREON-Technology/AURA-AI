@@ -491,8 +491,8 @@ Phase A, not by an estimate.
 
 ---
 
-Related: [Production Readiness Score](../AURA_AI_PRODUCTION_READINESS_SCORE.md) ·
-[Current Architecture](../AURA_AI_CURRENT_ARCHITECTURE.md) ·
+Related: [Production Readiness Score](reports/AURA_AI_PRODUCTION_READINESS_SCORE.md) ·
+[Current Architecture](reports/AURA_AI_CURRENT_ARCHITECTURE.md) ·
 [Architecture Overview](architecture/00-overview.md) ·
 [Missing Components](analysis/03-missing-components-report.md) ·
-[V2 Blueprint](../Doc/V2_BLUEPRINT.md)
+[V2 Blueprint](archive/legacy-doc/V2_BLUEPRINT.md)

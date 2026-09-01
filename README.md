@@ -99,6 +99,23 @@ Start with the [overview](docs/architecture/00-overview.md).
 
 ---
 
+## Repository layout
+
+```
+aura_backend/     Python/FastAPI — the product (v3 gateway, AI kernel)
+aura_client/      Flutter app (Android/iOS/macOS/web/desktop)
+aura_admin/       Next.js admin dashboard
+deploy/           Production compose, nginx, bootstrap/update scripts
+docs/             Architecture, guides, reports, plans, and archived docs
+infra/            Terraform for cloud provisioning
+scripts/          Client build, Firebase rules, and local dev helpers
+docker-compose.yml   Local dev stack (backend + qdrant + redis + workers)
+```
+
+Root-level `deploy_client.sh` / `.ps1` are thin wrappers around `scripts/` — either entry point works.
+
+---
+
 ## Documentation
 
 **Getting it running**
@@ -128,10 +145,10 @@ Start with the [overview](docs/architecture/00-overview.md).
 
 **The self-hosting mission** — what the system looked like before it, what changed, and an
 uninflated assessment of how close to production it actually is:
-[pre-modification audit](AURA_AI_CURRENT_ARCHITECTURE.md) ·
-[final implementation report](AURA_AI_FINAL_IMPLEMENTATION_REPORT.md) ·
-[production readiness score](AURA_AI_PRODUCTION_READINESS_SCORE.md) ·
-[hardware capacity report](AI_HARDWARE_CAPACITY_REPORT.md)
+[pre-modification audit](docs/reports/AURA_AI_CURRENT_ARCHITECTURE.md) ·
+[final implementation report](docs/reports/AURA_AI_FINAL_IMPLEMENTATION_REPORT.md) ·
+[production readiness score](docs/reports/AURA_AI_PRODUCTION_READINESS_SCORE.md) ·
+[hardware capacity report](docs/reports/AI_HARDWARE_CAPACITY_REPORT.md)
 
 **Where it started** — the Phase 1 analysis of the system this replaces, with file:line evidence
 for every finding: [architecture](docs/analysis/01-architecture-report.md) ·

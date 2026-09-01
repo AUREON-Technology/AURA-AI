@@ -16,6 +16,10 @@ Three independent apps in one repo:
 - **`aura_admin/`** — Next.js admin dashboard (lightly used so far; `npm run dev|build|lint`,
   `npm run test:e2e` for Playwright).
 
+Supporting directories: `deploy/` (production stack), `docs/` (architecture, guides, reports),
+`infra/` (Terraform), `scripts/` (client build and Firebase helpers). Historical docs live under
+`docs/archive/`.
+
 `docs/AURA_UPGRADE_ROADMAP.md` is the current source of truth for what's actually built vs. only
 claimed — it's baselined against a specific commit and corrects stale claims with file:line
 citations. Check it before assuming a capability does or doesn't exist. Its standing rule also

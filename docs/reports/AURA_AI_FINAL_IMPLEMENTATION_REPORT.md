@@ -13,7 +13,7 @@ section 3.
 Companion documents:
 [Pre-modification audit](AURA_AI_CURRENT_ARCHITECTURE.md) ·
 [Production readiness score](AURA_AI_PRODUCTION_READINESS_SCORE.md) ·
-[Architecture decision records](docs/architecture/00-overview.md)
+[Architecture decision records](../architecture/00-overview.md)
 
 ---
 
