@@ -183,6 +183,34 @@ class TestPromotionGate:
         assert promoted.stage is ModelStage.PRODUCTION
         assert done.status is FineTuneJobStatus.SUCCEEDED
 
+    async def test_finetune_digest_approval_cannot_promote_to_production(self, loop_b) -> None:
+        """A FINETUNE approval keyed to a dataset digest must not satisfy a PRODUCTION
+        promotion, even when the model version shares that same dataset_digest."""
+        _, _, approvals, models, _ = loop_b
+        from aura_core.mlops.model_registry import ModelVersion
+
+        digest = "shared-digest-xyz"
+        version = ModelVersion(
+            model_id="aura-ft",
+            version="9.9.9",
+            provider_kind="ollama",
+            stage=ModelStage.CANARY,
+            canary_percent=10,
+            artefact_uri="aura-ft:9.9.9",
+            dataset_digest=digest,
+        )
+        await models.register(version)
+
+        finetune_approval = await approvals.request(
+            kind=ApprovalKind.FINETUNE, summary="train run", artefact_digest=digest,
+        )
+        await approvals.decide(finetune_approval.id, approved=True, by="admin@example.com")
+
+        with pytest.raises((ApprovalRequiredError, ConflictError)):
+            await models.transition(
+                "aura-ft", "9.9.9", to=ModelStage.PRODUCTION, approval_id=finetune_approval.id,
+            )
+
     async def test_canary_blocked_on_coverage_drop(self, loop_b) -> None:
         _, _, approvals, models, _ = loop_b
         from aura_core.mlops.model_registry import ModelVersion
