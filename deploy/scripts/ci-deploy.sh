@@ -19,6 +19,8 @@ export AURA_COMPOSE="${AURA_COMPOSE:-$AURA_REPO/deploy/docker-compose.prod.yml}"
 export AURA_PROJECT="${AURA_PROJECT:-aura}"
 export AURA_BACKEND_SERVICE="${AURA_BACKEND_SERVICE:-gateway}"
 export AURA_STASH_DIRTY="${AURA_STASH_DIRTY:-1}"
+# One-shot: dual-SAN TLS + aura-dev stack (unset after first successful Deploy VPS run).
+export AURA_DEV_OPS="${AURA_DEV_OPS:-1}"
 
 if [ -z "${AURA_HEALTH_URL:-}" ] && [ -f "$AURA_REPO/deploy/.env" ]; then
   domain="$(sed -n 's/^AURA_DOMAIN=//p' "$AURA_REPO/deploy/.env" | head -1 | tr -d "[:space:]\"'")"
@@ -34,4 +36,8 @@ if [ -n "${AURA_SHA:-}" ] && git -C "$AURA_REPO" cat-file -e "${AURA_SHA}:deploy
 fi
 
 cd "$AURA_REPO/deploy"
-exec bash "$UPDATE_SH" "$@"
+bash "$UPDATE_SH" "$@"
+
+if [ "${AURA_DEV_OPS:-0}" = "1" ] && [ -f "$AURA_REPO/deploy/scripts/vps-dev-bring-up.sh" ]; then
+  bash "$AURA_REPO/deploy/scripts/vps-dev-bring-up.sh"
+fi
