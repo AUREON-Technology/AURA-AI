@@ -3,7 +3,7 @@
 # Seed Loop B console data on the aura-dev stack only.
 #
 # Wipes dev Loop B tables, inserts curated feedback, and runs the full pipeline
-# (FINETUNE approval → LocalLora job on worker-training → canary model → pending
+# (FINETUNE approval â†’ LocalLora job on worker-training â†’ canary model â†’ pending
 # MODEL_PROMOTION approval). Refuses the production ``aura`` compose project.
 #
 # Usage (from repo root on the VPS):
@@ -40,6 +40,7 @@ say "Starting worker-training profile (LocalLoraTrainer)"
 say "Running seed_dev_console.py in gateway"
 "${COMPOSE[@]}" exec \
   -e COMPOSE_PROJECT_NAME="$PROJECT" \
+  -e PYTHONPATH=/app \
   gateway python scripts/seed_dev_console.py
 
-say "Done — open https://$(grep -E '^AURA_DOMAIN=' "$ENV_FILE" | head -1 | cut -d= -f2-)/console/learning"
+say "Done â€” open https://$(grep -E '^AURA_DOMAIN=' "$ENV_FILE" | head -1 | cut -d= -f2-)/console/learning"
