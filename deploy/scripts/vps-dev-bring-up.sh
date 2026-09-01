@@ -49,6 +49,10 @@ if [ "$TLS" = "1" ]; then
 fi
 
 if [ "$UP" = "1" ]; then
+  say "Stopping stale dev app containers (if any)"
+  docker compose -p aura-dev -f docker-compose.dev.yml \
+    --env-file .env.development stop gateway console 2>/dev/null || true
+
   say "Starting aura-dev data layer"
   docker compose -p aura-dev -f docker-compose.dev.yml \
     --env-file .env.development up -d postgres redis qdrant
@@ -65,6 +69,25 @@ if [ "$UP" = "1" ]; then
   say "Alembic migrate (dev)"
   docker compose -p aura-dev -f docker-compose.dev.yml \
     --env-file .env.development run --rm gateway alembic upgrade head
+
+  say "Recreating dev gateway"
+  docker compose -p aura-dev -f docker-compose.dev.yml \
+    --env-file .env.development up -d --force-recreate --no-deps gateway
+
+  say "Waiting for dev gateway health"
+  for attempt in $(seq 1 36); do
+    status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' aura-dev-gateway 2>/dev/null || echo missing)"
+    if [ "$status" = "healthy" ]; then
+      info "gateway healthy"
+      break
+    fi
+    if [ "$attempt" = "36" ]; then
+      docker compose -p aura-dev -f docker-compose.dev.yml \
+        --env-file .env.development logs --tail=40 gateway || true
+      die "aura-dev-gateway not healthy (status=$status)"
+    fi
+    sleep 5
+  done
 
   say "Starting aura-dev app layer"
   docker compose -p aura-dev -f docker-compose.dev.yml \
