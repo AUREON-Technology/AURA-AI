@@ -346,7 +346,7 @@ class DatasetCurator:
             recommended=recommended,
             reasons=tuple(reasons),
             statistics=statistics_,
-            dataset_digest=dataset_digest(examples),
+            dataset_digest=dataset_digest(examples) if examples else "",
             estimated_examples=len(examples),
             estimated_tokens=tokens,
             estimated_cost_usd=(

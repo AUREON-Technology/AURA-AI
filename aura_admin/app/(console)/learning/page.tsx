@@ -126,6 +126,7 @@ export default function LearningPage() {
           <ConfirmDialog
             title="Request fine-tune approval"
             confirmText="request"
+            disabled={!recommendation?.dataset_digest}
             onConfirm={async () => {
               const body = await api<{ approval: { id: string } }>(
                 "/admin/learning/request-approval",
@@ -146,6 +147,9 @@ export default function LearningPage() {
             </a>
           ) : null}
         </div>
+        {!recommendation?.dataset_digest ? (
+          <p className="muted">No curated dataset yet — nothing to approve or export.</p>
+        ) : null}
         {approvalId ? <p className="muted">Pending approval: {approvalId}</p> : null}
       </div>
 
