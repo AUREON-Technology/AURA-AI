@@ -508,6 +508,7 @@ class AIKernel:
                     yield {"type": "citations", "citations": visible_citations}
 
                 collected: list[str] = []
+                saw_tool_calls = False
                 last_usage = None
                 assigned = await self._assigned_model(request)
                 completion = CompletionRequest(
@@ -532,6 +533,7 @@ class AIKernel:
                     if chunk.tool_calls:
                         # Informational only. Dispatching these would bypass taint/confirmation
                         # (ADR-006); planning/execution above is the only execute path.
+                        saw_tool_calls = True
                         yield {
                             "type": "tool_calls",
                             "calls": [
@@ -541,6 +543,25 @@ class AIKernel:
                         }
 
                 answer = "".join(collected)
+                empty_generation_fallback = False
+                if not answer.strip() and saw_tool_calls:
+                    # The model answered with a native tool-call and no text. Those calls are
+                    # informational only here (ADR-006) and were never executed, so without this
+                    # the turn would otherwise end as a bare "success" with an empty answer -- the
+                    # client has no way to tell that apart from a genuine failure.
+                    logger.warning(
+                        "generation returned tool-calls-only with no text; synthesizing fallback",
+                        extra={"needs_confirmation": bool(needs_confirmation)},
+                    )
+                    empty_generation_fallback = True
+                    answer = (
+                        "I have a suggested action ready for your confirmation below."
+                        if needs_confirmation
+                        else "I wasn't able to put together a reply for that -- "
+                        "could you rephrase your message or try again?"
+                    )
+                    yield {"type": "token", "text": answer}
+
                 guards_complete = False
                 if deps.safety is not None:
                     try:
@@ -599,8 +620,9 @@ class AIKernel:
                     "correlation_id": correlation.value,
                     # Stream does not run the reasoner; null is honest, not a fake score.
                     "confidence": None,
-                    "degraded": bool(tainted or searched_empty),
+                    "degraded": bool(tainted or searched_empty or empty_generation_fallback),
                     "searched_but_empty": searched_empty,
+                    "empty_generation_fallback": empty_generation_fallback,
                     "usage": {
                         "prompt_tokens": last_usage.prompt_tokens if last_usage else 0,
                         "completion_tokens": (
@@ -736,8 +758,15 @@ class AIKernel:
         deps = self._deps
         if deps.planner is None or deps.executor is None or not tools:
             return False
+        force = request.plan
+        if force is None and request.confirmed_tools:
+            # A caller supplying confirmed_tools is resuming a tool the user just approved;
+            # that must run through planning/execution (the only sanctioned execute path,
+            # ADR-006) regardless of whether the confirmation reply itself matches the
+            # short-message heuristic below.
+            force = True
         return deps.planner.needs_plan(
-            request.message, available_tools=[t.get("name", "") for t in tools], force=request.plan
+            request.message, available_tools=[t.get("name", "") for t in tools], force=force
         )
 
     def _tool_context(self, request: TurnRequest, tainted: bool) -> ToolContext:

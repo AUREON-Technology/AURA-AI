@@ -81,7 +81,7 @@ class TurnMeta {
       correlationId: json['correlation_id']?.toString(),
       confidence: _asDouble(json['confidence']),
       degraded: json['degraded'] == true,
-      needsConfirmation: json['needs_confirmation'] == true,
+      needsConfirmation: (json['needs_confirmation'] as List? ?? const []).isNotEmpty,
       tainted: json['tainted'] == true,
       guardsComplete: json['guards_complete'] == true,
       revised: json['revised'] == true,

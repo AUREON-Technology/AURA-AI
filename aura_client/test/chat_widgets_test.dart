@@ -125,6 +125,53 @@ void main() {
       expect(find.text('Retry'), findsOneWidget);
       expect(find.byType(MarkdownBody), findsNothing);
     });
+
+    testWidgets(
+      'empty turn awaiting confirmation shows a hint, not the plain retry card',
+      (tester) async {
+        final message = Message(
+          id: 'asst-confirm',
+          conversationId: 'conv-1',
+          role: 'assistant',
+          content: '',
+          createdAt: DateTime.utc(2026, 1, 1),
+          toolCallsJson: '[{"name":"propose_health_log","arguments":{},"settled":true}]',
+          citationsJson: '["handbook@v1"]',
+          turnMetaJson: const TurnMeta(needsConfirmation: true, guardsComplete: true).encode(),
+        );
+        await tester.pumpWidget(
+          ProviderScope(
+            child: _wrap(MessageBubble(message: message, isUser: false)),
+          ),
+        );
+        expect(find.text('No reply this turn'), findsNothing);
+        expect(find.text('Retry'), findsNothing);
+        expect(find.text('Confirm the action above to continue.'), findsOneWidget);
+        expect(find.byType(ToolCallChips), findsOneWidget);
+        expect(find.byType(CitationChips), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'empty turn without a pending confirmation still shows the plain retry card',
+      (tester) async {
+        final message = Message(
+          id: 'asst-empty-2',
+          conversationId: 'conv-1',
+          role: 'assistant',
+          content: '',
+          createdAt: DateTime.utc(2026, 1, 1),
+          turnMetaJson: const TurnMeta(needsConfirmation: false).encode(),
+        );
+        await tester.pumpWidget(
+          ProviderScope(
+            child: _wrap(MessageBubble(message: message, isUser: false)),
+          ),
+        );
+        expect(find.text('No reply this turn'), findsOneWidget);
+        expect(find.text('Retry'), findsOneWidget);
+      },
+    );
   });
 
   group('ToolCallChips', () {

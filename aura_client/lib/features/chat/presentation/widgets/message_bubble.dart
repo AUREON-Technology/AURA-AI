@@ -213,6 +213,10 @@ class MessageBubble extends ConsumerWidget {
                     ],
                     if (showSkeleton)
                       const StreamingMessageSkeleton()
+                    else if (!isStreaming &&
+                        message.content.trim().isEmpty &&
+                        turnMeta.needsConfirmation)
+                      const _AwaitingConfirmationHint()
                     else if (!isStreaming && message.content.trim().isEmpty)
                       EmptyAnswerRetryCard(
                         onRetry: () {
@@ -288,6 +292,31 @@ class MessageBubble extends ConsumerWidget {
                 ),
               ),
       ),
+    );
+  }
+}
+
+/// Shown instead of [EmptyAnswerRetryCard] when a turn ended with no text because it is
+/// waiting on the user to confirm a proposed tool action, not because it failed outright --
+/// retrying would just resend the same unconfirmed request.
+class _AwaitingConfirmationHint extends StatelessWidget {
+  const _AwaitingConfirmationHint();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.pending_actions_outlined, size: 16, color: palette.textSecondary),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            'Confirm the action above to continue.',
+            style: TextStyle(color: palette.textSecondary, fontSize: 13, height: 1.4),
+          ),
+        ),
+      ],
     );
   }
 }
