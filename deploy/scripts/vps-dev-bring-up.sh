@@ -11,6 +11,7 @@
 set -euo pipefail
 
 say() { printf '\n==> %s\n' "$*"; }
+info() { printf '    %s\n' "$*"; }
 die() { printf '\nFAILED: %s\n' "$*" >&2; exit 1; }
 
 REPO="${AURA_REPO:-/opt/aura-stack}"
