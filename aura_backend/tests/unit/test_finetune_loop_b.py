@@ -6,7 +6,12 @@ from datetime import datetime, timezone
 
 import pytest
 
-from aura_core.domain.errors import ApprovalRequiredError, ConflictError, NotFoundError
+from aura_core.domain.errors import (
+    ApprovalRequiredError,
+    ConflictError,
+    NotFoundError,
+    ValidationError,
+)
 from aura_core.domain.identifiers import UserId
 from aura_core.learning import (
     ApprovalKind,
@@ -114,6 +119,17 @@ class TestFineTuneService:
         assert approval.artefact_digest == recommendation.dataset_digest
         loaded = await approvals._store.get(approval.id)
         assert loaded is not None
+
+    async def test_recommend_with_no_examples_has_no_digest(self, loop_b) -> None:
+        _, service, *_ = loop_b
+        recommendation, stored = await service.recommend()
+        assert stored is None
+        assert recommendation.dataset_digest == ""
+
+    async def test_request_approval_with_no_examples_is_a_validation_error(self, loop_b) -> None:
+        _, service, *_ = loop_b
+        with pytest.raises(ValidationError):
+            await service.request_approval()
 
 
 class TestFineTuneJobEngine:
