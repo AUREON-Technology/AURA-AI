@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 #
 # TLS dual-SAN renewal + aura-dev stack bring-up + optional seed.
 # Invoked from ci-deploy.sh when AURA_DEV_OPS=1 (GitHub Actions Deploy VPS).
@@ -50,9 +50,9 @@ if [ "$TLS" = "1" ]; then
 fi
 
 if [ "$UP" = "1" ]; then
-  say "Stopping stale dev app containers (if any)"
+  say "Stopping stale dev gateway (if any) — console left running to avoid nginx 502"
   docker compose -p aura-dev -f docker-compose.dev.yml \
-    --env-file .env.development stop gateway console 2>/dev/null || true
+    --env-file .env.development stop gateway 2>/dev/null || true
 
   say "Starting aura-dev data layer"
   docker compose -p aura-dev -f docker-compose.dev.yml \
@@ -98,7 +98,9 @@ fi
 if [ "$SEED" = "1" ]; then
   say "Seeding dev console (Loop B)"
   chmod +x scripts/seed-dev.sh
-  ./scripts/seed-dev.sh
+  if ! ./scripts/seed-dev.sh; then
+    info "WARN: dev seed failed — gateway and console stay up; re-run seed-dev.sh on VPS"
+  fi
 fi
 
 say "Dev health check"
