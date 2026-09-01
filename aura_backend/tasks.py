@@ -62,7 +62,7 @@ def build_lora_dataset_task(user_id: str) -> dict:
     logger.info(f"Celery task: Building LoRA dataset in background...")
     try:
         dataset = learning_pipeline.build_lora_dataset("alpaca")
-        # Written under settings.data_dir, not the container-local cwd — the
+        # Written under settings.data_dir, not the container-local cwd â€” the
         # Celery worker and the API run in *separate containers*, so a file
         # written to either one's cwd is invisible to the other and is lost on
         # the next redeploy. Only a shared mounted volume makes this artifact
@@ -98,9 +98,12 @@ def drain_finetune_queue_task() -> dict:
 
 
 async def _run_finetune_job(job_id: str) -> dict:
+    from infrastructure.secret_hydration import hydrate_secrets_from_files
+    from aura_core.config import load_settings
     from aura_core.container import build_container
 
-    container = build_container()
+    hydrate_secrets_from_files()
+    container = build_container(load_settings(refresh=True))
     job = await container.finetune_jobs.run(job_id)
     return {"status": str(job.status), "job": job.as_dict()}
 
@@ -145,7 +148,7 @@ async def _generate_insights_for_all_users() -> int:
 @celery_app.task(name="tasks.generate_insights_for_all_users_task", queue="realtime")
 def generate_insights_for_all_users_task() -> dict:
     """Beat-scheduled wrapper bridging Celery's sync task execution into
-    the async SQLAlchemy service (services/insights.py) — each run gets
+    the async SQLAlchemy service (services/insights.py) â€” each run gets
     its own event loop, same pattern as any sync-context-calls-async-code
     integration."""
     logger.info("Celery task: Generating insights for all users...")
