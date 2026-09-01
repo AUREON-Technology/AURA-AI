@@ -8,6 +8,7 @@ root unless noted.
 | `bootstrap-secrets.sh` | Generate `deploy/secrets/*` for first prod bring-up |
 | `bootstrap-host.sh` | Host prep (Docker, firewall) |
 | `vps-update.sh` | Pull `main`, migrate, rebuild prod stack, health-check |
+| `renew-tls-dual-san.sh` | On VPS: expand Let's Encrypt cert with prod + dev SANs (deploy/) |
 | `seed-dev.sh` | Seed Loop B data on **`aura-dev` only** (refuses prod project) |
 | `backup.sh` / `restore.sh` | Local backup cycle (invoked by backup service) |
 | `ci-deploy.sh` | CI entrypoint for automated prod deploy |
@@ -28,4 +29,4 @@ docker compose -p aura-dev -f deploy/docker-compose.dev.yml \
 ./deploy/scripts/seed-dev.sh
 ```
 
-See `docs/guides/deployment-guide.md` for TLS SAN renewal and Google OAuth dev origin setup.
+Renew dual-hostname TLS on the VPS: `cd deploy && ./scripts/renew-tls-dual-san.sh` (see `docs/guides/deployment-guide.md`). Google OAuth dev origin setup is documented there too.

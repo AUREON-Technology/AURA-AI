@@ -122,13 +122,15 @@ Prod nginx terminates TLS for both hostnames and proxies dev traffic to `aura-de
 
 1. Deploy code (prod unchanged): `./deploy/scripts/vps-update.sh`
 2. Add `AURA_DEV_DOMAIN=dev.<your-ip>.nip.io` to `deploy/.env` and reload nginx
-3. Re-issue TLS with both SANs (preferred):
+3. Re-issue TLS with both SANs **on the VPS** (SSH in; do not run certbot from a Windows
+   workstation). From `deploy/` on the host:
    ```bash
-   certbot certonly --standalone \
-     -d "$AURA_DOMAIN" \
-     -d "$AURA_DEV_DOMAIN"
-   docker compose -f deploy/docker-compose.prod.yml exec nginx nginx -s reload
+   ./scripts/renew-tls-dual-san.sh
    ```
+   The script sources `deploy/.env`, tries webroot issuance with nginx up, falls back to
+   standalone if needed, reloads nginx, and prints an OpenSSL SAN check for the dev hostname.
+   Until the `aura-dev` gateway is running, `https://$AURA_DEV_DOMAIN` may still return **502**
+   after the cert is fixed - bring up the dev stack (step 5).
 4. Create dev config: `cp deploy/.env.development.example deploy/.env.development`
 5. Start dev stack:
    ```bash
