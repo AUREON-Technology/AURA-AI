@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # GitHub Actions entry point. Same as vps-update.sh, with the production
 # checkout's locations filled in so the workflow does not have to know them.
 #
@@ -40,4 +40,8 @@ bash "$UPDATE_SH" "$@"
 
 if [ "${AURA_DEV_OPS:-0}" = "1" ] && [ -f "$AURA_REPO/deploy/scripts/vps-dev-bring-up.sh" ]; then
   bash "$AURA_REPO/deploy/scripts/vps-dev-bring-up.sh"
+fi
+# Keep dev /console reachable after prod deploy (nginx proxies to aura-dev-console).
+if [ -f "$AURA_REPO/deploy/scripts/dev-console-up.sh" ]; then
+  bash "$AURA_REPO/deploy/scripts/dev-console-up.sh" || true
 fi
