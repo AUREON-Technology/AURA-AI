@@ -18,7 +18,7 @@ REPO="${AURA_REPO:-/opt/aura-stack}"
 DEPLOY="${AURA_DEPLOY_DIR:-$REPO/deploy}"
 TLS="${AURA_DEV_OPS_TLS:-1}"
 UP="${AURA_DEV_OPS_UP:-1}"
-SEED="${AURA_DEV_OPS_SEED:-1}"
+SEED="${AURA_DEV_OPS_SEED:-0}"
 
 [ -d "$DEPLOY" ] || die "deploy dir not found: $DEPLOY"
 cd "$DEPLOY"
@@ -70,7 +70,7 @@ if [ "$TLS" = "1" ]; then
 fi
 
 if [ "$UP" = "1" ]; then
-  say "Stopping stale dev gateway (if any) — console left running to avoid nginx 502"
+  say "Stopping stale dev gateway (if any) â€” console left running to avoid nginx 502"
   docker compose -p aura-dev -f docker-compose.dev.yml \
     --env-file .env.development stop gateway 2>/dev/null || true
 
@@ -134,7 +134,7 @@ if [ "$SEED" = "1" ]; then
   say "Seeding dev console (Loop B)"
   chmod +x scripts/seed-dev.sh
   if ! ./scripts/seed-dev.sh; then
-    info "WARN: dev seed failed — gateway and console stay up; re-run seed-dev.sh on VPS"
+    info "WARN: dev seed failed â€” gateway and console stay up; re-run seed-dev.sh on VPS"
   fi
 fi
 
