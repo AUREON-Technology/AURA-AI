@@ -1,0 +1,353 @@
+# AURA AI — development stack (parallel to production on the same VPS).
+#
+# Prod ingress (nginx in docker-compose.prod.yml) routes dev.169.x.nip.io to
+# this stack via the shared external network `aura_edge`. Ollama stays on prod
+# to save RAM; dev gateway reaches it at http://ollama:11434/v1 over aura_edge.
+#
+# Bring up:
+#   docker compose -p aura-dev -f deploy/docker-compose.dev.yml \
+#     --env-file deploy/.env.development --profile training up -d
+#
+# See docs/guides/deployment-guide.md § Dual-environment VPS.
+
+name: aura-dev
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-restart: &restart
+  restart: unless-stopped
+
+networks:
+  # Internal app bridge (gateway ↔ console). Nginx reaches these via aura_edge.
+  edge:
+    driver: bridge
+  data:
+    driver: bridge
+    internal: true
+  egress:
+    driver: bridge
+  # Shared with prod nginx + ollama (created by prod stack as `aura_edge`).
+  aura_edge:
+    external: true
+    name: aura_edge
+
+volumes:
+  postgres_data_dev:
+  qdrant_data_dev:
+  redis_data_dev:
+  aura_workspace_dev:
+  aura_datasets_dev:
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  redis_password:
+    file: ./secrets/redis_password
+  qdrant_api_key:
+    file: ./secrets/qdrant_api_key
+  jwt_secret:
+    file: ./secrets/jwt_secret
+  firebase_credentials:
+    file: ./secrets/firebase_credentials.json
+
+services:
+  console:
+    container_name: aura-dev-console
+    build:
+      context: ../aura_admin
+      dockerfile: Dockerfile
+      args:
+        NEXT_BASE_PATH: /console
+        NEXT_PUBLIC_BASE_PATH: /console
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com}
+        NEXT_PUBLIC_GRAFANA_EMBED: "0"
+    <<: *restart
+    logging: *logging
+    environment:
+      AURA_API_URL: http://gateway:8000
+      NEXT_BASE_PATH: /console
+      NEXT_PUBLIC_BASE_PATH: /console
+      NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      NEXT_PUBLIC_GRAFANA_EMBED: "0"
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+    networks: [edge, aura_edge]
+    depends_on:
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/console/login').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 512M}
+
+  gateway:
+    container_name: aura-dev-gateway
+    build:
+      context: ../aura_backend
+      dockerfile: Dockerfile
+    <<: *restart
+    logging: *logging
+    command: >
+      uvicorn aura_service:app
+      --host 0.0.0.0 --port 8000
+      --workers ${AURA_WORKERS:-2}
+      --proxy-headers --forwarded-allow-ips='*'
+      --timeout-keep-alive 65
+    environment:
+      AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-development}
+      AURA_LOG_FORMAT: json
+      AURA_LOG_LEVEL: ${AURA_LOG_LEVEL:-DEBUG}
+      AURA_METRICS_ENABLED: "true"
+      PROMETHEUS_MULTIPROC_DIR: /var/lib/aura/prometheus
+      AURA_VECTOR_BACKEND: qdrant
+      AURA_DOCUMENT_BACKEND: postgres
+      AURA_MEMORY_BACKEND: postgres
+      AURA_CACHE_BACKEND: redis
+      AURA_QDRANT_URL: http://qdrant:6333
+      AURA_TRUSTED_PROXY_COUNT: "1"
+      AURA_LLM_PROVIDERS: ${AURA_LLM_PROVIDERS:-local}
+      AURA_LLM_TIMEOUT_S: ${AURA_LLM_TIMEOUT_S:-180}
+      AURA_PROVIDER_LOCAL_KIND: openai_compatible
+      AURA_PROVIDER_LOCAL_BASE_URL: ${AURA_PROVIDER_LOCAL_BASE_URL:-http://ollama:11434/v1}
+      AURA_PROVIDER_LOCAL_MODEL: ${AURA_PROVIDER_LOCAL_MODEL:-${AURA_LOCAL_MODEL:-qwen2.5:3b-instruct-q4_K_M}}
+      AURA_PROVIDER_LOCAL_TIMEOUT_S: ${AURA_PROVIDER_LOCAL_TIMEOUT_S:-180}
+      AURA_PROVIDER_LOCAL_IS_LOCAL: "true"
+      AURA_PROVIDER_LOCAL_QUALITY_TIER: "1"
+      AURA_PROVIDER_LOCAL_MAX_CONCURRENCY: ${AURA_PROVIDER_LOCAL_MAX_CONCURRENCY:-1}
+      AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
+      AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
+      AURA_MODEL_ALLOWLIST: ${AURA_MODEL_ALLOWLIST:-}
+      AURA_DATABASE_URL_FILE: /run/secrets/postgres_password
+      AURA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      AURA_QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
+      AURA_JWT_SECRET_FILE: /run/secrets/jwt_secret
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      FIREBASE_SERVICE_ACCOUNT_PATH: /run/secrets/firebase_credentials
+      AURA_DOMAIN: ${AURA_DOMAIN}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:8080,http://127.0.0.1:8080,https://${AURA_DOMAIN}}
+      ALLOW_MOCK_ATTESTATION: ${ALLOW_MOCK_ATTESTATION:-true}
+      DEBUG_MODE: "false"
+      APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
+      AURA_IOS_BUNDLE_ID: ${AURA_IOS_BUNDLE_ID:-com.auraai.auraClient}
+      SUPERADMIN_EMAILS: ${SUPERADMIN_EMAILS:-}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      DEVELOPER_EMAILS: ${DEVELOPER_EMAILS:-}
+      DATA_DIR: /var/lib/aura/workspace
+      AURA_VOICE_LIVE_ENABLED: ${AURA_VOICE_LIVE_ENABLED:-true}
+      AURA_VOICE_LIVE_MAX_SESSIONS: ${AURA_VOICE_LIVE_MAX_SESSIONS:-4}
+      AURA_LEARNING_DATASET_DIR: /var/lib/aura/datasets
+      LEARNING_FINETUNE_MIN_EXAMPLES: ${LEARNING_FINETUNE_MIN_EXAMPLES:-12}
+      LEARNING_FINETUNE_MIN_USERS: ${LEARNING_FINETUNE_MIN_USERS:-5}
+      LEARNING_FINETUNE_ALLOW_CPU: ${LEARNING_FINETUNE_ALLOW_CPU:-true}
+      AURA_FINETUNE_TRAINER: ${AURA_FINETUNE_TRAINER:-local}
+    secrets: [postgres_password, redis_password, qdrant_api_key, jwt_secret, firebase_credentials]
+    volumes:
+      - aura_workspace_dev:/var/lib/aura/workspace
+      - aura_datasets_dev:/var/lib/aura/datasets
+    networks: [edge, data, aura_edge]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      qdrant: {condition: service_started}
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5).status==200 else 1)"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    deploy:
+      resources:
+        limits: {cpus: "1.5", memory: 2G}
+
+  worker-realtime:
+    build:
+      context: ../aura_backend
+      dockerfile: Dockerfile
+    <<: *restart
+    logging: *logging
+    command: celery -A tasks worker -Q realtime -c 2 --loglevel=info --max-tasks-per-child=200
+    environment: &worker_env
+      AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-development}
+      AURA_LOG_FORMAT: json
+      AURA_VECTOR_BACKEND: qdrant
+      AURA_DOCUMENT_BACKEND: postgres
+      AURA_MEMORY_BACKEND: postgres
+      AURA_CACHE_BACKEND: redis
+      AURA_QDRANT_URL: http://qdrant:6333
+      AURA_LLM_PROVIDERS: ${AURA_LLM_PROVIDERS:-local}
+      AURA_LLM_TIMEOUT_S: ${AURA_LLM_TIMEOUT_S:-180}
+      AURA_PROVIDER_LOCAL_KIND: openai_compatible
+      AURA_PROVIDER_LOCAL_BASE_URL: ${AURA_PROVIDER_LOCAL_BASE_URL:-http://ollama:11434/v1}
+      AURA_PROVIDER_LOCAL_MODEL: ${AURA_PROVIDER_LOCAL_MODEL:-${AURA_LOCAL_MODEL:-qwen2.5:3b-instruct-q4_K_M}}
+      AURA_PROVIDER_LOCAL_TIMEOUT_S: ${AURA_PROVIDER_LOCAL_TIMEOUT_S:-180}
+      AURA_PROVIDER_LOCAL_IS_LOCAL: "true"
+      AURA_PROVIDER_LOCAL_QUALITY_TIER: "1"
+      AURA_PROVIDER_LOCAL_MAX_CONCURRENCY: "1"
+      AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
+      AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
+      AURA_LEARNING_REFRESH_ENABLED: ${AURA_LEARNING_REFRESH_ENABLED:-true}
+      AURA_LEARNING_REFRESH_CRON: ${AURA_LEARNING_REFRESH_CRON:-0 2 * * *}
+      AURA_DATABASE_URL_FILE: /run/secrets/postgres_password
+      AURA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      AURA_QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      DATA_DIR: /var/lib/aura/workspace
+      AURA_LEARNING_DATASET_DIR: /var/lib/aura/datasets
+      DEBUG_MODE: "false"
+    secrets: [postgres_password, redis_password, qdrant_api_key]
+    networks: [data]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "0.75", memory: 768M}
+
+  worker-ingestion:
+    build:
+      context: ../aura_backend
+      dockerfile: Dockerfile
+    <<: *restart
+    logging: *logging
+    command: celery -A tasks worker -Q ingestion,learning -c 2 --loglevel=info --max-tasks-per-child=50
+    environment: *worker_env
+    secrets: [postgres_password, redis_password, qdrant_api_key]
+    volumes:
+      - aura_workspace_dev:/var/lib/aura/workspace
+      - aura_datasets_dev:/var/lib/aura/datasets
+    networks: [data, egress]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      qdrant: {condition: service_started}
+    deploy:
+      resources:
+        limits: {cpus: "1.0", memory: 1536M}
+
+  worker-training:
+    profiles: [training]
+    build:
+      context: ../aura_backend
+      dockerfile: Dockerfile
+    <<: *restart
+    logging: *logging
+    command: celery -A tasks worker -Q learning -c 1 --loglevel=info --max-tasks-per-child=1
+    environment:
+      <<: *worker_env
+      AURA_FINETUNE_TRAINER: local
+      LEARNING_FINETUNE_ALLOW_CPU: ${LEARNING_FINETUNE_ALLOW_CPU:-true}
+      AURA_LEARNING_DATASET_DIR: /var/lib/aura/datasets
+    secrets: [postgres_password, redis_password, qdrant_api_key]
+    volumes:
+      - aura_workspace_dev:/var/lib/aura/workspace
+      - aura_datasets_dev:/var/lib/aura/datasets
+    networks: [data, egress, aura_edge]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "2.0", memory: 4G}
+
+  beat:
+    build:
+      context: ../aura_backend
+      dockerfile: Dockerfile
+    <<: *restart
+    logging: *logging
+    command: celery -A celery_app beat --loglevel=info
+    environment: *worker_env
+    secrets: [postgres_password, redis_password, qdrant_api_key]
+    networks: [data]
+    depends_on:
+      redis: {condition: service_healthy}
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 256M}
+
+  postgres:
+    image: postgres:16-alpine
+    <<: *restart
+    logging: *logging
+    environment:
+      POSTGRES_USER: aura
+      POSTGRES_DB: aura
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    secrets: [postgres_password]
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aura -d aura"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits: {cpus: "0.75", memory: 1536M}
+
+  redis:
+    image: redis:7-alpine
+    <<: *restart
+    logging: *logging
+    command: >
+      sh -c 'redis-server
+      --requirepass "$$(cat /run/secrets/redis_password)"
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --protected-mode yes'
+    secrets: [redis_password]
+    volumes:
+      - redis_data_dev:/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$(cat /run/secrets/redis_password)\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 384M}
+
+  qdrant:
+    image: qdrant/qdrant:latest@sha256:057ee3a8da769fe7310dd3537b4dc7583bf87a95ce8ac43c0af5a46bc580d1fc
+    <<: *restart
+    logging: *logging
+    environment:
+      QDRANT__SERVICE__API_KEY_FILE: /run/secrets/qdrant_api_key
+      QDRANT__SERVICE__ENABLE_STATIC_CONTENT_SHARE: "false"
+      QDRANT__TELEMETRY_DISABLED: "true"
+      QDRANT__STORAGE__PERFORMANCE__MAX_OPTIMIZATION_THREADS: "2"
+    secrets: [qdrant_api_key]
+    volumes:
+      - qdrant_data_dev:/qdrant/storage
+    networks: [data]
+    deploy:
+      resources:
+        limits: {cpus: "0.75", memory: 1536M}

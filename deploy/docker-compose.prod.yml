@@ -42,6 +42,10 @@ networks:
   # would blur that boundary. Model pulls are still gated by AURA_MODEL_ALLOWLIST (SEC-01).
   egress:
     driver: bridge
+  # Cross-compose bridge: prod nginx + ollama share this with aura-dev gateway/console.
+  aura_edge:
+    name: aura_edge
+    driver: bridge
 
 volumes:
   postgres_data:
@@ -99,7 +103,8 @@ services:
     # replacing them with empty strings since those aren't real environment variables.
     environment:
       AURA_DOMAIN: ${AURA_DOMAIN}
-      NGINX_ENVSUBST_FILTER: ^AURA_DOMAIN$$
+      AURA_DEV_DOMAIN: ${AURA_DEV_DOMAIN:-dev.${AURA_DOMAIN}}
+      NGINX_ENVSUBST_FILTER: ^AURA_(DOMAIN|DEV_DOMAIN)$
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/templates:/etc/nginx/templates:ro
@@ -108,7 +113,7 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d
       - nginx_certs:/etc/letsencrypt
       - ./nginx/www:/var/www/certbot:ro
-    networks: [edge, observability]
+    networks: [edge, observability, aura_edge]
     depends_on:
       gateway:
         condition: service_healthy
@@ -399,7 +404,7 @@ services:
       - ollama_models:/root/.ollama
     # data: reachable by the gateway that calls it. egress: the only service that needs a
     # route to the internet, to pull model weights -- see the `egress` network's comment above.
-    networks: [data, egress]
+    networks: [data, egress, aura_edge]
     environment:
       OLLAMA_HOST: 0.0.0.0:11434
       # One model resident; a second would evict the first on a 16 GB box and turn every
