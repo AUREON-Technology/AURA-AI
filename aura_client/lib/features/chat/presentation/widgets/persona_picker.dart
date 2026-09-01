@@ -41,11 +41,11 @@ class PersonaChip extends ConsumerWidget {
           border: Border.all(color: palette.border),
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize: shrink ? MainAxisSize.max : MainAxisSize.min,
           children: [
             Icon(icon, size: 16, color: palette.brandOnSurfaceText),
             const SizedBox(width: AuraSpacing.xs),
-            if (shrink) Flexible(child: labelText) else labelText,
+            if (shrink) Expanded(child: labelText) else labelText,
             const SizedBox(width: AuraSpacing.xs),
             Icon(Icons.expand_more, size: 16, color: palette.textSecondary),
           ],

@@ -31,16 +31,15 @@ class HomePage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return _TodayScaffold(ref: ref);
+    return const _TodayScaffold();
   }
 }
 
-class _TodayScaffold extends StatelessWidget {
-  final WidgetRef ref;
-  const _TodayScaffold({required this.ref});
+class _TodayScaffold extends ConsumerWidget {
+  const _TodayScaffold();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final palette = AuraPalette.of(context);
     final tasksAsync = ref.watch(tasksStreamProvider);
     final calendarAsync = ref.watch(calendarEventsStreamProvider);
@@ -88,7 +87,7 @@ class _TodayScaffold extends StatelessWidget {
             const SizedBox(height: AuraSpacing.lg),
             _QuickStatsRow(tasksAsync: tasksAsync, financeAsync: financeAsync, healthAsync: healthAsync),
             const SizedBox(height: AuraSpacing.lg),
-            _SystemHealthCard(aiStatus: aiStatus, ref: ref),
+            _SystemHealthCard(aiStatus: aiStatus),
             const SizedBox(height: AuraSpacing.xxl),
           ],
         ),
@@ -451,8 +450,7 @@ class _StatTile extends StatelessWidget {
 
 class _SystemHealthCard extends StatelessWidget {
   final AIRouterStatus aiStatus;
-  final WidgetRef ref;
-  const _SystemHealthCard({required this.aiStatus, required this.ref});
+  const _SystemHealthCard({required this.aiStatus});
 
   @override
   Widget build(BuildContext context) {

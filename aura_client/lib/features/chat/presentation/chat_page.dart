@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/database/database.dart';
 
 import '../data/chat_repository.dart';
 import 'chat_view_model.dart';
@@ -45,16 +45,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _consumeInitialQuery(q));
   }
 
-  /// Auto-sends the Home capture-bar query once, then clears GoRouter extra
-  /// so a shell rebuild / hot reload cannot fire it again.
+  /// Auto-sends the Home capture-bar query once. [ChatUiState.consumedInitialQuery]
+  /// prevents a second send on rebuild; we intentionally do not call [GoRouter.go]
+  /// here because re-navigating to `/chat` would dispose this page mid-callback.
   void _consumeInitialQuery(String query) {
     if (!mounted) return;
     _messageController.clear();
     unawaited(ref.read(chatViewModelProvider.notifier).consumeInitialQuery(query));
-
-    if (GoRouterState.of(context).extra is String) {
-      context.go('/chat');
-    }
   }
 
   @override
@@ -102,6 +99,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final sessionsAsync = ref.watch(conversationsStreamProvider);
     final isMobile = MediaQuery.of(context).size.width < 768;
 
+    ref.listen<AsyncValue<List<Message>>>(
+      chatMessagesStreamProvider(activeSessionId),
+      (previous, next) {
+        final messages = next.asData?.value;
+        if (messages == null || messages.isEmpty || !mounted) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _scrollToBottom();
+        });
+      },
+    );
+
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: palette.background,
@@ -145,7 +153,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             onSuggestionSelected: (prompt) => _messageController.text = prompt,
                           );
                         }
-                        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
 
                         return ListView.builder(
                           controller: _scrollController,
