@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Mapping, Sequence
 
-from ..context.engine import ContextEngine, ContextRequest
+from ..context.engine import ContextEngine, ContextRequest, AssembledContext
 from ..domain.errors import (
     AllProvidersFailedError,
     AuraError,
@@ -38,7 +38,7 @@ from ..domain.errors import (
     SafetyViolationError,
 )
 from ..domain.events import TurnCompleted, TurnFailed, TurnStarted
-from ..domain.goals import GoalSnapshot
+from ..domain.context import user_facing_citations
 from ..domain.identifiers import CorrelationId, SessionId, TurnId, UserId
 from ..domain.knowledge import RetrievalResult
 from ..domain.llm import (
@@ -398,7 +398,7 @@ class AIKernel:
         return TurnResult(
             text=answer,
             telemetry=telemetry,
-            citations=assembled.citations,
+            citations=self._resolve_citations(assembled, retrieval),
             tool_calls=tuple(t.name for t in tool_telemetry),
             confidence=confidence,
             needs_confirmation=tuple(dict.fromkeys(needs_confirmation)),
@@ -503,7 +503,9 @@ class AIKernel:
                     )
                 )
 
-                visible_citations = list(assembled.user_citations)
+                visible_citations = list(
+                    self._resolve_citations(assembled, retrieval, user_facing=True)
+                )
                 if visible_citations:
                     yield {"type": "citations", "citations": visible_citations}
 
@@ -858,6 +860,38 @@ class AIKernel:
             confirmed_tools=request.confirmed_tools,
         )
 
+    @staticmethod
+    def _format_tool_capabilities(
+        tools: Sequence[Mapping[str, Any]], *, max_names: int = 5
+    ) -> str:
+        """Keep orchestrator prompts within the CPU prefill budget.
+
+        Listing every registered tool name can consume most of the 400-token cap and
+        evict retrieved knowledge from the packed context (no citations, no grounding).
+        """
+        names = [str(tool.get("name") or "") for tool in tools if tool.get("name")]
+        if not names:
+            return ""
+        if len(names) <= max_names:
+            return ", ".join(names)
+        shown = ", ".join(names[:max_names])
+        return f"{shown}, ... ({len(names)} tools total)"
+
+    @staticmethod
+    def _resolve_citations(
+        assembled: AssembledContext,
+        retrieval: RetrievalResult | None,
+        *,
+        user_facing: bool = False,
+    ) -> tuple[str, ...]:
+        packed = assembled.user_citations if user_facing else assembled.citations
+        if packed:
+            return packed
+        if retrieval and retrieval.chunks:
+            cites = retrieval.citations()
+            return user_facing_citations(cites) if user_facing else cites
+        return ()
+
     def _render_system_prompt(
         self, request: TurnRequest, tools: Sequence[Mapping[str, Any]]
     ) -> str:
@@ -876,9 +910,7 @@ class AIKernel:
                     # only needs a slot for it.
                     "fence_rules": "",
                     "current_time": now.isoformat(timespec="minutes"),
-                    "capabilities": ", ".join(
-                        str(t.get("name") or "") for t in tools if t.get("name")
-                    ),
+                    "capabilities": self._format_tool_capabilities(tools),
                 },
             )
             return rendered.text
