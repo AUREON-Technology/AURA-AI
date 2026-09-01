@@ -513,6 +513,56 @@ class TestStreamToolExecution:
         assert actions["actions"][0]["type"] == "add_task"
         assert actions["actions"][0]["params"]["title"] == "Backup notes"
 
+    async def test_confirmed_tools_alone_forces_planning_without_plan_true(
+        self, container
+    ) -> None:
+        """A confirmation reply resuming a tool the user just approved must reach planning
+        even when the reply text itself ("yes, approve.") is too short/generic to match the
+        needs_plan heuristic on its own -- confirmed_tools is a signal in its own right."""
+        await container.startup()
+        captured: dict[str, object] = {}
+        original_needs_plan = container.kernel._deps.planner.needs_plan
+
+        def spy_needs_plan(message, *, available_tools=(), force=None):  # noqa: ANN001
+            captured["force"] = force
+            return original_needs_plan(message, available_tools=available_tools, force=force)
+
+        container.kernel._deps.planner.needs_plan = spy_needs_plan
+
+        frames = [
+            frame async for frame in container.kernel.stream(
+                _request("yes, approve.", confirmed_tools=("propose_task",))
+            )
+        ]
+
+        assert captured["force"] is True
+        assert frames[-1]["type"] == "done"
+
+    async def test_tool_calls_only_generation_does_not_surface_as_empty_success(
+        self, container
+    ) -> None:
+        """A short confirmation reply skips planning; if the provider still answers with a
+        native tool-call and no text, the done frame must not be a bare empty success --
+        regression for the "No reply this turn" bug."""
+        await container.startup()
+        echo = container.router.get("echo")
+        echo.queue(ScriptedTurn(
+            text="",
+            tool_calls=[("propose_health_log", {"summary": "ran 5k"})],
+        ))
+
+        frames = [
+            frame async for frame in container.kernel.stream(_request("yes, approve."))
+        ]
+
+        assert not any(f["type"] == "error" for f in frames)
+        token_text = "".join(f["text"] for f in frames if f["type"] == "token")
+        assert token_text.strip(), "a fallback token frame must carry non-empty text"
+        done = frames[-1]
+        assert done["type"] == "done"
+        assert done["empty_generation_fallback"] is True
+        assert done["degraded"] is True
+
     async def test_short_add_task_stream_yields_actions_without_forcing_plan(
         self, container
     ) -> None:
@@ -557,4 +607,25 @@ class TestStreamToolExecution:
         assert plan_calls["n"] == 0
         assert not any(f["type"] in {"step", "actions"} for f in frames)
         assert frames[-1]["type"] == "done"
+
+    async def test_output_guard_violation_blocks_the_turn_not_a_silent_empty_success(
+        self, container
+    ) -> None:
+        """run()'s output-guard step (unlike stream()'s) has no inline try/except around
+        guard_output -- confirm that's fine because run() already catches SafetyViolationError
+        one level up and reports BLOCKED, rather than ever returning a "successful" empty
+        answer."""
+        from aura_core.domain.errors import SafetyViolationError
+
+        await container.startup()
+
+        async def blocking_guard_output(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise SafetyViolationError("blocked", guard="test-guard", action="block")
+
+        container.kernel._deps.safety.guard_output = blocking_guard_output
+
+        result = await container.kernel.run(_request())
+
+        assert result.telemetry.outcome is TurnOutcome.BLOCKED
+        assert result.text == ""
 

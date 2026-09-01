@@ -110,8 +110,10 @@ void main() {
     });
 
     test('done event maps turn_id, confidence, degraded, and confirmation', () {
+      // The backend always sends needs_confirmation as a list of tool names, never a bare
+      // boolean -- see aura_core/kernel/kernel.py's `done` frame.
       final events = feedAll([
-        'event: done\ndata: {"turn_id":"t-1","confidence":0.2,"degraded":true,"needs_confirmation":true,"tainted":true,"guards_complete":true,"usage":{"tokens":12}}\n\n',
+        'event: done\ndata: {"turn_id":"t-1","confidence":0.2,"degraded":true,"needs_confirmation":["propose_health_log"],"tainted":true,"guards_complete":true,"usage":{"tokens":12}}\n\n',
       ]);
       final meta = events[0].turnMeta;
       expect(meta, isNotNull);
@@ -121,6 +123,13 @@ void main() {
       expect(meta.needsConfirmation, isTrue);
       expect(meta.tainted, isTrue);
       expect(meta.showLowConfidence, isTrue);
+    });
+
+    test('done event with an empty needs_confirmation list is not confirmation-pending', () {
+      final events = feedAll([
+        'event: done\ndata: {"turn_id":"t-2","needs_confirmation":[]}\n\n',
+      ]);
+      expect(events[0].turnMeta!.needsConfirmation, isFalse);
     });
 
     test('step frame carries a label', () {
