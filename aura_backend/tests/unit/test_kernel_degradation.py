@@ -608,6 +608,27 @@ class TestStreamToolExecution:
         assert not any(f["type"] in {"step", "actions"} for f in frames)
         assert frames[-1]["type"] == "done"
 
+    async def test_stream_final_generation_does_not_advertise_tools(self, container) -> None:
+        """Regression: advertising tools on the final generation pass made local models answer
+        with native tool_calls and no text, which ADR-006 never executes."""
+        await container.startup()
+        echo = container.router.get("echo")
+        echo.queue(ScriptedTurn(text="The engineer who built AURA knows the system's design."))
+
+        frames = [
+            frame async for frame in container.kernel.stream(
+                _request("The engineer who created you knows.")
+            )
+        ]
+
+        done = frames[-1]
+        assert done["type"] == "done"
+        assert done.get("empty_generation_fallback") is not True
+        token_text = "".join(f["text"] for f in frames if f["type"] == "token")
+        assert "wasn't able to put together" not in token_text
+        assert echo.calls
+        assert echo.calls[-1].tools == ()
+
     async def test_output_guard_violation_blocks_the_turn_not_a_silent_empty_success(
         self, container
     ) -> None:

@@ -311,7 +311,7 @@ class AIKernel:
         # 8. Generate ----------------------------------------------------------------
         stage_start = time.perf_counter()
         answer, provider, model, usage, cost, cached, cache_tier, fallbacks, strategy, confidence = (
-            await self._generate(request, assembled, retrieval, budget, tool_declarations)
+            await self._generate(request, assembled, retrieval, budget)
         )
         timings["generation"] = (time.perf_counter() - stage_start) * 1000.0
 
@@ -511,6 +511,9 @@ class AIKernel:
                 saw_tool_calls = False
                 last_usage = None
                 assigned = await self._assigned_model(request)
+                # Prose-only generation (ADR-006): tools execute via planning above, not via
+                # native tool_calls from the model. Advertising tools here makes local models
+                # answer with tool-calls-only and no text.
                 completion = CompletionRequest(
                     conversation=assembled.conversation,
                     model=assigned,
@@ -520,7 +523,7 @@ class AIKernel:
                     ),
                     policy=request.routing_policy,
                     require_local=request.require_local,
-                    tools=tool_declarations,
+                    tools=(),
                     timeout_s=self._completion_timeout_s(),
                 )
 
@@ -1013,7 +1016,6 @@ class AIKernel:
         assembled: Any,
         retrieval: RetrievalResult | None,
         budget: TurnBudget,
-        tools: Sequence[Mapping[str, Any]] = (),
     ) -> tuple[str, str | None, str | None, Any, float, bool, str | None, int, Any, float | None]:
         deps = self._deps
         namespace = request.user_id.value
@@ -1027,7 +1029,7 @@ class AIKernel:
             ),
             policy=request.routing_policy,
             require_local=request.require_local,
-            tools=tuple(tools),
+            tools=(),
             timeout_s=self._completion_timeout_s(),
         )
 

@@ -53,7 +53,7 @@ BUILTIN_PROMPTS: tuple[PromptTemplate, ...] = (
 {{{{/current_time}}}}
 {{{{#user_profile}}}}User: {{{{user_profile}}}}
 {{{{/user_profile}}}}
-{{{{#capabilities}}}}Tools: {{{{capabilities}}}}. Call only when needed.
+{{{{#capabilities}}}}Tools: {{{{capabilities}}}}. Answer in prose; planning runs tools, not you.
 {{{{/capabilities}}}}""",
     ),
     # ---------------------------------------------------------------- system: personas
@@ -75,7 +75,7 @@ Nothing you propose is done until the user approves.
 {_FENCE_RULES}
 {{{{#current_time}}}}Time: {{{{current_time}}}}.
 {{{{/current_time}}}}
-{{{{#capabilities}}}}Tools: {{{{capabilities}}}}. Call only when needed.
+{{{{#capabilities}}}}Tools: {{{{capabilities}}}}. Answer in prose; planning runs tools, not you.
 {{{{/capabilities}}}}""",
     ),
     PromptTemplate(
@@ -94,7 +94,7 @@ move money. You do not give regulated investment, tax, or legal advice — recom
 professional. If records are incomplete, say what is missing.
 
 {_FENCE_RULES}
-{{{{#capabilities}}}}Tools: {{{{capabilities}}}}. Call only when needed.
+{{{{#capabilities}}}}Tools: {{{{capabilities}}}}. Answer in prose; planning runs tools, not you.
 {{{{/capabilities}}}}""",
     ),
     PromptTemplate(
@@ -113,7 +113,7 @@ medication. For symptoms or anything urgent, say a clinician is needed. Report t
 do not infer a condition.
 
 {_FENCE_RULES}
-{{{{#capabilities}}}}Tools: {{{{capabilities}}}}. Call only when needed.
+{{{{#capabilities}}}}Tools: {{{{capabilities}}}}. Answer in prose; planning runs tools, not you.
 {{{{/capabilities}}}}""",
     ),
     PromptTemplate(
@@ -132,7 +132,7 @@ separate sources from your analysis. If sources disagree, present both. If they 
 say so — do not guess.
 
 {_FENCE_RULES}
-{{{{#capabilities}}}}Tools: {{{{capabilities}}}}. Call only when needed.
+{{{{#capabilities}}}}Tools: {{{{capabilities}}}}. Answer in prose; planning runs tools, not you.
 {{{{/capabilities}}}}""",
     ),
     PromptTemplate(
@@ -150,7 +150,7 @@ Software specialist: give working code, state version/environment assumptions, a
 unhandled failure modes. In reviews, cite file, line, and the input that breaks it.
 
 {_FENCE_RULES}
-{{{{#capabilities}}}}Tools: {{{{capabilities}}}}. Call only when needed.
+{{{{#capabilities}}}}Tools: {{{{capabilities}}}}. Answer in prose; planning runs tools, not you.
 {{{{/capabilities}}}}""",
     ),
     PromptTemplate(
