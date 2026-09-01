@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 #
 # TLS dual-SAN renewal + aura-dev stack bring-up + optional seed.
 # Invoked from ci-deploy.sh when AURA_DEV_OPS=1 (GitHub Actions Deploy VPS).
@@ -26,6 +26,25 @@ cd "$DEPLOY"
 ENV_FILE="$DEPLOY/.env"
 DEV_ENV="$DEPLOY/.env.development"
 
+
+ensure_superadmin_from_example() {
+  local example="$DEPLOY/.env.development.example"
+  [ -f "$DEV_ENV" ] || return 0
+  [ -f "$example" ] || return 0
+  local example_line
+  example_line="$(grep -E '^SUPERADMIN_EMAILS=' "$example" | head -1 || true)"
+  [ -n "$example_line" ] || return 0
+  if grep -qF "$example_line" "$DEV_ENV" 2>/dev/null; then
+    return 0
+  fi
+  if grep -qE '^SUPERADMIN_EMAILS=' "$DEV_ENV" 2>/dev/null; then
+    sed -i "s/^SUPERADMIN_EMAILS=.*/$example_line/" "$DEV_ENV"
+  else
+    printf '\n%s\n' "$example_line" >> "$DEV_ENV"
+  fi
+  say "Synced SUPERADMIN_EMAILS in .env.development from example"
+}
+
 ensure_dev_domain() {
   if [ ! -f "$ENV_FILE" ]; then
     die "missing $ENV_FILE"
@@ -42,6 +61,7 @@ if [ ! -f "$DEV_ENV" ] && [ -f "$DEPLOY/.env.development.example" ]; then
 fi
 
 ensure_dev_domain
+ensure_superadmin_from_example
 
 if [ "$TLS" = "1" ]; then
   say "Dual-SAN TLS renewal"
@@ -71,9 +91,9 @@ if [ "$UP" = "1" ]; then
   docker compose -p aura-dev -f docker-compose.dev.yml \
     --env-file .env.development run --rm gateway alembic upgrade head
 
-  say "Recreating dev gateway"
+  say "Recreating dev gateway and console"
   docker compose -p aura-dev -f docker-compose.dev.yml \
-    --env-file .env.development up -d --force-recreate --no-deps gateway
+    --env-file .env.development up -d --force-recreate --no-deps gateway console
 
   say "Waiting for dev gateway health"
   for attempt in $(seq 1 36); do
@@ -90,9 +110,24 @@ if [ "$UP" = "1" ]; then
     sleep 5
   done
 
-  say "Starting aura-dev app layer"
+  say "Starting aura-dev app layer (console + workers)"
   docker compose -p aura-dev -f docker-compose.dev.yml \
     --env-file .env.development --profile training up -d
+
+  say "Waiting for dev console health"
+  for attempt in $(seq 1 24); do
+    status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' aura-dev-console 2>/dev/null || echo missing)"
+    if [ "$status" = "healthy" ]; then
+      info "console healthy"
+      break
+    fi
+    if [ "$attempt" = "24" ]; then
+      docker compose -p aura-dev -f docker-compose.dev.yml \
+        --env-file .env.development logs --tail=40 console || true
+      die "aura-dev-console not healthy (status=$status)"
+    fi
+    sleep 5
+  done
 fi
 
 if [ "$SEED" = "1" ]; then
