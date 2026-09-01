@@ -56,11 +56,25 @@ fi
 
 DC=(docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE")
 
+read_pem_text() {
+  docker run --rm \
+    -v "${CERT_VOLUME}:/etc/letsencrypt" \
+    alpine/openssl:latest \
+    x509 -in "/etc/letsencrypt/live/$AURA_DOMAIN/fullchain.pem" -noout -text 2>/dev/null || true
+}
+
+pem_has_dev_san() {
+  local cert
+  cert="$(read_pem_text)"
+  [ -n "$cert" ] && echo "$cert" | grep -F "DNS:$AURA_DEV_DOMAIN" >/dev/null
+}
+
 run_webroot() {
   docker run --rm \
     -v "${CERT_VOLUME}:/etc/letsencrypt" \
     -v "$DEPLOY_DIR/nginx/www:/var/www/certbot" \
     "$CERTBOT_IMAGE" certonly --expand --cert-name "$AURA_DOMAIN" \
+    --non-interactive \
     --webroot -w /var/www/certbot \
     -d "$AURA_DOMAIN" -d "$AURA_DEV_DOMAIN" \
     --agree-tos "${EMAIL_ARGS[@]}"
@@ -78,6 +92,7 @@ run_standalone() {
   docker run --rm -p 80:80 \
     -v "${CERT_VOLUME}:/etc/letsencrypt" \
     "$CERTBOT_IMAGE" certonly --expand --cert-name "$AURA_DOMAIN" \
+    --non-interactive \
     --standalone \
     -d "$AURA_DOMAIN" -d "$AURA_DEV_DOMAIN" \
     --agree-tos "${EMAIL_ARGS[@]}"
@@ -89,10 +104,7 @@ run_standalone() {
 verify_dev_san() {
   say "Verifying certificate SAN for $AURA_DEV_DOMAIN"
   local cert
-  cert="$(docker run --rm \
-    -v "${CERT_VOLUME}:/etc/letsencrypt" \
-    alpine/openssl:latest \
-    x509 -in "/etc/letsencrypt/live/$AURA_DOMAIN/fullchain.pem" -noout -text 2>/dev/null || true)"
+  cert="$(read_pem_text)"
   if [ -z "$cert" ]; then
     die "could not read fullchain.pem for $AURA_DOMAIN from cert volume $CERT_VOLUME"
   fi
@@ -111,7 +123,9 @@ info "cert volume: $CERT_VOLUME"
 
 mkdir -p "$DEPLOY_DIR/nginx/www"
 
-if run_webroot; then
+if pem_has_dev_san; then
+  info "certificate already includes $AURA_DEV_DOMAIN â€” skipping certbot"
+elif run_webroot; then
   info "webroot issuance succeeded"
 else
   info "webroot failed; falling back to standalone"
