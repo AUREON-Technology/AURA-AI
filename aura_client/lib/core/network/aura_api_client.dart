@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
 import '../auth/token_manager.dart';
-import '../config/config.dart';
+import '../config/backend_url_provider.dart';
 import '../security/device_validation_service.dart';
 import 'aura_api_error.dart';
 
@@ -22,6 +22,8 @@ class AuraApiClient {
 
   AuraApiClient(this._ref, {http.Client? httpClient}) : _http = httpClient;
 
+  String get _backendUrl => _ref.read(backendUrlProvider);
+
   Future<Map<String, String>> _headers({
     required bool jsonBody,
     String? correlationId,
@@ -32,7 +34,9 @@ class AuraApiClient {
     if (jsonBody) headers['Content-Type'] = 'application/json';
     final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
     if (token != null) headers['Authorization'] = 'Bearer $token';
-    headers.addAll(await DeviceValidationService.getAttestationHeaders());
+    headers.addAll(
+      await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
+    );
     return headers;
   }
 
@@ -44,7 +48,7 @@ class AuraApiClient {
   }) async {
     final uri = path.startsWith('http')
         ? Uri.parse(path)
-        : Uri.parse('${AppConfig.backendUrl}$path');
+        : Uri.parse('$_backendUrl$path');
     final tokens = _ref.read(tokenManagerProvider);
 
     Future<http.Response> send() async {
@@ -117,7 +121,7 @@ class AuraApiClient {
   Future<http.Response> get(String path) => request(method: 'GET', path: path);
 
   Future<http.Response> probeHealth() {
-    final uri = Uri.parse('${AppConfig.backendUrl}/health/ready');
+    final uri = Uri.parse('$_backendUrl/health/ready');
     final client = _http;
     return client != null ? client.get(uri) : http.get(uri);
   }

@@ -6,7 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../../auth/token_manager.dart';
-import '../../../config/config.dart';
+import '../../../config/backend_url_provider.dart';
 import '../../../security/device_validation_service.dart';
 import 'live_voice_protocol.dart';
 
@@ -30,8 +30,10 @@ class LiveVoiceSocket {
   Stream<List<int>> get pcm => _pcm.stream;
   bool get isConnected => _channel != null;
 
+  String get _backendUrl => _ref.read(backendUrlProvider);
+
   Uri get _uri {
-    final base = AppConfig.backendUrl.replaceFirst(RegExp(r'^http'), 'ws');
+    final base = _backendUrl.replaceFirst(RegExp(r'^http'), 'ws');
     return Uri.parse('$base/api/v3/voice/live');
   }
 
@@ -55,7 +57,9 @@ class LiveVoiceSocket {
     if (token == null || token.isEmpty) {
       throw StateError('no access token for live voice');
     }
-    final attestation = await DeviceValidationService.getAttestationHeaders();
+    final attestation = await DeviceValidationService.getAttestationHeaders(
+      backendUrl: _backendUrl,
+    );
     send(LiveAuthFrame(token: token, attestation: attestation));
   }
 
@@ -63,7 +67,9 @@ class LiveVoiceSocket {
     final tokens = _ref.read(tokenManagerProvider);
     final token = await tokens.getValidAccessToken();
     if (token == null || token.isEmpty) return;
-    final attestation = await DeviceValidationService.getAttestationHeaders();
+    final attestation = await DeviceValidationService.getAttestationHeaders(
+      backendUrl: _backendUrl,
+    );
     send(LiveReauthFrame(token: token, attestation: attestation));
   }
 

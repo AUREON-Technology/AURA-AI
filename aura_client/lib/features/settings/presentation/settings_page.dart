@@ -40,6 +40,13 @@ class SettingsPage extends ConsumerWidget {
                   subtitle: 'System, light, or dark',
                   onTap: () => context.go('/appearance'),
                 ),
+                const _RowDivider(),
+                AuraListTile(
+                  icon: Icons.dns_outlined,
+                  title: 'Server environment',
+                  subtitle: 'Production or development backend',
+                  onTap: () => context.go('/server-environment'),
+                ),
               ],
             ),
           ),

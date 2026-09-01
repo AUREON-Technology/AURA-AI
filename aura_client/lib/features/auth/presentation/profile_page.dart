@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/security/device_validation_service.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import 'auth_provider.dart';
@@ -26,7 +27,9 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
     });
 
     await Future.delayed(const Duration(milliseconds: 400));
-    final attestation = await DeviceValidationService.resolve();
+    final attestation = await DeviceValidationService.resolve(
+      backendUrl: ref.read(backendUrlProvider),
+    );
 
     setState(() {
       _validationLogs.add('Identified platform as: ${attestation.platform.toUpperCase()}');

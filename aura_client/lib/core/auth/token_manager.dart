@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import '../config/backend_url_policy.dart';
-import '../config/config.dart';
+import '../config/backend_url_provider.dart';
 import '../security/device_validation_service.dart';
 import '../../features/auth/presentation/auth_provider.dart';
 import 'refresh_token_store.dart';
@@ -33,7 +33,15 @@ class TokenManager {
   final Ref _ref;
   final http.Client? _http;
   final RefreshTokenStore _store;
-  static const String _authUrl = "${AppConfig.backendUrl}/api/v3/auth";
+  TokenManager(
+    this._ref, {
+    http.Client? httpClient,
+    RefreshTokenStore? store,
+  })  : _http = httpClient,
+        _store = store ?? const SecureRefreshTokenStore();
+
+  String get _authUrl => '${_ref.read(backendUrlProvider)}/api/v3/auth';
+  String get _backendUrl => _ref.read(backendUrlProvider);
 
   String? _accessToken;
   DateTime? _accessTokenExpiry;
@@ -42,13 +50,6 @@ class TokenManager {
   /// Shared by concurrent [getValidAccessToken] callers so a rotated
   /// refresh token is not spent twice (AURA-010).
   Future<String?>? _inFlightAccessToken;
-
-  TokenManager(
-    this._ref, {
-    http.Client? httpClient,
-    RefreshTokenStore? store,
-  })  : _http = httpClient,
-        _store = store ?? const SecureRefreshTokenStore();
 
   Future<void> _loadCachedRefreshToken() async {
     _refreshToken ??= await _store.read();
@@ -163,7 +164,9 @@ class TokenManager {
       }
 
       final headers = {"Authorization": "Bearer $idToken"};
-      headers.addAll(await DeviceValidationService.getAttestationHeaders());
+      headers.addAll(
+        await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
+      );
 
       final response = await _post("$_authUrl/token", headers: headers);
       if (response.statusCode != 200) {
@@ -199,7 +202,7 @@ class TokenManager {
   /// Operators can still mint a session via `/web/token` (role-gated).
   Future<String?> _tryDebugOperatorExchange(String idToken) async {
     if (!kDebugMode) return null;
-    if (!BackendUrlPolicy.isSafeForRelease(AppConfig.backendUrl)) return null;
+    if (!BackendUrlPolicy.isSafeForRelease(_backendUrl)) return null;
     try {
       final response = await _post(
         "$_authUrl/web/token",

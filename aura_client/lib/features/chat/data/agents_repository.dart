@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:aura_client/core/auth/token_manager.dart';
-import 'package:aura_client/core/config/config.dart';
+import 'package:aura_client/core/config/backend_url_provider.dart';
 
 /// One persona from `GET /api/v3/chat/stream`'s sibling endpoint
 /// `/api/v3/agents` (`aura_core/prompts/library.py`'s `AGENT_PROMPT_IDS`).
@@ -56,8 +56,9 @@ const Map<String, (String, IconData)> _knownPersonas = {
 /// aura_core/prompts/library.py's actual AGENT_PROMPT_IDS.
 final agentsProvider = FutureProvider<List<AgentInfo>>((ref) async {
   final token = await ref.read(tokenManagerProvider).getValidAccessToken();
+  final backendUrl = ref.read(backendUrlProvider);
   final response = await http.get(
-    Uri.parse('${AppConfig.backendUrl}/api/v3/agents'),
+    Uri.parse('$backendUrl/api/v3/agents'),
     headers: {if (token != null) 'Authorization': 'Bearer $token'},
   );
   if (response.statusCode != 200) {

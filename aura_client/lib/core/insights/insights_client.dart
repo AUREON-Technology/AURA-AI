@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import '../auth/token_manager.dart';
-import '../config/config.dart';
+import '../config/backend_url_provider.dart';
 import '../security/device_validation_service.dart';
 
 /// AURA Insights client (Doc/V2_BLUEPRINT.md §8) — talks to the backend's
@@ -38,15 +38,18 @@ class AppInsight {
 
 class InsightsClient {
   final Ref _ref;
-  static const String _baseUrl = "${AppConfig.backendUrl}/api/v3/insights";
-
   InsightsClient(this._ref);
+
+  String get _baseUrl => '${_ref.read(backendUrlProvider)}/api/v3/insights';
+  String get _backendUrl => _ref.read(backendUrlProvider);
 
   Future<Map<String, String>> _headers() async {
     final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
     final headers = <String, String>{"Content-Type": "application/json"};
     if (token != null) headers["Authorization"] = "Bearer $token";
-    headers.addAll(await DeviceValidationService.getAttestationHeaders());
+    headers.addAll(
+      await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
+    );
     return headers;
   }
 

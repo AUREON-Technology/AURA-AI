@@ -1,4 +1,5 @@
 import 'package:aura_client/core/config/backend_url_policy.dart';
+import 'package:aura_client/core/config/backend_url_settings.dart';
 import 'package:aura_client/core/config/config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -46,6 +47,24 @@ void main() {
     test('rejects empty or relative values', () {
       expect(BackendUrlPolicy.rejectionReason(''), isNotNull);
       expect(BackendUrlPolicy.rejectionReason('aura.example.org'), isNotNull);
+    });
+
+    test('runtime allowlist accepts known AURA presets', () {
+      expect(
+        BackendUrlPolicy.isRuntimeAllowed(BackendUrlSettings.productionUrl),
+        isTrue,
+      );
+      expect(
+        BackendUrlPolicy.isRuntimeAllowed(BackendUrlSettings.developmentUrl),
+        isTrue,
+      );
+    });
+
+    test('runtime allowlist rejects unknown hosts even when https', () {
+      expect(
+        BackendUrlPolicy.runtimeRejectionReason('https://evil.example.org'),
+        contains('allowlist'),
+      );
     });
   });
 }

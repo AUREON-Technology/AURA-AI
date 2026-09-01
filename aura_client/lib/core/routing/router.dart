@@ -20,6 +20,7 @@ import '../../features/memory/presentation/memory_page.dart';
 import '../../features/models/presentation/model_manager_page.dart';
 import '../../features/onboarding/presentation/onboarding_gate.dart';
 import '../../features/onboarding/presentation/onboarding_page.dart';
+import '../../features/settings/presentation/backend_environment_page.dart';
 import '../../features/settings/presentation/appearance_page.dart';
 import '../../features/settings/presentation/settings_page.dart';
 import '../../l10n/generated/app_localizations.dart';
@@ -43,6 +44,7 @@ class ShellLayout extends ConsumerWidget {
         path.startsWith('/analytics') ||
         path.startsWith('/automations') ||
         path.startsWith('/appearance') ||
+        path.startsWith('/server-environment') ||
         path.startsWith('/settings')) {
       return 3;
     }
@@ -311,6 +313,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/appearance',
             builder: (context, state) => const AppearancePage(),
+          ),
+          GoRoute(
+            path: '/server-environment',
+            builder: (context, state) => const BackendEnvironmentPage(),
           ),
           GoRoute(
             path: '/analytics',

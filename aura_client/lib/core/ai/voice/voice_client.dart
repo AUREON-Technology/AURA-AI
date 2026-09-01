@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
 import '../../auth/token_manager.dart';
-import '../../config/config.dart';
+import '../../config/backend_url_provider.dart';
 import '../../security/device_validation_service.dart';
 import 'speech_text.dart';
 
@@ -34,14 +34,18 @@ class VoiceSpeakResult {
 class VoiceClient {
   final Ref _ref;
   final http.Client? _http;
-  static const String _backendUrl = "${AppConfig.backendUrl}/api/v3/voice";
-
   VoiceClient(this._ref, {http.Client? httpClient}) : _http = httpClient;
+
+  String get _backendUrl => '${_ref.read(backendUrlProvider)}/api/v3/voice';
 
   Future<Map<String, String>> _headers(String? token) async {
     final headers = <String, String>{};
     if (token != null) headers['Authorization'] = 'Bearer $token';
-    headers.addAll(await DeviceValidationService.getAttestationHeaders());
+    headers.addAll(
+      await DeviceValidationService.getAttestationHeaders(
+        backendUrl: _ref.read(backendUrlProvider),
+      ),
+    );
     return headers;
   }
 

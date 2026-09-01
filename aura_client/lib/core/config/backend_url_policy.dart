@@ -1,4 +1,5 @@
-/// Rules for what may be baked into a shipped client as [AppConfig.backendUrl].
+/// Rules for what may be baked into a shipped client as [AppConfig.backendUrl],
+/// and which hosts may be selected at runtime via Settings.
 ///
 /// The compile-time default is localhost so `flutter run` never talks to
 /// production. Release builds must use `https://$AURA_DOMAIN`, matching the TLS
@@ -9,6 +10,12 @@ class BackendUrlPolicy {
   BackendUrlPolicy._();
 
   static const String localDevUrl = 'http://localhost:8000';
+
+  /// Known AURA gateway hosts users may switch between in release builds.
+  static const Set<String> runtimeAllowlistedHosts = {
+    '169.58.188.43.nip.io',
+    'dev.169.58.188.43.nip.io',
+  };
 
   static final RegExp _ipv4Host = RegExp(r'^\d{1,3}(\.\d{1,3}){3}$');
 
@@ -34,8 +41,29 @@ class BackendUrlPolicy {
 
   static bool isSafeForRelease(String url) => rejectionReason(url) == null;
 
+  /// Runtime switch validation: HTTPS hostname rules plus the preset allowlist.
+  static String? runtimeRejectionReason(String url) {
+    final baseReason = rejectionReason(url);
+    if (baseReason != null) return baseReason;
+
+    final host = Uri.tryParse(url)?.host.toLowerCase();
+    if (host == null || !runtimeAllowlistedHosts.contains(host)) {
+      return 'Backend URL host is not in the runtime allowlist: $url';
+    }
+    return null;
+  }
+
+  static bool isRuntimeAllowed(String url) => runtimeRejectionReason(url) == null;
+
   static void assertSafeForRelease(String url) {
     final reason = rejectionReason(url);
+    if (reason != null) {
+      throw StateError(reason);
+    }
+  }
+
+  static void assertRuntimeAllowed(String url) {
+    final reason = runtimeRejectionReason(url);
     if (reason != null) {
       throw StateError(reason);
     }

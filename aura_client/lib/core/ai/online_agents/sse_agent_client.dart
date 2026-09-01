@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import '../../auth/token_manager.dart';
-import '../../config/config.dart';
+import '../../config/backend_url_provider.dart';
 import '../../network/aura_api_error.dart';
 import '../../security/device_validation_service.dart';
 import '../../../features/chat/data/turn_meta.dart';
@@ -111,10 +111,12 @@ class SseFrameParser {
 
 class SseAgentClient {
   final Ref _ref;
-  static const String _url = "${AppConfig.backendUrl}/api/v3/chat/stream";
   final _uuid = const Uuid();
 
   SseAgentClient(this._ref);
+
+  String get _url => '${_ref.read(backendUrlProvider)}/api/v3/chat/stream';
+  String get _backendUrl => _ref.read(backendUrlProvider);
 
   Stream<SseChatEvent> streamAgentEvents({
     required String message,
@@ -137,7 +139,9 @@ class SseAgentClient {
         req.headers['X-Correlation-Id'] = cid;
         final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
         if (token != null) req.headers['Authorization'] = 'Bearer $token';
-        req.headers.addAll(await DeviceValidationService.getAttestationHeaders());
+        req.headers.addAll(
+          await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
+        );
       }
 
       await applyAuth(request);

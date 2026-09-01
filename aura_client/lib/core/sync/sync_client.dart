@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import '../auth/token_manager.dart';
-import '../config/config.dart';
+import '../config/backend_url_provider.dart';
 import '../database/database.dart';
 import '../database/database_provider.dart';
 import '../security/device_validation_service.dart';
@@ -28,9 +28,10 @@ class SyncClient {
   final AppDatabase _db;
   final Ref _ref;
   final http.Client? _http;
-  static const String _syncUrl = "${AppConfig.backendUrl}/api/v3/sync";
-
   SyncClient(this._db, this._ref, {http.Client? httpClient}) : _http = httpClient;
+
+  String get _syncUrl => '${_ref.read(backendUrlProvider)}/api/v3/sync';
+  String get _backendUrl => _ref.read(backendUrlProvider);
 
   // v3 endpoints authenticate via TokenManager's backend-issued JWT
   // (Doc/V2_BLUEPRINT.md §9), not the raw Google ID token older endpoints used.
@@ -41,7 +42,9 @@ class SyncClient {
       "Content-Type": "application/json",
       "Authorization": "Bearer $token",
     };
-    headers.addAll(await DeviceValidationService.getAttestationHeaders());
+    headers.addAll(
+      await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
+    );
     return headers;
   }
 

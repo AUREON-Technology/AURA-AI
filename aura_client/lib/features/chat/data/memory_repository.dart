@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
-import 'package:aura_client/core/config/config.dart';
+import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/security/device_validation_service.dart';
 import 'package:aura_client/core/security/deterministic_id.dart';
@@ -32,15 +32,19 @@ class MemoryRepository {
   final AppDatabase _db;
   final Ref _ref;
   final http.Client? _http;
-  static const String _backendUrl = "${AppConfig.backendUrl}/api/v3/memory";
-
   MemoryRepository(this._db, this._ref, {http.Client? httpClient}) : _http = httpClient;
+
+  String get _backendUrl => '${_ref.read(backendUrlProvider)}/api/v3/memory';
 
   Future<Map<String, String>> _headers(String? token, {bool jsonBody = false}) async {
     final headers = <String, String>{};
     if (jsonBody) headers['Content-Type'] = 'application/json';
     if (token != null) headers['Authorization'] = 'Bearer $token';
-    headers.addAll(await DeviceValidationService.getAttestationHeaders());
+    headers.addAll(
+      await DeviceValidationService.getAttestationHeaders(
+        backendUrl: _ref.read(backendUrlProvider),
+      ),
+    );
     return headers;
   }
 

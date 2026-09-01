@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
-import '../../config/config.dart';
+import '../../config/backend_url_provider.dart';
 import '../../auth/token_manager.dart';
 import '../../network/aura_api_error.dart';
 import '../../security/device_validation_service.dart';
@@ -14,14 +14,18 @@ import '../../../features/knowledge/domain/knowledge_document.dart';
 class KnowledgeCenter {
   final Ref _ref;
   final http.Client? _http;
-  static const String _backendUrl = "${AppConfig.backendUrl}/api/v3/knowledge";
-
   KnowledgeCenter(this._ref, {http.Client? httpClient}) : _http = httpClient;
+
+  String get _backendUrl => '${_ref.read(backendUrlProvider)}/api/v3/knowledge';
 
   Future<Map<String, String>> _headers(String? token) async {
     final headers = <String, String>{"Content-Type": "application/json"};
     if (token != null) headers['Authorization'] = 'Bearer $token';
-    headers.addAll(await DeviceValidationService.getAttestationHeaders());
+    headers.addAll(
+      await DeviceValidationService.getAttestationHeaders(
+        backendUrl: _ref.read(backendUrlProvider),
+      ),
+    );
     return headers;
   }
 
@@ -195,7 +199,11 @@ class KnowledgeCenter {
         ..fields['title'] = title
         ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
       if (token != null) request.headers['Authorization'] = 'Bearer $token';
-      request.headers.addAll(await DeviceValidationService.getAttestationHeaders());
+      request.headers.addAll(
+        await DeviceValidationService.getAttestationHeaders(
+          backendUrl: _ref.read(backendUrlProvider),
+        ),
+      );
       final client = _http;
       return client != null ? client.send(request) : http.Client().send(request);
     }
