@@ -10,6 +10,12 @@ This is a config/deployment change, not a code change — `aura_core/llm/registr
 `router.py` already support any number of providers. Everything below already exists in the
 repo, gated so it is inert until you actually have a GPU host.
 
+This guide covers a co-located GPU node, preferred via `quality_first` whenever it's healthy. For
+a topology where Ollama stays primary and a Hugging Face Space GPU node is used only as failover
+when Ollama is down, see
+[`split-inference-deployment.md` §8](split-inference-deployment.md#8-gpu-vllm-variant-contabo-primary-space-as-failover)
+instead — same underlying router, opposite preference.
+
 ---
 
 ## 0. Before you start

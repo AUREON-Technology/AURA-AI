@@ -328,7 +328,184 @@ looked like.
 
 ---
 
+## 8. GPU vLLM variant: Contabo primary, Space as failover
+
+Everything above trades Ollama *away* for a Space. This section does the opposite: Ollama on the
+Contabo VPS stays the primary provider, and a Space is added *behind* it, reached automatically
+only when Contabo/Ollama is unhealthy. If you followed §1–7 and removed `ollama` from
+`docker-compose.prod.yml`, this variant is not for you — it assumes Ollama is still running.
+
+This is also not the same topology as [`gpu-hybrid-setup.md`](gpu-hybrid-setup.md), which adds a
+**co-located** GPU node preferred via `quality_first` whenever it's healthy. Here the Space is
+insurance, not an upgrade: `local_first` keeps Ollama preferred, and the Space only takes traffic
+when Ollama's circuit breaker has opened.
+
+### What's different from the CPU variant above
+
+- **Ollama is not removed.** `AURA_LLM_PROVIDERS=local,hfspace` — both providers configured, not
+  one replacing the other.
+- **Real vLLM, not llama.cpp.** [`spaces/inference-vllm/`](../../spaces/inference-vllm/) runs the
+  actual `vllm/vllm-openai` server, which needs CUDA.
+- **A paid GPU hardware tier, not `cpu-basic`.** vLLM will not run on CPU-only Spaces at all.
+- **`local_first`, not the single-provider default.** Already the default policy
+  (`AURA_LLM_ROUTING_POLICY=local_first` in `.env.example`) — no change needed there.
+
+### Cost model
+
+GPU Spaces bill **hourly**, not the flat $9/month PRO fee §1 walks through for `cpu-basic`. There
+is no single number to quote here — it depends on the flavor (`t4-small`, `a10g-small`, …) and
+whether it sleeps when idle — check the Space hardware pricing page for current rates before
+choosing one.
+
+The sleep-vs-always-on tradeoff matters more here than in §1. A CPU Space that only serves the
+whole system already pays a cold-start tax on every wake; this Space is a *failover*, used
+rarely by design, so an always-on flavor (no sleep) is the better default even though it costs
+more per month sitting mostly idle — a failover that is itself slow or unreliable when Ollama is
+actually down defeats the reason it exists. If cost matters more than that guarantee, a sleeping
+tier is still workable; just widen `AURA_PROVIDER_HFSPACE_TIMEOUT_S` (see below) and accept slower
+failover.
+
+### Create the Space
+
+Same `hf auth login` / key-generation preamble as [§2](#2-create-the-space) — do that first if you
+haven't. Then, from this repo:
+
+```bash
+key=$(openssl rand -hex 32); echo "$key"
+
+hf repo create aura-inference-vllm --type space --sdk docker --flavor t4-small \
+  --secrets "VLLM_API_KEY=$key"
+hf upload <your-username>/aura-inference-vllm spaces/inference-vllm . --repo-type space
+```
+
+Swap `t4-small` for whatever GPU flavor you've chosen. `--secrets` at creation means the Space is
+never briefly unauthenticated, same reasoning as §2.
+
+### Verify the Space
+
+```bash
+KEY=<the VLLM_API_KEY you set>
+BASE=https://<your-username>-aura-inference-vllm.hf.space
+
+curl -sS "$BASE/v1/models" -H "Authorization: Bearer $KEY" | jq
+curl -sS "$BASE/v1/chat/completions" -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"Qwen/Qwen2.5-7B-Instruct-AWQ","messages":[{"role":"user","content":"reply with one word: ready"}]}' \
+  | jq -r '.choices[0].message.content'
+
+# This MUST return 401. If it returns a completion, the endpoint is open — stop and fix it.
+curl -s -o /dev/null -w '%{http_code}\n' "$BASE/v1/models"
+```
+
+### Configure the gateway
+
+On the VPS, in `deploy/.env` (Ollama's `local` block stays exactly as it is — this only adds
+`hfspace`):
+
+```bash
+AURA_ALLOW_REMOTE_INFERENCE=true
+
+AURA_LLM_PROVIDERS=local,hfspace
+AURA_PROVIDER_HFSPACE_KIND=openai_compatible
+AURA_PROVIDER_HFSPACE_BASE_URL=https://<your-username>-aura-inference-vllm.hf.space/v1
+AURA_PROVIDER_HFSPACE_MODEL=Qwen/Qwen2.5-7B-Instruct-AWQ
+AURA_PROVIDER_HFSPACE_API_KEY_ENV=AURA_PROVIDER_HFSPACE_API_KEY
+AURA_PROVIDER_HFSPACE_IS_LOCAL=false
+AURA_PROVIDER_HFSPACE_QUALITY_TIER=2
+AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW=8192
+AURA_PROVIDER_HFSPACE_TIMEOUT_S=45
+AURA_PROVIDER_HFSPACE_MAX_CONCURRENCY=8
+
+# The key itself, matching the Space secret. Never in the provider block.
+AURA_PROVIDER_HFSPACE_API_KEY=<same value as VLLM_API_KEY>
+```
+
+Restart so the gateway and workers pick up the second provider:
+
+```bash
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env \
+  up -d gateway worker-realtime worker-ingestion beat
+```
+
+Notes on the values that differ from §3's CPU-Space block:
+
+- **`TIMEOUT_S=45`, not `300`.** Once warm, GPU vLLM answers in a few seconds; a 300 s timeout
+  here would only make a genuinely dead Space hang the failover path for five minutes per request,
+  which defeats the point of failing over quickly. If you chose a sleeping GPU flavor and see cold
+  starts exceed 45 s, raise this — but prefer fixing the sleep setting first (see Cost model
+  above).
+- **`MAX_CONCURRENCY=8`, not `2`.** GPU batching serves several concurrent generations without the
+  CPU Space's near-serial slowdown. Tune against your actual flavor's throughput.
+- **`IS_LOCAL=false`.** This is the setting that makes the whole topology work: `local_first`
+  scores non-local providers behind local ones unconditionally
+  (`aura_core/llm/router.py`'s `_score`), so `hfspace` can only be reached once `local`'s circuit
+  is open. Setting this to `true` by mistake would make the router load-balance between Ollama and
+  the Space instead of treating the Space as failover-only.
+
+### The circuit breaker is global, not per-provider — a real limitation to know about
+
+`AURA_LLM_CIRCUIT_THRESHOLD` (default 5 consecutive failures) and `AURA_LLM_CIRCUIT_OPEN_S`
+(default 30s) apply to **every** provider's breaker equally — there is no
+`AURA_PROVIDER_<NAME>_CIRCUIT_*` override today. Practically this is fine at the defaults:
+Ollama's typical failure mode (crashed, out of memory, network partition) is not a cold start, so
+loosening the global breaker to tolerate a slow-waking Space would only make Ollama's own outages
+take longer to fail over from too. Leave the defaults; solve Space cold-start latency with an
+always-on hardware flavor or persistent storage instead of a looser breaker. Per-provider circuit
+tuning would be a reasonable follow-up but is a code change, not a config one — out of scope here.
+
+### Verification checklist
+
+**Steady state** — Ollama healthy:
+
+```bash
+curl -fsS http://localhost:8080/health | jq '.dependencies'
+```
+
+Both `local` and `hfspace` should report; `local`'s circuit should be closed. Send a real chat
+turn and confirm (via logs or router stats) it was served by `local`.
+
+**Failover** — simulate Ollama being unavailable:
+
+```bash
+docker compose -f deploy/docker-compose.prod.yml stop ollama
+```
+
+After `AURA_LLM_CIRCUIT_THRESHOLD` (default 5) consecutive failed turns, `local`'s circuit opens
+and subsequent turns are served by `hfspace` instead — confirm via logs/router stats, and that
+responses land within the `AURA_PROVIDER_HFSPACE_TIMEOUT_S` bound. Restart Ollama
+(`docker compose -f deploy/docker-compose.prod.yml start ollama`); after
+`AURA_LLM_CIRCUIT_OPEN_S` (default 30s) the breaker's next probe should succeed and `local` should
+become primary again automatically — no config change or restart needed for that half.
+
+**Automated failover proof**, using the existing opt-in load test rather than watching logs by
+hand:
+
+```bash
+export AURA_HYBRID_TEST_OLLAMA_BASE_URL=http://<contabo-host>:11434
+export AURA_HYBRID_TEST_OLLAMA_MODEL=qwen2.5:3b-instruct-q4_K_M
+export AURA_HYBRID_TEST_VLLM_BASE_URL=https://<your-username>-aura-inference-vllm.hf.space/v1
+export AURA_HYBRID_TEST_VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct-AWQ
+cd aura_backend && pytest tests/load -m load -s -k "vllm_hybrid_routing and failover"
+```
+
+That test builds its own `OllamaProvider`/`OpenAICompatibleProvider` pair directly rather than
+reading `deploy/.env`, and its default fixture may not attach an `Authorization` header — check
+`OpenAICompatibleProvider.__init__`'s `api_key` parameter and pass the Space's key through for this
+run if the real endpoint rejects the request with 401. Its other two tests assume both providers
+are `is_local=True`, which does not describe this topology; only the failover test is meaningful
+to run as-is here.
+
+### Rolling back
+
+Drop `hfspace` from `AURA_LLM_PROVIDERS` (back to `AURA_LLM_PROVIDERS=local`) and restart. The
+circuit breaker already stopped depending on it the moment Ollama recovered — this just removes
+the now-unused candidate rather than fixing anything broken.
+
+---
+
 Related: [Hardware Capacity Report](../../AI_HARDWARE_CAPACITY_REPORT.md) ·
 [Provisioning Runbook](provisioning-runbook.md) ·
 [Host Migration Runbook](host-migration-runbook.md) ·
-[Space source](../../spaces/inference/)
+[GPU Hybrid Setup](gpu-hybrid-setup.md) ·
+[Space source (llama.cpp)](../../spaces/inference/) ·
+[Space source (vLLM failover)](../../spaces/inference-vllm/)
