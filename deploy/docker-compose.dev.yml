@@ -61,6 +61,11 @@ secrets:
     file: ./secrets/jwt_secret
   firebase_credentials:
     file: ./secrets/firebase_credentials.json
+  # See docker-compose.prod.yml's `secrets:` block for what these two are.
+  secrets_encryption_key:
+    file: ./secrets/secrets_encryption_key
+  github_oauth_client_secret:
+    file: ./secrets/github_oauth_client_secret
 
 services:
   console:
@@ -146,6 +151,8 @@ services:
       AURA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
       AURA_QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
       AURA_JWT_SECRET_FILE: /run/secrets/jwt_secret
+      AURA_SECRETS_ENCRYPTION_KEY_FILE: /run/secrets/secrets_encryption_key
+      AURA_GITHUB_OAUTH_CLIENT_SECRET_FILE: /run/secrets/github_oauth_client_secret
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       FIREBASE_SERVICE_ACCOUNT_PATH: /run/secrets/firebase_credentials
@@ -175,9 +182,23 @@ services:
       AURA_GITHUB_ENABLED: ${AURA_GITHUB_ENABLED:-false}
       AURA_GITHUB_DEFAULT_OWNER: ${AURA_GITHUB_DEFAULT_OWNER:-}
       AURA_GITHUB_DEFAULT_REPO: ${AURA_GITHUB_DEFAULT_REPO:-}
+      # Per-user GitHub OAuth connect flow -- off by default, same as prod. See
+      # docker-compose.prod.yml's gateway env block for what each setting does.
+      AURA_GITHUB_OAUTH_ENABLED: ${AURA_GITHUB_OAUTH_ENABLED:-false}
+      AURA_GITHUB_OAUTH_CLIENT_ID: ${AURA_GITHUB_OAUTH_CLIENT_ID:-}
+      AURA_GITHUB_OAUTH_CALLBACK_URL: ${AURA_GITHUB_OAUTH_CALLBACK_URL:-https://${AURA_DOMAIN}/api/v3/integrations/github/callback}
       AURA_MCP_ENABLED: ${AURA_MCP_ENABLED:-false}
       AURA_MCP_SERVERS_JSON: ${AURA_MCP_SERVERS_JSON:-}
-    secrets: [postgres_password, redis_password, qdrant_api_key, jwt_secret, firebase_credentials]
+    secrets:
+      [
+        postgres_password,
+        redis_password,
+        qdrant_api_key,
+        jwt_secret,
+        firebase_credentials,
+        secrets_encryption_key,
+        github_oauth_client_secret,
+      ]
     volumes:
       - aura_workspace_dev:/var/lib/aura/workspace
       - aura_datasets_dev:/var/lib/aura/datasets
