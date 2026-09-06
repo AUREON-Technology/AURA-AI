@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
 
@@ -55,6 +56,18 @@ class PersonaChip extends ConsumerWidget {
   }
 }
 
+/// A short human label for a capability gate, falling back to the raw name for anything not
+/// explicitly known -- so a new backend-declared capability never breaks this UI, it just reads
+/// a little less polished until this map is updated.
+const Map<String, String> _knownCapabilityLabels = {
+  'engineer_agent': 'the Engineer capability',
+};
+
+String _capabilityLabel(Set<String> capabilities) {
+  if (capabilities.isEmpty) return 'an additional capability';
+  return capabilities.map((c) => _knownCapabilityLabels[c] ?? c).join(', ');
+}
+
 void showPersonaPicker(BuildContext context) {
   showModalBottomSheet(
     context: context,
@@ -108,25 +121,44 @@ class PersonaPickerSheet extends ConsumerWidget {
                         final agent = agents[index];
                         final (label, icon) = personaDisplay(agent.id);
                         final isActive = agent.id == activeId;
-                        return AuraSelectTile(
-                          icon: icon,
+                        // A persona the caller's own capabilities don't satisfy must never be
+                        // selectable: AgentRegistry.resolve() doesn't error on a mismatch, it
+                        // silently answers as the orchestrator instead, which is worse than a
+                        // greyed-out tile the user can see the reason for.
+                        final locked = !agent.usable;
+                        final tile = AuraSelectTile(
+                          icon: locked ? Icons.lock_outline : icon,
                           title: label,
-                          subtitle: agent.description.isEmpty
-                              ? null
-                              : agent.description,
+                          subtitle: locked
+                              ? 'Requires ${_capabilityLabel(agent.requiredCapabilities)} -- not available on this account'
+                              : (agent.description.isEmpty ? null : agent.description),
                           selected: isActive,
-                          trailing: isActive
-                              ? Icon(
-                                  Icons.check,
-                                  color: palette.brandOnSurfaceText,
+                          trailing: !locked && agent.id == 'coding_agent'
+                              ? IconButton(
+                                  tooltip: 'Engineer Task History',
+                                  visualDensity: VisualDensity.compact,
+                                  icon: Icon(Icons.history, color: palette.textSecondary),
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    context.go('/engineer-history');
+                                  },
                                 )
-                              : null,
-                          onTap: () {
-                            ref
-                                .read(activeAgentIdProvider.notifier)
-                                .setAgent(agent.id);
-                            Navigator.pop(context);
-                          },
+                              : (isActive
+                                  ? Icon(Icons.check, color: palette.brandOnSurfaceText)
+                                  : null),
+                          onTap: locked
+                              ? () {}
+                              : () {
+                                  ref
+                                      .read(activeAgentIdProvider.notifier)
+                                      .setAgent(agent.id);
+                                  Navigator.pop(context);
+                                },
+                        );
+                        if (!locked) return tile;
+                        return Opacity(
+                          opacity: 0.5,
+                          child: IgnorePointer(child: tile),
                         );
                       },
                     ),

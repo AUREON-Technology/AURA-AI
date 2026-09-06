@@ -14,14 +14,44 @@ class AgentInfo {
   final String id;
   final String description;
   final String version;
+  // Whether *this caller's* granted capabilities satisfy the persona's required_capabilities
+  // (backend-computed, `AgentRegistry.resolve()`'s own check mirrored for the client). A picker
+  // must never let the user select a persona where this is false -- doing so doesn't error, it
+  // silently answers as the orchestrator instead (see `requiredCapabilities` below).
+  final bool usable;
+  // The capabilities `AgentRegistry.resolve()` requires before it will resolve to this persona
+  // rather than silently falling back to the orchestrator. Empty for personas with no gate.
+  final Set<String> requiredCapabilities;
+  // Null means "no restriction beyond the caller's own capabilities" (the orchestrator); a list
+  // is this persona's actual tool grant.
+  final List<String>? allowedTools;
+  final String riskCeiling;
 
-  const AgentInfo({required this.id, required this.description, required this.version});
+  const AgentInfo({
+    required this.id,
+    required this.description,
+    required this.version,
+    this.usable = true,
+    this.requiredCapabilities = const {},
+    this.allowedTools,
+    this.riskCeiling = '',
+  });
 
   factory AgentInfo.fromJson(Map<String, dynamic> json) {
+    final rawRequired = json['required_capabilities'];
+    final rawAllowed = json['allowed_tools'];
     return AgentInfo(
       id: json['id'] as String? ?? '',
       description: json['description'] as String? ?? '',
       version: json['version'] as String? ?? '',
+      // Absent on an un-upgraded backend -- default true so an older server's behavior (no
+      // client-side gating at all) is unchanged rather than everything becoming unselectable.
+      usable: json['usable'] as bool? ?? true,
+      requiredCapabilities: rawRequired is List
+          ? rawRequired.map((c) => c.toString()).toSet()
+          : const {},
+      allowedTools: rawAllowed is List ? rawAllowed.map((t) => t.toString()).toList() : null,
+      riskCeiling: json['risk_ceiling'] as String? ?? '',
     );
   }
 }

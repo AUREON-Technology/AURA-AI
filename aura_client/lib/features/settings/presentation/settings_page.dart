@@ -78,6 +78,13 @@ class SettingsPage extends ConsumerWidget {
                 ),
                 const _RowDivider(),
                 AuraListTile(
+                  icon: Icons.code_outlined,
+                  title: 'Engineer Task History',
+                  subtitle: 'PRs, commits, and sandbox runs',
+                  onTap: () => context.go('/engineer-history'),
+                ),
+                const _RowDivider(),
+                AuraListTile(
                   icon: Icons.cloud_outlined,
                   iconColor: AuraPalette.of(context).info,
                   title: 'Engine status',

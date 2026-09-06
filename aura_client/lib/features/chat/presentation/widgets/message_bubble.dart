@@ -15,6 +15,7 @@ import '../../data/chat_repository.dart';
 import '../../data/turn_meta.dart';
 import 'citation_chip.dart';
 import 'empty_answer_retry_card.dart';
+import 'engineer_confirmation_card.dart';
 import 'feedback_sheet.dart';
 import 'persona_badge.dart';
 import 'step_log_panel.dart';
@@ -218,6 +219,16 @@ class MessageBubble extends ConsumerWidget {
                       PersonaBadge(label: personaInfo.$1, icon: personaInfo.$2),
                       const SizedBox(height: AuraSpacing.sm),
                     ],
+                    if (!isStreaming &&
+                        turnMeta.resolvedAgent != null &&
+                        agentId != null &&
+                        turnMeta.resolvedAgent != agentId) ...[
+                      _ResolvedAgentMismatchBanner(
+                        requested: agentId,
+                        resolved: turnMeta.resolvedAgent!,
+                      ),
+                      const SizedBox(height: AuraSpacing.sm),
+                    ],
                     if (showSkeleton)
                       const StreamingMessageSkeleton()
                     else if (!isStreaming &&
@@ -266,6 +277,12 @@ class MessageBubble extends ConsumerWidget {
                       const SizedBox(height: AuraSpacing.sm),
                       StepLogPanel(steps: turnMeta.steps),
                     ],
+                    if (!isStreaming) ...[
+                      const SizedBox(height: AuraSpacing.sm),
+                      EngineerConfirmationCard(
+                        turnId: turnMeta.turnId ?? message.id,
+                      ),
+                    ],
                     if (citations.isNotEmpty) ...[
                       const SizedBox(height: AuraSpacing.sm),
                       CitationChips(citations: citations),
@@ -303,6 +320,47 @@ class MessageBubble extends ConsumerWidget {
                   ],
                 ),
               ),
+      ),
+    );
+  }
+}
+
+/// Shown when the backend answered with a different persona than the one requested --
+/// `AgentRegistry.resolve()` silently falls back to the orchestrator when the caller lacks a
+/// persona's required capability, with no error anywhere else in the response. The picker
+/// (`persona_picker.dart`) already tries to prevent selecting an unusable persona in the first
+/// place; this is the belt-and-suspenders signal for when that guard is somehow bypassed (a
+/// stale cached agent list, for instance).
+class _ResolvedAgentMismatchBanner extends StatelessWidget {
+  const _ResolvedAgentMismatchBanner({required this.requested, required this.resolved});
+
+  final String requested;
+  final String resolved;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    final (requestedLabel, _) = personaDisplay(requested);
+    final (resolvedLabel, _) = personaDisplay(resolved);
+    return Container(
+      padding: const EdgeInsets.all(AuraSpacing.sm),
+      decoration: BoxDecoration(
+        color: palette.warning.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(AuraRadius.sm),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, size: 16, color: palette.warning),
+          const SizedBox(width: AuraSpacing.xs),
+          Expanded(
+            child: Text(
+              'This request was handled by $resolvedLabel, not $requestedLabel -- your account '
+              'may not have access to $requestedLabel.',
+              style: TextStyle(color: palette.textSecondary, fontSize: 12, height: 1.4),
+            ),
+          ),
+        ],
       ),
     );
   }

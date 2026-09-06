@@ -24,6 +24,7 @@ class _FailingSseClient extends SseAgentClient {
     bool useMemory = true,
     bool useTools = true,
     List<String> confirmedTools = const [],
+    List<String> confirmedCallIds = const [],
     String? correlationId,
     int maxOutputTokens = 1024,
     double temperature = 0.3,

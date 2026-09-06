@@ -37,6 +37,18 @@ class PendingConfirmation extends Notifier<List<PendingToolCall>> {
   List<PendingToolCall> build() => [];
 
   void setPending(List<PendingToolCall> calls) => state = calls;
+
+  /// Adds to the existing pending list rather than replacing it, so a second turn's pending
+  /// calls don't discard a still-unresolved earlier turn's -- each call carries its own [turnId]
+  /// (Phase 2's per-message confirmation card filters by it).
+  void addPending(List<PendingToolCall> calls) => state = [...state, ...calls];
+
+  void removeByCallId(String callId) =>
+      state = state.where((c) => c.callId != callId).toList();
+
+  void removeByTurnId(String turnId) =>
+      state = state.where((c) => c.turnId != turnId).toList();
+
   void clear() => state = [];
 }
 
@@ -105,6 +117,7 @@ class ChatRepository {
     bool useMemory = true,
     bool useTools = true,
     List<String> confirmedTools = const [],
+    List<String> confirmedCallIds = const [],
     bool persistUserMessage = true,
   }) async {
     if (_ref.read(streamingMessageIdProvider) != null) {
@@ -113,7 +126,9 @@ class ChatRepository {
     }
 
     _ref.read(pendingActionsProvider.notifier).clear();
-    _ref.read(pendingConfirmationProvider.notifier).clear();
+    // Pending confirmations are turn-scoped (each `PendingToolCall.turnId`), not cleared wholesale
+    // here -- a new message must not silently discard a still-unresolved earlier turn's pending
+    // calls. `confirmTaintedTools`/`rejectTools` remove entries individually as they resolve.
 
     if (persistUserMessage) {
       final userMsgId = _uuid.v4();
@@ -160,6 +175,7 @@ class ChatRepository {
         useMemory: useMemory,
         useTools: useTools,
         confirmedTools: confirmedTools,
+        confirmedCallIds: confirmedCallIds,
         assistantMsgId: assistantMsgId,
       );
 
@@ -208,6 +224,7 @@ class ChatRepository {
   Future<void> confirmTaintedTools({
     required String conversationId,
     required List<String> confirmedTools,
+    List<String> confirmedCallIds = const [],
   }) async {
     final messages = await (_db.select(_db.messages)
           ..where((m) => m.conversationId.equals(conversationId))
@@ -215,13 +232,36 @@ class ChatRepository {
         .get();
     final userMessages = messages.where((m) => m.role == 'user').toList();
     if (userMessages.isEmpty) return;
-    _ref.read(pendingConfirmationProvider.notifier).clear();
+    for (final callId in confirmedCallIds) {
+      _ref.read(pendingConfirmationProvider.notifier).removeByCallId(callId);
+    }
+    if (confirmedCallIds.isEmpty) {
+      // Legacy all-or-nothing path: no call ids given, so every pending call sharing one of
+      // these tool names is being approved -- clear them all rather than leaving stale entries.
+      final notifier = _ref.read(pendingConfirmationProvider.notifier);
+      for (final call in _ref.read(pendingConfirmationProvider)) {
+        if (confirmedTools.contains(call.tool) && call.callId != null) {
+          notifier.removeByCallId(call.callId!);
+        }
+      }
+    }
     await sendChatMessage(
       conversationId: conversationId,
       userContent: userMessages.last.content,
       confirmedTools: confirmedTools,
+      confirmedCallIds: confirmedCallIds,
       persistUserMessage: false,
     );
+  }
+
+  /// Rejects pending calls locally -- no request is sent; the backend simply never receives a
+  /// confirmation for these call ids, so they stay refused on the next turn like today's
+  /// "just don't confirm it" behavior, only now scoped to the specific calls the user declined.
+  void rejectPendingCalls(List<String> callIds) {
+    final notifier = _ref.read(pendingConfirmationProvider.notifier);
+    for (final callId in callIds) {
+      notifier.removeByCallId(callId);
+    }
   }
 
   Future<_SseResult> _sendViaSse({
@@ -232,6 +272,7 @@ class ChatRepository {
     required bool useMemory,
     required bool useTools,
     required List<String> confirmedTools,
+    List<String> confirmedCallIds = const [],
     required String assistantMsgId,
   }) async {
     final stopwatch = Stopwatch()..start();
@@ -252,6 +293,7 @@ class ChatRepository {
         useMemory: useMemory,
         useTools: useTools,
         confirmedTools: confirmedTools,
+        confirmedCallIds: confirmedCallIds,
       );
 
       await for (final event in stream) {
@@ -319,16 +361,26 @@ class ChatRepository {
               await _updateMessageToolCalls(assistantMsgId, toolCalls);
             }
             final done = event.turnMeta ?? const TurnMeta();
-            meta = done.copyWith(revised: meta.revised, steps: steps);
+            meta = done.copyWith(
+              revised: meta.revised,
+              steps: steps,
+              // The message id doubles as this turn's scoping key for pending confirmations --
+              // stable even when the backend's own `turn_id` is absent (an un-upgraded backend).
+              turnId: done.turnId ?? assistantMsgId,
+            );
             await _updateMessageTurnMeta(assistantMsgId, meta);
             if (meta.pendingToolCalls.isNotEmpty) {
               // The backend's `pending_tool_calls` (the actual confirm-gated calls, with their
               // real arguments) replaces the old guess from `toolCalls` -- those are the native,
               // informational-only tool-call frames (ADR-006, never executed), which merely
               // often happened to line up with the real confirm-gated tool by coincidence.
-              _ref
-                  .read(pendingConfirmationProvider.notifier)
-                  .setPending(meta.pendingToolCalls);
+              // `addPending` (not `setPending`): an earlier turn's still-unresolved confirmation
+              // must not be silently dropped just because a later turn also produced one.
+              _ref.read(pendingConfirmationProvider.notifier).addPending(
+                    meta.pendingToolCalls
+                        .map((p) => p.copyWith(turnId: meta.turnId))
+                        .toList(),
+                  );
             } else if (meta.needsConfirmation) {
               // Backward-compat fallback for a backend that hasn't been upgraded yet (no
               // `pending_tool_calls` field): fall back to the old name-only guess so confirmation
@@ -338,8 +390,8 @@ class ChatRepository {
                   .whereType<String>()
                   .where((n) => n.isNotEmpty)
                   .toList();
-              _ref.read(pendingConfirmationProvider.notifier).setPending(
-                    names.map((n) => PendingToolCall(tool: n)).toList(),
+              _ref.read(pendingConfirmationProvider.notifier).addPending(
+                    names.map((n) => PendingToolCall(tool: n, turnId: meta.turnId)).toList(),
                   );
             }
             break;

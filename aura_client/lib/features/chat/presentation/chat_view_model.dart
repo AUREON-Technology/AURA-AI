@@ -7,6 +7,7 @@ import '../../health/data/health_repository.dart';
 import '../../sync/sync_engine.dart';
 import '../../tasks/data/task_repository.dart';
 import '../data/chat_repository.dart';
+import '../data/turn_meta.dart';
 import 'pending_actions_executor.dart';
 
 @immutable
@@ -129,13 +130,26 @@ class ChatViewModel extends Notifier<ChatUiState> {
     }
   }
 
-  Future<void> confirmTools() {
-    final tools = ref.read(pendingConfirmationProvider).map((p) => p.tool).toList();
+  /// Confirms the given pending calls (default: every pending call, preserving "Confirm All").
+  /// Confirms by call id when available -- precise even when two pending calls share a tool
+  /// name -- falling back to the tool name for any call an older backend didn't tag with one.
+  Future<void> confirmTools([List<PendingToolCall>? calls]) {
+    final List<PendingToolCall> pending = calls ?? ref.read(pendingConfirmationProvider);
+    final callIds = pending.map((p) => p.callId).whereType<String>().toList();
+    final tools = pending.map((p) => p.tool).toSet().toList();
     final sessionId = ref.read(activeConversationIdProvider);
     return ref.read(chatRepositoryProvider).confirmTaintedTools(
           conversationId: sessionId,
           confirmedTools: tools,
+          confirmedCallIds: callIds,
         );
+  }
+
+  /// Declines the given pending calls without sending anything to the backend -- they simply
+  /// stay unconfirmed, same as never approving them today, just scoped to only these calls.
+  void rejectTools(List<PendingToolCall> calls) {
+    final callIds = calls.map((p) => p.callId).whereType<String>().toList();
+    ref.read(chatRepositoryProvider).rejectPendingCalls(callIds);
   }
 
   void rejectPendingActions() {

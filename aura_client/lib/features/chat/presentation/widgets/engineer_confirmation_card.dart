@@ -7,36 +7,63 @@ import 'package:aura_client/features/chat/data/turn_meta.dart';
 import 'package:aura_client/features/chat/presentation/chat_view_model.dart';
 
 import 'code_preview.dart';
+import 'github_branch_summary.dart';
+import 'sandbox_diff_view.dart';
+import 'sandbox_file_view.dart';
+import 'sandbox_terminal_view.dart';
 
-/// Replaces the old, argument-blind `ConfirmationCard`: renders what a confirm-gated tool call
-/// actually proposes (branch/files/PR title/body for GitHub tools), not just its name, so
-/// approving a draft PR no longer means approving it blind. Falls back to a generic
-/// name+arguments table for any tool this doesn't have specific rendering for, so the card never
-/// breaks on an unrecognized one (including `github_create_branch`, which is confirm-gated today
-/// but has no dedicated sub-card).
-class EngineerConfirmationCard extends ConsumerWidget {
+/// Renders what a confirm-gated tool call actually proposes (branch/files/PR title/body for
+/// GitHub tools, real file/command/diff views for sandbox tools), not just its name, so
+/// approving a draft PR or a shell command no longer means approving it blind.
+///
+/// Scoped to one turn (per-message): when [turnId] is set, only pending calls whose
+/// [PendingToolCall.turnId] matches are shown here -- the single global card this replaced had
+/// no way to say which assistant bubble it belonged to. Pass `turnId: null` (as the live-voice
+/// screen does, which has no discrete message list) to show every pending call regardless of
+/// turn -- the old global behavior.
+class EngineerConfirmationCard extends ConsumerStatefulWidget {
   const EngineerConfirmationCard({
     super.key,
+    this.turnId,
     this.onConfirm,
     this.onCancel,
   });
 
-  /// When set, used instead of [chatViewModelProvider.confirmTools].
+  final String? turnId;
+
+  /// When set, used instead of [chatViewModelProvider.confirmTools] and receives every pending
+  /// call shown by this card (selection is not exposed to this callback -- callers using it,
+  /// e.g. live voice, don't yet support per-call selection there).
   final VoidCallback? onConfirm;
 
-  /// When set, used instead of clearing [pendingConfirmationProvider] alone.
+  /// When set, used instead of [chatViewModelProvider.rejectTools].
   final VoidCallback? onCancel;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final pending = ref.watch(pendingConfirmationProvider);
+  ConsumerState<EngineerConfirmationCard> createState() => _EngineerConfirmationCardState();
+}
+
+class _EngineerConfirmationCardState extends ConsumerState<EngineerConfirmationCard> {
+  final Set<String> _deselected = {};
+
+  @override
+  Widget build(BuildContext context) {
+    final all = ref.watch(pendingConfirmationProvider);
+    final pending = widget.turnId == null
+        ? all
+        : all.where((c) => c.turnId == widget.turnId).toList();
     if (pending.isEmpty) return const SizedBox.shrink();
 
+    final selectable = pending.where((c) => c.callId != null).length;
+    final selected = pending
+        .where((c) => c.callId != null && !_deselected.contains(c.callId))
+        .toList();
+    // A call with no call_id (a legacy name-only fallback entry) can't be individually selected
+    // -- it is always included, matching the old all-or-nothing behavior for that one entry.
+    final toConfirm = [...selected, ...pending.where((c) => c.callId == null)];
+
     return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AuraSpacing.xl,
-        vertical: AuraSpacing.sm,
-      ),
+      padding: const EdgeInsets.symmetric(vertical: AuraSpacing.sm),
       child: AuraCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -48,7 +75,21 @@ class EngineerConfirmationCard extends ConsumerWidget {
             const SizedBox(height: AuraSpacing.sm),
             for (var i = 0; i < pending.length; i++) ...[
               if (i > 0) const SizedBox(height: AuraSpacing.md),
-              _PendingCallSummary(call: pending[i]),
+              _PendingCallRow(
+                call: pending[i],
+                selected: pending[i].callId == null ||
+                    !_deselected.contains(pending[i].callId),
+                selectable: selectable > 1 && pending[i].callId != null,
+                onToggle: (value) => setState(() {
+                  final id = pending[i].callId;
+                  if (id == null) return;
+                  if (value) {
+                    _deselected.remove(id);
+                  } else {
+                    _deselected.add(id);
+                  }
+                }),
+              ),
             ],
             const SizedBox(height: AuraSpacing.md),
             Row(
@@ -57,16 +98,18 @@ class EngineerConfirmationCard extends ConsumerWidget {
                   child: AuraButton(
                     label: 'Cancel',
                     variant: AuraButtonVariant.secondary,
-                    onPressed: onCancel ??
-                        () => ref.read(pendingConfirmationProvider.notifier).clear(),
+                    onPressed: widget.onCancel ??
+                        () => ref.read(chatViewModelProvider.notifier).rejectTools(pending),
                   ),
                 ),
                 const SizedBox(width: AuraSpacing.md),
                 Expanded(
                   child: AuraButton(
-                    label: 'Confirm',
-                    onPressed: onConfirm ??
-                        () => ref.read(chatViewModelProvider.notifier).confirmTools(),
+                    label: toConfirm.length < pending.length ? 'Confirm selected' : 'Confirm',
+                    onPressed: toConfirm.isEmpty
+                        ? null
+                        : (widget.onConfirm ??
+                            () => ref.read(chatViewModelProvider.notifier).confirmTools(toConfirm)),
                   ),
                 ),
               ],
@@ -74,6 +117,33 @@ class EngineerConfirmationCard extends ConsumerWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _PendingCallRow extends StatelessWidget {
+  const _PendingCallRow({
+    required this.call,
+    required this.selected,
+    required this.selectable,
+    required this.onToggle,
+  });
+
+  final PendingToolCall call;
+  final bool selected;
+  final bool selectable;
+  final ValueChanged<bool> onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final summary = _PendingCallSummary(call: call);
+    if (!selectable) return summary;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Checkbox(value: selected, onChanged: (v) => onToggle(v ?? true)),
+        Expanded(child: summary),
+      ],
     );
   }
 }
@@ -92,6 +162,31 @@ class _PendingCallSummary extends StatelessWidget {
         return _DraftPrSummary(call: call);
       case 'github_commit_files':
         return _CommitFilesSummary(call: call);
+      case 'github_create_branch':
+        return _SummaryShell(
+          icon: Icons.call_split,
+          title: 'Create branch',
+          children: [GithubBranchSummary(arguments: call.arguments)],
+        );
+      case 'write_file':
+        return _WriteFileSummary(call: call);
+      case 'edit_file':
+        return _EditFileSummary(call: call);
+      case 'run_command':
+        return _RunCommandSummary(call: call);
+      case 'git_commit':
+        return _GitCommitSummary(call: call);
+      case 'git_checkout_branch':
+        return _SummaryShell(
+          icon: Icons.call_split,
+          title: 'Switch to branch',
+          children: [
+            Text(
+              '${call.arguments['branch'] ?? '?'}',
+              style: const TextStyle(fontFamily: 'Courier', fontSize: 13),
+            ),
+          ],
+        );
       default:
         return _GenericToolSummary(call: call);
     }
@@ -203,8 +298,95 @@ class _CommitFilesSummary extends StatelessWidget {
             padding: const EdgeInsets.only(top: 2),
             child: Text('${a['message']}', style: Theme.of(context).textTheme.bodyMedium),
           ),
-        for (final entry in fileEntries)
-          CodePreview(path: entry.key.toString(), content: entry.value?.toString() ?? ''),
+        // A real diff when the backend could produce one (an active sandbox session at
+        // confirmation time); otherwise fall back to the old add-only content preview per file.
+        if (call.diffPreview != null && call.diffPreview!.trim().isNotEmpty)
+          SandboxDiffView(diffText: call.diffPreview!)
+        else
+          for (final entry in fileEntries)
+            CodePreview(path: entry.key.toString(), content: entry.value?.toString() ?? ''),
+      ],
+    );
+  }
+}
+
+class _WriteFileSummary extends StatelessWidget {
+  const _WriteFileSummary({required this.call});
+
+  final PendingToolCall call;
+
+  @override
+  Widget build(BuildContext context) {
+    final a = call.arguments;
+    return _SummaryShell(
+      icon: Icons.note_add_outlined,
+      title: 'Write file',
+      children: [
+        SandboxFileView(
+          path: a['path']?.toString() ?? '?',
+          content: a['content']?.toString() ?? '',
+        ),
+      ],
+    );
+  }
+}
+
+class _EditFileSummary extends StatelessWidget {
+  const _EditFileSummary({required this.call});
+
+  final PendingToolCall call;
+
+  @override
+  Widget build(BuildContext context) {
+    final a = call.arguments;
+    return _SummaryShell(
+      icon: Icons.edit_note_outlined,
+      title: 'Edit ${a['path'] ?? 'file'}',
+      children: [
+        SandboxDiffView.fromBeforeAfter(
+          before: a['find']?.toString() ?? '',
+          after: a['replace']?.toString() ?? '',
+        ),
+      ],
+    );
+  }
+}
+
+class _RunCommandSummary extends StatelessWidget {
+  const _RunCommandSummary({required this.call});
+
+  final PendingToolCall call;
+
+  @override
+  Widget build(BuildContext context) {
+    final command = call.arguments['command']?.toString() ?? '';
+    return _SummaryShell(
+      icon: Icons.terminal,
+      title: 'Run command in sandbox',
+      children: [SandboxTerminalView(body: command)],
+    );
+  }
+}
+
+class _GitCommitSummary extends StatelessWidget {
+  const _GitCommitSummary({required this.call});
+
+  final PendingToolCall call;
+
+  @override
+  Widget build(BuildContext context) {
+    final message = call.arguments['message']?.toString() ?? '';
+    return _SummaryShell(
+      icon: Icons.commit,
+      title: 'Commit sandbox changes',
+      children: [
+        if (message.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(message, style: Theme.of(context).textTheme.bodyMedium),
+          ),
+        if (call.diffPreview != null && call.diffPreview!.trim().isNotEmpty)
+          SandboxDiffView(diffText: call.diffPreview!),
       ],
     );
   }
