@@ -24,6 +24,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Mapping, Sequence
 
+from ..domain.engineering import EngineerRun
 from ..domain.errors import ConflictError, NotFoundError, ValidationError
 from ..domain.goals import GoalSnapshot
 from ..domain.identifiers import DocumentId, MemoryId, PersonalOsRecordId, UserId
@@ -437,6 +438,30 @@ class InMemoryPersonalOsStore:
         async with self._lock:
             self._records.pop(record_id.value, None)
         return True
+
+
+class InMemoryEngineerRunStore:
+    """Reference implementation of
+    :class:`~aura_core.ports.coding.EngineerRunStore`. Read-only from a caller's perspective
+    beyond :meth:`record` -- see that port's docstring."""
+
+    def __init__(self) -> None:
+        self._runs: list[EngineerRun] = []
+        self._lock = asyncio.Lock()
+
+    async def record(self, run: EngineerRun) -> None:
+        async with self._lock:
+            self._runs.append(run)
+
+    async def list_for_user(
+        self, user_id: UserId, *, since: datetime | None = None, limit: int = 200,
+    ) -> list[EngineerRun]:
+        matches = [
+            r for r in self._runs
+            if r.user_id == user_id and (since is None or r.created_at >= since)
+        ]
+        matches.sort(key=lambda r: r.created_at, reverse=True)
+        return matches[:limit]
 
 
 _FAR_FUTURE = datetime(9999, 12, 31, tzinfo=timezone.utc)

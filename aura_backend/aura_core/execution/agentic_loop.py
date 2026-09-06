@@ -84,6 +84,7 @@ class AgenticExecutor:
         context: ToolContext,
         capabilities: Sequence[str] = (),
         confirmed_tools: Sequence[str] = (),
+        confirmed_call_ids: Sequence[str] = (),
         available_tools: Sequence[Mapping[str, Any]] = (),
         max_iterations: int = 1,
         deadline_s: float = 600.0,
@@ -93,7 +94,8 @@ class AgenticExecutor:
         deadline = time.monotonic() + deadline_s
         outcome = await self._executor.execute(
             plan, context=context, capabilities=capabilities,
-            confirmed_tools=confirmed_tools, on_event=on_event,
+            confirmed_tools=confirmed_tools, confirmed_call_ids=confirmed_call_ids,
+            on_event=on_event,
         )
         while self._should_continue(outcome, deadline=deadline, max_iterations=max_iterations):
             revised = await self._next_plan(
@@ -103,7 +105,8 @@ class AgenticExecutor:
                 break
             outcome = await self._executor.execute(
                 revised, context=context, capabilities=capabilities,
-                confirmed_tools=confirmed_tools, on_event=on_event,
+                confirmed_tools=confirmed_tools, confirmed_call_ids=confirmed_call_ids,
+                on_event=on_event,
             )
         return outcome
 
@@ -114,6 +117,7 @@ class AgenticExecutor:
         context: ToolContext,
         capabilities: Sequence[str] = (),
         confirmed_tools: Sequence[str] = (),
+        confirmed_call_ids: Sequence[str] = (),
         available_tools: Sequence[Mapping[str, Any]] = (),
         max_iterations: int = 1,
         deadline_s: float = 600.0,
@@ -132,7 +136,7 @@ class AgenticExecutor:
         while True:
             async for item in self._executor.stream(
                 current, context=context, capabilities=capabilities,
-                confirmed_tools=confirmed_tools,
+                confirmed_tools=confirmed_tools, confirmed_call_ids=confirmed_call_ids,
             ):
                 if isinstance(item, StepEvent):
                     yield item

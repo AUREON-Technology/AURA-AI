@@ -30,6 +30,7 @@ __all__ = [
     "ToolCallId",
     "GenerationId",
     "PersonalOsRecordId",
+    "EngineerRunId",
     "deterministic_uuid",
 ]
 
@@ -133,6 +134,14 @@ class PersonalOsRecordId(Identifier):
     same name: this is a different table with a different visibility contract -- see
     ``aura_core/domain/personal_os.py``.
     """
+
+
+@dataclass(frozen=True, slots=True)
+class EngineerRunId(Identifier):
+    """One recorded outcome of an engineer-agent tool call (sandbox or GitHub) -- see
+    ``aura_core/domain/engineering.py``. Its own id type for the same reason
+    :class:`PersonalOsRecordId` is: a different table, a different visibility contract, not to be
+    confused with a `ToolCallId`."""
 
 
 def deterministic_uuid(*parts: str, namespace: str = "aura") -> uuid.UUID:

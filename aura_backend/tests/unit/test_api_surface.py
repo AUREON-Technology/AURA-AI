@@ -206,6 +206,38 @@ class TestIntrospection:
         response = user_client.post("/api/v3/feedback", json={"turn_id": "t", "rating": 99})
         assert response.status_code == 422
 
+    def test_engineer_runs_starts_empty(self, user_client) -> None:
+        response = user_client.get("/api/v3/engineering/runs")
+        assert response.status_code == 200
+        assert response.json()["runs"] == []
+
+    def test_a_recorded_engineer_run_is_returned_for_its_owner(
+        self, user_client, container
+    ) -> None:
+        import asyncio
+        from datetime import datetime, timezone
+
+        from aura_core.domain.engineering import EngineerRun, EngineerRunStatus
+        from aura_core.domain.identifiers import EngineerRunId, UserId
+
+        now = datetime.now(timezone.utc)
+        asyncio.run(container.engineer_runs.record(EngineerRun(
+            id=EngineerRunId.new(), user_id=UserId("test-user"), turn_id="t1",
+            correlation_id="c1", persona="engineer",
+            tool="github_create_draft_pull_request", call_id="step_s1",
+            status=EngineerRunStatus.SUCCEEDED, created_at=now, updated_at=now,
+            pr_url="https://github.com/o/r/pull/1",
+        )))
+
+        response = user_client.get("/api/v3/engineering/runs")
+        runs = response.json()["runs"]
+        assert len(runs) == 1
+        assert runs[0]["pr_url"] == "https://github.com/o/r/pull/1"
+
+    def test_an_invalid_since_timestamp_is_rejected(self, user_client) -> None:
+        response = user_client.get("/api/v3/engineering/runs", params={"since": "not-a-date"})
+        assert response.status_code == 422
+
 
 class TestAdminOperations:
     def test_an_index_rebuild_reports_its_gate_outcome(self, admin_client) -> None:

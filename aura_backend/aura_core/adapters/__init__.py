@@ -7,6 +7,7 @@ lazily inside each adapter so an unused one never has to be installed.
 
 from .memory_stores import (
     InMemoryDocumentStore,
+    InMemoryEngineerRunStore,
     InMemoryGraphStore,
     InMemoryMemoryStore,
     InMemoryPersonalOsStore,
@@ -19,6 +20,7 @@ __all__ = [
     "InMemoryDocumentStore",
     "InMemoryMemoryStore",
     "InMemoryPersonalOsStore",
+    "InMemoryEngineerRunStore",
     "InMemoryGraphStore",
     "InMemoryEventBus",
     "InMemoryAuditSink",

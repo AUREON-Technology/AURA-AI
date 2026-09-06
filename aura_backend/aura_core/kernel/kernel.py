@@ -25,6 +25,7 @@ side effect so it cannot be forgotten (ADR-009).
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -39,7 +40,8 @@ from ..domain.errors import (
 )
 from ..domain.events import TurnCompleted, TurnFailed, TurnStarted
 from ..domain.context import user_facing_citations
-from ..domain.identifiers import CorrelationId, SessionId, TurnId, UserId
+from ..domain.engineering import EngineerRun, EngineerRunStatus
+from ..domain.identifiers import CorrelationId, EngineerRunId, SessionId, TurnId, UserId
 from ..domain.knowledge import RetrievalResult
 from ..domain.llm import (
     CompletionRequest,
@@ -74,6 +76,14 @@ __all__ = ["AIKernel", "TurnRequest", "TurnResult", "KernelDependencies"]
 
 logger = get_logger("kernel")
 
+# Matches `tools/coding.py::_ENGINEER_CAPABILITY` -- not imported directly since `kernel/` sits
+# above `tools/` in the layering and must not import a concrete tool module.
+_ENGINEER_AGENT_CAPABILITY = "engineer_agent"
+_URL_RE = re.compile(r"https?://\S+")
+# `github_create_branch`'s result text ends "... (<sha[:7]>)" -- best-effort extraction, not a
+# guarantee every tool's prose embeds a SHA in this exact shape.
+_SHA_RE = re.compile(r"\(([0-9a-f]{7,40})\)\s*$")
+
 
 @dataclass(frozen=True, slots=True)
 class TurnRequest:
@@ -93,6 +103,10 @@ class TurnRequest:
     require_local: bool = False
     capabilities: tuple[str, ...] = ()
     confirmed_tools: tuple[str, ...] = ()
+    #: Precise per-call confirmation: a `ToolCallId` value (e.g. `"step_<plan-step-id>"`) rather
+    #: than a tool name, so two pending calls to the same tool in one turn can be confirmed
+    #: independently. Checked before `confirmed_tools`; either alone is sufficient.
+    confirmed_call_ids: tuple[str, ...] = ()
     max_output_tokens: int = 1024
     temperature: float = 0.3
     route: str = "chat"
@@ -113,6 +127,11 @@ class TurnResult:
     #: same tool must surface as two separate pending calls, not collapse into one.
     pending_tool_calls: tuple[Mapping[str, Any], ...] = ()
     plan_summary: tuple[Mapping[str, Any], ...] = ()
+    #: The persona id `AgentRegistry.resolve()` actually used -- may differ from
+    #: `TurnRequest.agent` when the caller lacked that persona's `required_capabilities` and the
+    #: registry silently fell back to `orchestrator` (see `AgentRegistry.resolve()`'s docstring).
+    #: Lets a caller detect that fallback instead of it being invisible.
+    resolved_agent: str | None = None
 
     @property
     def degraded(self) -> bool:
@@ -145,6 +164,9 @@ class KernelDependencies:
     #: instead of the single `executor.execute()` call when the turn's resolved agent declares
     #: `max_plan_iterations > 1`. `None` preserves the pre-agentic-loop behaviour exactly.
     agentic_executor: Any = None
+    #: `EngineerRunStore` (`ports/coding.py`) -- `None` disables recording engineer-agent tool
+    #: outcomes entirely (matching every other optional dependency's "absent means off" contract).
+    engineer_runs: Any = None
     episodic: Any = None
     cache: Any = None
     metrics: Any = None
@@ -209,6 +231,8 @@ class AIKernel:
         started: float,
     ) -> TurnResult:
         deps = self._deps
+        resolved_spec = self._resolve_agent(request)
+        resolved_agent = resolved_spec.id if resolved_spec is not None else request.agent
         timings: dict[str, float] = {}
         budget = TurnBudget(
             max_generations=getattr(
@@ -299,6 +323,9 @@ class AIKernel:
                             "tool": report.tool,
                             "arguments": dict(report.arguments),
                         })
+                await self._record_engineer_runs(
+                    request, turn_id, correlation, resolved_agent, outcome
+                )
 
         # 7. Assemble context --------------------------------------------------------
         stage_start = time.perf_counter()
@@ -418,6 +445,7 @@ class AIKernel:
             needs_confirmation=tuple(dict.fromkeys(needs_confirmation)),
             pending_tool_calls=tuple(pending_tool_calls),
             plan_summary=tuple(plan_summary),
+            resolved_agent=resolved_agent,
         )
 
     # -- streaming ---------------------------------------------------------------------
@@ -443,6 +471,8 @@ class AIKernel:
         with LogContext(correlation_id=correlation.value, route=request.route):
             try:
                 deps = self._deps
+                resolved_spec = self._resolve_agent(request)
+                resolved_agent = resolved_spec.id if resolved_spec is not None else request.agent
                 message = request.message
                 if deps.safety is not None:
                     decision = await deps.safety.guard_input(
@@ -479,6 +509,7 @@ class AIKernel:
                 tool_results: list[tuple[str, str]] = []
                 needs_confirmation: list[str] = []
                 pending_tool_calls: list[Mapping[str, Any]] = []
+                plan_summary: list[Mapping[str, Any]] = []
                 outcome: ExecutionOutcome | None = None
                 if self._should_plan(request, tool_declarations):
                     try:
@@ -494,6 +525,11 @@ class AIKernel:
                         outcome = None
                 if outcome is not None:
                     tool_results = outcome.summary_for_context()
+                    plan_summary = [
+                        {"id": s.id.value, "kind": str(s.kind), "status": str(s.status),
+                         "description": s.description}
+                        for s in outcome.plan.steps
+                    ]
                     for report in outcome.tool_reports:
                         if report.needs_confirmation:
                             needs_confirmation.append(report.tool)
@@ -502,6 +538,9 @@ class AIKernel:
                                 "tool": report.tool,
                                 "arguments": dict(report.arguments),
                             })
+                    await self._record_engineer_runs(
+                        request, turn_id, correlation, resolved_agent, outcome
+                    )
 
                 actions = actions_from_tool_results(tool_results)
                 if actions:
@@ -643,6 +682,8 @@ class AIKernel:
                     "citations": visible_citations,
                     "needs_confirmation": list(dict.fromkeys(needs_confirmation)),
                     "pending_tool_calls": pending_tool_calls,
+                    "plan_summary": plan_summary,
+                    "resolved_agent": resolved_agent,
                     "turn_id": turn_id.value,
                     "correlation_id": correlation.value,
                     # Stream does not run the reasoner; null is honest, not a fake score.
@@ -765,6 +806,74 @@ class AIKernel:
             return None
         return self._deps.agents.resolve(request.agent, capabilities=request.capabilities)
 
+    async def _record_engineer_runs(
+        self,
+        request: TurnRequest,
+        turn_id: TurnId,
+        correlation: CorrelationId,
+        resolved_agent: str,
+        outcome: ExecutionOutcome | None,
+    ) -> None:
+        """Durable record of what an engineer-agent tool call did, for the client's history view.
+
+        Only tools gated behind `required_capability="engineer_agent"` are recorded -- every
+        other tool's outcome already has a home (telemetry, audit) that isn't specific to this
+        one persona. Fires for every terminal report (succeeded, failed, or still pending
+        confirmation), not just successes, so a rejected/failed attempt is visible too.
+        """
+        deps = self._deps
+        if deps.engineer_runs is None or outcome is None or not outcome.tool_reports:
+            return
+        steps_by_call_id = {f"step_{s.id.value}": s for s in outcome.plan.steps}
+        now = datetime.now(timezone.utc)
+        for report in outcome.tool_reports:
+            try:
+                spec = deps.tools.spec(report.tool) if deps.tools is not None else None
+            except Exception:
+                spec = None
+            if spec is None or spec.required_capability != _ENGINEER_AGENT_CAPABILITY:
+                continue
+            step = steps_by_call_id.get(report.call_id)
+            text = (step.result or "") if step is not None else ""
+            status = (
+                EngineerRunStatus.SUCCEEDED if report.ok
+                else EngineerRunStatus.PENDING if report.needs_confirmation
+                else EngineerRunStatus.FAILED
+            )
+            pr_url = None
+            if report.tool == "github_create_draft_pull_request":
+                match = _URL_RE.search(text)
+                pr_url = match.group(0) if match else None
+            commit_sha = None
+            if report.tool in ("github_create_branch", "git_commit"):
+                match = _SHA_RE.search(text)
+                commit_sha = match.group(1) if match else None
+            sandbox_transcript = (
+                text if report.tool in
+                ("write_file", "edit_file", "run_command", "git_diff", "git_commit",
+                 "git_checkout_branch")
+                else None
+            )
+            try:
+                await deps.engineer_runs.record(EngineerRun(
+                    id=EngineerRunId.new(),
+                    user_id=request.user_id,
+                    turn_id=turn_id.value,
+                    correlation_id=correlation.value,
+                    persona=resolved_agent,
+                    tool=report.tool,
+                    call_id=report.call_id,
+                    status=status,
+                    created_at=now,
+                    updated_at=now,
+                    pr_url=pr_url,
+                    branch=dict(report.arguments).get("branch"),
+                    commit_sha=commit_sha,
+                    sandbox_transcript=sandbox_transcript,
+                ))
+            except Exception:
+                logger.warning("failed to record engineer run", extra={"tool": report.tool})
+
     def _tool_declarations(self, request: TurnRequest) -> tuple[Mapping[str, Any], ...]:
         deps = self._deps
         if not (request.use_tools and deps.tools is not None):
@@ -786,8 +895,8 @@ class AIKernel:
         if deps.planner is None or deps.executor is None or not tools:
             return False
         force = request.plan
-        if force is None and request.confirmed_tools:
-            # A caller supplying confirmed_tools is resuming a tool the user just approved;
+        if force is None and (request.confirmed_tools or request.confirmed_call_ids):
+            # A caller supplying confirmed_tools/confirmed_call_ids is resuming a tool the user just approved;
             # that must run through planning/execution (the only sanctioned execute path,
             # ADR-006) regardless of whether the confirmation reply itself matches the
             # short-message heuristic below.
@@ -856,6 +965,7 @@ class AIKernel:
                     context=context,
                     capabilities=request.capabilities,
                     confirmed_tools=request.confirmed_tools,
+                    confirmed_call_ids=request.confirmed_call_ids,
                     available_tools=tools,
                     max_iterations=max_iterations,
                     deadline_s=self._agentic_loop_deadline_s(),
@@ -865,6 +975,7 @@ class AIKernel:
                 context=context,
                 capabilities=request.capabilities,
                 confirmed_tools=request.confirmed_tools,
+                confirmed_call_ids=request.confirmed_call_ids,
             )
         except Exception:
             logger.warning("planning or execution failed; answering directly")
@@ -891,6 +1002,7 @@ class AIKernel:
                 context=context,
                 capabilities=request.capabilities,
                 confirmed_tools=request.confirmed_tools,
+                confirmed_call_ids=request.confirmed_call_ids,
                 available_tools=tools,
                 max_iterations=max_iterations,
                 deadline_s=self._agentic_loop_deadline_s(),
@@ -904,6 +1016,7 @@ class AIKernel:
                 context=context,
                 capabilities=request.capabilities,
                 confirmed_tools=request.confirmed_tools,
+                confirmed_call_ids=request.confirmed_call_ids,
             ):
                 yield item
             return
@@ -912,6 +1025,7 @@ class AIKernel:
             context=context,
             capabilities=request.capabilities,
             confirmed_tools=request.confirmed_tools,
+            confirmed_call_ids=request.confirmed_call_ids,
         )
 
     @staticmethod

@@ -439,6 +439,9 @@ class TestStreamToolExecution:
         assert "degraded" in done
         assert "searched_but_empty" in done
         assert "usage" in done
+        assert done["resolved_agent"] == "orchestrator"
+        plan_summary = done["plan_summary"]
+        assert plan_summary and any(s["kind"] == "tool" for s in plan_summary)
         echo = container.router.get("echo")
         blob = "\n".join(m.content for m in echo.calls[-1].conversation)
         assert "2+2 = 4" in blob
@@ -511,6 +514,32 @@ class TestStreamToolExecution:
                     "add a backup task",
                     plan=True,
                     confirmed_tools=("propose_task",),
+                )
+            )
+        ]
+        actions = next(f for f in frames if f["type"] == "actions")
+        assert actions["actions"][0]["type"] == "add_task"
+        assert actions["actions"][0]["params"]["title"] == "Backup notes"
+
+    async def test_tainted_side_effect_runs_when_confirmed_by_call_id(self, container) -> None:
+        """`confirmed_call_ids` confirms the specific pending call, not just its tool name."""
+        await container.startup()
+        container.kernel._deps.planner = _FixedPlanner(
+            _tool_plan("propose_task", {"title": "Backup notes"})
+        )
+        container.kernel._deps.knowledge.retrieve = _tainted_retrieve()
+        container.kernel._deps.safety.guard_context_items = _force_taint(
+            container.kernel._deps.safety
+        )
+
+        frames = [
+            frame async for frame in container.kernel.stream(
+                _request(
+                    "add a backup task",
+                    plan=True,
+                    # _tool_plan's single step is StepId("s1"), so its deterministic call_id
+                    # (ExecutionEngine._run_step) is "step_s1" -- no confirmed_tools needed.
+                    confirmed_call_ids=("step_s1",),
                 )
             )
         ]

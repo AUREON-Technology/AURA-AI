@@ -128,6 +128,7 @@ class ExecutionEngine:
         context: ToolContext,
         capabilities: Sequence[str] = (),
         confirmed_tools: Sequence[str] = (),
+        confirmed_call_ids: Sequence[str] = (),
         handlers: Mapping[StepKind, Callable[[PlanStep], Any]] | None = None,
         on_event: Callable[[StepEvent], Any] | None = None,
     ) -> ExecutionOutcome:
@@ -175,7 +176,8 @@ class ExecutionEngine:
                 *(
                     self._run_step(
                         step, context=context, capabilities=capabilities,
-                        confirmed_tools=confirmed_tools, handlers=handlers or {},
+                        confirmed_tools=confirmed_tools, confirmed_call_ids=confirmed_call_ids,
+                        handlers=handlers or {},
                     )
                     for step in running
                 ),
@@ -280,21 +282,27 @@ class ExecutionEngine:
         context: ToolContext,
         capabilities: Sequence[str],
         confirmed_tools: Sequence[str],
+        confirmed_call_ids: Sequence[str],
         handlers: Mapping[StepKind, Callable[[PlanStep], Any]],
     ) -> tuple[str, bool, float, Any]:
         started = time.perf_counter()
 
         if step.kind is StepKind.TOOL and step.tool:
+            call_id = f"step_{step.id.value}"
             call = ToolCall(
-                id=ToolCallId(f"step_{step.id.value}"),
+                id=ToolCallId(call_id),
                 name=step.tool,
                 arguments=dict(step.arguments),
             )
+            # Precise per-call confirmation first (two pending calls to the same tool in one
+            # turn must be confirmable independently); tool-name matching remains for callers
+            # still on the older `confirmed_tools`-only contract.
+            confirmed = call_id in confirmed_call_ids or step.tool in confirmed_tools
             result, report = await self._tools.execute(
                 call,
                 context,
                 capabilities=capabilities,
-                confirmed=step.tool in confirmed_tools,
+                confirmed=confirmed,
             )
             return result.content, result.ok, (time.perf_counter() - started) * 1000.0, report
 
@@ -330,6 +338,7 @@ class ExecutionEngine:
         context: ToolContext,
         capabilities: Sequence[str] = (),
         confirmed_tools: Sequence[str] = (),
+        confirmed_call_ids: Sequence[str] = (),
         handlers: Mapping[StepKind, Callable[[PlanStep], Any]] | None = None,
     ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
         """Execute while yielding progress, then yield the final outcome.
@@ -351,6 +360,7 @@ class ExecutionEngine:
                     context=context,
                     capabilities=capabilities,
                     confirmed_tools=confirmed_tools,
+                    confirmed_call_ids=confirmed_call_ids,
                     handlers=handlers,
                     on_event=emit,
                 )

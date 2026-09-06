@@ -9,7 +9,11 @@ here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
+
+from ..domain.engineering import EngineerRun
+from ..domain.identifiers import UserId
 
 __all__ = [
     "McpToolDescriptor",
@@ -18,6 +22,7 @@ __all__ = [
     "SandboxHandle",
     "SandboxResult",
     "SandboxRunner",
+    "EngineerRunStore",
 ]
 
 
@@ -117,4 +122,21 @@ class SandboxRunner(Protocol):
         ...
 
     async def destroy(self, handle: SandboxHandle) -> None:
+        ...
+
+
+@runtime_checkable
+class EngineerRunStore(Protocol):
+    """Persistence for :class:`~aura_core.domain.engineering.EngineerRun` rows.
+
+    Read-only from the Flutter client's perspective (it pulls via the generic sync cursor, never
+    pushes) -- this port has no ``update``/``delete``; :meth:`record` always inserts a new row.
+    """
+
+    async def record(self, run: EngineerRun) -> None:
+        ...
+
+    async def list_for_user(
+        self, user_id: UserId, *, since: datetime | None = None, limit: int = 200,
+    ) -> Sequence[EngineerRun]:
         ...

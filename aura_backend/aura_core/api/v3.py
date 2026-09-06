@@ -15,6 +15,7 @@ a time behind a flag.
 # ``build_router``'s scope; with postponed evaluation every one of them would be misread as a
 # query parameter. Runtime annotations keep the models resolvable.
 import json
+from datetime import datetime
 from typing import Any, AsyncIterator, Mapping
 
 from ..domain.errors import (
@@ -114,6 +115,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         routing_policy: str | None = None
         require_local: bool = False
         confirmed_tools: list[str] = Field(default_factory=list)
+        confirmed_call_ids: list[str] = Field(default_factory=list)
         max_output_tokens: int = Field(default=1024, ge=16, le=8192)
         temperature: float = Field(default=0.3, ge=0.0, le=2.0)
 
@@ -239,6 +241,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             require_local=payload.require_local,
             capabilities=caller.capabilities,
             confirmed_tools=tuple(payload.confirmed_tools),
+            confirmed_call_ids=tuple(payload.confirmed_call_ids),
             max_output_tokens=payload.max_output_tokens,
             temperature=payload.temperature,
         )
@@ -281,6 +284,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "needs_confirmation": list(result.needs_confirmation),
                 "pending_tool_calls": list(result.pending_tool_calls),
                 "plan": list(result.plan_summary),
+                "resolved_agent": result.resolved_agent,
                 "correlation_id": result.telemetry.correlation_id.value,
                 "turn_id": result.telemetry.turn_id.value,
                 "usage": {
@@ -760,6 +764,51 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                         "usable": spec.required_capabilities.issubset(granted),
                     }
                     for spec in container.agents
+                ]
+            }
+        )
+
+    @router.get("/engineering/runs")
+    async def list_engineer_runs(
+        caller: Principal = Depends(principal), since: str | None = Query(default=None),
+    ) -> JSONResponse:
+        """Durable history of engineer-agent tool outcomes for the caller (Engineer Task History).
+
+        Not part of the generic `/api/v3/sync` cursor protocol: `EngineerRun` rows are keyed by
+        the `UserId` value object's string form, not the v2 relational `users.id` UUID every
+        `SYNCABLE_MODELS` table assumes -- see `adapters/postgres_engineer_runs.py`.
+        """
+        if container.engineer_runs is None:
+            return JSONResponse(content={"runs": []})
+        since_dt = None
+        if since:
+            try:
+                since_dt = datetime.fromisoformat(since)
+            except ValueError:
+                raise HTTPException(
+                    status_code=422,
+                    detail=ValidationError("`since` must be an ISO-8601 timestamp").to_dict(),
+                )
+        runs = await container.engineer_runs.list_for_user(caller.user_id, since=since_dt)
+        return JSONResponse(
+            content={
+                "runs": [
+                    {
+                        "id": r.id.value,
+                        "turn_id": r.turn_id,
+                        "correlation_id": r.correlation_id,
+                        "persona": r.persona,
+                        "tool": r.tool,
+                        "call_id": r.call_id,
+                        "status": r.status,
+                        "pr_url": r.pr_url,
+                        "branch": r.branch,
+                        "commit_sha": r.commit_sha,
+                        "sandbox_transcript": r.sandbox_transcript,
+                        "created_at": r.created_at.isoformat(),
+                        "updated_at": r.updated_at.isoformat(),
+                    }
+                    for r in runs
                 ]
             }
         )
