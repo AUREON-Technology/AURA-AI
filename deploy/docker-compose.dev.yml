@@ -165,6 +165,8 @@ services:
       SUPERADMIN_EMAILS: ${SUPERADMIN_EMAILS:-}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       DEVELOPER_EMAILS: ${DEVELOPER_EMAILS:-}
+      # See docker-compose.prod.yml's gateway env block for what this does.
+      AURA_ENGINEER_AGENT_ROLES: ${AURA_ENGINEER_AGENT_ROLES:-}
       DATA_DIR: /var/lib/aura/workspace
       AURA_VOICE_LIVE_ENABLED: ${AURA_VOICE_LIVE_ENABLED:-true}
       AURA_VOICE_LIVE_MAX_SESSIONS: ${AURA_VOICE_LIVE_MAX_SESSIONS:-4}

@@ -67,6 +67,9 @@ const Map<String, (String, IconData)> _knownPersonas = {
   'research_agent': ('Research Agent', Icons.travel_explore_outlined),
   'coding_agent': ('Coding Agent', Icons.code_outlined),
   'decision_agent': ('Decision Agent', Icons.balance_outlined),
+  // The gated persona backing tools/coding.py's sandbox + GitHub tools -- distinct from the
+  // much weaker 'coding_agent' above (read-only tools, no capability gate).
+  'engineer': ('Engineer', Icons.build_circle_outlined),
 };
 
 (String label, IconData icon) personaDisplay(String agentId) {

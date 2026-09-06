@@ -133,7 +133,7 @@ class PersonaPickerSheet extends ConsumerWidget {
                               ? 'Requires ${_capabilityLabel(agent.requiredCapabilities)} -- not available on this account'
                               : (agent.description.isEmpty ? null : agent.description),
                           selected: isActive,
-                          trailing: !locked && agent.id == 'coding_agent'
+                          trailing: !locked && agent.id == 'engineer'
                               ? IconButton(
                                   tooltip: 'Engineer Task History',
                                   visualDensity: VisualDensity.compact,

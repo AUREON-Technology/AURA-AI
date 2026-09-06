@@ -323,6 +323,12 @@ services:
       SUPERADMIN_EMAILS: ${SUPERADMIN_EMAILS:-}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       DEVELOPER_EMAILS: ${DEVELOPER_EMAILS:-}
+      # Which of the roles above (User/Developer/Admin/SuperAdmin) get the "engineer_agent"
+      # capability -- the gate on the `engineer` persona and every tool in tools/coding.py
+      # (sandboxed filesystem/command/git, GitHub read+write). Empty by default: unlike the
+      # email lists above, this grants a capability, not a role, and that persona can run shell
+      # commands and push commits/PRs, so nobody gets it until explicitly opted in here.
+      AURA_ENGINEER_AGENT_ROLES: ${AURA_ENGINEER_AGENT_ROLES:-}
       # Shared workspace for staged Drive PDFs (API downloads, Celery ingests).
       DATA_DIR: /var/lib/aura/workspace
       # Phase H live duplex WebSocket. Default on for this stack (STT/TTS are baked

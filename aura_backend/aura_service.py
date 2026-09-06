@@ -91,6 +91,11 @@ def _build_authenticator(settings: Any):
             capabilities.append("admin.act")
         if role == "SuperAdmin":
             capabilities.append("admin.super")
+        # Gates the `engineer` persona and every tool in tools/coding.py (sandboxed
+        # filesystem/command/git, GitHub read+write) -- empty by default, so nobody has it
+        # until an operator explicitly opts a role in via AURA_ENGINEER_AGENT_ROLES.
+        if role in settings.security.engineer_agent_roles:
+            capabilities.append("engineer_agent")
         return Principal(
             user_id=UserId(str(subject)),
             email=claims.get("email") or "",
