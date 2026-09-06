@@ -279,6 +279,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "confidence": result.confidence,
                 "tools_used": list(result.tool_calls),
                 "needs_confirmation": list(result.needs_confirmation),
+                "pending_tool_calls": list(result.pending_tool_calls),
                 "plan": list(result.plan_summary),
                 "correlation_id": result.telemetry.correlation_id.value,
                 "turn_id": result.telemetry.turn_id.value,
