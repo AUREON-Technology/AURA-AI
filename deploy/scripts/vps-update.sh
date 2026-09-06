@@ -213,6 +213,22 @@ COMPOSE_DIR="$(cd "$(dirname "$COMPOSE")" && pwd)"
 info "compose file: $COMPOSE"
 info "project:      $PROJECT"
 
+# -- 4b. ensure required secret files exist ------------------------------------------------
+# A merge can add a new mandatory Docker secret to the compose file's `secrets:` list (e.g.
+# secrets_encryption_key/github_oauth_client_secret, added alongside AURA_GITHUB_OAUTH_ENABLED)
+# without this script knowing in advance -- Docker refuses to even create the container if the
+# file a secret names is missing, and the failure looks like a broken migration:
+#   invalid mount config for type "bind": bind source path does not exist: .../secrets/X
+# bootstrap-secrets.sh is the script that creates these, but it is a one-time bring-up script
+# nothing here used to call, so the *first* deploy after such a PR always failed this way and
+# needed a human to SSH in and run it by hand. It only ever fills in a file that is missing (it
+# prints "keeping existing X" and leaves a real secret alone otherwise), so calling it here on
+# every routine deploy is safe.
+if [ -f "$COMPOSE_DIR/scripts/bootstrap-secrets.sh" ]; then
+  say "Ensuring required secret files exist"
+  run "bash '$COMPOSE_DIR/scripts/bootstrap-secrets.sh'"
+fi
+
 # Compose auto-loads docker-compose.override.yml only when no -f is given. This script always
 # passes -f, so without adding it explicitly the override is ignored -- including the one
 # deploy/nginx/host-proxy.conf.example instructs operators to write on a shared host, which is
