@@ -863,13 +863,25 @@ class McpSettings:
 
 @dataclass(frozen=True, slots=True)
 class GitHubSettings:
-    """GitHub REST API access for the engineer agent's read/write tools.
+    """GitHub access for the engineer agent's read/write tools -- two independent paths.
 
-    ``token_env`` names the environment variable holding the PAT rather than storing the token
-    itself, matching :class:`ProviderConfig.api_key_env` -- the secret is a property, never a
-    dataclass field, so it cannot be reached by :meth:`AuraSettings.as_dict`'s introspection.
-    ``allowed_repos`` is defence in depth: even a repo-scoped PAT should only ever be used against
-    the repos an operator explicitly named, not merely whatever the model's arguments claim.
+    ``token_env`` (the original path) names the environment variable holding one
+    deployment-wide PAT rather than storing the token itself, matching
+    :class:`ProviderConfig.api_key_env` -- the secret is a property, never a dataclass field, so
+    it cannot be reached by :meth:`AuraSettings.as_dict`'s introspection. Every user of the
+    deployment shares this one token.
+
+    ``oauth_*`` (per-user GitHub App OAuth, ``api/v2/github_integration.py``) lets each user
+    connect their own GitHub account instead, so tool calls run against exactly the repos *that
+    user* granted during installation. ``oauth_client_secret_env`` follows the same
+    name-the-env-var-not-the-value pattern as ``token_env``. The two paths are not mutually
+    exclusive to configure, but :func:`Container._build_github_client_resolver` prefers
+    ``oauth_enabled`` when both are set, since a per-user grant is strictly narrower than a
+    shared deployment-wide one.
+
+    ``allowed_repos`` is defence in depth for *either* path: even a repo-scoped credential should
+    only ever be used against the repos an operator explicitly named, not merely whatever the
+    model's arguments claim.
     """
 
     enabled: bool = False
@@ -877,6 +889,14 @@ class GitHubSettings:
     default_owner: str = ""
     default_repo: str = ""
     allowed_repos: tuple[str, ...] = ()
+
+    oauth_enabled: bool = False
+    oauth_client_id: str = ""
+    oauth_client_secret_env: str = "AURA_GITHUB_OAUTH_CLIENT_SECRET"
+    #: Where GitHub redirects after a user authorizes the app, e.g.
+    #: ``https://api.example.com/api/v3/integrations/github/callback``. Must exactly match the
+    #: callback URL configured on the GitHub App itself.
+    oauth_callback_url: str = ""
 
     @classmethod
     def from_env(cls) -> "GitHubSettings":
@@ -886,11 +906,22 @@ class GitHubSettings:
             default_owner=_env("GITHUB_DEFAULT_OWNER", "") or "",
             default_repo=_env("GITHUB_DEFAULT_REPO", "") or "",
             allowed_repos=_list("GITHUB_ALLOWED_REPOS"),
+            oauth_enabled=_bool("GITHUB_OAUTH_ENABLED", False),
+            oauth_client_id=_env("GITHUB_OAUTH_CLIENT_ID", "") or "",
+            oauth_client_secret_env=(
+                _env("GITHUB_OAUTH_CLIENT_SECRET_ENV", "AURA_GITHUB_OAUTH_CLIENT_SECRET")
+                or "AURA_GITHUB_OAUTH_CLIENT_SECRET"
+            ),
+            oauth_callback_url=_env("GITHUB_OAUTH_CALLBACK_URL", "") or "",
         )
 
     @property
     def token(self) -> str:
         return os.environ.get(self.token_env, "")
+
+    @property
+    def oauth_client_secret(self) -> str:
+        return os.environ.get(self.oauth_client_secret_env, "")
 
 
 @dataclass(frozen=True, slots=True)

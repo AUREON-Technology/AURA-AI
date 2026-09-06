@@ -33,11 +33,15 @@ _EXPECTED_UNTRUSTED_CONTENT_TOOLS = {
 }
 
 
+async def _github_client_resolver(user_id):
+    return InMemoryGitHubClient()
+
+
 def test_known_content_fetching_tools_are_tagged_untrusted_content() -> None:
     tools = default_tools(
         allowed_http_hosts=("example.com",),
         sandbox_runner=InMemorySandboxRunner(),
-        github_client=InMemoryGitHubClient(),
+        github_client_resolver=_github_client_resolver,
         github_default_repo="acme/widgets",
     )
     by_name = {t.spec.name: t.spec for t in tools}
@@ -55,7 +59,7 @@ def test_low_risk_tools_are_not_tagged() -> None:
     """Sanity check the tag isn't applied indiscriminately -- tools that
     can't return attacker-controlled text should stay untagged."""
     tools = default_tools(
-        sandbox_runner=InMemorySandboxRunner(), github_client=InMemoryGitHubClient(),
+        sandbox_runner=InMemorySandboxRunner(), github_client_resolver=_github_client_resolver,
         github_default_repo="acme/widgets",
     )
     by_name = {t.spec.name: t.spec for t in tools}

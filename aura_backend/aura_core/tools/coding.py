@@ -225,11 +225,31 @@ def build_sandbox_tools(sandbox_runner: Any) -> list[Tool]:
 # --------------------------------------------------------------------------------------
 
 
-def build_github_tools(github_client: Any, *, default_repo: str = "") -> list[Tool]:
+def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[Tool]:
     """Read/write GitHub tools. Every write is ``side_effecting`` at ``CONFIDENTIAL``
     sensitivity, which ``ToolSpec.__post_init__`` already forces into
     ``requires_confirmation`` -- ``create_draft_pull_request`` always opens as a draft, so a
-    confirmed call still leaves a human to mark it ready."""
+    confirmed call still leaves a human to mark it ready.
+
+    ``client_resolver`` is ``Container._build_github_client_resolver``'s callable
+    ``(UserId) -> Awaitable[GitHubClient | None]``, called with ``context.user_id`` on every
+    invocation rather than closing over one fixed client -- whether that resolves to a
+    deployment-wide admin token or the calling user's own OAuth-connected identity is a
+    container-wiring decision these tools don't need to know about. ``None`` means the caller has
+    not connected GitHub (or the admin token disappeared mid-process); every tool below surfaces
+    that as a clear, actionable failure rather than a generic API error.
+    """
+
+    async def _client(context: ToolContext) -> Any:
+        client = await client_resolver(context.user_id)
+        if client is None:
+            raise ToolExecutionError(
+                "GitHub is not connected for this user -- connect an account via "
+                "/api/v3/integrations/github/connect, or ask an operator to configure "
+                "AURA_GITHUB_TOKEN, before using GitHub tools",
+                tool="github",
+            )
+        return client
 
     def _repo(explicit: str | None) -> str:
         repo = explicit or default_repo
@@ -261,9 +281,10 @@ def build_github_tools(github_client: Any, *, default_repo: str = "") -> list[To
         tags=("untrusted_content",),
     )
     async def github_get_file_contents(
-        path: str, repo: str | None = None, ref: str | None = None
+        path: str, context: ToolContext, repo: str | None = None, ref: str | None = None
     ) -> str:
-        return await github_client.get_file_contents(_repo(repo), path, ref=ref)
+        client = await _client(context)
+        return await client.get_file_contents(_repo(repo), path, ref=ref)
 
     @tool(
         "github_get_issue",
@@ -277,8 +298,9 @@ def build_github_tools(github_client: Any, *, default_repo: str = "") -> list[To
         max_result_chars=10_000,
         tags=("untrusted_content",),
     )
-    async def github_get_issue(number: int, repo: str | None = None) -> str:
-        return await github_client.get_issue(_repo(repo), int(number))
+    async def github_get_issue(number: int, context: ToolContext, repo: str | None = None) -> str:
+        client = await _client(context)
+        return await client.get_issue(_repo(repo), int(number))
 
     @tool(
         "github_get_pull_request",
@@ -292,8 +314,11 @@ def build_github_tools(github_client: Any, *, default_repo: str = "") -> list[To
         max_result_chars=10_000,
         tags=("untrusted_content",),
     )
-    async def github_get_pull_request(number: int, repo: str | None = None) -> str:
-        return await github_client.get_pull_request(_repo(repo), int(number))
+    async def github_get_pull_request(
+        number: int, context: ToolContext, repo: str | None = None
+    ) -> str:
+        client = await _client(context)
+        return await client.get_pull_request(_repo(repo), int(number))
 
     @tool(
         "github_create_branch",
@@ -307,8 +332,11 @@ def build_github_tools(github_client: Any, *, default_repo: str = "") -> list[To
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=20.0,
     )
-    async def github_create_branch(branch: str, from_ref: str, repo: str | None = None) -> str:
-        return await github_client.create_branch(_repo(repo), branch=branch, from_ref=from_ref)
+    async def github_create_branch(
+        branch: str, from_ref: str, context: ToolContext, repo: str | None = None
+    ) -> str:
+        client = await _client(context)
+        return await client.create_branch(_repo(repo), branch=branch, from_ref=from_ref)
 
     @tool(
         "github_commit_files",
@@ -324,9 +352,11 @@ def build_github_tools(github_client: Any, *, default_repo: str = "") -> list[To
         timeout_s=60.0,
     )
     async def github_commit_files(
-        branch: str, message: str, files: Mapping[str, str], repo: str | None = None
+        branch: str, message: str, files: Mapping[str, str], context: ToolContext,
+        repo: str | None = None,
     ) -> str:
-        return await github_client.commit_files(
+        client = await _client(context)
+        return await client.commit_files(
             _repo(repo), branch=branch, message=message, files=files
         )
 
@@ -346,9 +376,11 @@ def build_github_tools(github_client: Any, *, default_repo: str = "") -> list[To
         timeout_s=20.0,
     )
     async def github_create_draft_pull_request(
-        branch: str, base: str, title: str, body: str, repo: str | None = None
+        branch: str, base: str, title: str, body: str, context: ToolContext,
+        repo: str | None = None,
     ) -> str:
-        return await github_client.create_draft_pull_request(
+        client = await _client(context)
+        return await client.create_draft_pull_request(
             _repo(repo), branch=branch, base=base, title=title, body=body
         )
 

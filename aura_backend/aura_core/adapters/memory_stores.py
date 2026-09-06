@@ -26,6 +26,7 @@ from typing import Any, AsyncIterator, Mapping, Sequence
 
 from ..domain.engineering import EngineerRun
 from ..domain.errors import ConflictError, NotFoundError, ValidationError
+from ..domain.github_identity import GitHubIdentity
 from ..domain.goals import GoalSnapshot
 from ..domain.identifiers import DocumentId, MemoryId, PersonalOsRecordId, UserId
 from ..domain.knowledge import (
@@ -51,6 +52,7 @@ __all__ = [
     "InMemoryGraphStore",
     "InMemoryGoalsPort",
     "InMemoryInsightSink",
+    "InMemoryGitHubIdentityPort",
 ]
 
 
@@ -493,6 +495,28 @@ class InMemoryGoalsPort:
             )
         )
         return goals[:limit]
+
+
+class InMemoryGitHubIdentityPort:
+    """Reference implementation of :class:`~aura_core.ports.storage.GitHubIdentityPort`.
+
+    Test/local-dev only: a real deployment's identities live in Postgres
+    (:class:`~aura_core.adapters.postgres_github_identity.PostgresGitHubIdentityPort`), encrypted
+    at rest. Here they sit in a plain dict -- fine for tests, since a real per-user OAuth token
+    must never exist outside that encrypted table.
+    """
+
+    def __init__(self) -> None:
+        self._by_user: dict[str, GitHubIdentity] = {}
+
+    async def get(self, user_id: UserId) -> GitHubIdentity | None:
+        return self._by_user.get(user_id.value)
+
+    async def upsert(self, user_id: UserId, identity: GitHubIdentity) -> None:
+        self._by_user[user_id.value] = identity
+
+    async def delete(self, user_id: UserId) -> None:
+        self._by_user.pop(user_id.value, None)
 
 
 class InMemoryInsightSink:

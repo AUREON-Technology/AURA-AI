@@ -106,6 +106,7 @@ def _mount_platform_routers(app) -> None:
     from api.automation import router as automation_router
     from api.learning import router as learning_router
     from api.v2.auth import router as auth_router
+    from api.v2.github_integration import router as github_integration_router
     from api.v2.insights import router as insights_router
     from api.v2.sync import router as sync_router
 
@@ -115,6 +116,7 @@ def _mount_platform_routers(app) -> None:
     app.include_router(automation_router)
     app.include_router(learning_router)
     app.include_router(admin_platform_router)
+    app.include_router(github_integration_router)
 
 
 def _register_inference_budget_handler(app) -> None:

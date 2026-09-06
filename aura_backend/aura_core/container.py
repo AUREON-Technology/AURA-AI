@@ -13,11 +13,13 @@ production swaps them by configuration.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from .adapters.memory_stores import (
     InMemoryDocumentStore,
     InMemoryEngineerRunStore,
+    InMemoryGitHubIdentityPort,
     InMemoryGoalsPort,
     InMemoryGraphStore,
     InMemoryInsightSink,
@@ -134,6 +136,7 @@ class Container:
         self.personal_os_store = self._build_personal_os_store()
         self.engineer_runs = self._build_engineer_run_store()
         self.goals = self._build_goals_port()
+        self.github_identities = self._build_github_identity_port()
         self.graph = self._build_graph_store()
         self.feedback = self._build_feedback_store()
         self.audit = self._build_audit_sink()
@@ -323,6 +326,8 @@ class Container:
 
         self.sandbox_runner = self._build_sandbox_runner()
         self.github_client = self._build_github_client()
+        self._github_clients_by_user: dict[str, Any] = {}
+        self.github_client_resolver = self._build_github_client_resolver()
         self.mcp_client = self._build_mcp_client()
         self.tools = self._build_tools()
         self.planner = (
@@ -768,6 +773,19 @@ class Container:
             )
         return InMemoryGoalsPort()
 
+    def _build_github_identity_port(self) -> Any:
+        """The `GitHubIdentityPort`: per-user OAuth-connected GitHub identities, distinct from
+        the single admin `AURA_GITHUB_TOKEN` `_build_github_client` wires. Gated on
+        `document_backend` like `_build_goals_port` -- both are Postgres-only paths against the
+        same database, not a backend of their own."""
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_github_identity import PostgresGitHubIdentityPort
+
+            return PostgresGitHubIdentityPort(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        return InMemoryGitHubIdentityPort()
+
     def _build_event_outbox(self) -> Any:
         """The `EventOutbox` (Phase E1): a new, aura_core-owned table -- gated the same way as
         the audit sink, since both need a real Postgres to survive a restart."""
@@ -864,7 +882,7 @@ class Container:
                 knowledge_engine=self.knowledge, memory_engine=self.memory,
                 personal_os_store=self.personal_os_store,
                 sandbox_runner=self.sandbox_runner,
-                github_client=self.github_client,
+                github_client_resolver=self.github_client_resolver,
                 github_default_repo=github_default_repo,
             )
         )
@@ -910,6 +928,99 @@ class Container:
         return GitHubClient(
             token=self.settings.github.token, allowed_repos=self.settings.github.allowed_repos
         )
+
+    def _build_github_client_resolver(self) -> Any:
+        """Per-user `GitHubClient` factory for the engineer agent's GitHub tools, keyed by
+        `ToolContext.user_id` (`tools/coding.py::build_github_tools`).
+
+        `None` unless a GitHub credential of *some* kind is configured -- matches the
+        "don't advertise a capability with nothing behind it" rule `_build_github_client`
+        already follows. Two paths, in preference order:
+
+        * `github.oauth_enabled`: each call looks up that user's own connected identity
+          (`self.github_identities`), refreshing an expired access token first when a refresh
+          token was stored, and returns `None` (so the tool call surfaces "not connected") for a
+          user who never went through `/api/v3/integrations/github/connect`.
+        * otherwise, `github.enabled`: every user shares the one admin-configured `GitHubClient`
+          `self.github_client` already is -- the pre-OAuth behaviour, unchanged, wrapped in the
+          same resolver shape so `build_github_tools` never has to know which path is active.
+
+        Constructed `GitHubClient`s are cached per user id (invalidated on refresh) rather than
+        rebuilt every call, and closed in `shutdown()` alongside `self.github_client`.
+        """
+        if self.settings.github.oauth_enabled:
+            from .adapters.github_client import GitHubClient
+            from .adapters.github_oauth import GitHubOAuthError
+            from .adapters.github_oauth import refresh_access_token as oauth_refresh
+            from .domain.github_identity import GitHubIdentity
+
+            identities = self.github_identities
+            allowed_repos = self.settings.github.allowed_repos
+            client_id = self.settings.github.oauth_client_id
+            client_secret = self.settings.github.oauth_client_secret
+            clock = self.clock
+
+            async def resolve(user_id: Any) -> Any:
+                identity = await identities.get(user_id)
+                if identity is None:
+                    return None
+
+                now = clock.now()
+                refreshed = False
+                if identity.token_expires_at is not None and identity.token_expires_at <= now:
+                    if not identity.refresh_token:
+                        logger.info("a user's GitHub access token expired with no refresh token")
+                        return None
+                    try:
+                        token = await oauth_refresh(
+                            client_id=client_id, client_secret=client_secret,
+                            refresh_token=identity.refresh_token,
+                        )
+                    except GitHubOAuthError as exc:
+                        logger.warning("GitHub token refresh failed: %s", exc)
+                        return None
+                    identity = GitHubIdentity(
+                        github_user_id=identity.github_user_id,
+                        github_login=identity.github_login,
+                        access_token=token.access_token,
+                        refresh_token=token.refresh_token or identity.refresh_token,
+                        token_expires_at=(
+                            now + timedelta(seconds=token.expires_in)
+                            if token.expires_in else None
+                        ),
+                        refresh_token_expires_at=(
+                            now + timedelta(seconds=token.refresh_token_expires_in)
+                            if token.refresh_token_expires_in
+                            else identity.refresh_token_expires_at
+                        ),
+                        installation_id=identity.installation_id,
+                        scopes=token.scope or identity.scopes,
+                        connected_at=identity.connected_at,
+                        updated_at=now,
+                    )
+                    await identities.upsert(user_id, identity)
+                    refreshed = True
+
+                cached = self._github_clients_by_user.get(user_id.value)
+                if cached is not None and not refreshed:
+                    return cached
+                if cached is not None:
+                    await cached.close()
+                client = GitHubClient(token=identity.access_token, allowed_repos=allowed_repos)
+                self._github_clients_by_user[user_id.value] = client
+                return client
+
+            return resolve
+
+        if self.github_client is None:
+            return None
+
+        static_client = self.github_client
+
+        async def resolve_static(user_id: Any) -> Any:
+            return static_client
+
+        return resolve_static
 
     def _build_mcp_client(self) -> Any:
         """`None` unless opted in (`mcp.enabled`) and at least one server is configured. Tool
@@ -957,6 +1068,8 @@ class Container:
             await close()
         if self.github_client is not None:
             await self.github_client.close()
+        for client in self._github_clients_by_user.values():
+            await client.close()
         if self.mcp_client is not None:
             await self.mcp_client.close()
         mark_dead = getattr(self.metrics, "mark_process_dead", None)

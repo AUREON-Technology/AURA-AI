@@ -17,7 +17,7 @@ from aura_core.adapters.coding_fakes import (
     InMemorySandboxRunner,
 )
 from aura_core.domain.errors import ToolExecutionError
-from aura_core.domain.identifiers import ToolCallId
+from aura_core.domain.identifiers import ToolCallId, UserId
 from aura_core.domain.messages import ToolCall
 from aura_core.domain.tools import ToolSensitivity
 from aura_core.ports.coding import McpToolDescriptor
@@ -38,6 +38,18 @@ def ctx(user) -> ToolContext:
 
 def _by_name(tools):
     return {t.spec.name: t for t in tools}
+
+
+def _static_resolver(client):
+    """`build_github_tools` takes a per-user resolver, not a raw client -- wraps a fixed client
+    the same way `Container._build_github_client_resolver` does for the single-admin-PAT path,
+    so these tests exercise the same shape production wires without needing a real per-user
+    identity store."""
+
+    async def resolve(user_id):
+        return client
+
+    return resolve
 
 
 class TestSandboxTools:
@@ -138,21 +150,21 @@ class TestGithubTools:
     async def test_read_file_contents(self, ctx) -> None:
         client = InMemoryGitHubClient()
         client.seed_file("acme/widgets", "main", "README.md", "# Widgets")
-        tools = _by_name(build_github_tools(client, default_repo="acme/widgets"))
+        tools = _by_name(build_github_tools(_static_resolver(client), default_repo="acme/widgets"))
 
         result = await tools["github_get_file_contents"].execute({"path": "README.md"}, ctx)
         assert result == "# Widgets"
 
     async def test_missing_repo_and_no_default_raises(self, ctx) -> None:
         client = InMemoryGitHubClient()
-        tools = _by_name(build_github_tools(client))
+        tools = _by_name(build_github_tools(_static_resolver(client)))
         with pytest.raises(ToolExecutionError):
             await tools["github_get_issue"].execute({"number": 1}, ctx)
 
     async def test_write_tools_are_confirmation_gated(self, ctx) -> None:
         client = InMemoryGitHubClient()
         registry = ToolRegistry(policy=ToolPolicy())
-        registry.register_all(build_github_tools(client, default_repo="acme/widgets"))
+        registry.register_all(build_github_tools(_static_resolver(client), default_repo="acme/widgets"))
 
         result, report = await registry.execute(
             ToolCall(
@@ -182,13 +194,49 @@ class TestGithubTools:
 
     async def test_commit_then_read_round_trips(self, ctx) -> None:
         client = InMemoryGitHubClient()
-        tools = _by_name(build_github_tools(client, default_repo="acme/widgets"))
+        tools = _by_name(build_github_tools(_static_resolver(client), default_repo="acme/widgets"))
         await client.create_branch("acme/widgets", branch="main", from_ref="main")
         await tools["github_commit_files"].execute(
             {"branch": "main", "message": "add", "files": {"x.txt": "hello"}}, ctx
         )
         content = await tools["github_get_file_contents"].execute({"path": "x.txt"}, ctx)
         assert content == "hello"
+
+
+class TestGithubToolsResolver:
+    """The resolver seam that lets `build_github_tools` serve either one shared admin client or
+    a per-user OAuth-connected one (`Container._build_github_client_resolver`) without the tools
+    themselves knowing which."""
+
+    async def test_resolver_returning_none_raises_actionable_error(self, ctx) -> None:
+        async def no_client(user_id):
+            return None
+
+        tools = _by_name(build_github_tools(no_client, default_repo="acme/widgets"))
+        with pytest.raises(ToolExecutionError, match="not connected"):
+            await tools["github_get_file_contents"].execute({"path": "README.md"}, ctx)
+
+    async def test_resolver_is_called_with_the_caller_s_user_id(self) -> None:
+        """Two different users must resolve to two different clients -- the whole point of the
+        per-user path is that a call is scoped by `context.user_id`, not a client closed over at
+        registration time."""
+        client_a = InMemoryGitHubClient()
+        client_a.seed_file("acme/widgets", "main", "README.md", "from A")
+        client_b = InMemoryGitHubClient()
+        client_b.seed_file("acme/widgets", "main", "README.md", "from B")
+        clients = {"user-a": client_a, "user-b": client_b}
+
+        async def resolver(user_id):
+            return clients.get(user_id.value)
+
+        tools = _by_name(build_github_tools(resolver, default_repo="acme/widgets"))
+        ctx_a = ToolContext(user_id=UserId("user-a"), correlation_id="c1", deadline_s=30.0)
+        ctx_b = ToolContext(user_id=UserId("user-b"), correlation_id="c2", deadline_s=30.0)
+
+        result_a = await tools["github_get_file_contents"].execute({"path": "README.md"}, ctx_a)
+        result_b = await tools["github_get_file_contents"].execute({"path": "README.md"}, ctx_b)
+        assert result_a == "from A"
+        assert result_b == "from B"
 
 
 class TestMcpBridge:
