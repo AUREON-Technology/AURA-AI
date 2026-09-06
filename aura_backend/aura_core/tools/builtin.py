@@ -32,6 +32,7 @@ from ..domain.memory import MemoryKind, MemoryQuery
 from ..domain.tools import ToolCategory, ToolSensitivity
 from ..ports.runtime import Tool, ToolContext
 from .base import param, tool
+from .coding import build_github_tools, build_sandbox_tools
 from .personal_os import personal_os_tools
 from .planning import find_calendar_slots, prioritize_tasks
 from .records import build_personal_os_crud_tools
@@ -541,6 +542,9 @@ def default_tools(
     workspace: str | Path | None = None,
     allowed_http_hosts: Sequence[str] = (),
     enable_weather: bool = False,
+    sandbox_runner: Any = None,
+    github_client: Any = None,
+    github_default_repo: str = "",
 ) -> list[Tool]:
     """Assemble the tool set for a deployment.
 
@@ -550,6 +554,12 @@ def default_tools(
     ``personal_os_store`` additionally wires the create/list CRUD tools (Phase C2) -- real
     server-side writes an agent's grant permits without a client-side approval card, against
     aura_core's own table, never the client's zero-knowledge encrypted one.
+
+    ``sandbox_runner`` and ``github_client`` wire the engineer agent's tools
+    (``tools/coding.py``) the same opt-in way -- absent, none of those tools are registered at
+    all. MCP-bridged tools are *not* assembled here: discovering them is an async I/O call
+    (``build_mcp_bridge_tools``), so ``Container.startup()`` registers them separately once the
+    event loop is running.
     """
     tools: list[Tool] = [
         calculator, current_datetime, prioritize_tasks, find_calendar_slots,
@@ -567,4 +577,8 @@ def default_tools(
         tools += build_http_tool(allowed_hosts=allowed_http_hosts)
     if enable_weather:
         tools += build_weather_tool()
+    if sandbox_runner is not None:
+        tools += build_sandbox_tools(sandbox_runner)
+    if github_client is not None:
+        tools += build_github_tools(github_client, default_repo=github_default_repo)
     return tools

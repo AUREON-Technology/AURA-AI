@@ -43,6 +43,10 @@ class AgentSpec:
     required_capabilities: frozenset[str] = frozenset()
     risk_ceiling: ToolSensitivity = ToolSensitivity.SYSTEM
     memory_scope: str = "shared"
+    #: How many plan-execute-observe-replan iterations this persona's turn may run
+    #: (``AIKernel``/``AgenticExecutor``). ``1`` -- the default, and every persona below except
+    #: ``engineer`` -- preserves the pre-agentic-loop behaviour exactly: plan once, execute once.
+    max_plan_iterations: int = 1
 
 
 class AgentRegistry:
@@ -161,6 +165,31 @@ def build_default_agent_registry() -> AgentRegistry:
                 # before a human has weighed in.
                 allowed_tools=_READ_TOOLS | {"calculator"},
                 risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="shared",
+            ),
+            AgentSpec(
+                id="engineer", name="Engineer",
+                prompt_template_id=AGENT_PROMPT_IDS["engineer"],
+                # Sandboxed filesystem/command/git tools and GitHub read+write (tools/coding.py)
+                # plus any MCP-bridged tool (registered dynamically at container startup, so a
+                # name here is only meaningful once that server is actually configured -- same
+                # "grant an id, not a guarantee it exists" rule _READ_TOOLS's own comment states).
+                allowed_tools=_READ_TOOLS | {
+                    "calculator",
+                    "write_file", "edit_file", "run_command",
+                    "git_diff", "git_commit", "git_checkout_branch",
+                    "github_get_file_contents", "github_get_issue", "github_get_pull_request",
+                    "github_create_branch", "github_commit_files",
+                    "github_create_draft_pull_request",
+                },
+                # required_capabilities gates the *persona* (AgentRegistry.resolve falls back to
+                # orchestrator without it); required_capability on each tool spec then gates the
+                # *tool* too, so a caller cannot reach these tools through some other persona
+                # either. Both must be granted, which is deliberate belt-and-braces given how much
+                # more this persona can do than every other one here.
+                required_capabilities=frozenset({"engineer_agent"}),
+                risk_ceiling=ToolSensitivity.SYSTEM,  # run_command needs SYSTEM
+                max_plan_iterations=8,
+                memory_scope="shared",
             ),
         ]
     )

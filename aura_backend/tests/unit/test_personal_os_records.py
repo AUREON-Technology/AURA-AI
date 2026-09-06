@@ -169,8 +169,17 @@ class TestKernelWiring:
         await container.startup()
         registered = {s.name for s in container.tools.available()}
         # fetch_url is deliberately named in research_agent's grant even when not registered --
-        # it needs AURA_HTTP_ALLOWED_HOSTS, which this default container leaves unset.
-        conditionally_registered = {"fetch_url"}
+        # it needs AURA_HTTP_ALLOWED_HOSTS, which this default container leaves unset. The
+        # engineer agent's sandbox/git and GitHub tools are the same story: they need
+        # AURA_SANDBOX_ENABLED (plus a reachable Docker daemon) and AURA_GITHUB_ENABLED (plus a
+        # token) respectively, neither of which this default container configures.
+        conditionally_registered = {
+            "fetch_url",
+            "write_file", "edit_file", "run_command",
+            "git_diff", "git_commit", "git_checkout_branch",
+            "github_get_file_contents", "github_get_issue", "github_get_pull_request",
+            "github_create_branch", "github_commit_files", "github_create_draft_pull_request",
+        }
         for spec in container.agents:
             if spec.allowed_tools is None:
                 continue

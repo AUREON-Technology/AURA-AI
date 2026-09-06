@@ -34,6 +34,14 @@ networks:
   aura_edge:
     external: true
     name: aura_edge
+  # Engineer agent (AURA_SANDBOX_ENABLED, off by default) -- see docker-compose.prod.yml's
+  # `sandbox_ctl`/`sandbox_egress`/`docker-socket-proxy` comments for the full rationale; this
+  # dev stack mirrors the same shape rather than repeating it.
+  sandbox_ctl:
+    driver: bridge
+    internal: true
+  sandbox_egress:
+    driver: bridge
 
 volumes:
   postgres_data_dev:
@@ -158,11 +166,22 @@ services:
       LEARNING_FINETUNE_MIN_USERS: ${LEARNING_FINETUNE_MIN_USERS:-5}
       LEARNING_FINETUNE_ALLOW_CPU: ${LEARNING_FINETUNE_ALLOW_CPU:-true}
       AURA_FINETUNE_TRAINER: ${AURA_FINETUNE_TRAINER:-local}
+      # Engineer agent (Phase J) -- off by default, same as prod. See
+      # docker-compose.prod.yml's gateway env block for what each setting does.
+      AURA_SANDBOX_ENABLED: ${AURA_SANDBOX_ENABLED:-false}
+      AURA_SANDBOX_IMAGE: ${AURA_SANDBOX_IMAGE:-python:3.12-slim}
+      AURA_SANDBOX_NETWORK: sandbox_egress
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      AURA_GITHUB_ENABLED: ${AURA_GITHUB_ENABLED:-false}
+      AURA_GITHUB_DEFAULT_OWNER: ${AURA_GITHUB_DEFAULT_OWNER:-}
+      AURA_GITHUB_DEFAULT_REPO: ${AURA_GITHUB_DEFAULT_REPO:-}
+      AURA_MCP_ENABLED: ${AURA_MCP_ENABLED:-false}
+      AURA_MCP_SERVERS_JSON: ${AURA_MCP_SERVERS_JSON:-}
     secrets: [postgres_password, redis_password, qdrant_api_key, jwt_secret, firebase_credentials]
     volumes:
       - aura_workspace_dev:/var/lib/aura/workspace
       - aura_datasets_dev:/var/lib/aura/datasets
-    networks: [edge, data, aura_edge]
+    networks: [edge, data, aura_edge, sandbox_ctl]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -177,6 +196,41 @@ services:
     deploy:
       resources:
         limits: {cpus: "1.5", memory: 2G}
+
+  # Engineer agent (AURA_SANDBOX_ENABLED, off by default) -- see docker-compose.prod.yml's
+  # `docker-socket-proxy` comment for the full env-allowlist rationale.
+  docker-socket-proxy:
+    profiles: [sandbox]
+    image: tecnativa/docker-socket-proxy:0.3.0
+    <<: *restart
+    logging: *logging
+    environment:
+      CONTAINERS: "1"
+      IMAGES: "1"
+      POST: "1"
+      EXEC: "0"
+      NETWORKS: "0"
+      VOLUMES: "0"
+      SERVICES: "0"
+      SWARM: "0"
+      SYSTEM: "0"
+      BUILD: "0"
+      COMMIT: "0"
+      CONFIGS: "0"
+      DISTRIBUTION: "0"
+      INFO: "0"
+      NODES: "0"
+      PLUGINS: "0"
+      SECRETS: "0"
+      SESSION: "0"
+      TASKS: "0"
+      AUTH: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [sandbox_ctl]
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 128M}
 
   worker-realtime:
     build:

@@ -137,6 +137,10 @@ class KernelDependencies:
     planner: Any = None
     reasoner: Any = None
     executor: Any = None
+    #: Optional bounded plan-execute-observe-replan loop (`execution/agentic_loop.py`), used
+    #: instead of the single `executor.execute()` call when the turn's resolved agent declares
+    #: `max_plan_iterations > 1`. `None` preserves the pre-agentic-loop behaviour exactly.
+    agentic_executor: Any = None
     episodic: Any = None
     cache: Any = None
     metrics: Any = None
@@ -808,6 +812,11 @@ class AIKernel:
             logger.warning("planning failed; answering directly")
             return None
 
+    def _agentic_loop_deadline_s(self) -> float:
+        return float(
+            getattr(getattr(self._deps.settings, "reasoning", None), "engineer_loop_deadline_s", 600.0)
+        )
+
     async def _plan_and_execute(
         self,
         request: TurnRequest,
@@ -820,9 +829,22 @@ class AIKernel:
             plan = await self._compose_plan(request, message, tools)
             if plan is None:
                 return None
+            context = self._tool_context(request, tainted)
+            agent = self._resolve_agent(request)
+            max_iterations = agent.max_plan_iterations if agent is not None else 1
+            if max_iterations > 1 and deps.agentic_executor is not None:
+                return await deps.agentic_executor.run(
+                    plan,
+                    context=context,
+                    capabilities=request.capabilities,
+                    confirmed_tools=request.confirmed_tools,
+                    available_tools=tools,
+                    max_iterations=max_iterations,
+                    deadline_s=self._agentic_loop_deadline_s(),
+                )
             return await deps.executor.execute(
                 plan,
-                context=self._tool_context(request, tainted),
+                context=context,
                 capabilities=request.capabilities,
                 confirmed_tools=request.confirmed_tools,
             )
@@ -843,6 +865,20 @@ class AIKernel:
         if plan is None:
             return
         context = self._tool_context(request, tainted)
+        agent = self._resolve_agent(request)
+        max_iterations = agent.max_plan_iterations if agent is not None else 1
+        if max_iterations > 1 and deps.agentic_executor is not None:
+            async for item in deps.agentic_executor.stream(
+                plan,
+                context=context,
+                capabilities=request.capabilities,
+                confirmed_tools=request.confirmed_tools,
+                available_tools=tools,
+                max_iterations=max_iterations,
+                deadline_s=self._agentic_loop_deadline_s(),
+            ):
+                yield item
+            return
         stream = getattr(deps.executor, "stream", None)
         if callable(stream):
             async for item in stream(
