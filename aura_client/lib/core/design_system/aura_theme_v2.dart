@@ -13,8 +13,13 @@ import 'typography.dart';
 class AuraThemeV2 {
   AuraThemeV2._();
 
-  static ThemeData get light => _build(AuraPalette.light, Brightness.light);
-  static ThemeData get dark => _build(AuraPalette.dark, Brightness.dark);
+  // Computed once, not per-access: these used to be getters recomputing `ColorScheme.fromSeed`
+  // (an HCT color-space computation) plus a full `ThemeData` tree on every read -- and
+  // `MaterialApp.router` in main.dart reads both `light` and `dark` on every `AuraApp.build()`,
+  // not just at startup, so any provider change that rebuilds the app (theme mode, auth state,
+  // ...) redid this work for no reason. A `static final` computes it exactly once per app run.
+  static final ThemeData light = _build(AuraPalette.light, Brightness.light);
+  static final ThemeData dark = _build(AuraPalette.dark, Brightness.dark);
 
   static ThemeData _build(AuraPalette palette, Brightness brightness) {
     final colorScheme = ColorScheme.fromSeed(
