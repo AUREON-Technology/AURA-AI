@@ -77,12 +77,27 @@ class ChatRepository {
 
   ChatRepository(this._db, this._ref);
 
-  // Watch messages for a specific conversation session
-  Stream<List<Message>> watchMessages(String conversationId) {
-    return (_db.select(_db.messages)
-          ..where((m) => m.conversationId.equals(conversationId))
-          ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
-        .watch();
+  // Watch messages for a specific conversation session.
+  //
+  // `limit`, when given, bounds the query to the most recent `limit` messages instead of the
+  // whole conversation. Each row's encrypted columns (content, citations, tool calls, turn meta)
+  // are decrypted synchronously on this isolate by Drift's `EncryptedTextConverter` when the
+  // query result is mapped -- an unbounded history load on a long conversation means hundreds of
+  // back-to-back AES-GCM calls on the UI isolate right as the chat screen builds, which is real,
+  // measurable jank (most visible in debug builds, where the pure-Dart cipher isn't JIT-warmed).
+  // Ordering by `createdAt DESC` to take the most recent `limit` rows, then reversing back to
+  // ascending order for display, keeps this a single indexed query rather than a full scan.
+  Stream<List<Message>> watchMessages(String conversationId, {int? limit}) {
+    final query = _db.select(_db.messages)
+      ..where((m) => m.conversationId.equals(conversationId));
+    if (limit == null) {
+      query.orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]);
+      return query.watch();
+    }
+    query
+      ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.desc)])
+      ..limit(limit);
+    return query.watch().map((rows) => rows.reversed.toList());
   }
 
   // Watch all active conversations (grouped by conversationId, ordering by latest)
@@ -539,10 +554,30 @@ final activeConversationIdProvider = NotifierProvider<ActiveConversation, String
   return ActiveConversation();
 });
 
+/// How many of a conversation's most recent messages are loaded, per conversation. Starts at
+/// [ChatVisibleMessageLimit.pageSize] and grows via [ChatVisibleMessageLimit.loadMore] --
+/// bounding the initial decrypt cost of opening a long conversation (see [ChatRepository.watchMessages]).
+class ChatVisibleMessageLimit extends Notifier<int> {
+  ChatVisibleMessageLimit(this.conversationId);
+
+  final String conversationId;
+  static const int pageSize = 60;
+
+  @override
+  int build() => pageSize;
+
+  void loadMore() => state += pageSize;
+}
+
+final chatVisibleMessageLimitProvider =
+    NotifierProvider.family<ChatVisibleMessageLimit, int, String>(
+        (conversationId) => ChatVisibleMessageLimit(conversationId));
+
 // Messages List stream provider
 final chatMessagesStreamProvider = StreamProvider.family.autoDispose<List<Message>, String>((ref, conversationId) {
   final repository = ref.watch(chatRepositoryProvider);
-  return repository.watchMessages(conversationId);
+  final limit = ref.watch(chatVisibleMessageLimitProvider(conversationId));
+  return repository.watchMessages(conversationId, limit: limit);
 });
 
 // Conversations list stream provider

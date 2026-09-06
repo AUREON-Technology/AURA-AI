@@ -95,6 +95,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final palette = AuraPalette.of(context);
     final activeSessionId = ref.watch(activeConversationIdProvider);
     final messagesAsync = ref.watch(chatMessagesStreamProvider(activeSessionId));
+    final visibleLimit = ref.watch(chatVisibleMessageLimitProvider(activeSessionId));
     final sessionsAsync = ref.watch(conversationsStreamProvider);
     final isMobile = MediaQuery.of(context).size.width < 768;
 
@@ -103,6 +104,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       (previous, next) {
         final messages = next.asData?.value;
         if (messages == null || messages.isEmpty || !mounted) return;
+        // "Load earlier messages" also emits a new list (grown at the front) -- only auto-scroll
+        // when the newest message actually changed, not on every emission, or loading history
+        // would immediately yank the view back to the bottom.
+        final previousMessages = previous?.asData?.value;
+        final previousLast = (previousMessages != null && previousMessages.isNotEmpty)
+            ? previousMessages.last
+            : null;
+        if (previousLast != null && previousLast.id == messages.last.id) return;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _scrollToBottom();
         });
@@ -153,15 +162,35 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                           );
                         }
 
+                        // A full page came back, so there may be older messages this query
+                        // didn't fetch (see ChatVisibleMessageLimit's paging, added to bound
+                        // how many encrypted rows get decrypted on first load of a long
+                        // conversation). Fewer than the limit means history is exhausted.
+                        final hasMoreHistory = messages.length >= visibleLimit;
+                        final itemCount = messages.length + (hasMoreHistory ? 1 : 0);
+
                         return ListView.builder(
                           controller: _scrollController,
                           padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.xl, vertical: AuraSpacing.lg),
-                          itemCount: messages.length,
+                          itemCount: itemCount,
                           itemBuilder: (context, index) {
-                            final msg = messages[index];
+                            if (hasMoreHistory && index == 0) {
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: AuraSpacing.md),
+                                child: Center(
+                                  child: TextButton(
+                                    onPressed: () => ref
+                                        .read(chatVisibleMessageLimitProvider(activeSessionId).notifier)
+                                        .loadMore(),
+                                    child: const Text('Load earlier messages'),
+                                  ),
+                                ),
+                              );
+                            }
+                            final msg = messages[hasMoreHistory ? index - 1 : index];
                             String? userPrompt;
                             if (msg.role != 'user') {
-                              for (var i = index - 1; i >= 0; i--) {
+                              for (var i = (hasMoreHistory ? index - 1 : index) - 1; i >= 0; i--) {
                                 if (messages[i].role == 'user') {
                                   userPrompt = messages[i].content;
                                   break;
