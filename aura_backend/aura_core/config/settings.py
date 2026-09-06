@@ -654,6 +654,14 @@ class SecuritySettings:
     allow_mock_auth: bool = False
     allow_mock_attestation: bool = False
     admin_roles: tuple[str, ...] = ("Admin", "SuperAdmin")
+    #: Roles granted the "engineer_agent" capability -- the gate on both the `engineer` persona
+    #: (aura_core/agents/registry.py) and every tool in tools/coding.py (sandboxed
+    #: filesystem/command/git, GitHub read+write). Empty by default: unlike `admin_roles`, there
+    #: is no safe default role here, since this persona can run shell commands and push
+    #: commits/PRs (risk_ceiling=SYSTEM) -- granting it is a deliberate per-deployment decision,
+    #: not a side effect of upgrading, matching how AURA_SANDBOX_ENABLED/AURA_GITHUB_ENABLED
+    #: default off for the same reason.
+    engineer_agent_roles: tuple[str, ...] = ()
     rate_limit_enabled: bool = True
     rate_limit_per_user_per_minute: int = 60
     rate_limit_per_ip_per_minute: int = 120
@@ -670,6 +678,7 @@ class SecuritySettings:
             allow_mock_auth=_bool("ALLOW_MOCK_AUTH", False),
             allow_mock_attestation=_bool_aliased("ALLOW_MOCK_ATTESTATION", False),
             admin_roles=_list("ADMIN_ROLES", ("Admin", "SuperAdmin")),
+            engineer_agent_roles=_list("ENGINEER_AGENT_ROLES", ()),
             rate_limit_enabled=_bool("RATE_LIMIT_ENABLED", True),
             rate_limit_per_user_per_minute=_int("RATE_LIMIT_USER_PER_MIN", 60, minimum=1),
             rate_limit_per_ip_per_minute=_int("RATE_LIMIT_IP_PER_MIN", 120, minimum=1),
