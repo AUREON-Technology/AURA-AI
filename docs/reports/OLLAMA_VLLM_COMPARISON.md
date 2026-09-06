@@ -88,50 +88,49 @@ box doesn't have — this option is architecturally free but not resource-free.
 
 Keep CPU Ollama as the always-on, zero-cost, offline-capable default tier; add vLLM on a GPU box
 (owned or rented) as a second provider for quality-sensitive or high-throughput turns. **No
-`aura_core` code changes are needed** — `registry.py`/`router.py` already support N providers
-with per-provider quality tiers, and this exact pattern is pre-documented as a commented-out
-example in `deploy/.env.example:58-70`.
+`aura_core` code changes were needed** — `registry.py`/`router.py` already support N providers
+with per-provider quality tiers. The scaffolding for this option is now in the repo, ready to
+activate the moment a GPU host exists — see `docs/guides/gpu-hybrid-setup.md` for the full
+walkthrough. Summary of what's already in place:
 
-Steps, if/when a GPU host becomes available:
+1. **`deploy/docker-compose.prod.yml`** has an optional `vllm` service (image
+   `vllm/vllm-openai:latest`, GPU device reservation, `/v1/models` healthcheck, its own named
+   volume for the Hugging Face weight cache) gated behind a `gpu` compose profile — it does not
+   start with a plain `docker compose up -d`, only with
+   `docker compose -f deploy/docker-compose.prod.yml --profile gpu up -d vllm`. `gateway` and
+   the Celery workers already pass through `AURA_PROVIDER_LARGE_*` env vars (empty by default,
+   so this is a no-op until `AURA_LLM_PROVIDERS` also lists `large`).
+2. **`deploy/.env.example`** documents the exact `AURA_PROVIDER_LARGE_*` block to add to the real
+   `deploy/.env`, including the `AURA_VLLM_MODEL` / `AURA_VLLM_GPU_MEMORY_UTILIZATION` variables
+   that configure the compose service itself.
+3. **`tests/load/test_vllm_hybrid_routing.py`** is a new opt-in test, structured exactly like
+   Phase G2's `test_multi_model_routing.py`, that pairs a real `OllamaProvider` against a real
+   `OpenAICompatibleProvider` (vLLM) and proves health, completion, and `QUALITY_FIRST`
+   failover-to-vLLM against genuinely different backends — not two Ollama instances. This is
+   what closes the gap the roadmap itself names (vLLM "supported by protocol, not tried"): it
+   stays skipped until the four `AURA_HYBRID_TEST_*` env vars point at a real Ollama + a real
+   vLLM server, so CI is unaffected.
 
-1. Provision a GPU host (own network or rented) with NVIDIA drivers + container toolkit —
-   outside this repo's scope.
-2. Deploy `vllm/vllm-openai` there, serving a larger model (e.g. `qwen2.5:32b-instruct`) over
-   `/v1/chat/completions`.
-3. In the real `deploy/.env` (not the example), add a second provider following the pattern
-   already sketched at `deploy/.env.example:58-66`:
-   ```
-   AURA_LLM_PROVIDERS=local,large
-   AURA_PROVIDER_LARGE_KIND=openai_compatible
-   AURA_PROVIDER_LARGE_MODEL=<model served by vLLM>
-   AURA_PROVIDER_LARGE_BASE_URL=http://<gpu-host>:8000/v1
-   AURA_PROVIDER_LARGE_QUALITY_TIER=3
-   ```
-   Add `AURA_ALLOW_REMOTE_INFERENCE=true` only if the GPU host is rented/off-network compute
-   (per the README's remote-inference gate); not needed for a GPU box on your own network.
-4. Only touch `deploy/docker-compose.prod.yml` if the GPU host should be co-located in the same
-   compose stack — add a `vllm` service mirroring the NVIDIA device-reservation pattern already
-   present (commented out) on the `ollama` service, lines 427-429. If it's a separate host, no
-   compose change is needed; just point `AURA_PROVIDER_LARGE_BASE_URL` off-box.
-5. Decide the routing policy: keep `local_first` if Ollama should always be tried first
-   (cheap/fast/offline-safe), or move to `balanced`/`quality_first` if the GPU-backed vLLM tier
-   should be preferred whenever a turn can tolerate its higher latency/cost in exchange for
-   quality.
-6. **Validate before trusting it in production** — this closes the exact gap the roadmap flags
-   (vLLM "supported by protocol, not tried"): run a health probe and a few real routed
-   completions against the new `large` provider, the same way Phase G2 proved multi-Ollama
-   routing, before relying on it for real traffic.
+What still needs the actual hardware (out of this repo's scope): provisioning a GPU host with
+NVIDIA drivers + the container toolkit, bringing up the `vllm` profile there, and running the
+new opt-in test against it before trusting the `large` provider with real traffic. One subtlety
+worth calling out: `AURA_PROVIDER_LARGE_IS_LOCAL` defaults to `true`, not `false` — `is_local`
+means "your own infrastructure, not a vendor" (ADR-003), and a GPU box you own qualifies just as
+much as the CPU Ollama box does. That means `local_first` does **not** simply prefer Ollama over
+this second provider; with both marked `is_local=true`, it load-balances the two by measured
+latency/queue depth. Use `quality_first` if the GPU/vLLM tier should be preferred whenever it's
+healthy, or `balanced` for a blend of latency, cost, and quality tier.
 
-No changes to `aura_core/llm/registry.py` or `router.py` are required for either option — this
-is a deployment/configuration task, not a code change.
+No changes to `aura_core/llm/registry.py` or `router.py` were required for either option — this
+was a deployment/configuration/test task, not a change to the routing engine itself.
 
 ## 5. Verification
 
-- No application code was modified as part of this analysis, so `pytest` and
-  `pytest tests/architecture` are unaffected.
+- `pytest` and `pytest tests/architecture` remain green — nothing in `aura_core` changed.
 - **Option A:** re-run the existing opt-in `tests/load/test_multi_model_routing.py`
   (`AURA_ROUTING_TEST_*` env vars) as the regression check.
-- **Option B:** verification is operational once a GPU host exists — a compose/service
-  healthcheck on the new `vllm` service, `GET /v1/models` against it directly, and a routed
-  request through the running AURA gateway confirming the `large` provider gets selected for a
-  quality-tier request (via trace/logs, not a new automated test).
+- **Option B:** once a GPU host exists, bring up `--profile gpu`, confirm the `vllm` service's
+  own healthcheck passes, then run
+  `pytest tests/load -m load -s -k vllm_hybrid_routing` with the four `AURA_HYBRID_TEST_*` env
+  vars set (see the test's module docstring) as the proof step before relying on it in
+  production.

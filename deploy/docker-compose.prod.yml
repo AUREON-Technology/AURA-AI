@@ -37,9 +37,12 @@ networks:
     internal: true
   observability:
     driver: bridge
-  # Outbound-only, for ollama to pull model weights from registry.ollama.ai. Not `edge`:
-  # that network is documented as ingress-facing (nginx + gateway) and mixing egress into it
-  # would blur that boundary. Model pulls are still gated by AURA_MODEL_ALLOWLIST (SEC-01).
+  # Outbound-only, for ollama to pull model weights from registry.ollama.ai (gated by
+  # AURA_MODEL_ALLOWLIST, SEC-01) and, when the optional `gpu` profile is enabled, for vllm to
+  # pull weights from Hugging Face -- vllm has no equivalent allowlist API; the model it loads
+  # is fixed by AURA_VLLM_MODEL, an operator decision made once at container start, not an
+  # exposed runtime action. Not `edge`: that network is documented as ingress-facing (nginx +
+  # gateway) and mixing egress into it would blur that boundary.
   egress:
     driver: bridge
   # Cross-compose bridge: prod nginx + ollama share this with aura-dev gateway/console.
@@ -52,6 +55,9 @@ volumes:
   qdrant_data:
   redis_data:
   ollama_models:
+  # Only used when the optional `gpu` profile is enabled -- Hugging Face cache for vllm's
+  # weights, so a container restart does not re-download several GB of model.
+  vllm_models:
   prometheus_data:
   prometheus_multiproc:
   grafana_data:
@@ -208,6 +214,17 @@ services:
       AURA_PROVIDER_LOCAL_IS_LOCAL: "true"
       AURA_PROVIDER_LOCAL_QUALITY_TIER: "1"
       AURA_PROVIDER_LOCAL_MAX_CONCURRENCY: ${AURA_PROVIDER_LOCAL_MAX_CONCURRENCY:-1}
+      # Optional second "large" provider for a GPU-backed vllm node (hybrid setup --
+      # docs/reports/OLLAMA_VLLM_COMPARISON.md §4 Option B, docs/guides/gpu-hybrid-setup.md).
+      # A no-op until AURA_LLM_PROVIDERS also lists "large": aura_core only builds a
+      # ProviderConfig for names it's told to look up.
+      AURA_PROVIDER_LARGE_KIND: ${AURA_PROVIDER_LARGE_KIND:-}
+      AURA_PROVIDER_LARGE_MODEL: ${AURA_PROVIDER_LARGE_MODEL:-}
+      AURA_PROVIDER_LARGE_BASE_URL: ${AURA_PROVIDER_LARGE_BASE_URL:-}
+      AURA_PROVIDER_LARGE_QUALITY_TIER: ${AURA_PROVIDER_LARGE_QUALITY_TIER:-3}
+      AURA_PROVIDER_LARGE_TIMEOUT_S: ${AURA_PROVIDER_LARGE_TIMEOUT_S:-180}
+      AURA_PROVIDER_LARGE_MAX_CONCURRENCY: ${AURA_PROVIDER_LARGE_MAX_CONCURRENCY:-4}
+      AURA_PROVIDER_LARGE_IS_LOCAL: ${AURA_PROVIDER_LARGE_IS_LOCAL:-true}
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
       AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
@@ -303,6 +320,15 @@ services:
       AURA_PROVIDER_LOCAL_IS_LOCAL: "true"
       AURA_PROVIDER_LOCAL_QUALITY_TIER: "1"
       AURA_PROVIDER_LOCAL_MAX_CONCURRENCY: "1"
+      # See the matching block on `gateway` above -- same no-op-until-enabled second provider,
+      # needed here too so build_container() sees it on the learning-queue worker as well.
+      AURA_PROVIDER_LARGE_KIND: ${AURA_PROVIDER_LARGE_KIND:-}
+      AURA_PROVIDER_LARGE_MODEL: ${AURA_PROVIDER_LARGE_MODEL:-}
+      AURA_PROVIDER_LARGE_BASE_URL: ${AURA_PROVIDER_LARGE_BASE_URL:-}
+      AURA_PROVIDER_LARGE_QUALITY_TIER: ${AURA_PROVIDER_LARGE_QUALITY_TIER:-3}
+      AURA_PROVIDER_LARGE_TIMEOUT_S: ${AURA_PROVIDER_LARGE_TIMEOUT_S:-180}
+      AURA_PROVIDER_LARGE_MAX_CONCURRENCY: ${AURA_PROVIDER_LARGE_MAX_CONCURRENCY:-4}
+      AURA_PROVIDER_LARGE_IS_LOCAL: ${AURA_PROVIDER_LARGE_IS_LOCAL:-true}
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
       AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
@@ -427,6 +453,43 @@ services:
     # For a GPU host, uncomment and install the NVIDIA container toolkit:
     #   deploy.resources.reservations.devices:
     #     - {driver: nvidia, count: 1, capabilities: [gpu]}
+
+  # Optional GPU-backed vLLM node for the "large" quality-tier provider (hybrid setup --
+  # docs/reports/OLLAMA_VLLM_COMPARISON.md §4 Option B, walkthrough in
+  # docs/guides/gpu-hybrid-setup.md). Not started by a plain `docker compose up -d`: it
+  # requires an NVIDIA GPU + the NVIDIA container toolkit on this host, so it is gated behind
+  # a compose profile rather than a commented device-reservation block like `ollama`'s --
+  # there is no CPU fallback worth shipping for vllm the way there is for ollama. Bring up with:
+  #   docker compose -f deploy/docker-compose.prod.yml --profile gpu up -d vllm
+  # then add the AURA_PROVIDER_LARGE_* variables (see deploy/.env.example) to deploy/.env and
+  # restart gateway/workers so they pick up the second provider.
+  vllm:
+    profiles: [gpu]
+    image: vllm/vllm-openai:latest
+    <<: *restart
+    logging: *logging
+    command: >
+      --model ${AURA_VLLM_MODEL:-Qwen/Qwen2.5-32B-Instruct-AWQ}
+      --host 0.0.0.0 --port 8000
+      --gpu-memory-utilization ${AURA_VLLM_GPU_MEMORY_UTILIZATION:-0.90}
+    volumes:
+      - vllm_models:/root/.cache/huggingface
+    # data: reachable by the gateway/workers that call it. egress: to pull weights from
+    # Hugging Face -- see the `egress` network's comment above.
+    networks: [data, egress]
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/v1/models', timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits: {cpus: "4.0", memory: 16G}
+        reservations:
+          devices:
+            - {driver: nvidia, count: 1, capabilities: [gpu]}
 
   # ------------------------------------------------------------------ data tier
   postgres:
