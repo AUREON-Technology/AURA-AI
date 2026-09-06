@@ -44,7 +44,27 @@ def hydrate_secrets_from_files() -> None:
         if value and not os.environ.get(variable):
             os.environ[variable] = value
 
+    _hydrate_provider_api_keys()
     _mirror_legacy_secret_env()
+
+
+def _hydrate_provider_api_keys() -> None:
+    """Hydrate any LLM provider's API key from a Docker secret file.
+
+    ``AURA_PROVIDER_<NAME>_API_KEY_ENV`` names *another* env var that holds the key
+    (``ProviderConfig.api_key`` reads it lazily -- see aura_core/config/settings.py). Generic over
+    provider name so a new provider needs no change here, matching the "add a provider = config
+    change" property the rest of the LLM settings already have.
+    """
+    for key, target in list(os.environ.items()):
+        if not (key.startswith("AURA_PROVIDER_") and key.endswith("_API_KEY_ENV")):
+            continue
+        target = target.strip()
+        if not target:
+            continue
+        value = _read_secret_file(target)
+        if value and not os.environ.get(target):
+            os.environ[target] = value
 
 
 def _mirror_legacy_secret_env() -> None:

@@ -29,6 +29,10 @@ generate redis_password 40
 generate qdrant_api_key 48
 generate jwt_secret 64
 generate grafana_admin_password 24
+# Unused unless AURA_PROVIDER_HFSPACE_* is configured (see deploy/.env.example), but generated
+# unconditionally like the secrets above -- gateway/workers declare it in their `secrets:` list,
+# and docker compose refuses to start a service whose declared secret file does not exist.
+generate hfspace_api_key 48
 
 echo
 echo "Secrets are in $DIR with mode 600. They are gitignored."
