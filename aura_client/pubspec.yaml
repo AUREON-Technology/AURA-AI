@@ -59,6 +59,11 @@ dependencies:
   flutter_markdown: ^0.7.7+1
   http: ^1.6.0
   local_auth: ^2.3.0
+  # Opens the GitHub authorization page in the system browser for the per-user GitHub OAuth
+  # connect flow (features/engineering/presentation/github_connection_page.dart). GitHub's
+  # redirect back lands on the backend, not this app, so no custom URL scheme / deep link is
+  # registered for it.
+  url_launcher: ^6.3.1
   # Client-side halves of Phase F (multimodal/voice): file_picker lets the Knowledge Center
   # attach a PDF to POST /api/v3/knowledge/documents/upload; record and audioplayers capture a
   # voice note for POST /api/v3/voice/transcribe and play back POST /api/v3/voice/speak's WAV

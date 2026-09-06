@@ -543,7 +543,7 @@ def default_tools(
     allowed_http_hosts: Sequence[str] = (),
     enable_weather: bool = False,
     sandbox_runner: Any = None,
-    github_client: Any = None,
+    github_client_resolver: Any = None,
     github_default_repo: str = "",
 ) -> list[Tool]:
     """Assemble the tool set for a deployment.
@@ -555,11 +555,14 @@ def default_tools(
     server-side writes an agent's grant permits without a client-side approval card, against
     aura_core's own table, never the client's zero-knowledge encrypted one.
 
-    ``sandbox_runner`` and ``github_client`` wire the engineer agent's tools
+    ``sandbox_runner`` and ``github_client_resolver`` wire the engineer agent's tools
     (``tools/coding.py``) the same opt-in way -- absent, none of those tools are registered at
-    all. MCP-bridged tools are *not* assembled here: discovering them is an async I/O call
-    (``build_mcp_bridge_tools``), so ``Container.startup()`` registers them separately once the
-    event loop is running.
+    all. ``github_client_resolver`` is a callable ``(UserId) -> Awaitable[GitHubClient | None]``
+    (``Container._build_github_client_resolver``), not a single client: whether every caller
+    shares one admin-configured client or each resolves their own OAuth-connected one is a
+    container-wiring decision the tools themselves don't need to know about. MCP-bridged tools
+    are *not* assembled here: discovering them is an async I/O call (``build_mcp_bridge_tools``),
+    so ``Container.startup()`` registers them separately once the event loop is running.
     """
     tools: list[Tool] = [
         calculator, current_datetime, prioritize_tasks, find_calendar_slots,
@@ -579,6 +582,6 @@ def default_tools(
         tools += build_weather_tool()
     if sandbox_runner is not None:
         tools += build_sandbox_tools(sandbox_runner)
-    if github_client is not None:
-        tools += build_github_tools(github_client, default_repo=github_default_repo)
+    if github_client_resolver is not None:
+        tools += build_github_tools(github_client_resolver, default_repo=github_default_repo)
     return tools

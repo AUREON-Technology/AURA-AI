@@ -14,6 +14,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -174,6 +175,37 @@ class Goal(Base, SyncableMixin):
     priority: Mapped[str] = mapped_column(String(16), default="medium")  # low|medium|high
     target_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     progress_pct: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class GitHubIdentity(Base):
+    """One connected GitHub account per user (per-user OAuth connect flow,
+    ``api/v2/github_integration.py``) -- distinct from the deployment-wide admin token in
+    ``aura_core/config/settings.py``'s ``GitHubSettings``. Not a :class:`SyncableMixin` table:
+    nothing here is client-visible or cursor-synced, it is a server-only OAuth credential.
+    ``*_enc`` columns hold ciphertext from ``aura_core/adapters/secrets_crypto.py``'s own key,
+    which the server *does* decrypt on use -- unlike every other ``*_enc`` column in this schema.
+    """
+
+    __tablename__ = "github_identities"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True,
+    )
+    github_user_id: Mapped[int] = mapped_column(BigInteger)
+    github_login: Mapped[str] = mapped_column(String(255))
+    access_token_enc: Mapped[str] = mapped_column(Text)
+    refresh_token_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    refresh_token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    installation_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    scopes: Mapped[str] = mapped_column(String(500), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class Memory(Base, SyncableMixin):

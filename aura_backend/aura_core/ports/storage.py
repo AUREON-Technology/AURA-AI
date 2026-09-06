@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 from ..domain.events import DomainEvent
+from ..domain.github_identity import GitHubIdentity
 from ..domain.goals import GoalSnapshot
 from ..domain.identifiers import DocumentId, MemoryId, PersonalOsRecordId, UserId
 from ..domain.knowledge import (
@@ -36,6 +37,7 @@ __all__ = [
     "GoalsPort",
     "EventOutbox",
     "InsightSink",
+    "GitHubIdentityPort",
     "VectorPoint",
 ]
 
@@ -297,6 +299,30 @@ class GoalsPort(Protocol):
     async def active_summaries(
         self, owner_id: UserId, *, limit: int = 5
     ) -> Sequence[GoalSnapshot]:
+        ...
+
+
+@runtime_checkable
+class GitHubIdentityPort(Protocol):
+    """One connected GitHub account per user (per-user OAuth connect flow).
+
+    Backs the engineer agent's GitHub tools once ``GitHubSettings.oauth_enabled`` -- each user's
+    tool calls resolve their *own* stored identity instead of the single deployment-wide PAT
+    ``GitHubSettings.token`` provides. Read and write both belong on the same port, unlike
+    :class:`GoalsPort`'s read-only split, because this table's only writer besides the OAuth
+    callback is token refresh, which happens lazily on the same path that reads it.
+    """
+
+    async def get(self, user_id: UserId) -> GitHubIdentity | None:
+        ...
+
+    async def upsert(self, user_id: UserId, identity: GitHubIdentity) -> None:
+        """Insert or replace the caller's identity. A user has at most one connected GitHub
+        account at a time -- reconnecting overwrites rather than accumulating rows."""
+        ...
+
+    async def delete(self, user_id: UserId) -> None:
+        """Disconnect. Idempotent: deleting an already-absent identity is not an error."""
         ...
 
 

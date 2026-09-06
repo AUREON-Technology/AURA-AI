@@ -85,6 +85,13 @@ class SettingsPage extends ConsumerWidget {
                 ),
                 const _RowDivider(),
                 AuraListTile(
+                  icon: Icons.hub_outlined,
+                  title: 'GitHub Connection',
+                  subtitle: 'Connect your own GitHub account',
+                  onTap: () => context.go('/github-connect'),
+                ),
+                const _RowDivider(),
+                AuraListTile(
                   icon: Icons.cloud_outlined,
                   iconColor: AuraPalette.of(context).info,
                   title: 'Engine status',
