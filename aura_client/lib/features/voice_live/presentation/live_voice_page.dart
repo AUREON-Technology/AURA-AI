@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
-import 'package:aura_client/features/chat/presentation/widgets/confirmation_sheet.dart';
+import 'package:aura_client/features/chat/presentation/widgets/engineer_confirmation_card.dart';
 import 'package:aura_client/features/voice_live/presentation/live_voice_view_model.dart';
 import 'package:aura_client/features/voice_live/presentation/widgets/aura_voice_orb.dart';
 import 'package:aura_client/features/voice_live/presentation/widgets/aura_voice_waveform.dart';
@@ -91,7 +91,7 @@ class _LiveVoicePageState extends ConsumerState<LiveVoicePage>
                   draft: voice.assistantDraft,
                 ),
               ),
-            ConfirmationCard(
+            EngineerConfirmationCard(
               onConfirm: () =>
                   ref.read(liveVoiceViewModelProvider.notifier).confirmPending(),
               onCancel: () =>

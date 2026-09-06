@@ -17,6 +17,7 @@ import 'citation_chip.dart';
 import 'empty_answer_retry_card.dart';
 import 'feedback_sheet.dart';
 import 'persona_badge.dart';
+import 'step_log_panel.dart';
 import 'streaming_message_skeleton.dart';
 import 'tool_call_chip.dart';
 import 'turn_status_row.dart';
@@ -260,6 +261,10 @@ class MessageBubble extends ConsumerWidget {
                     if (toolCalls.isNotEmpty) ...[
                       const SizedBox(height: AuraSpacing.sm),
                       ToolCallChips(toolCalls: toolCalls),
+                    ],
+                    if (turnMeta.steps.isNotEmpty) ...[
+                      const SizedBox(height: AuraSpacing.sm),
+                      StepLogPanel(steps: turnMeta.steps),
                     ],
                     if (citations.isNotEmpty) ...[
                       const SizedBox(height: AuraSpacing.sm),

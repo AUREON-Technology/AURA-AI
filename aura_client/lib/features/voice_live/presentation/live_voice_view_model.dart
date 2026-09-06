@@ -8,6 +8,7 @@ import 'package:aura_client/core/ai/voice/live/live_mic_source.dart';
 import 'package:aura_client/core/ai/voice/live/live_voice_protocol.dart';
 import 'package:aura_client/core/ai/voice/live/live_voice_socket.dart';
 import 'package:aura_client/features/chat/data/chat_repository.dart';
+import 'package:aura_client/features/chat/data/turn_meta.dart';
 import 'package:aura_client/features/voice_live/data/live_voice_history.dart';
 import 'package:aura_client/features/voice_live/presentation/live_voice_state.dart';
 
@@ -125,7 +126,13 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
       case LiveTokenFrame(:final text):
         state = state.copyWith(assistantDraft: state.assistantDraft + text);
       case LiveConfirmationFrame(:final tools):
-        ref.read(pendingConfirmationProvider.notifier).setTools(tools);
+        // The live-voice WS protocol only ever sends tool names, no arguments -- unlike the
+        // SSE chat path's `pending_tool_calls`, this frame predates that and is out of scope
+        // here. Render with empty arguments so the shared confirmation UI still works, just
+        // without per-tool detail for this path.
+        ref.read(pendingConfirmationProvider.notifier).setPending(
+              tools.map((t) => PendingToolCall(tool: t)).toList(),
+            );
         state = state.copyWith(
           pendingTools: tools,
           phase: 'awaiting_confirmation',

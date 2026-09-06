@@ -130,7 +130,7 @@ class ChatViewModel extends Notifier<ChatUiState> {
   }
 
   Future<void> confirmTools() {
-    final tools = ref.read(pendingConfirmationProvider);
+    final tools = ref.read(pendingConfirmationProvider).map((p) => p.tool).toList();
     final sessionId = ref.read(activeConversationIdProvider);
     return ref.read(chatRepositoryProvider).confirmTaintedTools(
           conversationId: sessionId,

@@ -48,7 +48,7 @@ class ToolExecutionReport:
     """Outcome of one dispatch, for telemetry and audit."""
 
     __slots__ = ("call_id", "tool", "allowed", "ok", "duration_ms", "error_kind",
-                 "policy_reason", "result_chars", "needs_confirmation")
+                 "policy_reason", "result_chars", "needs_confirmation", "arguments")
 
     def __init__(
         self,
@@ -62,6 +62,7 @@ class ToolExecutionReport:
         policy_reason: str = "",
         result_chars: int = 0,
         needs_confirmation: bool = False,
+        arguments: Mapping[str, Any] | None = None,
     ) -> None:
         self.call_id = call_id
         self.tool = tool
@@ -72,6 +73,15 @@ class ToolExecutionReport:
         self.policy_reason = policy_reason
         self.result_chars = result_chars
         self.needs_confirmation = needs_confirmation
+        # Only ever populated on the confirmation-required path (see `execute()`'s matching
+        # `finish()` call below) -- never for a call that already ran or was denied outright.
+        # This deliberately does NOT follow `_audit_call`'s digest-only rule: that rule protects
+        # a long-lived, widely-readable audit log from a user's private data; this instead rides
+        # a same-user SSE/API response for a call that hasn't executed and is sitting in
+        # confirm-required limbo -- the user is being asked right now to approve exactly these
+        # arguments, so they must be able to see them. Different artefact, different lifetime,
+        # different audience.
+        self.arguments = dict(arguments) if arguments else {}
 
 
 class ToolRegistry:
@@ -213,6 +223,7 @@ class ToolRegistry:
         def finish(
             *, ok: bool, content: str, error_kind: str | None = None, allowed: bool = True,
             policy_reason: str = "", needs_confirmation: bool = False,
+            arguments: Mapping[str, Any] | None = None,
         ) -> tuple[ToolResult, ToolExecutionReport]:
             duration = (time.perf_counter() - started) * 1000.0
             result = ToolResult(
@@ -234,6 +245,7 @@ class ToolRegistry:
                 policy_reason=policy_reason,
                 result_chars=len(content),
                 needs_confirmation=needs_confirmation,
+                arguments=arguments,
             )
             return result, report
 
@@ -293,6 +305,7 @@ class ToolRegistry:
                 error_kind="confirmation_required",
                 policy_reason=decision.reason,
                 needs_confirmation=True,
+                arguments=arguments,
             )
 
         # 4. Sandboxed execution

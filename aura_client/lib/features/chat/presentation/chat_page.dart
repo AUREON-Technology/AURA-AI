@@ -13,7 +13,7 @@ import 'widgets/chat_header.dart';
 import 'widgets/chat_sidebar.dart';
 import 'widgets/empty_state_chat.dart';
 import 'widgets/message_bubble.dart';
-import 'widgets/confirmation_sheet.dart';
+import 'widgets/engineer_confirmation_card.dart';
 import 'widgets/pending_actions_card.dart';
 
 /// "Copilot" -- chat, rebuilt on the V2 design system.
@@ -183,7 +183,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       ),
                     ),
                   ),
-                  const ConfirmationCard(),
+                  const EngineerConfirmationCard(),
                   const PendingActionsCard(),
                   ChatComposer(
                     controller: _messageController,

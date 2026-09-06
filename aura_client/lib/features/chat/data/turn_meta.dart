@@ -13,6 +13,7 @@ class TurnMeta {
   final bool searchedButEmpty;
   final Map<String, dynamic>? usage;
   final List<TurnStep> steps;
+  final List<PendingToolCall> pendingToolCalls;
 
   const TurnMeta({
     this.turnId,
@@ -26,6 +27,7 @@ class TurnMeta {
     this.searchedButEmpty = false,
     this.usage,
     this.steps = const [],
+    this.pendingToolCalls = const [],
   });
 
   bool get showLowConfidence => confidence != null && confidence! < 0.45;
@@ -42,6 +44,7 @@ class TurnMeta {
     bool? searchedButEmpty,
     Map<String, dynamic>? usage,
     List<TurnStep>? steps,
+    List<PendingToolCall>? pendingToolCalls,
   }) {
     return TurnMeta(
       turnId: turnId ?? this.turnId,
@@ -55,6 +58,7 @@ class TurnMeta {
       searchedButEmpty: searchedButEmpty ?? this.searchedButEmpty,
       usage: usage ?? this.usage,
       steps: steps ?? this.steps,
+      pendingToolCalls: pendingToolCalls ?? this.pendingToolCalls,
     );
   }
 
@@ -70,6 +74,7 @@ class TurnMeta {
         'searched_but_empty': searchedButEmpty,
         'usage': usage,
         'steps': steps.map((s) => s.toJson()).toList(),
+        'pending_tool_calls': pendingToolCalls.map((p) => p.toJson()).toList(),
       };
 
   String encode() => jsonEncode(toJson());
@@ -93,6 +98,12 @@ class TurnMeta {
           ? rawSteps
               .whereType<Map>()
               .map((s) => TurnStep.fromJson(Map<String, dynamic>.from(s)))
+              .toList()
+          : const [],
+      pendingToolCalls: json['pending_tool_calls'] is List
+          ? (json['pending_tool_calls'] as List)
+              .whereType<Map>()
+              .map((p) => PendingToolCall.fromJson(Map<String, dynamic>.from(p)))
               .toList()
           : const [],
     );
@@ -127,14 +138,25 @@ class TurnStep {
   final String? kind;
   final String? status;
   final String? label;
+  final String? detail;
+  final double? elapsedMs;
 
-  const TurnStep({this.stepId, this.kind, this.status, this.label});
+  const TurnStep({
+    this.stepId,
+    this.kind,
+    this.status,
+    this.label,
+    this.detail,
+    this.elapsedMs,
+  });
 
   Map<String, dynamic> toJson() => {
         'step_id': stepId,
         'kind': kind,
         'status': status,
         'label': label,
+        'detail': detail,
+        'elapsed_ms': elapsedMs,
       };
 
   factory TurnStep.fromJson(Map<String, dynamic> json) {
@@ -142,7 +164,44 @@ class TurnStep {
       stepId: (json['step_id'] ?? json['id'])?.toString(),
       kind: json['kind']?.toString(),
       status: json['status']?.toString(),
-      label: (json['label'] ?? json['name'] ?? json['kind'])?.toString(),
+      // The backend's `StepEvent.as_dict()` sends the step's text under `description` -- this
+      // used to be dropped entirely (only `label`/`name`/`kind` were read), which is why steps
+      // were never worth rendering. `label` here is kept for backward compatibility with any
+      // already-persisted `TurnStep` JSON that only ever had that key.
+      label: (json['description'] ?? json['label'] ?? json['name'] ?? json['kind'])?.toString(),
+      detail: json['detail']?.toString(),
+      elapsedMs: (json['elapsed_ms'] as num?)?.toDouble(),
+    );
+  }
+}
+
+/// One tool call the backend is holding pending the user's explicit confirmation
+/// (`TurnResult.pending_tool_calls` / the `done` SSE frame's `pending_tool_calls`) -- carries the
+/// call's actual arguments, not just its tool name, so the client can show what it's approving.
+class PendingToolCall {
+  final String? callId;
+  final String tool;
+  final Map<String, dynamic> arguments;
+
+  const PendingToolCall({
+    this.callId,
+    required this.tool,
+    this.arguments = const {},
+  });
+
+  Map<String, dynamic> toJson() => {
+        'call_id': callId,
+        'tool': tool,
+        'arguments': arguments,
+      };
+
+  factory PendingToolCall.fromJson(Map<String, dynamic> json) {
+    return PendingToolCall(
+      callId: json['call_id']?.toString(),
+      tool: json['tool']?.toString() ?? '',
+      arguments: json['arguments'] is Map
+          ? Map<String, dynamic>.from(json['arguments'] as Map)
+          : const {},
     );
   }
 }

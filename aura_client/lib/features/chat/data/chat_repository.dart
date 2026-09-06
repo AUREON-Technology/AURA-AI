@@ -32,16 +32,16 @@ final pendingActionsProvider = NotifierProvider<PendingActions, List<dynamic>>((
   return PendingActions();
 });
 
-class PendingConfirmation extends Notifier<List<String>> {
+class PendingConfirmation extends Notifier<List<PendingToolCall>> {
   @override
-  List<String> build() => [];
+  List<PendingToolCall> build() => [];
 
-  void setTools(List<String> names) => state = names;
+  void setPending(List<PendingToolCall> calls) => state = calls;
   void clear() => state = [];
 }
 
 final pendingConfirmationProvider =
-    NotifierProvider<PendingConfirmation, List<String>>(PendingConfirmation.new);
+    NotifierProvider<PendingConfirmation, List<PendingToolCall>>(PendingConfirmation.new);
 
 /// The id of the assistant message currently receiving a stream, or null
 /// when nothing is in flight. Distinct from "content is empty" -- lets the
@@ -321,13 +321,26 @@ class ChatRepository {
             final done = event.turnMeta ?? const TurnMeta();
             meta = done.copyWith(revised: meta.revised, steps: steps);
             await _updateMessageTurnMeta(assistantMsgId, meta);
-            if (meta.needsConfirmation) {
+            if (meta.pendingToolCalls.isNotEmpty) {
+              // The backend's `pending_tool_calls` (the actual confirm-gated calls, with their
+              // real arguments) replaces the old guess from `toolCalls` -- those are the native,
+              // informational-only tool-call frames (ADR-006, never executed), which merely
+              // often happened to line up with the real confirm-gated tool by coincidence.
+              _ref
+                  .read(pendingConfirmationProvider.notifier)
+                  .setPending(meta.pendingToolCalls);
+            } else if (meta.needsConfirmation) {
+              // Backward-compat fallback for a backend that hasn't been upgraded yet (no
+              // `pending_tool_calls` field): fall back to the old name-only guess so confirmation
+              // still round-trips, just without per-tool detail.
               final names = toolCalls
                   .map((c) => c['name']?.toString())
                   .whereType<String>()
                   .where((n) => n.isNotEmpty)
                   .toList();
-              _ref.read(pendingConfirmationProvider.notifier).setTools(names);
+              _ref.read(pendingConfirmationProvider.notifier).setPending(
+                    names.map((n) => PendingToolCall(tool: n)).toList(),
+                  );
             }
             break;
           case SseEventKind.unknown:

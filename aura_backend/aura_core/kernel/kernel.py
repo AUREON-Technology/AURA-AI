@@ -108,6 +108,10 @@ class TurnResult:
     tool_calls: tuple[str, ...] = ()
     confidence: float | None = None
     needs_confirmation: tuple[str, ...] = ()
+    #: One entry per confirm-required tool call this turn, `{"call_id", "tool", "arguments"}`.
+    #: Not deduplicated by tool name (unlike `needs_confirmation`) -- two distinct calls to the
+    #: same tool must surface as two separate pending calls, not collapse into one.
+    pending_tool_calls: tuple[Mapping[str, Any], ...] = ()
     plan_summary: tuple[Mapping[str, Any], ...] = ()
 
     @property
@@ -262,6 +266,7 @@ class AIKernel:
         tool_telemetry: list[ToolTelemetry] = []
         tool_results: list[tuple[str, str]] = []
         needs_confirmation: list[str] = []
+        pending_tool_calls: list[Mapping[str, Any]] = []
         plan_summary: list[Mapping[str, Any]] = []
         plan_steps = plan_revisions = 0
 
@@ -289,6 +294,11 @@ class AIKernel:
                     )
                     if report.needs_confirmation:
                         needs_confirmation.append(report.tool)
+                        pending_tool_calls.append({
+                            "call_id": report.call_id,
+                            "tool": report.tool,
+                            "arguments": dict(report.arguments),
+                        })
 
         # 7. Assemble context --------------------------------------------------------
         stage_start = time.perf_counter()
@@ -406,6 +416,7 @@ class AIKernel:
             tool_calls=tuple(t.name for t in tool_telemetry),
             confidence=confidence,
             needs_confirmation=tuple(dict.fromkeys(needs_confirmation)),
+            pending_tool_calls=tuple(pending_tool_calls),
             plan_summary=tuple(plan_summary),
         )
 
@@ -467,6 +478,7 @@ class AIKernel:
                 tool_declarations = self._tool_declarations(request)
                 tool_results: list[tuple[str, str]] = []
                 needs_confirmation: list[str] = []
+                pending_tool_calls: list[Mapping[str, Any]] = []
                 outcome: ExecutionOutcome | None = None
                 if self._should_plan(request, tool_declarations):
                     try:
@@ -485,6 +497,11 @@ class AIKernel:
                     for report in outcome.tool_reports:
                         if report.needs_confirmation:
                             needs_confirmation.append(report.tool)
+                            pending_tool_calls.append({
+                                "call_id": report.call_id,
+                                "tool": report.tool,
+                                "arguments": dict(report.arguments),
+                            })
 
                 actions = actions_from_tool_results(tool_results)
                 if actions:
@@ -625,6 +642,7 @@ class AIKernel:
                     "guards_complete": guards_complete,
                     "citations": visible_citations,
                     "needs_confirmation": list(dict.fromkeys(needs_confirmation)),
+                    "pending_tool_calls": pending_tool_calls,
                     "turn_id": turn_id.value,
                     "correlation_id": correlation.value,
                     # Stream does not run the reasoner; null is honest, not a fake score.

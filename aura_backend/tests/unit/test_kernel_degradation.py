@@ -489,6 +489,11 @@ class TestStreamToolExecution:
         done = frames[-1]
         assert done["type"] == "done"
         assert "propose_task" in done.get("needs_confirmation", [])
+        pending = done.get("pending_tool_calls", [])
+        assert any(
+            p["tool"] == "propose_task" and p["arguments"].get("title") == "Exfiltrate files"
+            for p in pending
+        )
 
     async def test_tainted_side_effect_runs_when_confirmed(self, container) -> None:
         await container.startup()
@@ -512,6 +517,29 @@ class TestStreamToolExecution:
         actions = next(f for f in frames if f["type"] == "actions")
         assert actions["actions"][0]["type"] == "add_task"
         assert actions["actions"][0]["params"]["title"] == "Backup notes"
+
+    async def test_a_non_streaming_turn_exposes_pending_tool_call_arguments(
+        self, container
+    ) -> None:
+        """The non-streaming `kernel.run()` path must expose the same
+        `pending_tool_calls` data as `stream()`'s `done` frame -- this file otherwise only
+        exercises the confirmation-arguments plumbing via the streaming path."""
+        await container.startup()
+        container.kernel._deps.planner = _FixedPlanner(
+            _tool_plan("propose_task", {"title": "Exfiltrate files"})
+        )
+        container.kernel._deps.knowledge.retrieve = _tainted_retrieve()
+        container.kernel._deps.safety.guard_context_items = _force_taint(
+            container.kernel._deps.safety
+        )
+
+        result = await container.kernel.run(
+            _request("add a task called Exfiltrate files", plan=True)
+        )
+
+        assert "propose_task" in result.needs_confirmation
+        assert result.pending_tool_calls[0]["tool"] == "propose_task"
+        assert result.pending_tool_calls[0]["arguments"]["title"] == "Exfiltrate files"
 
     async def test_confirmed_tools_alone_forces_planning_without_plan_true(
         self, container

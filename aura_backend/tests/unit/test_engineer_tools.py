@@ -103,14 +103,22 @@ class TestSandboxTools:
         )
         assert not result.ok
         assert report.needs_confirmation
+        # The pending call's arguments must be visible so a client can show the user what
+        # they're being asked to approve, not just the tool's name. These are the *validated*
+        # arguments (post `validate_arguments()`), so an unset optional parameter's declared
+        # default (`timeout_s`) is present too.
+        assert report.arguments == {"command": "echo hi", "timeout_s": 60}
 
-        confirmed, _ = await registry.execute(
+        confirmed, confirmed_report = await registry.execute(
             ToolCall(id=ToolCallId("2"), name="run_command", arguments={"command": "echo hi"}),
             ctx,
             capabilities=("engineer_agent",),
             confirmed=True,
         )
         assert confirmed.ok
+        # Arguments are only ever attached to a confirm-required report -- a call that actually
+        # ran (even the same tool, once approved) carries none.
+        assert confirmed_report.arguments == {}
 
     async def test_sandbox_tools_require_the_engineer_capability(self, ctx) -> None:
         runner = InMemorySandboxRunner()
@@ -156,6 +164,9 @@ class TestGithubTools:
         )
         assert not result.ok
         assert report.needs_confirmation
+        assert report.arguments == {
+            "branch": "fix", "base": "main", "title": "Fix", "body": "...",
+        }
 
         confirmed, _ = await registry.execute(
             ToolCall(
