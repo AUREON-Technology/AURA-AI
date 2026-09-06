@@ -24,6 +24,22 @@ generate() {
     echo "generated $name ($length chars)"
 }
 
+# A Fernet key (aura_core/adapters/secrets_crypto.py) is 32 random bytes, urlsafe-base64
+# encoded -- generate()'s alnum-only alphabet would not decode as one. Rotating this after a
+# GitHub identity has been stored orphans that row (its token becomes undecryptable), same
+# caution as jwt_secret.
+generate_fernet_key() {
+    name=$1
+    path="$DIR/$name"
+    if [ -f "$path" ]; then
+        echo "keeping existing $name"
+        return
+    fi
+    openssl rand -base64 32 | tr '+/' '-_' > "$path"
+    chmod 600 "$path"
+    echo "generated $name (Fernet key)"
+}
+
 generate postgres_password 40
 generate redis_password 40
 generate qdrant_api_key 48
@@ -33,8 +49,16 @@ generate grafana_admin_password 24
 # unconditionally like the secrets above -- gateway/workers declare it in their `secrets:` list,
 # and docker compose refuses to start a service whose declared secret file does not exist.
 generate hfspace_api_key 48
+# Unused unless AURA_GITHUB_OAUTH_ENABLED is set, but present unconditionally for the same
+# "the file must exist for the service to start" reason as hfspace_api_key.
+generate_fernet_key secrets_encryption_key
+# Placeholder only -- unlike the secrets above, this one cannot be generated. Overwrite it with
+# the real client secret from the GitHub App's settings page before setting
+# AURA_GITHUB_OAUTH_ENABLED=true: printf '%s' "$CLIENT_SECRET" > "$DIR/github_oauth_client_secret"
+generate github_oauth_client_secret 40
 
 echo
 echo "Secrets are in $DIR with mode 600. They are gitignored."
 echo "Back them up somewhere the backups themselves are not stored -- losing jwt_secret"
-echo "invalidates every session; losing postgres_password locks you out of your own data."
+echo "invalidates every session; losing postgres_password locks you out of your own data;"
+echo "losing secrets_encryption_key orphans every connected GitHub account."
