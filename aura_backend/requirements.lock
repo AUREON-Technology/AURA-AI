@@ -16,6 +16,9 @@ annotated-types==0.8.0
 anyio==4.14.2
     # via
     #   httpx
+    #   httpx2
+    #   mcp
+    #   sse-starlette
     #   starlette
     #   watchfiles
 asgiref==3.12.1
@@ -24,6 +27,10 @@ async-timeout==5.0.1
     # via redis
 asyncpg==0.31.0
     # via -r requirements.txt
+attrs==26.1.0
+    # via
+    #   jsonschema
+    #   referencing
 av==18.1.0
     # via faster-whisper
 billiard==4.2.4
@@ -65,6 +72,8 @@ cryptography==50.0.0
     #   pyjwt
 ctranslate2==4.8.1
     # via faster-whisper
+docker==7.2.0
+    # via -r requirements.txt
 fastapi==0.141.1
     # via
     #   -r requirements.txt
@@ -135,6 +144,7 @@ grpcio-status==1.83.0
 h11==0.16.0
     # via
     #   httpcore
+    #   httpcore2
     #   uvicorn
 h2==4.4.1
     # via httpx
@@ -144,6 +154,8 @@ hpack==4.2.0
     # via h2
 httpcore==1.0.9
     # via httpx
+httpcore2==2.12.0
+    # via httpx2
 httplib2==0.32.0
     # via
     #   google-api-python-client
@@ -156,6 +168,8 @@ httpx==0.28.1
     #   firebase-admin
     #   huggingface-hub
     #   qdrant-client
+httpx2==2.12.0
+    # via mcp
 huggingface-hub==1.28.0
     # via
     #   faster-whisper
@@ -168,11 +182,16 @@ idna==3.19
     # via
     #   anyio
     #   httpx
+    #   httpx2
     #   requests
 jinja2==3.1.6
     # via torch
 joblib==1.5.3
     # via scikit-learn
+jsonschema==4.26.0
+    # via mcp
+jsonschema-specifications==2025.9.1
+    # via jsonschema
 kombu==5.6.2
     # via celery
 mako==1.4.1
@@ -183,6 +202,10 @@ markupsafe==3.0.3
     # via
     #   jinja2
     #   mako
+mcp==2.1.1
+    # via -r requirements.txt
+mcp-types==2.1.1
+    # via mcp
 mdurl==0.1.2
     # via markdown-it-py
 mpmath==1.3.0
@@ -207,6 +230,7 @@ onnxruntime==1.29.0
 opentelemetry-api==1.44.0
     # via
     #   -r requirements.txt
+    #   mcp
     #   opentelemetry-exporter-otlp-proto-http
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-asgi
@@ -285,6 +309,8 @@ pydantic==2.13.4
     # via
     #   -r requirements.txt
     #   fastapi
+    #   mcp
+    #   mcp-types
     #   pydantic-settings
     #   qdrant-client
 pydantic-core==2.46.4
@@ -297,6 +323,7 @@ pyjwt==2.13.0
     # via
     #   -r requirements.txt
     #   firebase-admin
+    #   mcp
 pyparsing==3.3.2
     # via httplib2
 pypdf==6.16.1
@@ -311,7 +338,9 @@ python-dotenv==1.2.3
     #   pydantic-settings
     #   uvicorn
 python-multipart==0.0.32
-    # via -r requirements.txt
+    # via
+    #   -r requirements.txt
+    #   mcp
 pyyaml==6.0.3
     # via
     #   ctranslate2
@@ -322,16 +351,25 @@ qdrant-client==1.19.0
     # via -r requirements.txt
 redis==8.1.0
     # via -r requirements.txt
+referencing==0.37.0
+    # via
+    #   jsonschema
+    #   jsonschema-specifications
 regex==2026.7.19
     # via transformers
 requests==2.34.2
     # via
     #   cachecontrol
+    #   docker
     #   google-api-core
     #   google-cloud-storage
     #   opentelemetry-exporter-otlp-proto-http
 rich==15.0.0
     # via typer
+rpds-py==2026.6.3
+    # via
+    #   jsonschema
+    #   referencing
 safetensors==0.8.0
     # via transformers
 scikit-learn==1.9.0
@@ -356,8 +394,13 @@ sqlalchemy==2.0.52
     # via
     #   -r requirements.txt
     #   alembic
+sse-starlette==3.4.11
+    # via mcp
 starlette==1.6.0
-    # via fastapi
+    # via
+    #   fastapi
+    #   mcp
+    #   sse-starlette
 sympy==1.14.0
     # via torch
 threadpoolctl==3.6.0
@@ -377,6 +420,10 @@ tqdm==4.70.0
     #   transformers
 transformers==5.15.1
     # via sentence-transformers
+truststore==0.10.4
+    # via
+    #   httpcore2
+    #   httpx2
 typer==0.27.1
     # via transformers
 typing-extensions==4.16.0
@@ -385,13 +432,17 @@ typing-extensions==4.16.0
     #   anyio
     #   fastapi
     #   grpcio
+    #   httpx2
     #   huggingface-hub
+    #   mcp
+    #   mcp-types
     #   opentelemetry-api
     #   opentelemetry-exporter-otlp-proto-http
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
     #   pydantic
     #   pydantic-core
+    #   referencing
     #   sentence-transformers
     #   sqlalchemy
     #   starlette
@@ -400,6 +451,7 @@ typing-extensions==4.16.0
 typing-inspection==0.4.4
     # via
     #   fastapi
+    #   mcp
     #   pydantic
     #   pydantic-settings
 tzdata==2026.3
@@ -410,11 +462,14 @@ uritemplate==4.2.0
     # via google-api-python-client
 urllib3==2.7.0
     # via
+    #   docker
     #   qdrant-client
     #   requests
     #   sentry-sdk
 uvicorn==0.52.4
-    # via -r requirements.txt
+    # via
+    #   -r requirements.txt
+    #   mcp
 uvloop==0.22.1
     # via uvicorn
 vine==5.1.0

@@ -40,3 +40,10 @@ pillow>=10.0.0
 # CTranslate2. TTS (aura_core/adapters/espeak_tts.py) needs no package here -- it shells out to
 # the `espeak-ng` system binary, also added in the Dockerfile's runner stage.
 faster-whisper>=1.0.0
+# Engineer agent: per-task sandbox (aura_core/adapters/docker_sandbox.py) needs a reachable
+# Docker daemon at runtime too -- see `Container._build_sandbox_runner`'s probe. MCP client
+# (aura_core/adapters/mcp_client.py) speaks the Model Context Protocol to configured servers.
+# Both are opt-in at the settings level (AURA_SANDBOX_ENABLED / AURA_MCP_ENABLED) and gracefully
+# degrade to "no sandbox" / "no MCP tools" when unreachable or unconfigured.
+docker>=7.0
+mcp>=1.0.0

@@ -37,6 +37,7 @@ from .config.settings import AuraSettings, load_settings
 from .context.engine import ContextEngine
 from .context.tokenizer import get_tokenizer
 from .domain.errors import ConfigurationError
+from .execution.agentic_loop import AgenticExecutor
 from .execution.engine import ExecutionEngine
 from .knowledge.chunking import ChunkingConfig
 from .knowledge.engine import KnowledgeEngine
@@ -318,6 +319,9 @@ class Container:
             max_generations=settings.knowledge.retrieval_max_generations,
         )
 
+        self.sandbox_runner = self._build_sandbox_runner()
+        self.github_client = self._build_github_client()
+        self.mcp_client = self._build_mcp_client()
         self.tools = self._build_tools()
         self.planner = (
             PlanningEngine(
@@ -347,6 +351,13 @@ class Container:
             max_parallel=settings.tools.max_parallel,
             metrics=self.metrics,
             event_bus=self.events,
+        )
+        # The engineer agent's bounded plan-execute-observe-replan loop (execution/agentic_loop.py)
+        # -- `None` when planning itself is disabled, since there is nothing to loop.
+        self.agentic_executor = (
+            AgenticExecutor(planner=self.planner, executor=self.executor, metrics=self.metrics)
+            if self.planner is not None
+            else None
         )
 
         from .learning.approval import ApprovalService, InMemoryApprovalStore
@@ -439,6 +450,7 @@ class Container:
                 planner=self.planner,
                 reasoner=self.reasoner,
                 executor=self.executor,
+                agentic_executor=self.agentic_executor,
                 episodic=self.episodic,
                 cache=self.llm_cache,
                 metrics=self.metrics,
@@ -827,13 +839,72 @@ class Container:
             event_bus=self.events,
             audit=self.audit,
         )
+        github_default_repo = ""
+        if self.settings.github.default_owner and self.settings.github.default_repo:
+            github_default_repo = (
+                f"{self.settings.github.default_owner}/{self.settings.github.default_repo}"
+            )
         registry.register_all(
             default_tools(
                 knowledge_engine=self.knowledge, memory_engine=self.memory,
                 personal_os_store=self.personal_os_store,
+                sandbox_runner=self.sandbox_runner,
+                github_client=self.github_client,
+                github_default_repo=github_default_repo,
             )
         )
         return registry
+
+    def _build_sandbox_runner(self) -> Any:
+        """`None` unless both opted in (`sandbox.enabled`) and a Docker daemon is actually
+        reachable -- the same opt-in-setting-plus-runtime-probe shape as `_build_ocr_engine`/
+        `_build_stt_engine`. Absent, `write_file`/`edit_file`/`run_command`/`git_*` are simply
+        never registered (`tools/builtin.py::default_tools`)."""
+        if not self.settings.sandbox.enabled:
+            return None
+        from .adapters.docker_sandbox import DockerSandboxRunner, docker_available
+
+        if not docker_available():
+            logger.warning(
+                "sandbox.enabled is set but no Docker daemon is reachable; "
+                "engineer-agent command/file tools will not be registered"
+            )
+            return None
+        return DockerSandboxRunner(
+            image=self.settings.sandbox.image,
+            network=self.settings.sandbox.network,
+            memory_limit=self.settings.sandbox.memory_limit,
+            cpu_limit=self.settings.sandbox.cpu_limit,
+        )
+
+    def _build_github_client(self) -> Any:
+        """`None` unless opted in (`github.enabled`) and a token is actually configured -- a
+        GitHub client with no token would register tools that can only ever fail, which is the
+        same "don't advertise a capability with nothing behind it" rule `build_http_tool` follows
+        for an empty host allowlist."""
+        if not self.settings.github.enabled:
+            return None
+        if not self.settings.github.token:
+            logger.warning(
+                "github.enabled is set but %s is unset; GitHub tools will not be registered",
+                self.settings.github.token_env,
+            )
+            return None
+        from .adapters.github_client import GitHubClient
+
+        return GitHubClient(
+            token=self.settings.github.token, allowed_repos=self.settings.github.allowed_repos
+        )
+
+    def _build_mcp_client(self) -> Any:
+        """`None` unless opted in (`mcp.enabled`) and at least one server is configured. Tool
+        discovery is async I/O, so bridging happens in `startup()`, not here -- this only builds
+        the (unconnected) client each configured server lazily connects through on first use."""
+        if not self.settings.mcp.enabled or not self.settings.mcp.servers:
+            return None
+        from .adapters.mcp_client import McpClient
+
+        return McpClient(servers=self.settings.mcp.servers)
 
     # -- lifecycle ---------------------------------------------------------------------
 
@@ -847,6 +918,21 @@ class Container:
         await self.index_manager.ensure_ready()
         if self.settings.knowledge.hybrid_enabled:
             await self.knowledge.rebuild_lexical_index()
+        if self.mcp_client is not None:
+            # Tool discovery is the one place registration happens after `_build_tools()` --
+            # `list_tools()` is async I/O (may launch subprocesses / open connections), which
+            # `Container.__init__` must never do. `ToolRegistry.register_all` is a plain dict
+            # insert, so calling it here, once, before the first request is served, is safe.
+            from .tools.coding import build_mcp_bridge_tools
+
+            try:
+                mcp_tools = await build_mcp_bridge_tools(
+                    self.mcp_client, safe_tools=self.settings.mcp.safe_tools
+                )
+                self.tools.register_all(mcp_tools)
+                logger.info("MCP tools registered", extra={"count": len(mcp_tools)})
+            except Exception:
+                logger.exception("MCP tool discovery failed; continuing without MCP tools")
         logger.info("container startup complete")
 
     async def shutdown(self) -> None:
@@ -854,6 +940,10 @@ class Container:
         close = getattr(self.embedder, "close", None)
         if close is not None:
             await close()
+        if self.github_client is not None:
+            await self.github_client.close()
+        if self.mcp_client is not None:
+            await self.mcp_client.close()
         mark_dead = getattr(self.metrics, "mark_process_dead", None)
         if mark_dead is not None:
             mark_dead()

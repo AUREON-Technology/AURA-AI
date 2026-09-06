@@ -14,6 +14,7 @@ Every setting is read from ``AURA_``-prefixed environment variables. The product
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass, field, fields, is_dataclass
@@ -46,6 +47,10 @@ __all__ = [
     "InfrastructureSettings",
     "LearningSettings",
     "VoiceSettings",
+    "McpServerConfig",
+    "McpSettings",
+    "GitHubSettings",
+    "SandboxSettings",
     "load_settings",
 ]
 
@@ -592,6 +597,10 @@ class ReasoningSettings:
     tot_depth: int = 3
     tot_max_nodes: int = 12
     verification_enabled: bool = True
+    #: Wall-clock cap on the engineer agent's plan-act-observe-replan loop
+    #: (`aura_core/execution/agentic_loop.py`), independent of any single execution
+    #: pass's own `deadline_s` -- this bounds the whole multi-iteration turn.
+    engineer_loop_deadline_s: float = 600.0
 
     @classmethod
     def from_env(cls) -> "ReasoningSettings":
@@ -606,6 +615,9 @@ class ReasoningSettings:
             tot_depth=_int("REASONING_TOT_DEPTH", 3, minimum=1, maximum=6),
             tot_max_nodes=_int("REASONING_TOT_MAX_NODES", 12, minimum=2, maximum=64),
             verification_enabled=_bool("REASONING_VERIFICATION_ENABLED", True),
+            engineer_loop_deadline_s=_float(
+                "REASONING_ENGINEER_LOOP_DEADLINE_S", 600.0, minimum=10.0, maximum=3600.0
+            ),
         )
 
 
@@ -774,6 +786,144 @@ class LearningSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class McpServerConfig:
+    """One configured MCP server. ``transport='stdio'`` launches ``command``/``args`` as a
+    subprocess and speaks MCP over its stdin/stdout; ``transport='sse'`` connects to ``url``."""
+
+    name: str
+    transport: str = "stdio"
+    command: str = ""
+    args: tuple[str, ...] = ()
+    url: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ConfigurationError("an MCP server entry must declare a name")
+        if self.transport not in {"stdio", "sse"}:
+            raise ConfigurationError(
+                f"MCP server {self.name!r} has unknown transport {self.transport!r}",
+                details={"supported": ["stdio", "sse"]},
+            )
+        if self.transport == "stdio" and not self.command:
+            raise ConfigurationError(f"MCP server {self.name!r} (stdio) must declare a command")
+        if self.transport == "sse" and not self.url:
+            raise ConfigurationError(f"MCP server {self.name!r} (sse) must declare a url")
+
+
+def _parse_mcp_servers(raw: str) -> tuple[McpServerConfig, ...]:
+    if not raw.strip():
+        return ()
+    try:
+        items = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ConfigurationError(
+            "AURA_MCP_SERVERS_JSON must be valid JSON", details={"value": raw}
+        ) from exc
+    if not isinstance(items, list):
+        raise ConfigurationError("AURA_MCP_SERVERS_JSON must be a JSON array of server objects")
+    servers = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            raise ConfigurationError("each AURA_MCP_SERVERS_JSON entry must be a JSON object")
+        servers.append(
+            McpServerConfig(
+                name=str(item.get("name", "")),
+                transport=str(item.get("transport", "stdio")),
+                command=str(item.get("command", "")),
+                args=tuple(str(a) for a in item.get("args", [])),
+                url=str(item.get("url", "")),
+            )
+        )
+    return tuple(servers)
+
+
+@dataclass(frozen=True, slots=True)
+class McpSettings:
+    """Model Context Protocol client configuration.
+
+    Every discovered tool is bridged into the tool registry at ``CONFIDENTIAL`` sensitivity,
+    ``side_effecting=True`` (so it always requires confirmation) and gated behind the
+    ``engineer_agent`` capability, *unless* its fully qualified name (``mcp_{server}_{tool}``)
+    appears in ``safe_tools`` -- see ``tools/coding.py::build_mcp_bridge_tools``. An MCP server an
+    operator has not reviewed is therefore inert by default, not merely opt-in.
+    """
+
+    enabled: bool = False
+    servers: tuple[McpServerConfig, ...] = ()
+    safe_tools: tuple[str, ...] = ()
+
+    @classmethod
+    def from_env(cls) -> "McpSettings":
+        return cls(
+            enabled=_bool("MCP_ENABLED", False),
+            servers=_parse_mcp_servers(_env("MCP_SERVERS_JSON", "") or ""),
+            safe_tools=_list("MCP_SAFE_TOOLS"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class GitHubSettings:
+    """GitHub REST API access for the engineer agent's read/write tools.
+
+    ``token_env`` names the environment variable holding the PAT rather than storing the token
+    itself, matching :class:`ProviderConfig.api_key_env` -- the secret is a property, never a
+    dataclass field, so it cannot be reached by :meth:`AuraSettings.as_dict`'s introspection.
+    ``allowed_repos`` is defence in depth: even a repo-scoped PAT should only ever be used against
+    the repos an operator explicitly named, not merely whatever the model's arguments claim.
+    """
+
+    enabled: bool = False
+    token_env: str = "AURA_GITHUB_TOKEN"
+    default_owner: str = ""
+    default_repo: str = ""
+    allowed_repos: tuple[str, ...] = ()
+
+    @classmethod
+    def from_env(cls) -> "GitHubSettings":
+        return cls(
+            enabled=_bool("GITHUB_ENABLED", False),
+            token_env=_env("GITHUB_TOKEN_ENV", "AURA_GITHUB_TOKEN") or "AURA_GITHUB_TOKEN",
+            default_owner=_env("GITHUB_DEFAULT_OWNER", "") or "",
+            default_repo=_env("GITHUB_DEFAULT_REPO", "") or "",
+            allowed_repos=_list("GITHUB_ALLOWED_REPOS"),
+        )
+
+    @property
+    def token(self) -> str:
+        return os.environ.get(self.token_env, "")
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxSettings:
+    """Per-task Docker sandbox for the engineer agent's ``run_command``/``write_file`` tools.
+
+    ``enabled`` alone is not enough to get a runner: ``Container._build_sandbox_runner`` also
+    probes that the ``docker`` package is importable and a daemon is actually reachable, the same
+    opt-in-setting-plus-runtime-probe pattern as ``_build_ocr_engine``/``_build_stt_engine``.
+    """
+
+    enabled: bool = False
+    image: str = "python:3.12-slim"
+    network: str = "sandbox_egress"
+    memory_limit: str = "512m"
+    cpu_limit: float = 1.0
+    timeout_s: float = 120.0
+    allowed_egress_hosts: tuple[str, ...] = ()
+
+    @classmethod
+    def from_env(cls) -> "SandboxSettings":
+        return cls(
+            enabled=_bool("SANDBOX_ENABLED", False),
+            image=_env("SANDBOX_IMAGE", "python:3.12-slim") or "python:3.12-slim",
+            network=_env("SANDBOX_NETWORK", "sandbox_egress") or "sandbox_egress",
+            memory_limit=_env("SANDBOX_MEMORY_LIMIT", "512m") or "512m",
+            cpu_limit=_float("SANDBOX_CPU_LIMIT", 1.0, minimum=0.1, maximum=8.0),
+            timeout_s=_float("SANDBOX_TIMEOUT_S", 120.0, minimum=1.0, maximum=1800.0),
+            allowed_egress_hosts=_list("SANDBOX_ALLOWED_EGRESS_HOSTS"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class VoiceSettings:
     """Self-hosted speech recognition and synthesis (Phase F2) -- both engines are only ever
     built when their binary/package is actually present (see
@@ -900,6 +1050,9 @@ class AuraSettings:
     infrastructure: InfrastructureSettings = field(default_factory=InfrastructureSettings)
     learning: LearningSettings = field(default_factory=LearningSettings)
     voice: VoiceSettings = field(default_factory=VoiceSettings)
+    mcp: McpSettings = field(default_factory=McpSettings)
+    github: GitHubSettings = field(default_factory=GitHubSettings)
+    sandbox: SandboxSettings = field(default_factory=SandboxSettings)
 
     @classmethod
     def from_env(cls) -> "AuraSettings":
@@ -930,6 +1083,9 @@ class AuraSettings:
             infrastructure=InfrastructureSettings.from_env(),
             learning=LearningSettings.from_env(),
             voice=VoiceSettings.from_env(),
+            mcp=McpSettings.from_env(),
+            github=GitHubSettings.from_env(),
+            sandbox=SandboxSettings.from_env(),
         )
 
     # -- validation --------------------------------------------------------------------

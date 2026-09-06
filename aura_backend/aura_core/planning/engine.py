@@ -218,8 +218,16 @@ class PlanningEngine:
 
     # -- replanning --------------------------------------------------------------------
 
-    def can_replan(self, plan: Plan) -> bool:
-        return len(plan.revisions) < self._max_replans
+    def can_replan(self, plan: Plan, *, limit: int | None = None) -> bool:
+        """Whether another revision is allowed.
+
+        ``limit`` lets a caller with its own iteration budget (``AgenticExecutor``, keyed off an
+        ``AgentSpec.max_plan_iterations``) override this engine's own ``max_replans`` default
+        rather than being capped by it -- the two are independent knobs, one per-deployment and
+        one per-agent-persona.
+        """
+        effective = self._max_replans if limit is None else limit
+        return len(plan.revisions) < effective
 
     async def replan(
         self,
@@ -227,16 +235,24 @@ class PlanningEngine:
         *,
         reason: str,
         available_tools: Sequence[Mapping[str, Any]] = (),
+        limit: int | None = None,
     ) -> Plan:
         """Produce a revised plan after a failure.
 
         Succeeded steps are preserved -- rerunning a successful tool call is wasteful and, for a
         side-effecting tool, actively wrong. Only the unfinished remainder is re-planned.
+
+        ``limit`` mirrors :meth:`can_replan`'s override -- a caller with its own iteration budget
+        (``AgenticExecutor``) passes its ``max_plan_iterations`` through here too, so this
+        method's own guard cannot reject a revision that its caller already confirmed was allowed.
         """
-        if not self.can_replan(plan):
+        if not self.can_replan(plan, limit=limit):
             raise PlanningError(
                 "replanning limit reached",
-                details={"revisions": len(plan.revisions), "limit": self._max_replans},
+                details={
+                    "revisions": len(plan.revisions),
+                    "limit": self._max_replans if limit is None else limit,
+                },
             )
 
         completed = [s for s in plan.steps if s.status is StepStatus.SUCCEEDED]

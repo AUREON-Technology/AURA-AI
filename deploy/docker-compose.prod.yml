@@ -46,6 +46,22 @@ networks:
   aura_edge:
     name: aura_edge
     driver: bridge
+  # Engineer agent (AURA_SANDBOX_ENABLED, off by default): gateway <-> docker-socket-proxy only.
+  # No other service attaches here, and the proxy is the only thing with the real socket -- the
+  # gateway container never gets host-root-equivalent access itself, only the restricted API
+  # surface docker-socket-proxy's own env allowlist (below) exposes.
+  sandbox_ctl:
+    driver: bridge
+    internal: true
+  # Where the engineer agent's ephemeral per-task containers (aura_core/adapters/docker_sandbox.py)
+  # actually run. Isolated from `data` and `edge` by construction -- a sandboxed task can reach
+  # neither Postgres/Qdrant/Redis nor the gateway/nginx tier. It is *not* `internal: true`: a
+  # sandbox with no egress at all cannot install packages or reach the repo it is meant to work
+  # on. An operator-provisioned egress allowlist/DNS filter on this network (a squid/dnsmasq
+  # sidecar keyed off AURA_SANDBOX_ALLOWED_EGRESS_HOSTS) is the still-open follow-up; until then,
+  # only enable AURA_SANDBOX_ENABLED on a host where that risk has been explicitly accepted.
+  sandbox_egress:
+    driver: bridge
 
 volumes:
   postgres_data:
@@ -252,12 +268,27 @@ services:
       AURA_VOICE_LIVE_MAX_SESSIONS: ${AURA_VOICE_LIVE_MAX_SESSIONS:-8}
       # Loop B: digest-addressed ChatML artefacts shared with learning workers.
       AURA_LEARNING_DATASET_DIR: /var/lib/aura/datasets
+      # Engineer agent (Phase J). Every one of these defaults to inert/off; enabling any is a
+      # deliberate per-deployment decision, not a side effect of upgrading.
+      AURA_SANDBOX_ENABLED: ${AURA_SANDBOX_ENABLED:-false}
+      AURA_SANDBOX_IMAGE: ${AURA_SANDBOX_IMAGE:-python:3.12-slim}
+      AURA_SANDBOX_NETWORK: sandbox_egress
+      AURA_SANDBOX_MEMORY_LIMIT: ${AURA_SANDBOX_MEMORY_LIMIT:-512m}
+      AURA_SANDBOX_CPU_LIMIT: ${AURA_SANDBOX_CPU_LIMIT:-1.0}
+      # docker-py's `docker.from_env()` reads this; only the socket-proxy's restricted API
+      # surface is reachable at this address, never the real socket (see `sandbox_ctl` above).
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      AURA_GITHUB_ENABLED: ${AURA_GITHUB_ENABLED:-false}
+      AURA_GITHUB_DEFAULT_OWNER: ${AURA_GITHUB_DEFAULT_OWNER:-}
+      AURA_GITHUB_DEFAULT_REPO: ${AURA_GITHUB_DEFAULT_REPO:-}
+      AURA_MCP_ENABLED: ${AURA_MCP_ENABLED:-false}
+      AURA_MCP_SERVERS_JSON: ${AURA_MCP_SERVERS_JSON:-}
     secrets: [postgres_password, redis_password, qdrant_api_key, jwt_secret, firebase_credentials]
     volumes:
       - aura_workspace:/var/lib/aura/workspace
       - aura_datasets:/var/lib/aura/datasets
       - prometheus_multiproc:/var/lib/aura/prometheus
-    networks: [edge, data]
+    networks: [edge, data, sandbox_ctl]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -274,6 +305,47 @@ services:
       resources:
         limits: {cpus: "2.0", memory: 3G}
         reservations: {memory: 1G}
+
+  # Engineer agent (AURA_SANDBOX_ENABLED, off by default; `profiles` keeps it from starting
+  # otherwise). The only container with the real Docker socket -- gateway reaches it over
+  # `sandbox_ctl` at DOCKER_HOST=tcp://docker-socket-proxy:2375, never the socket directly, so a
+  # compromised gateway process gets this restricted API surface, not host-root-equivalent
+  # access. The env vars below are tecnativa/docker-socket-proxy's own allowlist: CONTAINERS
+  # (create/start/stop/wait/logs/remove) and IMAGES (pull) are on; EXEC, NETWORKS (beyond attach
+  # at create), VOLUMES, SERVICES, SWARM, and everything else stay off, since
+  # `DockerSandboxRunner` never calls any of them.
+  docker-socket-proxy:
+    profiles: [sandbox]
+    image: tecnativa/docker-socket-proxy:0.3.0
+    <<: *restart
+    logging: *logging
+    environment:
+      CONTAINERS: "1"
+      IMAGES: "1"
+      POST: "1"
+      EXEC: "0"
+      NETWORKS: "0"
+      VOLUMES: "0"
+      SERVICES: "0"
+      SWARM: "0"
+      SYSTEM: "0"
+      BUILD: "0"
+      COMMIT: "0"
+      CONFIGS: "0"
+      DISTRIBUTION: "0"
+      INFO: "0"
+      NODES: "0"
+      PLUGINS: "0"
+      SECRETS: "0"
+      SESSION: "0"
+      TASKS: "0"
+      AUTH: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [sandbox_ctl]
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 128M}
 
   worker-realtime:
     build:
