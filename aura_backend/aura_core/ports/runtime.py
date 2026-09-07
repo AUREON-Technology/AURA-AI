@@ -54,6 +54,7 @@ class ToolContext:
     __slots__ = (
         "user_id", "correlation_id", "deadline_s", "tainted", "credentials", "metadata",
         "agent_id", "allowed_tools", "max_sensitivity", "memory_scope",
+        "capabilities", "delegation_depth",
     )
 
     def __init__(
@@ -69,6 +70,8 @@ class ToolContext:
         allowed_tools: frozenset[str] | None = None,
         max_sensitivity: ToolSensitivity | None = None,
         memory_scope: str = "shared",
+        capabilities: tuple[str, ...] = (),
+        delegation_depth: int = 0,
     ) -> None:
         self.user_id = user_id
         self.correlation_id = correlation_id
@@ -82,6 +85,12 @@ class ToolContext:
         self.allowed_tools = allowed_tools
         self.max_sensitivity = max_sensitivity
         self.memory_scope = memory_scope
+        # The caller's own capability grants and how many `delegate_to_agent` hops produced this
+        # turn -- both policy inputs for delegation (aura_core/tools/delegation.py), same
+        # rationale as agent_id/allowed_tools/max_sensitivity above: carried here because
+        # ToolContext is the one object that already flows from kernel to tool unchanged.
+        self.capabilities = capabilities
+        self.delegation_depth = delegation_depth
 
 
 @runtime_checkable

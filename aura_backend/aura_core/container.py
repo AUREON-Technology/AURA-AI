@@ -469,6 +469,21 @@ class Container:
                 models=self.models,
             )
         )
+        # After kernel exists, same reason as live_voice below: `delegate_to_agent`
+        # (tools/delegation.py) recurses into `self.kernel.run()`, so it cannot be built inside
+        # `_build_tools()` (which runs before the kernel does) -- the resolver defers the lookup
+        # of `self.kernel` to call time, once it is guaranteed to exist.
+        from .tools.delegation import build_delegation_tools
+
+        self.tools.register_all(
+            build_delegation_tools(
+                agents=self.agents,
+                kernel=lambda: self.kernel,
+                max_depth=settings.reasoning.max_delegation_depth,
+                deadline_s=settings.reasoning.delegation_deadline_s,
+            )
+        )
+
         # Phase H: after kernel exists so the live session can stream through it.
         self.live_voice = self._build_live_voice()
 

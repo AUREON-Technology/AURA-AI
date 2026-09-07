@@ -222,3 +222,35 @@ class TestKernelAgentWiring:
         assert context.agent_id == "health_companion"
         assert context.allowed_tools is not None
         assert "propose_expense" not in context.allowed_tools
+
+    async def test_a_delegated_grant_can_only_narrow_the_resolved_agents_own(
+        self, container, user
+    ) -> None:
+        """`delegate_to_agent` (aura_core/tools/delegation.py) already intersects grants before
+        building the child TurnRequest; `_tool_context`/`_tool_declarations` re-intersect against
+        the resolved AgentSpec here too, as defense in depth -- a broader override must never
+        widen what the resolved persona itself is allowed to reach."""
+        await container.startup()
+        finance_grant = container.agents.get("finance_advisor").allowed_tools
+
+        broad_override = frozenset({"calculator", "write_file", "run_command"})
+        context = container.kernel._tool_context(
+            _request(agent="finance_advisor", user_id=user, delegated_tool_grant=broad_override),
+            tainted=False,
+        )
+        assert context.allowed_tools == finance_grant & broad_override
+        assert "write_file" not in context.allowed_tools
+
+        narrow_override = frozenset({"calculator"})
+        context = container.kernel._tool_context(
+            _request(agent="finance_advisor", user_id=user, delegated_tool_grant=narrow_override),
+            tainted=False,
+        )
+        assert context.allowed_tools == frozenset({"calculator"})
+
+        declared = {
+            d["name"] for d in container.kernel._tool_declarations(
+                _request(agent="finance_advisor", user_id=user, delegated_tool_grant=narrow_override)
+            )
+        }
+        assert declared == {"calculator"}

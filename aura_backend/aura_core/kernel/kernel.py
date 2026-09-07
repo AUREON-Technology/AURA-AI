@@ -110,6 +110,17 @@ class TurnRequest:
     max_output_tokens: int = 1024
     temperature: float = 0.3
     route: str = "chat"
+    #: How many `delegate_to_agent` hops produced this turn (aura_core/tools/delegation.py).
+    #: `0` for every ordinary, non-delegated turn. Checked against
+    #: `settings.reasoning.max_delegation_depth` before a further delegation is allowed.
+    delegation_depth: int = 0
+    #: Set by `delegate_to_agent` on the child `TurnRequest` it builds: the intersection of the
+    #: delegating persona's own grant and the target persona's declared grant. `_tool_context()`
+    #: and `_tool_declarations()` intersect this again with the resolved `AgentSpec`'s own grant
+    #: (defense in depth -- a bug in the tool handler cannot hand a sub-turn a broader grant than
+    #: its own persona ever declares). `None` for every ordinary turn (no override).
+    delegated_tool_grant: frozenset[str] | None = None
+    delegated_risk_ceiling: ToolSensitivity | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -874,21 +885,51 @@ class AIKernel:
             except Exception:
                 logger.warning("failed to record engineer run", extra={"tool": report.tool})
 
+    @staticmethod
+    def _delegation_grant(
+        request: TurnRequest, agent: AgentSpec | None
+    ) -> tuple[frozenset[str] | None, ToolSensitivity | None]:
+        """The agent's own grant, narrowed by a `delegate_to_agent`-supplied override, if any.
+
+        `None` for either half of the agent's own grant means "unrestricted by this side" and is
+        preserved unless the override itself is also `None` for that half -- an override only
+        ever narrows, never widens, regardless of what the agent's own `AgentSpec` allows. This
+        is the defense-in-depth re-intersection described on `TurnRequest.delegated_tool_grant`:
+        even if `delegate_to_agent`'s own intersection logic had a bug, a sub-turn still cannot
+        exceed its resolved persona's declared grant.
+        """
+        base_tools = agent.allowed_tools if agent is not None else None
+        base_ceiling = agent.risk_ceiling if agent is not None else None
+        if request.delegated_tool_grant is None:
+            effective_tools = base_tools
+        elif base_tools is None:
+            effective_tools = request.delegated_tool_grant
+        else:
+            effective_tools = base_tools & request.delegated_tool_grant
+        if request.delegated_risk_ceiling is None:
+            effective_ceiling = base_ceiling
+        elif base_ceiling is None:
+            effective_ceiling = request.delegated_risk_ceiling
+        else:
+            effective_ceiling = min(base_ceiling, request.delegated_risk_ceiling)
+        return effective_tools, effective_ceiling
+
     def _tool_declarations(self, request: TurnRequest) -> tuple[Mapping[str, Any], ...]:
         deps = self._deps
         if not (request.use_tools and deps.tools is not None):
             return ()
         agent = self._resolve_agent(request)
-        max_sensitivity = agent.risk_ceiling if agent is not None else ToolSensitivity.SYSTEM
+        allowed_tools, max_sensitivity = self._delegation_grant(request, agent)
         declarations = deps.tools.declarations(
-            capabilities=request.capabilities, max_sensitivity=max_sensitivity
+            capabilities=request.capabilities,
+            max_sensitivity=max_sensitivity if max_sensitivity is not None else ToolSensitivity.SYSTEM,
         )
-        if agent is None or agent.allowed_tools is None:
+        if allowed_tools is None:
             return declarations
         # Not advertised, not requested: a tool outside the agent's grant should not appear in
         # the model's tool list, same reasoning as ToolRegistry.available()'s own capability
         # filter -- offering it only produces a call that policy.evaluate() then refuses.
-        return tuple(d for d in declarations if d.get("name") in agent.allowed_tools)
+        return tuple(d for d in declarations if d.get("name") in allowed_tools)
 
     def _should_plan(self, request: TurnRequest, tools: Sequence[Mapping[str, Any]]) -> bool:
         deps = self._deps
@@ -917,15 +958,26 @@ class AIKernel:
 
     def _tool_context(self, request: TurnRequest, tainted: bool) -> ToolContext:
         agent = self._resolve_agent(request)
+        allowed_tools, max_sensitivity = self._delegation_grant(request, agent)
+        deadline_s = 60.0
+        if agent is not None and (agent.allowed_tools is None or "delegate_to_agent" in agent.allowed_tools):
+            # A turn whose persona can delegate may itself be dispatching a recursive kernel.run()
+            # (aura_core/tools/delegation.py) rather than a simple API call -- the flat 60s every
+            # other tool gets would truncate that sub-turn well before its own budgets do.
+            deadline_s = getattr(
+                getattr(self._deps.settings, "reasoning", None), "delegation_deadline_s", 180.0
+            )
         return ToolContext(
             user_id=request.user_id,
             correlation_id=(request.correlation_id or CorrelationId.new()).value,
-            deadline_s=60.0,
+            deadline_s=deadline_s,
             tainted=tainted,
             agent_id=agent.id if agent is not None else None,
-            allowed_tools=agent.allowed_tools if agent is not None else None,
-            max_sensitivity=agent.risk_ceiling if agent is not None else None,
+            allowed_tools=allowed_tools,
+            max_sensitivity=max_sensitivity,
             memory_scope=agent.memory_scope if agent is not None else "shared",
+            capabilities=request.capabilities,
+            delegation_depth=request.delegation_depth,
         )
 
     async def _compose_plan(

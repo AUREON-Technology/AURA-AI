@@ -74,6 +74,21 @@ def test_low_risk_tools_are_not_tagged() -> None:
         assert "untrusted_content" not in by_name[name].tags
 
 
+def test_delegate_to_agent_is_tagged_untrusted_content() -> None:
+    """`delegate_to_agent` (aura_core/tools/delegation.py) isn't assembled by `default_tools()` --
+    it needs a live kernel resolver, wired separately in `Container.__init__` after the kernel
+    itself exists -- so it's built directly here rather than through the fixture the other tests
+    in this file share. A delegated sub-turn's answer can reflect tainted retrieval/tool output
+    the sub-persona itself pulled in, same reasoning as fetch_url's own tag."""
+    from aura_core.agents.registry import build_default_agent_registry
+    from aura_core.tools.delegation import build_delegation_tools
+
+    tools = build_delegation_tools(agents=build_default_agent_registry(), kernel=lambda: None)
+    by_name = {t.spec.name: t.spec for t in tools}
+    assert "delegate_to_agent" in by_name
+    assert "untrusted_content" in by_name["delegate_to_agent"].tags
+
+
 async def test_mcp_bridged_tools_default_to_tagged_untrusted_content() -> None:
     """A discovered MCP tool is untrusted by default (M4's same default-deny reasoning as any
     other externally-sourced content) unless an operator explicitly reviewed and allowlisted it
