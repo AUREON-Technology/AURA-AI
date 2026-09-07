@@ -18,6 +18,8 @@ from ..domain.identifiers import UserId
 __all__ = [
     "McpToolDescriptor",
     "McpClient",
+    "RepoFile",
+    "RepoTree",
     "CodeHostClient",
     "SandboxHandle",
     "SandboxResult",
@@ -49,6 +51,28 @@ class McpClient(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True)
+class RepoFile:
+    """One file (blob) in a repository at a given ref. ``size`` is in bytes, 0 if unreported."""
+
+    path: str
+    size: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class RepoTree:
+    """A repository's file listing at one ref.
+
+    ``truncated`` is not cosmetic: a forge that caps how much of a tree it will return in one
+    response (GitHub does, at ~100k entries) hands back a *partial* listing with no error, and an
+    agent that treats a partial listing as complete will confidently report that a file does not
+    exist. Carrying the flag lets the tool layer say so out loud.
+    """
+
+    files: tuple[RepoFile, ...] = ()
+    truncated: bool = False
+
+
 @runtime_checkable
 class CodeHostClient(Protocol):
     """Read/write access to a git forge.
@@ -59,6 +83,16 @@ class CodeHostClient(Protocol):
     """
 
     async def get_file_contents(self, repo: str, path: str, *, ref: str | None = None) -> str:
+        ...
+
+    async def list_files(self, repo: str, *, ref: str | None = None) -> RepoTree:
+        """Every file in the repository at ``ref`` (the default branch when ``None``).
+
+        Directories are not returned -- a caller wanting the shape of the tree derives it from
+        the paths. This is what makes "explore/analyse this repository" answerable at all:
+        :meth:`get_file_contents` needs a path the caller already knows, which an agent handed
+        only a repository URL does not have.
+        """
         ...
 
     async def get_issue(self, repo: str, number: int) -> str:

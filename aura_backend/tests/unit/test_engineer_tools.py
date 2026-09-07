@@ -203,6 +203,187 @@ class TestGithubTools:
         assert content == "hello"
 
 
+class TestRepositoryExploration:
+    """"Clone/analyse this repository" -- the request the engineer persona could not answer at
+    all before these tools existed: `github_get_file_contents` needs a path the agent does not
+    have, so a repository URL was a dead end however the persona was configured."""
+
+    def _seeded_client(self) -> InMemoryGitHubClient:
+        client = InMemoryGitHubClient()
+        client.seed_file("acme/widgets", "main", "README.md", "# Widgets")
+        client.seed_file("acme/widgets", "main", "src/app.py", "print('hi')\n")
+        client.seed_file("acme/widgets", "main", "src/util.py", "X = 1\n")
+        return client
+
+    async def test_listing_turns_a_repo_url_into_paths(self, ctx) -> None:
+        tools = _by_name(build_github_tools(_static_resolver(self._seeded_client())))
+
+        result = await tools["github_list_repository_files"].execute(
+            {"repo": "https://github.com/acme/widgets"}, ctx
+        )
+        assert "README.md" in result
+        assert "src/app.py" in result
+        assert "src/util.py" in result
+
+    async def test_listing_can_be_narrowed_by_path_prefix(self, ctx) -> None:
+        tools = _by_name(
+            build_github_tools(_static_resolver(self._seeded_client()), default_repo="acme/widgets")
+        )
+        result = await tools["github_list_repository_files"].execute({"path_prefix": "src/"}, ctx)
+        assert "src/app.py" in result and "README.md" not in result
+
+    async def test_listing_is_a_read_and_needs_no_confirmation(self, ctx) -> None:
+        """The sandbox-free path has to stay tap-free: a deployment with AURA_SANDBOX_ENABLED
+        off can still answer "analyse this repo" with list + read, and neither is side-effecting."""
+        registry = ToolRegistry(policy=ToolPolicy())
+        registry.register_all(
+            build_github_tools(_static_resolver(self._seeded_client()), default_repo="acme/widgets")
+        )
+        result, report = await registry.execute(
+            ToolCall(id=ToolCallId("1"), name="github_list_repository_files", arguments={}),
+            ctx,
+            capabilities=("engineer_agent",),
+        )
+        assert result.ok and not report.needs_confirmation
+
+    @pytest.mark.parametrize(
+        "given",
+        [
+            "acme/widgets",
+            "https://github.com/acme/widgets",
+            "https://github.com/acme/widgets.git",
+            "http://www.github.com/acme/widgets/",
+            "git@github.com:acme/widgets.git",
+            "https://github.com/acme/widgets/tree/main/src",
+        ],
+    )
+    async def test_repo_argument_accepts_the_forms_a_user_actually_pastes(
+        self, ctx, given: str
+    ) -> None:
+        tools = _by_name(build_github_tools(_static_resolver(self._seeded_client())))
+        result = await tools["github_get_file_contents"].execute(
+            {"path": "README.md", "repo": given}, ctx
+        )
+        assert result == "# Widgets"
+
+    async def test_unparseable_repo_argument_is_an_actionable_error(self, ctx) -> None:
+        tools = _by_name(build_github_tools(_static_resolver(self._seeded_client())))
+        with pytest.raises(ToolExecutionError, match="owner/name"):
+            await tools["github_get_file_contents"].execute(
+                {"path": "README.md", "repo": "https://example.com/"}, ctx
+            )
+
+
+class TestCloneRepository:
+    async def test_clone_lands_in_the_same_sandbox_run_command_reads(self, ctx) -> None:
+        """The point of building this with the sandbox tools rather than the GitHub ones: the
+        files have to be in the workspace the very next `run_command` sees."""
+        client = InMemoryGitHubClient()
+        client.seed_file("acme/widgets", "main", "README.md", "# Widgets")
+        client.seed_file("acme/widgets", "main", "src/app.py", "print('hi')\n")
+        tools = _by_name(
+            build_sandbox_tools(InMemorySandboxRunner(), code_host_resolver=_static_resolver(client))
+        )
+
+        result = await tools["clone_repository"].execute(
+            {"repo": "https://github.com/acme/widgets"}, ctx
+        )
+        assert "Copied 2 file(s)" in result
+
+        listing = await tools["run_command"].execute({"command": "ls -R widgets"}, ctx)
+        assert "README.md" in listing and "app.py" in listing
+        content = await tools["run_command"].execute({"command": "cat widgets/src/app.py"}, ctx)
+        assert "print('hi')" in content
+
+    async def test_destination_overrides_the_default_directory(self, ctx) -> None:
+        client = InMemoryGitHubClient()
+        client.seed_file("acme/widgets", "main", "README.md", "# Widgets")
+        tools = _by_name(
+            build_sandbox_tools(InMemorySandboxRunner(), code_host_resolver=_static_resolver(client))
+        )
+        await tools["clone_repository"].execute(
+            {"repo": "acme/widgets", "destination": "checkout"}, ctx
+        )
+        listing = await tools["run_command"].execute({"command": "cat checkout/README.md"}, ctx)
+        assert "# Widgets" in listing
+
+    async def test_binary_and_oversized_files_are_skipped_and_reported(self, ctx) -> None:
+        """A partial snapshot the agent doesn't know is partial is how "that file isn't in the
+        repo" gets asserted about a file that is."""
+        client = InMemoryGitHubClient()
+        client.seed_file("acme/widgets", "main", "README.md", "# Widgets")
+        client.seed_file("acme/widgets", "main", "logo.png", "\x89PNG-ish")
+        client.seed_file("acme/widgets", "main", "huge.txt", "x" * 300_000)
+        tools = _by_name(
+            build_sandbox_tools(InMemorySandboxRunner(), code_host_resolver=_static_resolver(client))
+        )
+
+        result = await tools["clone_repository"].execute({"repo": "acme/widgets"}, ctx)
+        assert "Copied 1 file(s)" in result
+        assert "1 binary file(s) skipped" in result
+        assert "1 file(s) over" in result
+        assert "partial" in result
+        missing = await tools["run_command"].execute({"command": "ls widgets"}, ctx)
+        assert "logo.png" not in missing
+
+    async def test_empty_or_unknown_repo_fails_with_a_usable_message(self, ctx) -> None:
+        tools = _by_name(
+            build_sandbox_tools(
+                InMemorySandboxRunner(), code_host_resolver=_static_resolver(InMemoryGitHubClient())
+            )
+        )
+        with pytest.raises(ToolExecutionError, match="no files to copy"):
+            await tools["clone_repository"].execute({"repo": "acme/nothing"}, ctx)
+
+    async def test_without_a_code_host_resolver_cloning_is_not_offered(self) -> None:
+        """Same opt-in shape as every other engineer tool: a deployment with no GitHub client
+        registers the sandbox tools without a clone tool rather than one that always fails."""
+        assert "clone_repository" not in _by_name(build_sandbox_tools(InMemorySandboxRunner()))
+
+    async def test_clone_requires_confirmation_and_the_engineer_capability(self, ctx) -> None:
+        client = InMemoryGitHubClient()
+        client.seed_file("acme/widgets", "main", "README.md", "# Widgets")
+        registry = ToolRegistry(policy=ToolPolicy())
+        registry.register_all(
+            build_sandbox_tools(InMemorySandboxRunner(), code_host_resolver=_static_resolver(client))
+        )
+
+        denied, denied_report = await registry.execute(
+            ToolCall(id=ToolCallId("1"), name="clone_repository",
+                     arguments={"repo": "acme/widgets"}),
+            ctx,
+            capabilities=(),
+        )
+        assert not denied.ok and "missing_capability" in denied_report.policy_reason
+
+        proposed, report = await registry.execute(
+            ToolCall(id=ToolCallId("2"), name="clone_repository",
+                     arguments={"repo": "acme/widgets"}),
+            ctx,
+            capabilities=("engineer_agent",),
+        )
+        assert not proposed.ok and report.needs_confirmation
+
+        confirmed, _ = await registry.execute(
+            ToolCall(id=ToolCallId("3"), name="clone_repository",
+                     arguments={"repo": "acme/widgets"}),
+            ctx,
+            capabilities=("engineer_agent",),
+            confirmed=True,
+        )
+        assert confirmed.ok and "Copied 1 file(s)" in confirmed.content
+
+    async def test_clone_reports_an_unconnected_github_account_actionably(self, ctx) -> None:
+        async def no_client(user_id):
+            return None
+
+        tools = _by_name(
+            build_sandbox_tools(InMemorySandboxRunner(), code_host_resolver=no_client)
+        )
+        with pytest.raises(ToolExecutionError, match="not connected"):
+            await tools["clone_repository"].execute({"repo": "acme/widgets"}, ctx)
+
+
 class TestGithubToolsResolver:
     """The resolver seam that lets `build_github_tools` serve either one shared admin client or
     a per-user OAuth-connected one (`Container._build_github_client_resolver`) without the tools
