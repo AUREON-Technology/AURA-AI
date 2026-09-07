@@ -237,43 +237,64 @@ fi
 # AURA_ENGINEER_AGENT_ROLES defaults empty, so AgentRegistry.resolve() fell back to the
 # orchestrator for every caller and the Engineer silently answered as the Orchestrator.
 #
-# This only ever *adds* a key that is absent from the file entirely. An operator's existing
-# value -- including a deliberately empty one -- is never rewritten, so it cannot re-widen a
-# grant someone narrowed by hand, and re-running it is a no-op.
+# "Absent" and "present but empty" are the same thing to the code reading these -- an empty
+# AURA_ENGINEER_AGENT_ROLES grants the capability to nobody, exactly like no line at all -- so
+# both are treated as unconfigured here. A non-empty value is somebody's deliberate choice and
+# is never rewritten; it is printed instead, because "already set" hid the one case that
+# mattered: a key that is present, empty, and doing nothing.
 ENV_FILE="$COMPOSE_DIR/.env"
 
-ensure_env_default() {
+# The current value of a key in $ENV_FILE: empty for absent, commented out, or set to nothing.
+# Trailing inline comments and surrounding quotes are stripped so the value compares the way
+# compose will read it.
+env_value() {
+  sed -n "s/^[[:space:]]*$1=//p" "$ENV_FILE" 2>/dev/null \
+    | head -1 | sed 's/[[:space:]]*#.*$//' | tr -d "\"'" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+set_env_value() {
   local key="$1" value="$2" note="$3"
-  if grep -qE "^[[:space:]]*${key}=" "$ENV_FILE"; then
-    info "$key: already set, left alone"
-    return 0
-  fi
   if [ "$DRY_RUN" = 1 ]; then
-    info "[dry-run] would append ${key}=${value} to $ENV_FILE"
+    info "[dry-run] would set ${key}=${value} in $ENV_FILE"
     return 0
   fi
-  printf '\n# %s -- added by vps-update.sh\n%s=%s\n' "$note" "$key" "$value" >> "$ENV_FILE"
-  info "$key: appended to $ENV_FILE (=$value)"
+  if grep -qE "^[[:space:]]*${key}=" "$ENV_FILE"; then
+    # Present but empty: rewrite that one line in place rather than appending a duplicate,
+    # which compose would resolve to whichever came last.
+    sed -i "s|^[[:space:]]*${key}=.*|${key}=${value}|" "$ENV_FILE"
+    info "$key: was empty, set to $value"
+  else
+    printf '\n# %s -- added by vps-update.sh\n%s=%s\n' "$note" "$key" "$value" >> "$ENV_FILE"
+    info "$key: appended to $ENV_FILE (=$value)"
+  fi
 }
 
 say "Ensuring deployment settings this release expects"
 if [ ! -f "$ENV_FILE" ]; then
   info "no $ENV_FILE on this host; compose runs on the process environment alone -- skipping"
 else
-  ensure_env_default AURA_ENGINEER_AGENT_ROLES "Admin,SuperAdmin" \
-    "roles granted the engineer_agent capability (aura_core/agents/registry.py)"
+  ENGINEER_ROLES="$(env_value AURA_ENGINEER_AGENT_ROLES)"
+  if [ -n "$ENGINEER_ROLES" ]; then
+    info "AURA_ENGINEER_AGENT_ROLES=$ENGINEER_ROLES (already configured, left alone)"
+  else
+    set_env_value AURA_ENGINEER_AGENT_ROLES "Admin,SuperAdmin" \
+      "roles granted the engineer_agent capability (aura_core/agents/registry.py)"
+  fi
 
   # Per-user GitHub OAuth is what actually puts a repository in reach of that persona, but it
   # cannot be switched on from here alone: the App's client id, callback URL, and real client
   # secret exist only on the GitHub App's settings page. Enable it once both env halves are
   # present rather than turning on a connect flow that would fail at the authorize step, and
   # say exactly what is missing until then.
-  if grep -qE '^[[:space:]]*AURA_GITHUB_OAUTH_CLIENT_ID=[^[:space:]]' "$ENV_FILE" \
-     && grep -qE '^[[:space:]]*AURA_GITHUB_OAUTH_CALLBACK_URL=[^[:space:]]' "$ENV_FILE"; then
-    ensure_env_default AURA_GITHUB_OAUTH_ENABLED "true" \
+  OAUTH_ENABLED="$(env_value AURA_GITHUB_OAUTH_ENABLED)"
+  if [ "$OAUTH_ENABLED" = "true" ]; then
+    info "AURA_GITHUB_OAUTH_ENABLED=true (already on)"
+  elif [ -n "$(env_value AURA_GITHUB_OAUTH_CLIENT_ID)" ] \
+       && [ -n "$(env_value AURA_GITHUB_OAUTH_CALLBACK_URL)" ]; then
+    set_env_value AURA_GITHUB_OAUTH_ENABLED "true" \
       "per-user GitHub OAuth for the engineer agent (api/v2/github_integration.py)"
   else
-    info "AURA_GITHUB_OAUTH_ENABLED: left off -- it needs, in $ENV_FILE:"
+    info "AURA_GITHUB_OAUTH_ENABLED=${OAUTH_ENABLED:-<unset>}, left as is -- it needs, in $ENV_FILE:"
     info "  AURA_GITHUB_OAUTH_CLIENT_ID=<the GitHub App's Client ID>"
     info "  AURA_GITHUB_OAUTH_CALLBACK_URL=https://<domain>/api/v3/integrations/github/callback"
     info "  and the App's real client secret in $COMPOSE_DIR/secrets/github_oauth_client_secret"
