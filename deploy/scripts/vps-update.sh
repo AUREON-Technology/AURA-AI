@@ -229,6 +229,58 @@ if [ -f "$COMPOSE_DIR/scripts/bootstrap-secrets.sh" ]; then
   run "bash '$COMPOSE_DIR/scripts/bootstrap-secrets.sh'"
 fi
 
+# -- 4c. ensure settings this release expects exist in .env ---------------------------------
+# The same gap as 4b, one level up. A merge can make a feature depend on a *setting* rather
+# than a secret file, and deploy/.env exists only on the host (it is gitignored), so nothing in
+# a pull request can set one: `git pull` ships the code for a feature that stays switched off
+# until a human SSHes in. That is exactly how the engineer persona shipped unreachable --
+# AURA_ENGINEER_AGENT_ROLES defaults empty, so AgentRegistry.resolve() fell back to the
+# orchestrator for every caller and the Engineer silently answered as the Orchestrator.
+#
+# This only ever *adds* a key that is absent from the file entirely. An operator's existing
+# value -- including a deliberately empty one -- is never rewritten, so it cannot re-widen a
+# grant someone narrowed by hand, and re-running it is a no-op.
+ENV_FILE="$COMPOSE_DIR/.env"
+
+ensure_env_default() {
+  local key="$1" value="$2" note="$3"
+  if grep -qE "^[[:space:]]*${key}=" "$ENV_FILE"; then
+    info "$key: already set, left alone"
+    return 0
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    info "[dry-run] would append ${key}=${value} to $ENV_FILE"
+    return 0
+  fi
+  printf '\n# %s -- added by vps-update.sh\n%s=%s\n' "$note" "$key" "$value" >> "$ENV_FILE"
+  info "$key: appended to $ENV_FILE (=$value)"
+}
+
+say "Ensuring deployment settings this release expects"
+if [ ! -f "$ENV_FILE" ]; then
+  info "no $ENV_FILE on this host; compose runs on the process environment alone -- skipping"
+else
+  ensure_env_default AURA_ENGINEER_AGENT_ROLES "Admin,SuperAdmin" \
+    "roles granted the engineer_agent capability (aura_core/agents/registry.py)"
+
+  # Per-user GitHub OAuth is what actually puts a repository in reach of that persona, but it
+  # cannot be switched on from here alone: the App's client id, callback URL, and real client
+  # secret exist only on the GitHub App's settings page. Enable it once both env halves are
+  # present rather than turning on a connect flow that would fail at the authorize step, and
+  # say exactly what is missing until then.
+  if grep -qE '^[[:space:]]*AURA_GITHUB_OAUTH_CLIENT_ID=[^[:space:]]' "$ENV_FILE" \
+     && grep -qE '^[[:space:]]*AURA_GITHUB_OAUTH_CALLBACK_URL=[^[:space:]]' "$ENV_FILE"; then
+    ensure_env_default AURA_GITHUB_OAUTH_ENABLED "true" \
+      "per-user GitHub OAuth for the engineer agent (api/v2/github_integration.py)"
+  else
+    info "AURA_GITHUB_OAUTH_ENABLED: left off -- it needs, in $ENV_FILE:"
+    info "  AURA_GITHUB_OAUTH_CLIENT_ID=<the GitHub App's Client ID>"
+    info "  AURA_GITHUB_OAUTH_CALLBACK_URL=https://<domain>/api/v3/integrations/github/callback"
+    info "  and the App's real client secret in $COMPOSE_DIR/secrets/github_oauth_client_secret"
+    info "  (bootstrap-secrets.sh writes a random placeholder there, which will not authenticate)"
+  fi
+fi
+
 # Compose auto-loads docker-compose.override.yml only when no -f is given. This script always
 # passes -f, so without adding it explicitly the override is ignored -- including the one
 # deploy/nginx/host-proxy.conf.example instructs operators to write on a shared host, which is
