@@ -81,7 +81,7 @@ services:
     <<: *restart
     logging: *logging
     environment:
-      AURA_API_URL: http://gateway:8000
+      AURA_API_URL: http://dev-gateway:8000
       NEXT_BASE_PATH: /console
       NEXT_PUBLIC_BASE_PATH: /console
       NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
@@ -91,7 +91,7 @@ services:
       PORT: "3000"
     networks: [edge, aura_edge]
     depends_on:
-      gateway:
+      dev-gateway:
         condition: service_healthy
     healthcheck:
       test:
@@ -109,7 +109,7 @@ services:
       resources:
         limits: {cpus: "0.5", memory: 512M}
 
-  gateway:
+  dev-gateway:
     container_name: aura-dev-gateway
     build:
       context: ../aura_backend

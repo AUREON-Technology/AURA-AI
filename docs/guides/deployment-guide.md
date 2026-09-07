@@ -140,7 +140,7 @@ Prod nginx terminates TLS for both hostnames and proxies dev traffic to `aura-de
 6. Migrate dev DB:
    ```bash
    docker compose -p aura-dev -f deploy/docker-compose.dev.yml \
-     --env-file deploy/.env.development run --rm gateway alembic upgrade head
+     --env-file deploy/.env.development run --rm dev-gateway alembic upgrade head
    ```
 7. Seed Loop B console data: `./deploy/scripts/seed-dev.sh`
 8. Add `https://dev.<your-ip>.nip.io` to Google Cloud Console **Authorized JavaScript origins**
