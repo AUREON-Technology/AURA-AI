@@ -338,6 +338,11 @@ class Container:
                 max_replans=settings.reasoning.max_replans,
                 enabled=settings.reasoning.planning_enabled,
                 metrics=self.metrics,
+                # Same deadline as the kernel's own chat completions (kernel.py's
+                # _completion_timeout_s reads this same setting) -- left at the
+                # CompletionRequest default of 60s, a cold prefill on a CPU-only provider
+                # silently downgrades every plan-worthy turn to a tool-less direct answer.
+                request_timeout_s=settings.llm.request_timeout_s,
             )
             if settings.reasoning.planning_enabled
             else None
