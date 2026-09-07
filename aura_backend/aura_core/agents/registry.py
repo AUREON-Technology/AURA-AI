@@ -175,9 +175,10 @@ def build_default_agent_registry() -> AgentRegistry:
                 # "grant an id, not a guarantee it exists" rule _READ_TOOLS's own comment states).
                 allowed_tools=_READ_TOOLS | {
                     "calculator",
-                    "write_file", "edit_file", "run_command",
+                    "write_file", "edit_file", "run_command", "clone_repository",
                     "git_diff", "git_commit", "git_checkout_branch",
-                    "github_get_file_contents", "github_get_issue", "github_get_pull_request",
+                    "github_list_repository_files", "github_get_file_contents",
+                    "github_get_issue", "github_get_pull_request",
                     "github_create_branch", "github_commit_files",
                     "github_create_draft_pull_request",
                 },

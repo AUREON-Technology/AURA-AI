@@ -16,6 +16,10 @@ existing decisions elsewhere in ``aura_core/tools/``:
 * Every tool below declares ``required_capability="engineer_agent"``. A caller without that grant
   never sees these tools at all (``ToolRegistry.available()`` filters them out before they reach
   a model's tool list), regardless of what sensitivity ceiling the caller otherwise has.
+* :func:`build_sandbox_tools`'s ``clone_repository`` does not shell out to ``git clone``: it
+  copies files through the code-host port into the sandbox. That keeps network egress and a
+  forge credential out of a container that runs model-chosen shell commands, and it is why
+  "analyse this repository" works on a deployment whose sandbox has no network at all.
 """
 
 from __future__ import annotations
@@ -40,6 +44,63 @@ __all__ = [
 logger = get_logger("tools.coding")
 
 _ENGINEER_CAPABILITY = "engineer_agent"
+
+#: Caps for `clone_repository`. A repository is arbitrary third-party data of unbounded size, and
+#: the sandbox workspace is a scratch directory inside a memory-limited container -- copying a
+#: multi-gigabyte monorepo into it would fail the turn slowly instead of quickly. These bound the
+#: work and are reported in the tool's result, so the agent knows the snapshot is partial rather
+#: than concluding a skipped file does not exist.
+_CLONE_MAX_FILES = 400
+_CLONE_MAX_FILE_BYTES = 256_000
+_CLONE_MAX_TOTAL_BYTES = 8_000_000
+_CLONE_CONCURRENCY = 6
+
+#: Paths per `github_list_repository_files` response. A large repository's full tree is tens of
+#: thousands of paths -- more context than the listing is worth, and `max_result_chars` would
+#: truncate it mid-path anyway; the tool says how many it withheld and how to narrow the listing.
+_LIST_FILES_MAX_ENTRIES = 1_000
+
+#: Extensions whose contents are not text and so cannot survive `SandboxRunner.write_file`'s
+#: UTF-8 contract. Skipped by name rather than by sniffing bytes: the code-host port hands back
+#: `str`, so by the time a binary blob reached here it would already have been lossily decoded.
+_BINARY_SUFFIXES = frozenset({
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".icns", ".svgz",
+    ".pdf", ".zip", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".jar", ".war",
+    ".mp3", ".mp4", ".mov", ".avi", ".wav", ".ogg", ".webm", ".flac",
+    ".ttf", ".otf", ".woff", ".woff2", ".eot",
+    ".so", ".dylib", ".dll", ".exe", ".bin", ".o", ".a", ".class", ".pyc", ".wasm",
+    ".db", ".sqlite", ".sqlite3", ".keystore", ".jks", ".p12", ".pack", ".idx",
+})
+
+
+def _is_binary_path(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    dot = name.rfind(".")
+    return dot > 0 and name[dot:].lower() in _BINARY_SUFFIXES
+
+
+def _normalize_repo(value: str) -> str:
+    """``owner/name`` from whatever form the user pasted.
+
+    A user asking an agent to look at a repository pastes a URL
+    (``https://github.com/owner/name``, with or without ``.git``, ``/tree/main``, or a trailing
+    slash), and the model passes that string straight through as the ``repo`` argument. Every
+    call below wants the ``owner/name`` slug the API is addressed by, so normalise once here
+    rather than making each tool -- or the model -- get it right.
+    """
+    repo = value.strip()
+    for prefix in ("https://", "http://", "ssh://", "git@", "www."):
+        if repo.startswith(prefix):
+            repo = repo[len(prefix):]
+    repo = repo.replace("github.com:", "github.com/")
+    if repo.startswith("github.com/"):
+        repo = repo[len("github.com/"):]
+    repo = repo.strip("/")
+    if repo.endswith(".git"):
+        repo = repo[: -len(".git")]
+    parts = [p for p in repo.split("/") if p]
+    # `owner/name/tree/main/subdir` and friends: the slug is the first two segments.
+    return "/".join(parts[:2])
 
 
 # --------------------------------------------------------------------------------------
@@ -87,8 +148,15 @@ class _SandboxSessionCache:
             return handle
 
 
-def build_sandbox_tools(sandbox_runner: Any) -> list[Tool]:
-    """Filesystem, command-execution, and git tools against one shared per-task sandbox."""
+def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) -> list[Tool]:
+    """Filesystem, command-execution, and git tools against one shared per-task sandbox.
+
+    ``code_host_resolver`` -- the same ``(UserId) -> Awaitable[CodeHostClient | None]`` callable
+    :func:`build_github_tools` takes -- additionally wires ``clone_repository``. It is built here,
+    next to the sandbox tools rather than with the GitHub ones, because it must write into the
+    *same* per-turn sandbox handle ``run_command`` will then read from: a clone that landed in a
+    different container would be invisible to the very next tool call.
+    """
     sessions = _SandboxSessionCache(sandbox_runner)
 
     @tool(
@@ -217,7 +285,138 @@ def build_sandbox_tools(sandbox_runner: Any) -> list[Tool]:
             )
         return result.stdout or f"switched to {branch}"
 
-    return [write_file, edit_file, run_command, git_diff, git_commit, git_checkout_branch]
+    tools: list[Tool] = [
+        write_file, edit_file, run_command, git_diff, git_commit, git_checkout_branch,
+    ]
+    if code_host_resolver is None:
+        return tools
+
+    @tool(
+        "clone_repository",
+        "Copy a GitHub repository's files into the engineer agent's sandbox workspace, so they "
+        "can be explored, searched, built, or tested with run_command. Use this when asked to "
+        "clone, analyse, review, or work on a repository. Text files only, up to a size and "
+        "count budget -- binaries and oversized files are skipped and the skips are reported.",
+        param("repo", "string",
+              "Repository to copy, as 'owner/name' or its GitHub URL.", max_length=400),
+        param("ref", "string", "Branch, tag, or commit SHA. Omit for the default branch.",
+              required=False, max_length=200),
+        param("destination", "string",
+              "Workspace subdirectory to copy into. Defaults to the repository's name.",
+              required=False, max_length=200),
+        category=ToolCategory.DEVELOPMENT,
+        sensitivity=ToolSensitivity.CONFIDENTIAL,
+        side_effecting=True,
+        required_capability=_ENGINEER_CAPABILITY,
+        timeout_s=300.0,
+        max_result_chars=20_000,
+        # Everything this pulls in is third-party repository content -- exactly as
+        # attacker-influenceable as fetch_url's page bodies or run_command's output.
+        tags=("untrusted_content",),
+    )
+    async def clone_repository(
+        repo: str, context: ToolContext, ref: str | None = None, destination: str | None = None,
+    ) -> str:
+        """Not `git clone`: the files are fetched through the code-host port and written into the
+        sandbox one by one.
+
+        A real clone would need the sandbox container to reach the network *and* to hold a
+        credential for private repositories -- an egress hole and a secret in a container running
+        model-chosen shell commands. Copying through the already-authenticated, already
+        repo-allowlisted client keeps both out of the sandbox, and works unchanged on a
+        deployment whose sandbox network is disabled entirely (`AURA_SANDBOX_NETWORK` unset).
+        """
+        slug = _normalize_repo(repo)
+        if slug.count("/") != 1 or not all(slug.split("/")):
+            raise ToolExecutionError(
+                f"could not read a repository from {repo!r}; expected 'owner/name' or a "
+                "GitHub URL like https://github.com/owner/name",
+                tool="clone_repository",
+            )
+        client = await code_host_resolver(context.user_id)
+        if client is None:
+            raise ToolExecutionError(
+                "GitHub is not connected for this user -- connect an account via "
+                "/api/v3/integrations/github/connect, or ask an operator to configure "
+                "AURA_GITHUB_TOKEN, before cloning a repository",
+                tool="clone_repository",
+            )
+        try:
+            tree = await client.list_files(slug, ref=ref)
+        except Exception as exc:
+            raise ToolExecutionError(
+                f"could not list {slug}{'@' + ref if ref else ''}: {exc}",
+                tool="clone_repository",
+            ) from exc
+        if not tree.files:
+            raise ToolExecutionError(
+                f"{slug}{'@' + ref if ref else ''} has no files to copy (empty repository, "
+                "wrong ref, or no access to it)",
+                tool="clone_repository",
+            )
+
+        root = (destination or slug.split("/")[1]).strip("/") or "repo"
+        selected: list[Any] = []
+        skipped_binary = skipped_large = skipped_budget = 0
+        total_bytes = 0
+        for entry in tree.files:
+            if _is_binary_path(entry.path):
+                skipped_binary += 1
+            elif entry.size > _CLONE_MAX_FILE_BYTES:
+                skipped_large += 1
+            elif (
+                len(selected) >= _CLONE_MAX_FILES
+                or total_bytes + entry.size > _CLONE_MAX_TOTAL_BYTES
+            ):
+                skipped_budget += 1
+            else:
+                selected.append(entry)
+                total_bytes += entry.size
+
+        handle = await sessions.get(context.correlation_id)
+        semaphore = asyncio.Semaphore(_CLONE_CONCURRENCY)
+        failed: list[str] = []
+
+        async def _copy(entry: Any) -> None:
+            async with semaphore:
+                try:
+                    content = await client.get_file_contents(slug, entry.path, ref=ref)
+                    await sandbox_runner.write_file(handle, f"{root}/{entry.path}", content)
+                except Exception as exc:  # one unreadable file must not lose the whole clone
+                    failed.append(f"{entry.path}: {exc}"[:200])
+
+        await asyncio.gather(*(_copy(entry) for entry in selected))
+
+        copied = len(selected) - len(failed)
+        lines = [
+            f"Copied {copied} file(s) from {slug}{'@' + ref if ref else ''} into "
+            f"./{root} in the sandbox workspace.",
+            "Explore it with run_command (e.g. 'ls -R {0}', 'cat {0}/README.md').".format(root),
+        ]
+        if skipped_binary or skipped_large or skipped_budget or failed or tree.truncated:
+            lines.append(
+                "Snapshot is partial -- do not conclude a file is absent from the repository "
+                "because it is absent here:"
+            )
+        if skipped_binary:
+            lines.append(f"- {skipped_binary} binary file(s) skipped")
+        if skipped_large:
+            lines.append(
+                f"- {skipped_large} file(s) over {_CLONE_MAX_FILE_BYTES // 1000}kB skipped"
+            )
+        if skipped_budget:
+            lines.append(
+                f"- {skipped_budget} file(s) skipped after the {_CLONE_MAX_FILES}-file / "
+                f"{_CLONE_MAX_TOTAL_BYTES // 1_000_000}MB budget was reached"
+            )
+        if failed:
+            lines.append(f"- {len(failed)} file(s) failed to copy: {'; '.join(failed[:5])}")
+        if tree.truncated:
+            lines.append("- the repository's file listing was truncated by GitHub")
+        return "\n".join(lines)
+
+    tools.append(clone_repository)
+    return tools
 
 
 # --------------------------------------------------------------------------------------
@@ -252,19 +451,69 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         return client
 
     def _repo(explicit: str | None) -> str:
-        repo = explicit or default_repo
+        repo = _normalize_repo(explicit or default_repo)
         if not repo:
             raise ToolExecutionError(
                 "no repo given and no default configured "
                 "(AURA_GITHUB_DEFAULT_OWNER/AURA_GITHUB_DEFAULT_REPO)",
                 tool="github",
             )
+        if repo.count("/") != 1:
+            raise ToolExecutionError(
+                f"could not read a repository from {explicit!r}; expected 'owner/name' or a "
+                "GitHub URL like https://github.com/owner/name",
+                tool="github",
+            )
         return repo
 
     _repo_param = param(
-        "repo", "string", "Repository as 'owner/name'. Omit to use the configured default.",
-        required=False, max_length=200,
+        "repo", "string",
+        "Repository as 'owner/name' or its GitHub URL. Omit to use the configured default.",
+        required=False, max_length=400,
     )
+
+    @tool(
+        "github_list_repository_files",
+        "List the file paths in a GitHub repository. Use this first when asked to explore, "
+        "analyse, or review a repository -- it is what turns a bare repository URL into paths "
+        "github_get_file_contents can then read. Works without a sandbox.",
+        _repo_param,
+        param("ref", "string", "Branch, tag, or commit SHA. Omit for the default branch.",
+              required=False, max_length=200),
+        param("path_prefix", "string",
+              "Only list files under this directory, e.g. 'src/'. Omit for the whole repository.",
+              required=False, max_length=300),
+        category=ToolCategory.DEVELOPMENT,
+        sensitivity=ToolSensitivity.CONFIDENTIAL,
+        required_capability=_ENGINEER_CAPABILITY,
+        timeout_s=30.0,
+        max_result_chars=40_000,
+        # Path names are repository-controlled text, same as file contents.
+        tags=("untrusted_content",),
+    )
+    async def github_list_repository_files(
+        context: ToolContext, repo: str | None = None, ref: str | None = None,
+        path_prefix: str | None = None,
+    ) -> str:
+        client = await _client(context)
+        tree = await client.list_files(_repo(repo), ref=ref)
+        prefix = (path_prefix or "").lstrip("/")
+        files = [f for f in tree.files if not prefix or f.path.startswith(prefix)]
+        if not files:
+            return (
+                f"No files{' under ' + prefix if prefix else ''} in {_repo(repo)}"
+                f"{'@' + ref if ref else ''}."
+            )
+        shown = files[:_LIST_FILES_MAX_ENTRIES]
+        lines = [f"{f.path} ({f.size} bytes)" for f in shown]
+        if len(files) > len(shown):
+            lines.append(
+                f"... and {len(files) - len(shown)} more file(s) not shown; narrow with "
+                "path_prefix"
+            )
+        if tree.truncated:
+            lines.append("(GitHub truncated this repository's file listing -- it is incomplete)")
+        return "\n".join(lines)
 
     @tool(
         "github_get_file_contents",
@@ -385,8 +634,9 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         )
 
     return [
-        github_get_file_contents, github_get_issue, github_get_pull_request,
-        github_create_branch, github_commit_files, github_create_draft_pull_request,
+        github_list_repository_files, github_get_file_contents, github_get_issue,
+        github_get_pull_request, github_create_branch, github_commit_files,
+        github_create_draft_pull_request,
     ]
 
 

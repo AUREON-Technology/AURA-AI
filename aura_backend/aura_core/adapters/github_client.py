@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import base64
 from typing import Any, Mapping
+from urllib.parse import quote
+
+from ..ports.coding import RepoFile, RepoTree
 
 __all__ = ["GitHubClient", "GitHubApiError"]
 
@@ -83,6 +86,26 @@ class GitHubClient:
         if data.get("encoding") == "base64":
             return base64.b64decode(data["content"]).decode("utf-8", errors="replace")
         return str(data.get("content", ""))
+
+    async def list_files(self, repo: str, *, ref: str | None = None) -> RepoTree:
+        """The repository's whole file list at ``ref``, in one call.
+
+        Uses the git trees API with ``recursive=1`` rather than walking ``/contents`` directory
+        by directory: one request for a repository of any depth instead of one per directory,
+        which is the difference between "analyse this repo" being a single tool call and being
+        dozens. ``HEAD`` stands in for the default branch, so no extra call is needed to discover
+        its name. GitHub caps a recursive tree response and reports the cap in ``truncated``;
+        that flag is passed through rather than swallowed (see :class:`RepoTree`).
+        """
+        self._assert_repo_allowed(repo)
+        tree_ref = quote(ref or "HEAD", safe="")
+        data = await self._request("GET", f"/repos/{repo}/git/trees/{tree_ref}?recursive=1")
+        files = tuple(
+            RepoFile(path=str(entry.get("path", "")), size=int(entry.get("size") or 0))
+            for entry in data.get("tree", [])
+            if entry.get("type") == "blob" and entry.get("path")
+        )
+        return RepoTree(files=files, truncated=bool(data.get("truncated")))
 
     async def get_issue(self, repo: str, number: int) -> str:
         self._assert_repo_allowed(repo)

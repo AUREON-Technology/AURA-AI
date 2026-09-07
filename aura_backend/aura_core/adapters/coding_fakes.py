@@ -18,7 +18,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from ..ports.coding import McpToolDescriptor, SandboxHandle, SandboxResult
+from ..ports.coding import McpToolDescriptor, RepoFile, RepoTree, SandboxHandle, SandboxResult
 
 __all__ = ["InMemorySandboxRunner", "InMemoryGitHubClient", "InMemoryMcpClient"]
 
@@ -118,6 +118,15 @@ class InMemoryGitHubClient:
             return self._files[(repo, branch, path)]
         except KeyError as exc:
             raise RuntimeError(f"{path} not found in {repo}@{branch}") from exc
+
+    async def list_files(self, repo: str, *, ref: str | None = None) -> RepoTree:
+        branch = ref or "main"
+        files = tuple(
+            RepoFile(path=path, size=len(content.encode("utf-8")))
+            for (r, b, path), content in sorted(self._files.items())
+            if r == repo and b == branch
+        )
+        return RepoTree(files=files)
 
     async def get_issue(self, repo: str, number: int) -> str:
         issue = self._issues.get((repo, number))

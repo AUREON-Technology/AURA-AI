@@ -581,7 +581,11 @@ def default_tools(
     if enable_weather:
         tools += build_weather_tool()
     if sandbox_runner is not None:
-        tools += build_sandbox_tools(sandbox_runner)
+        # The resolver is passed to both builders on purpose: `clone_repository` lives with the
+        # sandbox tools (it writes into their per-turn workspace) but reaches GitHub through the
+        # same per-user client the `github_*` tools use. Absent a resolver, the sandbox tools
+        # register without it and cloning is simply not offered.
+        tools += build_sandbox_tools(sandbox_runner, code_host_resolver=github_client_resolver)
     if github_client_resolver is not None:
         tools += build_github_tools(github_client_resolver, default_repo=github_default_repo)
     return tools

@@ -175,10 +175,11 @@ class TestKernelWiring:
         # token) respectively, neither of which this default container configures.
         conditionally_registered = {
             "fetch_url",
-            "write_file", "edit_file", "run_command",
+            "write_file", "edit_file", "run_command", "clone_repository",
             "git_diff", "git_commit", "git_checkout_branch",
-            "github_get_file_contents", "github_get_issue", "github_get_pull_request",
-            "github_create_branch", "github_commit_files", "github_create_draft_pull_request",
+            "github_list_repository_files", "github_get_file_contents", "github_get_issue",
+            "github_get_pull_request", "github_create_branch", "github_commit_files",
+            "github_create_draft_pull_request",
         }
         for spec in container.agents:
             if spec.allowed_tools is None:
