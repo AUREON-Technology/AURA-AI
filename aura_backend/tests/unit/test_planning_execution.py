@@ -319,6 +319,22 @@ class TestPlanningTimeout:
         assert router.last_request.timeout_s == 60.0
 
 
+class TestPlanningOutputBudget:
+    """A production incident on the self-hosted CPU provider measured this call sustaining
+    ~5 tokens/s: the old 1200-token ceiling needed up to 240s to finish, past even the deployed
+    180s timeout, so the provider call was hard-cancelled mid-JSON and raised instead of
+    returning -- the "no usable steps" diagnostic in plan() never got a chance to fire because
+    the response never reached ``_parse_steps``. The ceiling must stay low enough to actually
+    fit inside a realistic timeout on that hardware.
+    """
+
+    async def test_the_output_budget_fits_a_slow_cpu_provider_inside_the_timeout(self) -> None:
+        router = _StubRouter('{"steps": []}')
+        engine = PlanningEngine(router=router, prompts=build_default_registry())
+        await engine.plan(Goal(description="g"), available_tools=TOOLS)
+        assert router.last_request.sampling.max_output_tokens == 700
+
+
 class TestToolArgumentSignatures:
     """A tool's declaration already carries a full JSON-Schema ``parameters`` object (built for
 

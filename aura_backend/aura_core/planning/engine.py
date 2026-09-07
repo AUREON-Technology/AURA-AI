@@ -166,7 +166,17 @@ class PlanningEngine:
             response = await self._router.complete(
                 CompletionRequest(
                     conversation=Conversation.of([Message.user(rendered.text)]),
-                    sampling=SamplingParams(temperature=0.0, max_output_tokens=1200),
+                    # A production incident on the self-hosted CPU provider measured this exact
+                    # call sustaining ~5 tokens/s: at 1200 it can need up to 240s to finish, well
+                    # past even the deployed 180s request_timeout_s, so the provider call was
+                    # hard-cancelled mid-JSON every time -- raising instead of returning, which
+                    # skips _parse_steps entirely and starves the "no usable steps" diagnostic
+                    # below of the response preview it exists to capture. 700 tokens fits inside
+                    # that budget with margin on this hardware; a plan that still doesn't fit
+                    # degrades the same safe way truncated JSON always has (falls through to a
+                    # single RESPOND step below), just via a fast, parseable return instead of a
+                    # 180s wait ending in an exception.
+                    sampling=SamplingParams(temperature=0.0, max_output_tokens=700),
                     policy=self._policy,
                     timeout_s=self._request_timeout_s,
                 )
