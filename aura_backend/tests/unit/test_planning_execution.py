@@ -19,7 +19,7 @@ from aura_core.domain.planning import Goal, Plan, PlanStep, Priority, StepKind, 
 from aura_core.execution import ExecutionEngine
 from aura_core.execution.engine import ExecutionOutcome, StepEvent
 from aura_core.planning import PlanningEngine
-from aura_core.planning.engine import _parse_json_object
+from aura_core.planning.engine import _parse_json_object, _render_tool_line
 from aura_core.prompts import build_default_registry
 
 
@@ -267,6 +267,32 @@ class TestPlanningFallback:
         )
         assert plan.steps[0].kind is StepKind.RESPOND
 
+    async def test_a_response_the_router_returned_but_that_parsed_to_nothing_is_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Distinguishes a real provider failure (the except-block above, already logged as a
+
+        warning) from a response that arrived fine but had nothing `_parse_steps` could use --
+        previously indistinguishable from a model that legitimately chose to just answer, since
+        both fall through to the same single RESPOND step with no log signal either way.
+        """
+        with caplog.at_level("INFO", logger="aura.planning"):
+            await _engine("not json at all").plan(Goal(description="g"), available_tools=TOOLS)
+        assert any(
+            "planning produced no usable steps" in record.message for record in caplog.records
+        )
+
+    async def test_a_well_formed_plan_logs_no_such_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level("INFO", logger="aura.planning"):
+            await _engine(
+                '{"steps": [{"id": "s1", "kind": "respond", "description": "answer"}]}'
+            ).plan(Goal(description="g"), available_tools=TOOLS)
+        assert not any(
+            "planning produced no usable steps" in record.message for record in caplog.records
+        )
+
 
 class TestPlanningTimeout:
     """A cold prefill on a CPU-only provider must get the configured deadline, not the
@@ -291,6 +317,54 @@ class TestPlanningTimeout:
         engine = PlanningEngine(router=router, prompts=build_default_registry())
         await engine.plan(Goal(description="g"), available_tools=TOOLS)
         assert router.last_request.timeout_s == 60.0
+
+
+class TestToolArgumentSignatures:
+    """A tool's declaration already carries a full JSON-Schema ``parameters`` object (built for
+
+    provider tool-call payloads) -- the planning prompt used to discard it, showing the model
+    only a name and description and nothing about what ``arguments`` should contain. That gap is
+    a likely reason a small, CPU-quantized model either avoids a tool step entirely or fills
+    ``arguments`` with something the executor then rejects.
+    """
+
+    def test_a_tool_with_parameters_renders_its_argument_signature(self) -> None:
+        tool = {
+            "name": "run_command",
+            "description": "Run a shell command in the sandbox.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "timeout_s": {"type": "integer"},
+                },
+                "required": ["command"],
+            },
+        }
+        assert _render_tool_line(tool) == (
+            "- run_command(command*:string, timeout_s:integer): "
+            "Run a shell command in the sandbox."
+        )
+
+    def test_a_tool_with_no_parameters_falls_back_to_name_and_description(self) -> None:
+        tool = {"name": "current_datetime", "description": "Return the current time."}
+        assert _render_tool_line(tool) == "- current_datetime: Return the current time."
+
+    async def test_the_argument_signature_reaches_the_rendered_prompt(self) -> None:
+        router = _StubRouter('{"steps": []}')
+        engine = PlanningEngine(router=router, prompts=build_default_registry())
+        tool = {
+            "name": "run_command",
+            "description": "Run a shell command.",
+            "parameters": {
+                "type": "object",
+                "properties": {"command": {"type": "string"}},
+                "required": ["command"],
+            },
+        }
+        await engine.plan(Goal(description="g"), available_tools=[tool])
+        prompt_text = router.last_request.conversation.messages[0].content
+        assert "run_command(command*:string): Run a shell command." in prompt_text
 
 
 class TestTolerantJsonExtraction:
