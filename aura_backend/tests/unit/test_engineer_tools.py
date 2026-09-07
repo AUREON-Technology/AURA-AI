@@ -441,6 +441,27 @@ class TestRepositoryRequestMatching:
     def test_non_repository_requests_are_left_alone(self, message: str) -> None:
         assert matching_repository_tool(message, self.OFFERED) is None
 
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "please review my github.com profile settings",
+            "can you pull the latest sales numbers, then look at github.com for reference",
+        ],
+    )
+    def test_a_bare_platform_mention_with_no_path_is_not_a_repository_request(
+        self, message: str
+    ) -> None:
+        """A lone "github.com" used to match on its own -- paired with a common verb like
+        "review" or "pull", that forced a planning generation for a sentence that names the
+        platform but no repository at all. An owner/repo path is what a real repository mention
+        always has and a platform-only mention never does."""
+        assert matching_repository_tool(message, self.OFFERED) is None
+
+    def test_a_bare_platform_mention_with_a_path_still_matches(self) -> None:
+        assert matching_repository_tool(
+            "review gitlab.com/acme/widgets please", self.OFFERED
+        ) == "clone_repository"
+
     def test_nothing_matches_when_no_repository_tool_is_offered(self) -> None:
         assert matching_repository_tool(
             'clone "https://github.com/acme/widgets" and analyse it', ["calculator"]
