@@ -283,6 +283,9 @@ services:
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
       AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
+      # Read directly by huggingface_hub/sentence-transformers, not by aura_core -- avoids the
+      # Hub's anonymous rate limit on embedding-model (and Piper ONNX asset) downloads. Optional.
+      HF_TOKEN: ${HF_TOKEN:-}
       AURA_MODEL_ALLOWLIST: ${AURA_MODEL_ALLOWLIST:-}
       # Secrets are read from files by the entrypoint, never passed as values.
       AURA_DATABASE_URL_FILE: /run/secrets/postgres_password
@@ -489,6 +492,9 @@ services:
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
       AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
+      # See the matching line on `gateway` above -- same anonymous-rate-limit concern applies to
+      # the learning-queue worker's own embedding calls (refresh/consolidate).
+      HF_TOKEN: ${HF_TOKEN:-}
       AURA_LEARNING_REFRESH_ENABLED: ${AURA_LEARNING_REFRESH_ENABLED:-true}
       AURA_LEARNING_REFRESH_CRON: ${AURA_LEARNING_REFRESH_CRON:-0 2 * * *}
       AURA_DATABASE_URL_FILE: /run/secrets/postgres_password
