@@ -25,6 +25,7 @@ existing decisions elsewhere in ``aura_core/tools/``:
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from typing import Any, Mapping, Sequence
 
@@ -39,6 +40,8 @@ __all__ = [
     "build_sandbox_tools",
     "build_github_tools",
     "build_mcp_bridge_tools",
+    "REPOSITORY_TOOL_NAMES",
+    "matching_repository_tool",
 ]
 
 logger = get_logger("tools.coding")
@@ -101,6 +104,52 @@ def _normalize_repo(value: str) -> str:
     parts = [p for p in repo.split("/") if p]
     # `owner/name/tree/main/subdir` and friends: the slug is the first two segments.
     return "/".join(parts[:2])
+
+
+#: The tools that can answer "look at this repository", best first. `clone_repository` gives the
+#: fullest answer (the files land in the sandbox, so tests and grep work), but it needs a sandbox;
+#: the GitHub reads need nothing but a connected account.
+_REPOSITORY_TOOLS_BY_PREFERENCE = (
+    "clone_repository",
+    "github_list_repository_files",
+    "github_get_file_contents",
+)
+REPOSITORY_TOOL_NAMES = frozenset(_REPOSITORY_TOOLS_BY_PREFERENCE)
+
+_REPO_REFERENCE = re.compile(
+    r"https?://\S+|git@\S+|\b(?:github|gitlab|bitbucket)\.(?:com|org)\b|\b[\w.-]+/[\w.-]+\.git\b",
+    re.I,
+)
+_REPO_ACTION = re.compile(
+    r"\b(?:clone|fork|check ?out|pull|inspect|explore|analys[ei]|analyz[ei]|review|audit|"
+    r"summari[sz]e|read|look at|go through|walk through)\b",
+    re.I,
+)
+
+
+def matching_repository_tool(message: str, available_tools: Sequence[str]) -> str | None:
+    """The repository tool a "clone/analyse this repo" request should reach, or ``None``.
+
+    The same shape and the same job as ``tools/personal_os.py``'s
+    :func:`matching_personal_os_tool`: :meth:`PlanningEngine.needs_plan` skips planning for
+    anything its prose heuristics do not recognise as multi-step, and without planning nothing
+    ever runs a tool (ADR-006) -- so an unrecognised request is answered by the model alone,
+    which can only say it is unable to reach a repository. "clone <url> and analyse it" is
+    exactly that case: the verb precedes the conjunction, so the multi-step markers miss it.
+
+    Returns ``None`` unless a tool that could actually satisfy the request is being offered,
+    so a caller without the engineer grant does not pay for a planning generation that could
+    only end in a plain answer.
+    """
+    offered = [name for name in _REPOSITORY_TOOLS_BY_PREFERENCE if name in set(available_tools)]
+    if not offered:
+        return None
+    text = message.strip()
+    if not text:
+        return None
+    if _REPO_REFERENCE.search(text) and _REPO_ACTION.search(text):
+        return offered[0]
+    return None
 
 
 # --------------------------------------------------------------------------------------
