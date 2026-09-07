@@ -29,9 +29,11 @@ class _StubRouter:
     def __init__(self, body: str | Exception) -> None:
         self._body = body
         self.calls = 0
+        self.last_request = None
 
     async def complete(self, request):  # noqa: ANN001
         self.calls += 1
+        self.last_request = request
         if isinstance(self._body, Exception):
             raise self._body
 
@@ -264,6 +266,31 @@ class TestPlanningFallback:
             Goal(description="g"), available_tools=TOOLS
         )
         assert plan.steps[0].kind is StepKind.RESPOND
+
+
+class TestPlanningTimeout:
+    """A cold prefill on a CPU-only provider must get the configured deadline, not the
+
+    ``CompletionRequest`` default of 60s -- ``kernel.py``'s own chat-completion calls already
+    match ``AURA_LLM_TIMEOUT_S`` via ``_completion_timeout_s()``; the planning call was the one
+    call site still using the unconfigured default, silently downgrading a slow-but-alive
+    provider to a tool-less single RESPOND step (see plan()'s except-block above) well before
+    the operator's actual configured timeout was reached.
+    """
+
+    async def test_the_configured_timeout_reaches_the_router(self) -> None:
+        router = _StubRouter('{"steps": []}')
+        engine = PlanningEngine(
+            router=router, prompts=build_default_registry(), request_timeout_s=180.0
+        )
+        await engine.plan(Goal(description="g"), available_tools=TOOLS)
+        assert router.last_request.timeout_s == 180.0
+
+    async def test_the_default_matches_completionrequests_own_default(self) -> None:
+        router = _StubRouter('{"steps": []}')
+        engine = PlanningEngine(router=router, prompts=build_default_registry())
+        await engine.plan(Goal(description="g"), available_tools=TOOLS)
+        assert router.last_request.timeout_s == 60.0
 
 
 class TestTolerantJsonExtraction:

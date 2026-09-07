@@ -62,6 +62,7 @@ class PlanningEngine:
         enabled: bool = True,
         metrics: Any = None,
         policy: Any = None,
+        request_timeout_s: float = 60.0,
     ) -> None:
         self._router = router
         self._prompts = prompts
@@ -70,6 +71,13 @@ class PlanningEngine:
         self._enabled = enabled
         self._metrics = metrics
         self._policy = policy
+        # Must match settings.llm.request_timeout_s (AURA_LLM_TIMEOUT_S), the same value
+        # kernel.py's _completion_timeout_s() uses for chat completions. Left at
+        # CompletionRequest's own 60s default, a cold prefill on a CPU-only provider silently
+        # loses the router's only attempt to AllProvidersFailedError, and the caught exception
+        # in plan() below downgrades every such turn to a tool-less single RESPOND step -- for
+        # the engineer persona specifically, that means no tool call is ever considered.
+        self._request_timeout_s = request_timeout_s
 
     # -- gating ------------------------------------------------------------------------
 
@@ -137,6 +145,7 @@ class PlanningEngine:
                     conversation=Conversation.of([Message.user(rendered.text)]),
                     sampling=SamplingParams(temperature=0.0, max_output_tokens=1200),
                     policy=self._policy,
+                    timeout_s=self._request_timeout_s,
                 )
             )
             steps = self._parse_steps(response.text, available_tools={t.get("name") for t in available_tools})
