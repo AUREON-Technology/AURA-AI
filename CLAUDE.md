@@ -20,6 +20,12 @@ Supporting directories: `deploy/` (production stack), `docs/` (architecture, gui
 `infra/` (Terraform), `scripts/` (client build and Firebase helpers). Historical docs live under
 `docs/archive/`.
 
+The end-user guide (tabs, personas, the Engineer persona's repository tools, troubleshooting) is
+published at https://claude.ai/code/artifact/2743a01b-ba92-4473-99e9-04f84996ba8a — not part of
+`docs/`, since it's written for people using the app rather than people changing it. It has to be
+shared from the artifact's own share menu before this link works for anyone but the account that
+published it.
+
 `docs/AURA_UPGRADE_ROADMAP.md` is the current source of truth for what's actually built vs. only
 claimed — it's baselined against a specific commit and corrects stale claims with file:line
 citations. Check it before assuming a capability does or doesn't exist. Its standing rule also
