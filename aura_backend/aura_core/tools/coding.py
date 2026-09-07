@@ -116,13 +116,32 @@ _REPOSITORY_TOOLS_BY_PREFERENCE = (
 )
 REPOSITORY_TOOL_NAMES = frozenset(_REPOSITORY_TOOLS_BY_PREFERENCE)
 
+#: A bare platform mention ("check my github.com profile") used to match on its own -- combined
+#: with a common verb like "review" or "read" in `_REPO_ACTION`, that fired on ordinary sentences
+#: that merely name the platform, forcing a planning generation for a request with no repository
+#: in it at all. Requiring an owner/repo path after the domain is what a real repository mention
+#: always has and a platform-only mention never does, so the bare form now needs one.
+#:
+#: A full URL that merely *looks* like a repo (a GitHub Pages blog post, a gist) still matches --
+#: telling those apart from a real repository needs the content, not the URL shape, so this stays
+#: a false-positive risk. The cost is bounded and already the accepted one for this whole
+#: function: forcing a planning generation does not choose a tool, so the worst case is one wasted
+#: generation before the model itself declines to call `clone_repository` on it.
 _REPO_REFERENCE = re.compile(
-    r"https?://\S+|git@\S+|\b(?:github|gitlab|bitbucket)\.(?:com|org)\b|\b[\w.-]+/[\w.-]+\.git\b",
+    r"https?://\S+|git@\S+|"
+    r"\b(?:github|gitlab|bitbucket)\.(?:com|org)[:/][\w.-]+/[\w.-]+|"
+    r"\b[\w.-]+/[\w.-]+\.git\b",
     re.I,
 )
+#: Verb stems, not exact forms: `\w*` after the alternation is deliberate. The original pattern
+#: matched each verb's dictionary form only (`\breview\b`, `\bclone\b`), so `\b` immediately
+#: after the stem required a non-word character there -- which "reviewing", "cloned", and
+#: "analyzing" never have (the suffix is a word character too). That silently missed every
+#: inflected phrasing of a repository request and reproduced this module's own reason for
+#: existing, just for a different verb tense.
 _REPO_ACTION = re.compile(
-    r"\b(?:clone|fork|check ?out|pull|inspect|explore|analys[ei]|analyz[ei]|review|audit|"
-    r"summari[sz]e|read|look at|go through|walk through)\b",
+    r"\b(?:clon|fork|check(?:ing)? ?out|pull|inspect|explor|analy[sz]|review|audit|"
+    r"summari[sz]|read|look(?:ing)? at|go(?:ing)? through|walk(?:ing)? through)\w*\b",
     re.I,
 )
 
