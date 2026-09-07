@@ -601,6 +601,15 @@ class ReasoningSettings:
     #: (`aura_core/execution/agentic_loop.py`), independent of any single execution
     #: pass's own `deadline_s` -- this bounds the whole multi-iteration turn.
     engineer_loop_deadline_s: float = 600.0
+    #: How many `delegate_to_agent` hops a call tree may contain (`aura_core/tools/delegation.py`).
+    #: `1` means a delegating persona's own sub-turn cannot itself delegate further -- the default
+    #: ceiling, combined with only `orchestrator` holding the tool, caps recursion at exactly one
+    #: hop by construction.
+    max_delegation_depth: int = 1
+    #: Tool-call deadline for a persona whose grant includes `delegate_to_agent`, in place of the
+    #: flat 60s every other tool gets (`AIKernel._tool_context`) -- a delegated sub-turn is a full
+    #: recursive `kernel.run()`, not a simple API call, and needs room for its own budgets.
+    delegation_deadline_s: float = 180.0
 
     @classmethod
     def from_env(cls) -> "ReasoningSettings":
@@ -617,6 +626,12 @@ class ReasoningSettings:
             verification_enabled=_bool("REASONING_VERIFICATION_ENABLED", True),
             engineer_loop_deadline_s=_float(
                 "REASONING_ENGINEER_LOOP_DEADLINE_S", 600.0, minimum=10.0, maximum=3600.0
+            ),
+            max_delegation_depth=_int(
+                "REASONING_MAX_DELEGATION_DEPTH", 1, minimum=0, maximum=4
+            ),
+            delegation_deadline_s=_float(
+                "REASONING_DELEGATION_DEADLINE_S", 180.0, minimum=10.0, maximum=3600.0
             ),
         )
 
