@@ -32,8 +32,15 @@ logger = get_logger("agentic_loop")
 
 # Reasons ExecutionOutcome.blocked_reason can carry that mean "budget exhausted for this pass",
 # not "something failed that a revised plan could fix" -- replanning again would just spend
-# another generation to produce a plan that hits the same wall.
-_TERMINAL_BLOCKS = frozenset({"deadline_exceeded", "step_budget_exceeded", "budget_exceeded"})
+# another generation to produce a plan that hits the same wall. "needs_confirmation" belongs here
+# for a different reason: it is not exhaustion, it is the turn correctly waiting on the user, and
+# no revised plan makes a confirm-gated tool stop needing confirmation. Without it here, the loop
+# would replan past a pending confirmation and the outcome carrying it -- the only place the
+# kernel can find it -- gets overwritten by the next iteration's outcome (`run`/`stream` below
+# only ever keep the latest `outcome`), silently dropping the confirmation request.
+_TERMINAL_BLOCKS = frozenset(
+    {"deadline_exceeded", "step_budget_exceeded", "budget_exceeded", "needs_confirmation"}
+)
 
 
 class AgenticExecutor:
