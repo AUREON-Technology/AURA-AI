@@ -272,12 +272,12 @@ Write the updated summary as compact prose. No preamble.""",
     ),
     PromptTemplate(
         id="task.plan_decomposition",
-        version="1.0.0",
+        version="1.1.0",
         description="Decompose a goal into a dependency-ordered step list.",
         tags=("task", "planning"),
         variables=variables(
             ("goal", "What the user wants achieved."),
-            ("tools", "Available tools with descriptions.", False),
+            ("tools", "Available tools, each with its argument signature.", False),
             ("max_steps", "Upper bound on step count."),
         ),
         body="""Break this goal into the smallest set of concrete steps that achieves it.
@@ -286,7 +286,7 @@ Goal:
 {{goal}}
 {{#tools}}
 
-Tools available:
+Tools available -- name(argument:type, * = required): description
 {{tools}}
 {{/tools}}
 
@@ -295,7 +295,8 @@ Rules:
 - Each step is one action with an observable result.
 - Declare dependencies only where a step genuinely needs a previous step's output. Independent
   steps run in parallel, so a false dependency costs real time.
-- Use a tool step only for a tool that is listed.
+- Use a tool step only for a tool that is listed, and only with the argument names shown for it --
+  "arguments" must be an object using exactly those names, every required (*) one present.
 
 Respond with JSON only:
 {"steps": [{"id": "s1", "kind": "tool|retrieve|recall|generate|verify|respond",

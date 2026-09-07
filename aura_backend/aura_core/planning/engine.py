@@ -51,6 +51,31 @@ _MULTI_STEP_MARKERS = (
 _STEP_KINDS = {k.value for k in StepKind}
 
 
+def _render_tool_line(tool: Mapping[str, Any]) -> str:
+    """One prompt line per tool: name, its argument signature, then description.
+
+    ``available_tools`` (``ToolSpec.declaration()``) already carries a full JSON-Schema
+    ``parameters`` object -- built for provider tool-call payloads -- that this prompt used to
+    discard entirely, showing the model only a name and a one-line description. A small,
+    CPU-quantized model with no argument shape to go on has nothing to imitate for the
+    ``"arguments": {}`` field ``task.plan_decomposition`` asks it to fill in, which is exactly
+    the kind of gap that makes zero-shot JSON tool-calling unreliable: the model either avoids
+    a tool step entirely or fills ``arguments`` with a guess ``_parse_steps``/the executor then
+    rejects. ``*`` marks a required parameter, matching the note added to the prompt body.
+    """
+    name = tool.get("name", "")
+    description = tool.get("description", "")
+    properties = ((tool.get("parameters") or {}).get("properties")) or {}
+    if not properties:
+        return f"- {name}: {description}"
+    required = set((tool.get("parameters") or {}).get("required") or ())
+    args = ", ".join(
+        f"{pname}{'*' if pname in required else ''}:{pschema.get('type', 'string')}"
+        for pname, pschema in properties.items()
+    )
+    return f"- {name}({args}): {description}"
+
+
 class PlanningEngine:
     def __init__(
         self,
@@ -131,9 +156,7 @@ class PlanningEngine:
         started = time.perf_counter()
         limit = min(max_steps or self._max_steps, self._max_steps)
 
-        tool_lines = "\n".join(
-            f"- {t.get('name')}: {t.get('description', '')}" for t in available_tools
-        )
+        tool_lines = "\n".join(_render_tool_line(t) for t in available_tools)
         rendered = self._prompts.render(
             "task.plan_decomposition",
             {"goal": goal.description, "tools": tool_lines, "max_steps": str(limit)},
@@ -149,6 +172,18 @@ class PlanningEngine:
                 )
             )
             steps = self._parse_steps(response.text, available_tools={t.get("name") for t in available_tools})
+            if not steps:
+                # The router call succeeded -- this is not the except-block's "provider is
+                # down" case -- but the response still produced nothing usable. Without this,
+                # a model that legitimately chose to just answer and a model whose JSON
+                # _parse_steps rejected outright log identically (both fall through to the same
+                # single RESPOND step below), which made a real production incident
+                # undiagnosable from logs alone: the raw response is the only way to tell them
+                # apart, and once this call returns it is gone.
+                logger.info(
+                    "planning produced no usable steps; falling back to a direct response",
+                    extra={"response_preview": response.text[:300]},
+                )
         except Exception as exc:
             logger.warning("planning failed; falling back to a direct response",
                            extra={"error": type(exc).__name__})
