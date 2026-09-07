@@ -92,8 +92,11 @@ if [ "$UP" = "1" ]; then
     --env-file .env.development run --rm dev-gateway alembic upgrade head
 
   say "Recreating dev gateway and console"
+  # --remove-orphans: a container still running under an old service name (e.g. before a
+  # docker-compose.dev.yml service rename) keeps its container_name, so Compose's own container
+  # is blocked from claiming that name -- this clears it instead of failing with a name conflict.
   docker compose -p aura-dev -f docker-compose.dev.yml \
-    --env-file .env.development up -d --force-recreate --no-deps dev-gateway console
+    --env-file .env.development up -d --force-recreate --remove-orphans --no-deps dev-gateway console
 
   say "Waiting for dev gateway health"
   for attempt in $(seq 1 36); do
