@@ -75,7 +75,12 @@ limit_conn_zone $binary_remote_addr zone=aura_conn:10m;
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
-    http2 on;
+    # http2 deliberately NOT enabled -- see the matching comment in
+    # deploy/nginx/templates/aura.conf.template. A client whose ALPN offers h2 (curl and
+    # Dart's dart:io WebSocket client both do, by default) gets negotiated onto HTTP/2 for
+    # this whole server block, and HTTP/2 forbids the legacy Connection/Upgrade header
+    # fields the WebSocket location below relies on -- the handshake silently degrades to a
+    # plain GET, which 404s. Plain HTTP/1.1 is worth more here than h2's multiplexing.
     server_name __AURA_DOMAIN__;
 
     ssl_certificate     /etc/letsencrypt/live/__AURA_DOMAIN__/fullchain.pem;
