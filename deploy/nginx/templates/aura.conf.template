@@ -76,7 +76,16 @@ server {
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
-    http2 on;
+    # http2 deliberately NOT enabled: any client whose ALPN offers h2 (curl and Dart's
+    # dart:io WebSocket client both do, by default) gets negotiated onto HTTP/2 for this
+    # entire server block, and HTTP/2 forbids the legacy Connection/Upgrade header fields
+    # the WebSocket handshake below relies on -- nginx then forwards a plain GET instead of
+    # upgrading, which the app answers with its normal 404 (no HTTP GET handler exists on a
+    # websocket-only route). Confirmed live: the exact same request succeeds (101 Switching
+    # Protocols) hitting the gateway directly over HTTP/1.1, and 404s only through this proxy
+    # once ALPN picks h2. RFC 8441 (Extended CONNECT) would let h2 and WebSocket coexist, but
+    # that requires client support this stack cannot assume -- plain HTTP/1.1 works
+    # universally, which is worth more here than h2's multiplexing.
     server_name ${AURA_DOMAIN};
 
     ssl_certificate     /etc/letsencrypt/live/${AURA_DOMAIN}/fullchain.pem;
@@ -272,7 +281,8 @@ server {
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
-    http2 on;
+    # http2 deliberately NOT enabled here either -- see the matching comment on the prod
+    # HTTPS server block above; the same WebSocket-vs-h2 conflict applies to this vhost.
     server_name ${AURA_DEV_DOMAIN};
 
     # Single cert with both prod + dev SANs uses the prod live directory.

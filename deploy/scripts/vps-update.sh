@@ -456,8 +456,12 @@ else
   curl -sS --max-time 10 "$READY_URL" 2>&1 | head -20 | sed 's/^/      /' || true
 fi
 
-# Phase H: confirm the edge still upgrades /api/v3/voice/live. A 404 here usually means
-# nginx is serving a stale conf (Connection "") rather than the dedicated WS location.
+# Phase H: confirm the edge still upgrades /api/v3/voice/live. A 404 here most likely means
+# nginx negotiated HTTP/2 with this curl (ALPN offers h2 by default) -- HTTP/2 forbids the
+# legacy Connection/Upgrade headers the WebSocket handshake needs, so the request silently
+# degrades to a plain GET against a websocket-only route. `http2 on;` was removed from both
+# HTTPS server blocks in aura.conf.template for exactly this reason; if this still 404s,
+# check for `http2 on;` having crept back in before suspecting the location block itself.
 # Retried: force-recreate leaves nginx briefly unready and a single probe can false-alarm.
 WS_URL="${HEALTH_URL%/health}/api/v3/voice/live"
 WS_CODE="000"
@@ -474,7 +478,8 @@ done
 case "$WS_CODE" in
   101) info "voice live WS: OK  (101 Switching Protocols)" ;;
   404)
-    info "voice live WS: HTTP $WS_CODE at $WS_URL -- nginx likely missing Upgrade location"
+    info "voice live WS: HTTP $WS_CODE at $WS_URL -- check for \`http2 on;\` in aura.conf.template
+       (ALPN negotiating h2 breaks the legacy Upgrade handshake this route needs)"
     ;;
   *)
     # Auth/feature-off closes after accept often surface as non-101; not fatal for deploy.
