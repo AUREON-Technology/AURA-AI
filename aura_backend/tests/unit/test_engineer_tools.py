@@ -404,6 +404,24 @@ class TestRepositoryRequestMatching:
     def test_a_repository_request_is_recognised(self, message: str) -> None:
         assert matching_repository_tool(message, self.OFFERED) == "clone_repository"
 
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "I'm currently reviewing https://github.com/acme/widgets, can you continue?",
+            "please keep analyzing github.com/acme/widgets",
+            "the team cloned https://github.com/acme/widgets last week, can you check it",
+            "reviewed https://github.com/acme/widgets yesterday",
+            "summarizing https://github.com/acme/widgets now",
+        ],
+    )
+    def test_inflected_verb_forms_are_recognised(self, message: str) -> None:
+        """`\breview\b` never matches inside "reviewing" -- both characters either side of
+        where the boundary would need to fall are word characters, so the trailing `\b` fails
+        for every inflected form (-ing/-ed/-s) of every verb here. That silently reproduced this
+        module's own reason for existing (a repository request going unanswered) for anything
+        phrased in progressive or past tense instead of the bare imperative."""
+        assert matching_repository_tool(message, self.OFFERED) == "clone_repository"
+
     def test_it_prefers_the_richest_tool_actually_offered(self) -> None:
         """Without a sandbox there is no clone_repository, but the GitHub reads still answer
         "analyse this repo" -- the request must not stop being recognised."""

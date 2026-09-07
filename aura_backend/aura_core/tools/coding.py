@@ -120,9 +120,15 @@ _REPO_REFERENCE = re.compile(
     r"https?://\S+|git@\S+|\b(?:github|gitlab|bitbucket)\.(?:com|org)\b|\b[\w.-]+/[\w.-]+\.git\b",
     re.I,
 )
+#: Verb stems, not exact forms: `\w*` after the alternation is deliberate. The original pattern
+#: matched each verb's dictionary form only (`\breview\b`, `\bclone\b`), so `\b` immediately
+#: after the stem required a non-word character there -- which "reviewing", "cloned", and
+#: "analyzing" never have (the suffix is a word character too). That silently missed every
+#: inflected phrasing of a repository request and reproduced this module's own reason for
+#: existing, just for a different verb tense.
 _REPO_ACTION = re.compile(
-    r"\b(?:clone|fork|check ?out|pull|inspect|explore|analys[ei]|analyz[ei]|review|audit|"
-    r"summari[sz]e|read|look at|go through|walk through)\b",
+    r"\b(?:clon|fork|check(?:ing)? ?out|pull|inspect|explor|analy[sz]|review|audit|"
+    r"summari[sz]|read|look(?:ing)? at|go(?:ing)? through|walk(?:ing)? through)\w*\b",
     re.I,
 )
 
