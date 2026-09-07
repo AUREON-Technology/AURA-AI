@@ -222,6 +222,27 @@ class ExecutionEngine:
                     continue
                 if report is not None:
                     tool_reports.append(report)
+                if report is not None and getattr(report, "needs_confirmation", False):
+                    # A confirm-gated call is not a failure a replan could work around -- it is
+                    # the turn correctly stopping to ask the user. Without this branch it falls
+                    # into the `else` below indistinguishably from a real error: marked FAILED,
+                    # which (for the agentic loop specifically, `AgenticExecutor`'s
+                    # `max_plan_iterations > 1` personas like `engineer`) triggers a replan that
+                    # overwrites this outcome -- silently discarding the very report the kernel
+                    # needs to surface `needs_confirmation`/`pending_tool_calls` to the caller.
+                    # BLOCKED plus `blocked_reason="needs_confirmation"` (in `_TERMINAL_BLOCKS`,
+                    # `agentic_loop.py`) stops the loop here instead, so this outcome -- and the
+                    # report on it -- is what the kernel actually sees.
+                    blocked_reason = "needs_confirmation"
+                    updated.append(step.blocked("needs_confirmation"))
+                    await self._emit(
+                        on_event,
+                        StepEvent(
+                            step_id=step.id.value, kind=str(step.kind), status="blocked",
+                            description=step.description, detail=text[:200], elapsed_ms=elapsed,
+                        ),
+                    )
+                    continue
                 if ok:
                     results[step.id.value] = text
                     updated.append(step.succeeded(text, elapsed))

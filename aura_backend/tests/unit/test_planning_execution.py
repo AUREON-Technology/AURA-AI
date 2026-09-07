@@ -447,6 +447,39 @@ class TestExecution:
         assert "4" in outcome.results["s1"]
         assert len(outcome.tool_reports) == 1
 
+    async def test_a_confirmation_required_tool_call_blocks_rather_than_fails(
+        self, tool_context
+    ) -> None:
+        """A confirm-gated call (`ToolExecutionReport.needs_confirmation`) is the turn correctly
+        stopping to ask the user, not a failure a retry or a revised plan could fix. Marking it
+        BLOCKED (with `blocked_reason="needs_confirmation"`) rather than FAILED is what lets
+        `AgenticExecutor` (`_TERMINAL_BLOCKS`) stop instead of replanning past it -- discovered via
+        manual end-to-end verification of the `engineer` persona, whose `max_plan_iterations > 1`
+        routes through that loop and was silently discarding the confirmation request.
+        """
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+        from aura_core.tools.coding import build_sandbox_tools
+        from aura_core.tools.policy import ToolPolicy
+        from aura_core.tools.registry import ToolRegistry
+
+        registry = ToolRegistry(policy=ToolPolicy())
+        registry.register_all(build_sandbox_tools(InMemorySandboxRunner()))
+        plan = _plan(
+            PlanStep(id=StepId("s1"), kind=StepKind.TOOL, tool="run_command",
+                     description="run", arguments={"command": "echo hi"}),
+        )
+
+        outcome = await ExecutionEngine(tools=registry).execute(
+            plan, context=tool_context, capabilities=("engineer_agent",),
+        )
+
+        assert outcome.blocked_reason == "needs_confirmation"
+        assert outcome.plan.steps[0].status is StepStatus.BLOCKED
+        assert not outcome.plan.failed_steps
+        assert len(outcome.tool_reports) == 1
+        assert outcome.tool_reports[0].needs_confirmation
+        assert outcome.tool_reports[0].arguments["command"] == "echo hi"
+
     async def test_a_step_kind_with_no_handler_is_skipped_with_an_explanation(
         self, tools, tool_context
     ) -> None:

@@ -138,6 +138,26 @@ class TestRun:
         assert executor.execute_calls == 1
         assert planner.replan_calls == 0
 
+    async def test_needs_confirmation_stops_without_replanning(self, ctx) -> None:
+        """A confirm-gated tool call is not exhaustion or an unrecoverable error -- it is the turn
+        correctly waiting on the user -- but it must stop the loop exactly like a terminal block,
+        for a different reason: `run` only ever keeps the *latest* outcome (never accumulates
+        `tool_reports` across iterations), so a replan here would silently overwrite the outcome
+        carrying the confirmation report with one from a plan that never asked for it. This is the
+        `engineer` persona's real bug (`max_plan_iterations=8`, so this loop is what it runs
+        through) found via manual end-to-end verification against a real Docker sandbox."""
+        plan = _plan()
+        executor = _ScriptedExecutor([False], blocked_reason="needs_confirmation")
+        planner = _FakePlanner(max_replans=5)
+        agentic = AgenticExecutor(planner=planner, executor=executor)
+
+        outcome = await agentic.run(plan, context=ctx, max_iterations=5, deadline_s=10.0)
+
+        assert not outcome.succeeded
+        assert outcome.blocked_reason == "needs_confirmation"
+        assert executor.execute_calls == 1
+        assert planner.replan_calls == 0
+
     async def test_replan_failure_stops_the_loop_rather_than_raising(self, ctx) -> None:
         plan = _plan()
         executor = _ScriptedExecutor([False])
