@@ -90,6 +90,37 @@ class TestPlanningGate:
             available_tools=["search_knowledge"],
         ) is False
 
+    def test_a_repository_request_reaches_the_repo_tools(self) -> None:
+        """The bug this encodes, from a real production turn: "clone <url> and analyse it" puts
+        its verb before the conjunction, so no `_MULTI_STEP_MARKERS` pattern matches, planning
+        was skipped, no tool ran (ADR-006), and the model answered that it cannot reach a
+        repository -- while holding `clone_repository`."""
+        engine = _engine()
+        for message in (
+            'clone into this repository "https://github.com/acme/widgets" and Analyse it.',
+            "clone the repository that has git push: github.com/acme/widgets and Analyze it.",
+            "summarise https://github.com/acme/widgets for me",
+        ):
+            assert engine.needs_plan(
+                message,
+                available_tools=["clone_repository", "github_list_repository_files"],
+            ) is True, message
+
+    def test_a_repository_request_without_repo_tools_is_not_planned(self) -> None:
+        """Gated on a tool that could actually satisfy it, like the personal-OS exception: a
+        caller without the engineer grant should not pay for a planning generation that could
+        only end in a plain answer."""
+        assert _engine().needs_plan(
+            'clone into this repository "https://github.com/acme/widgets" and Analyse it.',
+            available_tools=["calculator", "search_knowledge"],
+        ) is False
+
+    def test_ordinary_prose_mentioning_neither_url_nor_action_is_untouched(self) -> None:
+        assert _engine().needs_plan(
+            "Could you please tell me how many days of annual leave permanent staff receive?",
+            available_tools=["clone_repository", "github_list_repository_files"],
+        ) is False
+
     def test_force_overrides_the_heuristic_in_both_directions(self) -> None:
         engine = _engine()
         assert engine.needs_plan("hi", available_tools=[], force=True) is True

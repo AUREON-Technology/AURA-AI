@@ -26,6 +26,7 @@ from aura_core.tools.coding import (
     build_github_tools,
     build_mcp_bridge_tools,
     build_sandbox_tools,
+    matching_repository_tool,
 )
 from aura_core.tools.policy import ToolPolicy
 from aura_core.tools.registry import ToolRegistry
@@ -382,6 +383,50 @@ class TestCloneRepository:
         )
         with pytest.raises(ToolExecutionError, match="not connected"):
             await tools["clone_repository"].execute({"repo": "acme/widgets"}, ctx)
+
+
+class TestRepositoryRequestMatching:
+    """`matching_repository_tool` -- the planning gate's hook for repository work, mirroring
+    `matching_personal_os_tool`. Its job is to stop a "clone this and analyse it" turn being
+    answered by the model alone while the tools for it sit unoffered."""
+
+    OFFERED = ["clone_repository", "github_list_repository_files", "github_get_file_contents"]
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            'clone into this repository "https://github.com/acme/widgets" and Analyse it.',
+            "clone the repository that has git push: github.com/acme/widgets and Analyze it.",
+            "review git@github.com:acme/widgets.git",
+            "have a look at https://gitlab.com/acme/widgets and summarise the layout",
+        ],
+    )
+    def test_a_repository_request_is_recognised(self, message: str) -> None:
+        assert matching_repository_tool(message, self.OFFERED) == "clone_repository"
+
+    def test_it_prefers_the_richest_tool_actually_offered(self) -> None:
+        """Without a sandbox there is no clone_repository, but the GitHub reads still answer
+        "analyse this repo" -- the request must not stop being recognised."""
+        assert matching_repository_tool(
+            "analyse https://github.com/acme/widgets",
+            ["github_list_repository_files", "github_get_file_contents"],
+        ) == "github_list_repository_files"
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "what is the capital of France?",
+            "clone my calendar for next week",          # action verb, no repository
+            "https://github.com/acme/widgets",           # repository, no action
+        ],
+    )
+    def test_non_repository_requests_are_left_alone(self, message: str) -> None:
+        assert matching_repository_tool(message, self.OFFERED) is None
+
+    def test_nothing_matches_when_no_repository_tool_is_offered(self) -> None:
+        assert matching_repository_tool(
+            'clone "https://github.com/acme/widgets" and analyse it', ["calculator"]
+        ) is None
 
 
 class TestGithubToolsResolver:

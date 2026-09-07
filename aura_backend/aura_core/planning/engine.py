@@ -31,6 +31,7 @@ from ..domain.llm import CompletionRequest, SamplingParams
 from ..domain.messages import Conversation, Message
 from ..domain.planning import Goal, Plan, PlanStep, Priority, StepKind, StepStatus
 from ..observability.logging import get_logger
+from ..tools.coding import matching_repository_tool
 from ..tools.personal_os import matching_personal_os_tool
 
 __all__ = ["PlanningEngine"]
@@ -89,6 +90,13 @@ class PlanningEngine:
             return False
         text = message.strip()
         if matching_personal_os_tool(text, available_tools):
+            return True
+        # Same exception, for the engineer agent's repository tools: "clone <url> and analyse it"
+        # puts its verb before the conjunction, so `_MULTI_STEP_MARKERS` misses it, and it can
+        # be under 40 characters. Skipping planning there does not produce a worse answer, it
+        # produces the model explaining it cannot reach a repository -- with the tools that
+        # could have sitting unused. Only fires when such a tool is actually offered.
+        if matching_repository_tool(text, available_tools):
             return True
         if len(text) < 40:
             return False

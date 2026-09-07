@@ -901,6 +901,16 @@ class AIKernel:
             # ADR-006) regardless of whether the confirmation reply itself matches the
             # short-message heuristic below.
             force = True
+        if force is None:
+            agent = self._resolve_agent(request)
+            if agent is not None and agent.max_plan_iterations > 1:
+                # An agentic persona (today: `engineer`) exists to do multi-step tool work, and
+                # planning is the only path that runs a tool at all. Gating it behind heuristics
+                # tuned for conversational personas is what makes such a persona answer "I can't
+                # do that" while holding the exact tool for the job. The cost is one planning
+                # generation on a turn that may not need it; a plan that comes back as a single
+                # RESPOND step still falls through to the direct answer (`_compose_plan`).
+                force = True
         return deps.planner.needs_plan(
             request.message, available_tools=[t.get("name", "") for t in tools], force=force
         )

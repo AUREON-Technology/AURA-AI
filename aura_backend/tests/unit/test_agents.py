@@ -65,6 +65,59 @@ class TestAgentRegistry:
             assert spec.allowed_tools is not None and len(spec.allowed_tools) > 0
 
 
+class TestAgenticPersonaPlanning:
+    """An agentic persona's tools are only reachable through planning (ADR-006), so the
+    conversational heuristics in `PlanningEngine.needs_plan` must not be what decides whether
+    it gets to use them.
+
+    From a real production turn: the Engineer answered "I don't have the capability to clone
+    repositories" with `clone_repository` in its grant, because the message matched no
+    multi-step marker and planning was therefore skipped entirely.
+    """
+
+    def _tools(self):
+        return [
+            {"name": "clone_repository", "description": "Copy a repository into the sandbox."},
+            {"name": "run_command", "description": "Run a shell command in the sandbox."},
+        ]
+
+    async def test_the_engineer_persona_plans_even_when_the_heuristic_would_not(
+        self, container
+    ) -> None:
+        await container.startup()
+        request = _request(
+            "fix it",  # short, no markers: needs_plan() alone says no
+            agent="engineer",
+            capabilities=("engineer_agent",),
+        )
+        assert container.kernel._should_plan(request, self._tools()) is True
+
+    async def test_a_conversational_persona_still_pays_only_when_the_heuristic_says_so(
+        self, container
+    ) -> None:
+        """The forcing is scoped to `max_plan_iterations > 1`, so every other persona keeps the
+        narrow gate that stops ordinary Q&A paying for a planning generation."""
+        await container.startup()
+        request = _request("fix it", agent="orchestrator")
+        assert container.kernel._should_plan(request, self._tools()) is False
+
+    async def test_an_explicit_plan_false_still_wins(self, container) -> None:
+        """`plan=False` is the caller saying "answer directly"; a persona default must not
+        override an explicit instruction."""
+        await container.startup()
+        request = _request(
+            "fix it", agent="engineer", capabilities=("engineer_agent",), plan=False,
+        )
+        assert container.kernel._should_plan(request, self._tools()) is False
+
+    async def test_without_the_capability_the_fallback_persona_decides(self, container) -> None:
+        """A caller lacking `engineer_agent` resolves to the orchestrator, whose
+        `max_plan_iterations` is 1 -- so no forcing, same as any other conversational turn."""
+        await container.startup()
+        request = _request("fix it", agent="engineer", capabilities=())
+        assert container.kernel._should_plan(request, self._tools()) is False
+
+
 class TestAgentGrantEnforcement:
     """The exit criterion: a tool call outside an agent's grant fails closed and is audited."""
 
