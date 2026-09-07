@@ -25,7 +25,7 @@ After first dev bring-up:
 
 ```bash
 docker compose -p aura-dev -f deploy/docker-compose.dev.yml \
-  --env-file deploy/.env.development run --rm gateway alembic upgrade head
+  --env-file deploy/.env.development run --rm dev-gateway alembic upgrade head
 ./deploy/scripts/seed-dev.sh
 ```
 

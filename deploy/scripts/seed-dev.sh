@@ -32,7 +32,7 @@ COMPOSE=(docker compose -p "$PROJECT" -f "$COMPOSE_FILE" --env-file "$ENV_FILE")
 say() { printf '\n==> %s\n' "$*"; }
 
 say "Building dev gateway and worker-training (seed + Celery fixes)"
-"${COMPOSE[@]}" build gateway worker-training
+"${COMPOSE[@]}" build dev-gateway worker-training
 
 say "Recreating worker-training with dev env (CPU LoRA flag)"
 "${COMPOSE[@]}" --profile training up -d --force-recreate worker-training
@@ -43,6 +43,6 @@ say "Running seed_dev_console.py in gateway"
   --no-deps \
   -e COMPOSE_PROJECT_NAME="$PROJECT" \
   -e PYTHONPATH=/app \
-  gateway python scripts/seed_dev_console.py
+  dev-gateway python scripts/seed_dev_console.py
 
 say "Done â€” open https://$(grep -E '^AURA_DOMAIN=' "$ENV_FILE" | head -1 | cut -d= -f2-)/console/learning"
