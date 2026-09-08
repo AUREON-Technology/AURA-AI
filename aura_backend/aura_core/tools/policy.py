@@ -12,6 +12,14 @@ Four rules, in order of strictness:
    tool cannot run without user confirmation. This is the rule that closes the SEC-02 attack
    chain: a poisoned document can no longer cause a Drive ingestion, because the ingestion tool
    sees a tainted context and stops for confirmation.
+
+   Tools marked ``workspace_local`` are exempt, because their "side effect" is a file in a
+   scratch directory that is destroyed with the workspace -- it reaches no user data and nothing
+   that outlives the task. The exemption exists to keep the gate meaningful rather than to
+   weaken it: without it, one cloned repository taints a turn and every subsequent command in a
+   multi-step engineering task asks for confirmation, and a prompt asked dozens of times per
+   task is one people approve without reading. Anything that leaves the workspace (a push, any
+   forge write) is not workspace-local and keeps every rule here. See ADR-011.
 4. **Sensitivity.** Confidential and system-level tools always require confirmation for
    side-effecting operations, tainted or not.
 """
@@ -90,6 +98,21 @@ class ToolPolicy:
             # The user has already approved this specific call; the confirmation rules below
             # exist to obtain exactly this.
             return ToolPolicyDecision.allow("user_confirmed", **audit)
+
+        # Work confined to an ephemeral agent workspace is allowed to proceed, tainted or not.
+        # The confinement is the justification: the "side effect" is a file in a scratch
+        # directory that is destroyed when the workspace expires, reaching no user data and
+        # nothing outside itself. Crossing out of that workspace -- git_push, any GitHub write,
+        # any personal-OS or knowledge write -- is not workspace-local and keeps every rule
+        # below, which is where the confirmation gate does its actual work.
+        #
+        # Without this, one clone taints the turn and every subsequent write_file, edit_file,
+        # run_command and git_commit in a multi-turn engineering session demands confirmation.
+        # A gate asked dozens of times per task is one people learn to click through, so the
+        # exemption protects the prompts that matter by removing the ones that do not. ADR-011
+        # records the reasoning; tests/architecture/test_workspace_local_tools.py pins the set.
+        if spec.workspace_local and spec.side_effecting:
+            return ToolPolicyDecision.allow("workspace_local_side_effect", **audit)
 
         if context.tainted and spec.side_effecting and self._block_when_tainted:
             return ToolPolicyDecision.confirm(

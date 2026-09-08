@@ -32,6 +32,12 @@ from aura_core.tools.policy import ToolPolicy
 from aura_core.tools.registry import ToolRegistry
 
 
+async def _github_resolver(user_id):
+    """Resolver for the tools that reach a forge, so the boundary-crossing half of the
+    confirmation contract can be exercised."""
+    return InMemoryGitHubClient()
+
+
 @pytest.fixture
 def ctx(user) -> ToolContext:
     return ToolContext(user_id=user, correlation_id="corr-engineer-1", deadline_s=30.0)
@@ -100,11 +106,16 @@ class TestSandboxTools:
         commit_result = await tools["git_commit"].execute({"message": "add f.txt"}, ctx)
         assert "committed" in commit_result or commit_result
 
-    async def test_run_command_and_writes_require_confirmation_via_policy(self, ctx) -> None:
-        """side_effecting + CONFIDENTIAL/SYSTEM sensitivity forces `requires_confirmation` at
-        declaration time (`ToolSpec.__post_init__`) -- `run_command` is SYSTEM, so this is the
-        exact mechanism ADR-006's taint/confirm rule and the "gated engineer agent" requirement
-        both rely on."""
+    async def test_workspace_local_work_runs_without_confirmation(self, ctx) -> None:
+        """`run_command` is SYSTEM + side_effecting, which used to force `requires_confirmation`
+        at declaration time and so gated every single command. It is now `workspace_local`
+        (ADR-011): its effects stay inside a scratch container and checkout that the reaper
+        deletes, so it runs, and the confirmation prompt is saved for calls that leave.
+
+        The old behaviour was not wrong in isolation -- it became wrong once a workspace lived
+        across turns, because an eight-iteration task then asked for approval at every step, and
+        a prompt asked that often is one people approve without reading.
+        """
         runner = InMemorySandboxRunner()
         registry = ToolRegistry(policy=ToolPolicy())
         registry.register_all(build_sandbox_tools(runner))
@@ -114,24 +125,51 @@ class TestSandboxTools:
             ctx,
             capabilities=("engineer_agent",),
         )
-        assert not result.ok
-        assert report.needs_confirmation
-        # The pending call's arguments must be visible so a client can show the user what
-        # they're being asked to approve, not just the tool's name. These are the *validated*
-        # arguments (post `validate_arguments()`), so an unset optional parameter's declared
-        # default (`timeout_s`) is present too.
-        assert report.arguments == {"command": "echo hi", "timeout_s": 60}
 
-        confirmed, confirmed_report = await registry.execute(
-            ToolCall(id=ToolCallId("2"), name="run_command", arguments={"command": "echo hi"}),
+        assert result.ok
+        assert not report.needs_confirmation
+        assert report.policy_reason == "workspace_local_side_effect"
+
+    async def test_repeated_workspace_local_calls_never_start_confirming(self, ctx) -> None:
+        """A whole task's worth of steps, which is the case that matters -- one allowed call
+        would not tell us the storm is gone."""
+        registry = ToolRegistry(policy=ToolPolicy())
+        registry.register_all(build_sandbox_tools(InMemorySandboxRunner()))
+
+        for index in range(10):
+            result, report = await registry.execute(
+                ToolCall(
+                    id=ToolCallId(str(index)), name="write_file",
+                    arguments={"path": f"f{index}.txt", "content": "x"},
+                ),
+                ctx,
+                capabilities=("engineer_agent",),
+            )
+            assert result.ok and not report.needs_confirmation
+
+    async def test_leaving_the_workspace_still_requires_confirmation(self, ctx) -> None:
+        """The other half of ADR-011, and the half that would make the change a mistake if it
+        broke: `clone_repository` reaches a real repository over the network, is not
+        workspace_local, and still stops for a human -- with its arguments visible, so the
+        prompt says what is being approved rather than just naming a tool."""
+        runner = InMemorySandboxRunner()
+        registry = ToolRegistry(policy=ToolPolicy())
+        registry.register_all(
+            build_sandbox_tools(runner, code_host_resolver=_github_resolver)
+        )
+
+        result, report = await registry.execute(
+            ToolCall(
+                id=ToolCallId("1"), name="clone_repository",
+                arguments={"repo": "acme/widgets"},
+            ),
             ctx,
             capabilities=("engineer_agent",),
-            confirmed=True,
         )
-        assert confirmed.ok
-        # Arguments are only ever attached to a confirm-required report -- a call that actually
-        # ran (even the same tool, once approved) carries none.
-        assert confirmed_report.arguments == {}
+
+        assert not result.ok
+        assert report.needs_confirmation
+        assert report.arguments["repo"] == "acme/widgets"
 
     async def test_sandbox_tools_require_the_engineer_capability(self, ctx) -> None:
         runner = InMemorySandboxRunner()

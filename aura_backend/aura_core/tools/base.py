@@ -100,6 +100,7 @@ def tool(
     max_result_chars: int = 16_000,
     version: str = "1.0.0",
     tags: tuple[str, ...] = (),
+    workspace_local: bool = False,
 ) -> Callable[[Handler], FunctionTool]:
     """Decorator form.
 
@@ -111,6 +112,10 @@ def tool(
     e.g. ``"untrusted_content"`` marks a tool whose *output* is attacker-influenceable external
     text (registry.execute taints the calling ToolContext when it sees this tag; see
     tools/registry.py and tools/builtin.py's fetch_url).
+
+    ``workspace_local`` is read by the policy engine and exempts a tool from confirmation: set it
+    only where the effect really is confined to an ephemeral agent workspace. See
+    ``ToolSpec.workspace_local`` and ADR-011.
     """
 
     def decorate(handler: Handler) -> FunctionTool:
@@ -126,6 +131,7 @@ def tool(
             max_result_chars=max_result_chars,
             version=version,
             tags=tags,
+            workspace_local=workspace_local,
         )
         return FunctionTool(spec, handler)
 

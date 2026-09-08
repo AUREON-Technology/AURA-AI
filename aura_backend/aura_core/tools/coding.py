@@ -239,6 +239,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=15.0,
+        workspace_local=True,
     )
     async def write_file(path: str, content: str, context: ToolContext) -> str:
         handle = await sessions.get(context.correlation_id)
@@ -259,6 +260,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=15.0,
+        workspace_local=True,
     )
     async def edit_file(path: str, find: str, replace: str, context: ToolContext) -> str:
         handle = await sessions.get(context.correlation_id)
@@ -291,6 +293,11 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         # Command output can echo file contents, comments, or anything else in the sandbox
         # workspace -- attacker-influenceable exactly like fetch_url's page content.
         tags=("untrusted_content",),
+        # SYSTEM + side_effecting would otherwise force confirmation on *every* command, which
+        # in an eight-iteration engineering task is a prompt per step. The effect is confined to
+        # the workspace container and its checkout; anything that leaves (git_push, forge
+        # writes) is not marked and stays gated.
+        workspace_local=True,
     )
     async def run_command(command: str, context: ToolContext, timeout_s: float = 60.0) -> str:
         handle = await sessions.get(context.correlation_id)
@@ -324,6 +331,9 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=30.0,
+        # A commit is local to the checkout until something pushes it; git_push is the tool that
+        # crosses the boundary, and it is deliberately not marked.
+        workspace_local=True,
     )
     async def git_commit(message: str, context: ToolContext) -> str:
         handle = await sessions.get(context.correlation_id)
@@ -342,6 +352,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=15.0,
+        workspace_local=True,
     )
     async def git_checkout_branch(branch: str, context: ToolContext) -> str:
         handle = await sessions.get(context.correlation_id)
