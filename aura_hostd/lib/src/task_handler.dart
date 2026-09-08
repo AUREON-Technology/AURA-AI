@@ -125,7 +125,18 @@ class TaskHandler {
         return -1;
       });
     } finally {
-      await Future.wait([stdoutDone, stderrDone]);
+      // Killing `process` only signals the PID we started -- `sh -c '<command>'` may have forked
+      // rather than exec'd it (shell-dependent, not something this daemon controls), leaving an
+      // orphaned descendant that still holds the stdout/stderr pipe fds open. Waiting on
+      // stdoutDone/stderrDone unboundedly would then hang this whole call until that orphan exits
+      // on its own -- exactly as long as whatever it was doing (observed: a killed `sleep 30`
+      // held the pipes open for the full 30 seconds). Bounding this wait is the fix: a normally
+      // terminating process's streams close well within this window, and a still-running orphan
+      // does not get to stall the RPC response it's no longer even attached to.
+      await Future.wait([stdoutDone, stderrDone]).timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => const <void>[],
+      );
     }
 
     if (timedOut) {
