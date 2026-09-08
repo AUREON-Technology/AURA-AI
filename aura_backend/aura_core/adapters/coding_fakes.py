@@ -142,6 +142,9 @@ class InMemorySandboxRunner:
 
         return await asyncio.to_thread(_size)
 
+    async def workspace_path(self, handle: SandboxHandle) -> str:
+        return str(self._scratch(handle))
+
     def is_paused(self, key: str) -> bool:
         """Test-only view of the flag above; no production caller."""
         return key in self._paused

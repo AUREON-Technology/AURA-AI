@@ -20,7 +20,10 @@ from __future__ import annotations
 import pytest
 
 from aura_core.adapters.coding_fakes import InMemoryGitHubClient, InMemorySandboxRunner
+from aura_core.adapters.memory_stores import InMemoryWorkspaceStore
 from aura_core.tools.builtin import default_tools
+from aura_core.tools.coding import build_sandbox_tools
+from aura_core.tools.workspaces import WorkspaceManager
 
 #: Effects confined to the disposable workspace: a scratch container and a checkout that the
 #: reaper deletes. Confirming a write to a directory that is about to be destroyed buys nothing,
@@ -31,12 +34,15 @@ _EXPECTED_WORKSPACE_LOCAL = {
     "run_command",
     "git_commit",
     "git_checkout_branch",
+    "open_workspace",
 }
 
 #: Tools that leave the workspace. Each one reaches something that outlives the task -- a
 #: repository on GitHub, the user's own records -- so each keeps the full confirmation path.
 _MUST_NOT_BE_WORKSPACE_LOCAL = {
     "clone_repository",
+    # Destroys a checkout including unpushed work, and cannot be undone by re-running the step.
+    "destroy_workspace",
     "github_create_branch",
     "github_commit_files",
     "github_create_draft_pull_request",
@@ -50,11 +56,23 @@ async def _github_client_resolver(user_id):
 
 @pytest.fixture
 def specs() -> dict:
+    """Every tool the engineer agent can get, including the ones that only exist once durable
+    workspaces are wired.
+
+    Building without a workspace manager -- the shape `default_tools` produces on its own --
+    would leave `open_workspace` unregistered and quietly outside this pin, which is exactly the
+    gap that lets a `workspace_local` tool ship unreviewed.
+    """
+    runner = InMemorySandboxRunner()
+    manager = WorkspaceManager(runner=runner, store=InMemoryWorkspaceStore())
     tools = default_tools(
         allowed_http_hosts=("example.com",),
-        sandbox_runner=InMemorySandboxRunner(),
+        sandbox_runner=runner,
         github_client_resolver=_github_client_resolver,
         github_default_repo="acme/widgets",
+    )
+    tools += build_sandbox_tools(
+        runner, code_host_resolver=_github_client_resolver, workspace_manager=manager
     )
     return {t.spec.name: t.spec for t in tools}
 

@@ -206,6 +206,16 @@ class SandboxRunner(Protocol):
         """Size of the workspace's files, in MiB. Bounds a checkout that grows without limit."""
         ...
 
+    async def workspace_path(self, handle: SandboxHandle) -> str:
+        """Where this workspace's files live *on this host*.
+
+        Asked of the runner rather than derived by the caller, because only the runner knows: a
+        deployed runner roots workspaces under a configured host directory, a local one uses a
+        temp directory, and a caller that recomputed the path would be right in one case and
+        silently wrong in the other. Host-side git (``adapters/host_git.py``) needs the real one.
+        """
+        ...
+
 
 @runtime_checkable
 class EngineerRunStore(Protocol):

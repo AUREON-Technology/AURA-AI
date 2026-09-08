@@ -664,6 +664,18 @@ class Container:
             raise ConfigurationError(f"unknown memory backend {backend!r}")
         return InMemoryEngineerRunStore()
 
+    async def _github_token_resolver(self, user_id: Any) -> str | None:
+        """The caller's forge token, for host-side git only.
+
+        A separate channel from `github_client_resolver` on purpose: the token is a credential,
+        and reaching into a client's private attribute to find it would both couple the tool
+        layer to one adapter and silently yield nothing for any other implementation of the port.
+        """
+        client = await self.github_client_resolver(user_id) if self.github_client_resolver else None
+        if client is None:
+            return None
+        return getattr(client, "token", None) or getattr(client, "_token", None)
+
     def _build_host_git(self) -> Any:
         """Real `git`, run by *this* process against a workspace directory.
 
@@ -967,6 +979,9 @@ class Container:
                 sandbox_runner=self.sandbox_runner,
                 github_client_resolver=self.github_client_resolver,
                 github_default_repo=github_default_repo,
+                workspace_manager=self.workspace_manager,
+                host_git=self.host_git,
+                github_token_resolver=self._github_token_resolver,
             )
         )
         return registry

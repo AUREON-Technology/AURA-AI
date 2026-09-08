@@ -257,6 +257,13 @@ class WorkspaceManager:
         await self._pause(record, self._now())
         await self._publish_gauges()
 
+    async def list_for_user(self, user_id: UserId) -> Sequence[AgentWorkspace]:
+        """This user's workspaces, most recently used first. Read-only; opens nothing."""
+        return await self._store.list_for_user(user_id)
+
+    async def get(self, user_id: UserId, repo: str) -> AgentWorkspace | None:
+        return await self._store.get(user_id, repo)
+
     async def touch(self, workspace_id: WorkspaceId) -> None:
         """Record activity. Every tool call does this; it is what the TTL measures."""
         await self._store.touch(workspace_id, at=self._now())

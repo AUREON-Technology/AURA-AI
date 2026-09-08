@@ -430,6 +430,14 @@ class DockerSandboxRunner:
 
         return await asyncio.to_thread(_size)
 
+    async def workspace_path(self, handle: SandboxHandle) -> str:
+        scratch = self._scratch_dirs.get(handle.task_id)
+        if scratch is None and self._host_root is not None:
+            scratch = self._host_root / handle.task_id
+        if scratch is None:
+            raise SandboxError(f"unknown workspace {handle.task_id!r}")
+        return str(scratch)
+
     async def destroy(self, handle: SandboxHandle) -> None:
         container = self._containers.pop(handle.task_id, None)
         if container is not None:
