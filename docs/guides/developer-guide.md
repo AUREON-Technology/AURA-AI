@@ -234,6 +234,46 @@ The Flutter `EngineerWorkspacesPanel` is mounted on the Engineer history page; P
 
 The Engineer persona's sandbox tools route through `CompositeSandboxRunner`: a connected
 `aura_hostd` session wins; otherwise the server Docker workspace (if configured). Grant the
-capability with `AURA_ENGINEER_AGENT_ROLES`. Containment and the hard command denylist are
-enforced only on the daemon — never trusted from the backend. See ADR-011 for what is and is
-not built yet.
+capability with `AURA_ENGINEER_AGENT_ROLES`. Design: [ADR-011](../architecture/011-desktop-engineer-agent.md).
+
+### Local run
+
+```bash
+# Terminal 1 — backend (v3 gateway with engineer roles granted)
+export AURA_ENGINEER_AGENT_ROLES=Developer,Admin,SuperAdmin   # example
+# …start your usual local stack / uvicorn…
+
+# Terminal 2 — host daemon
+cd aura_hostd && dart pub get
+dart run bin/aura_hostd.dart auth pair <CODE> --backend-url http://localhost:8000
+dart run bin/aura_hostd.dart grant /path/to/a/project
+dart run bin/aura_hostd.dart run          # WS + loopback control plane (default :8765)
+
+# Terminal 3 — Flutter desktop
+cd aura_client && flutter run -d windows  # or linux / macos
+# Settings → Desktop Engineer (/desktop-engineer): pairing code, roots, YOLO, daemon status
+```
+
+Desktop login uses `POST /api/v3/auth/desktop/token` (no Play Integrity). Pairing codes come from
+the Desktop Engineer screen; the daemon exchanges them via `aura_hostd auth pair <code>`.
+Containment and the hard command denylist are enforced only on the daemon — never trusted from
+the backend.
+
+### `surface=` (tool descriptions)
+
+`build_sandbox_tools(..., surface="auto"|"host"|"sandbox")` keeps tool *names* identical and
+swaps only the prose so the model is not told "scratch directory" when a host is paired
+(`surface="auto"` is the production default and describes both paths honestly). Locked by
+`tests/unit/test_engineer_tools.py`.
+
+### Consent / YOLO
+
+Untrusted roots: small read-only allowlist. `aura_hostd trust <path>` / control-plane trust:
+anything not on the hard denylist. `aura_hostd yolo on` (or the panel toggle): allowlist off for
+every granted root; containment and denylist stay. Interactive per-call Flutter approve/deny and
+ToolPolicy→`server_confirmed` RPC wiring are still deferred.
+
+### Still deferred
+
+Real PTY, live SSE→xterm in the panel, host file-tree/diff review, daemon auto-spawn, packaged
+installers. See ADR-011's Units 5–9 table.
