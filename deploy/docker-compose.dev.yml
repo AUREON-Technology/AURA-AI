@@ -40,8 +40,10 @@ networks:
   sandbox_ctl:
     driver: bridge
     internal: true
+  # Mirrors prod: no default route out; sandboxes reach the internet only via sandbox-proxy.
   sandbox_egress:
     driver: bridge
+    internal: true
 
 volumes:
   postgres_data_dev:
@@ -178,7 +180,9 @@ services:
       # Engineer agent (Phase J) -- off by default, same as prod. See
       # docker-compose.prod.yml's gateway env block for what each setting does.
       AURA_SANDBOX_ENABLED: ${AURA_SANDBOX_ENABLED:-false}
-      AURA_SANDBOX_IMAGE: ${AURA_SANDBOX_IMAGE:-python:3.12-slim}
+      # Built by `sandbox-image` below (not pulled) so IMAGES stays off the socket proxy.
+      AURA_SANDBOX_IMAGE: ${AURA_SANDBOX_IMAGE:-aura-sandbox:latest}
+      AURA_SANDBOX_PROXY_URL: ${AURA_SANDBOX_PROXY_URL:-http://sandbox-proxy:8888}
       AURA_SANDBOX_NETWORK: sandbox_egress
       # Its own root, never prod's: the dev stack shares this host with prod, and one directory
       # for both would let a dev workspace collide with a production one. Bind-mounted at the
@@ -228,8 +232,8 @@ services:
       resources:
         limits: {cpus: "1.5", memory: 2G}
 
-  # Engineer agent (AURA_SANDBOX_ENABLED, off by default) -- see docker-compose.prod.yml's
-  # `docker-socket-proxy` comment for the full env-allowlist rationale.
+  # Engineer agent (AURA_SANDBOX_ENABLED, off by default) -- mirrors prod: IMAGES off because
+  # `sandbox-image` builds the workspace image locally. See prod's docker-socket-proxy comment.
   docker-socket-proxy:
     profiles: [sandbox]
     image: tecnativa/docker-socket-proxy:0.3.0
@@ -237,7 +241,7 @@ services:
     logging: *logging
     environment:
       CONTAINERS: "1"
-      IMAGES: "1"
+      IMAGES: "0"
       POST: "1"
       EXEC: "0"
       NETWORKS: "0"
@@ -262,6 +266,32 @@ services:
     deploy:
       resources:
         limits: {cpus: "0.25", memory: 128M}
+
+  sandbox-image:
+    profiles: [sandbox]
+    build:
+      context: ./sandbox
+      dockerfile: Dockerfile
+    image: ${AURA_SANDBOX_IMAGE:-aura-sandbox:latest}
+    restart: "no"
+    command: ["true"]
+    logging: *logging
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 256M}
+
+  sandbox-proxy:
+    profiles: [sandbox]
+    image: ${AURA_SANDBOX_PROXY_IMAGE:-vimagick/tinyproxy:latest}
+    <<: *restart
+    logging: *logging
+    volumes:
+      - ./sandbox/tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
+      - ./sandbox/filter:/etc/tinyproxy/filter:ro
+    networks: [sandbox_egress, egress]
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 64M}
 
   worker-realtime:
     build:
