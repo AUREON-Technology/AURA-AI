@@ -455,6 +455,48 @@ numbers — **done**, and verified against real Postgres closely enough to catch
 serialisation bug. Multi-model routing proven against two real, simultaneously-running backends,
 not Ollama-plus-echo — **done**, with a permanent opt-in test reproducing the proof.
 
+### Phase J — Desktop Engineer agent
+
+**Started, 2026-09-08. Backend bridge done; the daemon and client UI are not.**
+
+This phase did not exist in any prior version of this roadmap — a gap worth naming plainly, since
+the standing rule elsewhere in this document is that undocumented-but-built capability gets
+corrected here. The Engineer persona and its tools (`aura_core/tools/coding.py`) predate this
+phase entirely and were never described here either; see ADR-011 for the full design.
+
+- **J1. Done.** `aura_core/ports/coding.py::SandboxRunner.create_task` now takes an optional
+  `user_id`, threaded from `_SandboxSessionCache` (`tools/coding.py`), so a runner that must route
+  per-caller has the identity it needs without every other runner knowing why.
+- **J2. Done.** `adapters/host_agent.py` (`HostAgentSession`, `HostAgentRegistry`,
+  `HostAgentSandboxRunner`, `CompositeSandboxRunner`) and `api/host_agent.py`
+  (`/api/v3/host/agent`, a duplex-RPC WebSocket shaped like `voice_live.py`) let the engineer
+  agent's sandbox tools route to a caller's connected desktop daemon instead of only the
+  server-side Docker sandbox. `container.sandbox_runner` is now always a
+  `CompositeSandboxRunner`; a paired desktop app serves the engineer tools even where
+  `sandbox.enabled` was never turned on. 19 new tests
+  (`tests/unit/test_host_agent.py`), all real (in-process fake sessions, not mocks) —
+  `pytest`/`tests/architecture`/the legacy `unittest` suite all stay green, no Docker required.
+- **J3. Not started.** The `aura_hostd` daemon itself: workspace-root grants, path containment
+  (checked *after* resolving symlinks, matching `tools/builtin.py::resolve_within`'s existing
+  discipline), a hard denylist no consent tier lifts, PTY/streamed terminal output, and the
+  tiered-consent/YOLO-mode UX. Until this exists, `CompositeSandboxRunner` always falls back to
+  the Docker sandbox path in practice — J2 built a caller, not yet a callee.
+- **J4. Not started.** Desktop pairing auth (`services/security.py` recognising a `desktop`
+  platform via a one-time-code pairing token rather than mobile attestation).
+- **J5. Not started.** The Flutter desktop client work: `google_sign_in` has no Linux/Windows
+  implementation (confirmed absent from both platforms' `generated_plugins.cmake`), so desktop
+  login needs a loopback-OAuth path before anything else desktop-side is reachable; then the
+  workspace picker, file tree, diff review, and live terminal panel, reusing the engineering
+  screens and chat widgets (`engineer_confirmation_card`, `sandbox_diff_view`,
+  `sandbox_terminal_view`) that already exist for the server-side sandbox.
+
+**Exit criteria (not yet met).** An engineer-capable user can pair a real desktop app and have the
+agent read, edit, and run commands against a real local project, with a path outside every granted
+workspace root refused even in the daemon's most permissive consent mode — **not proven**; J3–J5
+are the work that would prove it. This environment has no Dart/Flutter toolchain (confirmed:
+`dart`/`flutter` both absent), so per this repo's own testing conventions, no client-side claim
+belongs here until Client CI has actually run it.
+
 ## 4. Scope decisions
 
 Recorded so they are not re-litigated.
