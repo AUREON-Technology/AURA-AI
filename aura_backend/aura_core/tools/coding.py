@@ -194,7 +194,8 @@ class _SandboxSessionCache:
         self._handles: dict[str, tuple[Any, float]] = {}
         self._lock = asyncio.Lock()
 
-    async def get(self, correlation_id: str) -> Any:
+    async def get(self, context: ToolContext) -> Any:
+        correlation_id = context.correlation_id
         async with self._lock:
             now = time.monotonic()
             stale = [
@@ -211,7 +212,9 @@ class _SandboxSessionCache:
             if correlation_id in self._handles:
                 handle, _ = self._handles[correlation_id]
             else:
-                handle = await self._runner.create_task()
+                # `user_id` matters only to a runner that routes per-caller (the desktop
+                # host-agent bridge) -- every other runner accepts and ignores it (ports/coding.py).
+                handle = await self._runner.create_task(user_id=context.user_id)
             self._handles[correlation_id] = (handle, now)
             return handle
 
@@ -241,7 +244,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         timeout_s=15.0,
     )
     async def write_file(path: str, content: str, context: ToolContext) -> str:
-        handle = await sessions.get(context.correlation_id)
+        handle = await sessions.get(context)
         await sandbox_runner.write_file(handle, path, content)
         return f"Wrote {len(content)} bytes to {path}"
 
@@ -261,7 +264,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         timeout_s=15.0,
     )
     async def edit_file(path: str, find: str, replace: str, context: ToolContext) -> str:
-        handle = await sessions.get(context.correlation_id)
+        handle = await sessions.get(context)
         current = await sandbox_runner.read_file(handle, path)
         occurrences = current.count(find)
         if occurrences != 1:
@@ -293,7 +296,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         tags=("untrusted_content",),
     )
     async def run_command(command: str, context: ToolContext, timeout_s: float = 60.0) -> str:
-        handle = await sessions.get(context.correlation_id)
+        handle = await sessions.get(context)
         result = await sandbox_runner.run(handle, ["sh", "-c", command], timeout_s=timeout_s)
         return (
             f"exit_code={result.exit_code}\n"
@@ -311,7 +314,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         max_result_chars=20_000,
     )
     async def git_diff(context: ToolContext) -> str:
-        handle = await sessions.get(context.correlation_id)
+        handle = await sessions.get(context)
         result = await sandbox_runner.run(handle, ["git", "diff", "HEAD"], timeout_s=15.0)
         return result.stdout or "(no changes)"
 
@@ -326,7 +329,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         timeout_s=30.0,
     )
     async def git_commit(message: str, context: ToolContext) -> str:
-        handle = await sessions.get(context.correlation_id)
+        handle = await sessions.get(context)
         await sandbox_runner.run(handle, ["git", "add", "-A"], timeout_s=15.0)
         result = await sandbox_runner.run(handle, ["git", "commit", "-m", message], timeout_s=15.0)
         if result.exit_code != 0:
@@ -344,7 +347,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         timeout_s=15.0,
     )
     async def git_checkout_branch(branch: str, context: ToolContext) -> str:
-        handle = await sessions.get(context.correlation_id)
+        handle = await sessions.get(context)
         result = await sandbox_runner.run(handle, ["git", "checkout", "-B", branch], timeout_s=10.0)
         if result.exit_code != 0:
             raise ToolExecutionError(
@@ -441,7 +444,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
                 selected.append(entry)
                 total_bytes += entry.size
 
-        handle = await sessions.get(context.correlation_id)
+        handle = await sessions.get(context)
         semaphore = asyncio.Semaphore(_CLONE_CONCURRENCY)
         failed: list[str] = []
 

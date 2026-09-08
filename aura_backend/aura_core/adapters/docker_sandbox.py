@@ -86,7 +86,9 @@ class DockerSandboxRunner:
             self._client = docker.from_env()
         return self._client
 
-    async def create_task(self) -> SandboxHandle:
+    async def create_task(self, *, user_id: Any | None = None) -> SandboxHandle:
+        # `user_id` is accepted for `SandboxRunner` protocol conformance (the desktop host-agent
+        # bridge needs it to route per-user; this server-side sandbox does not) and ignored.
         task_id = uuid.uuid4().hex
         scratch = await asyncio.to_thread(tempfile.mkdtemp, prefix=f"aura-sandbox-{task_id}-")
         self._scratch_dirs[task_id] = Path(scratch)

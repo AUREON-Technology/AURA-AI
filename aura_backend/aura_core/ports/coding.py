@@ -138,10 +138,19 @@ class SandboxRunner(Protocol):
     A handle's lifetime is caller-managed: :meth:`create_task` before the first use,
     :meth:`destroy` when the task ends (success, failure, or turn abandonment) -- there is no
     implicit cleanup, because a runner that reaps sandboxes on a timer cannot tell a slow legitimate
-    task from an abandoned one.
+    task from an abandoned one. The one exception is a runner that routes by user (the desktop
+    host-agent bridge, ``adapters/host_agent.py``): there, a "task" is scoped to the user's own
+    open workspace rather than one chat turn, and :meth:`destroy` is deliberately a no-op --
+    documented on that adapter, not here, since it does not change this protocol's contract for
+    every other implementation.
+
+    ``user_id`` on :meth:`create_task` is ``None`` for every runner that does not need it (the
+    server-side Docker sandbox, the in-memory test fake) -- it exists only so a runner that must
+    route per-caller (again, the host-agent bridge) can be handed the caller's identity without
+    every other implementation having to know why.
     """
 
-    async def create_task(self) -> SandboxHandle:
+    async def create_task(self, *, user_id: UserId | None = None) -> SandboxHandle:
         ...
 
     async def run(
