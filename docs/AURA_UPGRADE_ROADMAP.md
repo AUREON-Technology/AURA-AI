@@ -467,7 +467,8 @@ not Ollama-plus-echo — **done**, with a permanent opt-in test reproducing the 
 
 ### Phase J — Desktop Engineer agent
 
-**Started, 2026-09-08. Backend bridge done; the daemon and client UI are not.**
+**Started, 2026-09-08. Backend bridge and daemon core done; PTY, interactive consent, pairing
+auth, and the client UI are not.**
 
 This phase did not exist in any prior version of this roadmap — a gap worth naming plainly, since
 the standing rule elsewhere in this document is that undocumented-but-built capability gets
@@ -486,26 +487,49 @@ phase entirely and were never described here either; see ADR-011 for the full de
   `sandbox.enabled` was never turned on. 19 new tests
   (`tests/unit/test_host_agent.py`), all real (in-process fake sessions, not mocks) —
   `pytest`/`tests/architecture`/the legacy `unittest` suite all stay green, no Docker required.
-- **J3. Not started.** The `aura_hostd` daemon itself: workspace-root grants, path containment
-  (checked *after* resolving symlinks, matching `tools/builtin.py::resolve_within`'s existing
-  discipline), a hard denylist no consent tier lifts, PTY/streamed terminal output, and the
-  tiered-consent/YOLO-mode UX. Until this exists, `CompositeSandboxRunner` always falls back to
-  the Docker sandbox path in practice — J2 built a caller, not yet a callee.
+- **J3. Core done; PTY and interactive consent not started.** The `aura_hostd` daemon (new
+  top-level `aura_hostd/`, a pure-Dart package with no Flutter dependency) now implements: an
+  outbound WebSocket client speaking `HostAgentSession`'s exact frame protocol, workspace-root
+  grants persisted locally (`aura_hostd grant/revoke/trust/untrust/roots`), path containment
+  checked *after* resolving symlinks (`lib/src/containment.dart`, matching
+  `tools/builtin.py::resolve_within`'s existing discipline) with a hard denylist on what can ever
+  be granted as a root, and the `write_file`/`read_file`/`run_command` RPC handlers. Command
+  policy (`lib/src/command_policy.dart`) is a disclosed simplification rather than the designed
+  tiered UX — there is no UI yet to prompt a human per call, so an untrusted workspace only runs a
+  small read-only allowlist and a trusted one allows anything not on the hard denylist; three
+  review passes against this allowlist found and closed real bypasses before merge (`find
+  -delete`/`find -exec` mutating without needing any blocked shell metacharacter; `env <command>`
+  laundering an arbitrary command through what looks like an inspection tool; and chained/
+  redirected/substituted commands slipping past a naive "starts with an allowlisted verb" prefix
+  match — closed by blocking shell metacharacters structurally before the allowlist is even
+  checked, not by chasing individual payloads). Still missing: PTY/streamed terminal output
+  (`run_command` returns full stdout/stderr only after the process exits) and Windows command
+  execution (the backend always sends `["sh", "-c", ...]`; a Windows machine with no POSIX shell
+  on `PATH` can't run commands via this path yet — filesystem ops and grants are unaffected).
+  `dart test` covers containment (including symlink-escape and `..`-traversal), the command-policy
+  allowlist (including the specific bypasses above), and the wire protocol end-to-end against a
+  local in-process server; `.github/workflows/hostd-ci.yml` is the actual verification, since this
+  environment has no Dart toolchain (confirmed: `dart`/`flutter` both absent) to run `dart
+  test`/`dart analyze` itself.
 - **J4. Not started.** Desktop pairing auth (`services/security.py` recognising a `desktop`
-  platform via a one-time-code pairing token rather than mobile attestation).
+  platform via a one-time-code pairing token rather than mobile attestation). `aura_hostd`
+  currently expects a bearer token supplied out of band (`aura_hostd auth set-token`) in its place.
 - **J5. Not started.** The Flutter desktop client work: `google_sign_in` has no Linux/Windows
   implementation (confirmed absent from both platforms' `generated_plugins.cmake`), so desktop
   login needs a loopback-OAuth path before anything else desktop-side is reachable; then the
   workspace picker, file tree, diff review, and live terminal panel, reusing the engineering
   screens and chat widgets (`engineer_confirmation_card`, `sandbox_diff_view`,
-  `sandbox_terminal_view`) that already exist for the server-side sandbox.
+  `sandbox_terminal_view`) that already exist for the server-side sandbox, plus supervising
+  `aura_hostd` itself (spawn/monitor/restart the daemon process).
 
 **Exit criteria (not yet met).** An engineer-capable user can pair a real desktop app and have the
 agent read, edit, and run commands against a real local project, with a path outside every granted
-workspace root refused even in the daemon's most permissive consent mode — **not proven**; J3–J5
-are the work that would prove it. This environment has no Dart/Flutter toolchain (confirmed:
-`dart`/`flutter` both absent), so per this repo's own testing conventions, no client-side claim
-belongs here until Client CI has actually run it.
+workspace root refused even in the daemon's most permissive consent mode — the containment half is
+implemented and unit-tested (J3), but **not proven** end-to-end without J4's real auth and J5's
+client, since nothing today drives `aura_hostd` other than its own CLI. This environment has no
+Dart/Flutter toolchain (confirmed: `dart`/`flutter` both absent), so per this repo's own testing
+conventions, no client-side claim belongs here until CI has actually run it — that applies to
+`aura_hostd`'s own test suite (`hostd-ci.yml`) exactly as much as it does to `aura_client`'s.
 
 ## 4. Scope decisions
 

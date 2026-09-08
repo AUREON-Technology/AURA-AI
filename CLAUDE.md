@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository shape
 
-Three independent apps in one repo:
+Four independent apps in one repo:
 
 - **`aura_backend/`** — Python/FastAPI. The actual product: a self-hosted AI platform (hybrid
   retrieval, memory, tools, planning) behind a v3 HTTP gateway. Read `README.md` and
@@ -15,6 +15,12 @@ Three independent apps in one repo:
   `/api/v3/*` routes.
 - **`aura_admin/`** — Next.js admin dashboard (lightly used so far; `npm run dev|build|lint`,
   `npm run test:e2e` for Playwright).
+- **`aura_hostd/`** — pure-Dart local daemon (no Flutter dependency) that lets the desktop Engineer
+  agent act on the user's real files and terminal. Pairs with the backend's
+  `/api/v3/host/agent` WebSocket. `dart pub get && dart test` (`.github/workflows/hostd-ci.yml`
+  gates it — a separate workflow from `client-ci.yml` since it needs `dart-lang/setup-dart`, not
+  Flutter). See `docs/architecture/011-desktop-engineer-agent.md` (ADR-011) for the design and
+  what is and is not built yet.
 
 Supporting directories: `deploy/` (production stack), `docs/` (architecture, guides, reports),
 `infra/` (Terraform), `scripts/` (client build and Firebase helpers). Historical docs live under
@@ -73,6 +79,19 @@ There is often no Flutter/Dart toolchain available in the environment a change i
 Write Dart carefully against the existing code's conventions and let Client CI (`flutter
 analyze` + `flutter test` + the Android build) be the actual verification — don't claim a client
 change is confirmed working unless you watched it pass CI.
+
+### Host daemon (`cd aura_hostd` first)
+
+```bash
+dart pub get
+dart analyze --fatal-infos
+dart test
+dart test test/some_test.dart            # single file
+dart run bin/aura_hostd.dart run          # connect and serve until killed
+```
+
+Same toolchain caveat as the client: this environment often has no Dart SDK either. Host Daemon
+CI (`.github/workflows/hostd-ci.yml`) is the actual verification.
 
 ## Backend architecture — the parts that span files
 

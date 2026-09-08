@@ -1,0 +1,38 @@
+name: Host Daemon CI
+
+# aura_hostd is a pure-Dart package (no Flutter dependency), so this uses dart-lang/setup-dart
+# directly rather than the Flutter action client-ci.yml needs. It is its own workflow rather than
+# a job bolted onto client-ci.yml because it gates on a different path and has nothing in common
+# with the Flutter build/test steps there.
+
+on:
+  pull_request:
+    paths:
+      - "aura_hostd/**"
+      - ".github/workflows/hostd-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "aura_hostd/**"
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aura_hostd
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Analyze
+        run: dart analyze --fatal-infos
+
+      - name: Test
+        run: dart test

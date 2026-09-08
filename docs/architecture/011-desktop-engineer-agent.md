@@ -1,6 +1,6 @@
 # ADR-011 — The desktop Engineer agent executes on the user's own machine, not a server sandbox
 
-**Status:** Partially implemented (backend bridge only — see "Implementation status") · **Date:** 2026-09-08
+**Status:** Partially implemented (backend bridge + daemon core; no client UI or pairing auth yet — see "Implementation status") · **Date:** 2026-09-08
 
 ## Context
 
@@ -94,14 +94,50 @@ to identity — it grants no bypass of `ToolPolicy`, taint, or the daemon's own 
 
 ## Implementation status
 
-As of this ADR: the backend bridge (`adapters/host_agent.py`, `api/host_agent.py`, the
-`container.py` rewiring, and the `SandboxRunner.create_task(user_id=...)` port extension) is
-implemented and tested (`tests/unit/test_host_agent.py`, `tests/unit/test_engineer_tools.py`).
+The backend bridge (`adapters/host_agent.py`, `api/host_agent.py`, the `container.py` rewiring,
+and the `SandboxRunner.create_task(user_id=...)` port extension) is implemented and tested
+(`tests/unit/test_host_agent.py`, `tests/unit/test_engineer_tools.py`).
 
-**Not yet implemented**, and needed before this ADR's decision is actually exercised by a real
-user: the `aura_hostd` daemon itself (workspace roots, path containment, PTY/streamed terminal,
-consent tiers, the desktop pairing auth flow), and the Flutter desktop UI that supervises it
-(workspace picker, diff review, live terminal). Until the daemon exists, `CompositeSandboxRunner`
-always falls back to the Docker sandbox path in practice — the bridge has a caller, but nothing
-is listening on the other end yet. See `docs/AURA_UPGRADE_ROADMAP.md` for the up-to-date status
-of what is and is not built.
+The `aura_hostd` daemon (top-level `aura_hostd/`, a pure-Dart package) now exists and implements
+its core: an outbound WebSocket client speaking the exact frame protocol
+`HostAgentSession`/`api/host_agent.py` expect, workspace-root grants persisted locally
+(`aura_hostd grant <path>`), path containment enforced *after* resolving symlinks
+(`lib/src/containment.dart`, matching `tools/builtin.py::resolve_within`'s discipline) with a hard
+denylist on what can ever be granted as a root (`/`, `/etc`, the home directory itself, etc.), and
+the `write_file`/`read_file`/`run_command` RPC handlers themselves.
+
+What the daemon does *not* yet have:
+
+- **PTY / streamed terminal output.** `run_command` runs to completion and returns full
+  stdout/stderr rather than streaming — the tool-facing behavior is correct, but a long-running
+  command gives no live output the way a real terminal would.
+- **Interactive tiered consent.** There is no UI yet to prompt a human per call, so the daemon
+  cannot implement "auto for reads, diff-and-approve for writes" as designed. In its place, each
+  workspace root is either untrusted (only a small read-only inspection allowlist runs —
+  `lib/src/command_policy.dart` — with `find`/`env` deliberately excluded from that allowlist
+  despite looking read-only, since both can mutate or execute arbitrary commands without needing
+  any of the blocked shell metacharacters) or explicitly marked `trusted`
+  (`aura_hostd trust <path>`), which allows anything not on the hard denylist. This is a real,
+  disclosed scope cut, not a weakening of the containment guarantee: path containment itself is
+  unconditional and applies identically regardless of trust.
+- **Windows command execution.** The backend always sends `["sh", "-c", "<command>"]` over the RPC
+  (`tools/coding.py::run_command`'s existing behavior, unchanged by this ADR) and the daemon execs
+  that argv directly; a Windows machine without a POSIX-compatible shell on `PATH` (no WSL/Git
+  Bash) cannot run commands via this path yet. Filesystem operations and workspace grants are
+  unaffected — this only blocks `run_command`.
+- **Desktop pairing auth.** `services/security.py` still rejects every non-mobile platform at
+  attestation. The daemon expects a bearer token supplied out of band
+  (`aura_hostd auth set-token`) until the pairing flow this ADR describes actually exists.
+- **The Flutter desktop UI** that supervises the daemon (workspace picker, diff review, live
+  terminal) — nothing yet drives `aura_hostd` other than its own CLI.
+
+`dart test` covers path containment (including symlink-escape and `..`-traversal attempts, and
+that containment does not require the target to already exist), the command-policy allowlist
+(including the `find -delete`/`find -exec` and `env`-laundering gaps a naive "starts with a safe
+verb" check would have missed, and chained/redirected/substituted commands via allowlisted verbs),
+and the WebSocket wire protocol end-to-end against a local in-process server. This environment had
+no Dart toolchain to actually run `dart pub get`/`dart test`/`dart analyze` itself (confirmed:
+`dart`/`flutter` both absent) — `.github/workflows/hostd-ci.yml` is the real verification, per
+this repo's own conventions for Dart/Flutter changes written without a local toolchain.
+
+See `docs/AURA_UPGRADE_ROADMAP.md` for the up-to-date status of what is and is not built.
