@@ -324,6 +324,9 @@ class Container:
             max_generations=settings.knowledge.retrieval_max_generations,
         )
 
+        from .adapters.host_agent import HostAgentRegistry
+
+        self.host_agent_registry = HostAgentRegistry()
         self.sandbox_runner = self._build_sandbox_runner()
         self.github_client = self._build_github_client()
         self._github_clients_by_user: dict[str, Any] = {}
@@ -909,10 +912,30 @@ class Container:
         return registry
 
     def _build_sandbox_runner(self) -> Any:
+        """Always a `CompositeSandboxRunner` (`adapters/host_agent.py`) wrapping the desktop
+        host-agent bridge plus, optionally, the server-side Docker sandbox as a fallback.
+
+        Unconditional (unlike the old Docker-only version this replaces) because
+        `write_file`/`edit_file`/`run_command`/`git_*` register whenever `sandbox_runner is not
+        None` (`tools/builtin.py::default_tools`), and a user who has paired their own desktop
+        app must get those tools regardless of whether this deployment has opted into
+        `sandbox.enabled` at all. `create_task` raises a clear, actionable error at call time if
+        neither path is actually usable for the caller -- registered-but-unusable is a better
+        failure than invisible.
+        """
+        from .adapters.host_agent import CompositeSandboxRunner, HostAgentSandboxRunner
+
+        return CompositeSandboxRunner(
+            host_runner=HostAgentSandboxRunner(self.host_agent_registry),
+            fallback=self._build_docker_sandbox_runner(),
+        )
+
+    def _build_docker_sandbox_runner(self) -> Any:
         """`None` unless both opted in (`sandbox.enabled`) and a Docker daemon is actually
         reachable -- the same opt-in-setting-plus-runtime-probe shape as `_build_ocr_engine`/
-        `_build_stt_engine`. Absent, `write_file`/`edit_file`/`run_command`/`git_*` are simply
-        never registered (`tools/builtin.py::default_tools`)."""
+        `_build_stt_engine`. This is only the `CompositeSandboxRunner` fallback now; a `None`
+        here just means no shared server-side sandbox, not "no engineer-agent tools" -- a
+        connected desktop app still works."""
         if not self.settings.sandbox.enabled:
             return None
         from .adapters.docker_sandbox import DockerSandboxRunner, docker_available
@@ -920,7 +943,8 @@ class Container:
         if not docker_available():
             logger.warning(
                 "sandbox.enabled is set but no Docker daemon is reachable; "
-                "engineer-agent command/file tools will not be registered"
+                "the server-side sandbox fallback will not be available (a connected desktop "
+                "app is unaffected)"
             )
             return None
         return DockerSandboxRunner(

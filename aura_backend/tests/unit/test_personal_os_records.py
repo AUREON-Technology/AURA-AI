@@ -170,9 +170,12 @@ class TestKernelWiring:
         registered = {s.name for s in container.tools.available()}
         # fetch_url is deliberately named in research_agent's grant even when not registered --
         # it needs AURA_HTTP_ALLOWED_HOSTS, which this default container leaves unset. The
-        # engineer agent's sandbox/git and GitHub tools are the same story: they need
-        # AURA_SANDBOX_ENABLED (plus a reachable Docker daemon) and AURA_GITHUB_ENABLED (plus a
-        # token) respectively, neither of which this default container configures.
+        # engineer agent's sandbox/git tools are absent from a capability-less `available()` for
+        # a different reason: `required_capability="engineer_agent"` gates them regardless of
+        # registration (`ToolRegistry.available`) -- asserted for real below, since registration
+        # itself no longer depends on Docker/`sandbox.enabled` at all (see that assertion). The
+        # GitHub tools are the original story: they need AURA_GITHUB_ENABLED plus a token,
+        # neither of which this default container configures, so they are genuinely unregistered.
         conditionally_registered = {
             "fetch_url",
             "write_file", "edit_file", "run_command", "clone_repository",
@@ -181,6 +184,20 @@ class TestKernelWiring:
             "github_get_pull_request", "github_create_branch", "github_commit_files",
             "github_create_draft_pull_request",
         }
+        # The sandbox/git tools (minus `clone_repository`, which additionally needs a GitHub
+        # resolver this default container does not configure) are unconditionally *registered*
+        # now: `sandbox_runner` (container.py::_build_sandbox_runner) is always a
+        # `CompositeSandboxRunner`, never `None`, because a user's paired desktop app can serve
+        # them with no server-side Docker sandbox configured at all. `create_task` is what fails
+        # at call time if neither a desktop session nor `sandbox.enabled` is actually usable.
+        engineer_sandbox_tools = {
+            "write_file", "edit_file", "run_command",
+            "git_diff", "git_commit", "git_checkout_branch",
+        }
+        registered_for_engineer = {
+            s.name for s in container.tools.available(capabilities=("engineer_agent",))
+        }
+        assert engineer_sandbox_tools <= registered_for_engineer
         for spec in container.agents:
             if spec.allowed_tools is None:
                 continue
