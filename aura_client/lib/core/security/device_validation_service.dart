@@ -172,14 +172,22 @@ class DeviceValidationService {
       case TargetPlatform.iOS:
         return 'ios';
       case TargetPlatform.windows:
-        return 'windows';
       case TargetPlatform.macOS:
-        return 'macos';
       case TargetPlatform.linux:
-        return 'linux';
+        // ADR-011: backend attestation recognises the single platform label `desktop`
+        // (pairing token), not per-OS names.
+        return 'desktop';
       default:
         return 'unknown';
     }
+  }
+
+  /// True on Windows / macOS / Linux (not web, not mobile).
+  static bool get isDesktopPlatform {
+    if (kIsWeb) return false;
+    return defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.linux;
   }
 }
 

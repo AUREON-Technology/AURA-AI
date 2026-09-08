@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:local_auth/local_auth.dart';
@@ -32,6 +32,19 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   }
 
   void _checkBiometricStatus() async {
+    // local_auth is unreliable / unavailable on many Linux/Windows builds; skip rather
+    // than surfacing a dead Unlock button (Unit 7 platform guard).
+    if (!kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.linux ||
+            defaultTargetPlatform == TargetPlatform.windows)) {
+      final hasCache = await ref.read(authProvider.notifier).hasCachedCredentials();
+      if (!mounted) return;
+      setState(() {
+        _canCheckBiometrics = false;
+        _hasCachedCredentials = hasCache;
+      });
+      return;
+    }
     try {
       final canCheck = await _localAuth.canCheckBiometrics;
       final hasCache = await ref.read(authProvider.notifier).hasCachedCredentials();

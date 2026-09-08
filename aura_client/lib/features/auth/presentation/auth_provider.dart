@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:aura_client/core/auth/desktop_loopback_oauth.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/security/aura_secure_storage.dart';
 
@@ -131,6 +132,11 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
   Future<void> signInWithGoogle() async {
     state = const AsyncValue.loading();
     try {
+      if (DesktopLoopbackOAuth.isNeeded) {
+        await _signInWithDesktopLoopback();
+        return;
+      }
+
       final googleUser = await _googleSignIn.authenticate();
       _currentAccount = googleUser;
       final idToken = googleUser.authentication.idToken;
@@ -157,6 +163,26 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     } catch (err, stack) {
       state = AsyncValue.error(err, stack);
     }
+  }
+
+  Future<void> _signInWithDesktopLoopback() async {
+    final result = await DesktopLoopbackOAuth().signIn();
+    final profile = UserProfile(
+      id: result.profile['id'] ?? '',
+      email: result.profile['email'] ?? '',
+      displayName: result.profile['name'] ?? 'Desktop User',
+      photoUrl: result.profile['picture']?.isEmpty == true
+          ? null
+          : result.profile['picture'],
+    );
+    await _storage.write(key: 'user_id', value: profile.id);
+    await _storage.write(key: 'user_email', value: profile.email);
+    await _storage.write(key: 'user_name', value: profile.displayName);
+    if (profile.photoUrl != null) {
+      await _storage.write(key: 'user_photo', value: profile.photoUrl);
+    }
+    await _storage.write(key: 'auth_token', value: result.idToken);
+    state = AsyncValue.data(profile);
   }
 
   // Developer bypass bypass for desktop testing without full OAuth redirect config

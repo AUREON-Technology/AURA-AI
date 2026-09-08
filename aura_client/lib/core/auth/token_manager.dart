@@ -164,11 +164,18 @@ class TokenManager {
       }
 
       final headers = {"Authorization": "Bearer $idToken"};
-      headers.addAll(
-        await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
-      );
+      // Desktop uses the non-attested /desktop/token path (ADR-011). Mobile keeps
+      // Play Integrity / App Attest via /token.
+      final exchangePath = DeviceValidationService.isDesktopPlatform
+          ? "$_authUrl/desktop/token"
+          : "$_authUrl/token";
+      if (!DeviceValidationService.isDesktopPlatform) {
+        headers.addAll(
+          await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
+        );
+      }
 
-      final response = await _post("$_authUrl/token", headers: headers);
+      final response = await _post(exchangePath, headers: headers);
       if (response.statusCode != 200) {
         debugPrint(
           "[TokenManager] token exchange failed: ${response.statusCode} ${response.body}",
