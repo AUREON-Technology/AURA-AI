@@ -134,12 +134,25 @@ class SandboxResult:
 
 @runtime_checkable
 class SandboxRunner(Protocol):
-    """An isolated, ephemeral execution environment, one instance per agent task.
+    """An isolated execution environment for agent work.
 
-    A handle's lifetime is caller-managed: :meth:`create_task` before the first use,
-    :meth:`destroy` when the task ends (success, failure, or turn abandonment) -- there is no
-    implicit cleanup, because a runner that reaps sandboxes on a timer cannot tell a slow legitimate
-    task from an abandoned one.
+    Two lifetimes, deliberately kept apart rather than unified:
+
+    *Ephemeral* (:meth:`create_task` / :meth:`destroy`) is the original per-task shape. The
+    handle's lifetime is caller-managed and there is no implicit cleanup, because a runner that
+    reaps on a timer cannot tell a slow legitimate task from an abandoned one.
+
+    *Durable* (:meth:`open_workspace` / :meth:`pause_workspace` / :meth:`destroy_workspace`) is
+    keyed by a caller-supplied, stable ``key`` instead of a fresh id, so the same key resumes the
+    same filesystem across turns, restarts of this process, and days. What makes that affordable
+    is :meth:`pause_workspace`: the content of a workspace is its checkout on disk, not a running
+    process, so between turns the execution environment is stopped and costs no memory at all.
+    Peak memory is therefore bounded by how many are *running*, never by how many exist.
+
+    The reason a timer-based reaper is acceptable here when it was not for tasks is that
+    "abandoned" is now observable: a durable workspace records when it was last used, so a reaper
+    can distinguish idle-for-days from busy-right-now. Whoever holds that record (see
+    :class:`WorkspaceStore`) decides; this port only carries it out.
     """
 
     async def create_task(self) -> SandboxHandle:
@@ -157,6 +170,40 @@ class SandboxRunner(Protocol):
         ...
 
     async def destroy(self, handle: SandboxHandle) -> None:
+        ...
+
+    async def open_workspace(self, key: str) -> SandboxHandle:
+        """Resume, or first create, the durable workspace named ``key``.
+
+        Idempotent, and must remain so across a restart of this process: a runner that has
+        forgotten its in-memory bookkeeping still has to find the existing environment rather
+        than silently start a second one over the same files.
+        """
+        ...
+
+    async def pause_workspace(self, handle: SandboxHandle) -> None:
+        """Stop the execution environment, keeping the workspace's files.
+
+        The memory story rests entirely on this being a real stop rather than an idle process:
+        a paused workspace must hold no RAM.
+        """
+        ...
+
+    async def destroy_workspace(self, handle: SandboxHandle) -> None:
+        """Remove the environment *and* its files. What the reaper calls at expiry."""
+        ...
+
+    async def workspace_keys(self) -> Sequence[str]:
+        """Every durable workspace key this runner can currently see.
+
+        Read from the substrate rather than from memory, so it stays true after a restart. This
+        is the half of reconciliation that finds environments no record knows about; the other
+        half (records whose environment is gone) comes from the store.
+        """
+        ...
+
+    async def workspace_disk_usage_mb(self, handle: SandboxHandle) -> float:
+        """Size of the workspace's files, in MiB. Bounds a checkout that grows without limit."""
         ...
 
 

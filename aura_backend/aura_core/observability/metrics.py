@@ -316,6 +316,14 @@ class Metrics:
             ("bypass",),
             multiprocess_mode="livemax",
         )
+        self.agent_workspaces = self._gauge(
+            "agent_workspaces",
+            "Durable engineer-agent workspaces by status. Only `hot` costs memory (a warm "
+            "workspace is a stopped container), so hot * the per-workspace memory limit is this "
+            "feature's whole RAM footprint -- alert on it approaching the host's headroom.",
+            ("status",),
+            multiprocess_mode="livemax",
+        )
 
         # -- tools ---------------------------------------------------------------------
         self.tool_calls_total = self._counter(
@@ -476,6 +484,16 @@ class Metrics:
         """
         for name, active in bypasses.items():
             self.insecure_mode.labels(bypass=name).set(1 if active else 0)
+
+    def set_agent_workspaces(self, counts: Mapping[str, int]) -> None:
+        """Publish the workspace census by status.
+
+        Every known status is written on every call, including the zeroes: a gauge that is only
+        set when non-zero keeps reporting the last count it saw after the workspaces are gone,
+        which would make the memory headroom alert fire against workspaces that no longer exist.
+        """
+        for status in ("hot", "warm"):
+            self.agent_workspaces.labels(status=status).set(counts.get(status, 0))
 
     def render(self) -> bytes:
         """Prometheus exposition text for the ``/metrics`` endpoint."""

@@ -327,6 +327,9 @@ class Container:
         )
 
         self.sandbox_runner = self._build_sandbox_runner()
+        # After the runner, never before: the manager needs it, and a None runner is the signal
+        # that this deployment has no workspaces at all.
+        self.workspace_manager = self._build_workspace_manager()
         self.github_client = self._build_github_client()
         self._github_clients_by_user: dict[str, Any] = {}
         self.github_client_resolver = self._build_github_client_resolver()
@@ -659,6 +662,30 @@ class Container:
         if backend != "memory":
             raise ConfigurationError(f"unknown memory backend {backend!r}")
         return InMemoryEngineerRunStore()
+
+    def _build_workspace_manager(self) -> Any:
+        """`None` whenever there is no sandbox runner -- without one there is nothing to open,
+        and a manager that could only ever refuse would be a worse error message than the tools
+        simply not being registered."""
+        if self.sandbox_runner is None:
+            return None
+        from .tools.workspaces import WorkspaceManager
+
+        sandbox = self.settings.sandbox
+        return WorkspaceManager(
+            runner=self.sandbox_runner,
+            store=self.workspaces,
+            host_root=sandbox.host_root,
+            memory_limit=sandbox.memory_limit,
+            max_workspaces=sandbox.max_workspaces,
+            max_running=sandbox.max_running,
+            ttl_hours=sandbox.workspace_ttl_hours,
+            hot_idle_s=sandbox.hot_idle_s,
+            disk_quota_mb=sandbox.workspace_disk_quota_mb,
+            min_free_memory_mb=sandbox.min_free_memory_mb,
+            clock=self.clock,
+            metrics=self.metrics,
+        )
 
     def _build_workspace_store(self) -> Any:
         """Same backend switch as `_build_engineer_run_store`, deliberately: a deployment that
@@ -1082,6 +1109,16 @@ class Container:
         await self.index_manager.ensure_ready()
         if self.settings.knowledge.hybrid_enabled:
             await self.knowledge.rebuild_lexical_index()
+        if self.workspace_manager is not None:
+            # Durable workspaces outlive this process, so its in-memory view of them starts
+            # empty and wrong. Reconciling here -- before the first request -- is what stops a
+            # restart from leaking containers nobody can reach or resuming a workspace whose
+            # container is gone. It never raises: a daemon that is not answering yet must not
+            # keep the gateway from serving traffic that has nothing to do with sandboxes.
+            try:
+                await self.workspace_manager.reconcile()
+            except Exception:
+                logger.exception("workspace reconciliation failed; continuing startup")
         if self.mcp_client is not None:
             # Tool discovery is the one place registration happens after `_build_tools()` --
             # `list_tools()` is async I/O (may launch subprocesses / open connections), which
