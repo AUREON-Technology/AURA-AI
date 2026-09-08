@@ -1,25 +1,26 @@
-/// Daemon configuration: backend URL and the bearer token used to authenticate the WebSocket
-/// connection.
+/// Daemon configuration: backend URL, auth token, and YOLO consent flag.
 ///
-/// This is deliberately the simple half of ADR-011's "Desktop identity is a pairing token, not
-/// attestation" decision. The one-time-code pairing exchange described there (the app shows a
-/// code, the daemon trades it for a device-scoped token) is not implemented anywhere yet -- the
-/// backend side (`services/security.py`, `api/v2/auth.py`) still rejects every non-mobile
-/// platform at attestation (Unit J4 in `docs/AURA_UPGRADE_ROADMAP.md`). Until that lands, this
-/// daemon expects a bearer token supplied out-of-band (`aura_hostd auth set-token`) -- practically,
-/// today, a token minted through whatever admin/dev path already exists for a desktop-shaped
-/// principal. Swapping this for real pairing later only touches how `authToken` gets set, not
-/// anything downstream of it.
+/// Pairing (ADR-011): `aura_hostd auth pair <code>` exchanges a one-time code from the
+/// desktop app for a session JWT + device-scoped token via
+/// `POST /api/v3/auth/desktop/pairing/exchange`. `auth set-token` remains for operators who
+/// already hold a bearer token.
 library;
 
 import 'dart:convert';
 import 'dart:io';
 
 class DaemonConfig {
-  DaemonConfig({required this.backendUrl, required this.authToken});
+  DaemonConfig({
+    required this.backendUrl,
+    required this.authToken,
+    this.deviceToken,
+    this.yolo = false,
+  });
 
   final String backendUrl;
   final String? authToken;
+  final String? deviceToken;
+  final bool yolo;
 
   /// The `wss://.../api/v3/host/agent` URL derived from [backendUrl], which is stored as the
   /// plain `https://host[:port]` base the same way every other AURA client config does.
@@ -29,11 +30,31 @@ class DaemonConfig {
     return uri.replace(scheme: scheme, path: '/api/v3/host/agent').toString();
   }
 
-  Map<String, Object?> toJson() => {'backend_url': backendUrl, 'auth_token': authToken};
+  DaemonConfig copyWith({
+    String? backendUrl,
+    String? authToken,
+    String? deviceToken,
+    bool? yolo,
+  }) =>
+      DaemonConfig(
+        backendUrl: backendUrl ?? this.backendUrl,
+        authToken: authToken ?? this.authToken,
+        deviceToken: deviceToken ?? this.deviceToken,
+        yolo: yolo ?? this.yolo,
+      );
+
+  Map<String, Object?> toJson() => {
+        'backend_url': backendUrl,
+        'auth_token': authToken,
+        'device_token': deviceToken,
+        'yolo': yolo,
+      };
 
   static DaemonConfig fromJson(Map<String, dynamic> json) => DaemonConfig(
         backendUrl: json['backend_url'] as String? ?? 'https://localhost:8000',
         authToken: json['auth_token'] as String?,
+        deviceToken: json['device_token'] as String?,
+        yolo: json['yolo'] as bool? ?? false,
       );
 }
 

@@ -85,6 +85,13 @@ class SettingsPage extends ConsumerWidget {
                 ),
                 const _RowDivider(),
                 AuraListTile(
+                  icon: Icons.desktop_windows_outlined,
+                  title: 'Desktop Engineer',
+                  subtitle: 'Pair aura_hostd and grant local folders',
+                  onTap: () => context.go('/desktop-engineer'),
+                ),
+                const _RowDivider(),
+                AuraListTile(
                   icon: Icons.hub_outlined,
                   title: 'GitHub Connection',
                   subtitle: 'Connect your own GitHub account',

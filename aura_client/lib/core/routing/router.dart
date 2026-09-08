@@ -14,6 +14,7 @@ import '../../features/chat/presentation/widgets/capture_sheet.dart';
 import '../../features/command_palette/command_palette.dart';
 import '../../features/engineering/presentation/engineer_history_page.dart';
 import '../../features/engineering/presentation/github_connection_page.dart';
+import '../../features/engineering/presentation/host_agent_page.dart';
 import '../../features/feedback/presentation/feedback_page.dart';
 import '../../features/home/presentation/home_page.dart';
 import '../../features/knowledge/presentation/knowledge_center_page.dart';
@@ -331,6 +332,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/engineer-history',
             builder: (context, state) => const EngineerHistoryPage(),
+          ),
+          GoRoute(
+            path: '/desktop-engineer',
+            builder: (context, state) => const HostAgentPage(),
           ),
           GoRoute(
             path: '/github-connect',

@@ -41,6 +41,12 @@ class HostAgentClient {
   WebSocket? _socket;
   bool _stopRequested = false;
 
+  /// True while a live WebSocket is open to the backend.
+  bool get isConnected {
+    final socket = _socket;
+    return socket != null && socket.readyState == WebSocket.open;
+  }
+
   static void _defaultLogger(String message) => stdout.writeln('[aura_hostd] $message');
 
   /// Runs the connect/serve/reconnect loop until [stop] is called. Each connection attempt that
