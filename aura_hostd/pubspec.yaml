@@ -1,0 +1,23 @@
+name: aura_hostd
+description: >
+  Local daemon that lets AURA's Engineer agent act on this machine's real files and terminal.
+  Pairs with the backend's /api/v3/host/agent WebSocket and enforces workspace containment
+  locally -- see docs/architecture/011-desktop-engineer-agent.md.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.4
+
+# This daemon runs commands and touches the real filesystem on the user's machine -- every
+# dependency added here is code that runs with that same access, so the bar for pulling one in is
+# high. `dart:io`'s `WebSocket` covers the transport without needing `web_socket_channel`; the one
+# runtime dependency is `path`, the Dart team's own zero-dependency path-manipulation package
+# (pure string logic, no I/O, no transitive deps), pinned to the same major version already
+# vetted in `aura_client/pubspec.yaml`.
+dependencies:
+  path: ^1.9.1
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^5.0.0
