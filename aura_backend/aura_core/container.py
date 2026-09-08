@@ -973,6 +973,7 @@ class Container:
             memory_limit=self.settings.sandbox.memory_limit,
             cpu_limit=self.settings.sandbox.cpu_limit,
             host_root=self.settings.sandbox.host_root,
+            proxy_url=self.settings.sandbox.proxy_url,
         )
 
     def _build_github_client(self) -> Any:

@@ -89,3 +89,30 @@ async def test_paths_are_still_contained_under_host_root(tmp_path: Path) -> None
             continue
         resolved = runner._resolve_within(handle, escape)
         assert runner._scratch(handle).resolve() in resolved.parents
+
+
+async def test_workspace_directory_is_writable_by_the_container_user(tmp_path: Path) -> None:
+    """The container runs as an unprivileged uid, but these per-workspace directories are created
+    here at runtime and would otherwise inherit this process's ownership -- root, in the deployed
+    gateway. `bootstrap-host.sh` chowns only the root, so without this the agent's first write
+    fails with permission denied and nothing before that point complains.
+
+    Asserted as "writable by someone other than the owner" rather than as a specific uid, because
+    the chown only succeeds when the test itself runs as root; the fallback path has to leave the
+    directory usable either way.
+    """
+    import os
+    import stat
+
+    runner = _runner(host_root=str(tmp_path))
+    handle = await runner.create_task()
+    scratch = runner._scratch(handle)
+
+    info = scratch.stat()
+    owned_by_sandbox_uid = info.st_uid == 10001
+    world_writable = bool(info.st_mode & stat.S_IWOTH)
+    assert owned_by_sandbox_uid or world_writable, (
+        f"workspace {scratch} is owned by uid {info.st_uid} with mode "
+        f"{stat.filemode(info.st_mode)}; the sandbox user could not write to it"
+    )
+    assert os.access(scratch, os.W_OK)

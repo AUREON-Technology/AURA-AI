@@ -16,16 +16,18 @@ nothing errors. ``host_root`` closes that gap by naming a directory bind-mounted
 process at the same absolute path it has on the host, so one path means one directory. It is
 optional precisely because the local and test cases have no such split.
 
-Network isolation is the operator's responsibility at the compose level (see
-``deploy/docker-compose.*.yml``'s ``sandbox_egress`` network): this adapter only attaches
-containers to whatever network name it is given, or disables networking entirely when none is
-configured. It does not itself enforce an egress allowlist -- that is a property of the Docker
-network the operator provisions, not something a container-launch call can add after the fact.
+Network isolation is split between this adapter and the compose stack, and neither half works
+alone. This adapter attaches containers to the network name it is given (or disables networking
+outright when given none) and sets ``HTTP(S)_PROXY`` when a proxy is configured. The compose file
+makes ``sandbox_egress`` ``internal: true`` and puts an allowlisting ``sandbox-proxy`` sidecar on
+it, so those variables are not a suggestion a determined command could ignore: there is no other
+route out, and a client that skips the proxy simply fails to connect.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import tempfile
 import uuid
@@ -49,6 +51,25 @@ _WORKSPACE_LABEL = "aura.workspace"
 #: Seconds to let a workspace's processes finish on pause before the daemon kills them. Short --
 #: a paused workspace's value is its files, and nothing in flight is expected to survive.
 _STOP_TIMEOUT_S = 10
+
+#: Must match the uid/gid created in deploy/sandbox/Dockerfile, because the host workspace
+#: directory is chowned to it. Mismatch shows up as permission errors on the first write, not at
+#: container start, so the two are deliberately stated in both places rather than inferred.
+_SANDBOX_UID_N = 10001
+_SANDBOX_GID_N = 10001
+_SANDBOX_UID = f"{_SANDBOX_UID_N}:{_SANDBOX_GID_N}"
+
+#: Enough for a real build (a test runner forks freely); far short of exhausting the host.
+_PIDS_LIMIT = 512
+_NOFILE_LIMIT = 4096
+_NPROC_LIMIT = 512
+
+
+def _ulimit(name: str, value: int) -> Any:
+    """Build a docker-py Ulimit lazily, so importing this module still needs no `docker`."""
+    from docker.types import Ulimit
+
+    return Ulimit(name=name, soft=value, hard=value)
 
 
 class SandboxError(RuntimeError):
@@ -99,12 +120,14 @@ class DockerSandboxRunner:
         memory_limit: str = "512m",
         cpu_limit: float = 1.0,
         host_root: str = "",
+        proxy_url: str = "",
     ) -> None:
         self._image = image
         self._network = network
         self._memory_limit = memory_limit
         self._cpu_limit = cpu_limit
         self._host_root = Path(host_root) if host_root else None
+        self._proxy_url = proxy_url
         self._client: Any = None
         self._scratch_dirs: dict[str, Path] = {}
         self._containers: dict[str, Any] = {}
@@ -125,10 +148,38 @@ class DockerSandboxRunner:
         process and the daemon share a filesystem) a plain temp directory is already such a path.
         """
         if self._host_root is None:
-            return Path(tempfile.mkdtemp(prefix=f"aura-sandbox-{task_id}-"))
-        scratch = self._host_root / task_id
-        scratch.mkdir(parents=True, exist_ok=True)
+            scratch = Path(tempfile.mkdtemp(prefix=f"aura-sandbox-{task_id}-"))
+        else:
+            scratch = self._host_root / task_id
+            scratch.mkdir(parents=True, exist_ok=True)
+        self._grant_to_sandbox_user(scratch)
         return scratch
+
+    @staticmethod
+    def _grant_to_sandbox_user(scratch: Path) -> None:
+        """Make the workspace writable by the unprivileged uid the container runs as.
+
+        ``bootstrap-host.sh`` chowns the *root*, but these per-workspace directories are created
+        here at runtime and inherit this process's ownership -- root, in the deployed gateway. A
+        root-owned bind mount under a container running as uid 10001 is readable and not
+        writable, which surfaces as permission denied on the first file the agent creates rather
+        than as anything at container start.
+
+        Falls back to a permissive mode when this process cannot chown (not root, or a
+        filesystem that refuses): the directory is inside the workspace root on a single-tenant
+        host, and an unwritable workspace is a broken feature.
+        """
+        try:
+            os.chown(scratch, _SANDBOX_UID_N, _SANDBOX_GID_N)
+        except (OSError, AttributeError):
+            try:
+                scratch.chmod(0o777)
+            except OSError:
+                logger.warning(
+                    "could not make sandbox workspace writable by the container user; "
+                    "commands in it will fail to write",
+                    extra={"path": str(scratch)},
+                )
 
     async def create_task(self) -> SandboxHandle:
         task_id = uuid.uuid4().hex
@@ -155,14 +206,51 @@ class DockerSandboxRunner:
             working_dir=_WORKDIR,
             volumes={str(scratch): {"bind": _WORKDIR, "mode": "rw"}},
             mem_limit=self._memory_limit,
+            # Without this, `mem_limit` bounds RAM but not swap, and a container over its limit
+            # swaps instead of failing -- which on this host means competing for disk I/O with
+            # Postgres rather than hitting a ceiling.
+            memswap_limit=self._memory_limit,
             nano_cpus=int(self._cpu_limit * 1_000_000_000),
             detach=True,
+            # A workspace runs commands a model chose, against a repository an attacker may
+            # control, and lives for days rather than one turn. Everything below is the same
+            # confinement a per-turn sandbox gets or stronger; none of it costs anything a
+            # legitimate build needs.
             security_opt=["no-new-privileges"],
+            cap_drop=["ALL"],
+            # Root in the container is root on the bind-mounted host directory. The image
+            # creates this uid and bootstrap-host.sh chowns the workspace root to match.
+            user=_SANDBOX_UID,
+            # Only /workspace and the tmpfs mounts below are writable, which also means the
+            # reaper has exactly one directory to remove to reclaim a workspace.
+            read_only=True,
+            tmpfs={
+                "/tmp": "rw,nosuid,nodev,noexec,size=256m",
+                # git refuses to run with nowhere to write its config; pip and npm want a cache.
+                "/home/aura": "rw,nosuid,nodev,size=64m",
+            },
+            # A fork bomb should hit a limit rather than the host's process table.
+            pids_limit=_PIDS_LIMIT,
+            ulimits=[
+                _ulimit("nofile", _NOFILE_LIMIT),
+                _ulimit("nproc", _NPROC_LIMIT),
+            ],
         )
         if self._network:
             run_kwargs["network"] = self._network
         else:
             run_kwargs["network_disabled"] = True
+        if self._proxy_url:
+            # Egress goes through the allowlisting proxy or not at all -- see the
+            # `sandbox-proxy` service and the internal `sandbox_egress` network.
+            run_kwargs["environment"] = {
+                "HTTP_PROXY": self._proxy_url,
+                "HTTPS_PROXY": self._proxy_url,
+                "http_proxy": self._proxy_url,
+                "https_proxy": self._proxy_url,
+                "NO_PROXY": "localhost,127.0.0.1",
+                "no_proxy": "localhost,127.0.0.1",
+            }
         return run_kwargs
 
     async def _ensure_container(self, handle: SandboxHandle) -> Any:

@@ -976,7 +976,7 @@ class SandboxSettings:
     """
 
     enabled: bool = False
-    image: str = "python:3.12-slim"
+    image: str = "aura-sandbox:latest"
     network: str = "sandbox_egress"
     memory_limit: str = "512m"
     cpu_limit: float = 1.0
@@ -990,6 +990,7 @@ class SandboxSettings:
     workspace_disk_quota_mb: int = 2048
     min_free_memory_mb: int = 1024
     in_container_git: bool = False
+    proxy_url: str = ""
 
     def __post_init__(self) -> None:
         # A ceiling on running workspaces above the ceiling on workspaces that may exist is not a
@@ -1005,7 +1006,7 @@ class SandboxSettings:
     def from_env(cls) -> "SandboxSettings":
         return cls(
             enabled=_bool("SANDBOX_ENABLED", False),
-            image=_env("SANDBOX_IMAGE", "python:3.12-slim") or "python:3.12-slim",
+            image=_env("SANDBOX_IMAGE", "aura-sandbox:latest") or "aura-sandbox:latest",
             network=_env("SANDBOX_NETWORK", "sandbox_egress") or "sandbox_egress",
             memory_limit=_env("SANDBOX_MEMORY_LIMIT", "512m") or "512m",
             cpu_limit=_float("SANDBOX_CPU_LIMIT", 1.0, minimum=0.1, maximum=8.0),
@@ -1023,6 +1024,7 @@ class SandboxSettings:
             ),
             min_free_memory_mb=_int("SANDBOX_MIN_FREE_MEMORY_MB", 1024, minimum=0, maximum=1_048_576),
             in_container_git=_bool("SANDBOX_IN_CONTAINER_GIT", False),
+            proxy_url=_env("SANDBOX_PROXY_URL", "") or "",
         )
 
 
