@@ -232,9 +232,12 @@ artefacts fetched from a third-party registry (SEC-01).
 | Qdrant | 1 GB | 2 GB | Roughly 4 KB per 384-dim chunk plus index |
 | Redis | 256 MB | 768 MB | `allkeys-lru`, bounded |
 | Observability | ~1 GB | ~2 GB | Prometheus 30 d + Loki |
+| Engineer workspaces | not recommended | 1 GB | Off by default. Only *running* workspaces cost memory (`AURA_SANDBOX_MAX_RUNNING` x `AURA_SANDBOX_MEMORY_LIMIT`); stopped ones cost disk alone. On 16 GB set `MAX_RUNNING=1` / `MAX_WORKSPACES=2`, since this competes with the model for the same pages |
 
 Disk: model weights (5-15 GB) dominate, then Prometheus (~5 GB at 30 days), Postgres, and
-Qdrant segments. 100 GB is comfortable; 50 GB works with one model and 14-day retention.
+Qdrant segments. 100 GB is comfortable; 50 GB works with one model and 14-day retention. Engineer
+workspaces add `AURA_SANDBOX_MAX_WORKSPACES` x `AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB` on top (8 GB
+at the defaults), reclaimed by the reaper 72 hours after a workspace was last used.
 
 **GPU.** Uncomment the `deploy.resources.reservations.devices` block on the `ollama` service and
 install the NVIDIA container toolkit. Expect roughly 10-20× the tokens/second of CPU inference

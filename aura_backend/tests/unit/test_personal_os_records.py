@@ -179,7 +179,10 @@ class TestKernelWiring:
         conditionally_registered = {
             "fetch_url",
             "write_file", "edit_file", "run_command", "clone_repository",
-            "git_diff", "git_commit", "git_checkout_branch",
+            "git_diff", "git_commit", "git_checkout_branch", "git_status", "git_push",
+            # Persistent workspaces (ADR-013) additionally need a workspace manager, which this
+            # default container has no sandbox runner to build one from.
+            "open_workspace", "list_workspaces", "destroy_workspace",
             "github_list_repository_files", "github_get_file_contents", "github_get_issue",
             "github_get_pull_request", "github_create_branch", "github_commit_files",
             "github_create_draft_pull_request",

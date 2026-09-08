@@ -574,16 +574,25 @@ class TestExecution:
         manual end-to-end verification of the `engineer` persona, whose `max_plan_iterations > 1`
         routes through that loop and was silently discarding the confirmation request.
         """
-        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+        from aura_core.adapters.coding_fakes import InMemoryGitHubClient, InMemorySandboxRunner
         from aura_core.tools.coding import build_sandbox_tools
         from aura_core.tools.policy import ToolPolicy
         from aura_core.tools.registry import ToolRegistry
 
+        async def _resolver(user_id):
+            return InMemoryGitHubClient()
+
+        # `clone_repository` rather than `run_command`: the latter is workspace_local as of
+        # ADR-014 and no longer confirms, but what this test is about is the BLOCKED-vs-FAILED
+        # handling of *any* confirm-gated call, which is unchanged and still load-bearing for
+        # the engineer persona's agentic loop.
         registry = ToolRegistry(policy=ToolPolicy())
-        registry.register_all(build_sandbox_tools(InMemorySandboxRunner()))
+        registry.register_all(
+            build_sandbox_tools(InMemorySandboxRunner(), code_host_resolver=_resolver)
+        )
         plan = _plan(
-            PlanStep(id=StepId("s1"), kind=StepKind.TOOL, tool="run_command",
-                     description="run", arguments={"command": "echo hi"}),
+            PlanStep(id=StepId("s1"), kind=StepKind.TOOL, tool="clone_repository",
+                     description="clone", arguments={"repo": "acme/widgets"}),
         )
 
         outcome = await ExecutionEngine(tools=registry).execute(
@@ -595,7 +604,7 @@ class TestExecution:
         assert not outcome.plan.failed_steps
         assert len(outcome.tool_reports) == 1
         assert outcome.tool_reports[0].needs_confirmation
-        assert outcome.tool_reports[0].arguments["command"] == "echo hi"
+        assert outcome.tool_reports[0].arguments["repo"] == "acme/widgets"
 
     async def test_a_step_kind_with_no_handler_is_skipped_with_an_explanation(
         self, tools, tool_context

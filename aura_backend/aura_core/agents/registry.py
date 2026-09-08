@@ -176,7 +176,11 @@ def build_default_agent_registry() -> AgentRegistry:
                 allowed_tools=_READ_TOOLS | {
                     "calculator",
                     "write_file", "edit_file", "run_command", "clone_repository",
-                    "git_diff", "git_commit", "git_checkout_branch",
+                    "git_diff", "git_commit", "git_checkout_branch", "git_status", "git_push",
+                    # Persistent workspaces (ADR-013). Only registered when a deployment wires a
+                    # workspace manager, so naming them here is a grant, not a guarantee they
+                    # exist -- the same rule _READ_TOOLS' own comment states.
+                    "open_workspace", "list_workspaces", "destroy_workspace",
                     "github_list_repository_files", "github_get_file_contents",
                     "github_get_issue", "github_get_pull_request",
                     "github_create_branch", "github_commit_files",

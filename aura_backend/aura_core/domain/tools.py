@@ -117,6 +117,17 @@ class ToolSpec:
     max_result_chars: int = 16_000
     version: str = "1.0.0"
     tags: tuple[str, ...] = ()
+    workspace_local: bool = False
+    """This tool's effects are confined to an ephemeral agent workspace -- a scratch container
+    and checkout that is destroyed when it expires -- and reach no user data, no external
+    service, and nothing that outlives it.
+
+    Set it only where that is literally true. It exempts a tool from the confirmation rules
+    below, and the exemption is sound *because* of the confinement: confirming a write to a
+    directory that will be deleted buys nothing, while asking dozens of times for it trains
+    people to approve without reading, which is what would then let a real one through. See
+    ADR-014, and `tests/architecture/test_workspace_local_tools.py`, which pins the exact set.
+    """
 
     _NAME_OK = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_")
 
@@ -135,7 +146,17 @@ class ToolSpec:
             raise ValueError(f"tool {self.name!r} has duplicate parameter names")
         # A tool that changes the world and cannot be confirmed is a footgun; make the
         # combination explicit at declaration time rather than discovering it in production.
-        if self.side_effecting and self.sensitivity >= ToolSensitivity.CONFIDENTIAL:
+        #
+        # `workspace_local` is the exception, and it is narrow: such a tool does not change the
+        # world, it changes a scratch directory that gets deleted. `run_command` is the case that
+        # forced this -- SYSTEM + side_effecting means every single command in a multi-step
+        # engineering task would otherwise be confirmation-gated, which is not a safety property
+        # so much as a way to make the confirmation prompt meaningless.
+        if (
+            self.side_effecting
+            and self.sensitivity >= ToolSensitivity.CONFIDENTIAL
+            and not self.workspace_local
+        ):
             object.__setattr__(self, "requires_confirmation", True)
 
     @property

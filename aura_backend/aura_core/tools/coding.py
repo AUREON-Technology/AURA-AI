@@ -36,6 +36,8 @@ import re
 import time
 from typing import Any, Mapping, Sequence
 
+from pathlib import Path
+
 from ..domain.errors import ToolExecutionError
 from ..domain.tools import ParameterSpec, ToolCategory, ToolSensitivity, ToolSpec
 from ..observability.logging import get_logger
@@ -93,6 +95,11 @@ _BINARY_SUFFIXES = frozenset({
     ".so", ".dylib", ".dll", ".exe", ".bin", ".o", ".a", ".class", ".pyc", ".wasm",
     ".db", ".sqlite", ".sqlite3", ".keystore", ".jks", ".p12", ".pack", ".idx",
 })
+
+
+def _clone_dir(slug: str, destination: str | None) -> str:
+    """Directory a clone lands in: the caller's choice, else the repository's own name."""
+    return destination or slug.split("/")[-1]
 
 
 def _is_binary_path(path: str) -> bool:
@@ -160,7 +167,13 @@ _REPO_REFERENCE = re.compile(
 #: existing, just for a different verb tense.
 _REPO_ACTION = re.compile(
     r"\b(?:clon|fork|check(?:ing)? ?out|pull|inspect|explor|analy[sz]|review|audit|"
-    r"summari[sz]|read|look(?:ing)? at|go(?:ing)? through|walk(?:ing)? through)\w*\b",
+    r"summari[sz]|read|look(?:ing)? at|go(?:ing)? through|walk(?:ing)? through|"
+    # Acting verbs, not just reading ones. A persistent workspace makes "run the tests on
+    # <repo>" or "fix the failing build in <repo>" ordinary requests, and planning is the only
+    # path that runs a tool (ADR-006) -- so a request that names a repository and asks for work
+    # has to reach the planner, or the agent answers that it cannot do the thing it can do.
+    r"run|build|test|fix|debug|install|deploy|refactor|implement|patch|migrat|upgrad|"
+    r"lint|format|compil|benchmark)\w*\b",
     re.I,
 )
 
@@ -238,6 +251,106 @@ class _SandboxSessionCache:
             return handle
 
 
+
+
+class _WorkspaceResolver:
+    """Resolves a tool call to a durable workspace, and records the activity that keeps it alive.
+
+    Replaces ``_SandboxSessionCache`` wherever a :class:`WorkspaceManager` is wired. The
+    difference that matters is lifetime: the cache handed out a container that died with the
+    turn, so "clone it and fix the failing test" had to start over every message. Here the same
+    ``(user, repo)`` resolves to the same checkout tomorrow.
+
+    Two details carry weight:
+
+    * **Every call touches.** The 72-hour TTL measures inactivity, so a workspace someone is
+      actively using must never look idle. Touching on read as well as write is deliberate --
+      reading a file is use.
+    * **The repository is remembered per turn.** ``clone_repository`` and ``open_workspace``
+      bind it; ``run_command`` afterwards needs no repository argument, which is both what a
+      model naturally emits and what keeps a follow-up command in the workspace the clone
+      landed in rather than silently opening a second one.
+
+    A turn that never names a repository gets a per-user scratch workspace, so the tools still
+    work for "write me a script and run it" -- the case that has nothing to do with a repository
+    and should not be made to invent one.
+    """
+
+    #: Repository name for the no-repository case. Not a valid ``owner/name``, so it can never
+    #: collide with a real repository a user also has open.
+    SCRATCH = "(scratch)"
+
+    def __init__(self, manager: Any, runner: Any) -> None:
+        self._manager = manager
+        self._runner = runner
+        self._bindings: dict[str, str] = {}
+        self._lock = asyncio.Lock()
+
+    def bind(self, correlation_id: str, repo: str) -> None:
+        self._bindings[correlation_id] = repo
+
+    def bound_repo(self, correlation_id: str) -> str | None:
+        return self._bindings.get(correlation_id)
+
+    async def open(self, context: ToolContext, repo: str | None = None) -> Any:
+        """The workspace for this call, running, with its activity recorded.
+
+        When the call names no repository and this turn has not bound one, fall back to the
+        user's most recently used workspace rather than to scratch. That fallback is what makes
+        the feature work across messages at all: a second message is a new correlation id with no
+        binding, so binding alone would send "now run the tests" to an empty scratch workspace
+        while the checkout sat in another one, and the agent would report that the files it just
+        created are missing. Scratch remains the answer only for a user who has no workspace --
+        the "write me a script and run it" case, which should not have to invent a repository.
+        """
+        async with self._lock:
+            target = repo or self._bindings.get(context.correlation_id)
+            if target is None:
+                target = await self._most_recent_repo(context) or self.SCRATCH
+            opened = await self._manager.open(context.user_id, target)
+            self._bindings[context.correlation_id] = target
+            await self._manager.touch(opened.record.id)
+            return opened
+
+    async def _most_recent_repo(self, context: ToolContext) -> str | None:
+        try:
+            existing = await self._manager.list_for_user(context.user_id)
+        except Exception:  # pragma: no cover - a store outage must not fail the tool call
+            return None
+        return existing[0].repo if existing else None
+
+    async def handle(self, context: ToolContext, repo: str | None = None) -> Any:
+        return (await self.open(context, repo)).handle
+
+
+class _SessionAdapter:
+    """Presents the per-turn cache and the durable resolver behind one call.
+
+    Keeps ``build_sandbox_tools`` usable without a manager -- the local/dev shape, and every test
+    that predates workspaces -- rather than forcing a second copy of every tool body.
+    """
+
+    def __init__(self, *, cache: Any = None, resolver: Any = None) -> None:
+        self._cache = cache
+        self._resolver = resolver
+
+    @property
+    def durable(self) -> bool:
+        return self._resolver is not None
+
+    async def handle(self, context: ToolContext, repo: str | None = None) -> Any:
+        if self._resolver is not None:
+            return await self._resolver.handle(context, repo)
+        return await self._cache.get(context)
+
+    async def opened(self, context: ToolContext, repo: str | None = None) -> Any:
+        if self._resolver is None:
+            return None
+        return await self._resolver.open(context, repo)
+
+    def bound_repo(self, correlation_id: str) -> str | None:
+        return self._resolver.bound_repo(correlation_id) if self._resolver else None
+
 async def _drain_streaming_run(
     runner: StreamingSandboxRunner, handle: Any, command: Sequence[str], *, timeout_s: float
 ) -> SandboxResult:
@@ -278,7 +391,15 @@ async def _drain_streaming_run(
     return SandboxResult(stdout="".join(stdout_parts), stderr=stderr, exit_code=exit_code)
 
 
-def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) -> list[Tool]:
+
+def build_sandbox_tools(
+    sandbox_runner: Any,
+    *,
+    code_host_resolver: Any = None,
+    workspace_manager: Any = None,
+    host_git: Any = None,
+    token_resolver: Any = None,
+) -> list[Tool]:
     """Filesystem, command-execution, and git tools against one shared per-task sandbox.
 
     ``code_host_resolver`` -- the same ``(UserId) -> Awaitable[CodeHostClient | None]`` callable
@@ -287,7 +408,14 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
     *same* per-turn sandbox handle ``run_command`` will then read from: a clone that landed in a
     different container would be invisible to the very next tool call.
     """
-    sessions = _SandboxSessionCache(sandbox_runner)
+    if workspace_manager is not None:
+        sessions = _SessionAdapter(
+            resolver=_WorkspaceResolver(workspace_manager, sandbox_runner)
+        )
+    else:
+        # No manager: per-turn sandboxes, exactly as before. This is the local/dev shape and the
+        # one every pre-workspace caller still gets.
+        sessions = _SessionAdapter(cache=_SandboxSessionCache(sandbox_runner))
 
     @tool(
         "write_file",
@@ -303,9 +431,10 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=15.0,
+        workspace_local=True,
     )
     async def write_file(path: str, content: str, context: ToolContext) -> str:
-        handle = await sessions.get(context)
+        handle = await sessions.handle(context)
         await sandbox_runner.write_file(handle, path, content)
         return f"Wrote {len(content)} bytes to {path}"
 
@@ -323,9 +452,10 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=15.0,
+        workspace_local=True,
     )
     async def edit_file(path: str, find: str, replace: str, context: ToolContext) -> str:
-        handle = await sessions.get(context)
+        handle = await sessions.handle(context)
         current = await sandbox_runner.read_file(handle, path)
         occurrences = current.count(find)
         if occurrences != 1:
@@ -357,9 +487,14 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         # Command output can echo file contents, comments, or anything else in the sandbox
         # workspace -- attacker-influenceable exactly like fetch_url's page content.
         tags=("untrusted_content",),
+        # SYSTEM + side_effecting would otherwise force confirmation on *every* command, which
+        # in an eight-iteration engineering task is a prompt per step. The effect is confined to
+        # the workspace container and its checkout; anything that leaves (git_push, forge
+        # writes) is not marked and stays gated.
+        workspace_local=True,
     )
     async def run_command(command: str, context: ToolContext, timeout_s: float = 60.0) -> str:
-        handle = await sessions.get(context)
+        handle = await sessions.handle(context)
         if isinstance(sandbox_runner, StreamingSandboxRunner):
             # Streaming and non-streaming runners return the same shape either way -- the
             # difference `run_streaming` makes today is bounding memory while output is still
@@ -388,7 +523,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         max_result_chars=20_000,
     )
     async def git_diff(context: ToolContext) -> str:
-        handle = await sessions.get(context)
+        handle = await sessions.handle(context)
         result = await sandbox_runner.run(handle, ["git", "diff", "HEAD"], timeout_s=15.0)
         return result.stdout or "(no changes)"
 
@@ -401,9 +536,12 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=30.0,
+        # A commit is local to the checkout until something pushes it; git_push is the tool that
+        # crosses the boundary, and it is deliberately not marked.
+        workspace_local=True,
     )
     async def git_commit(message: str, context: ToolContext) -> str:
-        handle = await sessions.get(context)
+        handle = await sessions.handle(context)
         await sandbox_runner.run(handle, ["git", "add", "-A"], timeout_s=15.0)
         result = await sandbox_runner.run(handle, ["git", "commit", "-m", message], timeout_s=15.0)
         if result.exit_code != 0:
@@ -419,9 +557,10 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=15.0,
+        workspace_local=True,
     )
     async def git_checkout_branch(branch: str, context: ToolContext) -> str:
-        handle = await sessions.get(context)
+        handle = await sessions.handle(context)
         result = await sandbox_runner.run(handle, ["git", "checkout", "-B", branch], timeout_s=10.0)
         if result.exit_code != 0:
             raise ToolExecutionError(
@@ -430,9 +569,163 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
             )
         return result.stdout or f"switched to {branch}"
 
+    @tool(
+        "open_workspace",
+        "Open (or resume) your persistent workspace for a repository, without cloning it. The "
+        "workspace keeps its files between turns and for 3 days after your last action, so a "
+        "task can continue across several messages. Use this to go back to a repository you "
+        "were already working on.",
+        param("repo", "string", "Repository this workspace is for, as 'owner/name'.",
+              max_length=400),
+        category=ToolCategory.DEVELOPMENT,
+        sensitivity=ToolSensitivity.PERSONAL,
+        side_effecting=True,
+        required_capability=_ENGINEER_CAPABILITY,
+        timeout_s=60.0,
+        workspace_local=True,
+    )
+    async def open_workspace(repo: str, context: ToolContext) -> str:
+        if not sessions.durable:
+            raise ToolExecutionError(
+                "persistent workspaces are not enabled on this deployment; the sandbox is "
+                "per-turn here",
+                tool="open_workspace",
+            )
+        slug = _normalize_repo(repo)
+        opened = await sessions.opened(context, slug)
+        listing = await sandbox_runner.run(
+            opened.handle, ["sh", "-c", "ls -A"], timeout_s=15.0
+        )
+        note = "\nNote: " + "; ".join(opened.evicted) if opened.evicted else ""
+        contents = listing.stdout.strip() or "(empty -- nothing cloned into it yet)"
+        return f"Workspace for {slug} is open. Contents:\n{contents}{note}"
+
+    @tool(
+        "list_workspaces",
+        "List your persistent workspaces: which repository each is for, whether it is running, "
+        "and when it was last used. A workspace is removed automatically after 3 days without "
+        "activity.",
+        category=ToolCategory.DEVELOPMENT,
+        sensitivity=ToolSensitivity.PERSONAL,
+        required_capability=_ENGINEER_CAPABILITY,
+        timeout_s=30.0,
+    )
+    async def list_workspaces(context: ToolContext) -> str:
+        if not sessions.durable:
+            return "Persistent workspaces are not enabled on this deployment."
+        rows = await workspace_manager.list_for_user(context.user_id)
+        if not rows:
+            return "You have no workspaces open."
+        lines = [
+            f"- {w.repo} ({w.status}), last used {w.last_active_at.isoformat(timespec='minutes')}"
+            for w in rows
+        ]
+        return "\n".join(lines)
+
+    @tool(
+        "destroy_workspace",
+        "Delete one of your persistent workspaces and everything in it, including any "
+        "uncommitted work. Use when a task is finished or the checkout should be started fresh.",
+        param("repo", "string", "Repository whose workspace should be deleted.", max_length=400),
+        category=ToolCategory.DEVELOPMENT,
+        # CONFIDENTIAL + side_effecting is the existing idiom for "always confirm"
+        # (ToolSpec.__post_init__). Deliberately NOT workspace_local: this destroys work the user
+        # may not have pushed, and unlike everything else in a workspace it cannot be undone by
+        # running the step again.
+        sensitivity=ToolSensitivity.CONFIDENTIAL,
+        side_effecting=True,
+        required_capability=_ENGINEER_CAPABILITY,
+        timeout_s=60.0,
+    )
+    async def destroy_workspace(repo: str, context: ToolContext) -> str:
+        if not sessions.durable:
+            raise ToolExecutionError(
+                "persistent workspaces are not enabled on this deployment",
+                tool="destroy_workspace",
+            )
+        slug = _normalize_repo(repo)
+        record = await workspace_manager.get(context.user_id, slug)
+        if record is None:
+            return f"No workspace open for {slug}."
+        await workspace_manager.destroy(record)
+        return f"Deleted the workspace for {slug} and everything in it."
+
+    @tool(
+        "git_status",
+        "Show the workspace checkout's git status: current branch, staged and unstaged changes.",
+        category=ToolCategory.DEVELOPMENT,
+        sensitivity=ToolSensitivity.PERSONAL,
+        required_capability=_ENGINEER_CAPABILITY,
+        timeout_s=30.0,
+    )
+    async def git_status(context: ToolContext) -> str:
+        handle = await sessions.handle(context)
+        result = await sandbox_runner.run(
+            handle, ["sh", "-c", "git status --short --branch"], timeout_s=15.0
+        )
+        return result.stdout or result.stderr or "(clean)"
+
+    @tool(
+        "git_push",
+        "Push the workspace's current branch to GitHub. Always asks the user to confirm first, "
+        "and refuses to push to the repository's default branch -- open a pull request from a "
+        "feature branch instead. Commit your work with git_commit before calling this.",
+        param("branch", "string", "Branch to push. Must not be the default branch.",
+              max_length=200),
+        param("repo", "string", "Repository, as 'owner/name'. Defaults to the one you cloned.",
+              required=False, max_length=400),
+        category=ToolCategory.DEVELOPMENT,
+        # The one tool here that publishes anything. CONFIDENTIAL + side_effecting makes
+        # confirmation mandatory (ToolSpec.__post_init__), and it is deliberately not
+        # workspace_local: this is precisely the boundary ADR-014 keeps the gate for.
+        sensitivity=ToolSensitivity.CONFIDENTIAL,
+        side_effecting=True,
+        required_capability=_ENGINEER_CAPABILITY,
+        timeout_s=300.0,
+    )
+    async def git_push(branch: str, context: ToolContext, repo: str | None = None) -> str:
+        if host_git is None or not sessions.durable:
+            raise ToolExecutionError(
+                "pushing is not available on this deployment; propose the change with "
+                "github_create_draft_pull_request instead",
+                tool="git_push",
+            )
+        slug = _normalize_repo(repo) if repo else sessions.bound_repo(context.correlation_id)
+        if not slug or slug == _WorkspaceResolver.SCRATCH:
+            raise ToolExecutionError(
+                "no repository is associated with this workspace; clone one first",
+                tool="git_push",
+            )
+        opened = await sessions.opened(context, slug)
+        checkout = Path(await sandbox_runner.workspace_path(opened.handle)) / _clone_dir(slug, None)
+        if not await host_git.is_repository(checkout):
+            raise ToolExecutionError(
+                f"{checkout.name} is not a git checkout; clone the repository first",
+                tool="git_push",
+            )
+
+        # Refused here rather than left to the forge's branch protection: not every repository
+        # has any, and "the agent pushed straight to main" is not a thing to discover afterwards.
+        default_branch = await host_git.default_branch(checkout)
+        if branch == default_branch:
+            raise ToolExecutionError(
+                f"refusing to push to {default_branch!r}, the default branch. Push a feature "
+                "branch and open a pull request from it.",
+                tool="git_push",
+            )
+
+        token = await token_resolver(context.user_id) if token_resolver else None
+        await host_git.push(checkout, branch=branch, token=token, repo=slug)
+        return f"Pushed {branch} to {slug}."
+
     tools: list[Tool] = [
         write_file, edit_file, run_command, git_diff, git_commit, git_checkout_branch,
+        git_status,
     ]
+    if host_git is not None:
+        tools.append(git_push)
+    if workspace_manager is not None:
+        tools += [open_workspace, list_workspaces, destroy_workspace]
     if code_host_resolver is None:
         return tools
 
@@ -462,14 +755,17 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
     async def clone_repository(
         repo: str, context: ToolContext, ref: str | None = None, destination: str | None = None,
     ) -> str:
-        """Not `git clone`: the files are fetched through the code-host port and written into the
-        sandbox one by one.
+        """A real ``git clone`` where host-side git is wired, and the old REST copy where it is not.
 
-        A real clone would need the sandbox container to reach the network *and* to hold a
-        credential for private repositories -- an egress hole and a secret in a container running
-        model-chosen shell commands. Copying through the already-authenticated, already
-        repo-allowlisted client keeps both out of the sandbox, and works unchanged on a
-        deployment whose sandbox network is disabled entirely (`AURA_SANDBOX_NETWORK` unset).
+        The credential is why this is not simply run inside the container. Host-side git gives
+        the workspace a complete checkout -- history, branches, tags -- while the token stays in
+        the gateway (``adapters/host_git.py``); running git in the container would put a secret
+        next to model-chosen shell commands operating on an attacker-controlled repository.
+
+        Without ``host_git`` the original behaviour remains: files copied one by one through the
+        already-authenticated code-host client, capped, with no ``.git``. That is a genuinely
+        weaker result -- no history, no push -- and it says so in what it returns rather than
+        leaving the agent to discover that ``git log`` is empty.
         """
         slug = _normalize_repo(repo)
         if slug.count("/") != 1 or not all(slug.split("/")):
@@ -485,6 +781,25 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
                 "/api/v3/integrations/github/connect, or ask an operator to configure "
                 "AURA_GITHUB_TOKEN, before cloning a repository",
                 tool="clone_repository",
+            )
+
+        if host_git is not None and sessions.durable:
+            opened = await sessions.opened(context, slug)
+            checkout = Path(await sandbox_runner.workspace_path(opened.handle)) / _clone_dir(
+                slug, destination
+            )
+            # The token travels on its own channel rather than being dug out of the code-host
+            # client: a private attribute would tie this to one adapter and silently yield None
+            # for any other, turning a private clone into a confusing auth failure.
+            token = await token_resolver(context.user_id) if token_resolver else None
+
+            await host_git.clone(slug, dest=checkout, token=token, ref=ref)
+            log = await host_git.log(checkout, limit=5)
+            branch = await host_git.current_branch(checkout)
+            note = "\nNote: " + "; ".join(opened.evicted) if opened.evicted else ""
+            return (
+                f"Cloned {slug} into {checkout.name}/ with full git history "
+                f"(branch {branch}). Recent commits:\n{log}{note}"
             )
         try:
             tree = await client.list_files(slug, ref=ref)
@@ -518,7 +833,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
                 selected.append(entry)
                 total_bytes += entry.size
 
-        handle = await sessions.get(context)
+        handle = await sessions.handle(context)
         semaphore = asyncio.Semaphore(_CLONE_CONCURRENCY)
         failed: list[str] = []
 

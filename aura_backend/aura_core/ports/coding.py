@@ -12,8 +12,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, AsyncIterator, Mapping, Protocol, Sequence, runtime_checkable
 
-from ..domain.engineering import EngineerRun
-from ..domain.identifiers import UserId
+from ..domain.engineering import AgentWorkspace, EngineerRun
+from ..domain.identifiers import UserId, WorkspaceId
 
 __all__ = [
     "McpToolDescriptor",
@@ -27,6 +27,7 @@ __all__ = [
     "SandboxOutputEvent",
     "StreamingSandboxRunner",
     "EngineerRunStore",
+    "WorkspaceStore",
 ]
 
 
@@ -135,21 +136,38 @@ class SandboxResult:
 
 @runtime_checkable
 class SandboxRunner(Protocol):
-    """An isolated, ephemeral execution environment, one instance per agent task.
+    """An isolated execution environment for agent work.
 
-    A handle's lifetime is caller-managed: :meth:`create_task` before the first use,
-    :meth:`destroy` when the task ends (success, failure, or turn abandonment) -- there is no
-    implicit cleanup, because a runner that reaps sandboxes on a timer cannot tell a slow legitimate
-    task from an abandoned one. The one exception is a runner that routes by user (the desktop
-    host-agent bridge, ``adapters/host_agent.py``): there, a "task" is scoped to the user's own
-    open workspace rather than one chat turn, and :meth:`destroy` is deliberately a no-op --
-    documented on that adapter, not here, since it does not change this protocol's contract for
-    every other implementation.
+    Two lifetimes, deliberately kept apart rather than unified:
+
+    *Ephemeral* (:meth:`create_task` / :meth:`destroy`) is the original per-task shape. The
+    handle's lifetime is caller-managed and there is no implicit cleanup, because a runner that
+    reaps on a timer cannot tell a slow legitimate task from an abandoned one. The one exception
+    is a runner that routes by user (the desktop host-agent bridge, ``adapters/host_agent.py``):
+    there, a "task" is scoped to the user's own open workspace rather than one chat turn, and
+    :meth:`destroy` is deliberately a no-op -- documented on that adapter, not here, since it does
+    not change this protocol's contract for every other implementation.
 
     ``user_id`` on :meth:`create_task` is ``None`` for every runner that does not need it (the
     server-side Docker sandbox, the in-memory test fake) -- it exists only so a runner that must
     route per-caller (again, the host-agent bridge) can be handed the caller's identity without
     every other implementation having to know why.
+
+    *Durable* (:meth:`open_workspace` / :meth:`pause_workspace` / :meth:`destroy_workspace`) is
+    keyed by a caller-supplied, stable ``key`` instead of a fresh id, so the same key resumes the
+    same filesystem across turns, restarts of this process, and days. What makes that affordable
+    is :meth:`pause_workspace`: the content of a workspace is its checkout on disk, not a running
+    process, so between turns the execution environment is stopped and costs no memory at all.
+    Peak memory is therefore bounded by how many are *running*, never by how many exist.
+
+    The reason a timer-based reaper is acceptable for the durable half when it was not for tasks
+    is that "abandoned" is now observable: a durable workspace records when it was last used, so a
+    reaper can distinguish idle-for-days from busy-right-now. Whoever holds that record (see
+    :class:`WorkspaceStore`) decides; this port only carries it out.
+
+    The two are complementary rather than competing. The desktop bridge routes a task to the
+    user's own machine; the durable half keeps a server-side checkout alive between turns. A
+    runner implements whichever half it can serve.
     """
 
     async def create_task(self, *, user_id: UserId | None = None) -> SandboxHandle:
@@ -167,6 +185,50 @@ class SandboxRunner(Protocol):
         ...
 
     async def destroy(self, handle: SandboxHandle) -> None:
+        ...
+
+    async def open_workspace(self, key: str) -> SandboxHandle:
+        """Resume, or first create, the durable workspace named ``key``.
+
+        Idempotent, and must remain so across a restart of this process: a runner that has
+        forgotten its in-memory bookkeeping still has to find the existing environment rather
+        than silently start a second one over the same files.
+        """
+        ...
+
+    async def pause_workspace(self, handle: SandboxHandle) -> None:
+        """Stop the execution environment, keeping the workspace's files.
+
+        The memory story rests entirely on this being a real stop rather than an idle process:
+        a paused workspace must hold no RAM.
+        """
+        ...
+
+    async def destroy_workspace(self, handle: SandboxHandle) -> None:
+        """Remove the environment *and* its files. What the reaper calls at expiry."""
+        ...
+
+    async def workspace_keys(self) -> Sequence[str]:
+        """Every durable workspace key this runner can currently see.
+
+        Read from the substrate rather than from memory, so it stays true after a restart. This
+        is the half of reconciliation that finds environments no record knows about; the other
+        half (records whose environment is gone) comes from the store.
+        """
+        ...
+
+    async def workspace_disk_usage_mb(self, handle: SandboxHandle) -> float:
+        """Size of the workspace's files, in MiB. Bounds a checkout that grows without limit."""
+        ...
+
+    async def workspace_path(self, handle: SandboxHandle) -> str:
+        """Where this workspace's files live *on this host*.
+
+        Asked of the runner rather than derived by the caller, because only the runner knows: a
+        deployed runner roots workspaces under a configured host directory, a local one uses a
+        temp directory, and a caller that recomputed the path would be right in one case and
+        silently wrong in the other. Host-side git (``adapters/host_git.py``) needs the real one.
+        """
         ...
 
 
@@ -225,4 +287,62 @@ class EngineerRunStore(Protocol):
     async def list_for_user(
         self, user_id: UserId, *, since: datetime | None = None, limit: int = 200,
     ) -> Sequence[EngineerRun]:
+        ...
+
+
+@runtime_checkable
+class WorkspaceStore(Protocol):
+    """Persistence for :class:`~aura_core.domain.engineering.AgentWorkspace` rows.
+
+    Deliberately mutable, unlike :class:`EngineerRunStore` next to it. A run is a fact that
+    happened and is only ever appended; a workspace is live state whose whole purpose is to be
+    updated -- ``touch`` on every tool call is what the idle TTL measures, and without it a
+    workspace in continuous use would be reaped on its third day.
+
+    ``touch`` is separated from ``upsert`` rather than folded into it because it is the hot path:
+    every single tool call performs one, and it must not require reading, mutating and writing
+    back a whole row (which would also race two concurrent calls against each other, with the
+    slower one restoring stale fields).
+    """
+
+    async def upsert(self, workspace: AgentWorkspace) -> None:
+        """Create or replace the row for this workspace id."""
+        ...
+
+    async def get(self, user_id: UserId, repo: str) -> AgentWorkspace | None:
+        """The workspace for this ``(user, repo)`` pair, or ``None``.
+
+        This pair is the natural key the tool layer resolves on -- an agent asked to work on a
+        repository knows the user and the repository, not a workspace id.
+        """
+        ...
+
+    async def get_by_id(self, workspace_id: WorkspaceId) -> AgentWorkspace | None:
+        ...
+
+    async def list_for_user(self, user_id: UserId) -> Sequence[AgentWorkspace]:
+        """Every workspace this user owns, most recently active first."""
+        ...
+
+    async def list_all(self) -> Sequence[AgentWorkspace]:
+        """Every workspace, for the reaper and for startup reconciliation.
+
+        Not scoped to a user because neither caller has one: they are reconciling this host's
+        containers against this host's rows.
+        """
+        ...
+
+    async def list_idle_since(self, cutoff: datetime) -> Sequence[AgentWorkspace]:
+        """Workspaces whose ``last_active_at`` is at or before ``cutoff``.
+
+        The reaper's query. Taking a cutoff rather than a TTL keeps the clock in the caller,
+        which is what lets a test drive expiry with ``FrozenClock`` instead of sleeping.
+        """
+        ...
+
+    async def touch(self, workspace_id: WorkspaceId, *, at: datetime, status: str | None = None) -> None:
+        """Record activity, optionally moving the workspace's status in the same write."""
+        ...
+
+    async def delete(self, workspace_id: WorkspaceId) -> None:
         ...

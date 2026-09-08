@@ -307,3 +307,35 @@ def drain_event_outbox_task() -> dict:
     except Exception as e:
         logger.error("Outbox drain task failed: %s", e, exc_info=True)
         return {"status": "error", "error": type(e).__name__}
+
+async def _run_workspace_reap() -> dict:
+    container = await _ensure_worker_container()
+    manager = getattr(container, "workspace_manager", None)
+    if manager is None:
+        # No sandbox runner on this deployment, so there is nothing to reap. Not an error: the
+        # beat entry is unconditional, and a deployment with the engineer agent switched off
+        # should not log a failure every half hour because of it.
+        return {"status": "skipped", "reason": "workspaces_not_enabled"}
+    summary = await manager.reap(run_sink=container.engineer_runs)
+    return {"status": "ok", **summary}
+
+
+@celery_app.task(name="tasks.reap_agent_workspaces_task", queue="realtime")
+def reap_agent_workspaces_task() -> dict:
+    """Pause idle engineer-agent workspaces, delete expired ones, and reconcile drift.
+
+    The only thing bounding this feature's disk and memory over time. A workspace is deleted
+    after AURA_SANDBOX_WORKSPACE_TTL_HOURS (72 by default) with no activity, measured from its
+    last use rather than its creation, so an actively used workspace is never reaped out from
+    under someone mid-task.
+
+    Runs on `realtime` rather than a heavier queue because it is short and mostly Docker API
+    calls, and it must not queue behind an ingestion job -- a reaper that runs late is a reaper
+    that lets a disk fill.
+    """
+    logger.info("Celery task: Reaping agent workspaces...")
+    try:
+        return asyncio.run(_run_workspace_reap())
+    except Exception as e:
+        logger.error("Workspace reap task failed: %s", e, exc_info=True)
+        return {"status": "error", "error": type(e).__name__}

@@ -119,6 +119,8 @@ aura_backend/aura_core/
 | [009](009-observability-first.md) | AI metrics are first-class domain output, not logging afterthoughts | Small runtime cost, in exchange for measurable quality, cost, and drift |
 | [010](010-cache-augmented-prefix.md) | CAG-lite: reserved byte-stable knowledge prefix (pins + budget), KV seams later | 80 tokens of the 400-token prefill reserved when pins exist, in exchange for always-on handbook grounding without retrieval luck |
 | [011](011-desktop-engineer-agent.md) | Desktop Engineer agent executes on the user's own machine via a host-agent bridge; `SandboxRunner` is the seam, containment is enforced by the daemon, never trusted from the server | A real relaxation of attestation for one platform (a pairing token, not mobile-grade attestation), in exchange for the Engineer persona actually acting on real projects instead of an ephemeral server sandbox |
+| [013](013-agent-workspaces.md) | Persistent per-(user, repo) engineer workspaces; stopped between turns; git runs host-side so the token never enters the container | Peak RAM is `max_running x memory_limit` rather than one container per workspace, in exchange for pause/resume machinery and a reaper that must not fail |
+| [014](014-workspace-local-side-effects.md) | Confirmation gates the workspace boundary, not writes inside it (amends ADR-006 rules 3-4) | One prompt per task at `git_push` instead of dozens, in exchange for a pinned allowlist that must be reviewed whenever it grows |
 
 ---
 

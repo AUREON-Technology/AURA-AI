@@ -34,6 +34,7 @@ class InMemorySandboxRunner:
 
     def __init__(self) -> None:
         self._scratch_dirs: dict[str, Path] = {}
+        self._paused: set[str] = set()
 
     async def create_task(self, *, user_id: Any | None = None) -> SandboxHandle:
         # `user_id` accepted for `SandboxRunner` protocol conformance, ignored -- this
@@ -93,8 +94,62 @@ class InMemorySandboxRunner:
 
     async def destroy(self, handle: SandboxHandle) -> None:
         scratch = self._scratch_dirs.pop(handle.task_id, None)
+        self._paused.discard(handle.task_id)
         if scratch is not None:
             await asyncio.to_thread(shutil.rmtree, scratch, True)
+
+    # -- durable workspaces ------------------------------------------------------------------
+    #
+    # Real, not simulated: a workspace key maps to a real directory that really persists across
+    # `open_workspace` calls, so a test that asserts "same repo, later turn, files still there"
+    # is exercising the property rather than a stub agreeing with it. What is *not* modelled is
+    # the container -- there is none here -- so "paused" is tracked as a flag. That is honest:
+    # this fake can prove the bookkeeping, and only `tests/load/test_docker_sandbox_live.py`
+    # against a real daemon can prove a paused workspace actually releases memory.
+
+    async def open_workspace(self, key: str) -> SandboxHandle:
+        handle = SandboxHandle(task_id=key)
+        self._paused.discard(key)
+        if key not in self._scratch_dirs:
+            scratch = await asyncio.to_thread(
+                tempfile.mkdtemp, prefix=f"aura-fake-workspace-{key}-"
+            )
+            self._scratch_dirs[key] = Path(scratch)
+        return handle
+
+    async def pause_workspace(self, handle: SandboxHandle) -> None:
+        if handle.task_id in self._scratch_dirs:
+            self._paused.add(handle.task_id)
+
+    async def destroy_workspace(self, handle: SandboxHandle) -> None:
+        await self.destroy(handle)
+
+    async def workspace_keys(self) -> list[str]:
+        return sorted(self._scratch_dirs)
+
+    async def workspace_disk_usage_mb(self, handle: SandboxHandle) -> float:
+        scratch = self._scratch_dirs.get(handle.task_id)
+        if scratch is None:
+            return 0.0
+
+        def _size() -> float:
+            total = 0
+            for path in scratch.rglob("*"):
+                try:
+                    if path.is_file() and not path.is_symlink():
+                        total += path.stat().st_size
+                except OSError:
+                    continue
+            return total / (1024 * 1024)
+
+        return await asyncio.to_thread(_size)
+
+    async def workspace_path(self, handle: SandboxHandle) -> str:
+        return str(self._scratch(handle))
+
+    def is_paused(self, key: str) -> bool:
+        """Test-only view of the flag above; no production caller."""
+        return key in self._paused
 
 
 class InMemoryGitHubClient:

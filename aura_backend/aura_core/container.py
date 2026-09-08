@@ -19,6 +19,7 @@ from typing import Any
 from .adapters.memory_stores import (
     InMemoryDocumentStore,
     InMemoryEngineerRunStore,
+    InMemoryWorkspaceStore,
     InMemoryGitHubIdentityPort,
     InMemoryGoalsPort,
     InMemoryGraphStore,
@@ -135,6 +136,7 @@ class Container:
         self.memory_store = self._build_memory_store()
         self.personal_os_store = self._build_personal_os_store()
         self.engineer_runs = self._build_engineer_run_store()
+        self.workspaces = self._build_workspace_store()
         self.goals = self._build_goals_port()
         self.github_identities = self._build_github_identity_port()
         self.graph = self._build_graph_store()
@@ -328,6 +330,10 @@ class Container:
 
         self.host_agent_registry = HostAgentRegistry()
         self.sandbox_runner = self._build_sandbox_runner()
+        # After the runner, never before: the manager needs it, and a None runner is the signal
+        # that this deployment has no workspaces at all.
+        self.workspace_manager = self._build_workspace_manager()
+        self.host_git = self._build_host_git()
         self.github_client = self._build_github_client()
         self._github_clients_by_user: dict[str, Any] = {}
         self.github_client_resolver = self._build_github_client_resolver()
@@ -661,6 +667,85 @@ class Container:
             raise ConfigurationError(f"unknown memory backend {backend!r}")
         return InMemoryEngineerRunStore()
 
+    async def _github_token_resolver(self, user_id: Any) -> str | None:
+        """The caller's forge token, for host-side git only.
+
+        A separate channel from `github_client_resolver` on purpose: the token is a credential,
+        and reaching into a client's private attribute to find it would both couple the tool
+        layer to one adapter and silently yield nothing for any other implementation of the port.
+        """
+        client = await self.github_client_resolver(user_id) if self.github_client_resolver else None
+        if client is None:
+            return None
+        return getattr(client, "token", None) or getattr(client, "_token", None)
+
+    def _build_host_git(self) -> Any:
+        """Real `git`, run by *this* process against a workspace directory.
+
+        Host-side so a private clone's token never enters the container: the workspace gets a
+        complete checkout -- history, branches, tags -- and no credential in any file a
+        model-chosen command could read. `None` without a sandbox runner, since there would be no
+        workspace to run it against.
+
+        `AURA_SANDBOX_IN_CONTAINER_GIT` is the opt-out for operators who would rather have git
+        inside the container and accept that a command can then read the credential; it is off by
+        default and deliberately not the recommended path.
+        """
+        if (
+            getattr(self, "docker_sandbox_runner", None) is None
+            or self.settings.sandbox.in_container_git
+        ):
+            return None
+        from .adapters.host_git import HostGitService
+
+        return HostGitService(timeout_s=self.settings.sandbox.timeout_s)
+
+    def _build_workspace_manager(self) -> Any:
+        """`None` unless a runner that actually implements the durable half exists.
+
+        Capability-probed rather than merely non-None, because `sandbox_runner` is now always a
+        `CompositeSandboxRunner`: it routes a task to the caller's desktop or to the server-side
+        sandbox, and can pause or reap neither. Building a manager on it would produce a
+        workspace that appears to persist and is never reclaimed -- worse than not offering the
+        feature. The Docker runner is the one that can, so the manager is built against it
+        directly.
+        """
+        runner = getattr(self, "docker_sandbox_runner", None)
+        if runner is None or not hasattr(runner, "open_workspace"):
+            return None
+        from .tools.workspaces import WorkspaceManager
+
+        sandbox = self.settings.sandbox
+        return WorkspaceManager(
+            runner=runner,
+            store=self.workspaces,
+            host_root=sandbox.host_root,
+            memory_limit=sandbox.memory_limit,
+            max_workspaces=sandbox.max_workspaces,
+            max_running=sandbox.max_running,
+            ttl_hours=sandbox.workspace_ttl_hours,
+            hot_idle_s=sandbox.hot_idle_s,
+            disk_quota_mb=sandbox.workspace_disk_quota_mb,
+            min_free_memory_mb=sandbox.min_free_memory_mb,
+            clock=self.clock,
+            metrics=self.metrics,
+        )
+
+    def _build_workspace_store(self) -> Any:
+        """Same backend switch as `_build_engineer_run_store`, deliberately: a deployment that
+        keeps engineer-run history in Postgres and workspaces in memory would forget every
+        workspace on restart while still claiming, in its own history, to have created them."""
+        backend = self.settings.infrastructure.memory_backend
+        if backend == "postgres":
+            from .adapters.postgres_workspaces import PostgresWorkspaceStore
+
+            return PostgresWorkspaceStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        if backend != "memory":
+            raise ConfigurationError(f"unknown memory backend {backend!r}")
+        return InMemoryWorkspaceStore()
+
     def _build_ocr_engine(self) -> Any:
         """`None` unless both the operator opted in (`ocr_enabled`) and the `tesseract` binary is
         actually on PATH -- `ports/documents.py`'s "sensible default is nothing" stays true
@@ -907,6 +992,9 @@ class Container:
                 sandbox_runner=self.sandbox_runner,
                 github_client_resolver=self.github_client_resolver,
                 github_default_repo=github_default_repo,
+                workspace_manager=self.workspace_manager,
+                host_git=self.host_git,
+                github_token_resolver=self._github_token_resolver,
             )
         )
         return registry
@@ -925,9 +1013,13 @@ class Container:
         """
         from .adapters.host_agent import CompositeSandboxRunner, HostAgentSandboxRunner
 
+        # Kept as its own attribute as well as the composite's fallback: durable workspaces are
+        # a server-side feature and need the runner that implements them. The composite routes
+        # per-task between a user's desktop and this, and cannot pause or reap anything.
+        self.docker_sandbox_runner = self._build_docker_sandbox_runner()
         return CompositeSandboxRunner(
             host_runner=HostAgentSandboxRunner(self.host_agent_registry),
-            fallback=self._build_docker_sandbox_runner(),
+            fallback=self.docker_sandbox_runner,
         )
 
     def _build_docker_sandbox_runner(self) -> Any:
@@ -952,6 +1044,8 @@ class Container:
             network=self.settings.sandbox.network,
             memory_limit=self.settings.sandbox.memory_limit,
             cpu_limit=self.settings.sandbox.cpu_limit,
+            host_root=self.settings.sandbox.host_root,
+            proxy_url=self.settings.sandbox.proxy_url,
         )
 
     def _build_github_client(self) -> Any:
@@ -1088,6 +1182,16 @@ class Container:
         await self.index_manager.ensure_ready()
         if self.settings.knowledge.hybrid_enabled:
             await self.knowledge.rebuild_lexical_index()
+        if self.workspace_manager is not None:
+            # Durable workspaces outlive this process, so its in-memory view of them starts
+            # empty and wrong. Reconciling here -- before the first request -- is what stops a
+            # restart from leaking containers nobody can reach or resuming a workspace whose
+            # container is gone. It never raises: a daemon that is not answering yet must not
+            # keep the gateway from serving traffic that has nothing to do with sandboxes.
+            try:
+                await self.workspace_manager.reconcile()
+            except Exception:
+                logger.exception("workspace reconciliation failed; continuing startup")
         if self.mcp_client is not None:
             # Tool discovery is the one place registration happens after `_build_tools()` --
             # `list_tools()` is async I/O (may launch subprocesses / open connections), which

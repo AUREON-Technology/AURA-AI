@@ -56,15 +56,20 @@ networks:
   sandbox_ctl:
     driver: bridge
     internal: true
-  # Where the engineer agent's ephemeral per-task containers (aura_core/adapters/docker_sandbox.py)
-  # actually run. Isolated from `data` and `edge` by construction -- a sandboxed task can reach
-  # neither Postgres/Qdrant/Redis nor the gateway/nginx tier. It is *not* `internal: true`: a
-  # sandbox with no egress at all cannot install packages or reach the repo it is meant to work
-  # on. An operator-provisioned egress allowlist/DNS filter on this network (a squid/dnsmasq
-  # sidecar keyed off AURA_SANDBOX_ALLOWED_EGRESS_HOSTS) is the still-open follow-up; until then,
-  # only enable AURA_SANDBOX_ENABLED on a host where that risk has been explicitly accepted.
+  # Where engineer-agent workspace containers (aura_core/adapters/docker_sandbox.py) actually run.
+  # Isolated from `data` and `edge` by construction -- a workspace can reach neither
+  # Postgres/Qdrant/Redis nor the gateway/nginx tier.
+  #
+  # `internal: true` as of the egress-allowlist work: this network now has no route out at all,
+  # and the only way to the internet is the `sandbox-proxy` sidecar, which attaches here *and* to
+  # `egress` and forwards solely to AURA_SANDBOX_ALLOWED_EGRESS_HOSTS. That closes the
+  # open follow-up this comment used to describe -- a workspace can install packages and fetch
+  # the repository it works on, and can reach nothing else, rather than the previous choice
+  # between "no egress, so unusable" and "full egress, so a model-chosen command reaches the
+  # whole internet".
   sandbox_egress:
     driver: bridge
+    internal: true
 
 volumes:
   postgres_data:
@@ -344,10 +349,30 @@ services:
       # Engineer agent (Phase J). Every one of these defaults to inert/off; enabling any is a
       # deliberate per-deployment decision, not a side effect of upgrading.
       AURA_SANDBOX_ENABLED: ${AURA_SANDBOX_ENABLED:-false}
-      AURA_SANDBOX_IMAGE: ${AURA_SANDBOX_IMAGE:-python:3.12-slim}
+      # Built by the `sandbox-image` service below, not pulled. That is what lets IMAGES stay
+      # off docker-socket-proxy's allowlist -- see that service's comment.
+      AURA_SANDBOX_IMAGE: ${AURA_SANDBOX_IMAGE:-aura-sandbox:latest}
+      AURA_SANDBOX_PROXY_URL: ${AURA_SANDBOX_PROXY_URL:-http://sandbox-proxy:8888}
       AURA_SANDBOX_NETWORK: sandbox_egress
       AURA_SANDBOX_MEMORY_LIMIT: ${AURA_SANDBOX_MEMORY_LIMIT:-512m}
       AURA_SANDBOX_CPU_LIMIT: ${AURA_SANDBOX_CPU_LIMIT:-1.0}
+      # Where engineer-agent workspaces live. This value is a *host* path, and it is bind-mounted
+      # into this container at the very same path (see `volumes:` below) on purpose: the gateway
+      # asks the host's daemon to mount a workspace, and the daemon resolves that source on the
+      # host. A path that existed only inside this container would name a different, empty
+      # directory once mounted -- write_file and run_command would silently stop agreeing. Keep
+      # the two sides identical if you change it.
+      AURA_SANDBOX_HOST_ROOT: ${AURA_SANDBOX_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes}
+      # Workspace lifecycle. A workspace is stopped (not deleted) between turns, so peak memory
+      # is MAX_RUNNING * MEMORY_LIMIT no matter how many exist; it is deleted once idle past the
+      # TTL. On a 16 GB host, set MAX_RUNNING=1 and MAX_WORKSPACES=2.
+      AURA_SANDBOX_WORKSPACE_TTL_HOURS: ${AURA_SANDBOX_WORKSPACE_TTL_HOURS:-72}
+      AURA_SANDBOX_HOT_IDLE_S: ${AURA_SANDBOX_HOT_IDLE_S:-900}
+      AURA_SANDBOX_MAX_WORKSPACES: ${AURA_SANDBOX_MAX_WORKSPACES:-4}
+      AURA_SANDBOX_MAX_RUNNING: ${AURA_SANDBOX_MAX_RUNNING:-2}
+      AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB: ${AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB:-2048}
+      AURA_SANDBOX_MIN_FREE_MEMORY_MB: ${AURA_SANDBOX_MIN_FREE_MEMORY_MB:-1024}
+      AURA_SANDBOX_IN_CONTAINER_GIT: ${AURA_SANDBOX_IN_CONTAINER_GIT:-false}
       # docker-py's `docker.from_env()` reads this; only the socket-proxy's restricted API
       # surface is reachable at this address, never the real socket (see `sandbox_ctl` above).
       DOCKER_HOST: tcp://docker-socket-proxy:2375
@@ -380,6 +405,10 @@ services:
       - aura_workspace:/var/lib/aura/workspace
       - aura_datasets:/var/lib/aura/datasets
       - prometheus_multiproc:/var/lib/aura/prometheus
+      # Same path on both sides -- see AURA_SANDBOX_HOST_ROOT above. A named volume cannot serve
+      # here: the daemon would have to resolve the *host* side of an engineer-agent workspace
+      # mount, and a volume name is not a path it can hand to a sibling container's bind.
+      - ${AURA_SANDBOX_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes}:${AURA_SANDBOX_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes}
     networks: [edge, data, sandbox_ctl]
     depends_on:
       postgres: {condition: service_healthy}
@@ -403,9 +432,11 @@ services:
   # `sandbox_ctl` at DOCKER_HOST=tcp://docker-socket-proxy:2375, never the socket directly, so a
   # compromised gateway process gets this restricted API surface, not host-root-equivalent
   # access. The env vars below are tecnativa/docker-socket-proxy's own allowlist: CONTAINERS
-  # (create/start/stop/wait/logs/remove) and IMAGES (pull) are on; EXEC, NETWORKS (beyond attach
-  # at create), VOLUMES, SERVICES, SWARM, and everything else stay off, since
-  # `DockerSandboxRunner` never calls any of them.
+  # (create/start/stop/wait/logs/remove) is on. IMAGES is now OFF too: the workspace image is
+  # built locally by the `sandbox-image` service rather than pulled at runtime, so nothing needs
+  # the image endpoints, and a compromised gateway is left with container operations alone.
+  # EXEC, NETWORKS (beyond attach at create), VOLUMES, SERVICES, SWARM and everything else stay
+  # off, since `DockerSandboxRunner` never calls any of them.
   docker-socket-proxy:
     profiles: [sandbox]
     image: tecnativa/docker-socket-proxy:0.3.0
@@ -413,7 +444,7 @@ services:
     logging: *logging
     environment:
       CONTAINERS: "1"
-      IMAGES: "1"
+      IMAGES: "0"
       POST: "1"
       EXEC: "0"
       NETWORKS: "0"
@@ -438,6 +469,51 @@ services:
     deploy:
       resources:
         limits: {cpus: "0.25", memory: 128M}
+
+  # Builds the engineer-agent workspace image on this host and exits. `docker compose up` runs it
+  # to completion before the gateway needs it, and it re-runs on every deploy, so the image tracks
+  # deploy/sandbox/Dockerfile rather than whatever was cached months ago.
+  #
+  # It exists so nothing is *pulled* at runtime: that is what allows IMAGES: "0" on the socket
+  # proxy above. `restart: "no"` because a build container that finishes is not a crash, and
+  # `unless-stopped` would rebuild it in a loop forever.
+  sandbox-image:
+    profiles: [sandbox]
+    build:
+      context: ./sandbox
+      dockerfile: Dockerfile
+    image: ${AURA_SANDBOX_IMAGE:-aura-sandbox:latest}
+    restart: "no"
+    command: ["true"]
+    logging: *logging
+    deploy:
+      resources:
+        limits: {cpus: "0.5", memory: 256M}
+
+  # The only route out of `sandbox_egress`, which is `internal: true`. Workspaces get
+  # HTTP(S)_PROXY pointing here (AURA_SANDBOX_PROXY_URL), and this forwards only to the hosts in
+  # AURA_SANDBOX_ALLOWED_EGRESS_HOSTS -- enough to clone a repository and install packages, and
+  # nothing else. Before this existed the choice was between a workspace with no network (unable
+  # to do the job) and one with the whole internet (a model-chosen command exfiltrating a
+  # checkout); neither was acceptable for a container that lives for days.
+  #
+  # tinyproxy rather than squid: no cache to manage, a config small enough to read in full, and a
+  # 64M footprint on a host whose memory is already the binding constraint.
+  sandbox-proxy:
+    profiles: [sandbox]
+    image: ${AURA_SANDBOX_PROXY_IMAGE:-vimagick/tinyproxy:latest}
+    <<: *restart
+    logging: *logging
+    volumes:
+      - ./sandbox/tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
+      - ./sandbox/filter:/etc/tinyproxy/filter:ro
+    # sandbox_egress to be reachable by workspaces; egress to actually reach the allowed hosts.
+    # Deliberately not on `data` or `edge`: a proxy that could reach Postgres would hand every
+    # workspace a route to it.
+    networks: [sandbox_egress, egress]
+    deploy:
+      resources:
+        limits: {cpus: "0.25", memory: 64M}
 
   worker-realtime:
     build:

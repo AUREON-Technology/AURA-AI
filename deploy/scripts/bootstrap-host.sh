@@ -235,6 +235,21 @@ systemctl restart systemd-journald 2>/dev/null && ok "journal capped at 500M"
 # -- 6. Timezone and hostname ------------------------------------------------------------------
 
 say "Housekeeping"
+# Engineer-agent workspace roots. Created here rather than left to Docker, because a bind mount
+# whose source is missing is created by the daemon as root-owned, and the sandbox containers run
+# as an unprivileged uid (see deploy/sandbox/Dockerfile) that could then not write to it. Empty
+# and harmless on a host that never enables AURA_SANDBOX_ENABLED.
+for sandbox_root in /opt/aura-stack/deploy/sandboxes /opt/aura-stack/deploy/sandboxes-dev; do
+    mkdir -p "$sandbox_root"
+    # 10001 is the unprivileged uid deploy/sandbox/Dockerfile creates and the containers run as.
+    # The two have to agree: a root-owned bind mount is one the workspace cannot write to, and
+    # that surfaces as a permission error on the first file the agent tries to create rather than
+    # at container start.
+    chown 10001:10001 "$sandbox_root"
+    chmod 0750 "$sandbox_root"
+done
+ok "engineer-agent workspace roots created, owned by the sandbox uid (10001)"
+
 timedatectl set-timezone UTC 2>/dev/null && ok "timezone UTC (log correlation across hosts)"
 apt-get install -y -qq unattended-upgrades >/dev/null 2>&1 \
     && ok "unattended-upgrades installed (security patches)" \

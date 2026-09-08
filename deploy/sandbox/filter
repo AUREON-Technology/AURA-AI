@@ -1,0 +1,18 @@
+# Hosts an engineer-agent workspace may reach. Extended regex, anchored, one host per line.
+#
+# Deliberately minimal: enough to clone a repository and install dependencies, nothing more.
+# Keep it that way -- every entry here is a host that a compromised workspace can send a stolen
+# checkout to, so the question for anything new is "does the agent's job fail without it".
+
+# GitHub: clone, fetch, push.
+^github\.com$
+^api\.github\.com$
+^codeload\.github\.com$
+^objects\.githubusercontent\.com$
+
+# Python packages.
+^pypi\.org$
+^files\.pythonhosted\.org$
+
+# Node packages.
+^registry\.npmjs\.org$

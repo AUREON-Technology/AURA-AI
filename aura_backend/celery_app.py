@@ -88,6 +88,14 @@ _beat_schedule = {
         "schedule": crontab(minute=0, hour=6),
         "options": {"queue": "realtime"},
     },
+    # Engineer-agent workspaces (ADR-013): pause what is idle, delete what has expired.
+    # Every 30 minutes rather than hourly because the pause half returns memory on a host whose
+    # RAM is the binding constraint, and a workspace abandoned mid-turn holds it until this runs.
+    "reap-agent-workspaces": {
+        "task": "tasks.reap_agent_workspaces_task",
+        "schedule": 1800.0,
+        "options": {"queue": "realtime"},
+    },
     # Loop B: pick up fine-tune jobs left QUEUED when launch used run_inline=false.
     "drain-finetune-queue": {
         "task": "tasks.drain_finetune_queue_task",

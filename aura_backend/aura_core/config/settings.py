@@ -950,31 +950,81 @@ class GitHubSettings:
 
 @dataclass(frozen=True, slots=True)
 class SandboxSettings:
-    """Per-task Docker sandbox for the engineer agent's ``run_command``/``write_file`` tools.
+    """Docker sandbox for the engineer agent's ``run_command``/``write_file`` tools.
 
     ``enabled`` alone is not enough to get a runner: ``Container._build_sandbox_runner`` also
     probes that the ``docker`` package is importable and a daemon is actually reachable, the same
     opt-in-setting-plus-runtime-probe pattern as ``_build_ocr_engine``/``_build_stt_engine``.
+
+    ``host_root`` is the one setting a Dockerised deployment cannot skip, and the reason is not
+    obvious: the gateway asks the *host's* Docker daemon to bind-mount a sandbox workspace, and
+    the daemon resolves that source path on the **host**, not inside the gateway container. A
+    path that exists only in the gateway's own filesystem (what ``tempfile.mkdtemp`` returns)
+    therefore names a *different, empty* directory once the daemon creates it, and files written
+    through ``write_file`` become invisible to ``run_command``. Setting this to a path that is
+    bind-mounted into the gateway at the **same absolute path** (see
+    ``deploy/docker-compose.prod.yml``'s ``gateway`` volumes) is what makes the two agree. Left
+    empty -- the local/test case, where the runner and the daemon share a filesystem -- scratch
+    directories fall back to ``tempfile.mkdtemp``.
+
+    The workspace knobs below bound what persistent workspaces (see
+    ``aura_core/ports/coding.py``'s ``WorkspaceStore``) may consume on a single-VPS deployment.
+    ``max_running`` is the one that bounds *memory*: a stopped workspace costs nothing but disk,
+    so peak RAM is ``max_running * memory_limit`` regardless of how many workspaces exist. On a
+    16 GB host sharing the box with the inference tier, ``max_running=1``/``max_workspaces=2``
+    is the safe setting; the defaults here assume the documented 24 GB target host.
     """
 
     enabled: bool = False
-    image: str = "python:3.12-slim"
+    image: str = "aura-sandbox:latest"
     network: str = "sandbox_egress"
     memory_limit: str = "512m"
     cpu_limit: float = 1.0
     timeout_s: float = 120.0
     allowed_egress_hosts: tuple[str, ...] = ()
+    host_root: str = ""
+    workspace_ttl_hours: float = 72.0
+    hot_idle_s: float = 900.0
+    max_workspaces: int = 4
+    max_running: int = 2
+    workspace_disk_quota_mb: int = 2048
+    min_free_memory_mb: int = 1024
+    in_container_git: bool = False
+    proxy_url: str = ""
+
+    def __post_init__(self) -> None:
+        # A ceiling on running workspaces above the ceiling on workspaces that may exist is not a
+        # harmless contradiction: it reads as "2 may run" while only 1 can ever be provisioned,
+        # which hides a mis-set variable until someone wonders why the second one never starts.
+        if self.max_running > self.max_workspaces:
+            raise ConfigurationError(
+                "AURA_SANDBOX_MAX_RUNNING must be <= AURA_SANDBOX_MAX_WORKSPACES",
+                details={"max_running": self.max_running, "max_workspaces": self.max_workspaces},
+            )
 
     @classmethod
     def from_env(cls) -> "SandboxSettings":
         return cls(
             enabled=_bool("SANDBOX_ENABLED", False),
-            image=_env("SANDBOX_IMAGE", "python:3.12-slim") or "python:3.12-slim",
+            image=_env("SANDBOX_IMAGE", "aura-sandbox:latest") or "aura-sandbox:latest",
             network=_env("SANDBOX_NETWORK", "sandbox_egress") or "sandbox_egress",
             memory_limit=_env("SANDBOX_MEMORY_LIMIT", "512m") or "512m",
             cpu_limit=_float("SANDBOX_CPU_LIMIT", 1.0, minimum=0.1, maximum=8.0),
             timeout_s=_float("SANDBOX_TIMEOUT_S", 120.0, minimum=1.0, maximum=1800.0),
             allowed_egress_hosts=_list("SANDBOX_ALLOWED_EGRESS_HOSTS"),
+            host_root=_env("SANDBOX_HOST_ROOT", "") or "",
+            workspace_ttl_hours=_float(
+                "SANDBOX_WORKSPACE_TTL_HOURS", 72.0, minimum=0.25, maximum=8760.0
+            ),
+            hot_idle_s=_float("SANDBOX_HOT_IDLE_S", 900.0, minimum=30.0, maximum=86400.0),
+            max_workspaces=_int("SANDBOX_MAX_WORKSPACES", 4, minimum=1, maximum=64),
+            max_running=_int("SANDBOX_MAX_RUNNING", 2, minimum=1, maximum=64),
+            workspace_disk_quota_mb=_int(
+                "SANDBOX_WORKSPACE_DISK_QUOTA_MB", 2048, minimum=16, maximum=1_048_576
+            ),
+            min_free_memory_mb=_int("SANDBOX_MIN_FREE_MEMORY_MB", 1024, minimum=0, maximum=1_048_576),
+            in_container_git=_bool("SANDBOX_IN_CONTAINER_GIT", False),
+            proxy_url=_env("SANDBOX_PROXY_URL", "") or "",
         )
 
 

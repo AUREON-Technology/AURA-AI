@@ -545,6 +545,9 @@ def default_tools(
     sandbox_runner: Any = None,
     github_client_resolver: Any = None,
     github_default_repo: str = "",
+    workspace_manager: Any = None,
+    host_git: Any = None,
+    github_token_resolver: Any = None,
 ) -> list[Tool]:
     """Assemble the tool set for a deployment.
 
@@ -585,7 +588,13 @@ def default_tools(
         # sandbox tools (it writes into their per-turn workspace) but reaches GitHub through the
         # same per-user client the `github_*` tools use. Absent a resolver, the sandbox tools
         # register without it and cloning is simply not offered.
-        tools += build_sandbox_tools(sandbox_runner, code_host_resolver=github_client_resolver)
+        tools += build_sandbox_tools(
+            sandbox_runner,
+            code_host_resolver=github_client_resolver,
+            workspace_manager=workspace_manager,
+            host_git=host_git,
+            token_resolver=github_token_resolver,
+        )
     if github_client_resolver is not None:
         tools += build_github_tools(github_client_resolver, default_repo=github_default_repo)
     return tools
