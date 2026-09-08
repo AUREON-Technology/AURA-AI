@@ -15,7 +15,7 @@ a time behind a flag.
 # ``build_router``'s scope; with postponed evaluation every one of them would be misread as a
 # query parameter. Runtime annotations keep the models resolvable.
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, AsyncIterator, Mapping
 
 from ..domain.errors import (
@@ -767,6 +767,60 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 ]
             }
         )
+
+    @router.get("/engineering/workspaces")
+    async def list_agent_workspaces(caller: Principal = Depends(principal)) -> JSONResponse:
+        """The caller's persistent engineer-agent workspaces.
+
+        Read on demand rather than synced: a workspace is live host state, and a client replica
+        would be stale the moment the reaper ran. `expires_at` is computed from the deployment's
+        configured TTL rather than stored, so changing the TTL does not leave every existing row
+        advertising the old one.
+        """
+        if container.workspace_manager is None:
+            return JSONResponse(content={"workspaces": [], "enabled": False})
+        ttl_hours = container.settings.sandbox.workspace_ttl_hours
+        rows = await container.workspace_manager.list_for_user(caller.user_id)
+        return JSONResponse(
+            content={
+                "enabled": True,
+                "ttl_hours": ttl_hours,
+                "workspaces": [
+                    {
+                        "id": w.id.value,
+                        "repo": w.repo,
+                        "status": w.status,
+                        "branch": w.branch,
+                        "created_at": w.created_at.isoformat(),
+                        "last_active_at": w.last_active_at.isoformat(),
+                        "expires_at": (
+                            w.last_active_at + timedelta(hours=ttl_hours)
+                        ).isoformat(),
+                    }
+                    for w in rows
+                ],
+            }
+        )
+
+    @router.delete("/engineering/workspaces/{workspace_id}")
+    async def delete_agent_workspace(
+        workspace_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Delete one of the caller's workspaces and everything in it.
+
+        Ownership is checked against the caller rather than trusted from the path: a workspace id
+        is guessable enough that treating it as a capability would let one user delete another's
+        checkout. A workspace belonging to someone else is reported as absent, not forbidden --
+        the same answer either way tells an unauthorised caller nothing about what exists.
+        """
+        if container.workspace_manager is None:
+            raise HTTPException(status_code=404, detail="workspaces are not enabled")
+        mine = await container.workspace_manager.list_for_user(caller.user_id)
+        target = next((w for w in mine if w.id.value == workspace_id), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="workspace not found")
+        await container.workspace_manager.destroy(target)
+        return JSONResponse(content={"deleted": workspace_id, "repo": target.repo})
 
     @router.get("/engineering/runs")
     async def list_engineer_runs(

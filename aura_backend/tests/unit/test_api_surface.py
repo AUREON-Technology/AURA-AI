@@ -238,6 +238,83 @@ class TestIntrospection:
         response = user_client.get("/api/v3/engineering/runs", params={"since": "not-a-date"})
         assert response.status_code == 422
 
+    def test_workspaces_report_being_disabled_rather_than_erroring(self, user_client) -> None:
+        """A deployment without the engineer agent has no workspaces, which is a state the
+        client should render ("not enabled here"), not an error it has to interpret."""
+        response = user_client.get("/api/v3/engineering/workspaces")
+
+        assert response.status_code == 200
+        assert response.json() == {"workspaces": [], "enabled": False}
+
+    def test_workspaces_are_listed_with_an_expiry_for_their_owner(self, container) -> None:
+        """`expires_at` is computed from the configured TTL rather than stored, so changing the
+        TTL does not leave existing rows advertising the old one."""
+        import asyncio
+        from datetime import datetime, timezone
+
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+        from aura_core.domain.identifiers import UserId
+        from aura_core.tools.workspaces import WorkspaceManager
+
+        container.workspace_manager = WorkspaceManager(
+            runner=InMemorySandboxRunner(), store=container.workspaces, min_free_memory_mb=0
+        )
+        asyncio.run(container.workspace_manager.open(UserId("test-user"), "acme/widgets"))
+
+        with _client(container) as client:
+            body = client.get("/api/v3/engineering/workspaces").json()
+
+        assert body["enabled"] is True
+        assert [w["repo"] for w in body["workspaces"]] == ["acme/widgets"]
+        row = body["workspaces"][0]
+        assert row["expires_at"] > row["last_active_at"]
+
+    def test_one_user_cannot_delete_anothers_workspace(self, container) -> None:
+        """Ownership is checked against the caller rather than trusted from the path -- a
+        workspace id is guessable enough that treating it as a capability would let one user
+        delete another's checkout. Reported as absent, not forbidden, so the answer tells an
+        unauthorised caller nothing about what exists."""
+        import asyncio
+
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+        from aura_core.domain.identifiers import UserId
+        from aura_core.tools.workspaces import WorkspaceManager
+
+        container.workspace_manager = WorkspaceManager(
+            runner=InMemorySandboxRunner(), store=container.workspaces, min_free_memory_mb=0
+        )
+        victim = asyncio.run(
+            container.workspace_manager.open(UserId("someone-else"), "acme/private")
+        )
+
+        with _client(container) as client:
+            response = client.delete(
+                f"/api/v3/engineering/workspaces/{victim.record.id.value}"
+            )
+
+        assert response.status_code == 404
+        assert asyncio.run(
+            container.workspaces.get_by_id(victim.record.id)
+        ) is not None, "another user's workspace was deleted"
+
+    def test_a_user_can_delete_their_own_workspace(self, container) -> None:
+        import asyncio
+
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+        from aura_core.domain.identifiers import UserId
+        from aura_core.tools.workspaces import WorkspaceManager
+
+        container.workspace_manager = WorkspaceManager(
+            runner=InMemorySandboxRunner(), store=container.workspaces, min_free_memory_mb=0
+        )
+        mine = asyncio.run(container.workspace_manager.open(UserId("test-user"), "acme/widgets"))
+
+        with _client(container) as client:
+            response = client.delete(f"/api/v3/engineering/workspaces/{mine.record.id.value}")
+
+        assert response.status_code == 200
+        assert asyncio.run(container.workspaces.get_by_id(mine.record.id)) is None
+
 
 class TestAdminOperations:
     def test_an_index_rebuild_reports_its_gate_outcome(self, admin_client) -> None:
