@@ -1,0 +1,107 @@
+# ADR-011 — The desktop Engineer agent executes on the user's own machine, not a server sandbox
+
+**Status:** Partially implemented (backend bridge only — see "Implementation status") · **Date:** 2026-09-08
+
+## Context
+
+The Engineer persona (`aura_core/agents/registry.py`) and its tools (`aura_core/tools/coding.py`
+— `write_file`, `edit_file`, `run_command`, `git_*`, GitHub read/write, MCP bridging) already
+exist and are already wired through the same planning → execution → `ToolRegistry`/`ToolPolicy`
+path every other tool uses. What they act on is the gap: `Container._build_sandbox_runner`
+(pre-this-ADR) built a `DockerSandboxRunner` — an ephemeral, network-restricted container **on
+the server**, torn down at the end of the turn. The tools say so out loud in their own
+descriptions: *"not the user's real files, a scratch directory."*
+
+That makes the Engineer persona useful for "write and test a snippet" but not for "be a real
+software engineer on any project on my computer" — the ask this ADR answers. Doing that requires
+touching the user's actual filesystem and a real terminal, on a real, possibly long-lived
+project, from a desktop client.
+
+## Decision
+
+### Execution moves to the user's machine; the port does not change
+
+`aura_core/ports/coding.py::SandboxRunner` was already the exact seam: `create_task` / `run` /
+`write_file` / `read_file` / `destroy`, used identically by every tool in `tools/coding.py`
+regardless of what implements it. Swapping the implementation changes *where* code runs without
+touching `AIKernel`, `ExecutionEngine`, `ToolRegistry`, `ToolPolicy`, or `agents/registry.py` —
+proof that the hexagonal boundary (ADR-001) is doing its job.
+
+The desktop app runs a local daemon (`aura_hostd`) that opens an **outbound** WebSocket to
+`/api/v3/host/agent` — outbound so a machine behind NAT/no forwarded port still works, the same
+reason `voice/live` is a server-push channel rather than the reverse. The server then calls
+*into* that connection — `adapters/host_agent.py::HostAgentSandboxRunner` — exactly the way
+`build_sandbox_tools` already calls into `DockerSandboxRunner`; the tool layer does not know or
+care which one it is talking to.
+
+`CompositeSandboxRunner` is what is actually wired into `container.sandbox_runner`: it prefers a
+connected desktop session for the calling user and falls back to the server-side Docker sandbox
+(or refuses, with a clear message) when none is connected. The choice is made once per task, at
+`create_task`, and fixed for that handle's lifetime — a handle does not migrate runners mid-task.
+
+### Containment is enforced by the daemon, never trusted from the server
+
+This is the central safety decision, stated explicitly because it is easy to get backwards: **a
+confused or compromised backend must not be able to touch the user's whole filesystem.**
+Server-side `ToolPolicy` still evaluates every call exactly as it does today — capability grant,
+sensitivity ceiling, taint (below) — before this bridge is ever reached. That gate answers "is
+this call authorized at all." It does not and cannot answer "is `/etc/passwd` a path this user
+meant to grant" — only the daemon, running on the machine in question, can answer that.
+
+So the daemon independently enforces its own containment: explicit workspace roots the user
+grants, path resolution that checks containment *after* resolving symlinks (matching the
+discipline `tools/builtin.py::build_file_tools`'s `resolve_within` already uses for the read-only
+workspace tools), and a hard denylist no consent tier — including an explicit "trust this
+workspace" mode — is allowed to lift. A path outside every granted root is refused, never merely
+confirmable; the user adds a root instead of the agent working around the boundary.
+
+### Trust channels and taint are unaffected
+
+`run_command`'s output still carries `tags=("untrusted_content",)` (`tools/coding.py`), so it
+still taints the turn exactly as it does against the Docker sandbox today, and a subsequent
+side-effecting tool still needs confirmation under a tainted context (ADR-006). A real machine's
+command output is not more trustworthy than a container's; if anything the daemon's own consent
+tiers are an *additional* layer on top of the existing taint/confirm rule, not a replacement for
+it.
+
+### Desktop identity is a pairing token, not attestation
+
+`services/security.py` rejects every platform that is not `android`/`ios` at attestation
+(`_reject_attestation("unsupported_platform")`), and there is no Play-Integrity/App-Attest
+equivalent for a desktop OS worth relying on. Requiring the same mobile attestation path for
+desktop would either block desktop entirely or force weakening attestation everywhere. Instead,
+desktop login uses a device-scoped pairing token: the app shows a one-time code, the daemon
+exchanges it for a narrower, revocable token — the same shape `/api/v3/auth/web/token` already
+uses for the browser's non-attested path. This is a real relaxation of the attestation
+requirement for one platform, made deliberately and narrowly rather than silently, and confined
+to identity — it grants no bypass of `ToolPolicy`, taint, or the daemon's own containment.
+
+## Consequences
+
+- `container.sandbox_runner` is now always non-`None` (`CompositeSandboxRunner`), so
+  `write_file`/`edit_file`/`run_command`/`git_*` register whenever the caller has the
+  `engineer_agent` capability, regardless of whether this deployment has opted into
+  `sandbox.enabled`. A caller with no connected desktop app and no configured Docker sandbox
+  gets a clear error from `create_task`, not an invisible tool — registered-but-unusable is a
+  better failure than silently absent.
+- The engineer agent's risk profile changes materially for a desktop-paired user: `run_command`
+  on a real machine is the most dangerous capability in the product. The daemon-side containment
+  described above is the mitigation, and it is a release gate, not a nice-to-have — verified by a
+  negative test (a path outside every granted root must be denied even with the daemon's most
+  permissive consent mode enabled).
+- Nothing changes for a user who never pairs a desktop app: `CompositeSandboxRunner` falls back
+  to the pre-existing Docker sandbox behavior exactly as before.
+
+## Implementation status
+
+As of this ADR: the backend bridge (`adapters/host_agent.py`, `api/host_agent.py`, the
+`container.py` rewiring, and the `SandboxRunner.create_task(user_id=...)` port extension) is
+implemented and tested (`tests/unit/test_host_agent.py`, `tests/unit/test_engineer_tools.py`).
+
+**Not yet implemented**, and needed before this ADR's decision is actually exercised by a real
+user: the `aura_hostd` daemon itself (workspace roots, path containment, PTY/streamed terminal,
+consent tiers, the desktop pairing auth flow), and the Flutter desktop UI that supervises it
+(workspace picker, diff review, live terminal). Until the daemon exists, `CompositeSandboxRunner`
+always falls back to the Docker sandbox path in practice — the bridge has a caller, but nothing
+is listening on the other end yet. See `docs/AURA_UPGRADE_ROADMAP.md` for the up-to-date status
+of what is and is not built.

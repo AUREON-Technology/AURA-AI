@@ -65,6 +65,24 @@ class TestSandboxTools:
         assert "exit_code=0" in result
         assert "hi" in result
 
+    async def test_session_cache_passes_the_caller_s_user_id_to_create_task(self, ctx) -> None:
+        """`_SandboxSessionCache` must thread `context.user_id` through to the runner -- this is
+        the whole mechanism a per-user runner (the desktop host-agent bridge) uses to route a
+        call to the right caller's daemon (ports/coding.py::SandboxRunner)."""
+        runner = InMemorySandboxRunner()
+        seen_user_ids = []
+        original_create_task = runner.create_task
+
+        async def recording_create_task(*, user_id=None):
+            seen_user_ids.append(user_id)
+            return await original_create_task(user_id=user_id)
+
+        runner.create_task = recording_create_task
+        tools = _by_name(build_sandbox_tools(runner))
+
+        await tools["write_file"].execute({"path": "hello.txt", "content": "hi"}, ctx)
+        assert seen_user_ids == [ctx.user_id]
+
     async def test_edit_file_requires_exactly_one_occurrence(self, ctx) -> None:
         runner = InMemorySandboxRunner()
         tools = _by_name(build_sandbox_tools(runner))
