@@ -21,7 +21,7 @@ class EngineerWorkspacesPanel extends ConsumerWidget {
       loading: () => const AuraSkeleton(height: 96),
       // A failed fetch of a secondary panel should not shout. The client already degrades to an
       // empty list, so this branch is for the unexpected rather than the routine.
-      error: (_, __) => const AuraEmptyState(
+      error: (_, _) => const AuraEmptyState(
         icon: Icons.cloud_off_outlined,
         title: 'Workspaces unavailable',
         message: 'Could not reach the server. Your work is not lost -- try again shortly.',
