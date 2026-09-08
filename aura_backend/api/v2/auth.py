@@ -12,7 +12,17 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from infrastructure.db.user_repo import get_or_create_user
-from services.jwt_auth import issue_token_pair, refresh_token_pair, revoke_refresh_token
+from services.desktop_pairing import (
+    exchange_pairing_code,
+    issue_pairing_code,
+    revoke_desktop_device_token,
+)
+from services.jwt_auth import (
+    issue_token_pair,
+    refresh_token_pair,
+    revoke_refresh_token,
+    verify_access_token,
+)
 from services.rbac import CONSOLE_MIN_ROLE, is_console_operator, stamp_resolved_role
 from services.security import store_nonce, verify_identity_token, verify_token
 
@@ -108,6 +118,81 @@ async def exchange_web_token(
         )
     await _persist_user(user_info)
     return issue_token_pair(user_info)
+
+
+@router.post("/desktop/token", response_model=TokenResponse)
+async def exchange_desktop_token(
+    request: Request,
+    authorization: HTTPAuthorizationCredentials | None = Depends(_web_bearer),
+):
+    """Desktop Flutter login. Google/Firebase ID token only — no Play Integrity.
+
+    ADR-011's deliberate attestation relaxation for the desktop platform: same identity
+    verification as ``/web/token``, but available to any authenticated user (not console-role
+    gated). Does **not** grant ``engineer_agent`` by itself -- that still comes from
+    ``AURA_ENGINEER_AGENT_ROLES``. Pairing the host daemon is a separate one-time-code flow
+    (``/desktop/pairing``).
+    """
+    user_info = await verify_identity_token(request, authorization)
+    stamp_resolved_role(user_info)
+    await _persist_user(user_info)
+    return issue_token_pair(user_info)
+
+
+class PairingCodeResponse(BaseModel):
+    code: str
+    expires_in: int
+
+
+class PairingExchangeRequest(BaseModel):
+    code: str
+    device_name: str = "aura_hostd"
+
+
+class PairingExchangeResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str
+    expires_in: int
+    device_token: str
+    device_id: str
+    expires_in_device: int
+
+
+class DeviceRevokeRequest(BaseModel):
+    device_token: str
+
+
+@router.post("/desktop/pairing", response_model=PairingCodeResponse)
+async def start_desktop_pairing(
+    request: Request,
+    authorization: HTTPAuthorizationCredentials | None = Depends(_web_bearer),
+):
+    """Issue a one-time pairing code for ``aura_hostd``. Requires a live access JWT."""
+    user_info = await verify_access_token(request, authorization)
+    stamp_resolved_role(user_info)
+    return issue_pairing_code(user_info)
+
+
+@router.post("/desktop/pairing/exchange", response_model=PairingExchangeResponse)
+async def exchange_desktop_pairing(body: PairingExchangeRequest):
+    """Daemon-facing: trade a pairing code for a device token + session JWTs.
+
+    Unauthenticated by design -- possession of the short-lived code *is* the proof, mirroring
+    how a one-time invite works. The code is single-use and expires quickly.
+    """
+    result = exchange_pairing_code(body.code, device_name=body.device_name)
+    if result is None:
+        raise HTTPException(status_code=400, detail="Pairing code is invalid or expired.")
+    return result
+
+
+@router.post("/desktop/pairing/revoke")
+async def revoke_desktop_pairing(body: DeviceRevokeRequest):
+    """Revoke a previously issued device-scoped pairing token."""
+    if not revoke_desktop_device_token(body.device_token):
+        raise HTTPException(status_code=404, detail="Device token not found.")
+    return {"status": "revoked"}
 
 
 @router.post("/refresh", response_model=TokenResponse)

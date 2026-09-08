@@ -216,6 +216,20 @@ def verify_device_integrity(attestation_token: Optional[str], platform: Optional
             attestation_failure_reason.set("ok")
             return True
 
+        elif platform == "desktop":
+            # ADR-011: desktop has no Play Integrity / App Attest path. A device-scoped pairing
+            # token (services/desktop_pairing.py), minted after an authenticated one-time-code
+            # exchange, is the attestation stand-in for this platform only -- not a ToolPolicy
+            # bypass and not accepted for android/ios.
+            from services.desktop_pairing import verify_desktop_device_token
+
+            if verify_desktop_device_token(attestation_token):
+                logger.info("Desktop pairing device token verified.")
+                attestation_failure_reason.set("ok")
+                return True
+            logger.warning("Desktop Integrity failure: pairing device token missing or invalid.")
+            return _reject_attestation("desktop_pairing")
+
         else:
             logger.warning(f"Unsupported device validation platform: {platform}")
             return _reject_attestation("unsupported_platform")
