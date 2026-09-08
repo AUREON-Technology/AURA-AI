@@ -12,8 +12,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
-from ..domain.engineering import EngineerRun
-from ..domain.identifiers import UserId
+from ..domain.engineering import AgentWorkspace, EngineerRun
+from ..domain.identifiers import UserId, WorkspaceId
 
 __all__ = [
     "McpToolDescriptor",
@@ -25,6 +25,7 @@ __all__ = [
     "SandboxResult",
     "SandboxRunner",
     "EngineerRunStore",
+    "WorkspaceStore",
 ]
 
 
@@ -173,4 +174,62 @@ class EngineerRunStore(Protocol):
     async def list_for_user(
         self, user_id: UserId, *, since: datetime | None = None, limit: int = 200,
     ) -> Sequence[EngineerRun]:
+        ...
+
+
+@runtime_checkable
+class WorkspaceStore(Protocol):
+    """Persistence for :class:`~aura_core.domain.engineering.AgentWorkspace` rows.
+
+    Deliberately mutable, unlike :class:`EngineerRunStore` next to it. A run is a fact that
+    happened and is only ever appended; a workspace is live state whose whole purpose is to be
+    updated -- ``touch`` on every tool call is what the idle TTL measures, and without it a
+    workspace in continuous use would be reaped on its third day.
+
+    ``touch`` is separated from ``upsert`` rather than folded into it because it is the hot path:
+    every single tool call performs one, and it must not require reading, mutating and writing
+    back a whole row (which would also race two concurrent calls against each other, with the
+    slower one restoring stale fields).
+    """
+
+    async def upsert(self, workspace: AgentWorkspace) -> None:
+        """Create or replace the row for this workspace id."""
+        ...
+
+    async def get(self, user_id: UserId, repo: str) -> AgentWorkspace | None:
+        """The workspace for this ``(user, repo)`` pair, or ``None``.
+
+        This pair is the natural key the tool layer resolves on -- an agent asked to work on a
+        repository knows the user and the repository, not a workspace id.
+        """
+        ...
+
+    async def get_by_id(self, workspace_id: WorkspaceId) -> AgentWorkspace | None:
+        ...
+
+    async def list_for_user(self, user_id: UserId) -> Sequence[AgentWorkspace]:
+        """Every workspace this user owns, most recently active first."""
+        ...
+
+    async def list_all(self) -> Sequence[AgentWorkspace]:
+        """Every workspace, for the reaper and for startup reconciliation.
+
+        Not scoped to a user because neither caller has one: they are reconciling this host's
+        containers against this host's rows.
+        """
+        ...
+
+    async def list_idle_since(self, cutoff: datetime) -> Sequence[AgentWorkspace]:
+        """Workspaces whose ``last_active_at`` is at or before ``cutoff``.
+
+        The reaper's query. Taking a cutoff rather than a TTL keeps the clock in the caller,
+        which is what lets a test drive expiry with ``FrozenClock`` instead of sleeping.
+        """
+        ...
+
+    async def touch(self, workspace_id: WorkspaceId, *, at: datetime, status: str | None = None) -> None:
+        """Record activity, optionally moving the workspace's status in the same write."""
+        ...
+
+    async def delete(self, workspace_id: WorkspaceId) -> None:
         ...

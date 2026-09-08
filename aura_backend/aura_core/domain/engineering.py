@@ -18,9 +18,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from .identifiers import EngineerRunId, UserId
+from .identifiers import EngineerRunId, UserId, WorkspaceId
 
-__all__ = ["EngineerRunStatus", "EngineerRun"]
+__all__ = ["EngineerRunStatus", "EngineerRun", "WorkspaceStatus", "AgentWorkspace"]
 
 
 class EngineerRunStatus:
@@ -58,3 +58,66 @@ class EngineerRun:
     branch: str | None = None
     commit_sha: str | None = None
     sandbox_transcript: str | None = None
+
+
+class WorkspaceStatus:
+    """Plain string constants, for the same reason :class:`EngineerRunStatus` is: the value is
+    stored verbatim in a column the Flutter client reads back, and the client shares no enum type
+    with the backend.
+
+    The three states are a memory story, not bookkeeping. A workspace's real content is the
+    checkout on disk, so it does not need a running container between turns:
+
+    * ``HOT``     -- container running. The only state that costs RAM.
+    * ``WARM``    -- container stopped, checkout intact. Costs disk only; restarting is fast
+      because the container still exists.
+    * ``EXPIRED`` -- past its idle TTL and reaped: container and directory both gone. Terminal;
+      the row is deleted rather than left in this state, which exists so a reaper mid-pass and a
+      caller reading concurrently agree on what is happening.
+    """
+
+    HOT = "hot"
+    WARM = "warm"
+    EXPIRED = "expired"
+
+
+@dataclass(frozen=True, slots=True)
+class AgentWorkspace:
+    """One durable engineer-agent workspace: a real git checkout plus the container that works
+    on it, scoped to a single ``(user_id, repo)`` pair.
+
+    Scoped per repository rather than per user on purpose. Two repositories a user is working on
+    get two containers and two filesystems, so a hostile repository cannot read the other's
+    checkout -- isolation by construction rather than by convention. Per *conversation* was the
+    other candidate and would re-clone for every new thread about the same repository, which is
+    the cost this whole feature exists to remove.
+
+    Unlike :class:`EngineerRun`, this is mutable live state, not an append-only ledger:
+    ``last_active_at`` is rewritten on every tool call and is what the TTL measures, so a
+    workspace someone is actively using is never reaped out from under them.
+
+    ``container_id`` is nullable because the row and the container are created in that order, and
+    because a reaped or externally-removed container leaves a row whose checkout is still on
+    disk. Reconciliation (``Container.startup``) treats a row with no live container and a
+    container with no row as the same class of problem: state that drifted, to be resolved
+    towards the store rather than guessed at.
+    """
+
+    id: WorkspaceId
+    user_id: UserId
+    repo: str
+    workspace_path: str
+    status: str
+    created_at: datetime
+    last_active_at: datetime
+    container_id: str | None = None
+    branch: str | None = None
+
+    def is_expired(self, *, now: datetime, ttl_hours: float) -> bool:
+        """True when nothing has touched this workspace for ``ttl_hours``.
+
+        Idle time is measured from ``last_active_at``, never from ``created_at``: the promise is
+        "expires after 3 days of inactivity", so a workspace used daily for a month is not stale
+        and a workspace created an hour ago and abandoned is on its way out.
+        """
+        return (now - self.last_active_at).total_seconds() >= ttl_hours * 3600.0

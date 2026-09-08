@@ -31,6 +31,7 @@ __all__ = [
     "GenerationId",
     "PersonalOsRecordId",
     "EngineerRunId",
+    "WorkspaceId",
     "deterministic_uuid",
 ]
 
@@ -142,6 +143,17 @@ class EngineerRunId(Identifier):
     ``aura_core/domain/engineering.py``. Its own id type for the same reason
     :class:`PersonalOsRecordId` is: a different table, a different visibility contract, not to be
     confused with a `ToolCallId`."""
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceId(Identifier):
+    """One persistent engineer-agent workspace -- a durable checkout plus the container that
+    works on it, scoped to one (user, repository) pair (see
+    ``aura_core/domain/engineering.py``).
+
+    Distinct from :class:`EngineerRunId`, which identifies one recorded *tool call*: a workspace
+    outlives many runs, and unlike a run it is mutable, live state rather than a ledger row.
+    """
 
 
 def deterministic_uuid(*parts: str, namespace: str = "aura") -> uuid.UUID:

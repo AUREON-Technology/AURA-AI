@@ -24,11 +24,11 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Mapping, Sequence
 
-from ..domain.engineering import EngineerRun
+from ..domain.engineering import AgentWorkspace, EngineerRun
 from ..domain.errors import ConflictError, NotFoundError, ValidationError
 from ..domain.github_identity import GitHubIdentity
 from ..domain.goals import GoalSnapshot
-from ..domain.identifiers import DocumentId, MemoryId, PersonalOsRecordId, UserId
+from ..domain.identifiers import DocumentId, MemoryId, PersonalOsRecordId, UserId, WorkspaceId
 from ..domain.knowledge import (
     Chunk,
     Document,
@@ -53,6 +53,7 @@ __all__ = [
     "InMemoryGoalsPort",
     "InMemoryInsightSink",
     "InMemoryGitHubIdentityPort",
+    "InMemoryWorkspaceStore",
 ]
 
 
@@ -464,6 +465,88 @@ class InMemoryEngineerRunStore:
         ]
         matches.sort(key=lambda r: r.created_at, reverse=True)
         return matches[:limit]
+
+
+class InMemoryWorkspaceStore:
+    """Reference implementation of :class:`~aura_core.ports.coding.WorkspaceStore`.
+
+    A real implementation, not a mock: the uniqueness rule on ``(user_id, repo)`` is enforced
+    here exactly as the Postgres index enforces it, so a test that would provision two workspaces
+    for one repository fails against this substrate too rather than only in production.
+    """
+
+    def __init__(self) -> None:
+        self._by_id: dict[str, AgentWorkspace] = {}
+        self._lock = asyncio.Lock()
+
+    @staticmethod
+    def _key(user_id: UserId, repo: str) -> tuple[str, str]:
+        return (user_id.value, repo)
+
+    async def upsert(self, workspace: AgentWorkspace) -> None:
+        async with self._lock:
+            existing = next(
+                (
+                    w for w in self._by_id.values()
+                    if self._key(w.user_id, w.repo) == self._key(workspace.user_id, workspace.repo)
+                    and w.id != workspace.id
+                ),
+                None,
+            )
+            if existing is not None:
+                # Mirrors ix_aura_agent_workspaces_user_repo. Two rows for one checkout would
+                # mean two containers racing on the same directory.
+                raise ValueError(
+                    f"a workspace for {workspace.repo!r} already exists for this user "
+                    f"({existing.id.value})"
+                )
+            self._by_id[workspace.id.value] = workspace
+
+    async def get(self, user_id: UserId, repo: str) -> AgentWorkspace | None:
+        async with self._lock:
+            for workspace in self._by_id.values():
+                if self._key(workspace.user_id, workspace.repo) == self._key(user_id, repo):
+                    return workspace
+        return None
+
+    async def get_by_id(self, workspace_id: WorkspaceId) -> AgentWorkspace | None:
+        async with self._lock:
+            return self._by_id.get(workspace_id.value)
+
+    async def list_for_user(self, user_id: UserId) -> list[AgentWorkspace]:
+        async with self._lock:
+            matches = [w for w in self._by_id.values() if w.user_id == user_id]
+        matches.sort(key=lambda w: w.last_active_at, reverse=True)
+        return matches
+
+    async def list_all(self) -> list[AgentWorkspace]:
+        async with self._lock:
+            matches = list(self._by_id.values())
+        matches.sort(key=lambda w: w.last_active_at, reverse=True)
+        return matches
+
+    async def list_idle_since(self, cutoff: datetime) -> list[AgentWorkspace]:
+        async with self._lock:
+            matches = [w for w in self._by_id.values() if w.last_active_at <= cutoff]
+        matches.sort(key=lambda w: w.last_active_at)
+        return matches
+
+    async def touch(
+        self, workspace_id: WorkspaceId, *, at: datetime, status: str | None = None
+    ) -> None:
+        async with self._lock:
+            current = self._by_id.get(workspace_id.value)
+            if current is None:
+                return
+            self._by_id[workspace_id.value] = _dc_replace(
+                current,
+                last_active_at=at,
+                status=current.status if status is None else status,
+            )
+
+    async def delete(self, workspace_id: WorkspaceId) -> None:
+        async with self._lock:
+            self._by_id.pop(workspace_id.value, None)
 
 
 _FAR_FUTURE = datetime(9999, 12, 31, tzinfo=timezone.utc)

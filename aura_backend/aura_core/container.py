@@ -19,6 +19,7 @@ from typing import Any
 from .adapters.memory_stores import (
     InMemoryDocumentStore,
     InMemoryEngineerRunStore,
+    InMemoryWorkspaceStore,
     InMemoryGitHubIdentityPort,
     InMemoryGoalsPort,
     InMemoryGraphStore,
@@ -135,6 +136,7 @@ class Container:
         self.memory_store = self._build_memory_store()
         self.personal_os_store = self._build_personal_os_store()
         self.engineer_runs = self._build_engineer_run_store()
+        self.workspaces = self._build_workspace_store()
         self.goals = self._build_goals_port()
         self.github_identities = self._build_github_identity_port()
         self.graph = self._build_graph_store()
@@ -657,6 +659,21 @@ class Container:
         if backend != "memory":
             raise ConfigurationError(f"unknown memory backend {backend!r}")
         return InMemoryEngineerRunStore()
+
+    def _build_workspace_store(self) -> Any:
+        """Same backend switch as `_build_engineer_run_store`, deliberately: a deployment that
+        keeps engineer-run history in Postgres and workspaces in memory would forget every
+        workspace on restart while still claiming, in its own history, to have created them."""
+        backend = self.settings.infrastructure.memory_backend
+        if backend == "postgres":
+            from .adapters.postgres_workspaces import PostgresWorkspaceStore
+
+            return PostgresWorkspaceStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        if backend != "memory":
+            raise ConfigurationError(f"unknown memory backend {backend!r}")
+        return InMemoryWorkspaceStore()
 
     def _build_ocr_engine(self) -> Any:
         """`None` unless both the operator opted in (`ocr_enabled`) and the `tesseract` binary is
