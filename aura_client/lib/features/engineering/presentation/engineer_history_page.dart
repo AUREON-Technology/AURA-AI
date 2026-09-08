@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:aura_client/core/ai/engineer/workspaces_panel.dart';
+import 'package:aura_client/core/ai/engineer/engineer_workspaces.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_diff_view.dart';
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_terminal_view.dart';
@@ -14,6 +16,10 @@ import '../data/engineer_run_repository.dart';
 /// Unlike the in-chat step log and confirmation card, this survives the conversation being
 /// archived and a reinstall (it reads straight from the backend's `EngineerRunStore`, not local
 /// Drift state).
+///
+/// Persistent workspaces (ADR-013) live above the run list: a workspace is server-side state
+/// with a deadline, and this page is the only engineer surface reachable from Settings and the
+/// persona picker.
 class EngineerHistoryPage extends ConsumerWidget {
   const EngineerHistoryPage({super.key});
 
@@ -26,43 +32,67 @@ class EngineerHistoryPage extends ConsumerWidget {
       backgroundColor: palette.background,
       appBar: AppBar(
         backgroundColor: palette.background,
-        title: const Text('Engineer Task History'),
+        title: const Text('Engineer'),
       ),
       body: RefreshIndicator(
-        onRefresh: () => ref.refresh(engineerRunsProvider.future),
-        child: runsAsync.when(
-          data: (runs) {
-            if (runs.isEmpty) {
-              return ListView(
-                children: const [
-                  AuraEmptyState(
-                    icon: Icons.code_outlined,
-                    title: 'No engineer runs yet',
-                    message:
-                        'Ask the Engineer agent to open a PR or run a command, and it will show up here.',
-                  ),
-                ],
-              );
-            }
-            return ListView.separated(
-              padding: const EdgeInsets.all(AuraSpacing.md),
-              itemCount: runs.length,
-              separatorBuilder: (_, _) => const SizedBox(height: AuraSpacing.sm),
-              itemBuilder: (context, index) => _EngineerRunTile(run: runs[index]),
-            );
-          },
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (err, _) => ListView(
-            children: [
-              AuraEmptyState(
-                icon: Icons.error_outline,
-                title: 'Could not load history',
-                message: '$err',
-                actionLabel: 'Retry',
-                onAction: () => ref.invalidate(engineerRunsProvider),
+        onRefresh: () async {
+          await Future.wait([
+            ref.refresh(engineerWorkspacesProvider.future),
+            ref.refresh(engineerRunsProvider.future),
+          ]);
+        },
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            const SliverPadding(
+              padding: EdgeInsets.fromLTRB(
+                AuraSpacing.md,
+                AuraSpacing.md,
+                AuraSpacing.md,
+                0,
               ),
-            ],
-          ),
+              sliver: SliverToBoxAdapter(child: EngineerWorkspacesPanel()),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.all(AuraSpacing.md),
+              sliver: runsAsync.when(
+                data: (runs) {
+                  if (runs.isEmpty) {
+                    return const SliverToBoxAdapter(
+                      child: AuraEmptyState(
+                        icon: Icons.code_outlined,
+                        title: 'No engineer runs yet',
+                        message:
+                            'Ask the Engineer agent to open a PR or run a command, and it will show up here.',
+                      ),
+                    );
+                  }
+                  return SliverList.separated(
+                    itemCount: runs.length,
+                    separatorBuilder: (_, _) =>
+                        const SizedBox(height: AuraSpacing.sm),
+                    itemBuilder: (context, index) =>
+                        _EngineerRunTile(run: runs[index]),
+                  );
+                },
+                loading: () => const SliverToBoxAdapter(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: AuraSpacing.xl),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                ),
+                error: (err, _) => SliverToBoxAdapter(
+                  child: AuraEmptyState(
+                    icon: Icons.error_outline,
+                    title: 'Could not load history',
+                    message: '$err',
+                    actionLabel: 'Retry',
+                    onAction: () => ref.invalidate(engineerRunsProvider),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
