@@ -399,6 +399,16 @@ first-PCM-after-`speech_ended` latency under a named model, Arabic live STT on m
 Whisper, Redis-backed exact multi-worker session caps. Client CI is the Dart gate — no Flutter
 toolchain in this environment; audio is not exercised there.
 
+A production edge-layer defect was found and fixed since (PR #65, 2026-09-07): `/api/v3/voice/live`
+404'd for every real client because `http2 on;` on the nginx HTTPS server block negotiated HTTP/2
+via ALPN for any client offering it (curl, and Dart's `dart:io` WebSocket client), and HTTP/2
+forbids the legacy `Connection`/`Upgrade` headers the WebSocket handshake needs — confirmed via
+`docker exec`/`curl -v` showing the identical request succeed over HTTP/1.1 straight to the
+gateway and 404 through nginx. Nothing in the app, the route registration, or the location block
+itself was wrong. This was purely an edge-config defect, so it doesn't move Phase H's own exit
+gates above, but it was the reason the whole feature was unreachable from any real client before
+this fix, regardless of what those gates otherwise measure.
+
 ### Phase I — Transcript / text NLP
 
 **Status: scaffolding / partial.** Design: [`docs/plans/phase-i-nlp.md`](plans/phase-i-nlp.md).
