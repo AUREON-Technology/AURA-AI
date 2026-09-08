@@ -376,3 +376,129 @@ class TestReconciliation:
         manager = WorkspaceManager(runner=_Broken(), store=store, clock=clock)
 
         assert await manager.reconcile() == {"orphan_containers": 0, "missing_containers": 0}
+
+
+class TestReaper:
+    """`reap()` is the only thing bounding this feature's disk and memory over time."""
+
+    async def test_expired_workspaces_are_removed(self, manager, store, runner, clock) -> None:
+        opened = await manager.open(_ALICE, "a/one")
+        await manager.pause(opened.record.id)
+        clock.advance(hours=73)
+
+        summary = await manager.reap()
+
+        assert summary["expired"] == 1
+        assert await store.get_by_id(opened.record.id) is None
+        assert await runner.workspace_keys() == []
+
+    async def test_a_workspace_in_use_is_never_reaped(self, manager, store, clock) -> None:
+        """The failure that would matter most: deleting a checkout somebody is working in."""
+        opened = await manager.open(_ALICE, "a/one")
+        for _ in range(6):
+            clock.advance(hours=20)
+            await manager.touch(opened.record.id)
+
+        await manager.reap()
+
+        assert await store.get_by_id(opened.record.id) is not None
+
+    async def test_idle_hot_workspaces_are_paused_not_deleted(
+        self, manager, store, clock
+    ) -> None:
+        """An abandoned turn holds memory until this runs; pausing returns it and loses nothing,
+        so it happens long before the TTL is anywhere near."""
+        opened = await manager.open(_ALICE, "a/one")
+        clock.advance(seconds=901)
+
+        summary = await manager.reap()
+
+        assert summary["paused"] == 1
+        assert summary["expired"] == 0
+        record = await store.get_by_id(opened.record.id)
+        assert record is not None and record.status == WorkspaceStatus.WARM
+
+    async def test_pausing_does_not_postpone_expiry(self, manager, store, clock) -> None:
+        """If the pause refreshed last_active_at, the sweep meant to reclaim an abandoned
+        workspace would keep it alive forever instead."""
+        opened = await manager.open(_ALICE, "a/one")
+        clock.advance(seconds=901)
+        await manager.reap()
+
+        clock.advance(hours=72)
+        await manager.reap()
+
+        assert await store.get_by_id(opened.record.id) is None
+
+    async def test_reap_is_idempotent(self, manager, store, clock) -> None:
+        """Beat restarts and manual triggers overlap; two passes must converge, not conflict."""
+        opened = await manager.open(_ALICE, "a/one")
+        await manager.pause(opened.record.id)
+        clock.advance(hours=73)
+
+        first = await manager.reap()
+        second = await manager.reap()
+
+        assert first["expired"] == 1
+        assert second["expired"] == 0
+        assert second["errors"] == 0
+
+    async def test_one_wedged_workspace_does_not_abandon_the_rest(
+        self, store, clock, runner
+    ) -> None:
+        """Precisely when the sweep matters most: a container that will not die must not stop
+        the others from being reclaimed."""
+
+        class _PartlyBroken(InMemorySandboxRunner):
+            async def destroy_workspace(self, handle):
+                if handle.task_id == wedged_id:
+                    raise RuntimeError("container will not die")
+                await super().destroy_workspace(handle)
+
+        broken = _PartlyBroken()
+        manager = WorkspaceManager(
+            runner=broken, store=store, clock=clock, min_free_memory_mb=0, max_workspaces=8
+        )
+        wedged = await manager.open(_ALICE, "a/wedged")
+        wedged_id = wedged.record.id.value
+        healthy = await manager.open(_ALICE, "a/healthy")
+        await manager.pause(wedged.record.id)
+        await manager.pause(healthy.record.id)
+        clock.advance(hours=73)
+
+        summary = await manager.reap()
+
+        assert summary["errors"] == 1
+        assert summary["expired"] == 1
+        assert await store.get_by_id(healthy.record.id) is None
+        assert await store.get_by_id(wedged.record.id) is not None
+
+    async def test_expiry_is_recorded_in_the_run_history(self, manager, clock) -> None:
+        """A workspace that simply is not there one day, with no record of why, is worse than
+        one that expired -- so the reap writes to the same history the agent's actions use."""
+        from aura_core.adapters.memory_stores import InMemoryEngineerRunStore
+
+        runs = InMemoryEngineerRunStore()
+        opened = await manager.open(_ALICE, "a/one")
+        await manager.pause(opened.record.id)
+        clock.advance(hours=73)
+
+        await manager.reap(run_sink=runs)
+
+        recorded = await runs.list_for_user(_ALICE)
+        assert len(recorded) == 1
+        assert "a/one" in recorded[0].sandbox_transcript
+        assert "expired" in recorded[0].sandbox_transcript
+
+    async def test_history_failure_never_blocks_reclaiming_disk(self, manager, clock) -> None:
+        class _BrokenSink:
+            async def record(self, run):
+                raise RuntimeError("history unavailable")
+
+        opened = await manager.open(_ALICE, "a/one")
+        await manager.pause(opened.record.id)
+        clock.advance(hours=73)
+
+        summary = await manager.reap(run_sink=_BrokenSink())
+
+        assert summary["expired"] == 1

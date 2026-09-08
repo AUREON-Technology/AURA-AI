@@ -306,6 +306,84 @@ class WorkspaceManager:
             if w.status == WorkspaceStatus.HOT and w.last_active_at <= cutoff
         ]
 
+    async def reap(self, *, run_sink: Any = None) -> dict[str, int]:
+        """One full housekeeping pass. The thing standing between this feature and a full disk.
+
+        Three jobs, in the order that frees the most for the least loss:
+
+        1. **Pause** hot workspaces whose turn plainly ended (crash, abandoned turn, a client
+           that hung up). Returns memory and loses nothing -- the checkout is untouched.
+        2. **Delete** workspaces idle past the TTL. This is the only step that destroys work, so
+           it is last and is driven purely by ``last_active_at``.
+        3. **Reconcile** drift in both directions, so a container whose row vanished is not left
+           holding disk that nothing will ever reclaim.
+
+        Idempotent by construction: every step reads current state and acts on what it finds, so
+        two overlapping runs (a beat restart, a manual trigger) converge rather than conflict.
+        Errors on one workspace never abandon the rest -- the case this most needs to survive is
+        a single wedged container, which is exactly when the sweep matters most.
+        """
+        summary = {"paused": 0, "expired": 0, "errors": 0}
+        now = self._now()
+
+        for workspace in await self.stale_hot(now):
+            try:
+                await self._pause(workspace, now)
+                summary["paused"] += 1
+            except Exception:
+                summary["errors"] += 1
+                logger.warning(
+                    "could not pause an idle workspace", extra={"workspace": workspace.id.value},
+                    exc_info=True,
+                )
+
+        for workspace in await self.expired(now):
+            try:
+                await self.destroy(workspace)
+                summary["expired"] += 1
+                if run_sink is not None:
+                    # Expiry is a thing that happened to the user's work, so it belongs in the
+                    # same history the rest of the agent's actions are visible in -- otherwise a
+                    # workspace simply is not there one day with no record of why.
+                    await self._record_expiry(run_sink, workspace, now)
+            except Exception:
+                summary["errors"] += 1
+                logger.warning(
+                    "could not reap an expired workspace",
+                    extra={"workspace": workspace.id.value}, exc_info=True,
+                )
+
+        summary.update(await self.reconcile())
+        if summary["paused"] or summary["expired"] or summary["errors"]:
+            logger.info("workspace reap complete", extra=summary)
+        return summary
+
+    async def _record_expiry(self, run_sink: Any, workspace: AgentWorkspace, now: datetime) -> None:
+        from ..domain.engineering import EngineerRun, EngineerRunStatus
+        from ..domain.identifiers import EngineerRunId
+
+        try:
+            await run_sink.record(
+                EngineerRun(
+                    id=EngineerRunId(f"expiry-{workspace.id.value}-{int(now.timestamp())}"),
+                    user_id=workspace.user_id,
+                    turn_id="",
+                    correlation_id="",
+                    persona="engineer",
+                    tool="destroy_workspace",
+                    call_id=f"reaper-{workspace.id.value}",
+                    status=EngineerRunStatus.SUCCEEDED,
+                    created_at=now,
+                    updated_at=now,
+                    sandbox_transcript=(
+                        f"Workspace for {workspace.repo} expired after "
+                        f"{self._ttl_hours:.0f}h without activity and was removed."
+                    ),
+                )
+            )
+        except Exception:  # pragma: no cover - history must never block reclaiming disk
+            logger.debug("could not record a workspace expiry", exc_info=True)
+
     async def reconcile(self) -> dict[str, int]:
         """Make the daemon's containers and the store's rows agree, in both directions.
 
