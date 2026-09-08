@@ -173,9 +173,10 @@ def test_ports_are_async() -> None:
     """
     violations: list[str] = []
     # Synchronous by design: pure accessors, the sync event-bus registration, the clock's
-    # non-awaiting readers, and `stream`, which returns an AsyncIterator rather than awaiting.
+    # non-awaiting readers, and `stream`/`run_streaming`, which return an AsyncIterator rather
+    # than awaiting (LLMProvider.stream, StreamingSandboxRunner.run_streaming).
     non_io = {"name", "model_id", "dimension", "max_batch_size", "capabilities", "spec",
-              "subscribe", "now", "monotonic", "stream"}
+              "subscribe", "now", "monotonic", "stream", "run_streaming"}
 
     for module in _modules("ports"):
         tree = ast.parse(module.read_text(encoding="utf-8"), str(module))

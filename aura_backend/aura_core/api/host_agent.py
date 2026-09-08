@@ -100,7 +100,11 @@ def register_host_agent(router: Any, container: Any, *, authenticator: Callable)
                     continue
 
                 ftype = frame.get("type")
-                if ftype in ("result", "error"):
+                if ftype in ("result", "error", "stream"):
+                    # "stream" is a run_streaming increment (adapters/host_agent.py's
+                    # HostAgentSession.call_streaming); routed the same way as result/error since
+                    # resolve() itself decides whether a call_id is a streaming or single-shot
+                    # call.
                     session.resolve(frame)
                 elif ftype == "reauth":
                     try:
