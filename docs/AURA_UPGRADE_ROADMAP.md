@@ -467,8 +467,8 @@ not Ollama-plus-echo — **done**, with a permanent opt-in test reproducing the 
 
 ### Phase J — Desktop Engineer agent
 
-**Started, 2026-09-08. Backend bridge and daemon core done; PTY, interactive consent, pairing
-auth, and the client UI are not.**
+**Started, 2026-09-08. Backend bridge, daemon core, and output streaming done; a real PTY,
+interactive consent, pairing auth, and the client UI are not.**
 
 This phase did not exist in any prior version of this roadmap — a gap worth naming plainly, since
 the standing rule elsewhere in this document is that undocumented-but-built capability gets
@@ -502,15 +502,38 @@ phase entirely and were never described here either; see ADR-011 for the full de
   laundering an arbitrary command through what looks like an inspection tool; and chained/
   redirected/substituted commands slipping past a naive "starts with an allowlisted verb" prefix
   match — closed by blocking shell metacharacters structurally before the allowlist is even
-  checked, not by chasing individual payloads). Still missing: PTY/streamed terminal output
-  (`run_command` returns full stdout/stderr only after the process exits) and Windows command
-  execution (the backend always sends `["sh", "-c", ...]`; a Windows machine with no POSIX shell
-  on `PATH` can't run commands via this path yet — filesystem ops and grants are unaffected).
-  `dart test` covers containment (including symlink-escape and `..`-traversal), the command-policy
-  allowlist (including the specific bypasses above), and the wire protocol end-to-end against a
-  local in-process server; `.github/workflows/hostd-ci.yml` is the actual verification, since this
+  checked, not by chasing individual payloads). Windows command execution is still a gap (the
+  backend always sends `["sh", "-c", ...]`; a Windows machine with no POSIX shell on `PATH` can't
+  run commands via this path yet — filesystem ops and grants are unaffected). `dart test` covers
+  containment (including symlink-escape and `..`-traversal), the command-policy allowlist
+  (including the specific bypasses above), and the wire protocol end-to-end against a local
+  in-process server; `.github/workflows/hostd-ci.yml` is the actual verification, since this
   environment has no Dart toolchain (confirmed: `dart`/`flutter` both absent) to run `dart
   test`/`dart analyze` itself.
+- **J3b (Unit 4). Streaming done; a real PTY is not.** `run_command`'s output now streams end to
+  end instead of only arriving as one blob after the command exits: `ports/coding.py` gained
+  `SandboxOutputEvent`/`StreamingSandboxRunner` (optional, `isinstance`-detected, purely additive
+  over `SandboxRunner.run`); `HostAgentSession.call_streaming` yields `stream` frames as they
+  arrive then the terminal `result`, with an *idle* timeout between frames rather than one fixed
+  deadline; `aura_hostd`'s `run` RPC handler takes an `onChunk` callback the WebSocket client wires
+  to send `stream` frames per output chunk; both sides cap accumulated output independently
+  (`_maxOutputCapChars=500_000` daemon-side, `_RUN_COMMAND_STREAM_CAP_CHARS=200_000`
+  backend-side) while still draining the process so a full pipe can't reintroduce the orphan-hang
+  bug J3's timeout-kill path already fixed once. Unlike J3, this environment does have a working
+  `pytest`, so the entire backend half was actually run, not asserted: 13 new tests
+  (`test_host_agent.py`, `test_engineer_tools.py`), a fitness-test update extending the
+  "every port method is `async def`" rule for `run_streaming`'s deliberate exception (matching
+  `LLMProvider.stream`'s existing one), `pytest`/`tests/architecture`/the legacy `unittest` suite
+  all green, no regressions. What "PTY" actually means here is disclosed, not implied: no raw
+  terminal mode, no resize, no job control — `_lineBuffered` wraps a command with `stdbuf -oL -eL`
+  when that GNU-coreutils binary is on `PATH` (present on Linux, generally absent on stock macOS,
+  skipped on Windows), which forces real incremental output for common C-based CLI tools but does
+  nothing for an interpreted runtime that decides its own stdout buffering (Python's io layer,
+  notably). And critically: **nothing consumes this yet.** The data provably flows daemon ->
+  backend (verified over a real WebSocket, `dart test`'s `rpc_client_test.dart`, and in
+  `pytest`), but no SSE `step` frame or client renders it — `run_command`'s tool-facing return
+  value is still one string, unchanged. Wiring per-chunk progress through the kernel's
+  `StepEvent`/SSE machinery is deferred to when Unit 8 actually has a client to show it to.
 - **J4. Not started.** Desktop pairing auth (`services/security.py` recognising a `desktop`
   platform via a one-time-code pairing token rather than mobile attestation). `aura_hostd`
   currently expects a bearer token supplied out of band (`aura_hostd auth set-token`) in its place.

@@ -141,6 +141,56 @@ void main() {
     expect(response['type'], 'error');
     expect(response['id'], 'w1');
   });
+
+  test('a run call sends stream frames before the terminal result frame', () async {
+    final tempDir = Directory.systemTemp.createTempSync('aura_hostd_rpc_stream_test_');
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    final roots = WorkspaceRoots(const []);
+    roots.addRoot(tempDir.path, trusted: true);
+    final handler = TaskHandler(roots);
+    final client = HostAgentClient(
+      wsUrl: server.wsUrl,
+      authToken: 't',
+      taskHandler: handler,
+      logger: (_) {},
+    );
+    unawaited(client.run());
+    addTearDown(client.stop);
+
+    final socket = await server.clientSocket;
+    final frames = StreamQueue(socket.map((m) => jsonDecode(m as String) as Map<String, dynamic>));
+    await frames.next; // auth frame
+
+    socket.add(jsonEncode({
+      'type': 'call',
+      'id': 'r1',
+      'method': 'run',
+      'params': {
+        'command': ['sh', '-c', 'echo one; echo two'],
+        'timeout_s': 5.0,
+      },
+    }));
+
+    final received = <Map<String, dynamic>>[];
+    Map<String, dynamic> frame;
+    do {
+      frame = await frames.next;
+      expect(frame['id'], 'r1');
+      received.add(frame);
+    } while (frame['type'] == 'stream');
+
+    expect(received.last['type'], 'result');
+    // At least one interim `stream` frame arrived before the terminal `result` -- the whole
+    // point of this call shape over the plain single-shot one.
+    expect(received.where((f) => f['type'] == 'stream'), isNotEmpty);
+    final streamedStdout = received
+        .where((f) => f['type'] == 'stream' && f['stream'] == 'stdout')
+        .map((f) => f['data'] as String)
+        .join();
+    expect(streamedStdout, contains('one'));
+    expect(streamedStdout, contains('two'));
+    expect((received.last['result'] as Map)['exit_code'], 0);
+  }, testOn: '!windows');
 }
 
 /// Minimal single-subscriber "pull one at a time" wrapper -- avoids pulling in

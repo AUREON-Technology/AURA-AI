@@ -131,5 +131,49 @@ void main() {
         throwsA(isA<RpcError>()),
       );
     });
+
+    test('reports output via onChunk, matching the aggregated result exactly', () async {
+      roots.setTrusted(workspaceDir.path, true);
+      final chunks = <MapEntry<String, String>>[];
+      final result = await handler.run(
+        {
+          'command': ['sh', '-c', 'echo out1; echo err1 1>&2; echo out2'],
+          'timeout_s': 5.0,
+        },
+        onChunk: (stream, data) => chunks.add(MapEntry(stream, data)),
+      );
+
+      expect(result['exit_code'], 0);
+      final stdoutFromChunks =
+          chunks.where((e) => e.key == 'stdout').map((e) => e.value).join();
+      final stderrFromChunks =
+          chunks.where((e) => e.key == 'stderr').map((e) => e.value).join();
+      expect(stdoutFromChunks, result['stdout']);
+      expect(stderrFromChunks, result['stderr']);
+      expect(stdoutFromChunks, contains('out1'));
+      expect(stdoutFromChunks, contains('out2'));
+      expect(stderrFromChunks, contains('err1'));
+    }, testOn: '!windows');
+
+    test('run works identically with no onChunk callback at all', () async {
+      roots.setTrusted(workspaceDir.path, true);
+      final result = await handler.run({
+        'command': ['sh', '-c', 'echo hi'],
+        'timeout_s': 5.0,
+      });
+      expect(result['exit_code'], 0);
+      expect(result['stdout'], contains('hi'));
+    }, testOn: '!windows');
+
+    test('caps captured/forwarded output at the daemon-side limit', () async {
+      roots.setTrusted(workspaceDir.path, true);
+      final result = await handler.run({
+        'command': ['sh', '-c', 'yes x | head -c 600000'],
+        'timeout_s': 10.0,
+      });
+      expect(result['exit_code'], 0);
+      expect((result['stdout'] as String).length, lessThanOrEqualTo(500000));
+      expect(result['stderr'], contains('truncated'));
+    }, testOn: '!windows');
   });
 }
