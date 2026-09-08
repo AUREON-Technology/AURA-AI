@@ -499,99 +499,25 @@ not Ollama-plus-echo — **done**, with a permanent opt-in test reproducing the 
 
 ### Phase J — Desktop Engineer agent
 
-**Started, 2026-09-08. Backend bridge, daemon core, and output streaming done; a real PTY,
-interactive consent, pairing auth, and the client UI are not.**
+**Updated 2026-09-09.** Backend bridge, daemon core, streaming, honest tool `surface=`,
+pairing auth, and a Flutter Desktop Engineer panel are in tree. Real PTY, interactive per-call
+consent prompts, live streamed terminal UI, and packaged hostd installers remain open.
 
-This phase did not exist in any prior version of this roadmap — a gap worth naming plainly, since
-the standing rule elsewhere in this document is that undocumented-but-built capability gets
-corrected here. The Engineer persona and its tools (`aura_core/tools/coding.py`) predate this
-phase entirely and were never described here either; see ADR-013 for the full design.
-
-- **J1. Done.** `aura_core/ports/coding.py::SandboxRunner.create_task` now takes an optional
-  `user_id`, threaded from `_SandboxSessionCache` (`tools/coding.py`), so a runner that must route
-  per-caller has the identity it needs without every other runner knowing why.
-- **J2. Done.** `adapters/host_agent.py` (`HostAgentSession`, `HostAgentRegistry`,
-  `HostAgentSandboxRunner`, `CompositeSandboxRunner`) and `api/host_agent.py`
-  (`/api/v3/host/agent`, a duplex-RPC WebSocket shaped like `voice_live.py`) let the engineer
-  agent's sandbox tools route to a caller's connected desktop daemon instead of only the
-  server-side Docker sandbox. `container.sandbox_runner` is now always a
-  `CompositeSandboxRunner`; a paired desktop app serves the engineer tools even where
-  `sandbox.enabled` was never turned on. 19 new tests
-  (`tests/unit/test_host_agent.py`), all real (in-process fake sessions, not mocks) —
-  `pytest`/`tests/architecture`/the legacy `unittest` suite all stay green, no Docker required.
-- **J3. Core done; PTY and interactive consent not started.** The `aura_hostd` daemon (new
-  top-level `aura_hostd/`, a pure-Dart package with no Flutter dependency) now implements: an
-  outbound WebSocket client speaking `HostAgentSession`'s exact frame protocol, workspace-root
-  grants persisted locally (`aura_hostd grant/revoke/trust/untrust/roots`), path containment
-  checked *after* resolving symlinks (`lib/src/containment.dart`, matching
-  `tools/builtin.py::resolve_within`'s existing discipline) with a hard denylist on what can ever
-  be granted as a root, and the `write_file`/`read_file`/`run_command` RPC handlers. Command
-  policy (`lib/src/command_policy.dart`) is a disclosed simplification rather than the designed
-  tiered UX — there is no UI yet to prompt a human per call, so an untrusted workspace only runs a
-  small read-only allowlist and a trusted one allows anything not on the hard denylist; three
-  review passes against this allowlist found and closed real bypasses before merge (`find
-  -delete`/`find -exec` mutating without needing any blocked shell metacharacter; `env <command>`
-  laundering an arbitrary command through what looks like an inspection tool; and chained/
-  redirected/substituted commands slipping past a naive "starts with an allowlisted verb" prefix
-  match — closed by blocking shell metacharacters structurally before the allowlist is even
-  checked, not by chasing individual payloads). Windows command execution is still a gap (the
-  backend always sends `["sh", "-c", ...]`; a Windows machine with no POSIX shell on `PATH` can't
-  run commands via this path yet — filesystem ops and grants are unaffected). `dart test` covers
-  containment (including symlink-escape and `..`-traversal), the command-policy allowlist
-  (including the specific bypasses above), and the wire protocol end-to-end against a local
-  in-process server; `.github/workflows/hostd-ci.yml` is the actual verification, since this
-  environment has no Dart toolchain (confirmed: `dart`/`flutter` both absent) to run `dart
-  test`/`dart analyze` itself.
-- **J3b (Unit 4). Streaming done; a real PTY is not.** `run_command`'s output now streams end to
-  end instead of only arriving as one blob after the command exits: `ports/coding.py` gained
-  `SandboxOutputEvent`/`StreamingSandboxRunner` (optional, `isinstance`-detected, purely additive
-  over `SandboxRunner.run`); `HostAgentSession.call_streaming` yields `stream` frames as they
-  arrive then the terminal `result`, with an *idle* timeout between frames rather than one fixed
-  deadline; `aura_hostd`'s `run` RPC handler takes an `onChunk` callback the WebSocket client wires
-  to send `stream` frames per output chunk; both sides cap accumulated output independently
-  (`_maxOutputCapChars=500_000` daemon-side, `_RUN_COMMAND_STREAM_CAP_CHARS=200_000`
-  backend-side) while still draining the process so a full pipe can't reintroduce the orphan-hang
-  bug J3's timeout-kill path already fixed once. Unlike J3, this environment does have a working
-  `pytest`, so the entire backend half was actually run, not asserted: 13 new tests
-  (`test_host_agent.py`, `test_engineer_tools.py`), a fitness-test update extending the
-  "every port method is `async def`" rule for `run_streaming`'s deliberate exception (matching
-  `LLMProvider.stream`'s existing one), `pytest`/`tests/architecture`/the legacy `unittest` suite
-  all green, no regressions. What "PTY" actually means here is disclosed, not implied: no raw
-  terminal mode, no resize, no job control — `_lineBuffered` wraps a command with `stdbuf -oL -eL`
-  when that GNU-coreutils binary is on `PATH` (present on Linux, generally absent on stock macOS,
-  skipped on Windows), which forces real incremental output for common C-based CLI tools but does
-  nothing for an interpreted runtime that decides its own stdout buffering (Python's io layer,
-  notably). And critically: **nothing consumes this yet.** The data provably flows daemon ->
-  backend (verified over a real WebSocket, `dart test`'s `rpc_client_test.dart`, and in
-  `pytest`), but no SSE `step` frame or client renders it — `run_command`'s tool-facing return
-  value is still one string, unchanged. Wiring per-chunk progress through the kernel's
-  `StepEvent`/SSE machinery is deferred to when Unit 8 actually has a client to show it to.
-- **J3c. Done.** `write_file`/`run_command`/`clone_repository`'s tool descriptions no longer
-  unconditionally claim "not the user's real files" / "cannot reach the user's real network" --
-  true only for the Docker-fallback path and false once `CompositeSandboxRunner` routes a task to
-  a paired desktop app instead, decided per task rather than per deployment. Descriptions now say
-  both possibilities rather than assert one; the fallback's real network restriction is kept, not
-  dropped. Locked in by
-  `test_engineer_tools.py::TestSandboxToolDescriptionsAreHonestAboutRouting`.
-- **J4. Not started.** Desktop pairing auth (`services/security.py` recognising a `desktop`
-  platform via a one-time-code pairing token rather than mobile attestation). `aura_hostd`
-  currently expects a bearer token supplied out of band (`aura_hostd auth set-token`) in its place.
-- **J5. Not started.** The Flutter desktop client work: `google_sign_in` has no Linux/Windows
-  implementation (confirmed absent from both platforms' `generated_plugins.cmake`), so desktop
-  login needs a loopback-OAuth path before anything else desktop-side is reachable; then the
-  workspace picker, file tree, diff review, and live terminal panel, reusing the engineering
-  screens and chat widgets (`engineer_confirmation_card`, `sandbox_diff_view`,
-  `sandbox_terminal_view`) that already exist for the server-side sandbox, plus supervising
-  `aura_hostd` itself (spawn/monitor/restart the daemon process).
-
-**Exit criteria (not yet met).** An engineer-capable user can pair a real desktop app and have the
-agent read, edit, and run commands against a real local project, with a path outside every granted
-workspace root refused even in the daemon's most permissive consent mode — the containment half is
-implemented and unit-tested (J3), but **not proven** end-to-end without J4's real auth and J5's
-client, since nothing today drives `aura_hostd` other than its own CLI. This environment has no
-Dart/Flutter toolchain (confirmed: `dart`/`flutter` both absent), so per this repo's own testing
-conventions, no client-side claim belongs here until CI has actually run it — that applies to
-`aura_hostd`'s own test suite (`hostd-ci.yml`) exactly as much as it does to `aura_client`'s.
+- **J1–J3c.** Done (see prior entries): port `user_id`, host-agent WS, `aura_hostd` core,
+  streaming/`stdbuf`, honest dual-path descriptions.
+- **J3d (Unit 5). Done with disclosed scope cuts.** `build_sandbox_tools(..., surface=)` swaps
+  host/sandbox/auto descriptions without renaming tools. Daemon consent: allowlist, trust, YOLO
+  (never lifts containment/hard denylist), and `server_confirmed` RPC flag. Interactive per-call
+  Flutter prompts still deferred.
+- **J4 (Unit 6). Done.** `/api/v3/auth/desktop/token`, pairing start/exchange/revoke,
+  `platform=desktop` device-token attestation, `aura_hostd auth pair`.
+- **J5 (Units 7–8). Partial.** Loopback OAuth on Linux/Windows, `/desktop/token` exchange,
+  platform guards, Desktop Engineer page (pairing code, roots, YOLO, daemon status via loopback
+  control plane). Not yet: live xterm stream, file-tree/diff review against hostd, daemon
+  auto-spawn/supervise, packaged installers.
+- **J6 (Unit 9). Partial.** ADR-011 + this phase, `hostd-ci.yml`, Linux desktop compile job in
+  `client-ci.yml`. No MSI/DMG/deb yet. Set `AURA_ENGINEER_AGENT_ROLES` in deploy to grant the
+  capability.
 
 ## 4. Scope decisions
 

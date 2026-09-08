@@ -217,3 +217,13 @@ deployment that never trains does not install.
 | Why does an index have that name? | `knowledge/index_manager.py`, ADR-007 |
 | What is recorded about a turn? | `domain/telemetry.py`, `observability/metrics.py` |
 | Where is everything wired? | `container.py` |
+| How does the desktop Engineer agent reach the user's machine? | ADR-011, `adapters/host_agent.py`, `aura_hostd/` |
+
+## Desktop Engineer agent (`aura_hostd`)
+
+The Engineer persona's sandbox tools route through `CompositeSandboxRunner`: a connected
+`aura_hostd` session wins; otherwise the server Docker sandbox (if configured). Grant the
+capability with `AURA_ENGINEER_AGENT_ROLES`. Desktop login uses `POST /api/v3/auth/desktop/token`
+(no Play Integrity); pair the daemon with a one-time code from the Flutter **Desktop Engineer**
+screen (`aura_hostd auth pair <code>`). Containment and the hard command denylist are enforced
+only on the daemon — never trusted from the backend.

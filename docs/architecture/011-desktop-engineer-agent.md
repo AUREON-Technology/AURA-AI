@@ -1,6 +1,6 @@
 # ADR-011 — The desktop Engineer agent executes on the user's own machine, not a server sandbox
 
-**Status:** Partially implemented (backend bridge + daemon core + output streaming; no client UI or pairing auth yet — see "Implementation status") · **Date:** 2026-09-08
+**Status:** Implemented (backend bridge + daemon + pairing auth + desktop client foundation; real PTY and interactive per-call consent UI still deferred — see "Implementation status") · **Date:** 2026-09-08
 
 ## Context
 
@@ -171,25 +171,23 @@ Locked in by `tests/unit/test_engineer_tools.py::TestSandboxToolDescriptionsAreH
 
 **What's still not built:**
 
-- **Interactive tiered consent.** There is no UI yet to prompt a human per call, so the daemon
-  cannot implement "auto for reads, diff-and-approve for writes" as designed. In its place, each
-  workspace root is either untrusted (only a small read-only inspection allowlist runs —
-  `lib/src/command_policy.dart` — with `find`/`env` deliberately excluded from that allowlist
-  despite looking read-only, since both can mutate or execute arbitrary commands without needing
-  any of the blocked shell metacharacters) or explicitly marked `trusted`
-  (`aura_hostd trust <path>`), which allows anything not on the hard denylist. This is a real,
-  disclosed scope cut, not a weakening of the containment guarantee: path containment itself is
-  unconditional and applies identically regardless of trust.
+- **Interactive tiered consent UI.** Daemon tiers now include untrusted allowlist, per-root
+  `trusted`, global **YOLO** (`aura_hostd yolo on` / control-plane toggle), and
+  `server_confirmed` suppression when ToolPolicy already confirmed a call. What is still missing
+  is a Flutter prompt queue for per-call approve/deny of writes and non-allowlisted commands.
 - **Windows command execution.** The backend always sends `["sh", "-c", "<command>"]` over the RPC
   (`tools/coding.py::run_command`'s existing behavior, unchanged by this ADR) and the daemon execs
   that argv directly; a Windows machine without a POSIX-compatible shell on `PATH` (no WSL/Git
   Bash) cannot run commands via this path yet. Filesystem operations and workspace grants are
   unaffected — this only blocks `run_command`.
-- **Desktop pairing auth.** `services/security.py` still rejects every non-mobile platform at
-  attestation. The daemon expects a bearer token supplied out of band
-  (`aura_hostd auth set-token`) until the pairing flow this ADR describes actually exists.
-- **The Flutter desktop UI** that supervises the daemon (workspace picker, diff review, live
-  terminal) — nothing yet drives `aura_hostd` other than its own CLI.
+- **Live terminal rendering of streamed chunks.** Streaming reaches the backend; wiring through
+  SSE `step` frames into `sandbox_terminal_view` is still open.
+- **Packaged hostd installers** (MSI/DMG/deb) — CLI / `dart compile exe` only.
+
+**Desktop pairing auth is implemented.** `POST /api/v3/auth/desktop/token` exchanges a Google ID
+token without mobile attestation; `POST /api/v3/auth/desktop/pairing` issues a one-time code;
+`aura_hostd auth pair <code>` exchanges it for a device-scoped token + session JWTs;
+`verify_device_integrity` accepts `platform=desktop` with that device token.
 
 `dart test` covers path containment (including symlink-escape and `..`-traversal attempts, and
 that containment does not require the target to already exist), the command-policy allowlist
