@@ -143,6 +143,15 @@ class WorkspaceRoots {
       throw InvalidRootError('$rawPath does not resolve to a directory');
     }
     final normalized = _normalizeForCompare(canonical);
+    // Any filesystem root (/, C:\, E:\, …) is never a meaningful workspace boundary.
+    // On Windows, '/' often resolves to the *current* drive root (e.g. E:\), which is
+    // not the same string as the hardcoded C:\ denylist entry.
+    if (p.dirname(canonical) == canonical) {
+      throw InvalidRootError(
+        '$rawPath resolves to $canonical, which is a filesystem root and can never be a '
+        'workspace root -- grant a project folder inside it instead',
+      );
+    }
     for (final denied in _rootDenylist) {
       if (normalized == denied) {
         throw InvalidRootError(

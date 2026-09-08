@@ -189,6 +189,9 @@ _MANIFEST_GLOBS = (
 _MANIFEST_SKIP = {
     "__pycache__", "venv", ".venv", "node_modules", "build", "dist", ".git",
     ".dart_tool", "Pods", ".gradle", "ephemeral",
+    # Claude Code / Cursor worktrees are full checkouts of arbitrary revisions; scanning them
+    # double-counts historical banned deps and credentials that are gone from HEAD.
+    ".claude",
 }
 
 #: An explicit, greppable per-line exemption, in the spirit of ``# noqa``.
@@ -210,6 +213,9 @@ def _manifests() -> list[Path]:
     for pattern in _MANIFEST_GLOBS:
         for path in REPO.rglob(pattern):
             if _MANIFEST_SKIP & set(path.parts) or not path.is_file():
+                continue
+            # Local secret files (gitignored) are not deployment manifests; examples stay scanned.
+            if path.name == ".env":
                 continue
             found.append(path)
     return sorted(set(found))
