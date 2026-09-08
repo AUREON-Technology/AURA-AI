@@ -158,6 +158,17 @@ progress through the kernel's `StepEvent`/SSE machinery to something a client ca
 deferred until Unit 8 actually has a client to render it for -- a protocol nobody consumes is not
 progress, and this ADR does not claim otherwise.
 
+**Tool descriptions no longer overclaim isolation.** Before this, `write_file`/`run_command`/
+`clone_repository`'s descriptions unconditionally told the model "not the user's real files" and
+"the sandbox cannot reach the user's real network" -- true only for the Docker-fallback path, and
+actively false once `CompositeSandboxRunner` routes a task to a paired desktop app instead. Since
+that routing decision is made per task (whichever runner `create_task` picks for that caller), not
+per deployment, a single static description has to describe both possibilities rather than assert
+one. `tools/coding.py` now does: each description says the workspace is the user's own machine
+when a desktop app is paired, falling back to the ephemeral sandbox container otherwise --
+including keeping the fallback's real network restriction intact rather than dropping it entirely.
+Locked in by `tests/unit/test_engineer_tools.py::TestSandboxToolDescriptionsAreHonestAboutRouting`.
+
 **What's still not built:**
 
 - **Interactive tiered consent.** There is no UI yet to prompt a human per call, so the daemon

@@ -83,6 +83,28 @@ class TestSandboxTools:
         await tools["write_file"].execute({"path": "hello.txt", "content": "hi"}, ctx)
         assert seen_user_ids == [ctx.user_id]
 
+
+class TestSandboxToolDescriptionsAreHonestAboutRouting:
+    """`CompositeSandboxRunner` (adapters/host_agent.py) decides per-task, not per-deployment,
+    whether a call lands in the ephemeral Docker sandbox or on the caller's own paired machine
+    (ADR-011) -- a static tool description cannot correctly claim only one of those is true. These
+    lock in that the descriptions say so instead of unconditionally asserting isolation that may
+    not hold for a given call."""
+
+    def test_write_file_does_not_unconditionally_claim_it_is_not_the_user_s_real_files(self) -> None:
+        tools = _by_name(build_sandbox_tools(InMemorySandboxRunner()))
+        description = tools["write_file"].spec.description
+        assert "not the user's real files" not in description
+        assert "paired desktop app" in description
+
+    def test_run_command_does_not_unconditionally_claim_no_network_access(self) -> None:
+        tools = _by_name(build_sandbox_tools(InMemorySandboxRunner()))
+        description = tools["run_command"].spec.description
+        assert "paired desktop app" in description
+        # Still says the *fallback* path is network-restricted -- that half of the old claim is
+        # true and shouldn't be lost, only the part that used to be stated unconditionally.
+        assert "network-restricted" in description
+
     async def test_edit_file_requires_exactly_one_occurrence(self, ctx) -> None:
         runner = InMemorySandboxRunner()
         tools = _by_name(build_sandbox_tools(runner))

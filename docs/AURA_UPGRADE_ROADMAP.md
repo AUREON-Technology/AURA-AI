@@ -534,6 +534,13 @@ phase entirely and were never described here either; see ADR-011 for the full de
   `pytest`), but no SSE `step` frame or client renders it — `run_command`'s tool-facing return
   value is still one string, unchanged. Wiring per-chunk progress through the kernel's
   `StepEvent`/SSE machinery is deferred to when Unit 8 actually has a client to show it to.
+- **J3c. Done.** `write_file`/`run_command`/`clone_repository`'s tool descriptions no longer
+  unconditionally claim "not the user's real files" / "cannot reach the user's real network" --
+  true only for the Docker-fallback path and false once `CompositeSandboxRunner` routes a task to
+  a paired desktop app instead, decided per task rather than per deployment. Descriptions now say
+  both possibilities rather than assert one; the fallback's real network restriction is kept, not
+  dropped. Locked in by
+  `test_engineer_tools.py::TestSandboxToolDescriptionsAreHonestAboutRouting`.
 - **J4. Not started.** Desktop pairing auth (`services/security.py` recognising a `desktop`
   platform via a one-time-code pairing token rather than mobile attestation). `aura_hostd`
   currently expects a bearer token supplied out of band (`aura_hostd auth set-token`) in its place.

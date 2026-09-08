@@ -7,19 +7,26 @@ itself, and nothing bypasses ``ToolPolicy.evaluate``'s capability, taint, and co
 Two things are worth stating explicitly because they look, at a glance, like they contradict
 existing decisions elsewhere in ``aura_core/tools/``:
 
-* :func:`build_sandbox_tools`'s ``write_file``/``edit_file`` operate on a *separate, ephemeral,
-  per-task sandbox root* -- the workspace a :class:`~aura_core.ports.coding.SandboxRunner`
-  provisions and tears down per turn -- never the read-only workspace
+* :func:`build_sandbox_tools`'s ``write_file``/``edit_file`` operate on a *separate, per-task
+  workspace root* -- provisioned (and, for the server-side sandbox, torn down) by whatever
+  :class:`~aura_core.ports.coding.SandboxRunner` is wired in -- never the read-only workspace
   ``tools/builtin.py::build_file_tools`` guards. That function's docstring says writing is
   "deliberately not offered" for *that* root; this module does not reverse that decision, because
-  it is a different root entirely, torn down when the task ends.
+  it is a different root entirely. Since ADR-011 that root is not always ephemeral or
+  container-isolated: ``container.py`` wires a :class:`~aura_core.adapters.host_agent.
+  CompositeSandboxRunner`, which routes each task to the caller's own paired desktop app
+  (``aura_hostd``) when one is connected, and only falls back to the ephemeral Docker sandbox
+  otherwise -- decided per task, not fixed per deployment. The tool descriptions below say so,
+  rather than unconditionally claiming "not the user's real files": that claim is only true for
+  the fallback path. See ``docs/architecture/011-desktop-engineer-agent.md``.
 * Every tool below declares ``required_capability="engineer_agent"``. A caller without that grant
   never sees these tools at all (``ToolRegistry.available()`` filters them out before they reach
   a model's tool list), regardless of what sensitivity ceiling the caller otherwise has.
 * :func:`build_sandbox_tools`'s ``clone_repository`` does not shell out to ``git clone``: it
-  copies files through the code-host port into the sandbox. That keeps network egress and a
-  forge credential out of a container that runs model-chosen shell commands, and it is why
-  "analyse this repository" works on a deployment whose sandbox has no network at all.
+  copies files through the code-host port into the workspace. That keeps network egress and a
+  forge credential out of a sandbox container that runs model-chosen shell commands, and it is
+  why "analyse this repository" works on a deployment whose Docker sandbox has no network at all
+  (a paired desktop app's own network is a separate matter -- see the point above).
 """
 
 from __future__ import annotations
@@ -49,10 +56,12 @@ logger = get_logger("tools.coding")
 _ENGINEER_CAPABILITY = "engineer_agent"
 
 #: Caps for `clone_repository`. A repository is arbitrary third-party data of unbounded size, and
-#: the sandbox workspace is a scratch directory inside a memory-limited container -- copying a
-#: multi-gigabyte monorepo into it would fail the turn slowly instead of quickly. These bound the
-#: work and are reported in the tool's result, so the agent knows the snapshot is partial rather
-#: than concluding a skipped file does not exist.
+#: the workspace may be a scratch directory inside a memory-limited container -- copying a
+#: multi-gigabyte monorepo into it would fail the turn slowly instead of quickly. (A paired
+#: desktop app's disk is not memory-limited the same way, but these caps apply uniformly rather
+#: than varying by which surface a given task happened to route to.) These bound the work and are
+#: reported in the tool's result, so the agent knows the snapshot is partial rather than
+#: concluding a skipped file does not exist.
 _CLONE_MAX_FILES = 400
 _CLONE_MAX_FILE_BYTES = 256_000
 _CLONE_MAX_TOTAL_BYTES = 8_000_000
@@ -282,10 +291,12 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
 
     @tool(
         "write_file",
-        "Write a UTF-8 text file inside the engineer agent's ephemeral sandbox workspace -- not "
-        "the user's real files, a scratch directory torn down after the task. Overwrites the "
-        "file if it already exists; creates parent directories as needed.",
-        param("path", "string", "Path relative to the sandbox workspace root.", max_length=300),
+        "Write a UTF-8 text file inside the engineer agent's workspace: the user's own machine, "
+        "inside whatever folder they have granted, if they have a paired desktop app connected "
+        "(AURA Desktop) -- otherwise an ephemeral sandbox container's scratch directory, torn "
+        "down after the task. Overwrites the file if it already exists; creates parent "
+        "directories as needed.",
+        param("path", "string", "Path relative to the workspace root.", max_length=300),
         param("content", "string", "The file's full new content.", max_length=200_000),
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
@@ -301,9 +312,9 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
     @tool(
         "edit_file",
         "Replace one exact occurrence of `find` with `replace` in a file inside the engineer "
-        "agent's sandbox workspace. Fails if `find` is not present exactly once -- read the file "
+        "agent's workspace. Fails if `find` is not present exactly once -- read the file "
         "first (e.g. via run_command 'cat path') to get the exact text.",
-        param("path", "string", "Path relative to the sandbox workspace root.", max_length=300),
+        param("path", "string", "Path relative to the workspace root.", max_length=300),
         param("find", "string", "Exact text to replace; must occur exactly once in the file.",
               max_length=50_000),
         param("replace", "string", "Replacement text.", max_length=50_000),
@@ -328,10 +339,12 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
 
     @tool(
         "run_command",
-        "Run a shell command inside the engineer agent's ephemeral, network-restricted sandbox "
-        "container and return its stdout/stderr/exit code. Use for running tests, linters, "
-        "builds, or inspecting the sandbox filesystem -- the sandbox cannot reach the user's real "
-        "network or the host.",
+        "Run a shell command inside the engineer agent's workspace and return its "
+        "stdout/stderr/exit code. Use for running tests, linters, builds, or inspecting the "
+        "workspace's files. If the user has a paired desktop app connected, this runs directly "
+        "on their own machine -- their real network, subject to the daemon's own path "
+        "containment and command policy. Otherwise it runs in an ephemeral, network-restricted "
+        "sandbox container that cannot reach the user's real network or host.",
         param("command", "string", "The shell command to run, e.g. 'pytest -q'.", max_length=2000),
         param("timeout_s", "number", "Max seconds to allow the command to run.", required=False,
               minimum=1, maximum=600, default=60),
@@ -367,7 +380,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
 
     @tool(
         "git_diff",
-        "Show the sandbox workspace's current git diff (unstaged and staged changes).",
+        "Show the workspace's current git diff (unstaged and staged changes).",
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
         required_capability=_ENGINEER_CAPABILITY,
@@ -381,7 +394,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
 
     @tool(
         "git_commit",
-        "Stage all changes in the sandbox workspace and commit them with the given message.",
+        "Stage all changes in the workspace and commit them with the given message.",
         param("message", "string", "Commit message.", max_length=2000),
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
@@ -399,7 +412,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
 
     @tool(
         "git_checkout_branch",
-        "Create (or switch to) a git branch in the sandbox workspace.",
+        "Create (or switch to) a git branch in the workspace.",
         param("branch", "string", "Branch name.", max_length=200),
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
@@ -425,7 +438,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
 
     @tool(
         "clone_repository",
-        "Copy a GitHub repository's files into the engineer agent's sandbox workspace, so they "
+        "Copy a GitHub repository's files into the engineer agent's workspace, so they "
         "can be explored, searched, built, or tested with run_command. Use this when asked to "
         "clone, analyse, review, or work on a repository. Text files only, up to a size and "
         "count budget -- binaries and oversized files are skipped and the skips are reported.",
@@ -522,7 +535,7 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
         copied = len(selected) - len(failed)
         lines = [
             f"Copied {copied} file(s) from {slug}{'@' + ref if ref else ''} into "
-            f"./{root} in the sandbox workspace.",
+            f"./{root} in the workspace.",
             "Explore it with run_command (e.g. 'ls -R {0}', 'cat {0}/README.md').".format(root),
         ]
         if skipped_binary or skipped_large or skipped_budget or failed or tree.truncated:
