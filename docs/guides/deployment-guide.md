@@ -243,6 +243,40 @@ at the defaults), reclaimed by the reaper 72 hours after a workspace was last us
 install the NVIDIA container toolkit. Expect roughly 10-20× the tokens/second of CPU inference
 on a 7B Q4 model.
 
+### Engineer workspaces (opt-in)
+
+Persistent per-(user, repo) Docker workspaces ([ADR-013](../architecture/013-agent-workspaces.md),
+confirmation boundary [ADR-014](../architecture/014-workspace-local-side-effects.md)) ship in the
+gateway image but stay **off** unless you enable both the compose profile and the gateway flag.
+`AURA_SANDBOX_ENABLED=true` alone only flips the setting; without `COMPOSE_PROFILES=sandbox` the
+socket-proxy / sandbox-proxy services never start. Defaults and comments live in
+`deploy/.env.example`.
+
+```bash
+# In deploy/.env (both required):
+AURA_SANDBOX_ENABLED=true
+COMPOSE_PROFILES=sandbox
+# Host path bind-mounted into the gateway at the *same* path (daemon resolves bind sources
+# on the host). Change both sides together or not at all:
+# AURA_SANDBOX_HOST_ROOT=/opt/aura-stack/deploy/sandboxes
+
+# Workspace roots must be writable by the sandbox uid (10001). bootstrap-host.sh does this;
+# if you created the directory by hand:
+sudo mkdir -p /opt/aura-stack/deploy/sandboxes
+sudo chown 10001:10001 /opt/aura-stack/deploy/sandboxes
+sudo chmod 0750 /opt/aura-stack/deploy/sandboxes
+
+docker compose -f docker-compose.prod.yml --env-file .env up -d
+# Or one-shot without persisting the profile:
+# docker compose -f docker-compose.prod.yml --profile sandbox up -d
+```
+
+On 16 GB hosts prefer `AURA_SANDBOX_MAX_RUNNING=1` and `AURA_SANDBOX_MAX_WORKSPACES=2` — peak RAM
+is `MAX_RUNNING × MEMORY_LIMIT`, not one container per stored workspace. Grant the capability
+with `AURA_ENGINEER_AGENT_ROLES` as well; the sandbox flag does not replace that gate. Until
+these are on and the Phase J live checks in `docs/AURA_UPGRADE_ROADMAP.md` have been observed,
+treat the feature as **built, not proven**.
+
 ---
 
 ## Operations

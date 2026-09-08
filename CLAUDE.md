@@ -20,7 +20,10 @@ Four independent apps in one repo:
   `/api/v3/host/agent` WebSocket. `dart pub get && dart test` (`.github/workflows/hostd-ci.yml`
   gates it — a separate workflow from `client-ci.yml` since it needs `dart-lang/setup-dart`, not
   Flutter). See `docs/architecture/011-desktop-engineer-agent.md` (ADR-011) for the design and
-  what is and is not built yet.
+  what is and is not built yet. Server-side persistent Engineer workspaces (durable Docker
+  checkouts per user/repo, host-side git, confirmation at the workspace boundary) are ADR-013 /
+  ADR-014 — opt-in via `AURA_SANDBOX_ENABLED` + `COMPOSE_PROFILES=sandbox`; Phase J in the
+  upgrade roadmap is **built, not proven** until the VPS live checks pass.
 
 Supporting directories: `deploy/` (production stack), `docs/` (architecture, guides, reports),
 `infra/` (Terraform), `scripts/` (client build and Firebase helpers). Historical docs live under
@@ -145,9 +148,9 @@ permanent platform adapters mounted outside `aura_core` (ADR-002), not legacy co
 removal.
 
 Full ADR list and the ten essential decisions are in `docs/architecture/00-overview.md` and
-`docs/architecture/001-*.md`–`009-*.md`; read the relevant one before touching retrieval, memory,
-routing, safety, or indexing — each encodes a reason something is shaped the way it is, not just
-what it does.
+`docs/architecture/001-*.md`–`014-*.md` (there is no 012); read the relevant one before touching
+retrieval, memory, routing, safety, indexing, desktop hostd (011), or engineer workspaces
+(013/014) — each encodes a reason something is shaped the way it is, not just what it does.
 
 ## Client architecture — the parts that span files
 

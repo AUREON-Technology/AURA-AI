@@ -217,3 +217,23 @@ deployment that never trains does not install.
 | Why does an index have that name? | `knowledge/index_manager.py`, ADR-007 |
 | What is recorded about a turn? | `domain/telemetry.py`, `observability/metrics.py` |
 | Where is everything wired? | `container.py` |
+| How do persistent engineer workspaces work? | ADR-013, ADR-014, `adapters/docker_sandbox.py`, `domain/engineering.py`, `adapters/postgres_workspaces.py` |
+| How does the desktop Engineer agent reach the user's machine? | ADR-011, `adapters/host_agent.py`, `aura_hostd/` |
+
+## Persistent engineer workspaces
+
+Server-side Engineer tools use durable per-(user, repository) Docker workspaces when
+`AURA_SANDBOX_ENABLED=true` and the compose `sandbox` profile is up (ADR-013). Workspaces are
+stopped between turns so peak RAM tracks `max_running`, not stored count; git runs host-side so
+tokens never enter the container; confirmation gates the workspace boundary (ADR-014), not every
+in-workspace write. Off by default — see [Deployment Guide → Engineer workspaces](deployment-guide.md#engineer-workspaces-opt-in).
+The Flutter `EngineerWorkspacesPanel` is mounted on the Engineer history page; Phase J in
+`docs/AURA_UPGRADE_ROADMAP.md` stays **built, not proven** until the VPS live checks pass.
+
+## Desktop Engineer agent (`aura_hostd`)
+
+The Engineer persona's sandbox tools route through `CompositeSandboxRunner`: a connected
+`aura_hostd` session wins; otherwise the server Docker workspace (if configured). Grant the
+capability with `AURA_ENGINEER_AGENT_ROLES`. Containment and the hard command denylist are
+enforced only on the daemon — never trusted from the backend. See ADR-011 for what is and is
+not built yet.

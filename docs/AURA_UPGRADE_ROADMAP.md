@@ -422,7 +422,19 @@ on real ASR transcripts are still required before marking the phase done.
 ### Phase J — Persistent engineer-agent workspaces
 
 **Status: built, not proven.** Design: [ADR-013](architecture/013-agent-workspaces.md),
-[ADR-014](architecture/014-workspace-local-side-effects.md).
+[ADR-014](architecture/014-workspace-local-side-effects.md). Sibling of the **Desktop Engineer**
+Phase J below (ADR-011 / `aura_hostd`): this track is the *server-side Docker* persistence path.
+Early plan text that numbered these decisions as ADR-010/011 is stale — those numbers are CAG-lite
+and the desktop Engineer agent.
+
+Units 1–11 shipped on `main` via [PR #70](https://github.com/anasibrahimgnedy-collab/AURA-AI/pull/70)
+(`91b6d5c`): durable per-(user, repo) workspaces, host-side git, confirmation at the workspace
+boundary, v3 API + client callers, reaper, hardened image/egress. Client and Backend CI were
+green; Deploy VPS succeeded, so the VPS checkout includes that code. [PR #72](https://github.com/anasibrahimgnedy-collab/AURA-AI/pull/72)
+(`97ed3a9`) mounts `EngineerWorkspacesPanel` on the Engineer history page and aligns
+`docker-compose.dev.yml`'s sandbox profile with prod. Sandbox remains **opt-in**: production
+still runs with `AURA_SANDBOX_ENABLED=false` and without `COMPOSE_PROFILES=sandbox`, so none of
+the live checks below have been observed on the VPS.
 
 The engineer agent gets a durable Docker workspace per (user, repository): a real `git clone`
 with history, surviving between turns, deleted after 72 hours without activity. Git runs
@@ -435,8 +447,8 @@ comment. Confirmation now gates the workspace boundary rather than every write i
 
 Backend and client tests pass (`pytest`, the legacy `unittest` tree, the architecture fitness
 tests, and a real-PostgreSQL check of the new adapter). **That is not evidence the feature
-works.** Every claim above depends on a Docker daemon, and none of it has run against one. What
-is outstanding, on the VPS with `AURA_SANDBOX_ENABLED=true` and the `sandbox` profile up:
+works on the VPS.** Code present with the sandbox profile down is still unproven. What is
+outstanding, on the VPS with `AURA_SANDBOX_ENABLED=true` and the `sandbox` profile up:
 
 1. `write_file` then `run_command cat` round-trips — proves the bind-mount path fix.
 2. `clone_repository`, then `git log` shows history.
@@ -505,7 +517,10 @@ interactive consent, pairing auth, and the client UI are not.**
 This phase did not exist in any prior version of this roadmap — a gap worth naming plainly, since
 the standing rule elsewhere in this document is that undocumented-but-built capability gets
 corrected here. The Engineer persona and its tools (`aura_core/tools/coding.py`) predate this
-phase entirely and were never described here either; see ADR-013 for the full design.
+phase entirely and were never described here either; see [ADR-011](architecture/011-desktop-engineer-agent.md)
+for the desktop/`aura_hostd` design. Server-side persistent Docker workspaces are a separate
+phase and decision pair ([ADR-013](architecture/013-agent-workspaces.md) /
+[ADR-014](architecture/014-workspace-local-side-effects.md)), not this one.
 
 - **J1. Done.** `aura_core/ports/coding.py::SandboxRunner.create_task` now takes an optional
   `user_id`, threaded from `_SandboxSessionCache` (`tools/coding.py`), so a runner that must route
@@ -623,6 +638,7 @@ Phase A, not by an estimate.
 | Voice (STT/TTS) | **Real**, self-hosted (`faster-whisper` / Piper primary, espeak-ng fallback), proven with a real synthesize→transcribe round trip through `POST /voice/speak` and `/voice/transcribe` | Phase F2 |
 | Live voice duplex | **Scaffolding** — WS session + engine + Flutter `/voice`; not device-proven; load round-trip open | Phase H |
 | Transcript NLP | **Scaffolding** — `aura_core/nlp/` normalize + shallow intent; quality on real ASR unproven | Phase I |
+| Persistent engineer workspaces | **Built, not proven** — Units 1–11 on `main` (`91b6d5c` / #70; panel + dev parity in #72); VPS still `AURA_SANDBOX_ENABLED=false`, no sandbox profile; 10 live checks open | Phase J (workspaces), ADR-013/014 |
 | Multi-model routing | **Proven** against two real, simultaneously-running local models (135M and 3B params) — `FASTEST`/`QUALITY_FIRST`/`BALANCED`/failover all route on real measured behaviour; `CHEAPEST` ties (both cost `$0`) | Phase G2, `tests/load/test_multi_model_routing.py` |
 | Restore verified | **Yes for all three stores** — Postgres, Qdrant and Redis each restored from the `backup` service's own output ([A2 report](reports/phase-a2-restore-drill.md)); offsite copy and `restore.sh` still unexercised | Phase A2 |
 | Production deployments | **1 and counting** — the real VPS, 17 services, verified live over HTTPS on 2026-08-23 | Phase A1 |
