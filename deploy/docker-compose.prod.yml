@@ -348,6 +348,23 @@ services:
       AURA_SANDBOX_NETWORK: sandbox_egress
       AURA_SANDBOX_MEMORY_LIMIT: ${AURA_SANDBOX_MEMORY_LIMIT:-512m}
       AURA_SANDBOX_CPU_LIMIT: ${AURA_SANDBOX_CPU_LIMIT:-1.0}
+      # Where engineer-agent workspaces live. This value is a *host* path, and it is bind-mounted
+      # into this container at the very same path (see `volumes:` below) on purpose: the gateway
+      # asks the host's daemon to mount a workspace, and the daemon resolves that source on the
+      # host. A path that existed only inside this container would name a different, empty
+      # directory once mounted -- write_file and run_command would silently stop agreeing. Keep
+      # the two sides identical if you change it.
+      AURA_SANDBOX_HOST_ROOT: ${AURA_SANDBOX_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes}
+      # Workspace lifecycle. A workspace is stopped (not deleted) between turns, so peak memory
+      # is MAX_RUNNING * MEMORY_LIMIT no matter how many exist; it is deleted once idle past the
+      # TTL. On a 16 GB host, set MAX_RUNNING=1 and MAX_WORKSPACES=2.
+      AURA_SANDBOX_WORKSPACE_TTL_HOURS: ${AURA_SANDBOX_WORKSPACE_TTL_HOURS:-72}
+      AURA_SANDBOX_HOT_IDLE_S: ${AURA_SANDBOX_HOT_IDLE_S:-900}
+      AURA_SANDBOX_MAX_WORKSPACES: ${AURA_SANDBOX_MAX_WORKSPACES:-4}
+      AURA_SANDBOX_MAX_RUNNING: ${AURA_SANDBOX_MAX_RUNNING:-2}
+      AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB: ${AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB:-2048}
+      AURA_SANDBOX_MIN_FREE_MEMORY_MB: ${AURA_SANDBOX_MIN_FREE_MEMORY_MB:-1024}
+      AURA_SANDBOX_IN_CONTAINER_GIT: ${AURA_SANDBOX_IN_CONTAINER_GIT:-false}
       # docker-py's `docker.from_env()` reads this; only the socket-proxy's restricted API
       # surface is reachable at this address, never the real socket (see `sandbox_ctl` above).
       DOCKER_HOST: tcp://docker-socket-proxy:2375
@@ -380,6 +397,10 @@ services:
       - aura_workspace:/var/lib/aura/workspace
       - aura_datasets:/var/lib/aura/datasets
       - prometheus_multiproc:/var/lib/aura/prometheus
+      # Same path on both sides -- see AURA_SANDBOX_HOST_ROOT above. A named volume cannot serve
+      # here: the daemon would have to resolve the *host* side of an engineer-agent workspace
+      # mount, and a volume name is not a path it can hand to a sibling container's bind.
+      - ${AURA_SANDBOX_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes}:${AURA_SANDBOX_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes}
     networks: [edge, data, sandbox_ctl]
     depends_on:
       postgres: {condition: service_healthy}

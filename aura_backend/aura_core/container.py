@@ -928,6 +928,7 @@ class Container:
             network=self.settings.sandbox.network,
             memory_limit=self.settings.sandbox.memory_limit,
             cpu_limit=self.settings.sandbox.cpu_limit,
+            host_root=self.settings.sandbox.host_root,
         )
 
     def _build_github_client(self) -> Any:

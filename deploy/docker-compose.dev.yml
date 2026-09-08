@@ -180,6 +180,13 @@ services:
       AURA_SANDBOX_ENABLED: ${AURA_SANDBOX_ENABLED:-false}
       AURA_SANDBOX_IMAGE: ${AURA_SANDBOX_IMAGE:-python:3.12-slim}
       AURA_SANDBOX_NETWORK: sandbox_egress
+      # Its own root, never prod's: the dev stack shares this host with prod, and one directory
+      # for both would let a dev workspace collide with a production one. Bind-mounted at the
+      # same path -- see docker-compose.prod.yml's AURA_SANDBOX_HOST_ROOT for why that matters.
+      AURA_SANDBOX_HOST_ROOT: ${AURA_SANDBOX_DEV_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes-dev}
+      AURA_SANDBOX_WORKSPACE_TTL_HOURS: ${AURA_SANDBOX_WORKSPACE_TTL_HOURS:-72}
+      AURA_SANDBOX_MAX_WORKSPACES: ${AURA_SANDBOX_DEV_MAX_WORKSPACES:-2}
+      AURA_SANDBOX_MAX_RUNNING: ${AURA_SANDBOX_DEV_MAX_RUNNING:-1}
       DOCKER_HOST: tcp://docker-socket-proxy:2375
       AURA_GITHUB_ENABLED: ${AURA_GITHUB_ENABLED:-false}
       AURA_GITHUB_DEFAULT_OWNER: ${AURA_GITHUB_DEFAULT_OWNER:-}
@@ -204,6 +211,7 @@ services:
     volumes:
       - aura_workspace_dev:/var/lib/aura/workspace
       - aura_datasets_dev:/var/lib/aura/datasets
+      - ${AURA_SANDBOX_DEV_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes-dev}:${AURA_SANDBOX_DEV_HOST_ROOT:-/opt/aura-stack/deploy/sandboxes-dev}
     networks: [edge, data, aura_edge, sandbox_ctl]
     depends_on:
       postgres: {condition: service_healthy}

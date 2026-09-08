@@ -7,6 +7,15 @@ this module must never require the dependency -- let alone a reachable daemon --
 can return ``None`` for a deployment that opted in but has no reachable Docker daemon, rather than
 failing at startup.
 
+**Bind-mount sources are host paths.** When this adapter runs inside a container itself (the
+deployed case: the gateway talks to the host daemon through ``docker-socket-proxy``), a
+workspace directory it creates in its *own* filesystem is not the directory the daemon mounts
+under that name -- the daemon resolves the source on the host and silently creates an empty one
+there. The two sides then disagree: ``write_file`` writes here, ``run_command`` reads there, and
+nothing errors. ``host_root`` closes that gap by naming a directory bind-mounted into this
+process at the same absolute path it has on the host, so one path means one directory. It is
+optional precisely because the local and test cases have no such split.
+
 Network isolation is the operator's responsibility at the compose level (see
 ``deploy/docker-compose.*.yml``'s ``sandbox_egress`` network): this adapter only attaches
 containers to whatever network name it is given, or disables networking entirely when none is
@@ -70,11 +79,13 @@ class DockerSandboxRunner:
         network: str = "",
         memory_limit: str = "512m",
         cpu_limit: float = 1.0,
+        host_root: str = "",
     ) -> None:
         self._image = image
         self._network = network
         self._memory_limit = memory_limit
         self._cpu_limit = cpu_limit
+        self._host_root = Path(host_root) if host_root else None
         self._client: Any = None
         self._scratch_dirs: dict[str, Path] = {}
         self._containers: dict[str, Any] = {}
@@ -86,10 +97,24 @@ class DockerSandboxRunner:
             self._client = docker.from_env()
         return self._client
 
+    def _make_scratch(self, task_id: str) -> Path:
+        """Create this task's workspace directory at a path the *daemon* can also resolve.
+
+        ``self._host_root`` is a directory bind-mounted into this process's own container at the
+        same absolute path it has on the host, so a path built under it means the same thing on
+        both sides of the Docker API. Without it (local runs, tests, any deployment where this
+        process and the daemon share a filesystem) a plain temp directory is already such a path.
+        """
+        if self._host_root is None:
+            return Path(tempfile.mkdtemp(prefix=f"aura-sandbox-{task_id}-"))
+        scratch = self._host_root / task_id
+        scratch.mkdir(parents=True, exist_ok=True)
+        return scratch
+
     async def create_task(self) -> SandboxHandle:
         task_id = uuid.uuid4().hex
-        scratch = await asyncio.to_thread(tempfile.mkdtemp, prefix=f"aura-sandbox-{task_id}-")
-        self._scratch_dirs[task_id] = Path(scratch)
+        scratch = await asyncio.to_thread(self._make_scratch, task_id)
+        self._scratch_dirs[task_id] = scratch
         return SandboxHandle(task_id=task_id)
 
     def _scratch(self, handle: SandboxHandle) -> Path:
