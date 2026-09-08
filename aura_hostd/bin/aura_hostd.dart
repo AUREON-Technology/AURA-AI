@@ -3,11 +3,11 @@
 /// `aura_hostd/README.md` for usage.
 ///
 /// Subcommands:
-///   aura_hostd auth set-token <token> [--backend-url <url>]
-///   aura_hostd grant <path> [--trust]
-///   aura_hostd revoke <path>
-///   aura_hostd trust <path>
-///   aura_hostd untrust <path>
+///   aura_hostd auth set-token &lt;token&gt; [--backend-url &lt;url&gt;]
+///   aura_hostd grant &lt;path&gt; [--trust]
+///   aura_hostd revoke &lt;path&gt;
+///   aura_hostd trust &lt;path&gt;
+///   aura_hostd untrust &lt;path&gt;
 ///   aura_hostd roots
 ///   aura_hostd run                      # start the daemon (connects and serves until killed)
 library;
