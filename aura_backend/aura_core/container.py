@@ -330,6 +330,7 @@ class Container:
         # After the runner, never before: the manager needs it, and a None runner is the signal
         # that this deployment has no workspaces at all.
         self.workspace_manager = self._build_workspace_manager()
+        self.host_git = self._build_host_git()
         self.github_client = self._build_github_client()
         self._github_clients_by_user: dict[str, Any] = {}
         self.github_client_resolver = self._build_github_client_resolver()
@@ -662,6 +663,24 @@ class Container:
         if backend != "memory":
             raise ConfigurationError(f"unknown memory backend {backend!r}")
         return InMemoryEngineerRunStore()
+
+    def _build_host_git(self) -> Any:
+        """Real `git`, run by *this* process against a workspace directory.
+
+        Host-side so a private clone's token never enters the container: the workspace gets a
+        complete checkout -- history, branches, tags -- and no credential in any file a
+        model-chosen command could read. `None` without a sandbox runner, since there would be no
+        workspace to run it against.
+
+        `AURA_SANDBOX_IN_CONTAINER_GIT` is the opt-out for operators who would rather have git
+        inside the container and accept that a command can then read the credential; it is off by
+        default and deliberately not the recommended path.
+        """
+        if self.sandbox_runner is None or self.settings.sandbox.in_container_git:
+            return None
+        from .adapters.host_git import HostGitService
+
+        return HostGitService(timeout_s=self.settings.sandbox.timeout_s)
 
     def _build_workspace_manager(self) -> Any:
         """`None` whenever there is no sandbox runner -- without one there is nothing to open,
