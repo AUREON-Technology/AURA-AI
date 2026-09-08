@@ -126,7 +126,7 @@ class ToolSpec:
     below, and the exemption is sound *because* of the confinement: confirming a write to a
     directory that will be deleted buys nothing, while asking dozens of times for it trains
     people to approve without reading, which is what would then let a real one through. See
-    ADR-012, and `tests/architecture/test_workspace_local_tools.py`, which pins the exact set.
+    ADR-014, and `tests/architecture/test_workspace_local_tools.py`, which pins the exact set.
     """
 
     _NAME_OK = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_")

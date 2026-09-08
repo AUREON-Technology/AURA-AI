@@ -71,6 +71,24 @@ class TestSandboxTools:
         assert "exit_code=0" in result
         assert "hi" in result
 
+    async def test_session_cache_passes_the_caller_s_user_id_to_create_task(self, ctx) -> None:
+        """`_SandboxSessionCache` must thread `context.user_id` through to the runner -- this is
+        the whole mechanism a per-user runner (the desktop host-agent bridge) uses to route a
+        call to the right caller's daemon (ports/coding.py::SandboxRunner)."""
+        runner = InMemorySandboxRunner()
+        seen_user_ids = []
+        original_create_task = runner.create_task
+
+        async def recording_create_task(*, user_id=None):
+            seen_user_ids.append(user_id)
+            return await original_create_task(user_id=user_id)
+
+        runner.create_task = recording_create_task
+        tools = _by_name(build_sandbox_tools(runner))
+
+        await tools["write_file"].execute({"path": "hello.txt", "content": "hi"}, ctx)
+        assert seen_user_ids == [ctx.user_id]
+
     async def test_edit_file_requires_exactly_one_occurrence(self, ctx) -> None:
         runner = InMemorySandboxRunner()
         tools = _by_name(build_sandbox_tools(runner))
@@ -109,7 +127,7 @@ class TestSandboxTools:
     async def test_workspace_local_work_runs_without_confirmation(self, ctx) -> None:
         """`run_command` is SYSTEM + side_effecting, which used to force `requires_confirmation`
         at declaration time and so gated every single command. It is now `workspace_local`
-        (ADR-012): its effects stay inside a scratch container and checkout that the reaper
+        (ADR-014): its effects stay inside a scratch container and checkout that the reaper
         deletes, so it runs, and the confirmation prompt is saved for calls that leave.
 
         The old behaviour was not wrong in isolation -- it became wrong once a workspace lived
@@ -148,7 +166,7 @@ class TestSandboxTools:
             assert result.ok and not report.needs_confirmation
 
     async def test_leaving_the_workspace_still_requires_confirmation(self, ctx) -> None:
-        """The other half of ADR-012, and the half that would make the change a mistake if it
+        """The other half of ADR-014, and the half that would make the change a mistake if it
         broke: `clone_repository` reaches a real repository over the network, is not
         workspace_local, and still stops for a human -- with its arguments visible, so the
         prompt says what is being approved rather than just naming a tool."""
@@ -183,6 +201,97 @@ class TestSandboxTools:
         )
         assert not result.ok
         assert "missing_capability" in report.policy_reason
+
+
+class _ScriptedStreamingRunner:
+    """A `StreamingSandboxRunner` that answers `run_streaming` with a fixed, pre-scripted event
+    sequence -- exercises `run_command`'s draining/truncation logic without depending on real
+    subprocess timing. `run` deliberately raises: if it gets called, `run_command` failed to
+    prefer the streaming path it is supposed to prefer whenever the runner offers one."""
+
+    def __init__(self, events):
+        self._events = events
+
+    async def create_task(self, *, user_id=None):
+        from aura_core.ports.coding import SandboxHandle
+
+        return SandboxHandle(task_id="scripted-task")
+
+    async def write_file(self, handle, path, content):
+        raise NotImplementedError
+
+    async def read_file(self, handle, path):
+        raise NotImplementedError
+
+    async def run(self, handle, command, *, timeout_s):
+        raise AssertionError("run_command must prefer run_streaming when the runner offers it")
+
+    async def run_streaming(self, handle, command, *, timeout_s):
+        for event in self._events:
+            yield event
+
+    async def destroy(self, handle):
+        pass
+
+
+class TestRunCommandStreaming:
+    async def test_uses_the_streaming_path_and_assembles_the_same_result_shape(self, ctx) -> None:
+        from aura_core.ports.coding import SandboxOutputEvent
+
+        runner = _ScriptedStreamingRunner([
+            SandboxOutputEvent(kind="stdout", data="line 1\n"),
+            SandboxOutputEvent(kind="stdout", data="line 2\n"),
+            SandboxOutputEvent(kind="stderr", data="a warning\n"),
+            SandboxOutputEvent(kind="done", exit_code=0),
+        ])
+        tools = _by_name(build_sandbox_tools(runner))
+        result = await tools["run_command"].execute({"command": "whatever"}, ctx)
+
+        assert "exit_code=0" in result
+        assert "line 1\nline 2\n" in result
+        assert "a warning\n" in result
+
+    async def test_a_nonzero_exit_code_is_reported(self, ctx) -> None:
+        from aura_core.ports.coding import SandboxOutputEvent
+
+        runner = _ScriptedStreamingRunner([
+            SandboxOutputEvent(kind="stderr", data="boom\n"),
+            SandboxOutputEvent(kind="done", exit_code=1),
+        ])
+        tools = _by_name(build_sandbox_tools(runner))
+        result = await tools["run_command"].execute({"command": "whatever"}, ctx)
+        assert "exit_code=1" in result
+
+    async def test_accumulation_is_capped_independent_of_the_tool_s_own_truncation(
+        self, ctx, monkeypatch
+    ) -> None:
+        """`_RUN_COMMAND_STREAM_CAP_CHARS` bounds what this function ever holds in memory while
+        draining -- lowered here so the test does not need to actually produce 200k characters of
+        output to exercise it."""
+        import aura_core.tools.coding as coding_module
+        from aura_core.ports.coding import SandboxOutputEvent
+
+        monkeypatch.setattr(coding_module, "_RUN_COMMAND_STREAM_CAP_CHARS", 10)
+        runner = _ScriptedStreamingRunner([
+            SandboxOutputEvent(kind="stdout", data="0123456789"),  # exactly the cap
+            SandboxOutputEvent(kind="stdout", data="this should not appear"),
+            SandboxOutputEvent(kind="done", exit_code=0),
+        ])
+        tools = _by_name(build_sandbox_tools(runner))
+        result = await tools["run_command"].execute({"command": "whatever"}, ctx)
+
+        assert "0123456789" in result
+        assert "this should not appear" not in result
+        assert "truncated" in result
+
+    async def test_a_plain_non_streaming_runner_still_works(self, ctx) -> None:
+        """`InMemorySandboxRunner` does not implement `StreamingSandboxRunner` -- run_command must
+        fall back to the plain `run` call exactly as before, not raise or hang."""
+        runner = InMemorySandboxRunner()
+        tools = _by_name(build_sandbox_tools(runner))
+        result = await tools["run_command"].execute({"command": "echo hi"}, ctx)
+        assert "exit_code=0" in result
+        assert "hi" in result
 
 
 class TestGithubTools:

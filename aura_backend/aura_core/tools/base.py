@@ -115,7 +115,7 @@ def tool(
 
     ``workspace_local`` is read by the policy engine and exempts a tool from confirmation: set it
     only where the effect really is confined to an ephemeral agent workspace. See
-    ``ToolSpec.workspace_local`` and ADR-012.
+    ``ToolSpec.workspace_local`` and ADR-014.
     """
 
     def decorate(handler: Handler) -> FunctionTool:

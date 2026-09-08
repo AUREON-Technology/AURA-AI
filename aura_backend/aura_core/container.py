@@ -326,6 +326,9 @@ class Container:
             max_generations=settings.knowledge.retrieval_max_generations,
         )
 
+        from .adapters.host_agent import HostAgentRegistry
+
+        self.host_agent_registry = HostAgentRegistry()
         self.sandbox_runner = self._build_sandbox_runner()
         # After the runner, never before: the manager needs it, and a None runner is the signal
         # that this deployment has no workspaces at all.
@@ -688,23 +691,33 @@ class Container:
         inside the container and accept that a command can then read the credential; it is off by
         default and deliberately not the recommended path.
         """
-        if self.sandbox_runner is None or self.settings.sandbox.in_container_git:
+        if (
+            getattr(self, "docker_sandbox_runner", None) is None
+            or self.settings.sandbox.in_container_git
+        ):
             return None
         from .adapters.host_git import HostGitService
 
         return HostGitService(timeout_s=self.settings.sandbox.timeout_s)
 
     def _build_workspace_manager(self) -> Any:
-        """`None` whenever there is no sandbox runner -- without one there is nothing to open,
-        and a manager that could only ever refuse would be a worse error message than the tools
-        simply not being registered."""
-        if self.sandbox_runner is None:
+        """`None` unless a runner that actually implements the durable half exists.
+
+        Capability-probed rather than merely non-None, because `sandbox_runner` is now always a
+        `CompositeSandboxRunner`: it routes a task to the caller's desktop or to the server-side
+        sandbox, and can pause or reap neither. Building a manager on it would produce a
+        workspace that appears to persist and is never reclaimed -- worse than not offering the
+        feature. The Docker runner is the one that can, so the manager is built against it
+        directly.
+        """
+        runner = getattr(self, "docker_sandbox_runner", None)
+        if runner is None or not hasattr(runner, "open_workspace"):
             return None
         from .tools.workspaces import WorkspaceManager
 
         sandbox = self.settings.sandbox
         return WorkspaceManager(
-            runner=self.sandbox_runner,
+            runner=runner,
             store=self.workspaces,
             host_root=sandbox.host_root,
             memory_limit=sandbox.memory_limit,
@@ -987,10 +1000,34 @@ class Container:
         return registry
 
     def _build_sandbox_runner(self) -> Any:
+        """Always a `CompositeSandboxRunner` (`adapters/host_agent.py`) wrapping the desktop
+        host-agent bridge plus, optionally, the server-side Docker sandbox as a fallback.
+
+        Unconditional (unlike the old Docker-only version this replaces) because
+        `write_file`/`edit_file`/`run_command`/`git_*` register whenever `sandbox_runner is not
+        None` (`tools/builtin.py::default_tools`), and a user who has paired their own desktop
+        app must get those tools regardless of whether this deployment has opted into
+        `sandbox.enabled` at all. `create_task` raises a clear, actionable error at call time if
+        neither path is actually usable for the caller -- registered-but-unusable is a better
+        failure than invisible.
+        """
+        from .adapters.host_agent import CompositeSandboxRunner, HostAgentSandboxRunner
+
+        # Kept as its own attribute as well as the composite's fallback: durable workspaces are
+        # a server-side feature and need the runner that implements them. The composite routes
+        # per-task between a user's desktop and this, and cannot pause or reap anything.
+        self.docker_sandbox_runner = self._build_docker_sandbox_runner()
+        return CompositeSandboxRunner(
+            host_runner=HostAgentSandboxRunner(self.host_agent_registry),
+            fallback=self.docker_sandbox_runner,
+        )
+
+    def _build_docker_sandbox_runner(self) -> Any:
         """`None` unless both opted in (`sandbox.enabled`) and a Docker daemon is actually
         reachable -- the same opt-in-setting-plus-runtime-probe shape as `_build_ocr_engine`/
-        `_build_stt_engine`. Absent, `write_file`/`edit_file`/`run_command`/`git_*` are simply
-        never registered (`tools/builtin.py::default_tools`)."""
+        `_build_stt_engine`. This is only the `CompositeSandboxRunner` fallback now; a `None`
+        here just means no shared server-side sandbox, not "no engineer-agent tools" -- a
+        connected desktop app still works."""
         if not self.settings.sandbox.enabled:
             return None
         from .adapters.docker_sandbox import DockerSandboxRunner, docker_available
@@ -998,7 +1035,8 @@ class Container:
         if not docker_available():
             logger.warning(
                 "sandbox.enabled is set but no Docker daemon is reachable; "
-                "engineer-agent command/file tools will not be registered"
+                "the server-side sandbox fallback will not be available (a connected desktop "
+                "app is unaffected)"
             )
             return None
         return DockerSandboxRunner(

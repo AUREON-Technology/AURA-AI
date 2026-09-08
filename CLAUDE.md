@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository shape
 
-Three independent apps in one repo:
+Four independent apps in one repo:
 
 - **`aura_backend/`** — Python/FastAPI. The actual product: a self-hosted AI platform (hybrid
   retrieval, memory, tools, planning) behind a v3 HTTP gateway. Read `README.md` and
@@ -15,6 +15,12 @@ Three independent apps in one repo:
   `/api/v3/*` routes.
 - **`aura_admin/`** — Next.js admin dashboard (lightly used so far; `npm run dev|build|lint`,
   `npm run test:e2e` for Playwright).
+- **`aura_hostd/`** — pure-Dart local daemon (no Flutter dependency) that lets the desktop Engineer
+  agent act on the user's real files and terminal. Pairs with the backend's
+  `/api/v3/host/agent` WebSocket. `dart pub get && dart test` (`.github/workflows/hostd-ci.yml`
+  gates it — a separate workflow from `client-ci.yml` since it needs `dart-lang/setup-dart`, not
+  Flutter). See `docs/architecture/011-desktop-engineer-agent.md` (ADR-011) for the design and
+  what is and is not built yet.
 
 Supporting directories: `deploy/` (production stack), `docs/` (architecture, guides, reports),
 `infra/` (Terraform), `scripts/` (client build and Firebase helpers). Historical docs live under
@@ -73,6 +79,19 @@ There is often no Flutter/Dart toolchain available in the environment a change i
 Write Dart carefully against the existing code's conventions and let Client CI (`flutter
 analyze` + `flutter test` + the Android build) be the actual verification — don't claim a client
 change is confirmed working unless you watched it pass CI.
+
+### Host daemon (`cd aura_hostd` first)
+
+```bash
+dart pub get
+dart analyze --fatal-infos
+dart test
+dart test test/some_test.dart            # single file
+dart run bin/aura_hostd.dart run          # connect and serve until killed
+```
+
+Same toolchain caveat as the client: this environment often has no Dart SDK either. Host Daemon
+CI (`.github/workflows/hostd-ci.yml`) is the actual verification.
 
 ## Backend architecture — the parts that span files
 
@@ -145,6 +164,40 @@ what it does.
   `KnowledgeCenter`, `VoiceClient`) wrapping `package:http`, attaching the JWT and device
   attestation headers (`DeviceValidationService.getAttestationHeaders()`) the same way every other
   client does — copy an existing one's shape rather than inventing a new auth pattern.
+
+## Deploy — what's easy to get wrong
+
+- **Production VPS layout**: the checkout lives at `/opt/aura-stack` (not `/opt/aura`) — a single
+  git clone that `deploy/scripts/vps-update.sh` locates automatically (see its own `find`
+  fallback if `AURA_REPO` isn't set). Two independent Compose projects run side by side on that
+  host: `aura` (prod, `deploy/docker-compose.prod.yml`) and `aura-dev`
+  (`docker-compose.dev.yml`) — `docker compose ls` shows both. `vps-update.sh` only ever touches
+  `aura`; the dev stack needs its own explicit restart.
+- **`nginx` is the only container with a published port** (SEC-12) — `gateway` binds no host
+  port, so reaching it directly means `docker exec`-ing into another container on the same
+  Docker network (or using `deploy/nginx/host-proxy.conf.example`'s override pattern for a
+  shared-host setup).
+- **Never re-add `http2 on;` to the HTTPS server blocks in
+  `deploy/nginx/templates/aura.conf.template`** (or its `host-proxy.conf.example` mirror). Any
+  client whose TLS ALPN offers h2 — curl by default, and Dart's `dart:io` WebSocket client the
+  Flutter app uses — gets negotiated onto HTTP/2, which forbids the legacy `Connection`/`Upgrade`
+  header fields the `/api/v3/voice/live` WebSocket handshake depends on; the request silently
+  degrades to a plain GET and 404s, while the identical request succeeds hitting the gateway
+  directly over HTTP/1.1. nginx can't disable HTTP/2 per-location (ALPN happens before request
+  routing even starts), so this is a deliberate server-block-wide HTTP/1.1-only tradeoff, not a
+  location-level fix — confirmed live and fixed in PR #65 after two other hypotheses (missing
+  location block, stale rendered config) were individually ruled out first.
+- **The self-hosted LLM (`qwen2.5:3b-instruct-q4_K_M` on Ollama, CPU-only) sustains roughly
+  5–10 tokens/sec in production**, degrading further as context grows. Any new completion call
+  needs its `max_output_tokens` sized so a worst-case generation actually finishes inside its
+  `timeout_s` at that throughput, or the provider call gets hard-cancelled mid-generation
+  (`AllProvidersFailedError`) before ever returning something parseable.
+  `PlanningEngine.plan()`'s call (`aura_core/planning/engine.py`) is the worked example — 700
+  tokens against the deployed 180s `request_timeout_s`, with the full reasoning in its own
+  comment — after the previous 1200-token ceiling was measured taking up to 240s in production.
+- Push-triggered pipeline: `Deploy VPS` (`.github/workflows/deploy-backend.yml`) fires via
+  `workflow_run` only after `Backend CI` succeeds on `main` — merging to `main` is the entire
+  deploy action, there is no separate manual step.
 
 ## Testing conventions worth knowing before writing a test
 

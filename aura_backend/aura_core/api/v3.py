@@ -963,6 +963,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         rate_limiter=rate_limiter,
     )
 
+    from .host_agent import register_host_agent
+
+    register_host_agent(router, container, authenticator=authenticator)
+
     return router
 
 

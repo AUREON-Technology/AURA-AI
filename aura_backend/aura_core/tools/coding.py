@@ -34,7 +34,7 @@ from pathlib import Path
 from ..domain.errors import ToolExecutionError
 from ..domain.tools import ParameterSpec, ToolCategory, ToolSensitivity, ToolSpec
 from ..observability.logging import get_logger
-from ..ports.coding import McpToolDescriptor
+from ..ports.coding import McpToolDescriptor, SandboxResult, StreamingSandboxRunner
 from ..ports.runtime import Tool, ToolContext
 from .base import FunctionTool, param, tool
 
@@ -59,6 +59,16 @@ _CLONE_MAX_FILES = 400
 _CLONE_MAX_FILE_BYTES = 256_000
 _CLONE_MAX_TOTAL_BYTES = 8_000_000
 _CLONE_CONCURRENCY = 6
+
+#: Bounds how much of a streamed command's output this side ever holds in memory while
+#: accumulating it, independent of whatever cap the daemon itself applies
+#: (`aura_hostd/lib/src/task_handler.dart`) and independent of `run_command`'s own
+#: `max_result_chars=20_000` (`ToolSpec`, which truncates the *returned* string after this
+#: function is done). Deliberately larger than that 20k so a command whose useful output is near
+#: the end (a test runner's summary, say) is not truncated at the wrong end by two caps fighting
+#: each other -- this one exists purely so a runaway command cannot grow this process's memory
+#: without bound while its output is still arriving.
+_RUN_COMMAND_STREAM_CAP_CHARS = 200_000
 
 #: Paths per `github_list_repository_files` response. A large repository's full tree is tens of
 #: thousands of paths -- more context than the listing is worth, and `max_result_chars` would
@@ -207,7 +217,8 @@ class _SandboxSessionCache:
         self._handles: dict[str, tuple[Any, float]] = {}
         self._lock = asyncio.Lock()
 
-    async def get(self, correlation_id: str) -> Any:
+    async def get(self, context: ToolContext) -> Any:
+        correlation_id = context.correlation_id
         async with self._lock:
             now = time.monotonic()
             stale = [
@@ -224,7 +235,9 @@ class _SandboxSessionCache:
             if correlation_id in self._handles:
                 handle, _ = self._handles[correlation_id]
             else:
-                handle = await self._runner.create_task()
+                # `user_id` matters only to a runner that routes per-caller (the desktop
+                # host-agent bridge) -- every other runner accepts and ignores it (ports/coding.py).
+                handle = await self._runner.create_task(user_id=context.user_id)
             self._handles[correlation_id] = (handle, now)
             return handle
 
@@ -319,7 +332,7 @@ class _SessionAdapter:
     async def handle(self, context: ToolContext, repo: str | None = None) -> Any:
         if self._resolver is not None:
             return await self._resolver.handle(context, repo)
-        return await self._cache.get(context.correlation_id)
+        return await self._cache.get(context)
 
     async def opened(self, context: ToolContext, repo: str | None = None) -> Any:
         if self._resolver is None:
@@ -328,6 +341,47 @@ class _SessionAdapter:
 
     def bound_repo(self, correlation_id: str) -> str | None:
         return self._resolver.bound_repo(correlation_id) if self._resolver else None
+
+async def _drain_streaming_run(
+    runner: StreamingSandboxRunner, handle: Any, command: Sequence[str], *, timeout_s: float
+) -> SandboxResult:
+    """Consumes a `StreamingSandboxRunner.run_streaming` sequence into the same `SandboxResult`
+    shape `SandboxRunner.run` returns, capping accumulated size at
+    `_RUN_COMMAND_STREAM_CAP_CHARS` along the way rather than after the fact.
+
+    A `"done"` event that never arrives (a runner that violates its own contract) would otherwise
+    hang this forever; that is a bug in the runner, not something to paper over here, so this
+    trusts the contract documented on `SandboxOutputEvent` rather than adding a second timeout on
+    top of the one `run_streaming` already enforces internally.
+    """
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    total_chars = 0
+    truncated = False
+    exit_code = -1
+    async for event in runner.run_streaming(handle, command, timeout_s=timeout_s):
+        if event.kind == "done":
+            exit_code = event.exit_code
+            break
+        if total_chars >= _RUN_COMMAND_STREAM_CAP_CHARS:
+            truncated = True
+            continue
+        target = stdout_parts if event.kind == "stdout" else stderr_parts
+        remaining = _RUN_COMMAND_STREAM_CAP_CHARS - total_chars
+        chunk = event.data[:remaining]
+        target.append(chunk)
+        total_chars += len(chunk)
+        if len(chunk) < len(event.data):
+            truncated = True
+    stderr = "".join(stderr_parts)
+    if truncated:
+        stderr += (
+            f"\n[aura] output truncated after {_RUN_COMMAND_STREAM_CAP_CHARS} characters "
+            "while the command was still running"
+        )
+    return SandboxResult(stdout="".join(stdout_parts), stderr=stderr, exit_code=exit_code)
+
+
 
 def build_sandbox_tools(
     sandbox_runner: Any,
@@ -428,7 +482,18 @@ def build_sandbox_tools(
     )
     async def run_command(command: str, context: ToolContext, timeout_s: float = 60.0) -> str:
         handle = await sessions.handle(context)
-        result = await sandbox_runner.run(handle, ["sh", "-c", command], timeout_s=timeout_s)
+        if isinstance(sandbox_runner, StreamingSandboxRunner):
+            # Streaming and non-streaming runners return the same shape either way -- the
+            # difference `run_streaming` makes today is bounding memory while output is still
+            # arriving (see `_RUN_COMMAND_STREAM_CAP_CHARS`) rather than holding one unbounded
+            # string until the command exits. Nothing downstream of this function observes the
+            # difference yet; that is Unit 5/8's job (a client to actually show live output),
+            # not this one's -- see docs/architecture/011-desktop-engineer-agent.md.
+            result = await _drain_streaming_run(
+                sandbox_runner, handle, ["sh", "-c", command], timeout_s=timeout_s
+            )
+        else:
+            result = await sandbox_runner.run(handle, ["sh", "-c", command], timeout_s=timeout_s)
         return (
             f"exit_code={result.exit_code}\n"
             f"--- stdout ---\n{result.stdout}\n"
@@ -599,7 +664,7 @@ def build_sandbox_tools(
         category=ToolCategory.DEVELOPMENT,
         # The one tool here that publishes anything. CONFIDENTIAL + side_effecting makes
         # confirmation mandatory (ToolSpec.__post_init__), and it is deliberately not
-        # workspace_local: this is precisely the boundary ADR-012 keeps the gate for.
+        # workspace_local: this is precisely the boundary ADR-014 keeps the gate for.
         sensitivity=ToolSensitivity.CONFIDENTIAL,
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,

@@ -1,0 +1,3 @@
+# This is a pure-Dart package (no Flutter), so it uses `package:lints` rather than
+# `package:flutter_lints` -- the flutter-specific rule set aura_client/analysis_options.yaml uses.
+include: package:lints/recommended.yaml

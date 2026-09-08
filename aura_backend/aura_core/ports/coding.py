@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
+from typing import Any, AsyncIterator, Mapping, Protocol, Sequence, runtime_checkable
 
 from ..domain.engineering import AgentWorkspace, EngineerRun
 from ..domain.identifiers import UserId, WorkspaceId
@@ -24,6 +24,8 @@ __all__ = [
     "SandboxHandle",
     "SandboxResult",
     "SandboxRunner",
+    "SandboxOutputEvent",
+    "StreamingSandboxRunner",
     "EngineerRunStore",
     "WorkspaceStore",
 ]
@@ -140,7 +142,16 @@ class SandboxRunner(Protocol):
 
     *Ephemeral* (:meth:`create_task` / :meth:`destroy`) is the original per-task shape. The
     handle's lifetime is caller-managed and there is no implicit cleanup, because a runner that
-    reaps on a timer cannot tell a slow legitimate task from an abandoned one.
+    reaps on a timer cannot tell a slow legitimate task from an abandoned one. The one exception
+    is a runner that routes by user (the desktop host-agent bridge, ``adapters/host_agent.py``):
+    there, a "task" is scoped to the user's own open workspace rather than one chat turn, and
+    :meth:`destroy` is deliberately a no-op -- documented on that adapter, not here, since it does
+    not change this protocol's contract for every other implementation.
+
+    ``user_id`` on :meth:`create_task` is ``None`` for every runner that does not need it (the
+    server-side Docker sandbox, the in-memory test fake) -- it exists only so a runner that must
+    route per-caller (again, the host-agent bridge) can be handed the caller's identity without
+    every other implementation having to know why.
 
     *Durable* (:meth:`open_workspace` / :meth:`pause_workspace` / :meth:`destroy_workspace`) is
     keyed by a caller-supplied, stable ``key`` instead of a fresh id, so the same key resumes the
@@ -149,13 +160,17 @@ class SandboxRunner(Protocol):
     process, so between turns the execution environment is stopped and costs no memory at all.
     Peak memory is therefore bounded by how many are *running*, never by how many exist.
 
-    The reason a timer-based reaper is acceptable here when it was not for tasks is that
-    "abandoned" is now observable: a durable workspace records when it was last used, so a reaper
-    can distinguish idle-for-days from busy-right-now. Whoever holds that record (see
+    The reason a timer-based reaper is acceptable for the durable half when it was not for tasks
+    is that "abandoned" is now observable: a durable workspace records when it was last used, so a
+    reaper can distinguish idle-for-days from busy-right-now. Whoever holds that record (see
     :class:`WorkspaceStore`) decides; this port only carries it out.
+
+    The two are complementary rather than competing. The desktop bridge routes a task to the
+    user's own machine; the durable half keeps a server-side checkout alive between turns. A
+    runner implements whichever half it can serve.
     """
 
-    async def create_task(self) -> SandboxHandle:
+    async def create_task(self, *, user_id: UserId | None = None) -> SandboxHandle:
         ...
 
     async def run(
@@ -214,6 +229,47 @@ class SandboxRunner(Protocol):
         temp directory, and a caller that recomputed the path would be right in one case and
         silently wrong in the other. Host-side git (``adapters/host_git.py``) needs the real one.
         """
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxOutputEvent:
+    """One increment of a streamed command's output, or its terminal outcome.
+
+    ``kind`` is ``"stdout"``/``"stderr"`` while the command is still running, in which case
+    ``data`` carries the chunk of output produced since the previous event -- or ``"done"``
+    exactly once, as the final event in the sequence, in which case ``exit_code`` carries the
+    command's exit status and ``data`` is unused. A well-behaved :class:`StreamingSandboxRunner`
+    implementation always terminates its sequence with exactly one ``"done"`` event, even on a
+    daemon-side timeout or error (mapped to a non-zero synthetic exit code) -- callers rely on
+    seeing ``"done"`` to know the command has actually finished, not just that the connection
+    went quiet.
+    """
+
+    kind: str
+    data: str = ""
+    exit_code: int = 0
+
+
+@runtime_checkable
+class StreamingSandboxRunner(Protocol):
+    """Optional capability: a :class:`SandboxRunner` that can report a command's output as it is
+    produced, not only once the command finishes.
+
+    Purely additive over :class:`SandboxRunner` -- a runner implements this *in addition to*
+    :meth:`SandboxRunner.run`, never instead of it, so every existing runner that does not
+    implement it keeps working exactly as before. Callers check via ``isinstance`` (this is a
+    ``@runtime_checkable`` Protocol) before using it, e.g. ``tools/coding.py::run_command``.
+
+    Today only the desktop host-agent bridge (``adapters/host_agent.py::HostAgentSandboxRunner``,
+    and ``CompositeSandboxRunner`` when it has routed a handle there) implements this -- the
+    server-side Docker sandbox and the in-memory test fake do not, so a deployment with no paired
+    desktop app is unaffected either way.
+    """
+
+    def run_streaming(
+        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
+    ) -> AsyncIterator[SandboxOutputEvent]:
         ...
 
 

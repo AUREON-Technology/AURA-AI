@@ -1,4 +1,4 @@
-# ADR-011 — Persistent engineer-agent workspaces, with git on the host side
+# ADR-013 — Persistent engineer-agent workspaces, with git on the host side
 
 **Status:** Accepted · **Date:** 2026-09-08
 
@@ -113,4 +113,4 @@ what a compromised workspace reaches, and the 72-hour TTL bounds the window. Eve
 by default (`AURA_SANDBOX_ENABLED=false`, `AURA_ENGINEER_AGENT_ROLES=` empty), and the compose
 services sit behind the `sandbox` profile.
 
-The confirmation consequence is large enough to be its own decision: see ADR-012.
+The confirmation consequence is large enough to be its own decision: see ADR-014.

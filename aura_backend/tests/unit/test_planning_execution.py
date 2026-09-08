@@ -583,7 +583,7 @@ class TestExecution:
             return InMemoryGitHubClient()
 
         # `clone_repository` rather than `run_command`: the latter is workspace_local as of
-        # ADR-012 and no longer confirms, but what this test is about is the BLOCKED-vs-FAILED
+        # ADR-014 and no longer confirms, but what this test is about is the BLOCKED-vs-FAILED
         # handling of *any* confirm-gated call, which is unchanged and still load-bearing for
         # the engineer persona's agentic loop.
         registry = ToolRegistry(policy=ToolPolicy())

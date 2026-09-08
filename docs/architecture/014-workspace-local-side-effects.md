@@ -1,4 +1,4 @@
-# ADR-012 — Confirmation gates the workspace boundary, not work inside it
+# ADR-014 — Confirmation gates the workspace boundary, not work inside it
 
 **Status:** Accepted · **Date:** 2026-09-08
 
@@ -10,7 +10,7 @@ ADR-006 established that a side-effecting tool cannot run in a tainted context w
 confirmation, and that confidential or system-level side effects always confirm. Those rules
 close the SEC-02 chain: a poisoned document cannot silently cause a write.
 
-Persistent workspaces (ADR-011) broke the economics of that, in a way that would have quietly
+Persistent workspaces (ADR-013) broke the economics of that, in a way that would have quietly
 destroyed the protection rather than tripping it. Two independent rules were involved:
 
 1. `ToolSpec.__post_init__` forces `requires_confirmation` on any side-effecting tool at

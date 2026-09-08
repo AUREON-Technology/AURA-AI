@@ -1,7 +1,7 @@
 """Fitness: exactly which tools are exempt from confirmation as `workspace_local`.
 
 `workspace_local` relaxes a security rule. A tool carrying it skips the taint gate and the
-confidential-side-effect gate (ADR-006's rule 3 and 4, amended by ADR-012), which is sound only
+confidential-side-effect gate (ADR-006's rule 3 and 4, amended by ADR-014), which is sound only
 while the claim behind the flag holds: that the tool's effects are confined to an ephemeral
 workspace destroyed on expiry, reaching no user data and nothing that outlives the task.
 
@@ -83,7 +83,7 @@ def test_the_workspace_local_set_is_exactly_what_is_pinned(specs) -> None:
     assert actual == _EXPECTED_WORKSPACE_LOCAL, (
         "the workspace_local set changed. This flag exempts a tool from the taint and "
         "confidential-side-effect confirmation gates, so a tool joins it only if its effects are "
-        "genuinely confined to an ephemeral workspace. Read ADR-012 before editing this list."
+        "genuinely confined to an ephemeral workspace. Read ADR-014 before editing this list."
     )
 
 

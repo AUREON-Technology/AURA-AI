@@ -19,7 +19,7 @@ Four rules, in order of strictness:
    weaken it: without it, one cloned repository taints a turn and every subsequent command in a
    multi-step engineering task asks for confirmation, and a prompt asked dozens of times per
    task is one people approve without reading. Anything that leaves the workspace (a push, any
-   forge write) is not workspace-local and keeps every rule here. See ADR-012.
+   forge write) is not workspace-local and keeps every rule here. See ADR-014.
 4. **Sensitivity.** Confidential and system-level tools always require confirmation for
    side-effecting operations, tainted or not.
 """
@@ -109,7 +109,7 @@ class ToolPolicy:
         # Without this, one clone taints the turn and every subsequent write_file, edit_file,
         # run_command and git_commit in a multi-turn engineering session demands confirmation.
         # A gate asked dozens of times per task is one people learn to click through, so the
-        # exemption protects the prompts that matter by removing the ones that do not. ADR-012
+        # exemption protects the prompts that matter by removing the ones that do not. ADR-014
         # records the reasoning; tests/architecture/test_workspace_local_tools.py pins the set.
         if spec.workspace_local and spec.side_effecting:
             return ToolPolicyDecision.allow("workspace_local_side_effect", **audit)

@@ -181,7 +181,9 @@ class DockerSandboxRunner:
                     extra={"path": str(scratch)},
                 )
 
-    async def create_task(self) -> SandboxHandle:
+    async def create_task(self, *, user_id: Any | None = None) -> SandboxHandle:
+        # `user_id` is accepted for `SandboxRunner` protocol conformance (the desktop host-agent
+        # bridge needs it to route per-user; this server-side sandbox does not) and ignored.
         task_id = uuid.uuid4().hex
         scratch = await asyncio.to_thread(self._make_scratch, task_id)
         self._scratch_dirs[task_id] = scratch
