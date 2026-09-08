@@ -109,7 +109,7 @@ class TestSandboxTools:
     async def test_workspace_local_work_runs_without_confirmation(self, ctx) -> None:
         """`run_command` is SYSTEM + side_effecting, which used to force `requires_confirmation`
         at declaration time and so gated every single command. It is now `workspace_local`
-        (ADR-011): its effects stay inside a scratch container and checkout that the reaper
+        (ADR-012): its effects stay inside a scratch container and checkout that the reaper
         deletes, so it runs, and the confirmation prompt is saved for calls that leave.
 
         The old behaviour was not wrong in isolation -- it became wrong once a workspace lived
@@ -148,7 +148,7 @@ class TestSandboxTools:
             assert result.ok and not report.needs_confirmation
 
     async def test_leaving_the_workspace_still_requires_confirmation(self, ctx) -> None:
-        """The other half of ADR-011, and the half that would make the change a mistake if it
+        """The other half of ADR-012, and the half that would make the change a mistake if it
         broke: `clone_repository` reaches a real repository over the network, is not
         workspace_local, and still stops for a human -- with its arguments visible, so the
         prompt says what is being approved rather than just naming a tool."""

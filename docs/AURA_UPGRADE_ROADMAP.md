@@ -409,6 +409,38 @@ to the graph). Wired through `container.nlp` and chat `to_turn`; live voice call
 `normalize_for_turn` extension point. **Not** a spaCy stack; no hosted NLP. Proven quality gains
 on real ASR transcripts are still required before marking the phase done.
 
+### Phase J — Persistent engineer-agent workspaces
+
+**Status: built, not proven.** Design: [ADR-011](architecture/011-agent-workspaces.md),
+[ADR-012](architecture/012-workspace-local-side-effects.md).
+
+The engineer agent gets a durable Docker workspace per (user, repository): a real `git clone`
+with history, surviving between turns, deleted after 72 hours without activity. Git runs
+host-side so the token never enters a container executing model-chosen commands. Capacity is
+bounded by *running* containers rather than stored workspaces, since a workspace is stopped
+between turns and a stopped container holds no memory. `sandbox_egress` became `internal: true`
+behind an allowlisting proxy, which closes the open follow-up the compose file flagged in its own
+comment. Confirmation now gates the workspace boundary rather than every write inside it
+(ADR-012), which is what keeps the prompt at `git_push` meaningful.
+
+Backend and client tests pass (`pytest`, the legacy `unittest` tree, the architecture fitness
+tests, and a real-PostgreSQL check of the new adapter). **That is not evidence the feature
+works.** Every claim above depends on a Docker daemon, and none of it has run against one. What
+is outstanding, on the VPS with `AURA_SANDBOX_ENABLED=true` and the `sandbox` profile up:
+
+1. `write_file` then `run_command cat` round-trips — proves the bind-mount path fix.
+2. `clone_repository`, then `git log` shows history.
+3. `grep -rn ghp_ /workspace/.git` finds nothing — no credential in the checkout.
+4. `id` reports uid 10001; writing outside `/workspace` fails.
+5. Egress allowlist holds: PyPI succeeds, an unlisted host does not.
+6. A second turn on the same repository reuses the workspace with files intact.
+7. `docker ps` between turns shows it stopped, and `free -m` unchanged.
+8. `docker compose restart gateway` re-adopts it by label.
+9. A backdated `last_active_at` plus the beat task removes container, directory and row.
+10. A full clone → edit → test → push session produces exactly **one** confirmation prompt.
+
+Per this document's own standing rule, this phase is not "done" until those have been observed.
+
 ### Phase G — Continuous intelligence
 
 **Done**, 2026-08-24.

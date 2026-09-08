@@ -599,7 +599,7 @@ def build_sandbox_tools(
         category=ToolCategory.DEVELOPMENT,
         # The one tool here that publishes anything. CONFIDENTIAL + side_effecting makes
         # confirmation mandatory (ToolSpec.__post_init__), and it is deliberately not
-        # workspace_local: this is precisely the boundary ADR-011 keeps the gate for.
+        # workspace_local: this is precisely the boundary ADR-012 keeps the gate for.
         sensitivity=ToolSensitivity.CONFIDENTIAL,
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,

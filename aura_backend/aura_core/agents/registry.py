@@ -177,7 +177,7 @@ def build_default_agent_registry() -> AgentRegistry:
                     "calculator",
                     "write_file", "edit_file", "run_command", "clone_repository",
                     "git_diff", "git_commit", "git_checkout_branch", "git_status", "git_push",
-                    # Persistent workspaces (ADR-010). Only registered when a deployment wires a
+                    # Persistent workspaces (ADR-011). Only registered when a deployment wires a
                     # workspace manager, so naming them here is a grant, not a guarantee they
                     # exist -- the same rule _READ_TOOLS' own comment states.
                     "open_workspace", "list_workspaces", "destroy_workspace",

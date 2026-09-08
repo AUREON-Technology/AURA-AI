@@ -190,7 +190,7 @@ class TestGitPush:
 
     def test_push_is_confirmation_gated(self, tools) -> None:
         """CONFIDENTIAL + side_effecting forces it, and it is deliberately not workspace_local:
-        this is the boundary ADR-011 keeps the confirmation gate for."""
+        this is the boundary ADR-012 keeps the confirmation gate for."""
         spec = tools["git_push"].spec
 
         assert spec.requires_confirmation
