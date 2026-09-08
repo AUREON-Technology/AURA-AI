@@ -408,7 +408,6 @@ class WorkspaceManager:
             await self._runner.destroy_workspace(handle)
             summary["orphan_containers"] += 1
 
-        now = self._now()
         for row in rows:
             if row.id.value not in live and row.status == WorkspaceStatus.HOT:
                 await self._store.touch(
