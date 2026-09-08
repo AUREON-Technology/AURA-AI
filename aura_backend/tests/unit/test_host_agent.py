@@ -24,6 +24,7 @@ from aura_core.adapters.host_agent import (
 )
 from aura_core.api import Principal, build_app
 from aura_core.domain.identifiers import UserId
+from aura_core.ports.coding import SandboxOutputEvent
 
 
 def _app(container, *, engineer_users: frozenset[str] = frozenset({"engineer-1"})):
@@ -148,6 +149,115 @@ class TestHostAgentSession:
             await call_task
 
 
+class TestHostAgentSessionStreaming:
+    @pytest.mark.anyio
+    async def test_call_streaming_yields_stream_frames_then_the_result_and_stops(self) -> None:
+        sent = []
+
+        async def send(frame):
+            sent.append(frame)
+
+        session = HostAgentSession(UserId("u1"), send)
+        collected = []
+
+        async def drive():
+            async for frame in session.call_streaming("run", {"command": ["echo"]}, timeout_s=5):
+                collected.append(frame)
+
+        task = asyncio.ensure_future(drive())
+        await asyncio.sleep(0)  # let it register and send
+        call_id = sent[0]["id"]
+
+        session.resolve({"type": "stream", "id": call_id, "stream": "stdout", "data": "a"})
+        session.resolve({"type": "stream", "id": call_id, "stream": "stdout", "data": "b"})
+        await asyncio.sleep(0)
+        session.resolve({"type": "result", "id": call_id, "result": {"exit_code": 0}})
+        await task
+
+        assert [f["type"] for f in collected] == ["stream", "stream", "result"]
+        assert [f["data"] for f in collected[:2]] == ["a", "b"]
+        assert collected[-1]["result"] == {"exit_code": 0}
+
+    @pytest.mark.anyio
+    async def test_call_streaming_raises_on_an_error_frame(self) -> None:
+        sent = []
+
+        async def send(frame):
+            sent.append(frame)
+
+        session = HostAgentSession(UserId("u1"), send)
+
+        async def drive():
+            async for _ in session.call_streaming("run", {}, timeout_s=5):
+                pass
+
+        task = asyncio.ensure_future(drive())
+        await asyncio.sleep(0)
+        session.resolve({"type": "error", "id": sent[0]["id"], "message": "boom"})
+        with pytest.raises(SandboxError, match="boom"):
+            await task
+
+    @pytest.mark.anyio
+    async def test_call_streaming_idle_timeout_resets_on_each_frame(self) -> None:
+        """The wait between frames is an idle timeout, not one fixed deadline -- a call that keeps
+        receiving frames must not time out just because the *total* elapsed time exceeds
+        `timeout_s`, as long as no single gap between frames does."""
+        sent = []
+
+        async def send(frame):
+            sent.append(frame)
+
+        session = HostAgentSession(UserId("u1"), send)
+        collected = []
+
+        async def drive():
+            async for frame in session.call_streaming("run", {}, timeout_s=0.05):
+                collected.append(frame)
+
+        task = asyncio.ensure_future(drive())
+        await asyncio.sleep(0)
+        call_id = sent[0]["id"]
+
+        # Three frames, each well inside the 0.05s idle window, spanning more than 0.05s total.
+        for _ in range(3):
+            await asyncio.sleep(0.02)
+            session.resolve({"type": "stream", "id": call_id, "stream": "stdout", "data": "x"})
+        session.resolve({"type": "result", "id": call_id, "result": {"exit_code": 0}})
+        await task
+        assert len(collected) == 4
+
+    @pytest.mark.anyio
+    async def test_call_streaming_times_out_on_true_silence(self) -> None:
+        async def send(frame):
+            return None
+
+        session = HostAgentSession(UserId("u1"), send)
+
+        async def drive():
+            async for _ in session.call_streaming("run", {}, timeout_s=0.05):
+                pass
+
+        with pytest.raises(SandboxError, match="did not respond"):
+            await drive()
+
+    @pytest.mark.anyio
+    async def test_fail_all_pending_unblocks_an_in_flight_streaming_call(self) -> None:
+        async def send(frame):
+            return None
+
+        session = HostAgentSession(UserId("u1"), send)
+
+        async def drive():
+            async for _ in session.call_streaming("run", {}, timeout_s=30):
+                pass
+
+        task = asyncio.ensure_future(drive())
+        await asyncio.sleep(0)
+        session.fail_all_pending("disconnected")
+        with pytest.raises(SandboxError, match="disconnected"):
+            await task
+
+
 class TestHostAgentRegistry:
     @pytest.mark.anyio
     async def test_register_then_resolve(self) -> None:
@@ -235,6 +345,58 @@ class TestHostAgentSandboxRunner:
         # lifetime -- so it must not raise and must not stop further calls on the same handle.
         await runner.destroy(handle)
 
+    @pytest.mark.anyio
+    async def test_run_streaming_yields_stdout_stderr_events_then_done(self) -> None:
+        """Drives `run_streaming` against a fake daemon that answers with several `stream` frames
+        before its final `result` -- the shape a real `aura_hostd` sends for a long-running
+        command."""
+        registry = HostAgentRegistry()
+
+        async def send(frame):
+            method, call_id, params = frame["method"], frame["id"], frame["params"]
+            if method == "create_task":
+                session.resolve({"type": "result", "id": call_id, "result": {"task_id": "task-1"}})
+                return
+            assert method == "run"
+            session.resolve({"type": "stream", "id": call_id, "stream": "stdout", "data": "line 1\n"})
+            session.resolve({"type": "stream", "id": call_id, "stream": "stdout", "data": "line 2\n"})
+            session.resolve({"type": "stream", "id": call_id, "stream": "stderr", "data": "warn\n"})
+            session.resolve({"type": "result", "id": call_id, "result": {"exit_code": 0}})
+
+        session = HostAgentSession(UserId("u1"), send)
+        await registry.register(session)
+
+        runner = HostAgentSandboxRunner(registry)
+        handle = await runner.create_task(user_id=UserId("u1"))
+
+        events = [
+            e async for e in runner.run_streaming(handle, ["sh", "-c", "..."], timeout_s=5)
+        ]
+        assert [(e.kind, e.data) for e in events[:3]] == [
+            ("stdout", "line 1\n"), ("stdout", "line 2\n"), ("stderr", "warn\n"),
+        ]
+        assert events[-1].kind == "done" and events[-1].exit_code == 0
+
+    @pytest.mark.anyio
+    async def test_run_streaming_propagates_an_error_frame(self) -> None:
+        registry = HostAgentRegistry()
+
+        async def send(frame):
+            method, call_id = frame["method"], frame["id"]
+            if method == "create_task":
+                session.resolve({"type": "result", "id": call_id, "result": {"task_id": "task-1"}})
+                return
+            session.resolve({"type": "error", "id": call_id, "message": "daemon exploded"})
+
+        session = HostAgentSession(UserId("u1"), send)
+        await registry.register(session)
+        runner = HostAgentSandboxRunner(registry)
+        handle = await runner.create_task(user_id=UserId("u1"))
+
+        with pytest.raises(SandboxError, match="daemon exploded"):
+            async for _ in runner.run_streaming(handle, ["sh", "-c", "x"], timeout_s=5):
+                pass
+
 
 class TestCompositeSandboxRunner:
     @pytest.mark.anyio
@@ -300,3 +462,46 @@ class TestCompositeSandboxRunner:
 
         await registry.register(HostAgentSession(UserId("u1"), send))
         assert await composite.read_file(handle, "a.txt") == "before pairing"
+
+    @pytest.mark.anyio
+    async def test_run_streaming_delegates_to_a_streaming_host_runner(self) -> None:
+        registry = HostAgentRegistry()
+
+        async def send(frame):
+            method, call_id = frame["method"], frame["id"]
+            if method == "create_task":
+                session.resolve({"type": "result", "id": call_id, "result": {"task_id": "t1"}})
+                return
+            session.resolve({"type": "stream", "id": call_id, "stream": "stdout", "data": "hi\n"})
+            session.resolve({"type": "result", "id": call_id, "result": {"exit_code": 0}})
+
+        session = HostAgentSession(UserId("u1"), send)
+        await registry.register(session)
+        composite = CompositeSandboxRunner(host_runner=HostAgentSandboxRunner(registry), fallback=None)
+        handle = await composite.create_task(user_id=UserId("u1"))
+
+        events = [e async for e in composite.run_streaming(handle, ["sh", "-c", "x"], timeout_s=5)]
+        assert [(e.kind, e.data) for e in events[:1]] == [("stdout", "hi\n")]
+        assert events[-1].kind == "done" and events[-1].exit_code == 0
+
+    @pytest.mark.anyio
+    async def test_run_streaming_replays_a_non_streaming_fallback_as_one_chunk_plus_done(self) -> None:
+        """The Docker sandbox (and the in-memory test fake) do not implement
+        `StreamingSandboxRunner` -- `run_streaming` on a handle routed there must still work,
+        replaying the ordinary `run` result as stdout/stderr chunks followed by `done`, so a
+        caller that always uses the streaming interface does not need two code paths."""
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+
+        fallback = InMemorySandboxRunner()
+        composite = CompositeSandboxRunner(
+            host_runner=HostAgentSandboxRunner(HostAgentRegistry()), fallback=fallback
+        )
+        handle = await composite.create_task(user_id=UserId("u1"))
+
+        events = [
+            e async for e in composite.run_streaming(handle, ["sh", "-c", "echo hi"], timeout_s=5)
+        ]
+        kinds = [e.kind for e in events]
+        assert kinds == ["stdout", "done"]
+        assert "hi" in events[0].data
+        assert events[-1].exit_code == 0

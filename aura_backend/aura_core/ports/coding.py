@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
+from typing import Any, AsyncIterator, Mapping, Protocol, Sequence, runtime_checkable
 
 from ..domain.engineering import EngineerRun
 from ..domain.identifiers import UserId
@@ -24,6 +24,8 @@ __all__ = [
     "SandboxHandle",
     "SandboxResult",
     "SandboxRunner",
+    "SandboxOutputEvent",
+    "StreamingSandboxRunner",
     "EngineerRunStore",
 ]
 
@@ -165,6 +167,47 @@ class SandboxRunner(Protocol):
         ...
 
     async def destroy(self, handle: SandboxHandle) -> None:
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxOutputEvent:
+    """One increment of a streamed command's output, or its terminal outcome.
+
+    ``kind`` is ``"stdout"``/``"stderr"`` while the command is still running, in which case
+    ``data`` carries the chunk of output produced since the previous event -- or ``"done"``
+    exactly once, as the final event in the sequence, in which case ``exit_code`` carries the
+    command's exit status and ``data`` is unused. A well-behaved :class:`StreamingSandboxRunner`
+    implementation always terminates its sequence with exactly one ``"done"`` event, even on a
+    daemon-side timeout or error (mapped to a non-zero synthetic exit code) -- callers rely on
+    seeing ``"done"`` to know the command has actually finished, not just that the connection
+    went quiet.
+    """
+
+    kind: str
+    data: str = ""
+    exit_code: int = 0
+
+
+@runtime_checkable
+class StreamingSandboxRunner(Protocol):
+    """Optional capability: a :class:`SandboxRunner` that can report a command's output as it is
+    produced, not only once the command finishes.
+
+    Purely additive over :class:`SandboxRunner` -- a runner implements this *in addition to*
+    :meth:`SandboxRunner.run`, never instead of it, so every existing runner that does not
+    implement it keeps working exactly as before. Callers check via ``isinstance`` (this is a
+    ``@runtime_checkable`` Protocol) before using it, e.g. ``tools/coding.py::run_command``.
+
+    Today only the desktop host-agent bridge (``adapters/host_agent.py::HostAgentSandboxRunner``,
+    and ``CompositeSandboxRunner`` when it has routed a handle there) implements this -- the
+    server-side Docker sandbox and the in-memory test fake do not, so a deployment with no paired
+    desktop app is unaffected either way.
+    """
+
+    def run_streaming(
+        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
+    ) -> AsyncIterator[SandboxOutputEvent]:
         ...
 
 

@@ -165,6 +165,97 @@ class TestSandboxTools:
         assert "missing_capability" in report.policy_reason
 
 
+class _ScriptedStreamingRunner:
+    """A `StreamingSandboxRunner` that answers `run_streaming` with a fixed, pre-scripted event
+    sequence -- exercises `run_command`'s draining/truncation logic without depending on real
+    subprocess timing. `run` deliberately raises: if it gets called, `run_command` failed to
+    prefer the streaming path it is supposed to prefer whenever the runner offers one."""
+
+    def __init__(self, events):
+        self._events = events
+
+    async def create_task(self, *, user_id=None):
+        from aura_core.ports.coding import SandboxHandle
+
+        return SandboxHandle(task_id="scripted-task")
+
+    async def write_file(self, handle, path, content):
+        raise NotImplementedError
+
+    async def read_file(self, handle, path):
+        raise NotImplementedError
+
+    async def run(self, handle, command, *, timeout_s):
+        raise AssertionError("run_command must prefer run_streaming when the runner offers it")
+
+    async def run_streaming(self, handle, command, *, timeout_s):
+        for event in self._events:
+            yield event
+
+    async def destroy(self, handle):
+        pass
+
+
+class TestRunCommandStreaming:
+    async def test_uses_the_streaming_path_and_assembles_the_same_result_shape(self, ctx) -> None:
+        from aura_core.ports.coding import SandboxOutputEvent
+
+        runner = _ScriptedStreamingRunner([
+            SandboxOutputEvent(kind="stdout", data="line 1\n"),
+            SandboxOutputEvent(kind="stdout", data="line 2\n"),
+            SandboxOutputEvent(kind="stderr", data="a warning\n"),
+            SandboxOutputEvent(kind="done", exit_code=0),
+        ])
+        tools = _by_name(build_sandbox_tools(runner))
+        result = await tools["run_command"].execute({"command": "whatever"}, ctx)
+
+        assert "exit_code=0" in result
+        assert "line 1\nline 2\n" in result
+        assert "a warning\n" in result
+
+    async def test_a_nonzero_exit_code_is_reported(self, ctx) -> None:
+        from aura_core.ports.coding import SandboxOutputEvent
+
+        runner = _ScriptedStreamingRunner([
+            SandboxOutputEvent(kind="stderr", data="boom\n"),
+            SandboxOutputEvent(kind="done", exit_code=1),
+        ])
+        tools = _by_name(build_sandbox_tools(runner))
+        result = await tools["run_command"].execute({"command": "whatever"}, ctx)
+        assert "exit_code=1" in result
+
+    async def test_accumulation_is_capped_independent_of_the_tool_s_own_truncation(
+        self, ctx, monkeypatch
+    ) -> None:
+        """`_RUN_COMMAND_STREAM_CAP_CHARS` bounds what this function ever holds in memory while
+        draining -- lowered here so the test does not need to actually produce 200k characters of
+        output to exercise it."""
+        import aura_core.tools.coding as coding_module
+        from aura_core.ports.coding import SandboxOutputEvent
+
+        monkeypatch.setattr(coding_module, "_RUN_COMMAND_STREAM_CAP_CHARS", 10)
+        runner = _ScriptedStreamingRunner([
+            SandboxOutputEvent(kind="stdout", data="0123456789"),  # exactly the cap
+            SandboxOutputEvent(kind="stdout", data="this should not appear"),
+            SandboxOutputEvent(kind="done", exit_code=0),
+        ])
+        tools = _by_name(build_sandbox_tools(runner))
+        result = await tools["run_command"].execute({"command": "whatever"}, ctx)
+
+        assert "0123456789" in result
+        assert "this should not appear" not in result
+        assert "truncated" in result
+
+    async def test_a_plain_non_streaming_runner_still_works(self, ctx) -> None:
+        """`InMemorySandboxRunner` does not implement `StreamingSandboxRunner` -- run_command must
+        fall back to the plain `run` call exactly as before, not raise or hang."""
+        runner = InMemorySandboxRunner()
+        tools = _by_name(build_sandbox_tools(runner))
+        result = await tools["run_command"].execute({"command": "echo hi"}, ctx)
+        assert "exit_code=0" in result
+        assert "hi" in result
+
+
 class TestGithubTools:
     async def test_read_file_contents(self, ctx) -> None:
         client = InMemoryGitHubClient()

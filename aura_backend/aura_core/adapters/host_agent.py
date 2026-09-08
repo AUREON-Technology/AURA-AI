@@ -21,11 +21,11 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Any, Awaitable, Callable, Mapping, Sequence
+from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 
 from ..domain.identifiers import UserId
 from ..observability.logging import get_logger
-from ..ports.coding import SandboxHandle, SandboxResult
+from ..ports.coding import SandboxHandle, SandboxOutputEvent, SandboxResult, StreamingSandboxRunner
 from .docker_sandbox import SandboxError
 
 __all__ = ["HostAgentSession", "HostAgentRegistry", "HostAgentSandboxRunner", "CompositeSandboxRunner"]
@@ -38,20 +38,34 @@ logger = get_logger("adapters.host_agent")
 #: enforces the tighter per-command budget the tool call actually asked for.
 _DEFAULT_CALL_TIMEOUT_S = 60.0
 
+#: Sentinel pushed onto every open streaming call's queue when the connection drops, so
+#: `call_streaming` can distinguish "the daemon disconnected mid-stream" from an ordinary frame
+#: that happens to carry no recognizable `type`.
+_STREAM_DISCONNECTED = object()
+
 
 class HostAgentSession:
     """One live connection to a single user's ``aura_hostd`` daemon.
 
     Owns request/response correlation for the duplex RPC channel `api/host_agent.py` runs over
-    the websocket: :meth:`call` sends a framed request and awaits the matching response;
-    :meth:`resolve` is fed every inbound ``result``/``error`` frame by the route's receive loop
-    and wakes whichever :meth:`call` is waiting on that id.
+    the websocket. Two calling conventions share the same wire shape:
+
+    * :meth:`call` sends a framed request and awaits exactly one ``result``/``error`` frame back
+      -- used by `create_task`/`write_file`/`read_file`, which only ever have one outcome.
+    * :meth:`call_streaming` sends the same kind of request but yields every ``stream`` frame the
+      daemon sends for that call *as it arrives*, then yields the terminal ``result`` frame and
+      stops (or raises on ``error``) -- used by `run_streaming` (`tools/coding.py::run_command`),
+      where the whole point is not waiting for the command to finish before seeing anything.
+
+    :meth:`resolve` is fed every inbound frame by the route's receive loop and routes each one to
+    whichever of the two bookkeeping structures (`_pending`/`_streams`) is waiting on that id.
     """
 
     def __init__(self, user_id: UserId, send: Callable[[Mapping[str, Any]], Awaitable[None]]) -> None:
         self.user_id = user_id
         self._send = send
         self._pending: dict[str, "asyncio.Future[Any]"] = {}
+        self._streams: dict[str, "asyncio.Queue[Any]"] = {}
 
     async def call(self, method: str, params: Mapping[str, Any], *, timeout_s: float) -> Any:
         call_id = uuid.uuid4().hex
@@ -67,10 +81,51 @@ class HostAgentSession:
         finally:
             self._pending.pop(call_id, None)
 
+    async def call_streaming(
+        self, method: str, params: Mapping[str, Any], *, timeout_s: float
+    ) -> AsyncIterator[Mapping[str, Any]]:
+        """Like :meth:`call`, but yields every ``stream`` frame for this call as it arrives, then
+        the terminal ``result`` frame, and stops. Raises :class:`SandboxError` on an ``error``
+        frame or if no frame at all (of any kind) arrives within ``timeout_s`` of the last one.
+
+        That last point matters: the timeout here is *idle* time between frames, not a fixed
+        overall deadline. A long-running command that is actively streaming output is making
+        progress by definition -- the daemon's own per-command timeout (`timeout_s` in the
+        `params` sent) is what actually bounds how long the command may run; this side only needs
+        to give up if the daemon itself stops talking.
+        """
+        call_id = uuid.uuid4().hex
+        queue: "asyncio.Queue[Any]" = asyncio.Queue()
+        self._streams[call_id] = queue
+        try:
+            await self._send({"type": "call", "id": call_id, "method": method, "params": dict(params)})
+            while True:
+                try:
+                    frame = await asyncio.wait_for(queue.get(), timeout=timeout_s)
+                except asyncio.TimeoutError as exc:
+                    raise SandboxError(
+                        f"desktop app did not respond to {method!r} within {timeout_s:.0f}s"
+                    ) from exc
+                if frame is _STREAM_DISCONNECTED:
+                    raise SandboxError("desktop app disconnected mid-stream")
+                ftype = frame.get("type")
+                if ftype == "error":
+                    raise SandboxError(str(frame.get("message") or "host agent error"))
+                yield frame
+                if ftype != "stream":
+                    return
+        finally:
+            self._streams.pop(call_id, None)
+
     def resolve(self, frame: Mapping[str, Any]) -> None:
-        """Feed one inbound `result`/`error` frame. Unknown or already-resolved ids are ignored --
-        a slow response to a call this side already timed out on is not an error, just late."""
+        """Feed one inbound `stream`/`result`/`error` frame. Unknown or already-resolved ids are
+        ignored -- a slow response to a call this side already gave up on is not an error, just
+        late."""
         call_id = str(frame.get("id") or "")
+        queue = self._streams.get(call_id)
+        if queue is not None:
+            queue.put_nowait(dict(frame))
+            return
         future = self._pending.get(call_id)
         if future is None or future.done():
             return
@@ -80,12 +135,15 @@ class HostAgentSession:
             future.set_result(frame.get("result"))
 
     def fail_all_pending(self, reason: str) -> None:
-        """Called when the connection drops -- every in-flight call must be unblocked rather than
-        hanging until its own timeout, which would otherwise stall a tool call for up to
-        `_DEFAULT_CALL_TIMEOUT_S` after the user already closed the desktop app."""
+        """Called when the connection drops -- every in-flight call (single-shot or streaming)
+        must be unblocked rather than hanging until its own timeout, which would otherwise stall a
+        tool call for up to `_DEFAULT_CALL_TIMEOUT_S` after the user already closed the desktop
+        app."""
         for future in self._pending.values():
             if not future.done():
                 future.set_exception(SandboxError(reason))
+        for queue in self._streams.values():
+            queue.put_nowait(_STREAM_DISCONNECTED)
 
 
 class HostAgentRegistry:
@@ -188,6 +246,31 @@ class HostAgentSandboxRunner:
         )
         return str((result or {}).get("content", ""))
 
+    async def run_streaming(
+        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
+    ) -> AsyncIterator[SandboxOutputEvent]:
+        """`StreamingSandboxRunner` capability -- see that Protocol's docstring. The wire shape a
+        `stream` frame carries is ``{"type": "stream", "id": ..., "stream": "stdout"|"stderr",
+        "data": "..."}``; the terminal ``result`` frame's ``result`` payload carries
+        ``exit_code`` exactly like the non-streaming `run` RPC's does.
+        """
+        session = await self._session_for(handle)
+        async for frame in session.call_streaming(
+            "run",
+            {"task_id": handle.task_id, "command": list(command), "timeout_s": timeout_s},
+            # Idle timeout between frames, not an overall deadline -- see call_streaming's
+            # docstring. The daemon is expected to send at least one frame (even just the
+            # terminal result) well within this window once it has started the command.
+            timeout_s=timeout_s + 5.0,
+        ):
+            if frame.get("type") == "stream":
+                yield SandboxOutputEvent(
+                    kind=str(frame.get("stream") or "stdout"), data=str(frame.get("data") or "")
+                )
+            else:
+                payload = frame.get("result") or {}
+                yield SandboxOutputEvent(kind="done", exit_code=int(payload.get("exit_code", -1)))
+
     async def destroy(self, handle: SandboxHandle) -> None:
         # Workspace-scoped on the daemon side -- see class docstring. Just forget the mapping so
         # a reused task_id (unlikely, but not impossible across daemon restarts) can't be routed
@@ -231,6 +314,29 @@ class CompositeSandboxRunner:
 
     async def run(self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float) -> SandboxResult:
         return await self._runner_for(handle).run(handle, command, timeout_s=timeout_s)
+
+    async def run_streaming(
+        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
+    ) -> AsyncIterator[SandboxOutputEvent]:
+        """Always present structurally (so `isinstance(composite, StreamingSandboxRunner)` is
+        always true for a `CompositeSandboxRunner`), but the routing decision is per-handle, not
+        per-object: whichever runner `create_task` actually chose for this handle may or may not
+        itself support streaming. When it does not (the Docker sandbox, the in-memory fake), this
+        replays the ordinary `run` result as a single stdout/stderr chunk followed by `done` --
+        callers that always use the streaming interface (`tools/coding.py::run_command`) do not
+        need two code paths, they just see one chunk instead of many.
+        """
+        runner = self._runner_for(handle)
+        if isinstance(runner, StreamingSandboxRunner):
+            async for event in runner.run_streaming(handle, command, timeout_s=timeout_s):
+                yield event
+            return
+        result = await runner.run(handle, command, timeout_s=timeout_s)
+        if result.stdout:
+            yield SandboxOutputEvent(kind="stdout", data=result.stdout)
+        if result.stderr:
+            yield SandboxOutputEvent(kind="stderr", data=result.stderr)
+        yield SandboxOutputEvent(kind="done", exit_code=result.exit_code)
 
     async def write_file(self, handle: SandboxHandle, path: str, content: str) -> None:
         await self._runner_for(handle).write_file(handle, path, content)

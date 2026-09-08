@@ -101,19 +101,31 @@ class HostAgentClient {
     final method = frame['method'] as String?;
     final params = (frame['params'] as Map<String, dynamic>?) ?? const {};
     try {
-      final result = await _dispatch(method, params);
+      final result = await _dispatch(socket, id, method, params);
       socket.add(jsonEncode({'type': 'result', 'id': id, 'result': result}));
     } catch (error) {
       socket.add(jsonEncode({'type': 'error', 'id': id, 'message': error.toString()}));
     }
   }
 
-  Future<Map<String, Object?>> _dispatch(String? method, Map<String, dynamic> params) {
+  Future<Map<String, Object?>> _dispatch(
+    WebSocket socket, dynamic id, String? method, Map<String, dynamic> params,
+  ) {
     switch (method) {
       case 'create_task':
         return taskHandler.createTask(params);
       case 'run':
-        return taskHandler.run(params);
+        // A `stream` frame per output chunk, sent as it arrives -- the caller
+        // (HostAgentSandboxRunner.run_streaming, aura_backend) reads these as they're delivered,
+        // not only once this call's own `result` frame (sent by `_handleCall` above, after this
+        // returns) arrives. Every other method has exactly one outcome and needs no interim
+        // frames, so this is `run`-specific rather than a general dispatch feature.
+        return taskHandler.run(
+          params,
+          onChunk: (streamName, data) {
+            socket.add(jsonEncode({'type': 'stream', 'id': id, 'stream': streamName, 'data': data}));
+          },
+        );
       case 'write_file':
         return taskHandler.writeFile(params);
       case 'read_file':

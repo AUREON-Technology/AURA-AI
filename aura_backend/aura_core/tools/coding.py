@@ -32,7 +32,7 @@ from typing import Any, Mapping, Sequence
 from ..domain.errors import ToolExecutionError
 from ..domain.tools import ParameterSpec, ToolCategory, ToolSensitivity, ToolSpec
 from ..observability.logging import get_logger
-from ..ports.coding import McpToolDescriptor
+from ..ports.coding import McpToolDescriptor, SandboxResult, StreamingSandboxRunner
 from ..ports.runtime import Tool, ToolContext
 from .base import FunctionTool, param, tool
 
@@ -57,6 +57,16 @@ _CLONE_MAX_FILES = 400
 _CLONE_MAX_FILE_BYTES = 256_000
 _CLONE_MAX_TOTAL_BYTES = 8_000_000
 _CLONE_CONCURRENCY = 6
+
+#: Bounds how much of a streamed command's output this side ever holds in memory while
+#: accumulating it, independent of whatever cap the daemon itself applies
+#: (`aura_hostd/lib/src/task_handler.dart`) and independent of `run_command`'s own
+#: `max_result_chars=20_000` (`ToolSpec`, which truncates the *returned* string after this
+#: function is done). Deliberately larger than that 20k so a command whose useful output is near
+#: the end (a test runner's summary, say) is not truncated at the wrong end by two caps fighting
+#: each other -- this one exists purely so a runaway command cannot grow this process's memory
+#: without bound while its output is still arriving.
+_RUN_COMMAND_STREAM_CAP_CHARS = 200_000
 
 #: Paths per `github_list_repository_files` response. A large repository's full tree is tens of
 #: thousands of paths -- more context than the listing is worth, and `max_result_chars` would
@@ -219,6 +229,46 @@ class _SandboxSessionCache:
             return handle
 
 
+async def _drain_streaming_run(
+    runner: StreamingSandboxRunner, handle: Any, command: Sequence[str], *, timeout_s: float
+) -> SandboxResult:
+    """Consumes a `StreamingSandboxRunner.run_streaming` sequence into the same `SandboxResult`
+    shape `SandboxRunner.run` returns, capping accumulated size at
+    `_RUN_COMMAND_STREAM_CAP_CHARS` along the way rather than after the fact.
+
+    A `"done"` event that never arrives (a runner that violates its own contract) would otherwise
+    hang this forever; that is a bug in the runner, not something to paper over here, so this
+    trusts the contract documented on `SandboxOutputEvent` rather than adding a second timeout on
+    top of the one `run_streaming` already enforces internally.
+    """
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    total_chars = 0
+    truncated = False
+    exit_code = -1
+    async for event in runner.run_streaming(handle, command, timeout_s=timeout_s):
+        if event.kind == "done":
+            exit_code = event.exit_code
+            break
+        if total_chars >= _RUN_COMMAND_STREAM_CAP_CHARS:
+            truncated = True
+            continue
+        target = stdout_parts if event.kind == "stdout" else stderr_parts
+        remaining = _RUN_COMMAND_STREAM_CAP_CHARS - total_chars
+        chunk = event.data[:remaining]
+        target.append(chunk)
+        total_chars += len(chunk)
+        if len(chunk) < len(event.data):
+            truncated = True
+    stderr = "".join(stderr_parts)
+    if truncated:
+        stderr += (
+            f"\n[aura] output truncated after {_RUN_COMMAND_STREAM_CAP_CHARS} characters "
+            "while the command was still running"
+        )
+    return SandboxResult(stdout="".join(stdout_parts), stderr=stderr, exit_code=exit_code)
+
+
 def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) -> list[Tool]:
     """Filesystem, command-execution, and git tools against one shared per-task sandbox.
 
@@ -297,7 +347,18 @@ def build_sandbox_tools(sandbox_runner: Any, *, code_host_resolver: Any = None) 
     )
     async def run_command(command: str, context: ToolContext, timeout_s: float = 60.0) -> str:
         handle = await sessions.get(context)
-        result = await sandbox_runner.run(handle, ["sh", "-c", command], timeout_s=timeout_s)
+        if isinstance(sandbox_runner, StreamingSandboxRunner):
+            # Streaming and non-streaming runners return the same shape either way -- the
+            # difference `run_streaming` makes today is bounding memory while output is still
+            # arriving (see `_RUN_COMMAND_STREAM_CAP_CHARS`) rather than holding one unbounded
+            # string until the command exits. Nothing downstream of this function observes the
+            # difference yet; that is Unit 5/8's job (a client to actually show live output),
+            # not this one's -- see docs/architecture/011-desktop-engineer-agent.md.
+            result = await _drain_streaming_run(
+                sandbox_runner, handle, ["sh", "-c", command], timeout_s=timeout_s
+            )
+        else:
+            result = await sandbox_runner.run(handle, ["sh", "-c", command], timeout_s=timeout_s)
         return (
             f"exit_code={result.exit_code}\n"
             f"--- stdout ---\n{result.stdout}\n"
