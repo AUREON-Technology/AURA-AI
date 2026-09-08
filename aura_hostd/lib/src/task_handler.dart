@@ -44,9 +44,11 @@ const _maxOutputCapChars = 500000;
 typedef OutputChunkCallback = void Function(String stream, String data);
 
 class TaskHandler {
-  TaskHandler(this._roots);
+  TaskHandler(this._roots, {this.yolo = false});
 
   final WorkspaceRoots _roots;
+  /// Global YOLO: skip the allowlist for granted roots. Containment + hard denylist still apply.
+  bool yolo;
   final Set<String> _activeTaskIds = {};
 
   Future<Map<String, Object?>> createTask(Map<String, dynamic> params) async {
@@ -115,7 +117,13 @@ class TaskHandler {
     final cwd = cwdParam != null ? _roots.requireContained(root, cwdParam) : root.canonicalPath;
 
     final commandForPolicy = _effectiveShellCommand(commandArgv);
-    final verdict = evaluateCommand(commandForPolicy, workspaceTrusted: root.trusted);
+    final serverConfirmed = params['server_confirmed'] == true;
+    final verdict = evaluateCommand(
+      commandForPolicy,
+      workspaceTrusted: root.trusted,
+      yolo: yolo,
+      serverConfirmed: serverConfirmed,
+    );
     if (!verdict.isAllowed) {
       throw RpcError('command refused: ${verdict.reason}');
     }

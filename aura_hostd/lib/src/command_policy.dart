@@ -1,31 +1,20 @@
 /// Command policy: decides whether `run_command` may execute a given command in a given
 /// workspace root.
 ///
-/// The full tiered-consent design (auto for reads, diff-and-approve for writes, an explicit YOLO
-/// mode, all surfaced through a UI) is Unit 5/8 of the desktop Engineer agent work
-/// (`docs/architecture/011-desktop-engineer-agent.md`) and needs the Flutter client to prompt a
-/// human. This daemon has no UI yet -- it can be run headless, paired to an account, with nothing
-/// watching it interactively. So rather than fake an "approve" prompt nobody can answer, this
-/// module implements the one tier that is safe to run unattended: an explicit per-workspace
-/// `trusted` flag the user sets out-of-band (`aura_hostd trust <path>`), plus a fixed allowlist of
-/// read-only/inspection commands that are safe to run in an untrusted workspace without asking.
-/// A command that is neither allowlisted nor in a trusted workspace is refused, not queued --
-/// there is nobody to queue it for yet.
+/// Consent tiers (ADR-011 Unit 5):
+/// * **Untrusted workspace** — only a fixed read-only/inspection allowlist runs.
+/// * **Trusted workspace** (`aura_hostd trust <path>`) — anything not on the hard denylist.
+/// * **YOLO** (`aura_hostd yolo on`) — collapses trust for *every* granted root the same way,
+///   but **never** lifts path containment or the hard denylist. That is the safety story.
+/// * **Server-confirmed** — when the RPC carries `server_confirmed: true` for this exact call
+///   (ToolPolicy already prompted the human), the daemon suppresses a second allowlist refusal
+///   for commands that would otherwise need trust. Containment + hard denylist still apply.
 ///
-/// This is a real, deliberate scope cut, not silently dropped: it is stated here, in
-/// `docs/architecture/011-desktop-engineer-agent.md`'s "Implementation status", and in the
-/// roadmap. When the interactive UI lands, `trusted` becomes one of several tiers instead of the
-/// only escape hatch, and the allowlist becomes the "auto-approve" tier rather than the only
-/// thing that runs without it.
+/// Interactive per-call approve/deny UI is still Unit 8; until that lands, trusted/YOLO/confirmed
+/// are the escape hatches rather than a queued prompt nobody can answer.
 ///
 /// Command policy is layered *on top of* workspace containment (`containment.dart`), never a
-/// substitute for it: a command permitted here still only ever runs with its working directory
-/// inside the granted root, and `run_command`'s shell interpretation means containment is a
-/// process-level control (via cwd), not a promise the shell command's own arguments cannot name a
-/// path elsewhere -- exactly like the equivalent risk already accepted server-side by
-/// `aura_backend/aura_core/tools/coding.py::run_command` against the Docker sandbox. The
-/// difference here is there is no container boundary underneath; that is why the hard denylist
-/// below exists in addition to the allowlist.
+/// substitute for it.
 library;
 
 /// Command prefixes that are always refused, in every workspace, trusted or not -- a floor no
@@ -87,7 +76,12 @@ class CommandVerdict {
   bool get isAllowed => decision == CommandDecision.allow;
 }
 
-CommandVerdict evaluateCommand(String command, {required bool workspaceTrusted}) {
+CommandVerdict evaluateCommand(
+  String command, {
+  required bool workspaceTrusted,
+  bool yolo = false,
+  bool serverConfirmed = false,
+}) {
   final trimmed = command.trim();
   for (final pattern in hardDenylistPatterns) {
     if (pattern.hasMatch(trimmed)) {
@@ -97,8 +91,22 @@ CommandVerdict evaluateCommand(String command, {required bool workspaceTrusted})
       );
     }
   }
-  if (workspaceTrusted) {
-    return const CommandVerdict(CommandDecision.allow, 'workspace is marked trusted');
+  if (workspaceTrusted || yolo) {
+    return CommandVerdict(
+      CommandDecision.allow,
+      yolo && !workspaceTrusted
+          ? 'YOLO mode is on (hard denylist and path containment still apply)'
+          : 'workspace is marked trusted',
+    );
+  }
+  if (serverConfirmed) {
+    // ToolPolicy already got an explicit human confirmation for this call_id. Suppressing a
+    // second daemon-side allowlist refusal avoids double-prompting; containment + denylist above
+    // still ran.
+    return const CommandVerdict(
+      CommandDecision.allow,
+      'server already confirmed this call; daemon allowlist suppressed',
+    );
   }
   if (_shellMetacharacters.hasMatch(trimmed)) {
     return const CommandVerdict(
@@ -118,7 +126,7 @@ CommandVerdict evaluateCommand(String command, {required bool workspaceTrusted})
   return const CommandVerdict(
     CommandDecision.deny,
     'workspace is not trusted and this command is not on the read-only allowlist -- run '
-    '`aura_hostd trust <path>` for this workspace, or wait for interactive per-call approval '
-    '(not yet implemented -- see docs/architecture/011-desktop-engineer-agent.md)',
+    '`aura_hostd trust <path>` or `aura_hostd yolo on`, or wait for interactive per-call '
+    'approval',
   );
 }

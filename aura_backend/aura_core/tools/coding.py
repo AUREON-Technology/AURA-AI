@@ -392,6 +392,82 @@ async def _drain_streaming_run(
 
 
 
+def _sandbox_tool_descriptions(surface: str) -> dict[str, str]:
+    """Tool *names* stay identical across surfaces; only the prose changes (Unit 5 / ADR-011).
+
+    ``surface`` is ``"host"`` (paired desktop only), ``"sandbox"`` (server Docker only), or
+    ``"auto"`` (CompositeSandboxRunner's per-task routing -- honest about both possibilities).
+    """
+    if surface not in ("auto", "host", "sandbox"):
+        raise ValueError(f"unknown sandbox tool surface {surface!r}; expected auto|host|sandbox")
+
+    if surface == "host":
+        write = (
+            "Write a UTF-8 text file on the user's own machine, inside whichever folder they have "
+            "granted to the paired desktop daemon (AURA Desktop / aura_hostd). Overwrites the "
+            "file if it already exists; creates parent directories as needed."
+        )
+        run = (
+            "Run a shell command on the user's own machine inside a granted workspace folder and "
+            "return its stdout/stderr/exit code. Subject to the daemon's path containment and "
+            "command policy (including YOLO / trust tiers) -- not a server-side container."
+        )
+        clone = (
+            "Clone a GitHub repository into a granted folder on the user's own machine via the "
+            "paired desktop daemon. Uses the caller's connected GitHub credentials on the server "
+            "to fetch contents, then writes them through the host-agent bridge."
+        )
+    elif surface == "sandbox":
+        write = (
+            "Write a UTF-8 text file inside an ephemeral sandbox container's scratch directory "
+            "(not the user's real files), torn down after the task. Overwrites the file if it "
+            "already exists; creates parent directories as needed."
+        )
+        run = (
+            "Run a shell command inside an ephemeral, network-restricted sandbox container and "
+            "return its stdout/stderr/exit code. The sandbox cannot reach the user's real "
+            "network or host filesystem."
+        )
+        clone = (
+            "Clone a GitHub repository into the ephemeral sandbox workspace (not the user's real "
+            "disk). Copies through the code-host port so the sandbox itself needs no network."
+        )
+    else:
+        write = (
+            "Write a UTF-8 text file inside the engineer agent's workspace: the user's own "
+            "machine, inside whatever folder they have granted, if they have a paired desktop "
+            "app connected (AURA Desktop) -- otherwise an ephemeral sandbox container's scratch "
+            "directory, torn down after the task. Overwrites the file if it already exists; "
+            "creates parent directories as needed."
+        )
+        run = (
+            "Run a shell command inside the engineer agent's workspace and return its "
+            "stdout/stderr/exit code. Use for running tests, linters, builds, or inspecting the "
+            "workspace's files. If the user has a paired desktop app connected, this runs "
+            "directly on their own machine -- their real network, subject to the daemon's own "
+            "path containment and command policy. Otherwise it runs in an ephemeral, "
+            "network-restricted sandbox container that cannot reach the user's real network or "
+            "host."
+        )
+        clone = (
+            "Clone a GitHub repository into the engineer agent's workspace. With a paired "
+            "desktop app this lands on the user's machine inside a granted folder; otherwise it "
+            "copies into an ephemeral sandbox scratch directory via the code-host port (the "
+            "fallback sandbox itself needs no network)."
+        )
+
+    return {
+        "write_file": write,
+        "edit_file": (
+            "Replace one exact occurrence of `find` with `replace` in a file inside the engineer "
+            "agent's workspace. Fails if `find` is not present exactly once -- read the file "
+            "first (e.g. via run_command 'cat path') to get the exact text."
+        ),
+        "run_command": run,
+        "clone_repository": clone,
+    }
+
+
 def build_sandbox_tools(
     sandbox_runner: Any,
     *,
@@ -399,6 +475,7 @@ def build_sandbox_tools(
     workspace_manager: Any = None,
     host_git: Any = None,
     token_resolver: Any = None,
+    surface: str = "auto",
 ) -> list[Tool]:
     """Filesystem, command-execution, and git tools against one shared per-task sandbox.
 
@@ -407,7 +484,12 @@ def build_sandbox_tools(
     next to the sandbox tools rather than with the GitHub ones, because it must write into the
     *same* per-turn sandbox handle ``run_command`` will then read from: a clone that landed in a
     different container would be invisible to the very next tool call.
+
+    ``surface`` selects tool *descriptions* only (``\"auto\"`` / ``\"host\"`` / ``\"sandbox\"``).
+    Tool names stay identical so agents/registry, matching, and confirmation UI need no change.
     """
+    descriptions = _sandbox_tool_descriptions(surface)
+
     if workspace_manager is not None:
         sessions = _SessionAdapter(
             resolver=_WorkspaceResolver(workspace_manager, sandbox_runner)
@@ -419,11 +501,7 @@ def build_sandbox_tools(
 
     @tool(
         "write_file",
-        "Write a UTF-8 text file inside the engineer agent's workspace: the user's own machine, "
-        "inside whatever folder they have granted, if they have a paired desktop app connected "
-        "(AURA Desktop) -- otherwise an ephemeral sandbox container's scratch directory, torn "
-        "down after the task. Overwrites the file if it already exists; creates parent "
-        "directories as needed.",
+        descriptions["write_file"],
         param("path", "string", "Path relative to the workspace root.", max_length=300),
         param("content", "string", "The file's full new content.", max_length=200_000),
         category=ToolCategory.DEVELOPMENT,
@@ -440,9 +518,7 @@ def build_sandbox_tools(
 
     @tool(
         "edit_file",
-        "Replace one exact occurrence of `find` with `replace` in a file inside the engineer "
-        "agent's workspace. Fails if `find` is not present exactly once -- read the file "
-        "first (e.g. via run_command 'cat path') to get the exact text.",
+        descriptions["edit_file"],
         param("path", "string", "Path relative to the workspace root.", max_length=300),
         param("find", "string", "Exact text to replace; must occur exactly once in the file.",
               max_length=50_000),
@@ -469,12 +545,7 @@ def build_sandbox_tools(
 
     @tool(
         "run_command",
-        "Run a shell command inside the engineer agent's workspace and return its "
-        "stdout/stderr/exit code. Use for running tests, linters, builds, or inspecting the "
-        "workspace's files. If the user has a paired desktop app connected, this runs directly "
-        "on their own machine -- their real network, subject to the daemon's own path "
-        "containment and command policy. Otherwise it runs in an ephemeral, network-restricted "
-        "sandbox container that cannot reach the user's real network or host.",
+        descriptions["run_command"],
         param("command", "string", "The shell command to run, e.g. 'pytest -q'.", max_length=2000),
         param("timeout_s", "number", "Max seconds to allow the command to run.", required=False,
               minimum=1, maximum=600, default=60),
@@ -731,10 +802,10 @@ def build_sandbox_tools(
 
     @tool(
         "clone_repository",
-        "Copy a GitHub repository's files into the engineer agent's workspace, so they "
-        "can be explored, searched, built, or tested with run_command. Use this when asked to "
-        "clone, analyse, review, or work on a repository. Text files only, up to a size and "
-        "count budget -- binaries and oversized files are skipped and the skips are reported.",
+        descriptions["clone_repository"]
+        + " Use when asked to clone, analyse, review, or work on a repository. Text files "
+        "only, up to a size and count budget -- binaries and oversized files are skipped and "
+        "the skips are reported.",
         param("repo", "string",
               "Repository to copy, as 'owner/name' or its GitHub URL.", max_length=400),
         param("ref", "string", "Branch, tag, or commit SHA. Omit for the default branch.",

@@ -111,6 +111,16 @@ class TestSandboxToolDescriptionsAreHonestAboutRouting:
         # true and shouldn't be lost, only the part that used to be stated unconditionally.
         assert "network-restricted" in description
 
+    def test_surface_host_names_stay_identical_but_descriptions_are_host_only(self) -> None:
+        auto = _by_name(build_sandbox_tools(InMemorySandboxRunner(), surface="auto"))
+        host = _by_name(build_sandbox_tools(InMemorySandboxRunner(), surface="host"))
+        sandbox = _by_name(build_sandbox_tools(InMemorySandboxRunner(), surface="sandbox"))
+        assert set(auto) == set(host) == set(sandbox)
+        assert "own machine" in host["write_file"].spec.description
+        assert "ephemeral sandbox" in sandbox["write_file"].spec.description
+        assert "network-restricted" not in host["run_command"].spec.description
+        assert "network-restricted" in sandbox["run_command"].spec.description
+
     async def test_edit_file_requires_exactly_one_occurrence(self, ctx) -> None:
         runner = InMemorySandboxRunner()
         tools = _by_name(build_sandbox_tools(runner))

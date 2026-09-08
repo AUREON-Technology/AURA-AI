@@ -127,4 +127,40 @@ void main() {
       expect(result.isAllowed, isTrue);
     });
   });
+
+  group('evaluateCommand: YOLO', () {
+    test('allows non-denylisted commands in an untrusted workspace when YOLO is on', () {
+      final result = evaluateCommand(
+        'pytest -q',
+        workspaceTrusted: false,
+        yolo: true,
+      );
+      expect(result.isAllowed, isTrue);
+    });
+
+    test('still refuses the hard denylist under YOLO', () {
+      final result = evaluateCommand('rm -rf /', workspaceTrusted: false, yolo: true);
+      expect(result.isAllowed, isFalse);
+    });
+  });
+
+  group('evaluateCommand: server_confirmed', () {
+    test('allows a non-allowlisted command when the server already confirmed', () {
+      final result = evaluateCommand(
+        'pytest -q',
+        workspaceTrusted: false,
+        serverConfirmed: true,
+      );
+      expect(result.isAllowed, isTrue);
+    });
+
+    test('still refuses the hard denylist even when server-confirmed', () {
+      final result = evaluateCommand(
+        'rm -rf /tmp/x',
+        workspaceTrusted: false,
+        serverConfirmed: true,
+      );
+      expect(result.isAllowed, isFalse);
+    });
+  });
 }
