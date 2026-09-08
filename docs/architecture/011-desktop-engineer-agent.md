@@ -10,7 +10,9 @@ exist and are already wired through the same planning → execution → `ToolReg
 path every other tool uses. What they act on is the gap: `Container._build_sandbox_runner`
 (pre-this-ADR) built a `DockerSandboxRunner` — an ephemeral, network-restricted container **on
 the server**, torn down at the end of the turn. The tools say so out loud in their own
-descriptions: *"not the user's real files, a scratch directory."*
+descriptions: *"not the user's real files, a scratch directory."* (ADR-013 later replaced that
+ephemeral server path with durable per-(user, repo) workspaces when the sandbox profile is
+enabled; this ADR is about moving execution onto the user's machine instead.)
 
 That makes the Engineer persona useful for "write and test a snippet" but not for "be a real
 software engineer on any project on my computer" — the ask this ADR answers. Doing that requires
@@ -165,7 +167,8 @@ actively false once `CompositeSandboxRunner` routes a task to a paired desktop a
 that routing decision is made per task (whichever runner `create_task` picks for that caller), not
 per deployment, a single static description has to describe both possibilities rather than assert
 one. `tools/coding.py` now does: each description says the workspace is the user's own machine
-when a desktop app is paired, falling back to the ephemeral sandbox container otherwise --
+when a desktop app is paired, falling back to the server Docker workspace (persistent per
+ADR-013 when `AURA_SANDBOX_ENABLED` is on; otherwise unavailable) otherwise --
 including keeping the fallback's real network restriction intact rather than dropping it entirely.
 Locked in by `tests/unit/test_engineer_tools.py::TestSandboxToolDescriptionsAreHonestAboutRouting`.
 

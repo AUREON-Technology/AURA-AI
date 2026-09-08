@@ -94,6 +94,10 @@ The arrow never reverses. A layering rule that lives only in a document decays w
 | [007](docs/architecture/007-versioned-indexes.md) | Index identity, alias promotion, O(1) rollback |
 | [008](docs/architecture/008-human-in-the-loop-learning.md) | Nothing reaches production without a person |
 | [009](docs/architecture/009-observability-first.md) | Every degradation increments a counter |
+| [010](docs/architecture/010-cache-augmented-prefix.md) | CAG-lite reserved knowledge prefix |
+| [011](docs/architecture/011-desktop-engineer-agent.md) | Desktop Engineer agent via `aura_hostd` |
+| [013](docs/architecture/013-agent-workspaces.md) | Persistent engineer workspaces; host-side git |
+| [014](docs/architecture/014-workspace-local-side-effects.md) | Confirmation at the workspace boundary |
 
 Start with the [overview](docs/architecture/00-overview.md).
 
@@ -105,6 +109,7 @@ Start with the [overview](docs/architecture/00-overview.md).
 aura_backend/     Python/FastAPI — the product (v3 gateway, AI kernel)
 aura_client/      Flutter app (Android/iOS/macOS/web/desktop)
 aura_admin/       Next.js admin dashboard
+aura_hostd/       Local Dart daemon for the desktop Engineer agent (ADR-011)
 deploy/           Production compose, nginx, bootstrap/update scripts
 docs/             Architecture, guides, reports, plans, and archived docs
 infra/            Terraform for cloud provisioning

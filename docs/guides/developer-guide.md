@@ -217,3 +217,63 @@ deployment that never trains does not install.
 | Why does an index have that name? | `knowledge/index_manager.py`, ADR-007 |
 | What is recorded about a turn? | `domain/telemetry.py`, `observability/metrics.py` |
 | Where is everything wired? | `container.py` |
+| How do persistent engineer workspaces work? | ADR-013, ADR-014, `adapters/docker_sandbox.py`, `domain/engineering.py`, `adapters/postgres_workspaces.py` |
+| How does the desktop Engineer agent reach the user's machine? | ADR-011, `adapters/host_agent.py`, `aura_hostd/` |
+
+## Persistent engineer workspaces
+
+Server-side Engineer tools use durable per-(user, repository) Docker workspaces when
+`AURA_SANDBOX_ENABLED=true` and the compose `sandbox` profile is up (ADR-013). Workspaces are
+stopped between turns so peak RAM tracks `max_running`, not stored count; git runs host-side so
+tokens never enter the container; confirmation gates the workspace boundary (ADR-014), not every
+in-workspace write. Off by default — see [Deployment Guide → Engineer workspaces](deployment-guide.md#engineer-workspaces-opt-in).
+The Flutter `EngineerWorkspacesPanel` is mounted on the Engineer history page; Phase J in
+`docs/AURA_UPGRADE_ROADMAP.md` stays **built, not proven** until the VPS live checks pass.
+
+## Desktop Engineer agent (`aura_hostd`)
+
+The Engineer persona's sandbox tools route through `CompositeSandboxRunner`: a connected
+`aura_hostd` session wins; otherwise the server Docker workspace (if configured). Grant the
+capability with `AURA_ENGINEER_AGENT_ROLES`. Design: [ADR-011](../architecture/011-desktop-engineer-agent.md).
+
+### Local run
+
+```bash
+# Terminal 1 — backend (v3 gateway with engineer roles granted)
+export AURA_ENGINEER_AGENT_ROLES=Developer,Admin,SuperAdmin   # example
+# …start your usual local stack / uvicorn…
+
+# Terminal 2 — host daemon
+cd aura_hostd && dart pub get
+dart run bin/aura_hostd.dart auth pair <CODE> --backend-url http://localhost:8000
+dart run bin/aura_hostd.dart grant /path/to/a/project
+dart run bin/aura_hostd.dart run          # WS + loopback control plane (default :8765)
+
+# Terminal 3 — Flutter desktop
+cd aura_client && flutter run -d windows  # or linux / macos
+# Settings → Desktop Engineer (/desktop-engineer): pairing code, roots, YOLO, daemon status
+```
+
+Desktop login uses `POST /api/v3/auth/desktop/token` (no Play Integrity). Pairing codes come from
+the Desktop Engineer screen; the daemon exchanges them via `aura_hostd auth pair <code>`.
+Containment and the hard command denylist are enforced only on the daemon — never trusted from
+the backend.
+
+### `surface=` (tool descriptions)
+
+`build_sandbox_tools(..., surface="auto"|"host"|"sandbox")` keeps tool *names* identical and
+swaps only the prose so the model is not told "scratch directory" when a host is paired
+(`surface="auto"` is the production default and describes both paths honestly). Locked by
+`tests/unit/test_engineer_tools.py`.
+
+### Consent / YOLO
+
+Untrusted roots: small read-only allowlist. `aura_hostd trust <path>` / control-plane trust:
+anything not on the hard denylist. `aura_hostd yolo on` (or the panel toggle): allowlist off for
+every granted root; containment and denylist stay. Interactive per-call Flutter approve/deny and
+ToolPolicy→`server_confirmed` RPC wiring are still deferred.
+
+### Still deferred
+
+Real PTY, live SSE→xterm in the panel, host file-tree/diff review, daemon auto-spawn, packaged
+installers. See ADR-011's Units 5–9 table.
