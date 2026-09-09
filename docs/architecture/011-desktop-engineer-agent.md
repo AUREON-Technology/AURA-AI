@@ -1,6 +1,6 @@
 # ADR-011 — The desktop Engineer agent executes on the user's own machine, not a server sandbox
 
-**Status:** Partially implemented (backend bridge + daemon core + output streaming; no client UI or pairing auth yet — see "Implementation status") · **Date:** 2026-09-08
+**Status:** Partially implemented (backend bridge + daemon core + output streaming + desktop pairing auth; no client UI yet — see "Implementation status") · **Date:** 2026-09-08
 
 ## Context
 
@@ -172,6 +172,32 @@ ADR-013 when `AURA_SANDBOX_ENABLED` is on; otherwise unavailable) otherwise --
 including keeping the fallback's real network restriction intact rather than dropping it entirely.
 Locked in by `tests/unit/test_engineer_tools.py::TestSandboxToolDescriptionsAreHonestAboutRouting`.
 
+**Desktop pairing auth.** Implemented on both sides. `services/device_pairing.py` (new) is the
+RFC-8628-shaped device authorization grant this ADR's "Desktop identity is a pairing token, not
+attestation" section describes: `start_pairing()` hands back a short human-readable `user_code`
+plus an opaque `pairing_id`; `approve_pairing()` requires the approving caller already hold a
+valid access token (mobile or web -- proof of an existing authenticated session standing in for
+the device attestation a desktop OS has no equivalent for) and binds the pairing to that
+identity; `poll_pairing()` is consumed exactly once on its first successful read after approval.
+`services/jwt_auth.py::issue_device_token` mints the resulting token: 30 days, no refresh token
+(a device token's revocability comes entirely from a `device_id` + owner record checked on every
+`verify_access_token` call, not a renewable session the server can decline to renew), and
+`revoke_device` checks the requesting caller actually owns the device before revoking, returning
+the same failure for "unknown device" and "wrong owner" so the endpoint can't be used to probe
+for someone else's device_id. Mounted as `POST /api/v3/auth/desktop/pair/{start,approve,poll}`
+and `/desktop/devices/revoke` on the existing `api/v2/auth.py` router. 19 tests in
+`test_device_pairing.py` (legacy `unittest` tree, mirroring `test_jwt_auth.py`'s approach) cover
+the service layer, token issuance/verification/revocation, and the full HTTP round trip through a
+real (unmocked) FastAPI app; full `pytest`, `pytest tests/architecture`, and the legacy suite all
+pass with no regressions.
+
+Daemon side: `aura_hostd auth pair [--backend-url <url>]` (`lib/src/pairing_client.dart`, new)
+runs the start -> show-code -> poll -> save-token flow using `dart:io`'s `HttpClient` (no new
+dependency), printing the code for the person to enter, then polling at the server-advised
+interval until approval or the code's `expires_in` elapses -- an abandoned pairing attempt raises
+rather than polling forever. On success it saves the token the same way `auth set-token` would
+have, so nothing downstream of `DaemonConfig.authToken` needed to change.
+
 **What's still not built:**
 
 - **Interactive tiered consent.** There is no UI yet to prompt a human per call, so the daemon
@@ -188,11 +214,13 @@ Locked in by `tests/unit/test_engineer_tools.py::TestSandboxToolDescriptionsAreH
   that argv directly; a Windows machine without a POSIX-compatible shell on `PATH` (no WSL/Git
   Bash) cannot run commands via this path yet. Filesystem operations and workspace grants are
   unaffected — this only blocks `run_command`.
-- **Desktop pairing auth.** `services/security.py` still rejects every non-mobile platform at
-  attestation. The daemon expects a bearer token supplied out of band
-  (`aura_hostd auth set-token`) until the pairing flow this ADR describes actually exists.
 - **The Flutter desktop UI** that supervises the daemon (workspace picker, diff review, live
-  terminal) — nothing yet drives `aura_hostd` other than its own CLI.
+  terminal) — nothing yet drives `aura_hostd` other than its own CLI, including pairing: a
+  person has to run `aura_hostd auth pair` from a terminal and enter the printed code somewhere
+  that can call `POST /api/v3/auth/desktop/pair/approve` (today, only a raw authenticated API
+  call — there is no screen in the app for it). `services/security.py`'s own
+  `verify_device_integrity` is untouched by this — pairing is a separate, parallel identity path
+  through `api/v2/auth.py`'s `/desktop/*` endpoints, not a new branch of attestation.
 
 `dart test` covers path containment (including symlink-escape and `..`-traversal attempts, and
 that containment does not require the target to already exist), the command-policy allowlist
@@ -201,7 +229,10 @@ verb" check would have missed, and chained/redirected/substituted commands via a
 `run`'s `onChunk` output matching the aggregated result exactly, the real 500,000-character
 daemon-side output cap (exercised with real output, not a lowered test-only threshold), and the
 WebSocket wire protocol end-to-end against a local in-process server, including a `run` call's
-`stream` frames arriving before its terminal `result`. This environment had no Dart toolchain to
+`stream` frames arriving before its terminal `result`, and (`pairing_client_test.dart`) the
+`auth pair` flow against a local fake HTTP server: the happy path (one pending poll, then
+approved), a session that expires before approval, a poll that reports `"expired"`, and a
+non-2xx response from `/pair/start`. This environment had no Dart toolchain to
 actually run `dart pub get`/`dart test`/`dart analyze` itself (confirmed: `dart`/`flutter` both
 absent) — `.github/workflows/hostd-ci.yml` is the real verification, per this repo's own
 conventions for Dart/Flutter changes written without a local toolchain. The backend half is
