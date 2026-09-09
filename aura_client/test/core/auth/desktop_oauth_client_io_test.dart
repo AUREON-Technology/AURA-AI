@@ -38,7 +38,7 @@ class _FakeTokenServer {
 
 /// Simulates the browser completing the OAuth dance: hits the loopback redirect_uri from
 /// [authUri] with the given query params, exactly as Google would after the user approves.
-Future<bool> _simulateBrowserCallback(Uri authUri, Map<String, String> extraParams) async {
+Future<void> _hitRedirect(Uri authUri, Map<String, String> extraParams) async {
   final redirectUri = Uri.parse(authUri.queryParameters['redirect_uri']!);
   final state = authUri.queryParameters['state']!;
   final callback = redirectUri.replace(queryParameters: {'state': state, ...extraParams});
@@ -47,10 +47,23 @@ Future<bool> _simulateBrowserCallback(Uri authUri, Map<String, String> extraPara
     final request = await client.getUrl(callback);
     final response = await request.close();
     await response.drain<void>();
-    return true;
   } finally {
     client.close(force: true);
   }
+}
+
+/// A fake `launch` for [signInWithGoogleLoopback] that hits the redirect with [extraParams].
+///
+/// Critically, it does **not** await that request before returning -- a real browser launch
+/// returns as soon as the OS hands off to the browser, well before any navigation happens, and
+/// `signInWithGoogleLoopback` doesn't start listening for the redirect (`server.first`) until
+/// *after* `launch` returns. Awaiting the full round trip here would deadlock: the simulated
+/// "browser" would be stuck waiting for a response from a server that has no listener yet.
+Future<bool> Function(Uri authUri) _fakeLaunch(Map<String, String> extraParams) {
+  return (authUri) {
+    unawaited(_hitRedirect(authUri, extraParams));
+    return Future<bool>.value(true);
+  };
 }
 
 void main() {
@@ -63,7 +76,7 @@ void main() {
     final result = await signInWithGoogleLoopback(
       clientId: 'test-client-id',
       tokenEndpoint: tokenServer.uri,
-      launch: (authUri) => _simulateBrowserCallback(authUri, {'code': 'auth-code-123'}),
+      launch: _fakeLaunch({'code': 'auth-code-123'}),
     );
 
     expect(result.idToken, 'fake-id-token');
@@ -91,7 +104,7 @@ void main() {
     await expectLater(
       signInWithGoogleLoopback(
         clientId: 'test-client-id',
-        launch: (authUri) => _simulateBrowserCallback(authUri, {'error': 'access_denied'}),
+        launch: _fakeLaunch({'error': 'access_denied'}),
       ),
       throwsA(isA<DesktopOAuthCancelledException>()),
     );
@@ -101,19 +114,21 @@ void main() {
     await expectLater(
       signInWithGoogleLoopback(
         clientId: 'test-client-id',
-        launch: (authUri) async {
+        launch: (authUri) {
           final redirectUri = Uri.parse(authUri.queryParameters['redirect_uri']!);
           final callback = redirectUri.replace(
             queryParameters: {'state': 'wrong-state', 'code': 'auth-code-123'},
           );
-          final client = HttpClient();
-          try {
-            final request = await client.getUrl(callback);
-            await (await request.close()).drain<void>();
-          } finally {
-            client.close(force: true);
-          }
-          return true;
+          unawaited(() async {
+            final client = HttpClient();
+            try {
+              final request = await client.getUrl(callback);
+              await (await request.close()).drain<void>();
+            } finally {
+              client.close(force: true);
+            }
+          }());
+          return Future<bool>.value(true);
         },
       ),
       throwsA(isA<DesktopOAuthCancelledException>()),
@@ -128,7 +143,7 @@ void main() {
       signInWithGoogleLoopback(
         clientId: 'test-client-id',
         tokenEndpoint: tokenServer.uri,
-        launch: (authUri) => _simulateBrowserCallback(authUri, {'code': 'auth-code-123'}),
+        launch: _fakeLaunch({'code': 'auth-code-123'}),
       ),
       throwsA(isA<DesktopOAuthCancelledException>()),
     );
@@ -145,7 +160,7 @@ void main() {
       signInWithGoogleLoopback(
         clientId: 'test-client-id',
         tokenEndpoint: tokenServer.uri,
-        launch: (authUri) => _simulateBrowserCallback(authUri, {'code': 'auth-code-123'}),
+        launch: _fakeLaunch({'code': 'auth-code-123'}),
       ),
       throwsA(isA<DesktopOAuthCancelledException>()),
     );
