@@ -12,7 +12,15 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from infrastructure.db.user_repo import get_or_create_user
-from services.jwt_auth import issue_token_pair, refresh_token_pair, revoke_refresh_token
+from services import device_pairing
+from services.jwt_auth import (
+    issue_device_token,
+    issue_token_pair,
+    refresh_token_pair,
+    revoke_device,
+    revoke_refresh_token,
+    verify_access_token,
+)
 from services.rbac import CONSOLE_MIN_ROLE, is_console_operator, stamp_resolved_role
 from services.security import store_nonce, verify_identity_token, verify_token
 
@@ -34,6 +42,38 @@ class NonceResponse(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+
+class PairingStartResponse(BaseModel):
+    pairing_id: str
+    user_code: str
+    expires_in: int
+    interval: int
+
+
+class PairingApproveRequest(BaseModel):
+    user_code: str
+
+
+class PairingApproveResponse(BaseModel):
+    status: str
+    device_id: str
+
+
+class PairingPollRequest(BaseModel):
+    pairing_id: str
+
+
+class PairingPollResponse(BaseModel):
+    status: str
+    access_token: str | None = None
+    token_type: str | None = None
+    expires_in: int | None = None
+    device_id: str | None = None
+
+
+class DeviceRevokeRequest(BaseModel):
+    device_id: str
 
 
 class RevokeRequest(BaseModel):
@@ -121,4 +161,52 @@ async def refresh(request: RefreshRequest):
 @router.post("/revoke")
 async def revoke(request: RevokeRequest):
     revoke_refresh_token(request.refresh_token)
+    return {"status": "revoked"}
+
+
+# --- Desktop device pairing (ADR-011, docs/architecture/011-desktop-engineer-agent.md) ---
+#
+# services/device_pairing.py has the full design; the three-endpoint shape mirrors OAuth's
+# device authorization grant (RFC 8628): a daemon starts a session and polls it (both
+# unauthenticated -- it has no identity yet), a human approves it from a client that already has
+# one (an ordinary access token, exactly what /token or /web/token already issue).
+
+
+@router.post("/desktop/pair/start", response_model=PairingStartResponse)
+async def start_desktop_pairing():
+    return device_pairing.start_pairing()
+
+
+@router.post("/desktop/pair/approve", response_model=PairingApproveResponse)
+async def approve_desktop_pairing(
+    body: PairingApproveRequest, user_info: dict = Depends(verify_access_token),
+):
+    """Requires the approving client's own valid access token -- this is what stands in for
+    attestation here: proof of an already-authenticated session, not proof of the new device's
+    integrity (ADR-011 explains why the latter has no desktop equivalent worth relying on)."""
+    device_id = device_pairing.approve_pairing(body.user_code, user_info)
+    if device_id is None:
+        raise HTTPException(status_code=400, detail="Pairing code is invalid, expired, or already used.")
+    return {"status": "approved", "device_id": device_id}
+
+
+@router.post("/desktop/pair/poll", response_model=PairingPollResponse)
+async def poll_desktop_pairing(body: PairingPollRequest):
+    outcome = device_pairing.poll_pairing(body.pairing_id)
+    if outcome["status"] != "approved":
+        return outcome
+    user_info = dict(outcome["user_info"])
+    stamp_resolved_role(user_info)
+    await _persist_user(user_info)
+    token = issue_device_token(user_info, device_id=outcome["device_id"])
+    return {"status": "approved", **token}
+
+
+@router.post("/desktop/devices/revoke")
+async def revoke_desktop_device(
+    body: DeviceRevokeRequest, user_info: dict = Depends(verify_access_token),
+):
+    ok = revoke_device(body.device_id, requesting_uid=str(user_info["uid"]))
+    if not ok:
+        raise HTTPException(status_code=404, detail="No such device paired to this account.")
     return {"status": "revoked"}
