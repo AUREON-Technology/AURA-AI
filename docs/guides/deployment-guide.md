@@ -277,6 +277,17 @@ with `AURA_ENGINEER_AGENT_ROLES` as well; the sandbox flag does not replace that
 these are on and the Phase J live checks in `docs/AURA_UPGRADE_ROADMAP.md` have been observed,
 treat the feature as **built, not proven**.
 
+Once both are on, verify it rather than assuming it:
+
+```bash
+bash deploy/scripts/verify-engineer-workspaces.sh
+```
+
+It runs the Phase J checks inside the gateway against the real daemon, prints a PASS/FAIL
+line each, and saves a report under `docs/reports/`. It works only in its own workspace
+and destroys it on the way out, so it is safe on a live host. Exit status is the number of
+failed checks.
+
 ---
 
 ## Operations

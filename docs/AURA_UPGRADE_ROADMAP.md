@@ -448,8 +448,16 @@ comment. Confirmation now gates the workspace boundary rather than every write i
 Backend and client tests pass (`pytest`, the legacy `unittest` tree, the architecture fitness
 tests, and a real-PostgreSQL check of the new adapter). **That is not evidence the feature
 works on the VPS.** Code present with the sandbox profile down is still unproven. What is
-outstanding, on the VPS with `AURA_SANDBOX_ENABLED=true` and the `sandbox` profile up:
+outstanding, on the VPS with `AURA_SANDBOX_ENABLED=true` and the `sandbox` profile up.
+Checks 1-9 are scripted — `bash deploy/scripts/verify-engineer-workspaces.sh` runs them
+against the real daemon through the gateway's own wiring and writes a report to
+`docs/reports/`. Cite that report here rather than this list when marking the phase
+proven; check 10 needs a real agent session and stays manual.
 
+
+0. `docker exec` is still refused by the socket proxy (403). Not in the original list, and
+   the reason commands run as their own container: if `EXEC` were ever turned back on, the
+   adapter would keep working and nothing would report that the allowlist had widened.
 1. `write_file` then `run_command cat` round-trips — proves the bind-mount path fix.
 2. `clone_repository`, then `git log` shows history.
 3. `grep -rn ghp_ /workspace/.git` finds nothing — no credential in the checkout.
