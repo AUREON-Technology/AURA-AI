@@ -111,6 +111,6 @@ def test_durable_and_ephemeral_share_one_launch_path(tmp_path) -> None:
 
     source = inspect.getsource(DockerSandboxRunner)
     assert source.count("_container_kwargs(") >= 3, (
-        "both open_workspace and _ensure_container must build their launch arguments through "
+        "open_workspace and run must both build their launch arguments through "
         "_container_kwargs, or one lifetime will quietly lose the hardening"
     )

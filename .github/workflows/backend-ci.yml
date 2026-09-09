@@ -140,3 +140,14 @@ jobs:
           context: aura_backend
           push: false
           tags: aura-backend:ci
+
+      # The engineer agent's workspace image. Built here because otherwise nothing builds it at
+      # all: it is behind the `sandbox` compose profile, so the first attempt would be on the VPS
+      # during a deploy, where a broken base digest or apt layer is indistinguishable from the
+      # feature itself failing. This proves the pinned digest still resolves and uid 10001 exists.
+      - name: Build sandbox image (no push — build-only gate)
+        uses: docker/build-push-action@v5
+        with:
+          context: deploy/sandbox
+          push: false
+          tags: aura-sandbox:ci
