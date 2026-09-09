@@ -24,6 +24,10 @@ Four independent apps in one repo:
   checkouts per user/repo, host-side git, confirmation at the workspace boundary) are ADR-013 /
   ADR-014 — opt-in via `AURA_SANDBOX_ENABLED` + `COMPOSE_PROFILES=sandbox`; Phase J in the
   upgrade roadmap is **built, not proven** until the VPS live checks pass.
+  `deploy/scripts/verify-engineer-workspaces.sh` is what produces that evidence — run on the VPS,
+  it drives the checks against a real daemon through the gateway's own wiring and writes a report
+  to `docs/reports/`. Nothing short of that report proves the phase; a green `pytest` cannot,
+  because the default suite's sandbox runner never touches the Docker API.
 
 Supporting directories: `deploy/` (production stack), `docs/` (architecture, guides, reports),
 `infra/` (Terraform), `scripts/` (client build and Firebase helpers). Historical docs live under
@@ -175,7 +179,11 @@ retrieval, memory, routing, safety, indexing, desktop hostd (011), or engineer w
   fallback if `AURA_REPO` isn't set). Two independent Compose projects run side by side on that
   host: `aura` (prod, `deploy/docker-compose.prod.yml`) and `aura-dev`
   (`docker-compose.dev.yml`) — `docker compose ls` shows both. `vps-update.sh` only ever touches
-  `aura`; the dev stack needs its own explicit restart.
+  `aura`; the dev stack needs its own explicit restart. **The two files are meant to stay at
+  parity on isolation settings** (network `internal:` flags, socket-proxy env allowlists, which
+  images are built rather than pulled) — they share a host, so hardening applied to only one of
+  them leaves the weaker stack as the real attack surface. Change a security-relevant key in one
+  and change it in the other in the same commit.
 - **`nginx` is the only container with a published port** (SEC-12) — `gateway` binds no host
   port, so reaching it directly means `docker exec`-ing into another container on the same
   Docker network (or using `deploy/nginx/host-proxy.conf.example`'s override pattern for a
@@ -190,6 +198,24 @@ retrieval, memory, routing, safety, indexing, desktop hostd (011), or engineer w
   routing even starts), so this is a deliberate server-block-wide HTTP/1.1-only tradeoff, not a
   location-level fix — confirmed live and fixed in PR #65 after two other hypotheses (missing
   location block, stale rendered config) were individually ruled out first.
+- **Never run a sandbox command with `docker exec`** (`exec_run`, `exec_create`/`exec_start`) in
+  `aura_core/adapters/docker_sandbox.py`. The gateway reaches the daemon only through
+  `docker-socket-proxy`, which sets `EXEC: "0"` in both compose files, so those calls come back
+  **403** — and the flag cannot be narrowed to the sandbox, because the proxy's allowlist is
+  daemon-wide: allowing exec so a workspace could be entered would equally allow entering
+  `postgres`, `ollama` and `nginx`. Each command therefore runs as its own throwaway container
+  over the workspace's bind mount, which needs only `CONTAINERS`. That is sound because a
+  workspace's state is the checkout on the host, not anything living in a process — the same
+  claim the hot/warm design already rests on when it stops a workspace between turns. This is
+  invisible to the test suite (the in-memory runner never touches the Docker API, and no CI job
+  stands up the socket proxy), so `tests/unit/test_sandbox_exec_surface.py` pins both halves: the
+  adapter never execs, *and* both compose files still refuse it. Found in #75 as a latent blocker
+  that would have made every `run_command` 403 on the first real run.
+- **The sandbox image is built, never pulled.** `deploy/sandbox/Dockerfile` (digest-pinned base,
+  uid 10001 matching the bind-mount `chown` in `bootstrap-host.sh`) is built by the
+  `sandbox-image` compose service and by `Backend CI`'s `docker-build` job. That is what lets
+  `IMAGES: "0"` stay off the socket proxy's allowlist — adding a runtime `docker pull` would
+  silently require putting it back.
 - **The self-hosted LLM (`qwen2.5:3b-instruct-q4_K_M` on Ollama, CPU-only) sustains roughly
   5–10 tokens/sec in production**, degrading further as context grows. Any new completion call
   needs its `max_output_tokens` sized so a worst-case generation actually finishes inside its
