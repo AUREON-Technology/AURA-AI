@@ -16,6 +16,12 @@ nothing errors. ``host_root`` closes that gap by naming a directory bind-mounted
 process at the same absolute path it has on the host, so one path means one directory. It is
 optional precisely because the local and test cases have no such split.
 
+**Commands run in their own container, not via ``docker exec``.** The deployed gateway reaches
+the daemon through ``docker-socket-proxy``, whose allowlist is daemon-wide rather than
+per-container: turning on ``EXEC`` so a workspace could be entered would equally allow entering
+``postgres`` or ``ollama``, so both compose files set ``EXEC: "0"`` and exec is refused with a
+403. Starting a container needs only ``CONTAINERS``, which is already allowed. See :meth:`run`.
+
 Network isolation is split between this adapter and the compose stack, and neither half works
 alone. This adapter attaches containers to the network name it is given (or disables networking
 outright when given none) and sets ``HTTP(S)_PROXY`` when a proxy is configured. The compose file
@@ -48,9 +54,19 @@ _WORKDIR = "/workspace"
 #: when in-memory bookkeeping would otherwise start a second container over an existing checkout.
 _WORKSPACE_LABEL = "aura.workspace"
 
+#: Marks a throwaway container started to run exactly one command. It is removed as soon as the
+#: command finishes; the label exists so one orphaned by this process dying mid-command is
+#: findable (`docker ps -a --filter label=aura.sandbox.oneshot`) rather than anonymous.
+_ONESHOT_LABEL = "aura.sandbox.oneshot"
+
 #: Seconds to let a workspace's processes finish on pause before the daemon kills them. Short --
 #: a paused workspace's value is its files, and nothing in flight is expected to survive.
 _STOP_TIMEOUT_S = 10
+
+#: Slack added to a command's own timeout before this process stops waiting on the daemon at all.
+#: The inner `container.wait(timeout=...)` is what normally enforces the deadline; this only
+#: bounds the case where the daemon itself stops answering, which would otherwise hang the turn.
+_WAIT_GRACE_S = 15.0
 
 #: Must match the uid/gid created in deploy/sandbox/Dockerfile, because the host workspace
 #: directory is chowned to it. Mismatch shows up as permission errors on the first write, not at
@@ -70,6 +86,25 @@ def _ulimit(name: str, value: int) -> Any:
     from docker.types import Ulimit
 
     return Ulimit(name=name, soft=value, hard=value)
+
+
+def _is_read_timeout(exc: BaseException) -> bool:
+    """True for the read timeout ``container.wait(timeout=...)`` surfaces when a command overruns.
+
+    Matched on the exception's *name*, walking the ``__cause__``/``__context__`` chain, because
+    docker-py raises this from ``requests`` and wraps it inconsistently across versions --
+    and because naming the class would mean importing ``requests`` at module scope, which this
+    module deliberately does not do (see the module docstring's lazy-import rule). Anything that
+    is not a timeout is re-raised by the caller rather than reported as one.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if "timeout" in type(current).__name__.lower():
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 class SandboxError(RuntimeError):
@@ -96,14 +131,20 @@ class DockerSandboxRunner:
     """Isolated containers for agent work, in two lifetimes.
 
     *Ephemeral*: ``create_task`` provisions a scratch directory and returns a new
-    :class:`SandboxHandle`; ``run``/``write_file``/``read_file`` lazily start (or reuse) one
-    container per handle, bind-mounting that directory at ``/workspace``; ``destroy`` removes
-    both. Nothing cleans these up on a timer -- the caller owns each handle's lifetime.
+    :class:`SandboxHandle`; ``write_file``/``read_file`` act on that directory directly and
+    ``run`` starts a throwaway container per command, bind-mounting it at ``/workspace``;
+    ``destroy`` removes the directory. Nothing cleans these up on a timer -- the caller owns each
+    handle's lifetime.
+
+    Commands never use ``docker exec``; see :meth:`run` for why the socket proxy's ``EXEC: "0"``
+    makes a container-per-command the only way to keep that allowlist as narrow as it is.
 
     *Durable*: ``open_workspace`` keys off a caller-supplied id instead of a fresh one, labels
     the container ``aura.workspace=<key>``, and resumes it on later calls. ``pause_workspace``
     stops it while keeping the checkout, so a workspace between turns holds no memory;
-    ``destroy_workspace`` removes container and files together.
+    ``destroy_workspace`` removes container and files together. Since commands run in their own
+    containers, this one carries the workspace's *identity* -- the label reconciliation and the
+    reaper find it by -- rather than executing anything.
 
     The label is what makes the durable half survive this process restarting. Every durable
     lookup goes to the daemon, never to ``self._containers``, because after a restart that
@@ -255,51 +296,86 @@ class DockerSandboxRunner:
             }
         return run_kwargs
 
-    async def _ensure_container(self, handle: SandboxHandle) -> Any:
-        container = self._containers.get(handle.task_id)
-        if container is not None:
-            return container
-
-        def _start() -> Any:
-            client = self._get_client()
-            # A durable workspace may already have a container this process has forgotten
-            # (restart). Adopting it is not an optimisation: starting a fresh one would leave two
-            # containers bind-mounting one checkout, and the second would not be labelled, so
-            # neither reconciliation nor the reaper would ever find it again.
-            existing = client.containers.list(
-                all=True, filters={"label": f"{_WORKSPACE_LABEL}={handle.task_id}"}
-            )
-            if existing:
-                adopted = existing[0]
-                adopted.reload()
-                if adopted.status != "running":
-                    adopted.start()
-                return adopted
-            return client.containers.run(**self._container_kwargs(self._scratch(handle)))
-
-        container = await asyncio.to_thread(_start)
-        self._containers[handle.task_id] = container
-        return container
-
     async def run(
         self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
     ) -> SandboxResult:
-        container = await self._ensure_container(handle)
+        """Run one command in a container of its own, over this handle's workspace directory.
 
-        def _exec() -> SandboxResult:
-            exit_code, output = container.exec_run(list(command), demux=True, workdir=_WORKDIR)
-            stdout_bytes, stderr_bytes = output if isinstance(output, tuple) else (output, b"")
-            return SandboxResult(
-                stdout=(stdout_bytes or b"").decode("utf-8", errors="replace"),
-                stderr=(stderr_bytes or b"").decode("utf-8", errors="replace"),
-                exit_code=int(exit_code or 0),
-            )
+        **Deliberately not ``docker exec``.** The gateway reaches the daemon through
+        ``docker-socket-proxy`` with ``EXEC: "0"`` in both compose files, so
+        ``POST /containers/{id}/exec`` is refused with a 403 -- and that flag cannot be narrowed
+        to the sandbox, because the proxy's allowlist is daemon-wide: permitting exec so a
+        workspace could be entered would equally permit entering ``postgres`` and ``ollama``.
+        Starting a container needs only ``CONTAINERS``, which the proxy already allows, so
+        command execution works without giving back any of the reduction Unit 4 made.
+
+        Nothing is lost by not reusing a container. A workspace's state is the checkout on the
+        bind mount -- that is the same claim the hot/warm design already rests on when it stops a
+        workspace between turns -- so a fresh container mounting the same directory sees exactly
+        the same files. The cost is container start (~100-300 ms) rather than exec (~30 ms),
+        which against this deployment's 5-10 tok/s inference is not where the time goes.
+
+        The container inherits :meth:`_container_kwargs` unchanged, so a one-shot command runs
+        under the same confinement a durable workspace does: unprivileged uid, all capabilities
+        dropped, read-only rootfs, pid and file limits, and egress only through the proxy.
+        """
+        scratch = self._scratch(handle)
+
+        def _run_once() -> SandboxResult:
+            client = self._get_client()
+            run_kwargs = self._container_kwargs(scratch)
+            run_kwargs["command"] = list(command)
+            run_kwargs["labels"] = {_ONESHOT_LABEL: handle.task_id}
+            # Never restart: a command that failed should stay failed and be reported, not be
+            # retried by the daemon behind the agent's back.
+            run_kwargs["restart_policy"] = {"Name": "no"}
+            container = client.containers.run(**run_kwargs)
+            try:
+                try:
+                    status = container.wait(timeout=timeout_s)
+                except Exception as exc:
+                    if not _is_read_timeout(exc):
+                        raise
+                    # Kill rather than leave it running: the caller has already given up on the
+                    # result, and a runaway build would otherwise hold its memory and CPU share
+                    # until the workspace was reaped.
+                    try:
+                        container.kill()
+                    except Exception:
+                        logger.debug("timed-out command kill failed", extra={"task": handle.task_id})
+                    return SandboxResult(
+                        stdout="",
+                        stderr=f"command timed out after {timeout_s:.0f}s",
+                        exit_code=124,
+                    )
+                # Read the streams separately rather than demuxed: this container ran one
+                # command, so its whole log *is* that command's output.
+                stdout_bytes = container.logs(stdout=True, stderr=False) or b""
+                stderr_bytes = container.logs(stdout=False, stderr=True) or b""
+                return SandboxResult(
+                    stdout=stdout_bytes.decode("utf-8", errors="replace"),
+                    stderr=stderr_bytes.decode("utf-8", errors="replace"),
+                    exit_code=int(status.get("StatusCode", 0) or 0),
+                )
+            finally:
+                try:
+                    container.remove(force=True)
+                except Exception:
+                    logger.debug(
+                        "one-shot container removal failed", extra={"task": handle.task_id}
+                    )
 
         try:
-            return await asyncio.wait_for(asyncio.to_thread(_exec), timeout=timeout_s)
+            return await asyncio.wait_for(
+                asyncio.to_thread(_run_once), timeout=timeout_s + _WAIT_GRACE_S
+            )
         except asyncio.TimeoutError:
+            # Only reachable when the daemon itself stopped answering -- `container.wait`'s own
+            # timeout handles an overrunning command and returns 124 above.
             return SandboxResult(
-                stdout="", stderr=f"command timed out after {timeout_s:.0f}s", exit_code=124
+                stdout="",
+                stderr=f"the Docker daemon did not respond within {timeout_s:.0f}s",
+                exit_code=124,
             )
 
     def _resolve_within(self, handle: SandboxHandle, relative: str) -> Path:
