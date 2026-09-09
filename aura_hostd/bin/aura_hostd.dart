@@ -4,6 +4,7 @@
 ///
 /// Subcommands:
 ///   aura_hostd auth set-token &lt;token&gt; [--backend-url &lt;url&gt;]
+///   aura_hostd auth pair [--backend-url &lt;url&gt;]
 ///   aura_hostd grant &lt;path&gt; [--trust]
 ///   aura_hostd revoke &lt;path&gt;
 ///   aura_hostd trust &lt;path&gt;
@@ -16,6 +17,7 @@ import 'dart:io';
 
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/containment.dart';
+import 'package:aura_hostd/src/pairing_client.dart';
 import 'package:aura_hostd/src/rpc_client.dart';
 import 'package:aura_hostd/src/task_handler.dart';
 import 'package:aura_hostd/src/workspace_store.dart';
@@ -32,19 +34,22 @@ Future<void> main(List<String> args) async {
 
   switch (args.first) {
     case 'auth':
-      _requireArgs(args, 2, 'auth set-token <token> [--backend-url <url>]');
-      if (args[1] != 'set-token') {
-        _printUsage();
-        exit(64);
-      }
-      final token = args[2];
+      _requireArgs(args, 2, 'auth set-token <token> [--backend-url <url>] | auth pair [--backend-url <url>]');
       var backendUrl = configStore.load().backendUrl;
       final flagIndex = args.indexOf('--backend-url');
       if (flagIndex >= 0 && flagIndex + 1 < args.length) {
         backendUrl = args[flagIndex + 1];
       }
-      configStore.save(DaemonConfig(backendUrl: backendUrl, authToken: token));
-      stdout.writeln('Saved auth token for $backendUrl');
+      if (args[1] == 'set-token') {
+        _requireArgs(args, 3, 'auth set-token <token> [--backend-url <url>]');
+        configStore.save(DaemonConfig(backendUrl: backendUrl, authToken: args[2]));
+        stdout.writeln('Saved auth token for $backendUrl');
+      } else if (args[1] == 'pair') {
+        await _pair(configStore, backendUrl);
+      } else {
+        _printUsage();
+        exit(64);
+      }
       break;
 
     case 'grant':
@@ -106,6 +111,30 @@ Future<void> main(List<String> args) async {
   }
 }
 
+/// `aura_hostd auth pair` -- ADR-011's pairing flow, daemon side. Starts a pairing session,
+/// prints the code for the user to enter into an already-signed-in AURA client, polls until
+/// they approve it, then saves the resulting device-scoped token exactly like `auth set-token`
+/// would have -- this is the flow that token was previously expected to arrive via out-of-band.
+Future<void> _pair(ConfigStore configStore, String backendUrl) async {
+  stdout.writeln('Pairing with $backendUrl ...');
+  try {
+    final result = await pairWithCode(
+      backendUrl,
+      onCode: (userCode) {
+        stdout.writeln('');
+        stdout.writeln('  Enter this code in AURA: $userCode');
+        stdout.writeln('');
+        stdout.writeln('Waiting for approval...');
+      },
+    );
+    configStore.save(DaemonConfig(backendUrl: backendUrl, authToken: result.accessToken));
+    stdout.writeln('Paired. Device ID: ${result.deviceId}');
+  } on PairingFailedError catch (error) {
+    stderr.writeln('Pairing failed: ${error.message}');
+    exit(1);
+  }
+}
+
 Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) async {
   final config = configStore.load();
   if (config.authToken == null || config.authToken!.isEmpty) {
@@ -157,6 +186,7 @@ aura_hostd -- local daemon for AURA's desktop Engineer agent
 
 Usage:
   aura_hostd auth set-token <token> [--backend-url <url>]
+  aura_hostd auth pair [--backend-url <url>]
   aura_hostd grant <path> [--trust]
   aura_hostd revoke <path>
   aura_hostd trust <path>

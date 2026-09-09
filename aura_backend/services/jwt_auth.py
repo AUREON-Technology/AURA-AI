@@ -35,6 +35,16 @@ REFRESH_TOKEN_TTL = timedelta(days=30)
 ALGORITHM = "HS256"
 _REFRESH_PREFIX = "refresh_token:"
 
+# A desktop-paired device (services/device_pairing.py) has no refresh token at all -- ADR-011's
+# "device-scoped, revocable, and narrower than a full session token" is met differently here than
+# for a mobile/web session: one long-lived, self-contained access token instead of a short-lived
+# access token renewed indefinitely by a long-lived refresh token. Long enough that a desktop
+# daemon someone actually uses day to day doesn't need to be re-paired constantly (aura_hostd has
+# no refresh-on-401 logic to begin with); "revocable" comes from the device-id check below, not
+# from a renewable session the server can decline to renew.
+DEVICE_ACCESS_TOKEN_TTL = timedelta(days=30)
+_REVOKED_DEVICE_PREFIX = "revoked_device:"
+
 # Dev-mode fallback: a random secret generated once per process if
 # JWT_SECRET isn't configured. Every existing session is invalidated on
 # restart in this mode — fine for local dev, not for production (see
@@ -96,7 +106,9 @@ def _refresh_store_delete(token: str) -> None:
     _local_refresh_store.pop(token, None)
 
 
-def create_access_token(user_info: dict) -> str:
+def create_access_token(
+    user_info: dict, *, ttl: timedelta = ACCESS_TOKEN_TTL, extra_claims: Optional[Dict[str, Any]] = None,
+) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": user_info["uid"],
@@ -105,8 +117,10 @@ def create_access_token(user_info: dict) -> str:
         "picture": user_info.get("picture"),
         "role": user_info.get("role"),
         "iat": now,
-        "exp": now + ACCESS_TOKEN_TTL,
+        "exp": now + ttl,
     }
+    if extra_claims:
+        payload.update(extra_claims)
     return jwt.encode(payload, _secret(), algorithm=ALGORITHM)
 
 
@@ -120,6 +134,84 @@ def issue_token_pair(user_info: dict) -> Dict[str, Any]:
         "token_type": "bearer",
         "expires_in": int(ACCESS_TOKEN_TTL.total_seconds()),
     }
+
+
+_DEVICE_OWNER_PREFIX = "device_owner:"
+_local_device_owners: Dict[str, str] = {}
+
+
+def _register_device_owner(device_id: str, uid: str) -> None:
+    """So a revoke request can be checked against who actually owns the device (below) -- without
+    this, any authenticated caller who learned or guessed a device_id could revoke someone else's
+    paired desktop. TTL matches the token's own lifetime: once the token would have expired via
+    its own `exp` claim anyway, there is nothing left for a revoke to protect against."""
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        redis_client.setex(f"{_DEVICE_OWNER_PREFIX}{device_id}", int(DEVICE_ACCESS_TOKEN_TTL.total_seconds()), uid)
+        return
+    _local_device_owners[device_id] = uid
+
+
+def _device_owner(device_id: str) -> Optional[str]:
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        return redis_client.get(f"{_DEVICE_OWNER_PREFIX}{device_id}")
+    return _local_device_owners.get(device_id)
+
+
+def issue_device_token(user_info: dict, *, device_id: str) -> Dict[str, Any]:
+    """A single long-lived access token for a paired desktop device -- no refresh token, see
+    DEVICE_ACCESS_TOKEN_TTL's doc comment. Called only from services/device_pairing.py once a
+    pairing has been approved by the user on an already-authenticated client."""
+    access_token = create_access_token(
+        user_info, ttl=DEVICE_ACCESS_TOKEN_TTL, extra_claims={"platform": "desktop", "device_id": device_id},
+    )
+    _register_device_owner(device_id, str(user_info["uid"]))
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": int(DEVICE_ACCESS_TOKEN_TTL.total_seconds()),
+        "device_id": device_id,
+    }
+
+
+_local_revoked_devices: set = set()
+_warned_no_redis_revocation = False
+
+
+def revoke_device(device_id: str, *, requesting_uid: str) -> bool:
+    """Marks a paired device's token as no longer valid, but only for the account that owns it --
+    checked against the owner record `issue_device_token` wrote, not just "any authenticated
+    caller." Returns False (nothing revoked) if the device is unknown or owned by someone else;
+    the API layer turns that into the same 404 either way; an owner check that could tell an
+    attacker "device exists, wrong owner" apart from "no such device" would leak device_ids to
+    probe for.
+
+    `verify_access_token` checks the revocation flag this sets for any token carrying a device_id
+    claim -- see there for why a device token needs this at all when mobile/web sessions get by
+    with a revocable refresh token instead (this one has none)."""
+    global _warned_no_redis_revocation
+    owner = _device_owner(device_id)
+    if owner is None or owner != requesting_uid:
+        return False
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        redis_client.setex(
+            f"{_REVOKED_DEVICE_PREFIX}{device_id}", int(DEVICE_ACCESS_TOKEN_TTL.total_seconds()), "1"
+        )
+        return True
+    if not _warned_no_redis_revocation:
+        logger.warning("Redis unavailable: device revocations are stored in-process only (lost on restart, not shared across workers).")
+        _warned_no_redis_revocation = True
+    _local_revoked_devices.add(device_id)
+    return True
+
+
+def is_device_revoked(device_id: str) -> bool:
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        return redis_client.exists(f"{_REVOKED_DEVICE_PREFIX}{device_id}") > 0
+    return device_id in _local_revoked_devices
 
 
 def refresh_token_pair(refresh_token: str) -> Optional[Dict[str, Any]]:
@@ -188,10 +280,18 @@ async def verify_access_token(
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token.")
 
+    device_id = payload.get("device_id")
+    if device_id and is_device_revoked(device_id):
+        # A device token has no refresh token to decline to renew (issue_device_token's doc
+        # comment) -- this check is the entire revocation mechanism for it, so it must run on
+        # every call, not just at issue time.
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Device access has been revoked.")
+
     return {
         "uid": payload.get("sub"),
         "email": payload.get("email"),
         "name": payload.get("name"),
         "picture": payload.get("picture"),
         "role": payload.get("role"),
+        "device_id": device_id,
     }

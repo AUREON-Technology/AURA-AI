@@ -1,15 +1,12 @@
 /// Daemon configuration: backend URL and the bearer token used to authenticate the WebSocket
 /// connection.
 ///
-/// This is deliberately the simple half of ADR-011's "Desktop identity is a pairing token, not
-/// attestation" decision. The one-time-code pairing exchange described there (the app shows a
-/// code, the daemon trades it for a device-scoped token) is not implemented anywhere yet -- the
-/// backend side (`services/security.py`, `api/v2/auth.py`) still rejects every non-mobile
-/// platform at attestation (Unit J4 in `docs/AURA_UPGRADE_ROADMAP.md`). Until that lands, this
-/// daemon expects a bearer token supplied out-of-band (`aura_hostd auth set-token`) -- practically,
-/// today, a token minted through whatever admin/dev path already exists for a desktop-shaped
-/// principal. Swapping this for real pairing later only touches how `authToken` gets set, not
-/// anything downstream of it.
+/// `authToken` is populated one of two ways: `aura_hostd auth pair` (`pairing_client.dart`,
+/// ADR-011's one-time-code exchange -- the app shows a code, this daemon trades it for a
+/// device-scoped token) or `aura_hostd auth set-token <token>` for supplying one out-of-band
+/// (a token minted through some other admin/dev path). Either way, everything downstream of
+/// `authToken` -- the WebSocket connection in `rpc_client.dart` -- is unaffected by which one was
+/// used.
 library;
 
 import 'dart:convert';

@@ -588,9 +588,30 @@ phase and decision pair ([ADR-013](architecture/013-agent-workspaces.md) /
   both possibilities rather than assert one; the fallback's real network restriction is kept, not
   dropped. Locked in by
   `test_engineer_tools.py::TestSandboxToolDescriptionsAreHonestAboutRouting`.
-- **J4. Not started.** Desktop pairing auth (`services/security.py` recognising a `desktop`
-  platform via a one-time-code pairing token rather than mobile attestation). `aura_hostd`
-  currently expects a bearer token supplied out of band (`aura_hostd auth set-token`) in its place.
+- **J4. Done.** Desktop pairing auth — not by extending `services/security.py`'s attestation path
+  to recognise a `desktop` platform (that path stays mobile/web-only, untouched), but a separate,
+  parallel identity path: `services/device_pairing.py` (new) implements the RFC-8628-shaped
+  device authorization grant this ADR describes — `start_pairing()` returns a short human-readable
+  `user_code` plus an opaque `pairing_id`; `approve_pairing()` requires the approving caller
+  already hold a valid access token (an existing authenticated session standing in for the
+  attestation a desktop OS has no equivalent for) and binds the pairing to that identity;
+  `poll_pairing()` is consumed exactly once on the first successful poll after approval.
+  `services/jwt_auth.py::issue_device_token` mints a 30-day, no-refresh-token access token whose
+  only revocation mechanism is a `device_id` + owner check on every `verify_access_token` call
+  (`revoke_device`, ownership-checked so a caller can't revoke someone else's paired device, and
+  indistinguishable in its failure response from "unknown device" so it can't be used to probe for
+  one). Mounted as `POST /api/v3/auth/desktop/pair/{start,approve,poll}` and
+  `/desktop/devices/revoke` on `api/v2/auth.py`'s existing router. `aura_hostd auth pair
+  [--backend-url <url>]` (`lib/src/pairing_client.dart`, new) is the daemon-side half: start ->
+  show the code -> poll at the server-advised interval -> save the resulting token the same way
+  `auth set-token` would have. This environment has a working `pytest`, so the backend half was
+  actually run: 19 new tests (`test_device_pairing.py`, legacy `unittest` tree, covering the
+  service layer, token issuance/verification/revocation, and the full HTTP round trip through a
+  real FastAPI app), full `pytest`/`tests/architecture`/the legacy suite all green, no
+  regressions. The daemon half (`pairing_client_test.dart`, four cases against a local fake HTTP
+  server) is written but unverified locally — no Dart toolchain here, `hostd-ci.yml` is the real
+  check, per this repo's own conventions. **Still missing:** a UI for the `approve` step — today
+  it is only reachable via a raw authenticated API call, since J5's client does not exist yet.
 - **J5. Not started.** The Flutter desktop client work: `google_sign_in` has no Linux/Windows
   implementation (confirmed absent from both platforms' `generated_plugins.cmake`), so desktop
   login needs a loopback-OAuth path before anything else desktop-side is reachable; then the
@@ -602,8 +623,11 @@ phase and decision pair ([ADR-013](architecture/013-agent-workspaces.md) /
 **Exit criteria (not yet met).** An engineer-capable user can pair a real desktop app and have the
 agent read, edit, and run commands against a real local project, with a path outside every granted
 workspace root refused even in the daemon's most permissive consent mode — the containment half is
-implemented and unit-tested (J3), but **not proven** end-to-end without J4's real auth and J5's
-client, since nothing today drives `aura_hostd` other than its own CLI. This environment has no
+implemented and unit-tested (J3), and real auth now exists end to end (J4: a person can run
+`aura_hostd auth pair` and get a working device token), but this is still **not proven**
+end-to-end without J5's client, since nothing today drives `aura_hostd` other than its own CLI —
+pairing today means running a terminal command and calling `/desktop/pair/approve` directly, not
+anything a non-technical user could do. This environment has no
 Dart/Flutter toolchain (confirmed: `dart`/`flutter` both absent), so per this repo's own testing
 conventions, no client-side claim belongs here until CI has actually run it — that applies to
 `aura_hostd`'s own test suite (`hostd-ci.yml`) exactly as much as it does to `aura_client`'s.
