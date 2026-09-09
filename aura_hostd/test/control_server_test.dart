@@ -248,15 +248,19 @@ void main() {
     final fakeBackend = await _FakeAuthServer.start(userCode: 'AB3D-9XYZ', deviceId: 'dev-1', pendingPolls: 1);
     addTearDown(fakeBackend.close);
 
+    // A fresh store pair bound to pairingConfigDir -- not the outer setUp()'s workspaceStore/
+    // configStore, which point at configDir. Using those by mistake here was a real bug: the
+    // token would have been saved to the wrong directory, and the assertion below checking
+    // pairingConfigDir would have found nothing.
+    final pairingConfigDir = Directory.systemTemp.createTempSync('aura_hostd_control_test_pair_');
+    addTearDown(() => pairingConfigDir.deleteSync(recursive: true));
     String? paired;
     final pairingServer = ControlServer(
-      workspaceStore: workspaceStore,
-      configStore: configStore,
+      workspaceStore: WorkspaceStore.forConfigDir(pairingConfigDir),
+      configStore: ConfigStore.forConfigDir(pairingConfigDir),
       onPaired: (token) => paired = token,
       logger: (_) {},
     );
-    final pairingConfigDir = Directory.systemTemp.createTempSync('aura_hostd_control_test_pair_');
-    addTearDown(() => pairingConfigDir.deleteSync(recursive: true));
     await pairingServer.start(pairingConfigDir);
     final controlFile =
         jsonDecode(File('${pairingConfigDir.path}/control.json').readAsStringSync()) as Map<String, dynamic>;
