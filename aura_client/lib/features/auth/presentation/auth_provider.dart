@@ -1,9 +1,29 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:aura_client/core/auth/desktop_oauth_client.dart';
+import 'package:aura_client/core/auth/platform_login_support.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
+import 'package:aura_client/core/config/config.dart';
 import 'package:aura_client/core/security/aura_secure_storage.dart';
+
+/// Reads the display-only claims (name/email/picture) out of a Google ID token's payload without
+/// verifying its signature -- safe here because it's only for populating [UserProfile] in the
+/// UI; the backend independently verifies the same token's signature/issuer/audience for real
+/// (`services/security.py::verify_identity_token`) during `signInWithDesktopOAuth`'s exchange.
+Map<String, dynamic> _unverifiedJwtPayload(String jwt) {
+  final parts = jwt.split('.');
+  if (parts.length != 3) return const {};
+  var payload = parts[1];
+  payload += '=' * ((4 - payload.length % 4) % 4);
+  try {
+    return jsonDecode(utf8.decode(base64Url.decode(payload))) as Map<String, dynamic>;
+  } catch (_) {
+    return const {};
+  }
+}
 
 class UserProfile {
   final String id;
@@ -44,14 +64,27 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
 
   @override
   FutureOr<UserProfile?> build() async {
-    // Initialise Google Sign In using Client ID
+    // Getting the singleton reference is cheap (no plugin channel call yet) -- always assign it
+    // so every other method that reads `_googleSignIn` below stays valid on every platform (a
+    // `late final` left unassigned throws on first read). What's actually unsafe on Linux/Windows
+    // (ADR-011 Unit 7) is initializing/using it, guarded below.
     _googleSignIn = GoogleSignIn.instance;
+
+    // google_sign_in has no plugin implementation on Linux/Windows -- skip initializing it there
+    // entirely rather than relying on the try/catch below to swallow the MissingPluginException
+    // on every launch. signInCached's desktop-device-token path
+    // (_restorePersistedDesktopToken) and signInWithDesktopOAuth cover login on these platforms.
+    if (!supportsNativeGoogleSignIn()) {
+      return null;
+    }
+
+    // Initialise Google Sign In using Client ID
     try {
       await _googleSignIn.initialize(
         clientId: kIsWeb ? '87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com' : null,
         serverClientId: '87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com',
       );
-      
+
       // Track the current user account via stream events (new in google_sign_in 7.x)
       _googleSignIn.authenticationEvents.listen((event) {
         if (event is GoogleSignInAuthenticationEventSignIn) {
@@ -111,9 +144,14 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         // leftover Google/mock token is on disk (developer bypass). Do not
         // treat that leftover Google ID token as freshly refreshed.
         if (!hasRefresh && (cachedGoogleToken == null || cachedGoogleToken.isEmpty)) {
-          debugPrint("[AuthNotifier] Cached profile found but no Google session or v2 refresh token.");
-          state = const AsyncValue.data(null);
-          return;
+          // Neither applies on desktop (Linux/Windows -- no google_sign_in, no refresh token on
+          // a device-scoped login, ADR-011 Unit 7): fall back to a persisted device token
+          // instead of treating this the same as "never logged in."
+          if (!await _restorePersistedDesktopToken()) {
+            debugPrint("[AuthNotifier] Cached profile found but no Google session, v2 refresh token, or desktop device token.");
+            state = const AsyncValue.data(null);
+            return;
+          }
         }
       }
 
@@ -123,6 +161,63 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         displayName: restored?.displayName ?? cachedName,
         photoUrl: restored?.photoUrl ?? cachedPhoto,
       ));
+    } catch (err, stack) {
+      state = AsyncValue.error(err, stack);
+    }
+  }
+
+  static const _desktopTokenKey = 'desktop_device_access_token';
+  static const _desktopTokenExpiryKey = 'desktop_device_token_expiry';
+
+  /// Loads a persisted desktop device token (Unit 7) into [TokenManager], if one exists and
+  /// hasn't expired. Returns whether it did -- see [signInCached]'s call site.
+  Future<bool> _restorePersistedDesktopToken() async {
+    final accessToken = await _storage.read(key: _desktopTokenKey);
+    final expiryRaw = await _storage.read(key: _desktopTokenExpiryKey);
+    if (accessToken == null || accessToken.isEmpty || expiryRaw == null) return false;
+    final expiry = DateTime.tryParse(expiryRaw);
+    if (expiry == null || !DateTime.now().isBefore(expiry)) return false;
+    ref.read(tokenManagerProvider).applyPersistedDesktopToken(accessToken: accessToken, expiry: expiry);
+    return true;
+  }
+
+  /// Desktop login (Linux/Windows -- ADR-011 Unit 7): a real loopback OAuth 2.0 + PKCE exchange
+  /// against Google (`core/auth/desktop_oauth_client.dart`), since `google_sign_in` has no
+  /// plugin implementation on either platform. The resulting Google ID token is exchanged for a
+  /// device-scoped access token via the backend's `/api/v3/auth/desktop/login`
+  /// (`TokenManager.exchangeDesktopLogin`) rather than `signInWithGoogle`'s `/token` path, which
+  /// needs device attestation this platform has no equivalent for.
+  Future<void> signInWithDesktopOAuth() async {
+    state = const AsyncValue.loading();
+    try {
+      final oauthResult = await signInWithGoogleLoopback(clientId: AppConfig.googleDesktopClientId);
+      final deviceToken = await ref.read(tokenManagerProvider).exchangeDesktopLogin(oauthResult.idToken);
+      if (deviceToken == null) {
+        throw StateError('The backend did not accept this Google sign-in for desktop login.');
+      }
+
+      final claims = _unverifiedJwtPayload(oauthResult.idToken);
+      final profile = UserProfile(
+        id: (claims['sub'] as String?) ?? '',
+        email: (claims['email'] as String?) ?? '',
+        displayName: (claims['name'] as String?) ?? 'Google User',
+        photoUrl: claims['picture'] as String?,
+      );
+
+      await _storage.write(key: 'user_id', value: profile.id);
+      await _storage.write(key: 'user_email', value: profile.email);
+      await _storage.write(key: 'user_name', value: profile.displayName);
+      if (profile.photoUrl != null) {
+        await _storage.write(key: 'user_photo', value: profile.photoUrl);
+      }
+      // The device token itself, not the (short-lived, single-use) Google ID token -- this is
+      // what lets signInCached restore the session on relaunch without another browser round
+      // trip. No refresh token exists to renew it once it expires (ADR-011); the user re-runs
+      // this flow at that point, the same disclosed gap Unit 6's aura_hostd pairing has.
+      await _storage.write(key: _desktopTokenKey, value: deviceToken.accessToken);
+      await _storage.write(key: _desktopTokenExpiryKey, value: deviceToken.expiry.toIso8601String());
+
+      state = AsyncValue.data(profile);
     } catch (err, stack) {
       state = AsyncValue.error(err, stack);
     }

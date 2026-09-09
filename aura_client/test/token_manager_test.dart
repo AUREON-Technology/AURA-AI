@@ -99,6 +99,91 @@ void main() {
     expect(refreshCalls, 2);
   });
 
+  group('TokenManager.exchangeDesktopLogin', () {
+    test('succeeds, caches the access token, and returns no refresh token', () async {
+      final httpClient = MockClient((request) async {
+        if (request.url.path.endsWith('/desktop/login')) {
+          expect(request.headers['Authorization'], 'Bearer google-id-token');
+          return http.Response(
+            jsonEncode({
+              'access_token': 'device-access-1',
+              'token_type': 'bearer',
+              'expires_in': 2592000,
+              'device_id': 'dev-1',
+            }),
+            200,
+          );
+        }
+        fail('unexpected ${request.method} ${request.url}');
+      });
+
+      final container = ProviderContainer(
+        overrides: [
+          tokenManagerProvider.overrideWith(
+            (ref) => TokenManager(ref, httpClient: httpClient, store: _MemoryRefreshTokenStore()),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final tm = container.read(tokenManagerProvider);
+      final token = await tm.exchangeDesktopLogin('google-id-token');
+
+      expect(token, isNotNull);
+      expect(token!.accessToken, 'device-access-1');
+      expect(token.expiry.isAfter(DateTime.now().add(const Duration(days: 29))), isTrue);
+
+      // getValidAccessToken must reuse this cached token rather than hitting /refresh or
+      // /token, since exchangeDesktopLogin already populated TokenManager's in-memory state.
+      expect(await tm.getValidAccessToken(), 'device-access-1');
+    });
+
+    test('returns null and does not cache anything on a non-200 response', () async {
+      final httpClient = MockClient((request) async {
+        return http.Response('{"detail":"Invalid or expired credentials."}', 401);
+      });
+
+      final container = ProviderContainer(
+        overrides: [
+          tokenManagerProvider.overrideWith(
+            (ref) => TokenManager(ref, httpClient: httpClient, store: _MemoryRefreshTokenStore()),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final tm = container.read(tokenManagerProvider);
+      expect(await tm.exchangeDesktopLogin('bad-token'), isNull);
+      expect(
+        container.read(authExchangeFailureProvider),
+        AuthExchangeFailure.other,
+      );
+    });
+  });
+
+  test('applyPersistedDesktopToken makes getValidAccessToken reuse it without a network call', () async {
+    final httpClient = MockClient((request) async {
+      fail('unexpected ${request.method} ${request.url}');
+    });
+
+    final container = ProviderContainer(
+      overrides: [
+        tokenManagerProvider.overrideWith(
+          (ref) => TokenManager(ref, httpClient: httpClient, store: _MemoryRefreshTokenStore()),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final tm = container.read(tokenManagerProvider);
+    tm.applyPersistedDesktopToken(
+      accessToken: 'restored-device-token',
+      expiry: DateTime.now().add(const Duration(days: 10)),
+    );
+
+    expect(await tm.getValidAccessToken(), 'restored-device-token');
+  });
+
   group('TokenManager.classifyExchangeFailure', () {
     test('a 403 matching the backend attestation error is classified distinctly', () {
       expect(

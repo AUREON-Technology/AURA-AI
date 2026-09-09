@@ -1,6 +1,6 @@
 # ADR-011 — The desktop Engineer agent executes on the user's own machine, not a server sandbox
 
-**Status:** Partially implemented (backend bridge + daemon core + output streaming + desktop pairing auth; no client UI yet — see "Implementation status") · **Date:** 2026-09-08
+**Status:** Partially implemented (backend bridge + daemon core + output streaming + desktop pairing auth for both the daemon and the app itself; the workspace UI is not built — see "Implementation status") · **Date:** 2026-09-08
 
 ## Context
 
@@ -198,6 +198,42 @@ interval until approval or the code's `expires_in` elapses -- an abandoned pairi
 rather than polling forever. On success it saves the token the same way `auth set-token` would
 have, so nothing downstream of `DaemonConfig.authToken` needed to change.
 
+**Desktop app login (Unit 7).** Distinct from the pairing flow above, which is for `aura_hostd` --
+a headless daemon with no browser to run an OAuth flow in. `aura_client` on desktop does have a
+browser, so its own login uses a real RFC 8252 loopback-redirect OAuth 2.0 + PKCE exchange against
+Google directly (`aura_client/lib/core/auth/desktop_oauth_client_io.dart`), rather than the
+pairing flow's "approve from an already-authenticated session" shape. This needs a *second* real
+Google OAuth client -- Google restricts the loopback-IP redirect URI (`http://127.0.0.1:<port>/`)
+this flow requires to "Desktop app"-type clients, and the existing `google_client_id` is a "Web
+application"-type client used for the mobile/web login path, so it can't be reused for this
+redirect. `aura_backend/config.py` gained `google_desktop_client_id` (env
+`AURA_GOOGLE_DESKTOP_CLIENT_ID`, empty by default -- an operator must register a real Desktop
+OAuth client before this works at all), and
+`services/security.py::verify_identity_token` now accepts either client's audience rather than a
+single hardcoded one (signature/issuer/expiry checks are unaffected). The resulting real Google
+identity has no device attestation behind it (no desktop equivalent exists, same as the pairing
+flow), so `POST /api/v3/auth/desktop/login` (new, `api/v2/auth.py`) mints the same kind of
+narrower, revocable device-scoped token the pairing flow issues to `aura_hostd`
+(`issue_device_token`) rather than a full session pair -- and unlike `/web/token`, it is not
+gated to console operators, since every AURA user should be able to log into the desktop app.
+Client side, `TokenManager` gained `exchangeDesktopLogin`/`applyPersistedDesktopToken`: with no
+refresh token to renew this one, the issued token is persisted client-side (secure storage) for
+reuse across app launches instead of going through the normal refresh machinery, and
+`AuthNotifier.signInWithDesktopOAuth` plus a platform-gated login button
+(`core/auth/platform_login_support.dart`, following
+`chat_header_overflow_menu.dart::chatHeaderShowsLiveVoice`'s existing precedent for this kind of
+platform allowlist) complete the flow -- `google_sign_in` stays the login path on macOS/mobile/web,
+unaffected. The `dart:io`-dependent implementation lives behind the same conditional-export
+pattern (`dart.library.ffi`) `core/database/connection/open_connection.dart` already established,
+so the web build never pulls it in. Backend verification is real: 8 new tests
+(`test_desktop_login.py`), full `pytest`/`tests/architecture`/the legacy suite (100 tests) all
+green -- this pass also caught and fixed a pre-existing flaky assertion in Unit 6's own
+`test_device_pairing.py` (its user-code regex excluded a character the alphabet actually
+includes; confirmed fixed over 30 repeated runs). Client-side verification is written but
+unconfirmed locally (12 new tests across `desktop_oauth_client_io_test.dart`,
+`platform_login_support_test.dart`, and additions to `token_manager_test.dart`) -- no Dart/Flutter
+toolchain in this environment, Client CI is the real check.
+
 **What's still not built:**
 
 - **Interactive tiered consent.** There is no UI yet to prompt a human per call, so the daemon
@@ -214,13 +250,19 @@ have, so nothing downstream of `DaemonConfig.authToken` needed to change.
   that argv directly; a Windows machine without a POSIX-compatible shell on `PATH` (no WSL/Git
   Bash) cannot run commands via this path yet. Filesystem operations and workspace grants are
   unaffected — this only blocks `run_command`.
-- **The Flutter desktop UI** that supervises the daemon (workspace picker, diff review, live
-  terminal) — nothing yet drives `aura_hostd` other than its own CLI, including pairing: a
-  person has to run `aura_hostd auth pair` from a terminal and enter the printed code somewhere
-  that can call `POST /api/v3/auth/desktop/pair/approve` (today, only a raw authenticated API
-  call — there is no screen in the app for it). `services/security.py`'s own
-  `verify_device_integrity` is untouched by this — pairing is a separate, parallel identity path
-  through `api/v2/auth.py`'s `/desktop/*` endpoints, not a new branch of attestation.
+- **The Flutter desktop workspace UI** that supervises the daemon (workspace picker, diff
+  review, live terminal) — nothing yet drives `aura_hostd` other than its own CLI, including
+  pairing: a person has to run `aura_hostd auth pair` from a terminal and enter the printed code
+  somewhere that can call `POST /api/v3/auth/desktop/pair/approve` (today, only a raw
+  authenticated API call — there is no screen in the app for that specific step, even though the
+  app itself can now log a person in, per Unit 7 above). `services/security.py`'s own
+  `verify_device_integrity` is untouched by either identity path — both pairing and desktop app
+  login are separate, parallel paths through `api/v2/auth.py`'s `/desktop/*` endpoints, not a new
+  branch of attestation.
+- **No Desktop OAuth client is actually registered yet.** Unit 7's login is refused until an
+  operator sets `AURA_GOOGLE_DESKTOP_CLIENT_ID` to a real "Desktop app"-type Google OAuth client
+  id — `google_desktop_client_id` ships empty by design (see its doc comment in
+  `aura_backend/config.py`), so this is deployment configuration, not code, still owed.
 
 `dart test` covers path containment (including symlink-escape and `..`-traversal attempts, and
 that containment does not require the target to already exist), the command-policy allowlist

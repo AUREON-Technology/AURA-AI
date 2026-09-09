@@ -519,8 +519,9 @@ not Ollama-plus-echo — **done**, with a permanent opt-in test reproducing the 
 
 ### Phase J — Desktop Engineer agent
 
-**Started, 2026-09-08. Backend bridge, daemon core, and output streaming done; a real PTY,
-interactive consent, pairing auth, and the client UI are not.**
+**Started, 2026-09-08. Backend bridge, daemon core, output streaming, pairing auth (daemon and
+app), and the app's own desktop login are done; a real PTY, interactive consent, and the
+workspace UI are not.**
 
 This phase did not exist in any prior version of this roadmap — a gap worth naming plainly, since
 the standing rule elsewhere in this document is that undocumented-but-built capability gets
@@ -620,25 +621,53 @@ phase and decision pair ([ADR-013](architecture/013-agent-workspaces.md) /
   server) is written but unverified locally — no Dart toolchain here, `hostd-ci.yml` is the real
   check, per this repo's own conventions. **Still missing:** a UI for the `approve` step — today
   it is only reachable via a raw authenticated API call, since J5's client does not exist yet.
-- **J5. Not started.** The Flutter desktop client work: `google_sign_in` has no Linux/Windows
-  implementation (confirmed absent from both platforms' `generated_plugins.cmake`), so desktop
-  login needs a loopback-OAuth path before anything else desktop-side is reachable; then the
-  workspace picker, file tree, diff review, and live terminal panel, reusing the engineering
-  screens and chat widgets (`engineer_confirmation_card`, `sandbox_diff_view`,
-  `sandbox_terminal_view`) that already exist for the server-side sandbox, plus supervising
-  `aura_hostd` itself (spawn/monitor/restart the daemon process).
+- **J5a (Unit 7). Login done; the workspace UI is not.** `google_sign_in` has no Linux/Windows
+  implementation (confirmed absent from both platforms' `generated_plugins.cmake`), so the
+  desktop app's own login went through a real RFC 8252 loopback-redirect OAuth 2.0 + PKCE
+  exchange against Google instead (`aura_client/lib/core/auth/desktop_oauth_client_io.dart`,
+  behind the same `dart.library.ffi` conditional-export pattern
+  `core/database/connection/open_connection.dart` already uses, so the web build -- which keeps
+  `google_sign_in`, unaffected -- never pulls in `dart:io`). This is a *separate* identity path
+  from J4's `aura_hostd` pairing flow: a headless daemon has no browser to run OAuth in, but
+  `aura_client` on desktop does. It needs a second, real Google OAuth client (Google restricts
+  the loopback-IP redirect URI this flow requires to "Desktop app"-type clients, and the existing
+  `google_client_id` is a "Web application"-type client used for mobile/web) --
+  `aura_backend/config.py` gained `google_desktop_client_id` (env
+  `AURA_GOOGLE_DESKTOP_CLIENT_ID`, empty by default: desktop login stays refused until an
+  operator registers one), and `services/security.py::verify_identity_token` now accepts either
+  client's audience rather than a single hardcoded one. The resulting real-but-unattested Google
+  identity is exchanged via the new `POST /api/v3/auth/desktop/login` for the same kind of
+  narrower, revocable device-scoped token J4's pairing issues (not a full session pair, and not
+  gated to console operators the way `/web/token` is -- every AURA user should be able to log
+  into the desktop app). Backend: 8 new tests (`test_desktop_login.py`), full
+  `pytest`/`tests/architecture`/the legacy suite (100 tests) all green -- also fixed a
+  pre-existing flaky assertion in J4's own `test_device_pairing.py` (its user-code regex excluded
+  a character the alphabet actually includes, confirmed fixed over 30 runs). Client: `TokenManager`
+  gained `exchangeDesktopLogin`/`applyPersistedDesktopToken` (no refresh token to renew this one,
+  so the issued token is persisted client-side via secure storage for reuse across app launches
+  instead of going through the normal refresh machinery); `AuthNotifier.signInWithDesktopOAuth`
+  and a platform-gated login button (`core/auth/platform_login_support.dart`, following
+  `chat_header_overflow_menu.dart::chatHeaderShowsLiveVoice`'s existing precedent for this kind of
+  allowlist) complete the flow. 12 new client tests, unverified locally — no Dart/Flutter
+  toolchain here, Client CI is the real check per this repo's conventions. **Still missing:** the
+  workspace picker, file tree, diff review, live terminal panel, and supervising `aura_hostd`
+  itself (spawn/monitor/restart the daemon process) -- reusing the engineering screens and chat
+  widgets (`engineer_confirmation_card`, `sandbox_diff_view`, `sandbox_terminal_view`) that
+  already exist for the server-side sandbox.
+- **J5b. Not started.** The workspace UI described above.
 
 **Exit criteria (not yet met).** An engineer-capable user can pair a real desktop app and have the
 agent read, edit, and run commands against a real local project, with a path outside every granted
 workspace root refused even in the daemon's most permissive consent mode — the containment half is
-implemented and unit-tested (J3), and real auth now exists end to end (J4: a person can run
-`aura_hostd auth pair` and get a working device token), but this is still **not proven**
-end-to-end without J5's client, since nothing today drives `aura_hostd` other than its own CLI —
-pairing today means running a terminal command and calling `/desktop/pair/approve` directly, not
-anything a non-technical user could do. This environment has no
-Dart/Flutter toolchain (confirmed: `dart`/`flutter` both absent), so per this repo's own testing
-conventions, no client-side claim belongs here until CI has actually run it — that applies to
-`aura_hostd`'s own test suite (`hostd-ci.yml`) exactly as much as it does to `aura_client`'s.
+implemented and unit-tested (J3), and real auth now exists end to end for both the daemon (J4: a
+person can run `aura_hostd auth pair`) and the app itself (J5a: real Google login via loopback
+OAuth) -- but this is still **not proven** end-to-end without J5b's workspace UI, since nothing
+today drives `aura_hostd` other than its own CLI, and the desktop app's own login has no Google
+Cloud OAuth client actually registered for it yet (`google_desktop_client_id` ships empty). This
+environment has no Dart/Flutter toolchain (confirmed: `dart`/`flutter` both absent), so per this
+repo's own testing conventions, no client-side claim belongs here until CI has actually run it —
+that applies to `aura_hostd`'s own test suite (`hostd-ci.yml`) exactly as much as it does to
+`aura_client`'s.
 
 ## 4. Scope decisions
 
