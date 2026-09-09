@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import 'package:aura_client/core/ai/engineer/workspaces_panel.dart';
@@ -33,6 +34,13 @@ class EngineerHistoryPage extends ConsumerWidget {
       appBar: AppBar(
         backgroundColor: palette.background,
         title: const Text('Engineer'),
+        actions: [
+          IconButton(
+            tooltip: 'Desktop daemon',
+            icon: const Icon(Icons.dns_outlined),
+            onPressed: () => context.push('/engineer-daemon'),
+          ),
+        ],
       ),
       body: RefreshIndicator(
         onRefresh: () async {
