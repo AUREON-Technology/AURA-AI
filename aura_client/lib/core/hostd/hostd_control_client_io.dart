@@ -145,7 +145,7 @@ class HostdControlClient {
       );
 
   Future<Map<String, dynamic>> startPairing({String? backendUrl}) =>
-      _request('POST', '/pair/start', body: {if (backendUrl != null) 'backend_url': backendUrl});
+      _request('POST', '/pair/start', body: {'backend_url': ?backendUrl});
 
   Future<Map<String, dynamic>> pairingStatus() => _request('GET', '/pair/status');
 
