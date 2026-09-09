@@ -300,13 +300,23 @@ async def verify_identity_token(
     token = authorization.credentials
 
     try:
+        # No audience passed to verify_oauth2_token itself -- desktop login (Unit 7) mints its
+        # ID token against google_desktop_client_id, a *different* registered OAuth client than
+        # google_client_id (Google restricts the loopback-IP redirect URI that flow needs to
+        # "Desktop app"-type clients, which can't be the same client as the mobile/web one). The
+        # signature/issuer/expiry checks still run; only the single-audience check is replaced
+        # with "one of ours" below.
         id_info = await anyio.to_thread.run_sync(
             lambda: id_token.verify_oauth2_token(
                 token,
                 google_requests.Request(),
-                settings.google_client_id,
             )
         )
+        accepted_audiences = {settings.google_client_id}
+        if settings.google_desktop_client_id:
+            accepted_audiences.add(settings.google_desktop_client_id)
+        if id_info.get("aud") not in accepted_audiences:
+            raise ValueError(f"Unrecognized audience: {id_info.get('aud')!r}")
         logger.debug(f"Google ID token verified successfully for: {id_info.get('email')}")
         return {
             "uid": id_info.get("sub"),

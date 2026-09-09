@@ -61,9 +61,12 @@ class TestDevicePairingService(unittest.TestCase):
         self.assertIn("user_code", session)
         self.assertEqual(session["expires_in"], 600)  # PAIRING_TTL, 10 minutes
         self.assertEqual(session["interval"], device_pairing.POLL_INTERVAL_S)
-        # XXXX-XXXX shape, from the unambiguous alphabet only.
+        # XXXX-XXXX shape, drawn only from device_pairing._USER_CODE_ALPHABET (no 0/O/1/I/L).
+        # Written out explicitly rather than as a range -- U through Z is contiguous but J-N
+        # isn't (L is excluded), so a range-based class silently rejects a valid U (caught by
+        # this test itself flaking intermittently before the fix).
         code = session["user_code"]
-        self.assertRegex(code, r"^[A-HJ-NP-TV-Z2-9]{4}-[A-HJ-NP-TV-Z2-9]{4}$")
+        self.assertRegex(code, r"^[ABCDEFGHJKMNPQRSTUVWXYZ2-9]{4}-[ABCDEFGHJKMNPQRSTUVWXYZ2-9]{4}$")
 
     def test_poll_before_approval_is_pending(self):
         session = start_pairing()
