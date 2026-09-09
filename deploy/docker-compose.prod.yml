@@ -325,6 +325,9 @@ services:
       # App Attest app ID is APPLE_TEAM_ID + '.' + ios bundle id.
       APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
       AURA_IOS_BUNDLE_ID: ${AURA_IOS_BUNDLE_ID:-com.auraai.auraClient}
+      # Desktop (Linux/Windows) loopback OAuth client -- see Settings.google_desktop_client_id.
+      # A no-op until a real "Desktop app" Google Cloud Console client is provisioned and set.
+      GOOGLE_DESKTOP_CLIENT_ID: ${GOOGLE_DESKTOP_CLIENT_ID:-}
       # Role allowlists for services.rbac.get_user_role. Unset means nobody is
       # minted Admin/Developer/SuperAdmin from env; consumers stay User.
       # SUPERADMIN_EMAILS is the only list that can mint SuperAdmin.

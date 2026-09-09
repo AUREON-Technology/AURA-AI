@@ -75,6 +75,15 @@ class Settings(BaseSettings):
     
     # Production Authentication Settings
     google_client_id: str = "87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com"
+    # Separate OAuth client for aura_client's Linux/Windows loopback sign-in
+    # (DesktopGoogleOAuthService) -- Google only allows an unregistered
+    # loopback (http://127.0.0.1:<port>) redirect URI for a "Desktop app"
+    # client type, not the "Web application" client above, so the two can't
+    # share a client ID. An ID token minted by this client carries it as
+    # `aud`, and verify_identity_token() accepts either. Empty by default:
+    # unset means desktop-flow tokens are rejected, not silently trusted
+    # against the wrong audience.
+    google_desktop_client_id: str = ""
     # Must match aura_client/android/app/build.gradle.kts `applicationId`.
     # Play Integrity rejects any token whose requestDetails.packageName differs,
     # so a drift between these two values silently breaks all Android auth —

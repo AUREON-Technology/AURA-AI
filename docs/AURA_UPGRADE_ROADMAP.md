@@ -620,13 +620,35 @@ phase and decision pair ([ADR-013](architecture/013-agent-workspaces.md) /
   server) is written but unverified locally — no Dart toolchain here, `hostd-ci.yml` is the real
   check, per this repo's own conventions. **Still missing:** a UI for the `approve` step — today
   it is only reachable via a raw authenticated API call, since J5's client does not exist yet.
-- **J5. Not started.** The Flutter desktop client work: `google_sign_in` has no Linux/Windows
-  implementation (confirmed absent from both platforms' `generated_plugins.cmake`), so desktop
-  login needs a loopback-OAuth path before anything else desktop-side is reachable; then the
-  workspace picker, file tree, diff review, and live terminal panel, reusing the engineering
-  screens and chat widgets (`engineer_confirmation_card`, `sandbox_diff_view`,
-  `sandbox_terminal_view`) that already exist for the server-side sandbox, plus supervising
-  `aura_hostd` itself (spawn/monitor/restart the daemon process).
+- **J5. Desktop login built, not proven; the rest of the client not started.**
+  `google_sign_in` has no Linux/Windows implementation (confirmed absent from both platforms'
+  `generated_plugins.cmake`), so those platforms now go through a loopback-redirect + PKCE OAuth
+  flow (`DesktopGoogleOAuthService`,
+  `aura_client/lib/features/auth/data/desktop_google_oauth_service.dart`), wired into
+  `AuthNotifier.signInWithGoogle()` (`auth_provider.dart`) behind a `defaultTargetPlatform`
+  check — macOS/mobile/web keep the existing `google_sign_in` plugin path. Because Google only
+  allows an unregistered `http://127.0.0.1:<port>` redirect for a "Desktop app"-type OAuth
+  client, not the "Web application" client `serverClientId` already uses, the loopback flow
+  needs its own client ID (`AppConfig.googleDesktopClientId`, `--dart-define=GOOGLE_DESKTOP_CLIENT_ID`)
+  — the backend now accepts either audience (`Settings.google_desktop_client_id`,
+  `services/security.py::verify_identity_token`, tests in
+  `tests/unit/test_desktop_oauth_audience.py`). **Not proven / still open:** no real "Desktop
+  app" OAuth client has actually been provisioned in Google Cloud Console yet — until one is and
+  its ID is supplied at build/deploy time, `GOOGLE_DESKTOP_CLIENT_ID` stays empty and the button
+  fails closed with a clear "not configured" error rather than attempting a flow that can only
+  fail. Separately, and not addressed by this work: `verify_device_integrity`
+  (`services/security.py`) still has no attestation story for `windows`/`linux`/`macos`
+  platforms and rejects them outside `allow_mock_attestation`, so a production desktop build
+  will pass Google sign-in and then fail the device-attestation check on `/api/v3/auth/token` —
+  closing that gap is a separate, larger question (there is no OS-level attestation SDK
+  equivalent to Play Integrity/App Attest on desktop) deliberately left open here rather than
+  silently bypassed. No Flutter toolchain in the environment this was written in, so
+  `desktop_google_oauth_service_test.dart` is written but unverified locally — Client CI is the
+  real check, per this repo's own conventions. Still to build: the workspace picker, file tree,
+  diff review, and live terminal panel, reusing the engineering screens and chat widgets
+  (`engineer_confirmation_card`, `sandbox_diff_view`, `sandbox_terminal_view`) that already exist
+  for the server-side sandbox, plus supervising `aura_hostd` itself (spawn/monitor/restart the
+  daemon process).
 
 **Exit criteria (not yet met).** An engineer-capable user can pair a real desktop app and have the
 agent read, edit, and run commands against a real local project, with a path outside every granted

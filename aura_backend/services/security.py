@@ -300,13 +300,23 @@ async def verify_identity_token(
     token = authorization.credentials
 
     try:
+        # `audience` deliberately omitted here: verify_oauth2_token only
+        # accepts a single string, but a valid ID token may carry either the
+        # mobile/web client ID or the desktop loopback client ID as `aud`
+        # (see Settings.google_desktop_client_id). Signature/issuer/expiry
+        # are still fully verified by the library; the audience is checked
+        # explicitly below against the allowlist instead.
         id_info = await anyio.to_thread.run_sync(
             lambda: id_token.verify_oauth2_token(
                 token,
                 google_requests.Request(),
-                settings.google_client_id,
             )
         )
+        accepted_audiences = {settings.google_client_id}
+        if settings.google_desktop_client_id:
+            accepted_audiences.add(settings.google_desktop_client_id)
+        if id_info.get("aud") not in accepted_audiences:
+            raise ValueError(f"Unrecognized token audience: {id_info.get('aud')}")
         logger.debug(f"Google ID token verified successfully for: {id_info.get('email')}")
         return {
             "uid": id_info.get("sub"),

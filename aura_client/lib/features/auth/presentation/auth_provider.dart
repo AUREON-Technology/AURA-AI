@@ -3,7 +3,20 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
+import 'package:aura_client/core/config/config.dart';
 import 'package:aura_client/core/security/aura_secure_storage.dart';
+import 'package:aura_client/features/auth/data/desktop_google_oauth_service.dart';
+
+/// `google_sign_in` has no Linux/Windows plugin implementation
+/// (AURA_UPGRADE_ROADMAP.md phase J5) -- those platforms go through
+/// [DesktopGoogleOAuthService]'s loopback flow instead of
+/// `GoogleSignIn.instance.authenticate()`. macOS, mobile, and web keep the
+/// plugin path, which already works there.
+bool _usesLoopbackOAuth() {
+  if (kIsWeb) return false;
+  return defaultTargetPlatform == TargetPlatform.linux ||
+      defaultTargetPlatform == TargetPlatform.windows;
+}
 
 class UserProfile {
   final String id;
@@ -46,6 +59,11 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
   FutureOr<UserProfile?> build() async {
     // Initialise Google Sign In using Client ID
     _googleSignIn = GoogleSignIn.instance;
+    if (_usesLoopbackOAuth()) {
+      // No google_sign_in plugin implementation on this platform -- skip
+      // straight to the loopback flow's own storage-backed session restore.
+      return null;
+    }
     try {
       await _googleSignIn.initialize(
         clientId: kIsWeb ? '87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com' : null,
@@ -131,31 +149,60 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
   Future<void> signInWithGoogle() async {
     state = const AsyncValue.loading();
     try {
-      final googleUser = await _googleSignIn.authenticate();
-      _currentAccount = googleUser;
-      final idToken = googleUser.authentication.idToken;
-
-      final profile = UserProfile(
-        id: googleUser.id,
-        email: googleUser.email,
-        displayName: googleUser.displayName ?? 'Google User',
-        photoUrl: googleUser.photoUrl,
-      );
-
-      // Cache details
-      await _storage.write(key: 'user_id', value: profile.id);
-      await _storage.write(key: 'user_email', value: profile.email);
-      await _storage.write(key: 'user_name', value: profile.displayName);
-      if (profile.photoUrl != null) {
-        await _storage.write(key: 'user_photo', value: profile.photoUrl);
-      }
-      if (idToken != null) {
-        await _storage.write(key: 'auth_token', value: idToken);
-      }
-
+      final profile = _usesLoopbackOAuth()
+          ? await _signInWithLoopbackOAuth()
+          : await _signInWithGoogleSignInPlugin();
       state = AsyncValue.data(profile);
     } catch (err, stack) {
       state = AsyncValue.error(err, stack);
+    }
+  }
+
+  Future<UserProfile> _signInWithGoogleSignInPlugin() async {
+    final googleUser = await _googleSignIn.authenticate();
+    _currentAccount = googleUser;
+    final idToken = googleUser.authentication.idToken;
+
+    final profile = UserProfile(
+      id: googleUser.id,
+      email: googleUser.email,
+      displayName: googleUser.displayName ?? 'Google User',
+      photoUrl: googleUser.photoUrl,
+    );
+
+    await _cacheProfile(profile, idToken: idToken);
+    return profile;
+  }
+
+  /// Linux/Windows path: `google_sign_in` has no plugin there, so this drives
+  /// [DesktopGoogleOAuthService]'s loopback-redirect flow instead. There is
+  /// no [GoogleSignInAccount] to track for later silent restore -- the
+  /// cached `auth_token` (read back by [getIdToken] / [signInCached]) is the
+  /// only session state on these platforms.
+  Future<UserProfile> _signInWithLoopbackOAuth() async {
+    final oauth = DesktopGoogleOAuthService(clientId: AppConfig.googleDesktopClientId);
+    final account = await oauth.signIn();
+
+    final profile = UserProfile(
+      id: account.sub,
+      email: account.email,
+      displayName: account.name ?? 'Google User',
+      photoUrl: account.picture,
+    );
+
+    await _cacheProfile(profile, idToken: account.idToken);
+    return profile;
+  }
+
+  Future<void> _cacheProfile(UserProfile profile, {String? idToken}) async {
+    await _storage.write(key: 'user_id', value: profile.id);
+    await _storage.write(key: 'user_email', value: profile.email);
+    await _storage.write(key: 'user_name', value: profile.displayName);
+    if (profile.photoUrl != null) {
+      await _storage.write(key: 'user_photo', value: profile.photoUrl);
+    }
+    if (idToken != null) {
+      await _storage.write(key: 'auth_token', value: idToken);
     }
   }
 
