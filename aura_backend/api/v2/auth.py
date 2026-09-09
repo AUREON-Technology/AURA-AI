@@ -76,6 +76,13 @@ class DeviceRevokeRequest(BaseModel):
     device_id: str
 
 
+class DesktopLoginResponse(BaseModel):
+    access_token: str
+    token_type: str
+    expires_in: int
+    device_id: str
+
+
 class RevokeRequest(BaseModel):
     refresh_token: str
 
@@ -210,3 +217,31 @@ async def revoke_desktop_device(
     if not ok:
         raise HTTPException(status_code=404, detail="No such device paired to this account.")
     return {"status": "revoked"}
+
+
+@router.post("/desktop/login", response_model=DesktopLoginResponse)
+async def desktop_login(
+    request: Request,
+    authorization: HTTPAuthorizationCredentials | None = Depends(_web_bearer),
+):
+    """The desktop *app's own* login (Unit 7) -- distinct from the pairing flow above, which is
+    for aura_hostd, a headless daemon with no browser of its own to run an OAuth flow in.
+    aura_client on desktop can open one (lib/core/auth/desktop_oauth_client.dart, a real
+    loopback-redirect OAuth 2.0 + PKCE exchange against Google), so it has a real Google identity
+    proof by the time it calls this -- verify_identity_token accepts it (see
+    services/security.py's dual-audience check, since a Desktop-type OAuth client is required for
+    that redirect and can't be the same client id the mobile/web login path verifies against).
+
+    What it does not have is device attestation -- no desktop equivalent exists (ADR-011). So,
+    like the pairing flow, this mints the narrower, revocable device-scoped token
+    issue_device_token gives aura_hostd rather than a full session pair: a real identity proof
+    without an integrity proof earns a device token, not a session.
+
+    Called as a plain function (not via Depends), matching exchange_web_token just above --
+    verify_identity_token has no attestation requirement of its own to enforce as a dependency,
+    and this keeps both non-attested identity endpoints in the same shape."""
+    user_info = await verify_identity_token(request, authorization)
+    stamp_resolved_role(user_info)
+    await _persist_user(user_info)
+    device_id = secrets.token_urlsafe(16)
+    return issue_device_token(user_info, device_id=device_id)

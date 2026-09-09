@@ -75,6 +75,19 @@ class Settings(BaseSettings):
     
     # Production Authentication Settings
     google_client_id: str = "87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com"
+    # A *separate* OAuth client, registered as Google's "Desktop app" type, not the "Web
+    # application" type google_client_id above is. Google restricts the loopback-IP redirect
+    # URI (http://127.0.0.1:<port>/) aura_client's desktop login (ADR-011 Unit 7,
+    # aura_client/lib/core/auth/desktop_oauth_client.dart) needs to Desktop-type clients only, so
+    # the same client id can't be reused for that authorization step -- but the resulting ID
+    # token is still verified here (services/security.py::verify_identity_token accepts either
+    # audience). Empty by default: desktop login is refused with a clear error until an operator
+    # registers a real Desktop OAuth client and sets AURA_GOOGLE_DESKTOP_CLIENT_ID, the same
+    # disclosed-until-configured pattern apple_team_id/ios_bundle_id already use above.
+    google_desktop_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOOGLE_DESKTOP_CLIENT_ID", "AURA_GOOGLE_DESKTOP_CLIENT_ID"),
+    )
     # Must match aura_client/android/app/build.gradle.kts `applicationId`.
     # Play Integrity rejects any token whose requestDetails.packageName differs,
     # so a drift between these two values silently breaks all Android auth —

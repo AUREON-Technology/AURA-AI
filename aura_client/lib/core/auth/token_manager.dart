@@ -25,6 +25,15 @@ final authExchangeFailureProvider =
   return AuthExchangeFailureNotifier();
 });
 
+/// A device-scoped token issued by `POST /api/v3/auth/desktop/login` (ADR-011 Unit 7) --
+/// see [TokenManager.exchangeDesktopLogin].
+class DesktopDeviceToken {
+  DesktopDeviceToken({required this.accessToken, required this.expiry});
+
+  final String accessToken;
+  final DateTime expiry;
+}
+
 /// Manages the backend-issued access/refresh JWT pair (Doc/V2_BLUEPRINT.md
 /// §9), shared by every v3 API client (SyncClient, InsightsClient,
 /// SseAgentClient) so token exchange/caching/refresh logic lives in one
@@ -217,6 +226,53 @@ class TokenManager {
       debugPrint("[TokenManager] debug operator web/token failed: $e");
       return null;
     }
+  }
+
+  /// Exchanges a real Google ID token obtained from the desktop loopback OAuth flow
+  /// (`core/auth/desktop_oauth_client.dart`, ADR-011 Unit 7) for a device-scoped access token via
+  /// `POST /api/v3/auth/desktop/login` -- distinct from [_tryExchange]'s `/token` path, which
+  /// needs `google_sign_in` (unavailable on Linux/Windows) and device attestation (no desktop
+  /// equivalent exists). The response has no `refresh_token` (same shape Unit 6's pairing flow
+  /// issues to `aura_hostd` -- ADR-011 explains why: revocability comes from a device_id check,
+  /// not a renewable session), so [_applyTokenResponse] doesn't apply here. Returns the issued
+  /// token and its expiry (or null on failure) so the caller
+  /// (`AuthNotifier.signInWithDesktopOAuth`) can persist it for reuse across launches --
+  /// [getValidAccessToken]'s normal refresh/re-exchange machinery has nothing to fall back to
+  /// once this one expires, since there is no refresh token.
+  Future<DesktopDeviceToken?> exchangeDesktopLogin(String googleIdToken) async {
+    try {
+      final response = await _post(
+        "$_authUrl/desktop/login",
+        headers: {"Authorization": "Bearer $googleIdToken"},
+      );
+      if (response.statusCode != 200) {
+        debugPrint(
+          "[TokenManager] desktop login failed: ${response.statusCode} ${response.body}",
+        );
+        _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.other);
+        return null;
+      }
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final accessToken = body['access_token'] as String;
+      final expiry = DateTime.now().add(Duration(seconds: body['expires_in'] as int));
+      _accessToken = accessToken;
+      _accessTokenExpiry = expiry;
+      _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.none);
+      debugPrint("[TokenManager] desktop login succeeded");
+      return DesktopDeviceToken(accessToken: accessToken, expiry: expiry);
+    } catch (e) {
+      debugPrint("[TokenManager] desktop login failed: $e");
+      _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.other);
+      return null;
+    }
+  }
+
+  /// Restores a previously-persisted desktop device token into memory without a fresh browser
+  /// round trip -- see [exchangeDesktopLogin]'s doc comment for why the normal refresh/exchange
+  /// path can't do this on its own for a token with no refresh token.
+  void applyPersistedDesktopToken({required String accessToken, required DateTime expiry}) {
+    _accessToken = accessToken;
+    _accessTokenExpiry = expiry;
   }
 
   /// Pure classification, split out from [_tryExchange] so the C1 fix (does

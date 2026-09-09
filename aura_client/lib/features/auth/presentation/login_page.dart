@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:local_auth/local_auth.dart';
 import 'auth_provider.dart';
+import 'package:aura_client/core/auth/platform_login_support.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 
 /// V2 rebuild (Doc/V2_BLUEPRINT.md §4) — same auth flows as V1, restyled
@@ -143,7 +144,15 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                           if (authState.isLoading)
                             Center(child: CircularProgressIndicator(color: palette.brand))
                           else ...[
-                            _GoogleSignInButton(onPressed: () => ref.read(authProvider.notifier).signInWithGoogle()),
+                            if (supportsNativeGoogleSignIn())
+                              _GoogleSignInButton(onPressed: () => ref.read(authProvider.notifier).signInWithGoogle())
+                            else
+                              AuraButton(
+                                label: 'Sign in with Google (browser)',
+                                icon: Icons.open_in_browser,
+                                expand: true,
+                                onPressed: () => ref.read(authProvider.notifier).signInWithDesktopOAuth(),
+                              ),
                             const SizedBox(height: AuraSpacing.md),
                             if (_canCheckBiometrics && _hasCachedCredentials) ...[
                               AuraButton(
