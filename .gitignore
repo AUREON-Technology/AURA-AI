@@ -63,7 +63,10 @@ aura_backend/scratch/
 # Flutter / Dart (aura_client)
 # ==========================================
 aura_client/build/
-aura_client/.dart_tool/
+# Every Dart package, not just the client: aura_hostd is a Dart package too, and scoping this to
+# one directory is how 33 MB of build output (a 29 MB test snapshot, a 4.4 MB incremental kernel)
+# reached the repository.
+**/.dart_tool/
 aura_client/.flutter-plugins
 aura_client/.flutter-plugins-dependencies
 aura_client/android/.gradle/
