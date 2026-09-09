@@ -10,6 +10,13 @@
 /// only start a session and poll it, exactly like OAuth's device authorization grant (RFC 8628)
 /// this mirrors. `dart:io`'s `HttpClient` covers this without a new dependency, matching
 /// `config.dart`'s stated bar for what's allowed to run with this daemon's access.
+///
+/// [startPairing]/[pollPairingOnce] are split out from [pairWithCode] so a caller that cannot
+/// block a request on the whole flow -- `control_server.dart`'s `/pair/start` and `/pair/status`,
+/// answering a UI in a *different process* that needs the code back before approval happens, not
+/// after -- can drive the same two backend calls without owning a sleep loop itself. `pairWithCode`
+/// (what `aura_hostd auth pair`'s CLI path still uses) is now a thin wrapper composing both,
+/// unchanged in behavior.
 library;
 
 import 'dart:async';
@@ -36,13 +43,101 @@ class PairingResult {
   final String deviceId;
 }
 
-/// Runs the start -> display-code -> poll -> return-token flow against [backendUrl].
+/// A just-started pairing session: the code to show the user, and everything a later
+/// [pollPairingOnce] call needs to check on it.
+class PairingSession {
+  PairingSession({
+    required this.pairingId,
+    required this.userCode,
+    required this.expiresIn,
+    required this.intervalS,
+  });
+
+  final String pairingId;
+  final String userCode;
+  final int expiresIn;
+  final int intervalS;
+}
+
+/// What one poll found: still waiting, approved (with the token), or the session is gone
+/// (expired, or some status this client doesn't recognize -- treated the same way, since either
+/// way there is nothing left to poll for).
+sealed class PairingPollOutcome {}
+
+class PairingPending implements PairingPollOutcome {}
+
+class PairingApproved implements PairingPollOutcome {
+  PairingApproved(this.result);
+  final PairingResult result;
+}
+
+class PairingGone implements PairingPollOutcome {
+  PairingGone(this.reason);
+  final String reason;
+}
+
+/// Starts a pairing session against [backendUrl] and returns the code to show the user plus the
+/// session details a caller needs to poll it later.
+Future<PairingSession> startPairing(String backendUrl, {HttpClient? httpClient}) async {
+  final client = httpClient ?? HttpClient();
+  final ownsClient = httpClient == null;
+  try {
+    final start = await _postJson(client, backendUrl, '/api/v3/auth/desktop/pair/start', {});
+    return PairingSession(
+      pairingId: start['pairing_id'] as String,
+      userCode: start['user_code'] as String,
+      expiresIn: (start['expires_in'] as num).toInt(),
+      intervalS: (start['interval'] as num).toInt(),
+    );
+  } finally {
+    if (ownsClient) client.close(force: true);
+  }
+}
+
+/// Polls [backendUrl] once for [session]'s outcome. Callers that need to keep waiting on
+/// [PairingPending] are responsible for their own delay between calls (matching
+/// [PairingSession.intervalS]) and their own deadline (matching [PairingSession.expiresIn]) --
+/// this does exactly one HTTP round trip, no looping, so it is safe to call from a context that
+/// cannot block for the whole pairing window (an HTTP handler answering a separate poll of its
+/// own, e.g. `control_server.dart`'s `/pair/status`).
+Future<PairingPollOutcome> pollPairingOnce(
+  String backendUrl,
+  PairingSession session, {
+  HttpClient? httpClient,
+}) async {
+  final client = httpClient ?? HttpClient();
+  final ownsClient = httpClient == null;
+  try {
+    final poll = await _postJson(
+      client,
+      backendUrl,
+      '/api/v3/auth/desktop/pair/poll',
+      {'pairing_id': session.pairingId},
+    );
+    final status = poll['status'] as String?;
+    if (status == 'approved') {
+      return PairingApproved(PairingResult(
+        accessToken: poll['access_token'] as String,
+        deviceId: poll['device_id'] as String,
+      ));
+    }
+    if (status == 'pending') {
+      return PairingPending();
+    }
+    return PairingGone('pairing session ended with status "$status" before approval');
+  } finally {
+    if (ownsClient) client.close(force: true);
+  }
+}
+
+/// Runs the start -> display-code -> poll -> return-token flow against [backendUrl] end to end,
+/// blocking until it resolves -- what `aura_hostd auth pair`'s CLI path uses, since a terminal
+/// command blocking until it's done is exactly the right UX there.
 ///
 /// [onCode] is called once, as soon as the session starts, with the human-readable code to show
-/// the user (`aura_hostd auth pair`'s caller is expected to print it and tell them where to enter
-/// it). Polls at the server-advised interval until the session is approved or its `expires_in`
-/// elapses, at which point this throws [PairingFailedError] rather than polling forever -- an
-/// abandoned pairing attempt must not leave this daemon spinning indefinitely.
+/// the user. Polls at the server-advised interval until the session is approved or its
+/// `expires_in` elapses, at which point this throws [PairingFailedError] rather than polling
+/// forever -- an abandoned pairing attempt must not leave this daemon spinning indefinitely.
 Future<PairingResult> pairWithCode(
   String backendUrl, {
   required void Function(String userCode) onCode,
@@ -51,39 +146,25 @@ Future<PairingResult> pairWithCode(
   final client = httpClient ?? HttpClient();
   final ownsClient = httpClient == null;
   try {
-    final start = await _postJson(client, backendUrl, '/api/v3/auth/desktop/pair/start', {});
-    final pairingId = start['pairing_id'] as String;
-    final userCode = start['user_code'] as String;
-    final expiresIn = (start['expires_in'] as num).toInt();
-    final intervalS = (start['interval'] as num).toInt();
+    final session = await startPairing(backendUrl, httpClient: client);
+    onCode(session.userCode);
 
-    onCode(userCode);
-
-    final deadline = DateTime.now().add(Duration(seconds: expiresIn));
+    final deadline = DateTime.now().add(Duration(seconds: session.expiresIn));
     while (DateTime.now().isBefore(deadline)) {
-      await Future<void>.delayed(Duration(seconds: intervalS));
-      final poll = await _postJson(
-        client,
-        backendUrl,
-        '/api/v3/auth/desktop/pair/poll',
-        {'pairing_id': pairingId},
-      );
-      final status = poll['status'] as String?;
-      if (status == 'approved') {
-        return PairingResult(
-          accessToken: poll['access_token'] as String,
-          deviceId: poll['device_id'] as String,
-        );
-      }
-      if (status != 'pending') {
-        // "expired" or anything unrecognized -- the session is gone either way, and a pending
-        // status is the only one worth continuing to poll for.
-        throw PairingFailedError('pairing session ended with status "$status" before approval');
+      await Future<void>.delayed(Duration(seconds: session.intervalS));
+      final outcome = await pollPairingOnce(backendUrl, session, httpClient: client);
+      switch (outcome) {
+        case PairingApproved(result: final result):
+          return result;
+        case PairingGone(reason: final reason):
+          throw PairingFailedError(reason);
+        case PairingPending():
+          continue;
       }
     }
     throw PairingFailedError(
-      'pairing code expired after ${expiresIn}s without being approved -- run `aura_hostd auth '
-      'pair` again',
+      'pairing code expired after ${session.expiresIn}s without being approved -- run `aura_hostd '
+      'auth pair` again',
     );
   } finally {
     if (ownsClient) client.close(force: true);
