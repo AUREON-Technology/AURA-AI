@@ -1,7 +1,8 @@
 /// Riverpod wiring for the desktop Engineer daemon screen (ADR-011 Unit 8): the control client,
 /// the process supervisor, a polled status snapshot, and the executable-path setting a person
-/// configures once (there is no bundled `aura_hostd` binary to default to -- same
-/// disclosed-until-configured shape `google_desktop_client_id` already uses on the backend).
+/// configures once -- there is no bundled `aura_hostd` binary to default to, unlike
+/// `google_desktop_client_id` on the backend, which is a registered OAuth client id now
+/// hardcoded rather than left for an operator to supply.
 library;
 
 import 'dart:async';

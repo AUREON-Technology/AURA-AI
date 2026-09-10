@@ -207,8 +207,11 @@ Google OAuth client -- Google restricts the loopback-IP redirect URI (`http://12
 this flow requires to "Desktop app"-type clients, and the existing `google_client_id` is a "Web
 application"-type client used for the mobile/web login path, so it can't be reused for this
 redirect. `aura_backend/config.py` gained `google_desktop_client_id` (env
-`AURA_GOOGLE_DESKTOP_CLIENT_ID`, empty by default -- an operator must register a real Desktop
-OAuth client before this works at all), and
+`AURA_GOOGLE_DESKTOP_CLIENT_ID`). A real "Desktop app"-type client was registered 2026-09-10
+(Google Cloud project `aura-ai-anas-gnedy`) and is now the hardcoded default, the same way the
+mobile/web `google_client_id` above it always has been -- an OAuth client id is not a secret, so
+it needs no deploy-time configuration; `aura_client/lib/core/config/config.dart`'s
+`googleDesktopClientId` carries the matching id as its own hardcoded default. And
 `services/security.py::verify_identity_token` now accepts either client's audience rather than a
 single hardcoded one (signature/issuer/expiry checks are unaffected). The resulting real Google
 identity has no device attestation behind it (no desktop equivalent exists, same as the pairing
@@ -308,10 +311,15 @@ configures the executable path themselves, the same disclosed-until-configured s
   `services/security.py`'s own `verify_device_integrity` is untouched by either identity path —
   both pairing and desktop app login are separate, parallel paths through `api/v2/auth.py`'s
   `/desktop/*` endpoints, not a new branch of attestation.
-- **No Desktop OAuth client is actually registered yet.** Unit 7's login is refused until an
-  operator sets `AURA_GOOGLE_DESKTOP_CLIENT_ID` to a real "Desktop app"-type Google OAuth client
-  id — `google_desktop_client_id` ships empty by design (see its doc comment in
-  `aura_backend/config.py`), so this is deployment configuration, not code, still owed.
+
+**Desktop OAuth client registered (2026-09-10).** A real "Desktop app"-type Google OAuth client
+now backs Unit 7's login — `google_desktop_client_id` is hardcoded in `aura_backend/config.py`,
+matching `googleDesktopClientId` hardcoded in `aura_client/lib/core/config/config.dart`, the same
+way the pre-existing mobile/web `google_client_id` has always been hardcoded on both sides. This
+closes the one deployment-configuration gap this ADR previously listed as still owed; what
+remains unproven is that the flow actually runs end to end on a real machine (see "Exit
+criteria" below) — no Dart/Flutter toolchain in this environment has run any of Unit 7's client
+code, only reviewed it.
 
 `dart test` covers path containment (including symlink-escape and `..`-traversal attempts, and
 that containment does not require the target to already exist), the command-policy allowlist

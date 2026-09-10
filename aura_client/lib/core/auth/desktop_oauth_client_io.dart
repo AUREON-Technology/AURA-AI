@@ -17,8 +17,9 @@
 ///    the PKCE `code_verifier` in place of a client secret (a "Desktop app" OAuth client is a
 ///    public client -- there is no secret worth protecting on a machine the user controls).
 ///
-/// Needs a real "Desktop app"-type OAuth client registered in Google Cloud Console, supplied via
-/// `--dart-define=GOOGLE_DESKTOP_CLIENT_ID=...` (`core/config/config.dart`) --see
+/// Needs a real "Desktop app"-type OAuth client registered in Google Cloud Console
+/// (`core/config/config.dart::googleDesktopClientId`, hardcoded there with a
+/// `--dart-define=GOOGLE_DESKTOP_CLIENT_ID=...` override) -- see
 /// `aura_backend/config.py::google_desktop_client_id`'s doc comment for why it can't be the same
 /// client id as the existing mobile/web login path.
 library;
