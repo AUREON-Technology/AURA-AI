@@ -520,9 +520,10 @@ not Ollama-plus-echo — **done**, with a permanent opt-in test reproducing the 
 ### Phase J — Desktop Engineer agent
 
 **Started, 2026-09-08. Backend bridge, daemon core, output streaming, pairing auth (daemon and
-app), the app's own desktop login, and a first workspace-management UI (daemon supervision,
-pairing, root grants, file browsing) are done; a real PTY, interactive consent tiers, live
-terminal streaming to a client, and diff review outside of chat are not.**
+app), the app's own desktop login, a first workspace-management UI (daemon supervision,
+pairing, root grants, file browsing), and Linux/Windows desktop build scripts with CI are done;
+a real PTY, interactive consent tiers, live terminal streaming to a client, diff review outside
+of chat, and a bundled `aura_hostd` binary are not.**
 
 This phase did not exist in any prior version of this roadmap — a gap worth naming plainly, since
 the standing rule elsewhere in this document is that undocumented-but-built capability gets
@@ -688,15 +689,36 @@ phase and decision pair ([ADR-013](architecture/013-agent-workspaces.md) /
   starts and stops a process but does not auto-restart it); and a bundled `aura_hostd` binary
   (there is none -- the person configures the path themselves, the same disclosed-until-configured
   shape `google_desktop_client_id` already uses).
+- **J5c. Done — packaging/CI, the remaining piece of Unit 9.** `hostd-ci.yml` has gated every
+  `aura_hostd` change since J3 and `client-ci.yml`'s `analyze-and-test`/`build-android` jobs have
+  gated `aura_client` since before this phase; what was still open was a CI build gate for the
+  Linux desktop target itself and build scripts to produce one outside CI. Added: a `build-linux`
+  job in `client-ci.yml` (installs `ninja-build`/`libgtk-3-dev`, `flutter config
+  --enable-linux-desktop`, then `flutter build linux --release` against a placeholder
+  `BACKEND_URL` -- build-only, unsigned, same pattern `build-android` already uses, so a
+  Linux-only regression is caught in CI instead of only at release time) and
+  `scripts/deploy_client_desktop.sh` (Linux, plus macOS when run on Darwin) /
+  `scripts/deploy_client_desktop.ps1` (Windows), both resolving `BACKEND_URL` from `deploy/.env`
+  through the same `client_backend_url.sh`/`.ps1` helpers `deploy_client.{sh,ps1}` already use,
+  with thin root-level wrappers matching the existing `deploy_client.sh`/`.ps1` pattern.
+  Deliberately out of scope, matching J5b's own disclosed cut: neither script builds or bundles
+  `aura_hostd` -- a person still builds it themselves (`dart compile exe`) and points the client's
+  daemon executable-path setting at the result. No macOS/Windows CI job was added (Linux is the
+  practical desktop target this phase actually targets, and hosted macOS/Windows runners cost
+  meaningfully more per minute than the Linux runner `build-android`/`build-linux` share) -- add
+  one if and when macOS/Windows desktop support is actually claimed. Unverified locally like every
+  other Dart/Flutter change in this phase (no toolchain here); `client-ci.yml`'s new job running
+  green is the real verification.
 
 **Exit criteria (not yet met).** An engineer-capable user can pair a real desktop app and have the
 agent read, edit, and run commands against a real local project, with a path outside every granted
 workspace root refused even in the daemon's most permissive consent mode — the containment half is
 implemented and unit-tested (J3), real auth exists end to end for both the daemon (J4) and the app
-itself (J5a), and the app can now supervise, pair, and grant workspace roots on the daemon without
-touching a terminal (J5b) -- but this is still **not proven** end-to-end: the desktop app's own
+itself (J5a), the app can now supervise, pair, and grant workspace roots on the daemon without
+touching a terminal (J5b), and the Linux desktop build now has its own CI gate and build scripts
+(J5c) -- but this is still **not proven** end-to-end: the desktop app's own
 login has no Google Cloud OAuth client actually registered for it yet
-(`google_desktop_client_id` ships empty), and none of J5b's new code has run anywhere but this
+(`google_desktop_client_id` ships empty), and none of J5b/J5c's new code has run anywhere but this
 environment's read-through review. This environment has no Dart/Flutter toolchain (confirmed:
 `dart`/`flutter` both absent), so per this repo's own testing conventions, no client-side claim
 belongs here until CI has actually run it — that applies to `aura_hostd`'s own test suite
@@ -734,7 +756,7 @@ Phase A, not by an estimate.
 | Live voice duplex | **Scaffolding** — WS session + engine + Flutter `/voice`; not device-proven; load round-trip open | Phase H |
 | Transcript NLP | **Scaffolding** — `aura_core/nlp/` normalize + shallow intent; quality on real ASR unproven | Phase I |
 | Persistent engineer workspaces | **Built, not proven** — Units 1–11 on `main` (`91b6d5c` / #70; panel + dev parity in #72); VPS still `AURA_SANDBOX_ENABLED=false`, no sandbox profile; 10 live checks open | Phase J (workspaces), ADR-013/014 |
-| Desktop Engineer (`aura_hostd`) | **In tree, partial** — Units 1–9 with disclosed cuts; real PTY / live xterm / installers / ToolPolicy→`server_confirmed` open ([ADR-011](architecture/011-desktop-engineer-agent.md)) | Phase J (Desktop) |
+| Desktop Engineer (`aura_hostd`) | **In tree, partial** — Units 1–9 done with disclosed cuts (real PTY / live xterm / restart-on-crash / a bundled `aura_hostd` binary / interactive tiered consent remain open); still unproven end to end — no OAuth client registered, no Dart/Flutter toolchain run anywhere but CI ([ADR-011](architecture/011-desktop-engineer-agent.md)) | Phase J (Desktop) |
 | Multi-model routing | **Proven** against two real, simultaneously-running local models (135M and 3B params) — `FASTEST`/`QUALITY_FIRST`/`BALANCED`/failover all route on real measured behaviour; `CHEAPEST` ties (both cost `$0`) | Phase G2, `tests/load/test_multi_model_routing.py` |
 | Restore verified | **Yes for all three stores** — Postgres, Qdrant and Redis each restored from the `backup` service's own output ([A2 report](reports/phase-a2-restore-drill.md)); offsite copy and `restore.sh` still unexercised | Phase A2 |
 | Production deployments | **1 and counting** — the real VPS, 17 services, verified live over HTTPS on 2026-08-23 | Phase A1 |

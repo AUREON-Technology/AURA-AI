@@ -7,6 +7,7 @@ root (`deploy_client.sh`, `deploy_client.ps1`, etc.).
 | Script | Purpose |
 | --- | --- |
 | `deploy_client.sh` / `.ps1` | Production Flutter build with `BACKEND_URL` from `deploy/.env` |
+| `deploy_client_desktop.sh` / `.ps1` | Desktop Flutter build (Linux/macOS via `.sh`, Windows via `.ps1`) with the same `BACKEND_URL` resolution; does not build or bundle `aura_hostd` |
 | `run_client_device.ps1` | Physical Android debug run against production HTTPS |
 | `deploy_rules.ps1` | Deploy Firebase rules from `firebase/` |
 | `init_infra.ps1` | Legacy GCP/Firebase bootstrap (historical) |
