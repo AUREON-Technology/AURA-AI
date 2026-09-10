@@ -102,11 +102,14 @@ jobs:
           channel: stable
 
       # Flutter's Linux desktop embedder needs GTK 3 and a native build toolchain that
-      # ubuntu-latest doesn't ship by default.
+      # ubuntu-latest doesn't ship by default. libgstreamer1.0-dev/libgstreamer-plugins-base1.0-dev
+      # are not Flutter's own requirement -- they're pulled in by the audioplayers_linux plugin's
+      # CMakeLists.txt (`pkg_check_modules(... gstreamer-1.0 ...)`), which fails the CMake
+      # configure step without them (confirmed by this job's first real run).
       - name: Install Linux desktop build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libgtk-3-dev
+          sudo apt-get install -y ninja-build libgtk-3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
       - name: Enable Linux desktop support
         run: flutter config --enable-linux-desktop
