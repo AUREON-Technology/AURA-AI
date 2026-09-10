@@ -1,6 +1,6 @@
 # ADR-011 — The desktop Engineer agent executes on the user's own machine, not a server sandbox
 
-**Status:** Partially implemented (backend bridge + daemon core + output streaming + desktop pairing auth for both the daemon and the app itself + a first workspace-management UI; interactive consent tiers, live terminal streaming to a client, and diff review outside of chat are not built — see "Implementation status") · **Date:** 2026-09-08
+**Status:** Partially implemented (backend bridge + daemon core + output streaming + desktop pairing auth for both the daemon and the app itself + a first workspace-management UI + Linux/Windows desktop build scripts and CI; interactive consent tiers, live terminal streaming to a client, and diff review outside of chat are not built — see "Implementation status") · **Date:** 2026-09-08
 
 ## Context
 
@@ -336,5 +336,22 @@ conventions for Dart/Flutter changes written without a local toolchain. The back
 different: this environment does have a working `pytest`, so every backend claim above (the new
 port, the session/runner/composite streaming behavior, `run_command`'s streaming path and its
 truncation) was actually run, not asserted — see the previous section.
+
+**Packaging and CI (Unit 9).** `hostd-ci.yml` (Dart analyze + test) has gated every `aura_hostd`
+change since Unit 3, and `client-ci.yml`'s `analyze-and-test`/`build-android` jobs have gated
+`aura_client` since before this ADR. What Unit 9 adds: a `build-linux` job in `client-ci.yml`
+(build-only, same unsigned/no-packaging-step pattern `build-android` already uses) so a
+Linux-desktop-only regression — a plugin with no Linux implementation, a missing native
+dependency — is caught in CI instead of only at release time, plus
+`scripts/deploy_client_desktop.sh` (Linux, and macOS when run on Darwin) and
+`scripts/deploy_client_desktop.ps1` (Windows) alongside the existing `deploy_client.{sh,ps1}`,
+resolving `BACKEND_URL` the same way. Deliberately out of scope, consistent with Unit 8's own
+disclosed cut: neither script builds, packages, or bundles `aura_hostd` — a person still builds
+it themselves (`dart compile exe`) and configures the resulting binary's path in the client, the
+same shape `google_desktop_client_id` already uses on the backend. macOS and Windows CI jobs
+(equivalent to `build-linux`) are not added — Linux is the practical desktop target named
+throughout this ADR, and GitHub-hosted macOS/Windows runners cost meaningfully more per minute
+than the Linux runner `build-android`/`build-linux` already use, which is not a cost this unit's
+scope obviously earns; add them if and when macOS/Windows desktop support is actually claimed.
 
 See `docs/AURA_UPGRADE_ROADMAP.md` for the up-to-date status of what is and is not built.
