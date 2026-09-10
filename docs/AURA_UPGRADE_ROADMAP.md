@@ -520,8 +520,9 @@ not Ollama-plus-echo — **done**, with a permanent opt-in test reproducing the 
 ### Phase J — Desktop Engineer agent
 
 **Started, 2026-09-08. Backend bridge, daemon core, output streaming, pairing auth (daemon and
-app), and the app's own desktop login are done; a real PTY, interactive consent, and the
-workspace UI are not.**
+app), the app's own desktop login, and a first workspace-management UI (daemon supervision,
+pairing, root grants, file browsing) are done; a real PTY, interactive consent tiers, live
+terminal streaming to a client, and diff review outside of chat are not.**
 
 This phase did not exist in any prior version of this roadmap — a gap worth naming plainly, since
 the standing rule elsewhere in this document is that undocumented-but-built capability gets
@@ -649,24 +650,57 @@ phase and decision pair ([ADR-013](architecture/013-agent-workspaces.md) /
   and a platform-gated login button (`core/auth/platform_login_support.dart`, following
   `chat_header_overflow_menu.dart::chatHeaderShowsLiveVoice`'s existing precedent for this kind of
   allowlist) complete the flow. 12 new client tests, unverified locally — no Dart/Flutter
-  toolchain here, Client CI is the real check per this repo's conventions. **Still missing:** the
-  workspace picker, file tree, diff review, live terminal panel, and supervising `aura_hostd`
-  itself (spawn/monitor/restart the daemon process) -- reusing the engineering screens and chat
-  widgets (`engineer_confirmation_card`, `sandbox_diff_view`, `sandbox_terminal_view`) that
-  already exist for the server-side sandbox.
-- **J5b. Not started.** The workspace UI described above.
+  toolchain here, Client CI is the real check per this repo's conventions.
+- **J5b. Done, with the interactive-diff/live-terminal parts still deferred.** `aura_hostd` had no
+  local surface for a UI to query -- only the outbound WebSocket to the backend and its own CLI --
+  so this unit added one: `control_server.dart` (new) binds a loopback-only HTTP server (ephemeral
+  port + a random per-run token written to `control.json` in the daemon's config dir) exposing
+  `GET /status`, `GET`/`POST /roots` (grant/revoke/trust, the same `WorkspaceStore` the CLI uses),
+  `GET /list` and `GET /read` (containment-checked exactly like every other filesystem RPC in this
+  daemon -- `WorkspaceRoots.requireContained`, no separate path-handling logic that could bypass
+  it), and a two-phase `/pair/start` + `/pair/status` pairing flow. The two-phase split (rather
+  than one blocking `/pair` call) exists because a UI in a *different process* needs the code back
+  *before* approval happens, not after -- `pairing_client.dart` was refactored to expose
+  `startPairing`/`pollPairingOnce` as separate functions for this, with `pairWithCode` (still what
+  the CLI uses) now a thin wrapper composing both, unchanged in behavior. `bin/aura_hostd.dart`'s
+  `run` command now starts the control server immediately and connects to the backend once
+  authenticated -- either already, or later via `/pair/status` reporting approved, without needing
+  a restart. On the client: `core/hostd/` (new) -- `HostdControlClient` (HTTP client for the
+  control server), `HostdSupervisor` (the first process-supervision code in this app;
+  `Process.start`s `aura_hostd run`, captures its stdout/stderr, no existing precedent to follow),
+  and Riverpod wiring (`hostd_providers.dart`) including a polled status snapshot and a capped log
+  buffer. `HostDaemonPage` (new, reachable from the Engineer history screen) ties it together:
+  start/stop, pairing (shows the code in a dialog while polling), root grant/revoke/trust (labeled
+  honestly -- "trusted" is the real mechanism that exists today, not a fabricated "YOLO" toggle
+  with nothing behind it), and a read-only file browser (`HostFileBrowserPage`, new) reusing
+  `SandboxFileView` rather than duplicating it. Both new local-only files
+  (`hostd_config_paths.dart`, `hostd_control_client.dart`, `hostd_supervisor.dart`) sit behind the
+  `dart.library.ffi` conditional-export pattern `desktop_oauth_client.dart` (Unit 7) already
+  established, so the web build never pulls in `dart:io`. 18 new daemon-side tests
+  (`control_server_test.dart` plus additions to `pairing_client_test.dart`), unverified locally --
+  no Dart toolchain here, `hostd-ci.yml` is the real check. 8 new client-side tests
+  (`hostd_control_client_io_test.dart`, `hostd_providers_test.dart`), same caveat, Client CI is the
+  real check. **Deliberately deferred, and disclosed rather than faked:** interactive diff review
+  of a *pending* agent change (already covered where it matters -- chat's
+  `engineer_confirmation_card` + `SandboxDiffView`, before a write lands) and a real live-streaming
+  terminal panel (the daemon-to-backend streaming Unit 4 built has no client consumer yet, and
+  wasn't the target here); process-supervision restart-on-crash logic (this unit's `HostdSupervisor`
+  starts and stops a process but does not auto-restart it); and a bundled `aura_hostd` binary
+  (there is none -- the person configures the path themselves, the same disclosed-until-configured
+  shape `google_desktop_client_id` already uses).
 
 **Exit criteria (not yet met).** An engineer-capable user can pair a real desktop app and have the
 agent read, edit, and run commands against a real local project, with a path outside every granted
 workspace root refused even in the daemon's most permissive consent mode — the containment half is
-implemented and unit-tested (J3), and real auth now exists end to end for both the daemon (J4: a
-person can run `aura_hostd auth pair`) and the app itself (J5a: real Google login via loopback
-OAuth) -- but this is still **not proven** end-to-end without J5b's workspace UI, since nothing
-today drives `aura_hostd` other than its own CLI, and the desktop app's own login has no Google
-Cloud OAuth client actually registered for it yet (`google_desktop_client_id` ships empty). This
-environment has no Dart/Flutter toolchain (confirmed: `dart`/`flutter` both absent), so per this
-repo's own testing conventions, no client-side claim belongs here until CI has actually run it —
-that applies to `aura_hostd`'s own test suite (`hostd-ci.yml`) exactly as much as it does to
+implemented and unit-tested (J3), real auth exists end to end for both the daemon (J4) and the app
+itself (J5a), and the app can now supervise, pair, and grant workspace roots on the daemon without
+touching a terminal (J5b) -- but this is still **not proven** end-to-end: the desktop app's own
+login has no Google Cloud OAuth client actually registered for it yet
+(`google_desktop_client_id` ships empty), and none of J5b's new code has run anywhere but this
+environment's read-through review. This environment has no Dart/Flutter toolchain (confirmed:
+`dart`/`flutter` both absent), so per this repo's own testing conventions, no client-side claim
+belongs here until CI has actually run it — that applies to `aura_hostd`'s own test suite
+(`hostd-ci.yml`) exactly as much as it does to
 `aura_client`'s.
 
 ## 4. Scope decisions

@@ -1,6 +1,6 @@
 # ADR-011 — The desktop Engineer agent executes on the user's own machine, not a server sandbox
 
-**Status:** Partially implemented (backend bridge + daemon core + output streaming + desktop pairing auth for both the daemon and the app itself; the workspace UI is not built — see "Implementation status") · **Date:** 2026-09-08
+**Status:** Partially implemented (backend bridge + daemon core + output streaming + desktop pairing auth for both the daemon and the app itself + a first workspace-management UI; interactive consent tiers, live terminal streaming to a client, and diff review outside of chat are not built — see "Implementation status") · **Date:** 2026-09-08
 
 ## Context
 
@@ -234,6 +234,53 @@ unconfirmed locally (12 new tests across `desktop_oauth_client_io_test.dart`,
 `platform_login_support_test.dart`, and additions to `token_manager_test.dart`) -- no Dart/Flutter
 toolchain in this environment, Client CI is the real check.
 
+**Desktop workspace management UI (Unit 8).** `aura_hostd` had no local surface for a UI to
+query -- only its CLI and the outbound WebSocket to the backend -- so this unit adds one:
+`aura_hostd/lib/src/control_server.dart` binds a loopback-only HTTP server on an ephemeral port,
+writes `{port, token}` (a random per-run secret) to `control.json` in the daemon's config dir so
+a same-machine process can find it, and exposes `GET /status`, `GET`/`POST /roots`
+(grant/revoke/trust, through the exact `WorkspaceStore` the CLI already uses), `GET /list` and
+`GET /read` (a read-only file browser, containment-checked via `WorkspaceRoots.requireContained`
+exactly like every other filesystem RPC in this daemon -- no separate path-handling logic that
+could bypass it), and a two-phase `POST /pair/start` + `GET /pair/status` pairing flow. The split
+into two calls (rather than one call that blocks until approved, which is what `pairing_client
+.dart` originally offered) exists because a UI in a *different process* needs the code back
+*before* approval happens, not after; `pairing_client.dart` was refactored to expose
+`startPairing`/`pollPairingOnce` as separate functions for this, with `pairWithCode` (still what
+the CLI's own `auth pair` uses) now a thin wrapper composing both, behavior unchanged.
+`bin/aura_hostd.dart`'s `run` command starts the control server immediately, whether or not a
+token exists yet, and connects to the backend once one does -- either already, or later via
+`/pair/status` reporting approved -- without needing `run` restarted.
+
+On the client, `aura_client/lib/core/hostd/` (new) adds `HostdControlClient` (the HTTP client for
+the endpoints above), `HostdSupervisor` (`Process.start`s `aura_hostd run` and captures its
+stdout/stderr -- the first process-supervision code in this app; there was no existing precedent
+to follow), and Riverpod wiring including a polled status snapshot and a capped in-memory log
+buffer. `HostDaemonPage` (new, reachable via a new toolbar action on the existing Engineer
+history screen) ties these together: start/stop, pairing (shows the code in a dialog while
+polling `/pair/status`), root grant/revoke/trust, and a link into `HostFileBrowserPage` (new) --
+a read-only file browser reusing the existing `SandboxFileView` chat widget rather than
+duplicating it. The root-trust toggle is labeled for what it actually does ("trusted -- commands
+run without per-call confirmation, still confined to this folder"), not as a "YOLO" mode: Unit
+5's daemon-side consent tiers were never built, so there is no separate runtime mode a "YOLO"
+label would honestly describe yet, only the coarser trusted/untrusted split that already exists.
+The three new `dart:io`-touching client files sit behind the same `dart.library.ffi`
+conditional-export pattern `core/auth/desktop_oauth_client.dart` (Unit 7) established, so the web
+build never pulls in `dart:io`. 18 new daemon-side tests (`control_server_test.dart` plus
+additions to `pairing_client_test.dart`) and 8 new client-side tests
+(`hostd_control_client_io_test.dart`, `hostd_providers_test.dart`) -- both unverified locally, no
+Dart/Flutter toolchain here, `hostd-ci.yml`/Client CI are the real checks.
+
+**Deliberately deferred, not fabricated:** interactive diff review of a *pending* agent change
+(already covered where it matters most -- chat's `engineer_confirmation_card` +
+`SandboxDiffView`, before a write ever lands -- so this unit's file browser only shows current
+on-disk state, not a diff); a real live-streaming terminal panel in the client (Unit 4's
+daemon-to-backend streaming still has no client consumer, and building one wasn't this unit's
+target); restart-on-crash logic in `HostdSupervisor` (it starts and stops a process, but does not
+watch for and recover from a crash); and a bundled `aura_hostd` binary (there is none -- a person
+configures the executable path themselves, the same disclosed-until-configured shape
+`google_desktop_client_id` already uses on the backend).
+
 **What's still not built:**
 
 - **Interactive tiered consent.** There is no UI yet to prompt a human per call, so the daemon
@@ -250,15 +297,17 @@ toolchain in this environment, Client CI is the real check.
   that argv directly; a Windows machine without a POSIX-compatible shell on `PATH` (no WSL/Git
   Bash) cannot run commands via this path yet. Filesystem operations and workspace grants are
   unaffected — this only blocks `run_command`.
-- **The Flutter desktop workspace UI** that supervises the daemon (workspace picker, diff
-  review, live terminal) — nothing yet drives `aura_hostd` other than its own CLI, including
-  pairing: a person has to run `aura_hostd auth pair` from a terminal and enter the printed code
-  somewhere that can call `POST /api/v3/auth/desktop/pair/approve` (today, only a raw
-  authenticated API call — there is no screen in the app for that specific step, even though the
-  app itself can now log a person in, per Unit 7 above). `services/security.py`'s own
-  `verify_device_integrity` is untouched by either identity path — both pairing and desktop app
-  login are separate, parallel paths through `api/v2/auth.py`'s `/desktop/*` endpoints, not a new
-  branch of attestation.
+- **Live terminal streaming and interactive diff review in the client.** `HostDaemonPage` (Unit
+  8) covers daemon supervision, pairing, and root management, but the daemon-to-backend output
+  streaming Unit 4 built still has no client that renders it incrementally, and reviewing what
+  the agent is *about to* change stays a chat-time flow (`engineer_confirmation_card`), not
+  something this screen does. Approving a pairing code (`POST /api/v3/auth/desktop/pair/approve`)
+  still means a raw authenticated API call from *some* already-signed-in client — there is no
+  screen anywhere yet for that specific step, on either the daemon's pairing flow or (not
+  applicable there, since the app authenticates itself directly) Unit 7's own login.
+  `services/security.py`'s own `verify_device_integrity` is untouched by either identity path —
+  both pairing and desktop app login are separate, parallel paths through `api/v2/auth.py`'s
+  `/desktop/*` endpoints, not a new branch of attestation.
 - **No Desktop OAuth client is actually registered yet.** Unit 7's login is refused until an
   operator sets `AURA_GOOGLE_DESKTOP_CLIENT_ID` to a real "Desktop app"-type Google OAuth client
   id — `google_desktop_client_id` ships empty by design (see its doc comment in
@@ -274,7 +323,13 @@ WebSocket wire protocol end-to-end against a local in-process server, including 
 `stream` frames arriving before its terminal `result`, and (`pairing_client_test.dart`) the
 `auth pair` flow against a local fake HTTP server: the happy path (one pending poll, then
 approved), a session that expires before approval, a poll that reports `"expired"`, and a
-non-2xx response from `/pair/start`. This environment had no Dart toolchain to
+non-2xx response from `/pair/start` -- plus, now, `startPairing`/`pollPairingOnce` directly.
+`control_server_test.dart` (Unit 8) covers the control server end-to-end over real HTTP:
+token enforcement on every endpoint but `/status`, grant/trust/revoke round-tripping through the
+same `WorkspaceStore` the CLI uses (including the denylist refusal), `/list`/`/read` containment
+(inside a root succeeds, a `../` escape is refused with 403, an ungranted root 404s), and the
+two-phase pairing endpoints reporting pending then approved and calling the daemon's
+`onPaired` callback. This environment had no Dart toolchain to
 actually run `dart pub get`/`dart test`/`dart analyze` itself (confirmed: `dart`/`flutter` both
 absent) — `.github/workflows/hostd-ci.yml` is the real verification, per this repo's own
 conventions for Dart/Flutter changes written without a local toolchain. The backend half is

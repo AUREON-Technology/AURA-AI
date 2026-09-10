@@ -11,12 +11,19 @@
 ///   aura_hostd untrust &lt;path&gt;
 ///   aura_hostd roots
 ///   aura_hostd run                      # start the daemon (connects and serves until killed)
+///
+/// `run` also starts a loopback-only local control server (`lib/src/control_server.dart`, Unit 8)
+/// so a UI on the same machine -- `aura_client`'s desktop Engineer workspace screen -- can
+/// supervise this daemon and browse granted workspaces without shelling out to this CLI and
+/// scraping stdout.
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/containment.dart';
+import 'package:aura_hostd/src/control_server.dart';
 import 'package:aura_hostd/src/pairing_client.dart';
 import 'package:aura_hostd/src/rpc_client.dart';
 import 'package:aura_hostd/src/task_handler.dart';
@@ -135,12 +142,35 @@ Future<void> _pair(ConfigStore configStore, String backendUrl) async {
   }
 }
 
-Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) async {
-  final config = configStore.load();
-  if (config.authToken == null || config.authToken!.isEmpty) {
-    stderr.writeln('No auth token configured. Run `aura_hostd auth set-token <token>` first.');
-    exit(1);
+/// Starts the backend WebSocket connection (`HostAgentClient`) if not already running -- shared
+/// by the "already paired at startup" and "paired later via the control server" paths below, so
+/// pairing does not require restarting `run`.
+class _BackendConnection {
+  _BackendConnection(this.configStore, this.workspaceStore);
+
+  final ConfigStore configStore;
+  final WorkspaceStore workspaceStore;
+  HostAgentClient? _client;
+
+  void startIfAuthenticated() {
+    if (_client != null) return;
+    final config = configStore.load();
+    if (config.authToken == null || config.authToken!.isEmpty) return;
+    final handler = TaskHandler(workspaceStore.load());
+    final client = HostAgentClient(
+      wsUrl: config.hostAgentWsUrl,
+      authToken: config.authToken!,
+      taskHandler: handler,
+    );
+    _client = client;
+    stdout.writeln('Connecting to ${config.backendUrl} ...');
+    unawaited(client.run());
   }
+
+  void stop() => _client?.stop();
+}
+
+Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) async {
   final roots = workspaceStore.load();
   if (roots.all.isEmpty) {
     stdout.writeln(
@@ -149,19 +179,32 @@ Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) 
     );
   }
 
-  final handler = TaskHandler(roots);
-  final client = HostAgentClient(
-    wsUrl: config.hostAgentWsUrl,
-    authToken: config.authToken!,
-    taskHandler: handler,
+  final backend = _BackendConnection(configStore, workspaceStore);
+  final controlServer = ControlServer(
+    workspaceStore: workspaceStore,
+    configStore: configStore,
+    // A UI driving `/pair/start` + `/pair/status` (Unit 8, control_server.dart) pairs this
+    // daemon without ever needing `run` restarted -- the control server exists before any token
+    // does precisely so that path works.
+    onPaired: (_) => backend.startIfAuthenticated(),
   );
+  await controlServer.start(resolveConfigDir());
+
+  backend.startIfAuthenticated();
+  if (configStore.load().authToken == null) {
+    stdout.writeln(
+      'No auth token configured yet -- run `aura_hostd auth pair`, or pair from the AURA app, '
+      'to connect to the backend. The control server is up in the meantime.',
+    );
+  }
 
   var shuttingDown = false;
   Future<void> shutdown() async {
     if (shuttingDown) return;
     shuttingDown = true;
     stdout.writeln('Shutting down...');
-    client.stop();
+    backend.stop();
+    await controlServer.stop();
     exit(0);
   }
 
@@ -170,7 +213,9 @@ Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) 
     ProcessSignal.sigterm.watch().listen((_) => shutdown());
   }
 
-  await client.run();
+  // Keep the process alive -- the actual work happens in the control server's request handler
+  // and (once connected) HostAgentClient.run()'s own loop; this just prevents main() returning.
+  await Completer<void>().future;
 }
 
 void _requireArgs(List<String> args, int minLength, String usage) {

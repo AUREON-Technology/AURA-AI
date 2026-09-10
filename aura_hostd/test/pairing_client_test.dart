@@ -134,4 +134,43 @@ void main() {
       throwsA(isA<PairingFailedError>()),
     );
   });
+
+  group('startPairing / pollPairingOnce (the split control_server.dart uses)', () {
+    test('startPairing returns the session without polling', () async {
+      server.on('/api/v3/auth/desktop/pair/start', (body) async => {
+            'pairing_id': 'pid-4',
+            'user_code': 'EFGH-4321',
+            'expires_in': 60,
+            'interval': 3,
+          });
+
+      final session = await startPairing(server.backendUrl);
+
+      expect(session.pairingId, 'pid-4');
+      expect(session.userCode, 'EFGH-4321');
+      expect(session.expiresIn, 60);
+      expect(session.intervalS, 3);
+      expect(server.requestedPaths, isNot(contains('/api/v3/auth/desktop/pair/poll')));
+    });
+
+    test('pollPairingOnce reports pending, approved, and gone as distinct outcomes', () async {
+      final session = PairingSession(pairingId: 'pid-5', userCode: 'X', expiresIn: 60, intervalS: 0);
+      var response = <String, Object?>{'status': 'pending'};
+      server.on('/api/v3/auth/desktop/pair/poll', (body) async {
+        expect(body['pairing_id'], 'pid-5');
+        return response;
+      });
+
+      expect(await pollPairingOnce(server.backendUrl, session), isA<PairingPending>());
+
+      response = {'status': 'approved', 'access_token': 'tok-xyz', 'device_id': 'dev-9'};
+      final approved = await pollPairingOnce(server.backendUrl, session);
+      expect(approved, isA<PairingApproved>());
+      expect((approved as PairingApproved).result.accessToken, 'tok-xyz');
+      expect(approved.result.deviceId, 'dev-9');
+
+      response = {'status': 'expired'};
+      expect(await pollPairingOnce(server.backendUrl, session), isA<PairingGone>());
+    });
+  });
 }
