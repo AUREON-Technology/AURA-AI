@@ -635,8 +635,12 @@ phase and decision pair ([ADR-013](architecture/013-agent-workspaces.md) /
   the loopback-IP redirect URI this flow requires to "Desktop app"-type clients, and the existing
   `google_client_id` is a "Web application"-type client used for mobile/web) --
   `aura_backend/config.py` gained `google_desktop_client_id` (env
-  `AURA_GOOGLE_DESKTOP_CLIENT_ID`, empty by default: desktop login stays refused until an
-  operator registers one), and `services/security.py::verify_identity_token` now accepts either
+  `AURA_GOOGLE_DESKTOP_CLIENT_ID`). A real "Desktop app"-type client was registered 2026-09-10
+  (Google Cloud project `aura-ai-anas-gnedy`) and is now hardcoded as its default, the same way
+  the mobile/web `google_client_id` above it always has been -- an OAuth client id is not a
+  secret, so this needs no deploy-time configuration; `aura_client/lib/core/config/config.dart`'s
+  `googleDesktopClientId` carries the matching id as its own hardcoded default, and
+  `services/security.py::verify_identity_token` now accepts either
   client's audience rather than a single hardcoded one. The resulting real-but-unattested Google
   identity is exchanged via the new `POST /api/v3/auth/desktop/login` for the same kind of
   narrower, revocable device-scoped token J4's pairing issues (not a full session pair, and not
@@ -716,10 +720,10 @@ workspace root refused even in the daemon's most permissive consent mode — the
 implemented and unit-tested (J3), real auth exists end to end for both the daemon (J4) and the app
 itself (J5a), the app can now supervise, pair, and grant workspace roots on the daemon without
 touching a terminal (J5b), and the Linux desktop build now has its own CI gate and build scripts
-(J5c) -- but this is still **not proven** end-to-end: the desktop app's own
-login has no Google Cloud OAuth client actually registered for it yet
-(`google_desktop_client_id` ships empty), and none of J5b/J5c's new code has run anywhere but this
-environment's read-through review. This environment has no Dart/Flutter toolchain (confirmed:
+(J5c), and the desktop app's own login now has a real Google Cloud OAuth client registered and
+hardcoded (2026-09-10) -- but this is still **not proven** end-to-end: none of J5a/J5b/J5c's new
+code has run anywhere but this environment's read-through review, including the login flow
+against the now-real client. This environment has no Dart/Flutter toolchain (confirmed:
 `dart`/`flutter` both absent), so per this repo's own testing conventions, no client-side claim
 belongs here until CI has actually run it — that applies to `aura_hostd`'s own test suite
 (`hostd-ci.yml`) exactly as much as it does to
@@ -756,7 +760,7 @@ Phase A, not by an estimate.
 | Live voice duplex | **Scaffolding** — WS session + engine + Flutter `/voice`; not device-proven; load round-trip open | Phase H |
 | Transcript NLP | **Scaffolding** — `aura_core/nlp/` normalize + shallow intent; quality on real ASR unproven | Phase I |
 | Persistent engineer workspaces | **Built, not proven** — Units 1–11 on `main` (`91b6d5c` / #70; panel + dev parity in #72); VPS still `AURA_SANDBOX_ENABLED=false`, no sandbox profile; 10 live checks open | Phase J (workspaces), ADR-013/014 |
-| Desktop Engineer (`aura_hostd`) | **In tree, partial** — Units 1–9 done with disclosed cuts (real PTY / live xterm / restart-on-crash / a bundled `aura_hostd` binary / interactive tiered consent remain open); still unproven end to end — no OAuth client registered, no Dart/Flutter toolchain run anywhere but CI ([ADR-011](architecture/011-desktop-engineer-agent.md)) | Phase J (Desktop) |
+| Desktop Engineer (`aura_hostd`) | **In tree, partial** — Units 1–9 done with disclosed cuts (real PTY / live xterm / restart-on-crash / a bundled `aura_hostd` binary / interactive tiered consent remain open); Desktop OAuth client now registered (2026-09-10); still unproven end to end — no Dart/Flutter toolchain run anywhere but CI ([ADR-011](architecture/011-desktop-engineer-agent.md)) | Phase J (Desktop) |
 | Multi-model routing | **Proven** against two real, simultaneously-running local models (135M and 3B params) — `FASTEST`/`QUALITY_FIRST`/`BALANCED`/failover all route on real measured behaviour; `CHEAPEST` ties (both cost `$0`) | Phase G2, `tests/load/test_multi_model_routing.py` |
 | Restore verified | **Yes for all three stores** — Postgres, Qdrant and Redis each restored from the `backup` service's own output ([A2 report](reports/phase-a2-restore-drill.md)); offsite copy and `restore.sh` still unexercised | Phase A2 |
 | Production deployments | **1 and counting** — the real VPS, 17 services, verified live over HTTPS on 2026-08-23 | Phase A1 |

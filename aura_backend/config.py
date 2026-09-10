@@ -81,11 +81,14 @@ class Settings(BaseSettings):
     # aura_client/lib/core/auth/desktop_oauth_client.dart) needs to Desktop-type clients only, so
     # the same client id can't be reused for that authorization step -- but the resulting ID
     # token is still verified here (services/security.py::verify_identity_token accepts either
-    # audience). Empty by default: desktop login is refused with a clear error until an operator
-    # registers a real Desktop OAuth client and sets AURA_GOOGLE_DESKTOP_CLIENT_ID, the same
-    # disclosed-until-configured pattern apple_team_id/ios_bundle_id already use above.
+    # audience). Registered 2026-09-10 (Google Cloud project aura-ai-anas-gnedy) and hardcoded
+    # here the same way google_client_id above is -- an OAuth client id is not a secret, it's a
+    # public identifier embedded in the app itself; only the id is needed here, since
+    # verify_identity_token checks it as an audience, not a credential, and this desktop client's
+    # own token exchange (desktop_oauth_client_io.dart) uses PKCE, never a client secret. Still
+    # overridable via AURA_GOOGLE_DESKTOP_CLIENT_ID for a deployment that registers its own.
     google_desktop_client_id: str = Field(
-        default="",
+        default="87789110323-pprobmjkf4f16rem4kacr2nqgi9ql1i0.apps.googleusercontent.com",
         validation_alias=AliasChoices("GOOGLE_DESKTOP_CLIENT_ID", "AURA_GOOGLE_DESKTOP_CLIENT_ID"),
     )
     # Must match aura_client/android/app/build.gradle.kts `applicationId`.
