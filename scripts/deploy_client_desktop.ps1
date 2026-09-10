@@ -6,6 +6,12 @@
 # docs/architecture/011-desktop-engineer-agent.md) -- is not bundled: a person still configures
 # its executable path themselves, so this script does not attempt to build or embed it.
 #
+# Also resolves GOOGLE_DESKTOP_CLIENT_SECRET from deploy/.env (or the environment) and injects
+# it via --dart-define, the one piece of desktop login (ADR-011 Unit 7) that must NEVER be
+# hardcoded in source -- deploy/.env itself is untracked (same as AURA_DOMAIN/BACKEND_URL), so
+# this is the only place it should ever live on disk. Missing it is not a hard build failure:
+# the build still succeeds, desktop login just refuses with a clear error until it's set.
+#
 # Linux/macOS desktop are built by deploy_client_desktop.sh instead -- Flutter does not
 # cross-compile the Windows desktop build from a non-Windows host.
 
@@ -30,9 +36,20 @@ function Invoke-Flutter {
 $BACKEND_URL = Get-AuraClientBackendUrl -EnvFile $EnvFile
 Assert-AuraReleaseBackendUrl -Url $BACKEND_URL
 
+$GoogleDesktopClientSecret = $env:GOOGLE_DESKTOP_CLIENT_SECRET
+if (-not $GoogleDesktopClientSecret) {
+  $GoogleDesktopClientSecret = Read-AuraEnvKey -Key "GOOGLE_DESKTOP_CLIENT_SECRET" -EnvFile $EnvFile
+}
+
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "Building AURA AI Client for Desktop (Windows)" -ForegroundColor Cyan
 Write-Host "   Target Backend: $BACKEND_URL" -ForegroundColor Cyan
+if (-not $GoogleDesktopClientSecret) {
+  Write-Host "   WARNING: GOOGLE_DESKTOP_CLIENT_SECRET is not set (deploy/.env or environment) --" -ForegroundColor Yellow
+  Write-Host "            this build's desktop login will refuse with a clear error until it is." -ForegroundColor Yellow
+} else {
+  Write-Host "   Desktop OAuth client secret: configured" -ForegroundColor Cyan
+}
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "Before shipping, confirm TLS matches this hostname:" -ForegroundColor Yellow
 Write-Host "   bash deploy/scripts/verify-client-hostname.sh" -ForegroundColor Yellow
@@ -49,11 +66,13 @@ Invoke-Flutter -FlutterArgs @("pub", "get")
 Write-Host "Enabling Windows desktop support (no-op if already enabled)..." -ForegroundColor Yellow
 Invoke-Flutter -FlutterArgs @("config", "--enable-windows-desktop")
 
+$DartDefines = @("--dart-define=BACKEND_URL=$BACKEND_URL")
+if ($GoogleDesktopClientSecret) {
+  $DartDefines += "--dart-define=GOOGLE_DESKTOP_CLIENT_SECRET=$GoogleDesktopClientSecret"
+}
+
 Write-Host "Building production Windows desktop bundle..." -ForegroundColor Yellow
-Invoke-Flutter -FlutterArgs @(
-  "build", "windows", "--release",
-  "--dart-define=BACKEND_URL=$BACKEND_URL"
-)
+Invoke-Flutter -FlutterArgs (@("build", "windows", "--release") + $DartDefines)
 
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host "Desktop build generated." -ForegroundColor Green
