@@ -40,11 +40,17 @@ flutter clean
 echo "Resolving dependencies..."
 flutter pub get
 
+echo "Enabling Linux desktop support (no-op if already enabled)..."
+flutter config --enable-linux-desktop
+
 echo "Building production Linux desktop bundle..."
 flutter build linux --release \
   --dart-define=BACKEND_URL="$BACKEND_URL"
 
 if [ "$(uname)" == "Darwin" ]; then
+  echo "Enabling macOS desktop support (no-op if already enabled)..."
+  flutter config --enable-macos-desktop
+
   echo "Building production macOS desktop bundle..."
   flutter build macos --release \
     --dart-define=BACKEND_URL="$BACKEND_URL"

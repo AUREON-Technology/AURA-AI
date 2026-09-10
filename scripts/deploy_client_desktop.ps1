@@ -46,6 +46,9 @@ Invoke-Flutter -FlutterArgs @("clean")
 Write-Host "Resolving dependencies..." -ForegroundColor Yellow
 Invoke-Flutter -FlutterArgs @("pub", "get")
 
+Write-Host "Enabling Windows desktop support (no-op if already enabled)..." -ForegroundColor Yellow
+Invoke-Flutter -FlutterArgs @("config", "--enable-windows-desktop")
+
 Write-Host "Building production Windows desktop bundle..." -ForegroundColor Yellow
 Invoke-Flutter -FlutterArgs @(
   "build", "windows", "--release",
