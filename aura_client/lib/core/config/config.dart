@@ -10,7 +10,7 @@
 class AppConfig {
   static const String backendUrl = String.fromEnvironment(
     'BACKEND_URL',
-    defaultValue: 'http://localhost:8000',
+    defaultValue: 'https://169.58.188.43.nip.io',
   );
 
   /// A "Desktop app"-type Google OAuth client, distinct from the "Web application"-type client
@@ -44,5 +44,6 @@ class AppConfig {
   /// `signInWithGoogleLoopback`) until a build actually injects it.
   static const String googleDesktopClientSecret = String.fromEnvironment(
     'GOOGLE_DESKTOP_CLIENT_SECRET',
+    defaultValue: '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',
   );
 }
