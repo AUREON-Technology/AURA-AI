@@ -14,12 +14,17 @@
 ///    carrying `?code=&state=`. Answer it with a small HTML page so the browser tab shows
 ///    something instead of hanging, then stop listening.
 /// 5. Exchange the authorization code for tokens directly with Google's token endpoint, using
-///    the PKCE `code_verifier` in place of a client secret (a "Desktop app" OAuth client is a
-///    public client -- there is no secret worth protecting on a machine the user controls).
+///    the PKCE `code_verifier` alongside the client secret. RFC 8252 and Google's own docs say a
+///    "Desktop app" client is public and PKCE alone should suffice -- but the client actually
+///    registered for this app rejects a secret-less exchange with `invalid_request:
+///    client_secret is missing` (confirmed live, not a hypothetical), so the secret is sent too.
 ///
 /// Needs a real "Desktop app"-type OAuth client registered in Google Cloud Console
-/// (`core/config/config.dart::googleDesktopClientId`, hardcoded there with a
-/// `--dart-define=GOOGLE_DESKTOP_CLIENT_ID=...` override) -- see
+/// (`core/config/config.dart::googleDesktopClientId`, hardcoded there, unlike
+/// `googleDesktopClientSecret` -- deliberately NOT hardcoded, since a compiled binary and "not
+/// meant to be confidential" are still two different things from "safe to check into git
+/// history"; it's injected only via `--dart-define=GOOGLE_DESKTOP_CLIENT_SECRET=...`, which
+/// `scripts/deploy_client_desktop.sh`/`.ps1` resolve from an untracked `deploy/.env`) -- see
 /// `aura_backend/config.py::google_desktop_client_id`'s doc comment for why it can't be the same
 /// client id as the existing mobile/web login path.
 library;
@@ -63,6 +68,7 @@ const _tokenEndpoint = 'https://oauth2.googleapis.com/token';
 /// -- production callers never pass them.
 Future<DesktopOAuthResult> signInWithGoogleLoopback({
   required String clientId,
+  required String clientSecret,
   Duration timeout = const Duration(minutes: 5),
   @visibleForTesting Future<bool> Function(Uri uri)? launch,
   @visibleForTesting Uri? tokenEndpoint,
@@ -71,6 +77,13 @@ Future<DesktopOAuthResult> signInWithGoogleLoopback({
     throw DesktopOAuthCancelledException(
       'No GOOGLE_DESKTOP_CLIENT_ID configured for this build -- desktop sign-in is not set up '
       'yet. See aura_backend/config.py::google_desktop_client_id.',
+    );
+  }
+  if (clientSecret.isEmpty) {
+    throw DesktopOAuthCancelledException(
+      'No GOOGLE_DESKTOP_CLIENT_SECRET configured for this build -- Google\'s token endpoint '
+      'rejects this client\'s exchange without one. See core/config/config.dart::'
+      'googleDesktopClientSecret.',
     );
   }
   final doLaunch = launch ?? _defaultLaunch;
@@ -128,6 +141,7 @@ Future<DesktopOAuthResult> signInWithGoogleLoopback({
     final idToken = await _exchangeCodeForIdToken(
       tokenEndpoint: tokenEndpoint ?? Uri.parse(_tokenEndpoint),
       clientId: clientId,
+      clientSecret: clientSecret,
       code: code,
       verifier: verifier,
       redirectUri: redirectUri,
@@ -151,6 +165,7 @@ Future<void> _respond(HttpRequest request, {required bool success, required Stri
 Future<String> _exchangeCodeForIdToken({
   required Uri tokenEndpoint,
   required String clientId,
+  required String clientSecret,
   required String code,
   required String verifier,
   required String redirectUri,
@@ -161,6 +176,7 @@ Future<String> _exchangeCodeForIdToken({
     request.headers.contentType = ContentType('application', 'x-www-form-urlencoded');
     request.write(Uri(queryParameters: {
       'client_id': clientId,
+      'client_secret': clientSecret,
       'code': code,
       'code_verifier': verifier,
       'grant_type': 'authorization_code',

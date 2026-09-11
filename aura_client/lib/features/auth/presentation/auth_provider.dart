@@ -190,7 +190,10 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
   Future<void> signInWithDesktopOAuth() async {
     state = const AsyncValue.loading();
     try {
-      final oauthResult = await signInWithGoogleLoopback(clientId: AppConfig.googleDesktopClientId);
+      final oauthResult = await signInWithGoogleLoopback(
+        clientId: AppConfig.googleDesktopClientId,
+        clientSecret: AppConfig.googleDesktopClientSecret,
+      );
       final deviceToken = await ref.read(tokenManagerProvider).exchangeDesktopLogin(oauthResult.idToken);
       if (deviceToken == null) {
         throw StateError('The backend did not accept this Google sign-in for desktop login.');

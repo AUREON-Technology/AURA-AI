@@ -639,8 +639,15 @@ phase and decision pair ([ADR-013](architecture/013-agent-workspaces.md) /
   (Google Cloud project `aura-ai-anas-gnedy`) and is now hardcoded as its default, the same way
   the mobile/web `google_client_id` above it always has been -- an OAuth client id is not a
   secret, so this needs no deploy-time configuration; `aura_client/lib/core/config/config.dart`'s
-  `googleDesktopClientId` carries the matching id as its own hardcoded default, and
-  `services/security.py::verify_identity_token` now accepts either
+  `googleDesktopClientId` carries the matching id as its own hardcoded default. **Correction from
+  a real first run, not review:** Google's token endpoint rejected a PKCE-only exchange against
+  this client with `invalid_request: client_secret is missing`, contradicting the "public client,
+  no secret needed" assumption ADR-011 made at design time -- `config.dart` gained a matching
+  `googleDesktopClientSecret`, deliberately never hardcoded or committed unlike the client id
+  (only injected at build time via an untracked `deploy/.env` entry and `--dart-define`,
+  resolved by `scripts/deploy_client_desktop.sh`/`.ps1`) and the token exchange now sends it
+  alongside PKCE. The backend never sees this secret; it only checks the client id as an
+  audience. `services/security.py::verify_identity_token` now accepts either
   client's audience rather than a single hardcoded one. The resulting real-but-unattested Google
   identity is exchanged via the new `POST /api/v3/auth/desktop/login` for the same kind of
   narrower, revocable device-scoped token J4's pairing issues (not a full session pair, and not
@@ -721,9 +728,11 @@ implemented and unit-tested (J3), real auth exists end to end for both the daemo
 itself (J5a), the app can now supervise, pair, and grant workspace roots on the daemon without
 touching a terminal (J5b), and the Linux desktop build now has its own CI gate and build scripts
 (J5c), and the desktop app's own login now has a real Google Cloud OAuth client registered and
-hardcoded (2026-09-10) -- but this is still **not proven** end-to-end: none of J5a/J5b/J5c's new
-code has run anywhere but this environment's read-through review, including the login flow
-against the now-real client. This environment has no Dart/Flutter toolchain (confirmed:
+hardcoded (2026-09-10) -- corrected once already against a real run (the client secret fix
+above), which is real evidence the flow gets far enough to talk to Google, not proof it's
+finished. This is still **not proven** end-to-end: past that one confirmed fix, none of
+J5a/J5b/J5c's new code has been watched complete a full run in this environment -- only reacted
+to the one error a real attempt surfaced. This environment has no Dart/Flutter toolchain (confirmed:
 `dart`/`flutter` both absent), so per this repo's own testing conventions, no client-side claim
 belongs here until CI has actually run it — that applies to `aura_hostd`'s own test suite
 (`hostd-ci.yml`) exactly as much as it does to

@@ -211,7 +211,18 @@ redirect. `aura_backend/config.py` gained `google_desktop_client_id` (env
 (Google Cloud project `aura-ai-anas-gnedy`) and is now the hardcoded default, the same way the
 mobile/web `google_client_id` above it always has been -- an OAuth client id is not a secret, so
 it needs no deploy-time configuration; `aura_client/lib/core/config/config.dart`'s
-`googleDesktopClientId` carries the matching id as its own hardcoded default. And
+`googleDesktopClientId` carries the matching id as its own hardcoded default. **Correction found
+live, not in review:** RFC 8252 and Google's own guidance say a "Desktop app" client is public
+and PKCE alone should be enough at the token endpoint -- but this registered client's token
+endpoint actually rejects a secret-less exchange with `invalid_request: client_secret is
+missing`. So `desktop_oauth_client_io.dart`'s token exchange sends the client secret alongside
+PKCE after all; `config.dart` gained a matching `googleDesktopClientSecret` -- unlike the client
+id, deliberately NOT hardcoded (Google's "not meant to be confidential" stance on installed-app
+secrets is not the same claim as "safe to commit to git history"), injected only via
+`--dart-define=GOOGLE_DESKTOP_CLIENT_SECRET=...` that `scripts/deploy_client_desktop.sh`/`.ps1`
+resolve from an untracked `deploy/.env` entry, the same way `BACKEND_URL` is already handled. The
+backend never sees or needs this secret -- `verify_identity_token` only checks the client id as
+an audience. And
 `services/security.py::verify_identity_token` now accepts either client's audience rather than a
 single hardcoded one (signature/issuer/expiry checks are unaffected). The resulting real Google
 identity has no device attestation behind it (no desktop equivalent exists, same as the pairing
@@ -312,14 +323,22 @@ configures the executable path themselves, the same disclosed-until-configured s
   both pairing and desktop app login are separate, parallel paths through `api/v2/auth.py`'s
   `/desktop/*` endpoints, not a new branch of attestation.
 
-**Desktop OAuth client registered (2026-09-10).** A real "Desktop app"-type Google OAuth client
-now backs Unit 7's login — `google_desktop_client_id` is hardcoded in `aura_backend/config.py`,
-matching `googleDesktopClientId` hardcoded in `aura_client/lib/core/config/config.dart`, the same
-way the pre-existing mobile/web `google_client_id` has always been hardcoded on both sides. This
-closes the one deployment-configuration gap this ADR previously listed as still owed; what
-remains unproven is that the flow actually runs end to end on a real machine (see "Exit
-criteria" below) — no Dart/Flutter toolchain in this environment has run any of Unit 7's client
-code, only reviewed it.
+**Desktop OAuth client registered (2026-09-10), then corrected against a real error.** A real
+"Desktop app"-type Google OAuth client now backs Unit 7's login — `google_desktop_client_id` is
+hardcoded in `aura_backend/config.py`, matching `googleDesktopClientId` hardcoded in
+`aura_client/lib/core/config/config.dart`, the same way the pre-existing mobile/web
+`google_client_id` has always been hardcoded on both sides. This closes the one deployment-
+configuration gap this ADR previously listed as still owed. Running it for the first time
+surfaced a real correction to this ADR's own design section (see above): the token exchange
+needed a client secret after all — Google's token endpoint rejected a PKCE-only request with
+`invalid_request: client_secret is missing`, contradicting the "public client, no secret needed"
+assumption this ADR made at design time. `config.dart` gained `googleDesktopClientSecret` --
+unlike the client id, deliberately never hardcoded or committed, only injected at build time via
+`deploy/.env` (untracked) and `--dart-define` -- and `desktop_oauth_client_io.dart` now sends it.
+What remains
+unproven is that the rest of the flow (past this specific error) runs end to end on a real
+machine (see "Exit criteria" below) — no Dart/Flutter toolchain in this environment has run any
+of Unit 7's client code itself, only reviewed it and reacted to the error a real run produced.
 
 `dart test` covers path containment (including symlink-escape and `..`-traversal attempts, and
 that containment does not require the target to already exist), the command-policy allowlist

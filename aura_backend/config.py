@@ -84,9 +84,12 @@ class Settings(BaseSettings):
     # audience). Registered 2026-09-10 (Google Cloud project aura-ai-anas-gnedy) and hardcoded
     # here the same way google_client_id above is -- an OAuth client id is not a secret, it's a
     # public identifier embedded in the app itself; only the id is needed here, since
-    # verify_identity_token checks it as an audience, not a credential, and this desktop client's
-    # own token exchange (desktop_oauth_client_io.dart) uses PKCE, never a client secret. Still
-    # overridable via AURA_GOOGLE_DESKTOP_CLIENT_ID for a deployment that registers its own.
+    # verify_identity_token checks it as an audience, not a credential. The matching client
+    # *secret* is a client-side-only concern (aura_client/lib/core/config/config.dart's
+    # googleDesktopClientSecret) -- confirmed live, this registered client's token endpoint
+    # rejects a PKCE-only exchange with "client_secret is missing", so the client sends it
+    # alongside PKCE; the backend never sees or needs it. Still overridable via
+    # AURA_GOOGLE_DESKTOP_CLIENT_ID for a deployment that registers its own.
     google_desktop_client_id: str = Field(
         default="87789110323-pprobmjkf4f16rem4kacr2nqgi9ql1i0.apps.googleusercontent.com",
         validation_alias=AliasChoices("GOOGLE_DESKTOP_CLIENT_ID", "AURA_GOOGLE_DESKTOP_CLIENT_ID"),

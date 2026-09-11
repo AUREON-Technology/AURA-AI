@@ -28,4 +28,21 @@ class AppConfig {
     'GOOGLE_DESKTOP_CLIENT_ID',
     defaultValue: '87789110323-pprobmjkf4f16rem4kacr2nqgi9ql1i0.apps.googleusercontent.com',
   );
+
+  /// [googleDesktopClientId]'s matching secret. RFC 8252 and Google's own guidance say a
+  /// "Desktop app" client is public and PKCE alone should be enough at the token endpoint, but
+  /// the client actually registered for this app rejects a secret-less exchange with
+  /// `invalid_request: client_secret is missing` (confirmed live -- see
+  /// `desktop_oauth_client_io.dart::signInWithGoogleLoopback`'s doc comment). Unlike
+  /// [googleDesktopClientId], this is NOT hardcoded here even though Google's own installed-app
+  /// docs say it "cannot be treated as a secret" once shipped -- it still isn't committed to
+  /// source control on principle (and this repo's own secret-scanning tooling would flag it).
+  /// Injected only via `--dart-define=GOOGLE_DESKTOP_CLIENT_SECRET=...`
+  /// (`scripts/deploy_client_desktop.sh`/`.ps1`, which resolve it from a `GOOGLE_DESKTOP_
+  /// CLIENT_SECRET` entry in `deploy/.env` -- itself untracked, same as `AURA_DOMAIN`/
+  /// `BACKEND_URL`). Empty by default: desktop login is refused with a clear error (see
+  /// `signInWithGoogleLoopback`) until a build actually injects it.
+  static const String googleDesktopClientSecret = String.fromEnvironment(
+    'GOOGLE_DESKTOP_CLIENT_SECRET',
+  );
 }
