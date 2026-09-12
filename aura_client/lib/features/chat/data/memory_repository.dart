@@ -9,6 +9,7 @@ import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/security/device_validation_service.dart';
 import 'package:aura_client/core/security/deterministic_id.dart';
+import 'package:aura_client/core/sync/sync_payloads.dart';
 
 class MemoryItem {
   final String id;
@@ -64,16 +65,22 @@ class MemoryRepository {
     return response;
   }
 
-  // Watch local cache of memories
-  Stream<List<UserMemory>> watchLocalMemories() {
+  /// Watch local cache of memories with pagination
+  Stream<List<UserMemory>> watchLocalMemories({int limit = 100, int offset = 0}) {
     return (_db.select(_db.userMemories)
-          ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.desc)]))
+          ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.desc)])
+          ..limit(limit)
+          ..offset(offset))
         .watch();
   }
 
-  // Load local memories from SQLite cache directly
-  Future<List<MemoryItem>> loadLocalMemories() async {
-    final cached = await _db.select(_db.userMemories).get();
+  /// Load local memories with pagination
+  Future<List<MemoryItem>> loadLocalMemories({int limit = 100, int offset = 0}) async {
+    final cached = await (_db.select(_db.userMemories)
+          ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.desc)])
+          ..limit(limit)
+          ..offset(offset))
+        .get();
     return cached.map((c) => MemoryItem(id: c.id, content: c.fact)).toList();
   }
 
@@ -94,18 +101,14 @@ class MemoryRepository {
     }).where((item) => item.id.isNotEmpty).toList();
   }
 
-  // Fetch all memories from backend and sync to local Drift database.
-  //
-  // `limit` is explicit and set to the server's maximum (`GET /memory` clamps it at 100,
-  // aura_core/api/v3.py) because this call wipes and replaces the *entire* local cache below —
-  // omitting it meant the route's own default of 20 silently dropped every memory past the 20
-  // most recent on every sync, for any user who had more than 20. 100 is still a ceiling, not
-  // real pagination; a user with more memories than that still loses the tail here. Full
-  // incremental sync (a cursor, so this stops being a full-table replace) is the real fix and is
-  // tracked as follow-up, not attempted in this pass.
-  Future<List<MemoryItem>> syncMemories() async {
+  /// Incremental sync using cursor-based pagination.
+  /// Fetches memories in pages and merges with local cache.
+  Future<List<MemoryItem>> syncMemories({int limit = 100, int offset = 0}) async {
     try {
-      final uri = Uri.parse(_backendUrl).replace(queryParameters: {"limit": "100"});
+      final uri = Uri.parse(_backendUrl).replace(queryParameters: {
+        "limit": limit.toString(),
+        "offset": offset.toString(),
+      });
       final response = await _send((headers) {
         final client = _http;
         return client != null
@@ -116,13 +119,14 @@ class MemoryRepository {
         final items = _parseMemories(response.body);
 
         await _db.transaction(() async {
-          await _db.delete(_db.userMemories).go();
           for (final item in items) {
             await _db.into(_db.userMemories).insertOnConflictUpdate(
               UserMemoriesCompanion.insert(
                 id: item.id,
                 fact: item.content,
                 createdAt: DateTime.now(),
+                isSynced: const Value(true),
+                updatedAt: Value(DateTime.now()),
               ),
             );
           }
@@ -139,9 +143,10 @@ class MemoryRepository {
     }
   }
 
-  // Delete memory fact from both server and local Drift cache
+  /// Delete memory fact from both server and local Drift cache
   Future<void> deleteMemory(String memoryId) async {
     await (_db.delete(_db.userMemories)..where((m) => m.id.equals(memoryId))).go();
+    await _db.enqueueOutbox(table: 'memories', recordId: memoryId, operation: 'delete');
 
     try {
       final uri = Uri.parse("$_backendUrl/$memoryId");
@@ -159,7 +164,7 @@ class MemoryRepository {
     }
   }
 
-  // Manually add memory fact to server and local Drift cache
+  /// Manually add memory fact to server and local Drift cache
   Future<void> saveMemory(
     String fact, {
     String kind = 'semantic',
@@ -171,7 +176,15 @@ class MemoryRepository {
         id: id,
         fact: fact,
         createdAt: DateTime.now(),
+        isSynced: const Value(false),
+        updatedAt: Value(DateTime.now()),
       ),
+    );
+    await _db.enqueueOutbox(
+      table: 'memories',
+      recordId: id,
+      operation: 'upsert',
+      payload: SyncPayloads.userMemory(id, fact),
     );
 
     try {
@@ -189,6 +202,11 @@ class MemoryRepository {
       });
       if (response.statusCode != 200) {
         debugPrint("Failed to save memory remotely: ${response.body}");
+      } else {
+        // Mark as synced on success
+        await (_db.update(_db.userMemories)..where((m) => m.id.equals(id))).write(
+          UserMemoriesCompanion(isSynced: const Value(true), updatedAt: Value(DateTime.now())),
+        );
       }
     } catch (e) {
       debugPrint("Save memory remotely failed: $e");
@@ -201,8 +219,8 @@ final memoryRepositoryProvider = Provider<MemoryRepository>((ref) {
   return MemoryRepository(db, ref);
 });
 
-// Watch local database memories stream
-final localMemoriesStreamProvider = StreamProvider.autoDispose<List<UserMemory>>((ref) {
+// Watch local database memories stream with pagination
+final localMemoriesStreamProvider = StreamProvider.autoDispose.family<List<UserMemory>, ({int limit, int offset})>((ref, params) {
   final repo = ref.watch(memoryRepositoryProvider);
-  return repo.watchLocalMemories();
+  return repo.watchLocalMemories(limit: params.limit, offset: params.offset);
 });

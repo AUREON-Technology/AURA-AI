@@ -77,4 +77,8 @@ class SyncPayloads {
         "target_date": g.targetDate?.toUtc().toIso8601String(),
         "progress_pct": g.progressPct,
       };
+
+  static Map<String, dynamic> userMemory(String id, String fact) => {
+        "content_enc": EncryptionService.encryptText(fact),
+      };
 }
