@@ -151,6 +151,38 @@ class UserMemories extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+class Projects extends Table {
+  TextColumn get id => text()();
+  TextColumn get title => text().map(const EncryptedTextConverter())();
+  TextColumn get description => text().map(const EncryptedTextConverter()).nullable()();
+  TextColumn get status => text()(); // active, completed, archived, on_hold
+  DateTimeColumn get targetDate => dateTime().nullable()();
+  DateTimeColumn get createdAt => dateTime()();
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get updatedAt => dateTime().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+class Goals extends Table {
+  TextColumn get id => text()();
+  TextColumn get title => text().map(const EncryptedTextConverter())();
+  TextColumn get description => text().map(const EncryptedTextConverter()).nullable()();
+  TextColumn get projectId => text().nullable()();
+  TextColumn get category => text().nullable()();
+  TextColumn get status => text()(); // active, achieved, abandoned
+  TextColumn get priority => text()(); // low, medium, high
+  DateTimeColumn get targetDate => dateTime().nullable()();
+  IntColumn get progressPct => integer().withDefault(const Constant(0))();
+  DateTimeColumn get createdAt => dateTime()();
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
+  DateTimeColumn get updatedAt => dateTime().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
 class PendingDeletes extends Table {
   TextColumn get recordId => text()();
   TextColumn get targetTable => text()();
@@ -236,7 +268,7 @@ class TelemetryLogs extends Table {
 // Database Connection & Class
 // ----------------------------------------------------
 
-@DriftDatabase(tables: [Tasks, CalendarEvents, FinanceRecords, HealthRecords, Messages, AgentConfigurations, UserMemories, PendingDeletes, LearningLogs, OfflineModelWeights, TelemetryLogs, OutboxEntries, SyncMetadata])
+@DriftDatabase(tables: [Tasks, CalendarEvents, FinanceRecords, HealthRecords, Messages, AgentConfigurations, UserMemories, Projects, Goals, PendingDeletes, LearningLogs, OfflineModelWeights, TelemetryLogs, OutboxEntries, SyncMetadata])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(openConnection());
 
@@ -244,7 +276,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 10;
+  int get schemaVersion => 11;
 
   Future<List<TelemetryLog>> getTelemetry() => select(telemetryLogs).get();
   Future<void> insertTelemetry(TelemetryLogsCompanion log) => into(telemetryLogs).insert(log);
@@ -313,6 +345,12 @@ class AppDatabase extends _$AppDatabase {
       final allTasks = await (select(tasks)..limit(5)).get();
       if (allTasks.any((t) => t.title.startsWith('gcm:'))) return true;
 
+      final allProjects = await (select(projects)..limit(5)).get();
+      if (allProjects.any((p) => p.title.startsWith('gcm:'))) return true;
+
+      final allGoals = await (select(goals)..limit(5)).get();
+      if (allGoals.any((g) => g.title.startsWith('gcm:'))) return true;
+
       final allLogs = await (select(learningLogs)..limit(5)).get();
       if (allLogs.any((l) => l.prompt.startsWith('gcm:'))) return true;
     } catch (e) {
@@ -373,6 +411,10 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(messages, messages.turnId);
             await m.addColumn(messages, messages.turnMetaJson);
           }
+          if (from < 11) {
+            await m.createTable(projects);
+            await m.createTable(goals);
+          }
         },
         beforeOpen: (details) async {
           // Perform a decryption integrity check (detect key mismatch/loss from backup restore)
@@ -402,6 +444,8 @@ class AppDatabase extends _$AppDatabase {
               await delete(messages).go();
               await delete(agentConfigurations).go();
               await delete(userMemories).go();
+              await delete(projects).go();
+              await delete(goals).go();
               await delete(learningLogs).go();
               await delete(offlineModelWeights).go();
               await delete(telemetryLogs).go();

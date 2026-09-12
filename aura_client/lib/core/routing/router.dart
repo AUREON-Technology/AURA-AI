@@ -24,6 +24,8 @@ import '../../features/memory/presentation/memory_page.dart';
 import '../../features/models/presentation/model_manager_page.dart';
 import '../../features/onboarding/presentation/onboarding_gate.dart';
 import '../../features/onboarding/presentation/onboarding_page.dart';
+import '../../features/projects/presentation/projects_page.dart';
+import '../../features/goals/presentation/goals_page.dart';
 import '../../features/settings/presentation/backend_environment_page.dart';
 import '../../features/settings/presentation/appearance_page.dart';
 import '../../features/settings/presentation/settings_page.dart';
@@ -345,6 +347,14 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/engineer-daemon/browse',
             builder: (context, state) => HostFileBrowserPage(root: state.extra as String),
+          ),
+          GoRoute(
+            path: '/projects',
+            builder: (context, state) => const ProjectsPage(),
+          ),
+          GoRoute(
+            path: '/goals',
+            builder: (context, state) => const GoalsPage(),
           ),
         ],
       ),

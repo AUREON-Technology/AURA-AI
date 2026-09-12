@@ -45,10 +45,10 @@ class SyncPayloads {
         "exercise_minutes": r.exerciseMinutes,
       };
 
-  /// Postgres `messages` columns (AURA-014). Drift `agentId` is `persona`;
-  /// `citationsJson` / `toolCallsJson` travel as `citations_enc` /
-  /// `tool_calls_enc`. Ciphertext is produced here from already-decrypted
-  /// Drift fields, matching [task].
+/// Postgres `messages` columns (AURA-014). Drift `agentId` is `persona`;
+/// `citationsJson` / `toolCallsJson` travel as `citations_enc` /
+/// `tool_calls_enc`. Ciphertext is produced here from already-decrypted
+/// Drift fields, matching [task].
   static Map<String, dynamic> message(Message m) => {
         "conversation_id": m.conversationId,
         "role": m.role,
@@ -58,5 +58,23 @@ class SyncPayloads {
         "citations_enc": m.citationsJson != null ? EncryptionService.encryptText(m.citationsJson!) : null,
         "tool_calls_enc": m.toolCallsJson != null ? EncryptionService.encryptText(m.toolCallsJson!) : null,
         "persona": m.agentId,
+      };
+
+  static Map<String, dynamic> project(Project p) => {
+        "title_enc": EncryptionService.encryptText(p.title),
+        "description_enc": p.description != null ? EncryptionService.encryptText(p.description!) : null,
+        "status": p.status,
+        "target_date": p.targetDate?.toUtc().toIso8601String(),
+      };
+
+  static Map<String, dynamic> goal(Goal g) => {
+        "title_enc": EncryptionService.encryptText(g.title),
+        "description_enc": g.description != null ? EncryptionService.encryptText(g.description!) : null,
+        "project_id": g.projectId,
+        "category": g.category,
+        "status": g.status,
+        "priority": g.priority,
+        "target_date": g.targetDate?.toUtc().toIso8601String(),
+        "progress_pct": g.progressPct,
       };
 }

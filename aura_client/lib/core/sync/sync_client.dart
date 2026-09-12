@@ -178,6 +178,8 @@ class SyncClient {
         await _applyFinanceRecords(data["finance_records"] as List<dynamic>? ?? const []);
         await _applyHealthRecords(data["health_records"] as List<dynamic>? ?? const []);
         await _applyMessages(data["messages"] as List<dynamic>? ?? const []);
+        await _applyProjects(data["projects"] as List<dynamic>? ?? const []);
+        await _applyGoals(data["goals"] as List<dynamic>? ?? const []);
       });
 
       await _db.setSyncCursor(body["cursor"] as String);
@@ -314,6 +316,52 @@ class SyncClient {
             ),
             agentId: Value(row["persona"] as String?),
             createdAt: Value(_parseDate(row["created_at"]) ?? DateTime.now()),
+            updatedAt: Value(_parseDate(row["updated_at"])),
+          ));
+    }
+  }
+
+  Future<void> _applyProjects(List<dynamic> rows) async {
+    for (final raw in rows) {
+      final row = raw as Map<String, dynamic>;
+      final id = row["id"] as String;
+      if (row["deleted_at"] != null) {
+        await (_db.delete(_db.projects)..where((t) => t.id.equals(id))).go();
+        continue;
+      }
+      await _db.into(_db.projects).insertOnConflictUpdate(ProjectsCompanion(
+            id: Value(id),
+            title: Value(EncryptionService.decryptText(row["title_enc"] as String)),
+            description: Value(row["description_enc"] != null ? EncryptionService.decryptText(row["description_enc"] as String) : null),
+            status: Value(row["status"] as String? ?? "active"),
+            targetDate: Value(_parseDate(row["target_date"])),
+            createdAt: Value(_parseDate(row["created_at"]) ?? DateTime.now()),
+            isSynced: const Value(true),
+            updatedAt: Value(_parseDate(row["updated_at"])),
+          ));
+    }
+  }
+
+  Future<void> _applyGoals(List<dynamic> rows) async {
+    for (final raw in rows) {
+      final row = raw as Map<String, dynamic>;
+      final id = row["id"] as String;
+      if (row["deleted_at"] != null) {
+        await (_db.delete(_db.goals)..where((t) => t.id.equals(id))).go();
+        continue;
+      }
+      await _db.into(_db.goals).insertOnConflictUpdate(GoalsCompanion(
+            id: Value(id),
+            title: Value(EncryptionService.decryptText(row["title_enc"] as String)),
+            description: Value(row["description_enc"] != null ? EncryptionService.decryptText(row["description_enc"] as String) : null),
+            projectId: Value(row["project_id"] as String?),
+            category: Value(row["category"] as String?),
+            status: Value(row["status"] as String? ?? "active"),
+            priority: Value(row["priority"] as String? ?? "medium"),
+            targetDate: Value(_parseDate(row["target_date"])),
+            progressPct: Value(row["progress_pct"] as int? ?? 0),
+            createdAt: Value(_parseDate(row["created_at"]) ?? DateTime.now()),
+            isSynced: const Value(true),
             updatedAt: Value(_parseDate(row["updated_at"])),
           ));
     }
