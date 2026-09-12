@@ -71,11 +71,11 @@ GATEWAY_CID=$(docker compose -f "$COMPOSE_FILE" ps -q "$SERVICE")
 docker cp "$DRIVER" "$GATEWAY_CID":/tmp/verify_phase_j.py || die "could not copy the driver into the gateway"
 
 mkdir -p "$REPORT_DIR"
-# Pass required env vars from the gateway container to the exec session
-GATEWAY_ENV=$(docker exec "$GATEWAY_CID" printenv | grep -E '^(AURA_|POSTGRES_|REDIS_|QDRANT_|OLLAMA_)' | sed 's/^/-e /' | tr '\n' ' ')
 
-docker exec $GATEWAY_ENV "$GATEWAY_CID" \
-    sh -lc 'PYTHONPATH=/app python /tmp/verify_phase_j.py' 2>&1 | tee "$REPORT"
+# Build docker exec command with env vars from the gateway container
+# Use a more robust approach: export vars inside the shell command
+docker exec "$GATEWAY_CID" \
+    sh -lc 'eval $(printenv | grep -E "^(AURA_|POSTGRES_|REDIS_|QDRANT_|OLLAMA_)" | sed "s/^/export /"); PYTHONPATH=/app python /tmp/verify_phase_j.py' 2>&1 | tee "$REPORT"
 status=${PIPESTATUS[0]}
 
 # Strip the ANSI colouring so the saved report is quotable in the roadmap.
