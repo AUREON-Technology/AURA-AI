@@ -294,11 +294,12 @@ def _manual_check_10() -> None:
 
 async def main() -> int:
     from aura_core.container import Container
+    from aura_core.config.settings import load_settings
     from aura_core.domain.identifiers import UserId
 
     print(f"\n{_DIM}Phase J live checks -- persistent engineer-agent workspaces{_RESET}\n")
 
-    container = Container()
+    container = Container(load_settings())
     runner = getattr(container, "docker_sandbox_runner", None)
     manager = container.workspace_manager
 
