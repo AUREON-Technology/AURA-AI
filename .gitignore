@@ -1,6 +1,7 @@
 # ==========================================
 # Secrets / credentials — never commit
 # ==========================================
+tmp_*
 credentials.json
 **/credentials.json
 *.env
