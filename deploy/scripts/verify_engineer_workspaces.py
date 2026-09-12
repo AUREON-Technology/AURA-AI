@@ -296,8 +296,13 @@ async def main() -> int:
     from aura_core.container import Container
     from aura_core.config.settings import load_settings
     from aura_core.domain.identifiers import UserId
+    from infrastructure.secret_hydration import hydrate_secrets_from_files
 
     print(f"\n{_DIM}Phase J live checks -- persistent engineer-agent workspaces{_RESET}\n")
+
+    # Hydrate secrets from Docker secret files (AURA_DATABASE_URL, AURA_REDIS_URL, etc.)
+    # This is normally done by aura_service.py at startup, but we run outside that path.
+    hydrate_secrets_from_files()
 
     container = Container(load_settings(validate=False))
     runner = getattr(container, "docker_sandbox_runner", None)
