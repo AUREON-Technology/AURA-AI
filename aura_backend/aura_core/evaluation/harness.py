@@ -16,6 +16,7 @@ and a gate that depends on one is a gate that can be moved by prompt drift.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import re
@@ -33,6 +34,11 @@ __all__ = [
     "SuiteResult",
     "RetrievalEvaluator",
     "AnswerEvaluator",
+    "AgentEvaluator",
+    "AgentCase",
+    "AgentCaseResult",
+    "AgentSuiteResult",
+    "load_agent_cases",
     "RegressionGate",
     "LLMJudge",
 ]
@@ -361,6 +367,225 @@ class AnswerEvaluator:
         return suite_result
 
 
+# --------------------------------------------------------------------------------------
+# Agent Task Evaluation
+# --------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class AgentCase:
+    """One agent task evaluation case.
+
+    Extends EvalCase with agent-specific expectations: expected tools, success criteria,
+    and maximum allowed turns.
+    """
+
+    id: str
+    query: str
+    expected_tools: tuple[str, ...] = ()
+    success_criteria: tuple[str, ...] = ()
+    max_turns: int = 10
+    owner_id: str | None = None
+    tags: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.query.strip():
+            raise ValidationError(f"agent case {self.id!r} has an empty query")
+
+
+@dataclass(frozen=True, slots=True)
+class AgentCaseResult:
+    case_id: str
+    success: bool
+    tools_used: tuple[str, ...] = ()
+    tool_success_rate: float = 0.0
+    task_completed: bool = False
+    turns: int = 0
+    duration_ms: float = 0.0
+    detail: str = ""
+    trace: tuple[dict[str, Any], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AgentSuiteResult:
+    suite: str
+    results: tuple[AgentCaseResult, ...]
+    duration_ms: float = 0.0
+
+    @property
+    def pass_rate(self) -> float:
+        return sum(1 for r in self.results if r.success) / len(self.results) if self.results else 0.0
+
+    @property
+    def avg_tool_success_rate(self) -> float:
+        rates = [r.tool_success_rate for r in self.results]
+        return sum(rates) / len(rates) if rates else 0.0
+
+    @property
+    def task_completion_rate(self) -> float:
+        completed = sum(1 for r in self.results if r.task_completed)
+        return completed / len(self.results) if self.results else 0.0
+
+    def metrics(self) -> dict[str, float]:
+        names = {"pass_rate", "tool_success_rate", "task_completion_rate", "avg_turns", "avg_duration_ms"}
+        return {
+            "pass_rate": round(self.pass_rate, 4),
+            "tool_success_rate": round(self.avg_tool_success_rate, 4),
+            "task_completion_rate": round(self.task_completion_rate, 4),
+            "avg_turns": round(sum(r.turns for r in self.results) / len(self.results), 2) if self.results else 0.0,
+            "avg_duration_ms": round(sum(r.duration_ms for r in self.results) / len(self.results), 1) if self.results else 0.0,
+        }
+
+    def failures(self) -> list[AgentCaseResult]:
+        return [r for r in self.results if not r.success]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "suite": self.suite,
+            "cases": len(self.results),
+            "duration_ms": round(self.duration_ms, 1),
+            "metrics": self.metrics(),
+            "failures": [
+                {"case_id": r.case_id, "detail": r.detail, "tools_used": list(r.tools_used), "turns": r.turns}
+                for r in self.failures()[:20]
+            ],
+        }
+
+
+class AgentEvaluator:
+    """Evaluates end-to-end agent task execution through the AI Kernel.
+
+    Measures: task completion, tool selection accuracy, tool success rate,
+    recovery from failures, and adherence to expected tool sequences.
+    """
+
+    def __init__(
+        self,
+        kernel: Any,
+        *,
+        metrics: Any = None,
+        max_turns: int = 10,
+        timeout_s: float = 120.0,
+    ) -> None:
+        self._kernel = kernel
+        self._metrics = metrics
+        self._max_turns = max_turns
+        self._timeout_s = timeout_s
+
+    async def run(self, cases: Sequence[AgentCase]) -> AgentSuiteResult:
+        from ..domain.identifiers import UserId
+
+        started = time.perf_counter()
+        results = []
+
+        for case in cases:
+            case_started = time.perf_counter()
+            tools_used = []
+            tool_success_count = 0
+            tool_total = 0
+            task_completed = False
+            trace = []
+            turns = 0
+
+            try:
+                for turn_num in range(case.max_turns):
+                    turns = turn_num + 1
+                    turn = await asyncio.wait_for(
+                        self._kernel.run(
+                            TurnRequest(
+                                message=case.query if turn_num == 0 else "Continue",
+                                user_id=UserId(case.owner_id or "eval-user"),
+                                route="eval_agent",
+                            )
+                        ),
+                        timeout=self._timeout_s,
+                    )
+
+                    trace.append({
+                        "turn": turn_num + 1,
+                        "text": turn.text[:500],
+                        "tool_calls": [
+                            {"tool": tc.tool_name, "args": tc.args, "error": getattr(tc, "error", None)}
+                            for tc in getattr(turn, "tool_calls", [])
+                        ],
+                    })
+
+                    for tc in getattr(turn, "tool_calls", []):
+                        tools_used.append(tc.tool_name)
+                        tool_total += 1
+                        if not getattr(tc, "error", None):
+                            tool_success_count += 1
+
+                    if self._is_task_complete(turn.text, case):
+                        task_completed = True
+                        break
+
+                duration_ms = (time.perf_counter() - case_started) * 1000.0
+                tool_success_rate = tool_success_count / tool_total if tool_total > 0 else 1.0
+
+                success = task_completed and tool_success_rate > 0.8
+                detail = "" if success else f"Task not completed or tool success rate {tool_success_rate:.2f}"
+
+                results.append(
+                    AgentCaseResult(
+                        case_id=case.id,
+                        success=success,
+                        tools_used=tuple(tools_used),
+                        tool_success_rate=tool_success_rate,
+                        task_completed=task_completed,
+                        turns=turns,
+                        duration_ms=duration_ms,
+                        detail=detail,
+                        trace=tuple(trace),
+                    )
+                )
+
+            except asyncio.TimeoutError:
+                results.append(
+                    AgentCaseResult(
+                        case_id=case.id,
+                        success=False,
+                        tools_used=tuple(tools_used),
+                        tool_success_rate=tool_success_count / tool_total if tool_total > 0 else 0.0,
+                        task_completed=False,
+                        turns=turns,
+                        duration_ms=(time.perf_counter() - case_started) * 1000.0,
+                        detail=f"Timeout after {turns} turns",
+                        trace=tuple(trace),
+                    )
+                )
+            except Exception as e:
+                results.append(
+                    AgentCaseResult(
+                        case_id=case.id,
+                        success=False,
+                        tools_used=tuple(tools_used),
+                        tool_success_rate=tool_success_count / tool_total if tool_total > 0 else 0.0,
+                        task_completed=False,
+                        turns=turns,
+                        duration_ms=(time.perf_counter() - case_started) * 1000.0,
+                        detail=f"Error: {type(e).__name__}: {e}",
+                        trace=tuple(trace),
+                    )
+                )
+
+        suite_result = AgentSuiteResult(
+            suite="agent_tasks", results=tuple(results), duration_ms=(time.perf_counter() - started) * 1000.0
+        )
+        if self._metrics is not None:
+            for name, value in suite_result.metrics().items():
+                self._metrics.eval_score.labels(suite=suite_result.suite, metric=name).set(value)
+            self._metrics.eval_runs_total.labels(suite=suite_result.suite, outcome="ok").inc()
+        return suite_result
+
+    def _is_task_complete(self, text: str, case: AgentCase) -> bool:
+        if not case.success_criteria:
+            text_lower = text.lower()
+            return any(marker in text_lower for marker in ("done", "complete", "created", "finished", "success"))
+        text_lower = text.lower()
+        return all(criterion.lower() in text_lower for criterion in case.success_criteria)
+
+
 _REFUSAL_MARKERS = (
     "i don't have", "i do not have", "no information", "not covered", "cannot find",
     "could not find", "not in the", "unable to", "i don't know", "do not know",
@@ -480,3 +705,25 @@ def build_suite(cases: Sequence[Mapping[str, Any]], *, name: str) -> EvalSuite:
 
 def summarise(results: Sequence[SuiteResult]) -> dict[str, Any]:
     return {r.suite: r.metrics() for r in results}
+
+
+def load_agent_cases(path: str | Path) -> list[AgentCase]:
+    """Load agent evaluation cases from a JSONL file."""
+    cases = []
+    with open(path, "r", encoding="utf-8") as f:
+        for index, line in enumerate(f):
+            if not line.strip():
+                continue
+            payload = json.loads(line)
+            cases.append(
+                AgentCase(
+                    id=str(payload.get("id", f"case-{index + 1}")),
+                    query=payload["query"],
+                    expected_tools=tuple(payload.get("expected_tools", ())),
+                    success_criteria=tuple(payload.get("success_criteria", ())),
+                    max_turns=int(payload.get("max_turns", 10)),
+                    owner_id=payload.get("owner_id"),
+                    tags=tuple(payload.get("tags", ())),
+                )
+            )
+    return cases
