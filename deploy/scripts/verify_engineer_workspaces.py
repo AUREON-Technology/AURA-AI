@@ -299,7 +299,7 @@ async def main() -> int:
 
     print(f"\n{_DIM}Phase J live checks -- persistent engineer-agent workspaces{_RESET}\n")
 
-    container = Container(load_settings())
+    container = Container(load_settings(validate=False))
     runner = getattr(container, "docker_sandbox_runner", None)
     manager = container.workspace_manager
 
