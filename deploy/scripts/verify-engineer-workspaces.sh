@@ -71,7 +71,10 @@ GATEWAY_CID=$(docker compose -f "$COMPOSE_FILE" ps -q "$SERVICE")
 docker cp "$DRIVER" "$GATEWAY_CID":/tmp/verify_phase_j.py || die "could not copy the driver into the gateway"
 
 mkdir -p "$REPORT_DIR"
-docker compose -f "$COMPOSE_FILE" exec -T "$SERVICE" \
+# Pass required env vars from the gateway container to the exec session
+GATEWAY_ENV=$(docker exec "$GATEWAY_CID" printenv | grep -E '^(AURA_|POSTGRES_|REDIS_|QDRANT_|OLLAMA_)' | sed 's/^/-e /' | tr '\n' ' ')
+
+docker exec $GATEWAY_ENV -T "$GATEWAY_CID" \
     sh -lc 'PYTHONPATH=/app python /tmp/verify_phase_j.py' 2>&1 | tee "$REPORT"
 status=${PIPESTATUS[0]}
 
