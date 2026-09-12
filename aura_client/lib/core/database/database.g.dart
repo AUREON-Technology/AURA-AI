@@ -3923,6 +3923,1241 @@ class UserMemoriesCompanion extends UpdateCompanion<UserMemory> {
   }
 }
 
+class $ProjectsTable extends Projects with TableInfo<$ProjectsTable, Project> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $ProjectsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<String, String> title =
+      GeneratedColumn<String>(
+        'title',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+      ).withConverter<String>($ProjectsTable.$convertertitle);
+  @override
+  late final GeneratedColumnWithTypeConverter<String?, String> description =
+      GeneratedColumn<String>(
+        'description',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      ).withConverter<String?>($ProjectsTable.$converterdescriptionn);
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+    'status',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _targetDateMeta = const VerificationMeta(
+    'targetDate',
+  );
+  @override
+  late final GeneratedColumn<DateTime> targetDate = GeneratedColumn<DateTime>(
+    'target_date',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _isSyncedMeta = const VerificationMeta(
+    'isSynced',
+  );
+  @override
+  late final GeneratedColumn<bool> isSynced = GeneratedColumn<bool>(
+    'is_synced',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_synced" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    title,
+    description,
+    status,
+    targetDate,
+    createdAt,
+    isSynced,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'projects';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<Project> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('status')) {
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_statusMeta);
+    }
+    if (data.containsKey('target_date')) {
+      context.handle(
+        _targetDateMeta,
+        targetDate.isAcceptableOrUnknown(data['target_date']!, _targetDateMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('is_synced')) {
+      context.handle(
+        _isSyncedMeta,
+        isSynced.isAcceptableOrUnknown(data['is_synced']!, _isSyncedMeta),
+      );
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  Project map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return Project(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      title: $ProjectsTable.$convertertitle.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}title'],
+        )!,
+      ),
+      description: $ProjectsTable.$converterdescriptionn.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}description'],
+        ),
+      ),
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      )!,
+      targetDate: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}target_date'],
+      ),
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+      isSynced: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_synced'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      ),
+    );
+  }
+
+  @override
+  $ProjectsTable createAlias(String alias) {
+    return $ProjectsTable(attachedDatabase, alias);
+  }
+
+  static TypeConverter<String, String> $convertertitle =
+      const EncryptedTextConverter();
+  static TypeConverter<String, String> $converterdescription =
+      const EncryptedTextConverter();
+  static TypeConverter<String?, String?> $converterdescriptionn =
+      NullAwareTypeConverter.wrap($converterdescription);
+}
+
+class Project extends DataClass implements Insertable<Project> {
+  final String id;
+  final String title;
+  final String? description;
+  final String status;
+  final DateTime? targetDate;
+  final DateTime createdAt;
+  final bool isSynced;
+  final DateTime? updatedAt;
+  const Project({
+    required this.id,
+    required this.title,
+    this.description,
+    required this.status,
+    this.targetDate,
+    required this.createdAt,
+    required this.isSynced,
+    this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    {
+      map['title'] = Variable<String>(
+        $ProjectsTable.$convertertitle.toSql(title),
+      );
+    }
+    if (!nullToAbsent || description != null) {
+      map['description'] = Variable<String>(
+        $ProjectsTable.$converterdescriptionn.toSql(description),
+      );
+    }
+    map['status'] = Variable<String>(status);
+    if (!nullToAbsent || targetDate != null) {
+      map['target_date'] = Variable<DateTime>(targetDate);
+    }
+    map['created_at'] = Variable<DateTime>(createdAt);
+    map['is_synced'] = Variable<bool>(isSynced);
+    if (!nullToAbsent || updatedAt != null) {
+      map['updated_at'] = Variable<DateTime>(updatedAt);
+    }
+    return map;
+  }
+
+  ProjectsCompanion toCompanion(bool nullToAbsent) {
+    return ProjectsCompanion(
+      id: Value(id),
+      title: Value(title),
+      description: description == null && nullToAbsent
+          ? const Value.absent()
+          : Value(description),
+      status: Value(status),
+      targetDate: targetDate == null && nullToAbsent
+          ? const Value.absent()
+          : Value(targetDate),
+      createdAt: Value(createdAt),
+      isSynced: Value(isSynced),
+      updatedAt: updatedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(updatedAt),
+    );
+  }
+
+  factory Project.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return Project(
+      id: serializer.fromJson<String>(json['id']),
+      title: serializer.fromJson<String>(json['title']),
+      description: serializer.fromJson<String?>(json['description']),
+      status: serializer.fromJson<String>(json['status']),
+      targetDate: serializer.fromJson<DateTime?>(json['targetDate']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      isSynced: serializer.fromJson<bool>(json['isSynced']),
+      updatedAt: serializer.fromJson<DateTime?>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'title': serializer.toJson<String>(title),
+      'description': serializer.toJson<String?>(description),
+      'status': serializer.toJson<String>(status),
+      'targetDate': serializer.toJson<DateTime?>(targetDate),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'isSynced': serializer.toJson<bool>(isSynced),
+      'updatedAt': serializer.toJson<DateTime?>(updatedAt),
+    };
+  }
+
+  Project copyWith({
+    String? id,
+    String? title,
+    Value<String?> description = const Value.absent(),
+    String? status,
+    Value<DateTime?> targetDate = const Value.absent(),
+    DateTime? createdAt,
+    bool? isSynced,
+    Value<DateTime?> updatedAt = const Value.absent(),
+  }) => Project(
+    id: id ?? this.id,
+    title: title ?? this.title,
+    description: description.present ? description.value : this.description,
+    status: status ?? this.status,
+    targetDate: targetDate.present ? targetDate.value : this.targetDate,
+    createdAt: createdAt ?? this.createdAt,
+    isSynced: isSynced ?? this.isSynced,
+    updatedAt: updatedAt.present ? updatedAt.value : this.updatedAt,
+  );
+  Project copyWithCompanion(ProjectsCompanion data) {
+    return Project(
+      id: data.id.present ? data.id.value : this.id,
+      title: data.title.present ? data.title.value : this.title,
+      description: data.description.present
+          ? data.description.value
+          : this.description,
+      status: data.status.present ? data.status.value : this.status,
+      targetDate: data.targetDate.present
+          ? data.targetDate.value
+          : this.targetDate,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('Project(')
+          ..write('id: $id, ')
+          ..write('title: $title, ')
+          ..write('description: $description, ')
+          ..write('status: $status, ')
+          ..write('targetDate: $targetDate, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('isSynced: $isSynced, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    title,
+    description,
+    status,
+    targetDate,
+    createdAt,
+    isSynced,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is Project &&
+          other.id == this.id &&
+          other.title == this.title &&
+          other.description == this.description &&
+          other.status == this.status &&
+          other.targetDate == this.targetDate &&
+          other.createdAt == this.createdAt &&
+          other.isSynced == this.isSynced &&
+          other.updatedAt == this.updatedAt);
+}
+
+class ProjectsCompanion extends UpdateCompanion<Project> {
+  final Value<String> id;
+  final Value<String> title;
+  final Value<String?> description;
+  final Value<String> status;
+  final Value<DateTime?> targetDate;
+  final Value<DateTime> createdAt;
+  final Value<bool> isSynced;
+  final Value<DateTime?> updatedAt;
+  final Value<int> rowid;
+  const ProjectsCompanion({
+    this.id = const Value.absent(),
+    this.title = const Value.absent(),
+    this.description = const Value.absent(),
+    this.status = const Value.absent(),
+    this.targetDate = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.isSynced = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  ProjectsCompanion.insert({
+    required String id,
+    required String title,
+    this.description = const Value.absent(),
+    required String status,
+    this.targetDate = const Value.absent(),
+    required DateTime createdAt,
+    this.isSynced = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       title = Value(title),
+       status = Value(status),
+       createdAt = Value(createdAt);
+  static Insertable<Project> custom({
+    Expression<String>? id,
+    Expression<String>? title,
+    Expression<String>? description,
+    Expression<String>? status,
+    Expression<DateTime>? targetDate,
+    Expression<DateTime>? createdAt,
+    Expression<bool>? isSynced,
+    Expression<DateTime>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (title != null) 'title': title,
+      if (description != null) 'description': description,
+      if (status != null) 'status': status,
+      if (targetDate != null) 'target_date': targetDate,
+      if (createdAt != null) 'created_at': createdAt,
+      if (isSynced != null) 'is_synced': isSynced,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  ProjectsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? title,
+    Value<String?>? description,
+    Value<String>? status,
+    Value<DateTime?>? targetDate,
+    Value<DateTime>? createdAt,
+    Value<bool>? isSynced,
+    Value<DateTime?>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return ProjectsCompanion(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      description: description ?? this.description,
+      status: status ?? this.status,
+      targetDate: targetDate ?? this.targetDate,
+      createdAt: createdAt ?? this.createdAt,
+      isSynced: isSynced ?? this.isSynced,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (title.present) {
+      map['title'] = Variable<String>(
+        $ProjectsTable.$convertertitle.toSql(title.value),
+      );
+    }
+    if (description.present) {
+      map['description'] = Variable<String>(
+        $ProjectsTable.$converterdescriptionn.toSql(description.value),
+      );
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
+    if (targetDate.present) {
+      map['target_date'] = Variable<DateTime>(targetDate.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (isSynced.present) {
+      map['is_synced'] = Variable<bool>(isSynced.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ProjectsCompanion(')
+          ..write('id: $id, ')
+          ..write('title: $title, ')
+          ..write('description: $description, ')
+          ..write('status: $status, ')
+          ..write('targetDate: $targetDate, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('isSynced: $isSynced, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $GoalsTable extends Goals with TableInfo<$GoalsTable, Goal> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $GoalsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<String, String> title =
+      GeneratedColumn<String>(
+        'title',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+      ).withConverter<String>($GoalsTable.$convertertitle);
+  @override
+  late final GeneratedColumnWithTypeConverter<String?, String> description =
+      GeneratedColumn<String>(
+        'description',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      ).withConverter<String?>($GoalsTable.$converterdescriptionn);
+  static const VerificationMeta _projectIdMeta = const VerificationMeta(
+    'projectId',
+  );
+  @override
+  late final GeneratedColumn<String> projectId = GeneratedColumn<String>(
+    'project_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _categoryMeta = const VerificationMeta(
+    'category',
+  );
+  @override
+  late final GeneratedColumn<String> category = GeneratedColumn<String>(
+    'category',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+    'status',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _priorityMeta = const VerificationMeta(
+    'priority',
+  );
+  @override
+  late final GeneratedColumn<String> priority = GeneratedColumn<String>(
+    'priority',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _targetDateMeta = const VerificationMeta(
+    'targetDate',
+  );
+  @override
+  late final GeneratedColumn<DateTime> targetDate = GeneratedColumn<DateTime>(
+    'target_date',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _progressPctMeta = const VerificationMeta(
+    'progressPct',
+  );
+  @override
+  late final GeneratedColumn<int> progressPct = GeneratedColumn<int>(
+    'progress_pct',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _isSyncedMeta = const VerificationMeta(
+    'isSynced',
+  );
+  @override
+  late final GeneratedColumn<bool> isSynced = GeneratedColumn<bool>(
+    'is_synced',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_synced" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    title,
+    description,
+    projectId,
+    category,
+    status,
+    priority,
+    targetDate,
+    progressPct,
+    createdAt,
+    isSynced,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'goals';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<Goal> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('project_id')) {
+      context.handle(
+        _projectIdMeta,
+        projectId.isAcceptableOrUnknown(data['project_id']!, _projectIdMeta),
+      );
+    }
+    if (data.containsKey('category')) {
+      context.handle(
+        _categoryMeta,
+        category.isAcceptableOrUnknown(data['category']!, _categoryMeta),
+      );
+    }
+    if (data.containsKey('status')) {
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_statusMeta);
+    }
+    if (data.containsKey('priority')) {
+      context.handle(
+        _priorityMeta,
+        priority.isAcceptableOrUnknown(data['priority']!, _priorityMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_priorityMeta);
+    }
+    if (data.containsKey('target_date')) {
+      context.handle(
+        _targetDateMeta,
+        targetDate.isAcceptableOrUnknown(data['target_date']!, _targetDateMeta),
+      );
+    }
+    if (data.containsKey('progress_pct')) {
+      context.handle(
+        _progressPctMeta,
+        progressPct.isAcceptableOrUnknown(
+          data['progress_pct']!,
+          _progressPctMeta,
+        ),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('is_synced')) {
+      context.handle(
+        _isSyncedMeta,
+        isSynced.isAcceptableOrUnknown(data['is_synced']!, _isSyncedMeta),
+      );
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  Goal map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return Goal(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      title: $GoalsTable.$convertertitle.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}title'],
+        )!,
+      ),
+      description: $GoalsTable.$converterdescriptionn.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}description'],
+        ),
+      ),
+      projectId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}project_id'],
+      ),
+      category: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}category'],
+      ),
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      )!,
+      priority: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}priority'],
+      )!,
+      targetDate: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}target_date'],
+      ),
+      progressPct: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}progress_pct'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+      isSynced: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_synced'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      ),
+    );
+  }
+
+  @override
+  $GoalsTable createAlias(String alias) {
+    return $GoalsTable(attachedDatabase, alias);
+  }
+
+  static TypeConverter<String, String> $convertertitle =
+      const EncryptedTextConverter();
+  static TypeConverter<String, String> $converterdescription =
+      const EncryptedTextConverter();
+  static TypeConverter<String?, String?> $converterdescriptionn =
+      NullAwareTypeConverter.wrap($converterdescription);
+}
+
+class Goal extends DataClass implements Insertable<Goal> {
+  final String id;
+  final String title;
+  final String? description;
+  final String? projectId;
+  final String? category;
+  final String status;
+  final String priority;
+  final DateTime? targetDate;
+  final int progressPct;
+  final DateTime createdAt;
+  final bool isSynced;
+  final DateTime? updatedAt;
+  const Goal({
+    required this.id,
+    required this.title,
+    this.description,
+    this.projectId,
+    this.category,
+    required this.status,
+    required this.priority,
+    this.targetDate,
+    required this.progressPct,
+    required this.createdAt,
+    required this.isSynced,
+    this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    {
+      map['title'] = Variable<String>($GoalsTable.$convertertitle.toSql(title));
+    }
+    if (!nullToAbsent || description != null) {
+      map['description'] = Variable<String>(
+        $GoalsTable.$converterdescriptionn.toSql(description),
+      );
+    }
+    if (!nullToAbsent || projectId != null) {
+      map['project_id'] = Variable<String>(projectId);
+    }
+    if (!nullToAbsent || category != null) {
+      map['category'] = Variable<String>(category);
+    }
+    map['status'] = Variable<String>(status);
+    map['priority'] = Variable<String>(priority);
+    if (!nullToAbsent || targetDate != null) {
+      map['target_date'] = Variable<DateTime>(targetDate);
+    }
+    map['progress_pct'] = Variable<int>(progressPct);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    map['is_synced'] = Variable<bool>(isSynced);
+    if (!nullToAbsent || updatedAt != null) {
+      map['updated_at'] = Variable<DateTime>(updatedAt);
+    }
+    return map;
+  }
+
+  GoalsCompanion toCompanion(bool nullToAbsent) {
+    return GoalsCompanion(
+      id: Value(id),
+      title: Value(title),
+      description: description == null && nullToAbsent
+          ? const Value.absent()
+          : Value(description),
+      projectId: projectId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(projectId),
+      category: category == null && nullToAbsent
+          ? const Value.absent()
+          : Value(category),
+      status: Value(status),
+      priority: Value(priority),
+      targetDate: targetDate == null && nullToAbsent
+          ? const Value.absent()
+          : Value(targetDate),
+      progressPct: Value(progressPct),
+      createdAt: Value(createdAt),
+      isSynced: Value(isSynced),
+      updatedAt: updatedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(updatedAt),
+    );
+  }
+
+  factory Goal.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return Goal(
+      id: serializer.fromJson<String>(json['id']),
+      title: serializer.fromJson<String>(json['title']),
+      description: serializer.fromJson<String?>(json['description']),
+      projectId: serializer.fromJson<String?>(json['projectId']),
+      category: serializer.fromJson<String?>(json['category']),
+      status: serializer.fromJson<String>(json['status']),
+      priority: serializer.fromJson<String>(json['priority']),
+      targetDate: serializer.fromJson<DateTime?>(json['targetDate']),
+      progressPct: serializer.fromJson<int>(json['progressPct']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      isSynced: serializer.fromJson<bool>(json['isSynced']),
+      updatedAt: serializer.fromJson<DateTime?>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'title': serializer.toJson<String>(title),
+      'description': serializer.toJson<String?>(description),
+      'projectId': serializer.toJson<String?>(projectId),
+      'category': serializer.toJson<String?>(category),
+      'status': serializer.toJson<String>(status),
+      'priority': serializer.toJson<String>(priority),
+      'targetDate': serializer.toJson<DateTime?>(targetDate),
+      'progressPct': serializer.toJson<int>(progressPct),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'isSynced': serializer.toJson<bool>(isSynced),
+      'updatedAt': serializer.toJson<DateTime?>(updatedAt),
+    };
+  }
+
+  Goal copyWith({
+    String? id,
+    String? title,
+    Value<String?> description = const Value.absent(),
+    Value<String?> projectId = const Value.absent(),
+    Value<String?> category = const Value.absent(),
+    String? status,
+    String? priority,
+    Value<DateTime?> targetDate = const Value.absent(),
+    int? progressPct,
+    DateTime? createdAt,
+    bool? isSynced,
+    Value<DateTime?> updatedAt = const Value.absent(),
+  }) => Goal(
+    id: id ?? this.id,
+    title: title ?? this.title,
+    description: description.present ? description.value : this.description,
+    projectId: projectId.present ? projectId.value : this.projectId,
+    category: category.present ? category.value : this.category,
+    status: status ?? this.status,
+    priority: priority ?? this.priority,
+    targetDate: targetDate.present ? targetDate.value : this.targetDate,
+    progressPct: progressPct ?? this.progressPct,
+    createdAt: createdAt ?? this.createdAt,
+    isSynced: isSynced ?? this.isSynced,
+    updatedAt: updatedAt.present ? updatedAt.value : this.updatedAt,
+  );
+  Goal copyWithCompanion(GoalsCompanion data) {
+    return Goal(
+      id: data.id.present ? data.id.value : this.id,
+      title: data.title.present ? data.title.value : this.title,
+      description: data.description.present
+          ? data.description.value
+          : this.description,
+      projectId: data.projectId.present ? data.projectId.value : this.projectId,
+      category: data.category.present ? data.category.value : this.category,
+      status: data.status.present ? data.status.value : this.status,
+      priority: data.priority.present ? data.priority.value : this.priority,
+      targetDate: data.targetDate.present
+          ? data.targetDate.value
+          : this.targetDate,
+      progressPct: data.progressPct.present
+          ? data.progressPct.value
+          : this.progressPct,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('Goal(')
+          ..write('id: $id, ')
+          ..write('title: $title, ')
+          ..write('description: $description, ')
+          ..write('projectId: $projectId, ')
+          ..write('category: $category, ')
+          ..write('status: $status, ')
+          ..write('priority: $priority, ')
+          ..write('targetDate: $targetDate, ')
+          ..write('progressPct: $progressPct, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('isSynced: $isSynced, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    title,
+    description,
+    projectId,
+    category,
+    status,
+    priority,
+    targetDate,
+    progressPct,
+    createdAt,
+    isSynced,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is Goal &&
+          other.id == this.id &&
+          other.title == this.title &&
+          other.description == this.description &&
+          other.projectId == this.projectId &&
+          other.category == this.category &&
+          other.status == this.status &&
+          other.priority == this.priority &&
+          other.targetDate == this.targetDate &&
+          other.progressPct == this.progressPct &&
+          other.createdAt == this.createdAt &&
+          other.isSynced == this.isSynced &&
+          other.updatedAt == this.updatedAt);
+}
+
+class GoalsCompanion extends UpdateCompanion<Goal> {
+  final Value<String> id;
+  final Value<String> title;
+  final Value<String?> description;
+  final Value<String?> projectId;
+  final Value<String?> category;
+  final Value<String> status;
+  final Value<String> priority;
+  final Value<DateTime?> targetDate;
+  final Value<int> progressPct;
+  final Value<DateTime> createdAt;
+  final Value<bool> isSynced;
+  final Value<DateTime?> updatedAt;
+  final Value<int> rowid;
+  const GoalsCompanion({
+    this.id = const Value.absent(),
+    this.title = const Value.absent(),
+    this.description = const Value.absent(),
+    this.projectId = const Value.absent(),
+    this.category = const Value.absent(),
+    this.status = const Value.absent(),
+    this.priority = const Value.absent(),
+    this.targetDate = const Value.absent(),
+    this.progressPct = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.isSynced = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  GoalsCompanion.insert({
+    required String id,
+    required String title,
+    this.description = const Value.absent(),
+    this.projectId = const Value.absent(),
+    this.category = const Value.absent(),
+    required String status,
+    required String priority,
+    this.targetDate = const Value.absent(),
+    this.progressPct = const Value.absent(),
+    required DateTime createdAt,
+    this.isSynced = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       title = Value(title),
+       status = Value(status),
+       priority = Value(priority),
+       createdAt = Value(createdAt);
+  static Insertable<Goal> custom({
+    Expression<String>? id,
+    Expression<String>? title,
+    Expression<String>? description,
+    Expression<String>? projectId,
+    Expression<String>? category,
+    Expression<String>? status,
+    Expression<String>? priority,
+    Expression<DateTime>? targetDate,
+    Expression<int>? progressPct,
+    Expression<DateTime>? createdAt,
+    Expression<bool>? isSynced,
+    Expression<DateTime>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (title != null) 'title': title,
+      if (description != null) 'description': description,
+      if (projectId != null) 'project_id': projectId,
+      if (category != null) 'category': category,
+      if (status != null) 'status': status,
+      if (priority != null) 'priority': priority,
+      if (targetDate != null) 'target_date': targetDate,
+      if (progressPct != null) 'progress_pct': progressPct,
+      if (createdAt != null) 'created_at': createdAt,
+      if (isSynced != null) 'is_synced': isSynced,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  GoalsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? title,
+    Value<String?>? description,
+    Value<String?>? projectId,
+    Value<String?>? category,
+    Value<String>? status,
+    Value<String>? priority,
+    Value<DateTime?>? targetDate,
+    Value<int>? progressPct,
+    Value<DateTime>? createdAt,
+    Value<bool>? isSynced,
+    Value<DateTime?>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return GoalsCompanion(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      description: description ?? this.description,
+      projectId: projectId ?? this.projectId,
+      category: category ?? this.category,
+      status: status ?? this.status,
+      priority: priority ?? this.priority,
+      targetDate: targetDate ?? this.targetDate,
+      progressPct: progressPct ?? this.progressPct,
+      createdAt: createdAt ?? this.createdAt,
+      isSynced: isSynced ?? this.isSynced,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (title.present) {
+      map['title'] = Variable<String>(
+        $GoalsTable.$convertertitle.toSql(title.value),
+      );
+    }
+    if (description.present) {
+      map['description'] = Variable<String>(
+        $GoalsTable.$converterdescriptionn.toSql(description.value),
+      );
+    }
+    if (projectId.present) {
+      map['project_id'] = Variable<String>(projectId.value);
+    }
+    if (category.present) {
+      map['category'] = Variable<String>(category.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
+    if (priority.present) {
+      map['priority'] = Variable<String>(priority.value);
+    }
+    if (targetDate.present) {
+      map['target_date'] = Variable<DateTime>(targetDate.value);
+    }
+    if (progressPct.present) {
+      map['progress_pct'] = Variable<int>(progressPct.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (isSynced.present) {
+      map['is_synced'] = Variable<bool>(isSynced.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('GoalsCompanion(')
+          ..write('id: $id, ')
+          ..write('title: $title, ')
+          ..write('description: $description, ')
+          ..write('projectId: $projectId, ')
+          ..write('category: $category, ')
+          ..write('status: $status, ')
+          ..write('priority: $priority, ')
+          ..write('targetDate: $targetDate, ')
+          ..write('progressPct: $progressPct, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('isSynced: $isSynced, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $PendingDeletesTable extends PendingDeletes
     with TableInfo<$PendingDeletesTable, PendingDelete> {
   @override
@@ -6415,6 +7650,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $AgentConfigurationsTable agentConfigurations =
       $AgentConfigurationsTable(this);
   late final $UserMemoriesTable userMemories = $UserMemoriesTable(this);
+  late final $ProjectsTable projects = $ProjectsTable(this);
+  late final $GoalsTable goals = $GoalsTable(this);
   late final $PendingDeletesTable pendingDeletes = $PendingDeletesTable(this);
   late final $LearningLogsTable learningLogs = $LearningLogsTable(this);
   late final $OfflineModelWeightsTable offlineModelWeights =
@@ -6434,6 +7671,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     messages,
     agentConfigurations,
     userMemories,
+    projects,
+    goals,
     pendingDeletes,
     learningLogs,
     offlineModelWeights,
@@ -8394,6 +9633,599 @@ typedef $$UserMemoriesTableProcessedTableManager =
       UserMemory,
       PrefetchHooks Function()
     >;
+typedef $$ProjectsTableCreateCompanionBuilder =
+    ProjectsCompanion Function({
+      required String id,
+      required String title,
+      Value<String?> description,
+      required String status,
+      Value<DateTime?> targetDate,
+      required DateTime createdAt,
+      Value<bool> isSynced,
+      Value<DateTime?> updatedAt,
+      Value<int> rowid,
+    });
+typedef $$ProjectsTableUpdateCompanionBuilder =
+    ProjectsCompanion Function({
+      Value<String> id,
+      Value<String> title,
+      Value<String?> description,
+      Value<String> status,
+      Value<DateTime?> targetDate,
+      Value<DateTime> createdAt,
+      Value<bool> isSynced,
+      Value<DateTime?> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$ProjectsTableFilterComposer
+    extends Composer<_$AppDatabase, $ProjectsTable> {
+  $$ProjectsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<String, String, String> get title =>
+      $composableBuilder(
+        column: $table.title,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnWithTypeConverterFilters<String?, String, String> get description =>
+      $composableBuilder(
+        column: $table.description,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnFilters<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get targetDate => $composableBuilder(
+    column: $table.targetDate,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$ProjectsTableOrderingComposer
+    extends Composer<_$AppDatabase, $ProjectsTable> {
+  $$ProjectsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get title => $composableBuilder(
+    column: $table.title,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get description => $composableBuilder(
+    column: $table.description,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get targetDate => $composableBuilder(
+    column: $table.targetDate,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$ProjectsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $ProjectsTable> {
+  $$ProjectsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<String, String> get title =>
+      $composableBuilder(column: $table.title, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<String?, String> get description =>
+      $composableBuilder(
+        column: $table.description,
+        builder: (column) => column,
+      );
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get targetDate => $composableBuilder(
+    column: $table.targetDate,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get isSynced =>
+      $composableBuilder(column: $table.isSynced, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$ProjectsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $ProjectsTable,
+          Project,
+          $$ProjectsTableFilterComposer,
+          $$ProjectsTableOrderingComposer,
+          $$ProjectsTableAnnotationComposer,
+          $$ProjectsTableCreateCompanionBuilder,
+          $$ProjectsTableUpdateCompanionBuilder,
+          (Project, BaseReferences<_$AppDatabase, $ProjectsTable, Project>),
+          Project,
+          PrefetchHooks Function()
+        > {
+  $$ProjectsTableTableManager(_$AppDatabase db, $ProjectsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$ProjectsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$ProjectsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$ProjectsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> title = const Value.absent(),
+                Value<String?> description = const Value.absent(),
+                Value<String> status = const Value.absent(),
+                Value<DateTime?> targetDate = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<bool> isSynced = const Value.absent(),
+                Value<DateTime?> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => ProjectsCompanion(
+                id: id,
+                title: title,
+                description: description,
+                status: status,
+                targetDate: targetDate,
+                createdAt: createdAt,
+                isSynced: isSynced,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String title,
+                Value<String?> description = const Value.absent(),
+                required String status,
+                Value<DateTime?> targetDate = const Value.absent(),
+                required DateTime createdAt,
+                Value<bool> isSynced = const Value.absent(),
+                Value<DateTime?> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => ProjectsCompanion.insert(
+                id: id,
+                title: title,
+                description: description,
+                status: status,
+                targetDate: targetDate,
+                createdAt: createdAt,
+                isSynced: isSynced,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$ProjectsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $ProjectsTable,
+      Project,
+      $$ProjectsTableFilterComposer,
+      $$ProjectsTableOrderingComposer,
+      $$ProjectsTableAnnotationComposer,
+      $$ProjectsTableCreateCompanionBuilder,
+      $$ProjectsTableUpdateCompanionBuilder,
+      (Project, BaseReferences<_$AppDatabase, $ProjectsTable, Project>),
+      Project,
+      PrefetchHooks Function()
+    >;
+typedef $$GoalsTableCreateCompanionBuilder =
+    GoalsCompanion Function({
+      required String id,
+      required String title,
+      Value<String?> description,
+      Value<String?> projectId,
+      Value<String?> category,
+      required String status,
+      required String priority,
+      Value<DateTime?> targetDate,
+      Value<int> progressPct,
+      required DateTime createdAt,
+      Value<bool> isSynced,
+      Value<DateTime?> updatedAt,
+      Value<int> rowid,
+    });
+typedef $$GoalsTableUpdateCompanionBuilder =
+    GoalsCompanion Function({
+      Value<String> id,
+      Value<String> title,
+      Value<String?> description,
+      Value<String?> projectId,
+      Value<String?> category,
+      Value<String> status,
+      Value<String> priority,
+      Value<DateTime?> targetDate,
+      Value<int> progressPct,
+      Value<DateTime> createdAt,
+      Value<bool> isSynced,
+      Value<DateTime?> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$GoalsTableFilterComposer extends Composer<_$AppDatabase, $GoalsTable> {
+  $$GoalsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<String, String, String> get title =>
+      $composableBuilder(
+        column: $table.title,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnWithTypeConverterFilters<String?, String, String> get description =>
+      $composableBuilder(
+        column: $table.description,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnFilters<String> get projectId => $composableBuilder(
+    column: $table.projectId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get category => $composableBuilder(
+    column: $table.category,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get priority => $composableBuilder(
+    column: $table.priority,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get targetDate => $composableBuilder(
+    column: $table.targetDate,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get progressPct => $composableBuilder(
+    column: $table.progressPct,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$GoalsTableOrderingComposer
+    extends Composer<_$AppDatabase, $GoalsTable> {
+  $$GoalsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get title => $composableBuilder(
+    column: $table.title,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get description => $composableBuilder(
+    column: $table.description,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get projectId => $composableBuilder(
+    column: $table.projectId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get category => $composableBuilder(
+    column: $table.category,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get priority => $composableBuilder(
+    column: $table.priority,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get targetDate => $composableBuilder(
+    column: $table.targetDate,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get progressPct => $composableBuilder(
+    column: $table.progressPct,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get isSynced => $composableBuilder(
+    column: $table.isSynced,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$GoalsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $GoalsTable> {
+  $$GoalsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<String, String> get title =>
+      $composableBuilder(column: $table.title, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<String?, String> get description =>
+      $composableBuilder(
+        column: $table.description,
+        builder: (column) => column,
+      );
+
+  GeneratedColumn<String> get projectId =>
+      $composableBuilder(column: $table.projectId, builder: (column) => column);
+
+  GeneratedColumn<String> get category =>
+      $composableBuilder(column: $table.category, builder: (column) => column);
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
+  GeneratedColumn<String> get priority =>
+      $composableBuilder(column: $table.priority, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get targetDate => $composableBuilder(
+    column: $table.targetDate,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get progressPct => $composableBuilder(
+    column: $table.progressPct,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get isSynced =>
+      $composableBuilder(column: $table.isSynced, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$GoalsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $GoalsTable,
+          Goal,
+          $$GoalsTableFilterComposer,
+          $$GoalsTableOrderingComposer,
+          $$GoalsTableAnnotationComposer,
+          $$GoalsTableCreateCompanionBuilder,
+          $$GoalsTableUpdateCompanionBuilder,
+          (Goal, BaseReferences<_$AppDatabase, $GoalsTable, Goal>),
+          Goal,
+          PrefetchHooks Function()
+        > {
+  $$GoalsTableTableManager(_$AppDatabase db, $GoalsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$GoalsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$GoalsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$GoalsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> title = const Value.absent(),
+                Value<String?> description = const Value.absent(),
+                Value<String?> projectId = const Value.absent(),
+                Value<String?> category = const Value.absent(),
+                Value<String> status = const Value.absent(),
+                Value<String> priority = const Value.absent(),
+                Value<DateTime?> targetDate = const Value.absent(),
+                Value<int> progressPct = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<bool> isSynced = const Value.absent(),
+                Value<DateTime?> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => GoalsCompanion(
+                id: id,
+                title: title,
+                description: description,
+                projectId: projectId,
+                category: category,
+                status: status,
+                priority: priority,
+                targetDate: targetDate,
+                progressPct: progressPct,
+                createdAt: createdAt,
+                isSynced: isSynced,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String title,
+                Value<String?> description = const Value.absent(),
+                Value<String?> projectId = const Value.absent(),
+                Value<String?> category = const Value.absent(),
+                required String status,
+                required String priority,
+                Value<DateTime?> targetDate = const Value.absent(),
+                Value<int> progressPct = const Value.absent(),
+                required DateTime createdAt,
+                Value<bool> isSynced = const Value.absent(),
+                Value<DateTime?> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => GoalsCompanion.insert(
+                id: id,
+                title: title,
+                description: description,
+                projectId: projectId,
+                category: category,
+                status: status,
+                priority: priority,
+                targetDate: targetDate,
+                progressPct: progressPct,
+                createdAt: createdAt,
+                isSynced: isSynced,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$GoalsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $GoalsTable,
+      Goal,
+      $$GoalsTableFilterComposer,
+      $$GoalsTableOrderingComposer,
+      $$GoalsTableAnnotationComposer,
+      $$GoalsTableCreateCompanionBuilder,
+      $$GoalsTableUpdateCompanionBuilder,
+      (Goal, BaseReferences<_$AppDatabase, $GoalsTable, Goal>),
+      Goal,
+      PrefetchHooks Function()
+    >;
 typedef $$PendingDeletesTableCreateCompanionBuilder =
     PendingDeletesCompanion Function({
       required String recordId,
@@ -9739,6 +11571,10 @@ class $AppDatabaseManager {
       $$AgentConfigurationsTableTableManager(_db, _db.agentConfigurations);
   $$UserMemoriesTableTableManager get userMemories =>
       $$UserMemoriesTableTableManager(_db, _db.userMemories);
+  $$ProjectsTableTableManager get projects =>
+      $$ProjectsTableTableManager(_db, _db.projects);
+  $$GoalsTableTableManager get goals =>
+      $$GoalsTableTableManager(_db, _db.goals);
   $$PendingDeletesTableTableManager get pendingDeletes =>
       $$PendingDeletesTableTableManager(_db, _db.pendingDeletes);
   $$LearningLogsTableTableManager get learningLogs =>
