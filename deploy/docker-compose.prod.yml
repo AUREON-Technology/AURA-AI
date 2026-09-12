@@ -352,6 +352,8 @@ services:
       # Built by the `sandbox-image` service below, not pulled. That is what lets IMAGES stay
       # off docker-socket-proxy's allowlist -- see that service's comment.
       AURA_SANDBOX_IMAGE: ${AURA_SANDBOX_IMAGE:-aura-sandbox:latest}
+      # Proxy for egress from sandbox containers (tinyproxy on sandbox-proxy:8888)
+      AURA_SANDBOX_PROXY_URL: ${AURA_SANDBOX_PROXY_URL:-http://sandbox-proxy:8888}
       AURA_SANDBOX_PROXY_URL: ${AURA_SANDBOX_PROXY_URL:-http://sandbox-proxy:8888}
       AURA_SANDBOX_NETWORK: sandbox_egress
       AURA_SANDBOX_MEMORY_LIMIT: ${AURA_SANDBOX_MEMORY_LIMIT:-512m}

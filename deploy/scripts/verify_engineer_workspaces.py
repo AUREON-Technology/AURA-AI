@@ -131,8 +131,8 @@ async def check_real_clone(runner, manager, ws, host_git) -> str:
     dest = Path(await runner.workspace_path(ws)) / "checkout"
     await host_git.clone(_PUBLIC_REPO, dest=dest, token=None)
 
-    # Use absolute path for git to avoid PATH issues in container exec
-    log = await _sh(runner, ws, "cd checkout && /usr/bin/git log --oneline | head -5")
+    # Try git via PATH first, then fallback to absolute path
+    log = await _sh(runner, ws, "cd checkout && (git log --oneline | head -5 || /usr/bin/git log --oneline | head -5)")
 
     _require(log.exit_code == 0, f"git log exited {log.exit_code}: {log.stderr.strip()}")
     _require(log.stdout.strip(), "the checkout has no history -- this is a file copy, not a clone")
