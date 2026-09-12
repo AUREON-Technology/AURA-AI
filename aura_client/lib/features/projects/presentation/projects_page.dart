@@ -4,14 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import '../../auth/presentation/auth_provider.dart';
 import '../data/project_repository.dart';
+import '../data/project_providers.dart';
 import 'projects_view_model.dart';
-
-final projectsStreamProvider = StreamProvider<List<Project>>((ref) {
-  final repo = ref.watch(projectRepositoryProvider);
-  return repo.watchProjects();
-});
-
-final projectCategoryFilterProvider = StateProvider<String>((ref) => 'All');
 
 class ProjectsPage extends ConsumerWidget {
   const ProjectsPage({super.key});

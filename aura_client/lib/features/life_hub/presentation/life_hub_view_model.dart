@@ -6,7 +6,7 @@ import '../../health/data/health_repository.dart';
 import '../../tasks/data/task_repository.dart';
 import '../domain/life_item.dart';
 
-enum LifeHubFilter { all, tasks, calendar, finance, health }
+enum LifeHubFilter { all, tasks, calendar, finance, health, projects, goals }
 
 LifeHubFilter lifeHubFilterFromQuery(String? raw) {
   return switch (raw) {
@@ -14,6 +14,8 @@ LifeHubFilter lifeHubFilterFromQuery(String? raw) {
     'calendar' => LifeHubFilter.calendar,
     'finance' => LifeHubFilter.finance,
     'health' => LifeHubFilter.health,
+    'projects' => LifeHubFilter.projects,
+    'goals' => LifeHubFilter.goals,
     _ => LifeHubFilter.all,
   };
 }

@@ -4,14 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import '../../auth/presentation/auth_provider.dart';
 import '../data/goal_repository.dart';
+import '../data/goal_providers.dart';
 import 'goals_view_model.dart';
-
-final goalsStreamProvider = StreamProvider<List<Goal>>((ref) {
-  final repo = ref.watch(goalRepositoryProvider);
-  return repo.watchGoals();
-});
-
-final goalFilterProvider = StateProvider<String?>((ref) => null);
 
 class GoalsPage extends ConsumerWidget {
   const GoalsPage({super.key});

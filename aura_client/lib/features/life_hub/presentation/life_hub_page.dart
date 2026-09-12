@@ -17,6 +17,8 @@ import '../../tasks/data/task_repository.dart';
 import '../../tasks/presentation/widgets/add_task_dialog.dart';
 import '../../tasks/presentation/widgets/empty_state_tasks.dart';
 import '../../tasks/presentation/widgets/task_item_card.dart';
+import '../../projects/data/project_providers.dart';
+import '../../goals/data/goal_providers.dart';
 import '../domain/life_item.dart';
 import 'life_hub_view_model.dart';
 
@@ -81,6 +83,8 @@ class LifeHubPage extends ConsumerWidget {
       LifeHubFilter.calendar => 'Calendar',
       LifeHubFilter.finance => 'Finance',
       LifeHubFilter.health => 'Health',
+      LifeHubFilter.projects => 'Projects',
+      LifeHubFilter.goals => 'Goals',
     };
   }
 
@@ -99,6 +103,10 @@ class LifeHubPage extends ConsumerWidget {
       case LifeHubFilter.all:
       case LifeHubFilter.tasks:
         await showDialog(context: context, builder: (_) => const AddTaskDialog());
+      case LifeHubFilter.projects:
+        context.push('/projects');
+      case LifeHubFilter.goals:
+        context.push('/goals');
     }
   }
 }
@@ -115,6 +123,8 @@ class _LifeHubBody extends ConsumerWidget {
       LifeHubFilter.calendar => const _CalendarPane(),
       LifeHubFilter.finance => const _FinancePane(),
       LifeHubFilter.health => const _HealthPane(),
+      LifeHubFilter.projects => const _ProjectsPane(),
+      LifeHubFilter.goals => const _GoalsPane(),
     };
   }
 }
@@ -289,6 +299,122 @@ class _HealthPane extends ConsumerWidget {
       error: (e, _) => AuraEmptyState(
         icon: Icons.error_outline,
         title: 'Could not load health',
+        message: e.toString(),
+      ),
+    );
+  }
+}
+
+class _ProjectsPane extends ConsumerWidget {
+  const _ProjectsPane();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final projectsAsync = ref.watch(projectsStreamProvider);
+    return projectsAsync.when(
+      data: (projects) {
+        if (projects.isEmpty) {
+          return const AuraEmptyState(
+            icon: Icons.folder_open,
+            title: 'No projects yet',
+            message: 'Create a project to organize your work.',
+          );
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(AuraSpacing.lg, 0, AuraSpacing.lg, 88),
+          itemCount: projects.length,
+          itemBuilder: (context, index) {
+            final project = projects[index];
+            return AuraCard(
+              child: ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: Colors.blue.withValues(alpha: 0.12),
+                  child: const Icon(Icons.folder, color: Colors.blue),
+                ),
+                title: Text(project.title, style: const TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: project.targetDate != null
+                    ? Text('Due: ${project.targetDate!.toLocal().toString().split(' ')[0]}')
+                    : null,
+              ),
+            );
+          },
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => AuraEmptyState(
+        icon: Icons.error_outline,
+        title: 'Could not load projects',
+        message: e.toString(),
+      ),
+    );
+  }
+}
+
+class _GoalsPane extends ConsumerWidget {
+  const _GoalsPane();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final goalsAsync = ref.watch(goalsStreamProvider);
+    return goalsAsync.when(
+      data: (goals) {
+        if (goals.isEmpty) {
+          return const AuraEmptyState(
+            icon: Icons.flag,
+            title: 'No goals yet',
+            message: 'Create a goal to track your aspirations.',
+          );
+        }
+        return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(AuraSpacing.lg, 0, AuraSpacing.lg, 88),
+          itemCount: goals.length,
+          itemBuilder: (context, index) {
+            final goal = goals[index];
+            return AuraCard(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(goal.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Chip(
+                          label: Text(goal.status, style: const TextStyle(fontSize: 11)),
+                          backgroundColor: Colors.blue.withValues(alpha: 0.1),
+                        ),
+                        const SizedBox(width: 8),
+                        Chip(
+                          label: Text(goal.priority, style: const TextStyle(fontSize: 11)),
+                          backgroundColor: Colors.orange.withValues(alpha: 0.1),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    LinearProgressIndicator(
+                      value: goal.progressPct / 100,
+                      backgroundColor: Colors.grey[200],
+                      valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
+                      minHeight: 8,
+                    ),
+                    const SizedBox(height: 4),
+                    Text('${goal.progressPct}% complete'),
+                    if (goal.targetDate != null) ...[
+                      const SizedBox(height: 4),
+                      Text('Target: ${goal.targetDate!.toLocal().toString().split(' ')[0]}', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => AuraEmptyState(
+        icon: Icons.error_outline,
+        title: 'Could not load goals',
         message: e.toString(),
       ),
     );
