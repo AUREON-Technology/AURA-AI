@@ -1,0 +1,64 @@
+name: Admin CI
+
+# Runs against the dev stack brought up by vps-dev-ops.yml
+# Triggered automatically when vps-dev-ops.yml's bring_up_dev action completes,
+# or manually with a dev stack URL.
+
+on:
+  workflow_run:
+    workflows: ["VPS Dev Ops"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dev_stack_url:
+        description: 'Dev stack base URL (e.g., https://dev.aura.example.com)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  admin-ci:
+    name: Admin Dashboard CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: aura_admin/package-lock.json
+
+      - name: Install dependencies
+        working-directory: aura_admin
+        run: npm ci
+
+      - name: Lint
+        working-directory: aura_admin
+        run: npm run lint
+
+      - name: Build
+        working-directory: aura_admin
+        run: npm run build
+
+      - name: Determine dev stack URL
+        id: dev-url
+        run: |
+          if [ "${{ github.event.workflow_run.conclusion }}" = "success" ]; then
+            # vps-dev-ops bring_up_dev sets this as an output or we use default
+            echo "url=https://dev.${{ vars.AURA_DOMAIN }}" >> $GITHUB_OUTPUT
+          else
+            echo "url=${{ github.event.inputs.dev_stack_url }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run E2E tests
+        working-directory: aura_admin
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ steps.dev-url.outputs.url }}
+        run: npm run test:e2e
