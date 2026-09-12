@@ -72,10 +72,9 @@ docker cp "$DRIVER" "$GATEWAY_CID":/tmp/verify_phase_j.py || die "could not copy
 
 mkdir -p "$REPORT_DIR"
 
-# Build docker exec command with env vars from the gateway container
-# Use a more robust approach: export vars inside the shell command
-docker exec "$GATEWAY_CID" \
-    sh -lc 'eval $(printenv | grep -E "^(AURA_|POSTGRES_|REDIS_|QDRANT_|OLLAMA_)" | sed "s/^/export /"); PYTHONPATH=/app python /tmp/verify_phase_j.py' 2>&1 | tee "$REPORT"
+# Use docker compose exec which inherits the service's environment, plus PYTHONPATH
+docker compose -f "$COMPOSE_FILE" exec -T "$SERVICE" \
+    sh -lc 'PYTHONPATH=/app python /tmp/verify_phase_j.py' 2>&1 | tee "$REPORT"
 status=${PIPESTATUS[0]}
 
 # Strip the ANSI colouring so the saved report is quotable in the roadmap.
