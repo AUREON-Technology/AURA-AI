@@ -131,7 +131,8 @@ async def check_real_clone(runner, manager, ws, host_git) -> str:
     dest = Path(await runner.workspace_path(ws)) / "checkout"
     await host_git.clone(_PUBLIC_REPO, dest=dest, token=None)
 
-    log = await _sh(runner, ws, "cd checkout && git log --oneline | head -5")
+    # Use absolute path for git to avoid PATH issues in container exec
+    log = await _sh(runner, ws, "cd checkout && /usr/bin/git log --oneline | head -5")
 
     _require(log.exit_code == 0, f"git log exited {log.exit_code}: {log.stderr.strip()}")
     _require(log.stdout.strip(), "the checkout has no history -- this is a file copy, not a clone")
@@ -171,18 +172,21 @@ async def check_egress(runner, manager, ws) -> str:
     blocked = await _sh(
         runner, ws, "curl -s -m 15 -o /dev/null -w '%{http_code}' https://example.com || echo failed"
     )
+    blocked_out = blocked.stdout.strip()
+    # Connection failed: curl returns 000 or "failed" or empty; any non-2xx/3xx means blocked
     _require(
-        blocked.stdout.strip() in ("failed", "000", ""),
-        f"https://example.com was reachable (got {blocked.stdout.strip()!r}) -- the allowlist is "
+        blocked_out in ("failed", "000", "") or blocked_out.startswith("000") or "failed" in blocked_out,
+        f"https://example.com was reachable (got {blocked_out!r}) -- the allowlist is "
         "not being enforced; check that sandbox_egress is internal and the proxy is up",
     )
 
     allowed = await _sh(
         runner, ws, "curl -s -m 30 -o /dev/null -w '%{http_code}' https://pypi.org/simple/ || echo failed"
     )
+    allowed_out = allowed.stdout.strip()
     _require(
-        allowed.stdout.strip().startswith(("2", "3")),
-        f"pypi.org was NOT reachable (got {allowed.stdout.strip()!r}) -- the allowlist is too "
+        allowed_out.startswith(("2", "3")),
+        f"pypi.org was NOT reachable (got {allowed_out!r}) -- the allowlist is too "
         "tight to install anything, so builds will fail",
     )
     return "example.com blocked, pypi.org reachable"
