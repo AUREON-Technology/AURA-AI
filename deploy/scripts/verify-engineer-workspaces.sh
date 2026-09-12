@@ -74,7 +74,7 @@ mkdir -p "$REPORT_DIR"
 # Pass required env vars from the gateway container to the exec session
 GATEWAY_ENV=$(docker exec "$GATEWAY_CID" printenv | grep -E '^(AURA_|POSTGRES_|REDIS_|QDRANT_|OLLAMA_)' | sed 's/^/-e /' | tr '\n' ' ')
 
-docker exec $GATEWAY_ENV -T "$GATEWAY_CID" \
+docker exec $GATEWAY_ENV "$GATEWAY_CID" \
     sh -lc 'PYTHONPATH=/app python /tmp/verify_phase_j.py' 2>&1 | tee "$REPORT"
 status=${PIPESTATUS[0]}
 
