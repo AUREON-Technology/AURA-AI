@@ -71,7 +71,8 @@ GATEWAY_CID=$(docker compose -f "$COMPOSE_FILE" ps -q "$SERVICE")
 docker cp "$DRIVER" "$GATEWAY_CID":/tmp/verify_phase_j.py || die "could not copy the driver into the gateway"
 
 mkdir -p "$REPORT_DIR"
-docker compose -f "$COMPOSE_FILE" exec -T "$SERVICE" python /tmp/verify_phase_j.py 2>&1 | tee "$REPORT"
+docker compose -f "$COMPOSE_FILE" exec -T "$SERVICE" \
+    sh -lc 'PYTHONPATH=/app python /tmp/verify_phase_j.py' 2>&1 | tee "$REPORT"
 status=${PIPESTATUS[0]}
 
 # Strip the ANSI colouring so the saved report is quotable in the roadmap.
