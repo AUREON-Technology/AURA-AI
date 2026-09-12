@@ -188,7 +188,7 @@ _MANIFEST_GLOBS = (
 
 _MANIFEST_SKIP = {
     "__pycache__", "venv", ".venv", "node_modules", "build", "dist", ".git",
-    ".dart_tool", "Pods", ".gradle", "ephemeral",
+    ".dart_tool", "Pods", ".gradle", "ephemeral", ".claude",
 }
 
 #: An explicit, greppable per-line exemption, in the spirit of ``# noqa``.
