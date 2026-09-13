@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 /// Spacing scale — always use these instead of ad hoc SizedBox/padding
 /// values, so rhythm stays consistent across every screen.
 class AuraSpacing {
-  AuraSpacing._();
+  const AuraSpacing._();
+
   static const double xs = 4;
   static const double sm = 8;
   static const double md = 12;
@@ -11,6 +12,24 @@ class AuraSpacing {
   static const double xl = 24;
   static const double xxl = 32;
   static const double xxxl = 48;
+
+  /// Returns a scaled spacing instance for IDE density.
+  /// Uses the same API but multiplies all values by [scale].
+  static AuraSpacing _scaled(double scale) => _ScaledAuraSpacing(scale);
+}
+
+class _ScaledAuraSpacing extends AuraSpacing {
+  final double _scale;
+
+  const _ScaledAuraSpacing(this._scale) : super._();
+
+  double get xs => (AuraSpacing.xs * _scale).roundToDouble();
+  double get sm => (AuraSpacing.sm * _scale).roundToDouble();
+  double get md => (AuraSpacing.md * _scale).roundToDouble();
+  double get lg => (AuraSpacing.lg * _scale).roundToDouble();
+  double get xl => (AuraSpacing.xl * _scale).roundToDouble();
+  double get xxl => (AuraSpacing.xxl * _scale).roundToDouble();
+  double get xxxl => (AuraSpacing.xxxl * _scale).roundToDouble();
 }
 
 class AuraRadius {

@@ -82,6 +82,44 @@ jobs:
         working-directory: aura_client
         run: flutter build apk --release --dart-define=BACKEND_URL=https://staging.placeholder.invalid
 
+  build-windows:
+    # docs/architecture/015-desktop-ide.md (Desktop IDE, Phase K) — build-only gate for the
+    # Windows desktop target the Desktop IDE work targets first. Non-blocking for the Desktop
+    # IDE's D1-D3 merge until proven green here (see scripts/run_desktop_stack.ps1's own docs);
+    # required from D4 onward. Does not run or package aura_hostd, same as build-linux.
+    runs-on: windows-latest
+    needs: analyze-and-test
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.38.0"
+
+      - name: Enable Windows desktop support
+        run: flutter config --enable-windows-desktop
+
+      - name: Install dependencies
+        working-directory: aura_client
+        run: flutter pub get
+
+      - name: Regenerate Drift codegen
+        working-directory: aura_client
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Analyze
+        working-directory: aura_client
+        run: flutter analyze
+
+      - name: Test
+        working-directory: aura_client
+        run: flutter test
+
+      - name: Build release Windows bundle (build-only gate, not a publishable artifact)
+        working-directory: aura_client
+        run: flutter build windows --release --dart-define=BACKEND_URL=https://staging.placeholder.invalid
+
   build-linux:
     # ADR-011 (docs/architecture/011-desktop-engineer-agent.md) Unit 9. Build-only gate for the
     # Linux desktop target `aura_client/linux/` already carries — this never ran in CI before,

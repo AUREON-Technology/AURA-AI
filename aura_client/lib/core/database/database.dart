@@ -265,10 +265,61 @@ class TelemetryLogs extends Table {
 }
 
 // ----------------------------------------------------
+// Desktop IDE Tables (local-only, not synced)
+// ----------------------------------------------------
+
+class DesktopWorkspaces extends Table {
+  TextColumn get id => text()();
+  TextColumn get rootPath => text()();
+  TextColumn get displayName => text()();
+  DateTimeColumn get lastOpenedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+class DesktopEditorState extends Table {
+  TextColumn get workspaceId => text()();
+  TextColumn get openTabsJson => text()();
+  TextColumn get activeTabPath => text().nullable()();
+  RealColumn get sidebarWidth => real().nullable()();
+  RealColumn get agentPanelWidth => real().nullable()();
+  RealColumn get bottomPanelHeight => real().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {workspaceId};
+}
+
+class DesktopTerminalState extends Table {
+  TextColumn get workspaceId => text()();
+  TextColumn get sessionsJson => text()();
+
+  @override
+  Set<Column> get primaryKey => {workspaceId};
+}
+
+class DesktopLayoutState extends Table {
+  TextColumn get workspaceId => text()();
+  TextColumn get windowGeometryJson => text()();
+  TextColumn get panelVisibilityJson => text()();
+
+  @override
+  Set<Column> get primaryKey => {workspaceId};
+}
+
+class DesktopAgentState extends Table {
+  TextColumn get workspaceId => text()();
+  TextColumn get agentStateJson => text()();
+
+  @override
+  Set<Column> get primaryKey => {workspaceId};
+}
+
+// ----------------------------------------------------
 // Database Connection & Class
 // ----------------------------------------------------
 
-@DriftDatabase(tables: [Tasks, CalendarEvents, FinanceRecords, HealthRecords, Messages, AgentConfigurations, UserMemories, Projects, Goals, PendingDeletes, LearningLogs, OfflineModelWeights, TelemetryLogs, OutboxEntries, SyncMetadata])
+@DriftDatabase(tables: [Tasks, CalendarEvents, FinanceRecords, HealthRecords, Messages, AgentConfigurations, UserMemories, Projects, Goals, PendingDeletes, LearningLogs, OfflineModelWeights, TelemetryLogs, OutboxEntries, SyncMetadata, DesktopWorkspaces, DesktopEditorState, DesktopTerminalState, DesktopLayoutState, DesktopAgentState])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(openConnection());
 
@@ -276,7 +327,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 11;
+  int get schemaVersion => 12;
 
   Future<List<TelemetryLog>> getTelemetry() => select(telemetryLogs).get();
   Future<void> insertTelemetry(TelemetryLogsCompanion log) => into(telemetryLogs).insert(log);
@@ -414,6 +465,13 @@ class AppDatabase extends _$AppDatabase {
           if (from < 11) {
             await m.createTable(projects);
             await m.createTable(goals);
+          }
+          if (from < 12) {
+            await m.createTable(desktopWorkspaces);
+            await m.createTable(desktopEditorState);
+            await m.createTable(desktopTerminalState);
+            await m.createTable(desktopLayoutState);
+            await m.createTable(desktopAgentState);
           }
         },
         beforeOpen: (details) async {

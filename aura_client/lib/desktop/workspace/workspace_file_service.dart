@@ -1,0 +1,124 @@
+/// Workspace file service for Desktop IDE.
+///
+/// Read/write files with client-side containment check (mirrors hostd rules).
+/// This is for human IDE operations - agent operations go through hostd WebSocket.
+library;
+
+import 'dart:io';
+import 'package:path/path.dart' as p;
+import 'package:aura_client/core/security/path_containment.dart';
+
+/// Service for file I/O within a workspace root.
+class WorkspaceFileService {
+  WorkspaceFileService(this.workspaceRoot);
+
+  final String workspaceRoot;
+
+  /// Reads a file within the workspace.
+  Future<String> readFile(String relativePath) async {
+    final resolvedPath = requireContainedClient(workspaceRoot, relativePath);
+    final file = File(resolvedPath);
+    if (!file.existsSync()) {
+      throw FileSystemException('File not found', resolvedPath);
+    }
+    return file.readAsString();
+  }
+
+  /// Writes a file within the workspace.
+  Future<void> writeFile(String relativePath, String content) async {
+    final resolvedPath = requireContainedClient(workspaceRoot, relativePath);
+    final file = File(resolvedPath);
+    await file.parent.create(recursive: true);
+    await file.writeAsString(content);
+  }
+
+  /// Checks if a file exists.
+  Future<bool> exists(String relativePath) async {
+    try {
+      final resolvedPath = requireContainedClient(workspaceRoot, relativePath);
+      return File(resolvedPath).existsSync();
+    } on ClientContainmentViolation {
+      return false;
+    }
+  }
+
+  /// Lists files in a directory within the workspace.
+  Future<List<FileSystemEntity>> listDirectory(String relativePath) async {
+    final resolvedPath = requireContainedClient(workspaceRoot, relativePath);
+    final dir = Directory(resolvedPath);
+    if (!dir.existsSync()) {
+      throw FileSystemException('Directory not found', resolvedPath);
+    }
+    return dir.listSync();
+  }
+
+  /// Validates a workspace root.
+  void validateRoot() {
+    validateWorkspaceRoot(workspaceRoot);
+  }
+}
+
+/// Recursively walks a directory tree for quick open.
+Future<List<String>> walkWorkspaceFiles(
+  String workspaceRoot, {
+  List<String> ignorePatterns = const ['.git', 'node_modules', '.dart_tool', 'build', '.idea', '.vscode'],
+  int maxFiles = 5000,
+}) async {
+  final results = <String>[];
+  await _walkDirectory(
+    Directory(workspaceRoot),
+    workspaceRoot,
+    results,
+    ignorePatterns: ignorePatterns,
+    maxFiles: maxFiles,
+  );
+  return results;
+}
+
+Future<void> _walkDirectory(
+  Directory dir,
+  String workspaceRoot,
+  List<String> results, {
+  required List<String> ignorePatterns,
+  required int maxFiles,
+}) async {
+  if (results.length >= maxFiles) return;
+
+  final entities = dir.listSync();
+  for (final entity in entities) {
+    if (results.length >= maxFiles) break;
+
+    final basename = p.basename(entity.path);
+    if (ignorePatterns.contains(basename)) continue;
+
+    try {
+      final relativePath = _getRelativePath(workspaceRoot, entity.path);
+      if (relativePath == null) continue;
+
+      if (entity is File) {
+        results.add(relativePath);
+      } else if (entity is Directory) {
+        await _walkDirectory(
+          entity,
+          workspaceRoot,
+          results,
+          ignorePatterns: ignorePatterns,
+          maxFiles: maxFiles,
+        );
+      }
+    } catch (_) {
+      // Skip files that cause errors (symlinks, permission issues, etc.)
+    }
+  }
+}
+
+String? _getRelativePath(String workspaceRoot, String absolutePath) {
+  try {
+    final normalizedRoot = p.normalize(workspaceRoot);
+    final normalizedPath = p.normalize(absolutePath);
+    if (!normalizedPath.startsWith(normalizedRoot)) return null;
+    return p.relative(normalizedPath, from: normalizedRoot);
+  } catch (_) {
+    return null;
+  }
+}

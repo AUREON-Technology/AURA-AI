@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../features/analytics/presentation/analytics_page.dart';
 import '../../features/auth/presentation/auth_provider.dart';
@@ -32,6 +33,10 @@ import '../../features/settings/presentation/settings_page.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../../features/voice_live/presentation/live_voice_page.dart';
 import '../design_system/design_system.dart';
+import '../platform/aura_platform.dart';
+import '../../desktop/shell/desktop_shell.dart';
+import '../../desktop/workspace/workspace_welcome_page.dart';
+import '../../desktop/workspace/workspace_manager_page.dart';
 
 class ShellLayout extends ConsumerWidget {
   final Widget child;
@@ -229,7 +234,7 @@ final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/today',
     refreshListenable: notifier,
-    redirect: (context, state) {
+    redirect: (context, state) async {
       final authState = ref.read(authProvider);
       final isLoggedIn = authState.value != null;
       final location = state.matchedLocation;
@@ -247,6 +252,16 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (isLoggedIn && onboarded == true && isOnboarding) {
         return '/today';
       }
+
+      // Desktop IDE preference handling (Windows only)
+      if (isLoggedIn && isDesktopIde && location == '/today') {
+        final prefs = await SharedPreferences.getInstance();
+        final useIde = prefs.getBool('desktop_use_ide') ?? false;
+        if (useIde && !location.startsWith('/ide')) {
+          return '/ide';
+        }
+      }
+
       return null;
     },
     routes: [
@@ -355,6 +370,23 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/goals',
             builder: (context, state) => const GoalsPage(),
+          ),
+        ],
+      ),
+
+      // Desktop IDE Shell Route (Windows only)
+      ShellRoute(
+        builder: (context, state, child) => isDesktopIde
+            ? DesktopShell(child: child)
+            : const SizedBox.shrink(),
+        routes: [
+          GoRoute(
+            path: '/ide',
+            builder: (context, state) => const WorkspaceWelcomePage(),
+          ),
+          GoRoute(
+            path: '/ide/workspace',
+            builder: (context, state) => const WorkspaceManagerPage(),
           ),
         ],
       ),

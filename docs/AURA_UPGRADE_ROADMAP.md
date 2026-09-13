@@ -738,6 +738,85 @@ belongs here until CI has actually run it — that applies to `aura_hostd`'s own
 (`hostd-ci.yml`) exactly as much as it does to
 `aura_client`'s.
 
+### Phase K — Desktop IDE (Windows-first)
+
+**Status:** D0 architecture phase done (ADR-015). D1–D3 scaffolding exists and has been fixed to
+compile and wired end-to-end (router → `DesktopShell` → Explorer/editor/quick-open/session
+persistence), but **this is not yet proven** — this environment has no Flutter/Dart toolchain, so
+none of it has been run through `flutter analyze`/`flutter test`/`flutter build windows` (the new
+`build-windows` job in `client-ci.yml`, `continue-on-error: true` until proven). Do not treat D1–D3
+as done until that job (or a local Windows run) is green; the exit criteria below still name the
+real bar.
+
+Known compile/logic bugs fixed in this pass (kept here since they're the kind of thing that would
+otherwise re-appear if re-scaffolded): `router.dart` importing a nonexistent
+`desktop/desktop_shell.dart` path and missing page imports; a top-level `static` field (illegal
+outside a class) in `flutter_code_editor_provider.dart`; several files missing
+`dart:async`/`flutter/foundation.dart`/`package:drift/drift.dart`/`package:collection/collection.dart`
+imports; two barrel files (`desktop/state.dart`, `desktop/events.dart`) exporting paths one
+directory level too shallow; a `sealed class IdeEvent` subclassed from outside its own library file
+(illegal for sealed classes); an ambiguous-import collision between two same-named `HostdRoot`
+classes; `WorkspaceNotifier` subscribing to its own `WorkspaceOpened` event and re-publishing it —
+an infinite async loop; `DesktopShell` rendering its entire body (editor, sidebars, bottom panel)
+inside a `SizedBox` sized to `titleBarHeight` (36px); the primary sidebar showing the routed
+welcome/manager page instead of a file tree; `HostNotifier` checking a `status['reachable']` key
+`/status` never returns; and two `.replace()` Drift calls that would have thrown on any workspace
+without every column supplied. Also newly built: `desktop/explorer/` (was entirely missing) and
+`desktop/host/host_panel.dart`, and `EditorNotifier` session persistence to `DesktopEditorState`
+(was a stub).
+
+The Engineer agent already executes on the user's machine via `aura_hostd` (Phase J / ADR-011). The server-side persistent workspace model (ADR-013/014) provides durable per-(user, repo) workspaces. What is missing: a **human-facing IDE** that becomes the control surface for the same workspace model — not a port of the mobile app, but an IDE where AURA is a first-class workspace participant.
+
+Three-surface UX target:
+```
+             AURA DESKTOP
+                  │
+     ┌────────────┼────────────┐
+     ↓            ↓            ↓
+ WORKSPACE    INTELLIGENCE   CONTROL
+     │            │            │
+ Editor         AURA        Approvals
+ Files          Agents      Host
+ Git            Plans       Processes
+ Terminal       Context     Tasks
+ Tests          Memory      Security
+```
+
+D0–D3 establishes **Workspace** (editor, files, layout) with architectural plumbing for Intelligence and Control to integrate naturally in D4+.
+
+Key architectural decisions (ADR-015):
+- Dual-shell architecture: mobile keeps `ShellLayout` (`/today`, `/chat`, `/life`, `/you`); Windows gets `DesktopShell` at `/ide/*` with explicit preference (no forced redirect)
+- Filesystem split: human IDE reads via hostd (granted roots), writes via `dart:io` (workspace root); agent uses WebSocket → hostd (containment enforced by daemon)
+- Editor abstraction (`EditorProvider`) prevents lock-in; `flutter_code_editor` + `highlight` is initial provider
+- Drift v12 local-only tables for desktop session state (workspaces, editor, layout, terminal, agent)
+- `AuraIdeDensity` ThemeExtension for IDE-specific metrics (activity bar, sidebar widths, tab height, etc.)
+- Desktop state ownership matrix: Server-owned / Desktop-local / Host-owned — Riverpod notifiers per domain
+- IDE event model (`IdeEvent` stream): workspace.opened, file.changed, agent.*, approval.requested, git.changed, diagnostic.added
+- Shared containment test vectors (client = UX validation only; hostd = authoritative)
+
+Phase map:
+```
+D0 — Architecture doc + ADR-015 + containment test vectors
+D1 — Shell + State + Theme + Abstractions (Drift v12, AuraPlatform, DesktopShell, routing, editor abstraction, state notifiers, event bus, Windows CI)
+D2 — Workspace + Explorer (repository, welcome, manager, hostd-backed tree, HostPanel extraction)
+D3 — Editor (immutable EditorTab, tab bar, EditorProvider impl, file I/O, quick open, shortcuts, persistence)
+D4 — Terminal + PTY
+D5 — Git + Diff
+D6 — AURA AI Coding Layer (inline, diff, multi-file)
+D7 — Tests + Problems + Debug
+D8 — Agent Workspace (persistent per-repo)
+D9 — Multi-Agent Control Center
+D10 — Personal AI OS Desktop
+```
+
+Migration/reuse: `HostdControlClient` (explorer read + grant), `HostDaemonPage` (full settings → slim `HostPanel`), `HostFileBrowserPage` (delegate to shared `ExplorerService`), `ChatPage` (agent panel in D6), `engineer_run_repository` (task center D8).
+
+**Exit criteria (D0–D3):**
+- D0: Architecture doc reviewed; ADR-015 merged; containment test vectors passing in client and hostd test suites
+- D1: Windows build shows persistent activity bar + sidebars + bottom + status; desktop preference works; `flutter analyze` clean on Linux and Windows; Drift v12 migration runs; editor abstraction compiles
+- D2: Open folder → tree matches disk; granting root updates hostd; recent workspaces survive restart; hostd down → explorer reads via `dart:io` (read-only banner)
+- D3: Multiple files open; syntax highlight; dirty state + save; session restore after restart; unsaved close prompts; quick open works; shortcuts work; `flutter analyze` clean
+
 ## 4. Scope decisions
 
 Recorded so they are not re-litigated.
