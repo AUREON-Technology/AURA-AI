@@ -6,21 +6,18 @@ library;
 import 'package:drift/drift.dart';
 
 import 'package:aura_client/core/database/database.dart';
-import 'package:aura_client/desktop/state/desktop_application_state.dart';
 
 class DesktopWorkspaceRepository {
   DesktopWorkspaceRepository(this._db);
 
   final AppDatabase _db;
 
-  Future<List<DesktopWorkspace>> getAll() async {
-    final workspaces = await _db.select(_db.desktopWorkspaces).get();
-    return workspaces.map(DesktopWorkspace.fromDb).toList();
+  Future<List<DesktopWorkspace>> getAll() {
+    return _db.select(_db.desktopWorkspaces).get();
   }
 
-  Future<DesktopWorkspace?> getById(String id) async {
-    final workspace = await (_db.select(_db.desktopWorkspaces)..where((t) => t.id.equals(id))).getSingleOrNull();
-    return workspace != null ? DesktopWorkspace.fromDb(workspace) : null;
+  Future<DesktopWorkspace?> getById(String id) {
+    return (_db.select(_db.desktopWorkspaces)..where((t) => t.id.equals(id))).getSingleOrNull();
   }
 
   Future<void> create({
@@ -45,7 +42,7 @@ class DesktopWorkspaceRepository {
   }
 
   Future<void> delete(String id) async {
-    await _db.delete(_db.desktopWorkspaces).where((t) => t.id.equals(id)).go();
+    await (_db.delete(_db.desktopWorkspaces)..where((t) => t.id.equals(id))).go();
   }
 
   Future<void> deleteAll() async {

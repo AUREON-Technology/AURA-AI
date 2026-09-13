@@ -69,8 +69,7 @@ class MemoryRepository {
   Stream<List<UserMemory>> watchLocalMemories({int limit = 100, int offset = 0}) {
     return (_db.select(_db.userMemories)
           ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.desc)])
-          ..limit(limit)
-          ..offset(offset))
+          ..limit(limit, offset: offset))
         .watch();
   }
 
@@ -78,8 +77,7 @@ class MemoryRepository {
   Future<List<MemoryItem>> loadLocalMemories({int limit = 100, int offset = 0}) async {
     final cached = await (_db.select(_db.userMemories)
           ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.desc)])
-          ..limit(limit)
-          ..offset(offset))
+          ..limit(limit, offset: offset))
         .get();
     return cached.map((c) => MemoryItem(id: c.id, content: c.fact)).toList();
   }

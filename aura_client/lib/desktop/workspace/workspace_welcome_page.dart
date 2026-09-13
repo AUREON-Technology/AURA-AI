@@ -6,12 +6,11 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
-import 'package:aura_client/desktop/events/ide_event_bus.dart';
-import 'package:aura_client/desktop/events/ide_event.dart';
 
 class WorkspaceWelcomePage extends ConsumerWidget {
   const WorkspaceWelcomePage({super.key});
@@ -21,7 +20,6 @@ class WorkspaceWelcomePage extends ConsumerWidget {
     final palette = AuraPalette.of(context);
     final ideDensity = context.ideDensity;
     final workspaceState = ref.watch(workspaceNotifierProvider);
-    final hostState = ref.watch(hostNotifierProvider);
 
     return Scaffold(
       body: Center(
@@ -64,7 +62,6 @@ class WorkspaceWelcomePage extends ConsumerWidget {
                 AuraButton(
                   label: 'Open Folder',
                   icon: Icons.folder_open,
-                  size: AuraButtonSize.large,
                   onPressed: () => _openFolder(context, ref),
                 ),
                 const SizedBox(height: AuraSpacing.lg),
@@ -114,7 +111,8 @@ class WorkspaceWelcomePage extends ConsumerWidget {
     );
 
     // Offer to grant to hostd
-    if (ref.read(hostNotifierProvider).isConnected) {
+    final hostStatus = await ref.read(hostdControlClientProvider).status().catchError((_) => <String, dynamic>{});
+    if (hostStatus['authenticated'] == true) {
       if (!context.mounted) return;
       final shouldGrant = await _showGrantDialog(context, path);
       if (shouldGrant == true) {
@@ -188,51 +186,53 @@ class _RecentWorkspacesList extends ConsumerWidget {
     return Column(
       children: workspaces.map((ws) {
         final isActive = ws.id == activeWorkspaceId;
-        return AuraCard(
-          margin: EdgeInsets.only(bottom: ideDensity.spacingScale * AuraSpacing.sm),
-          padding: EdgeInsets.all(ideDensity.spacingScale * AuraSpacing.md),
-          child: InkWell(
-            onTap: () => ref.read(workspaceNotifierProvider.notifier).setActiveWorkspace(ws.id),
-            borderRadius: BorderRadius.circular(AuraRadius.md),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.folder_outlined,
-                  color: isActive ? palette.brand : palette.textSecondary,
-                ),
-                const SizedBox(width: AuraSpacing.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        ws.displayName,
-                        style: TextStyle(
-                          fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-                          color: palette.textPrimary,
-                        ),
-                      ),
-                      Text(
-                        ws.rootPath,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: palette.textSecondary,
-                          fontFamily: 'Courier',
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
+        return Padding(
+          padding: EdgeInsets.only(bottom: ideDensity.spacingScale * AuraSpacing.sm),
+          child: AuraCard(
+            padding: EdgeInsets.all(ideDensity.spacingScale * AuraSpacing.md),
+            child: InkWell(
+              onTap: () => ref.read(workspaceNotifierProvider.notifier).setActiveWorkspace(ws.id),
+              borderRadius: BorderRadius.circular(AuraRadius.md),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.folder_outlined,
+                    color: isActive ? palette.brand : palette.textSecondary,
                   ),
-                ),
-                if (isActive)
-                  Icon(Icons.check_circle, color: palette.brand, size: 20)
-                else
-                  IconButton(
-                    icon: Icon(Icons.close, size: 18, color: palette.textDisabled),
-                    onPressed: () => ref.read(workspaceNotifierProvider.notifier).removeWorkspace(ws.id),
-                    tooltip: 'Remove from recent',
+                  const SizedBox(width: AuraSpacing.md),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          ws.displayName,
+                          style: TextStyle(
+                            fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+                            color: palette.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          ws.rootPath,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: palette.textSecondary,
+                            fontFamily: 'Courier',
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
                   ),
-              ],
+                  if (isActive)
+                    Icon(Icons.check_circle, color: palette.brand, size: 20)
+                  else
+                    IconButton(
+                      icon: Icon(Icons.close, size: 18, color: palette.textDisabled),
+                      onPressed: () => ref.read(workspaceNotifierProvider.notifier).removeWorkspace(ws.id),
+                      tooltip: 'Remove from recent',
+                    ),
+                ],
+              ),
             ),
           ),
         );

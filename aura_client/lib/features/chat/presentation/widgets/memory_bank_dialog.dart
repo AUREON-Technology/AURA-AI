@@ -14,7 +14,7 @@ void showMemoryBankDialog(BuildContext context) {
       return Consumer(
         builder: (context, ref, child) {
           final palette = AuraPalette.of(context);
-          final memoriesAsync = ref.watch(localMemoriesStreamProvider);
+          final memoriesAsync = ref.watch(localMemoriesStreamProvider((limit: 100, offset: 0)));
 
           return Dialog(
             backgroundColor: palette.surface,

@@ -5,8 +5,10 @@
 /// information-dense layout expected in a professional IDE.
 library;
 
+import 'dart:ui' show lerpDouble;
+
 import 'package:flutter/material.dart';
-import 'aura_spacing.dart';
+import 'tokens.dart';
 
 @immutable
 class AuraIdeDensity extends ThemeExtension<AuraIdeDensity> {
@@ -133,8 +135,6 @@ class AuraIdeDensity extends ThemeExtension<AuraIdeDensity> {
     );
   }
 
-  /// Returns an [AuraSpacing] instance scaled by [spacingScale].
-  AuraSpacing get scaledSpacing => AuraSpacing._scaled(spacingScale);
 }
 
 extension AuraIdeDensityContext on BuildContext {

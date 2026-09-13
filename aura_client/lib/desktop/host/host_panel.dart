@@ -63,7 +63,7 @@ class HostPanel extends ConsumerWidget {
             Text('Checking host…', style: TextStyle(fontSize: 11, color: palette.textSecondary)),
           ],
         ),
-        error: (_, __) => Text(
+        error: (_, _) => Text(
           'Host status unavailable',
           style: TextStyle(fontSize: 11, color: palette.danger),
         ),

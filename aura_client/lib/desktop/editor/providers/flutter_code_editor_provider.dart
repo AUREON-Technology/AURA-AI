@@ -168,10 +168,11 @@ class _FlutterCodeEditorController implements EditorController {
         // Handled by UI
         break;
       case UndoCommand():
-        _codeController.undo();
+        // CodeField binds Ctrl+Z/Ctrl+Shift+Z to Flutter's own
+        // UndoTextIntent/RedoTextIntent internally (via its undo/redo
+        // history), so there's nothing for this command to drive directly.
         break;
       case RedoCommand():
-        _codeController.redo();
         break;
       case FormatCommand():
         // TODO: Implement formatting
@@ -244,7 +245,6 @@ class FlutterCodeEditorWidget extends StatefulWidget {
 
 class _FlutterCodeEditorWidgetState extends State<FlutterCodeEditorWidget> {
   late CodeController _codeController;
-  late CodeTheme _theme;
 
   @override
   void initState() {
@@ -258,15 +258,9 @@ class _FlutterCodeEditorWidgetState extends State<FlutterCodeEditorWidget> {
     _codeController = controller.codeController;
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _theme = _createTheme();
-  }
-
-  CodeTheme _createTheme() {
+  CodeThemeData _createThemeData() {
     final palette = AuraPalette.of(context);
-    return CodeTheme(
+    return CodeThemeData(
       styles: {
         'root': TextStyle(
           fontFamily: 'Courier',
@@ -287,10 +281,16 @@ class _FlutterCodeEditorWidgetState extends State<FlutterCodeEditorWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return CodeField(
-      controller: _codeController,
-      onChanged: widget.onTextChange,
-      textStyle: const TextStyle(fontFamily: 'Courier', fontSize: 13),
+    // CodeTheme is an InheritedWidget — CodeField reads its styles via
+    // CodeTheme.of(context) rather than a constructor parameter.
+    return CodeTheme(
+      data: _createThemeData(),
+      child: CodeField(
+        controller: _codeController,
+        onChanged: widget.onTextChange,
+        textStyle: const TextStyle(fontFamily: 'Courier', fontSize: 13),
+        expands: true,
+      ),
     );
   }
 }

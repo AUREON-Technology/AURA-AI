@@ -8,7 +8,7 @@ import 'dart:convert';
 
 import 'package:collection/collection.dart';
 import 'package:drift/drift.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/hostd/hostd_control_client.dart';
@@ -21,13 +21,12 @@ import 'package:aura_client/desktop/editor/editor_tab.dart';
 
 /// Workspace state notifier.
 class WorkspaceNotifier extends StateNotifier<WorkspaceState> {
-  WorkspaceNotifier(this._db, this._eventBus, this._hostdClient) : super(const WorkspaceState()) {
+  WorkspaceNotifier(this._db, this._eventBus) : super(const WorkspaceState()) {
     _loadWorkspaces();
   }
 
   final AppDatabase _db;
   final IdeEventBus _eventBus;
-  final HostdControlClient _hostdClient;
 
   // Note: this notifier does NOT subscribe to WorkspaceOpened on the event
   // bus — setActiveWorkspace() below is the only place that changes
@@ -37,9 +36,7 @@ class WorkspaceNotifier extends StateNotifier<WorkspaceState> {
 
   Future<void> _loadWorkspaces() async {
     final workspaces = await _db.select(_db.desktopWorkspaces).get();
-    state = state.copyWith(
-      workspaces: workspaces.map(DesktopWorkspace.fromDb).toList(),
-    );
+    state = state.copyWith(workspaces: workspaces);
   }
 
   Future<void> createWorkspace({
@@ -68,7 +65,7 @@ class WorkspaceNotifier extends StateNotifier<WorkspaceState> {
   }
 
   Future<void> removeWorkspace(String workspaceId) async {
-    await _db.delete(_db.desktopWorkspaces).where((t) => t.id.equals(workspaceId)).go();
+    await (_db.delete(_db.desktopWorkspaces)..where((t) => t.id.equals(workspaceId))).go();
     await _loadWorkspaces();
     if (state.activeWorkspaceId == workspaceId) {
       state = state.copyWith(activeWorkspaceId: null);
@@ -294,7 +291,8 @@ class LayoutNotifier extends StateNotifier<LayoutState> {
 
   void _subscribeToEvents() {
     _eventSub = _eventBus.stream
-        .whereType<LayoutChanged>()
+        .where((e) => e is LayoutChanged)
+        .cast<LayoutChanged>()
         .listen((event) {
           state = state.copyWith(
             primarySidebarWidth: event.panelSizes['primary'],
@@ -363,6 +361,11 @@ class HostNotifier extends StateNotifier<HostState> {
         state = state.copyWith(grantedRoots: [...state.grantedRoots, event.rootPath]);
       case HostRootRevoked():
         state = state.copyWith(grantedRoots: state.grantedRoots.where((r) => r != event.rootPath).toList());
+      default:
+        // The .where() filter in _subscribeToEvents already narrows to the
+        // four cases above; this default only exists to satisfy exhaustive
+        // switch-statement checking over the sealed IdeEvent hierarchy.
+        break;
     }
   }
 
@@ -385,6 +388,19 @@ class HostNotifier extends StateNotifier<HostState> {
     }
   }
 
+  /// Mirrors a polled [HostdStatusSnapshot] (from `hostdStatusProvider`,
+  /// the same source `HostPanel`/`HostDaemonPage` use) into this state, so
+  /// callers of [hostNotifierProvider] see live status rather than whatever
+  /// [refreshStatus] last fetched — which, absent this, is never, since
+  /// nothing else here calls it.
+  void updateFromSnapshot(HostdStatusSnapshot snapshot) {
+    state = state.copyWith(
+      isConnected: snapshot.authenticated,
+      backendUrl: snapshot.backendUrl,
+      grantedRoots: snapshot.roots.map((r) => r.path).toList(),
+    );
+  }
+
   @override
   void dispose() {
     _eventSub?.cancel();
@@ -403,7 +419,8 @@ class ApprovalNotifier extends StateNotifier<ApprovalState> {
 
   void _subscribeToEvents() {
     _eventSub = _eventBus.stream
-        .whereType<ApprovalRequested>()
+        .where((e) => e is ApprovalRequested)
+        .cast<ApprovalRequested>()
         .listen((event) {
           state = state.copyWith(
             pendingApprovals: [...state.pendingApprovals, PendingApproval(
@@ -460,8 +477,7 @@ class NotificationNotifier extends StateNotifier<NotificationState> {
 final workspaceNotifierProvider = StateNotifierProvider<WorkspaceNotifier, WorkspaceState>((ref) {
   final db = ref.watch(databaseProvider);
   final eventBus = ref.watch(ideEventBusProvider);
-  final hostdClient = ref.watch(hostdControlClientProvider);
-  return WorkspaceNotifier(db, eventBus, hostdClient);
+  return WorkspaceNotifier(db, eventBus);
 });
 
 /// Provider for editor notifier.
@@ -481,7 +497,15 @@ final layoutNotifierProvider = StateNotifierProvider<LayoutNotifier, LayoutState
 final hostNotifierProvider = StateNotifierProvider<HostNotifier, HostState>((ref) {
   final eventBus = ref.watch(ideEventBusProvider);
   final hostdClient = ref.watch(hostdControlClientProvider);
-  return HostNotifier(eventBus, hostdClient);
+  final notifier = HostNotifier(eventBus, hostdClient);
+  // Keep this notifier's isConnected/backendUrl/grantedRoots in sync with
+  // the same polled status HostPanel/HostDaemonPage show, so every host
+  // status display in the app agrees.
+  ref.listen(hostdStatusProvider, (previous, next) {
+    final snapshot = next.value;
+    if (snapshot != null) notifier.updateFromSnapshot(snapshot);
+  }, fireImmediately: true);
+  return notifier;
 });
 
 /// Provider for approval notifier.

@@ -88,10 +88,9 @@ dependencies:
   crypto: any
   pointycastle: any
   # Desktop IDE dependencies
-  flutter_code_editor: ^1.1.0
+  flutter_code_editor: ^0.3.5
   highlight: ^0.7.0
-  freezed_annotation: ^2.4.1
-  json_annotation: ^4.9.0
+  shared_preferences: ^2.5.5
 dev_dependencies:
   flutter_launcher_icons: ^0.13.1
   flutter_test:
@@ -105,7 +104,6 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   drift_dev: ^2.33.0
   build_runner: ^2.15.0
-  freezed: ^2.5.2
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

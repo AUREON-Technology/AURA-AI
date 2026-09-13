@@ -235,7 +235,7 @@ class InMemoryEditorDocument extends EditorDocument {
   @override
   final bool isDirty;
 
-  String _text;
+  final String _text;
 
   @override
   String get text => _text;

@@ -7,7 +7,7 @@ import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:aura_client/core/database/database.dart';
-import 'package:aura_client/desktop/editor/editor_abstraction.dart';
+import 'package:aura_client/desktop/editor/editor_tab.dart';
 
 /// Workspace state.
 @immutable
@@ -40,28 +40,10 @@ class WorkspaceState {
   }
 }
 
-/// Lightweight workspace model for state.
-@immutable
-class DesktopWorkspace {
-  const DesktopWorkspace({
-    required this.id,
-    required this.rootPath,
-    required this.displayName,
-    required this.lastOpenedAt,
-  });
-
-  final String id;
-  final String rootPath;
-  final String displayName;
-  final DateTime lastOpenedAt;
-
-  factory DesktopWorkspace.fromDb(DesktopWorkspacesData data) => DesktopWorkspace(
-    id: data.id,
-    rootPath: data.rootPath,
-    displayName: data.displayName,
-    lastOpenedAt: data.lastOpenedAt,
-  );
-}
+// Note: no separate hand-written workspace model here — Drift's own
+// generated `DesktopWorkspace` row class (from the `database.dart` import
+// above) already has exactly this shape (id/rootPath/displayName/
+// lastOpenedAt), so [WorkspaceState.workspaces] uses it directly.
 
 /// Hostd root model for state.
 @immutable

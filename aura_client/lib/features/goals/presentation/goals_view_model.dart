@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:aura_client/features/goals/data/goal_repository.dart';
 
 class GoalsViewModel extends StateNotifier<AsyncValue<void>> {

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import '../../auth/presentation/auth_provider.dart';
-import '../data/goal_repository.dart';
 import '../data/goal_providers.dart';
 import 'goals_view_model.dart';
 
@@ -14,7 +14,7 @@ class GoalsPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final authState = ref.watch(authProvider);
     final goalsAsync = ref.watch(goalsStreamProvider);
-    final ui = ref.watch(goalsViewModelProvider);
+    ref.watch(goalsViewModelProvider);
     final vm = ref.read(goalsViewModelProvider.notifier);
     final user = authState.value;
 

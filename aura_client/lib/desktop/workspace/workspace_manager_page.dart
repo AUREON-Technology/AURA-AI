@@ -6,12 +6,11 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
-import 'package:aura_client/desktop/events/ide_event_bus.dart';
-import 'package:aura_client/desktop/events/ide_event.dart';
 
 class WorkspaceManagerPage extends ConsumerWidget {
   const WorkspaceManagerPage({super.key});
@@ -21,7 +20,6 @@ class WorkspaceManagerPage extends ConsumerWidget {
     final palette = AuraPalette.of(context);
     final ideDensity = context.ideDensity;
     final workspaceState = ref.watch(workspaceNotifierProvider);
-    final hostState = ref.watch(hostNotifierProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -68,7 +66,7 @@ class WorkspaceManagerPage extends ConsumerWidget {
               Expanded(
                 child: ListView.separated(
                   itemCount: workspaceState.workspaces.length,
-                  separatorBuilder: (_, __) => SizedBox(height: ideDensity.spacingScale * AuraSpacing.sm),
+                  separatorBuilder: (_, _) => SizedBox(height: ideDensity.spacingScale * AuraSpacing.sm),
                   itemBuilder: (context, index) {
                     final ws = workspaceState.workspaces[index];
                     final isActive = ws.id == workspaceState.activeWorkspaceId;
@@ -146,7 +144,6 @@ class WorkspaceManagerPage extends ConsumerWidget {
                                     AuraButton(
                                       label: 'Open',
                                       variant: AuraButtonVariant.secondary,
-                                      size: AuraButtonSize.small,
                                       onPressed: () => ref.read(workspaceNotifierProvider.notifier).setActiveWorkspace(ws.id),
                                     ),
                                   const SizedBox(width: AuraSpacing.sm),
@@ -184,7 +181,8 @@ class WorkspaceManagerPage extends ConsumerWidget {
       displayName: displayName,
     );
 
-    if (ref.read(hostNotifierProvider).isConnected) {
+    final hostStatus = await ref.read(hostdControlClientProvider).status().catchError((_) => <String, dynamic>{});
+    if (hostStatus['authenticated'] == true) {
       if (!context.mounted) return;
       final shouldGrant = await _showGrantDialog(context, path);
       if (shouldGrant == true) {
@@ -277,7 +275,6 @@ class _EmptyWorkspaces extends StatelessWidget {
           AuraButton(
             label: 'Open Folder',
             icon: Icons.folder_open,
-            size: AuraButtonSize.large,
             onPressed: onOpenFolder,
           ),
         ],

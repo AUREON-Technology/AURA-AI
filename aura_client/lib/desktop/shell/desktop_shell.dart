@@ -12,6 +12,7 @@ import 'package:aura_client/desktop/shell/activity_bar.dart';
 import 'package:aura_client/desktop/shell/bottom_panel.dart';
 import 'package:aura_client/desktop/shell/status_bar.dart';
 import 'package:aura_client/desktop/shell/desktop_shortcuts.dart';
+import 'package:aura_client/desktop/agent/agent_panel.dart';
 import 'package:aura_client/desktop/explorer/explorer_panel.dart';
 import 'package:aura_client/desktop/editor/editor_tab_bar.dart';
 import 'package:aura_client/desktop/editor/code_editor_view.dart';
@@ -19,7 +20,6 @@ import 'package:aura_client/desktop/editor/quick_open_dialog.dart';
 import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
-import 'package:aura_client/desktop/state/desktop_application_state.dart';
 
 /// [child] is the currently routed `/ide/*` page (welcome or workspace
 /// manager) — shown in the main content area only while no file is open,
@@ -39,8 +39,8 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
   @override
   void initState() {
     super.initState();
-    _eventSub = ref.read(ideEventBusProvider).stream.whereType<ShowQuickOpenRequested>().listen((_) {
-      _showQuickOpen();
+    _eventSub = ref.read(ideEventBusProvider).stream.listen((event) {
+      if (event is ShowQuickOpenRequested) _showQuickOpen();
     });
   }
 
@@ -133,7 +133,7 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
                   if (layoutState.showSecondarySidebar)
                     SizedBox(
                       width: layoutState.secondarySidebarWidth,
-                      child: const _SecondarySidebarPlaceholder(),
+                      child: const AgentPanel(),
                     ),
                 ],
               ),
@@ -144,24 +144,6 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
               child: const StatusBar(),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SecondarySidebarPlaceholder extends StatelessWidget {
-  const _SecondarySidebarPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = AuraPalette.of(context);
-    return Container(
-      color: palette.surface,
-      child: Center(
-        child: Text(
-          'Agent Panel (D6)',
-          style: TextStyle(color: palette.textSecondary),
         ),
       ),
     );

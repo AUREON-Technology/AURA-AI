@@ -7639,6 +7639,1572 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataData> {
   }
 }
 
+class $DesktopWorkspacesTable extends DesktopWorkspaces
+    with TableInfo<$DesktopWorkspacesTable, DesktopWorkspace> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DesktopWorkspacesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _rootPathMeta = const VerificationMeta(
+    'rootPath',
+  );
+  @override
+  late final GeneratedColumn<String> rootPath = GeneratedColumn<String>(
+    'root_path',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _displayNameMeta = const VerificationMeta(
+    'displayName',
+  );
+  @override
+  late final GeneratedColumn<String> displayName = GeneratedColumn<String>(
+    'display_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _lastOpenedAtMeta = const VerificationMeta(
+    'lastOpenedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> lastOpenedAt = GeneratedColumn<DateTime>(
+    'last_opened_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    rootPath,
+    displayName,
+    lastOpenedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'desktop_workspaces';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<DesktopWorkspace> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('root_path')) {
+      context.handle(
+        _rootPathMeta,
+        rootPath.isAcceptableOrUnknown(data['root_path']!, _rootPathMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_rootPathMeta);
+    }
+    if (data.containsKey('display_name')) {
+      context.handle(
+        _displayNameMeta,
+        displayName.isAcceptableOrUnknown(
+          data['display_name']!,
+          _displayNameMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_displayNameMeta);
+    }
+    if (data.containsKey('last_opened_at')) {
+      context.handle(
+        _lastOpenedAtMeta,
+        lastOpenedAt.isAcceptableOrUnknown(
+          data['last_opened_at']!,
+          _lastOpenedAtMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_lastOpenedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  DesktopWorkspace map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DesktopWorkspace(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      rootPath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}root_path'],
+      )!,
+      displayName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}display_name'],
+      )!,
+      lastOpenedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_opened_at'],
+      )!,
+    );
+  }
+
+  @override
+  $DesktopWorkspacesTable createAlias(String alias) {
+    return $DesktopWorkspacesTable(attachedDatabase, alias);
+  }
+}
+
+class DesktopWorkspace extends DataClass
+    implements Insertable<DesktopWorkspace> {
+  final String id;
+  final String rootPath;
+  final String displayName;
+  final DateTime lastOpenedAt;
+  const DesktopWorkspace({
+    required this.id,
+    required this.rootPath,
+    required this.displayName,
+    required this.lastOpenedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['root_path'] = Variable<String>(rootPath);
+    map['display_name'] = Variable<String>(displayName);
+    map['last_opened_at'] = Variable<DateTime>(lastOpenedAt);
+    return map;
+  }
+
+  DesktopWorkspacesCompanion toCompanion(bool nullToAbsent) {
+    return DesktopWorkspacesCompanion(
+      id: Value(id),
+      rootPath: Value(rootPath),
+      displayName: Value(displayName),
+      lastOpenedAt: Value(lastOpenedAt),
+    );
+  }
+
+  factory DesktopWorkspace.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DesktopWorkspace(
+      id: serializer.fromJson<String>(json['id']),
+      rootPath: serializer.fromJson<String>(json['rootPath']),
+      displayName: serializer.fromJson<String>(json['displayName']),
+      lastOpenedAt: serializer.fromJson<DateTime>(json['lastOpenedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'rootPath': serializer.toJson<String>(rootPath),
+      'displayName': serializer.toJson<String>(displayName),
+      'lastOpenedAt': serializer.toJson<DateTime>(lastOpenedAt),
+    };
+  }
+
+  DesktopWorkspace copyWith({
+    String? id,
+    String? rootPath,
+    String? displayName,
+    DateTime? lastOpenedAt,
+  }) => DesktopWorkspace(
+    id: id ?? this.id,
+    rootPath: rootPath ?? this.rootPath,
+    displayName: displayName ?? this.displayName,
+    lastOpenedAt: lastOpenedAt ?? this.lastOpenedAt,
+  );
+  DesktopWorkspace copyWithCompanion(DesktopWorkspacesCompanion data) {
+    return DesktopWorkspace(
+      id: data.id.present ? data.id.value : this.id,
+      rootPath: data.rootPath.present ? data.rootPath.value : this.rootPath,
+      displayName: data.displayName.present
+          ? data.displayName.value
+          : this.displayName,
+      lastOpenedAt: data.lastOpenedAt.present
+          ? data.lastOpenedAt.value
+          : this.lastOpenedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesktopWorkspace(')
+          ..write('id: $id, ')
+          ..write('rootPath: $rootPath, ')
+          ..write('displayName: $displayName, ')
+          ..write('lastOpenedAt: $lastOpenedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, rootPath, displayName, lastOpenedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DesktopWorkspace &&
+          other.id == this.id &&
+          other.rootPath == this.rootPath &&
+          other.displayName == this.displayName &&
+          other.lastOpenedAt == this.lastOpenedAt);
+}
+
+class DesktopWorkspacesCompanion extends UpdateCompanion<DesktopWorkspace> {
+  final Value<String> id;
+  final Value<String> rootPath;
+  final Value<String> displayName;
+  final Value<DateTime> lastOpenedAt;
+  final Value<int> rowid;
+  const DesktopWorkspacesCompanion({
+    this.id = const Value.absent(),
+    this.rootPath = const Value.absent(),
+    this.displayName = const Value.absent(),
+    this.lastOpenedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  DesktopWorkspacesCompanion.insert({
+    required String id,
+    required String rootPath,
+    required String displayName,
+    required DateTime lastOpenedAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       rootPath = Value(rootPath),
+       displayName = Value(displayName),
+       lastOpenedAt = Value(lastOpenedAt);
+  static Insertable<DesktopWorkspace> custom({
+    Expression<String>? id,
+    Expression<String>? rootPath,
+    Expression<String>? displayName,
+    Expression<DateTime>? lastOpenedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (rootPath != null) 'root_path': rootPath,
+      if (displayName != null) 'display_name': displayName,
+      if (lastOpenedAt != null) 'last_opened_at': lastOpenedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  DesktopWorkspacesCompanion copyWith({
+    Value<String>? id,
+    Value<String>? rootPath,
+    Value<String>? displayName,
+    Value<DateTime>? lastOpenedAt,
+    Value<int>? rowid,
+  }) {
+    return DesktopWorkspacesCompanion(
+      id: id ?? this.id,
+      rootPath: rootPath ?? this.rootPath,
+      displayName: displayName ?? this.displayName,
+      lastOpenedAt: lastOpenedAt ?? this.lastOpenedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (rootPath.present) {
+      map['root_path'] = Variable<String>(rootPath.value);
+    }
+    if (displayName.present) {
+      map['display_name'] = Variable<String>(displayName.value);
+    }
+    if (lastOpenedAt.present) {
+      map['last_opened_at'] = Variable<DateTime>(lastOpenedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesktopWorkspacesCompanion(')
+          ..write('id: $id, ')
+          ..write('rootPath: $rootPath, ')
+          ..write('displayName: $displayName, ')
+          ..write('lastOpenedAt: $lastOpenedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $DesktopEditorStateTable extends DesktopEditorState
+    with TableInfo<$DesktopEditorStateTable, DesktopEditorStateData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DesktopEditorStateTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _workspaceIdMeta = const VerificationMeta(
+    'workspaceId',
+  );
+  @override
+  late final GeneratedColumn<String> workspaceId = GeneratedColumn<String>(
+    'workspace_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _openTabsJsonMeta = const VerificationMeta(
+    'openTabsJson',
+  );
+  @override
+  late final GeneratedColumn<String> openTabsJson = GeneratedColumn<String>(
+    'open_tabs_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _activeTabPathMeta = const VerificationMeta(
+    'activeTabPath',
+  );
+  @override
+  late final GeneratedColumn<String> activeTabPath = GeneratedColumn<String>(
+    'active_tab_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _sidebarWidthMeta = const VerificationMeta(
+    'sidebarWidth',
+  );
+  @override
+  late final GeneratedColumn<double> sidebarWidth = GeneratedColumn<double>(
+    'sidebar_width',
+    aliasedName,
+    true,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _agentPanelWidthMeta = const VerificationMeta(
+    'agentPanelWidth',
+  );
+  @override
+  late final GeneratedColumn<double> agentPanelWidth = GeneratedColumn<double>(
+    'agent_panel_width',
+    aliasedName,
+    true,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _bottomPanelHeightMeta = const VerificationMeta(
+    'bottomPanelHeight',
+  );
+  @override
+  late final GeneratedColumn<double> bottomPanelHeight =
+      GeneratedColumn<double>(
+        'bottom_panel_height',
+        aliasedName,
+        true,
+        type: DriftSqlType.double,
+        requiredDuringInsert: false,
+      );
+  @override
+  List<GeneratedColumn> get $columns => [
+    workspaceId,
+    openTabsJson,
+    activeTabPath,
+    sidebarWidth,
+    agentPanelWidth,
+    bottomPanelHeight,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'desktop_editor_state';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<DesktopEditorStateData> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('workspace_id')) {
+      context.handle(
+        _workspaceIdMeta,
+        workspaceId.isAcceptableOrUnknown(
+          data['workspace_id']!,
+          _workspaceIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_workspaceIdMeta);
+    }
+    if (data.containsKey('open_tabs_json')) {
+      context.handle(
+        _openTabsJsonMeta,
+        openTabsJson.isAcceptableOrUnknown(
+          data['open_tabs_json']!,
+          _openTabsJsonMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_openTabsJsonMeta);
+    }
+    if (data.containsKey('active_tab_path')) {
+      context.handle(
+        _activeTabPathMeta,
+        activeTabPath.isAcceptableOrUnknown(
+          data['active_tab_path']!,
+          _activeTabPathMeta,
+        ),
+      );
+    }
+    if (data.containsKey('sidebar_width')) {
+      context.handle(
+        _sidebarWidthMeta,
+        sidebarWidth.isAcceptableOrUnknown(
+          data['sidebar_width']!,
+          _sidebarWidthMeta,
+        ),
+      );
+    }
+    if (data.containsKey('agent_panel_width')) {
+      context.handle(
+        _agentPanelWidthMeta,
+        agentPanelWidth.isAcceptableOrUnknown(
+          data['agent_panel_width']!,
+          _agentPanelWidthMeta,
+        ),
+      );
+    }
+    if (data.containsKey('bottom_panel_height')) {
+      context.handle(
+        _bottomPanelHeightMeta,
+        bottomPanelHeight.isAcceptableOrUnknown(
+          data['bottom_panel_height']!,
+          _bottomPanelHeightMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {workspaceId};
+  @override
+  DesktopEditorStateData map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DesktopEditorStateData(
+      workspaceId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}workspace_id'],
+      )!,
+      openTabsJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}open_tabs_json'],
+      )!,
+      activeTabPath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}active_tab_path'],
+      ),
+      sidebarWidth: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}sidebar_width'],
+      ),
+      agentPanelWidth: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}agent_panel_width'],
+      ),
+      bottomPanelHeight: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}bottom_panel_height'],
+      ),
+    );
+  }
+
+  @override
+  $DesktopEditorStateTable createAlias(String alias) {
+    return $DesktopEditorStateTable(attachedDatabase, alias);
+  }
+}
+
+class DesktopEditorStateData extends DataClass
+    implements Insertable<DesktopEditorStateData> {
+  final String workspaceId;
+  final String openTabsJson;
+  final String? activeTabPath;
+  final double? sidebarWidth;
+  final double? agentPanelWidth;
+  final double? bottomPanelHeight;
+  const DesktopEditorStateData({
+    required this.workspaceId,
+    required this.openTabsJson,
+    this.activeTabPath,
+    this.sidebarWidth,
+    this.agentPanelWidth,
+    this.bottomPanelHeight,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['workspace_id'] = Variable<String>(workspaceId);
+    map['open_tabs_json'] = Variable<String>(openTabsJson);
+    if (!nullToAbsent || activeTabPath != null) {
+      map['active_tab_path'] = Variable<String>(activeTabPath);
+    }
+    if (!nullToAbsent || sidebarWidth != null) {
+      map['sidebar_width'] = Variable<double>(sidebarWidth);
+    }
+    if (!nullToAbsent || agentPanelWidth != null) {
+      map['agent_panel_width'] = Variable<double>(agentPanelWidth);
+    }
+    if (!nullToAbsent || bottomPanelHeight != null) {
+      map['bottom_panel_height'] = Variable<double>(bottomPanelHeight);
+    }
+    return map;
+  }
+
+  DesktopEditorStateCompanion toCompanion(bool nullToAbsent) {
+    return DesktopEditorStateCompanion(
+      workspaceId: Value(workspaceId),
+      openTabsJson: Value(openTabsJson),
+      activeTabPath: activeTabPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(activeTabPath),
+      sidebarWidth: sidebarWidth == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sidebarWidth),
+      agentPanelWidth: agentPanelWidth == null && nullToAbsent
+          ? const Value.absent()
+          : Value(agentPanelWidth),
+      bottomPanelHeight: bottomPanelHeight == null && nullToAbsent
+          ? const Value.absent()
+          : Value(bottomPanelHeight),
+    );
+  }
+
+  factory DesktopEditorStateData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DesktopEditorStateData(
+      workspaceId: serializer.fromJson<String>(json['workspaceId']),
+      openTabsJson: serializer.fromJson<String>(json['openTabsJson']),
+      activeTabPath: serializer.fromJson<String?>(json['activeTabPath']),
+      sidebarWidth: serializer.fromJson<double?>(json['sidebarWidth']),
+      agentPanelWidth: serializer.fromJson<double?>(json['agentPanelWidth']),
+      bottomPanelHeight: serializer.fromJson<double?>(
+        json['bottomPanelHeight'],
+      ),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'workspaceId': serializer.toJson<String>(workspaceId),
+      'openTabsJson': serializer.toJson<String>(openTabsJson),
+      'activeTabPath': serializer.toJson<String?>(activeTabPath),
+      'sidebarWidth': serializer.toJson<double?>(sidebarWidth),
+      'agentPanelWidth': serializer.toJson<double?>(agentPanelWidth),
+      'bottomPanelHeight': serializer.toJson<double?>(bottomPanelHeight),
+    };
+  }
+
+  DesktopEditorStateData copyWith({
+    String? workspaceId,
+    String? openTabsJson,
+    Value<String?> activeTabPath = const Value.absent(),
+    Value<double?> sidebarWidth = const Value.absent(),
+    Value<double?> agentPanelWidth = const Value.absent(),
+    Value<double?> bottomPanelHeight = const Value.absent(),
+  }) => DesktopEditorStateData(
+    workspaceId: workspaceId ?? this.workspaceId,
+    openTabsJson: openTabsJson ?? this.openTabsJson,
+    activeTabPath: activeTabPath.present
+        ? activeTabPath.value
+        : this.activeTabPath,
+    sidebarWidth: sidebarWidth.present ? sidebarWidth.value : this.sidebarWidth,
+    agentPanelWidth: agentPanelWidth.present
+        ? agentPanelWidth.value
+        : this.agentPanelWidth,
+    bottomPanelHeight: bottomPanelHeight.present
+        ? bottomPanelHeight.value
+        : this.bottomPanelHeight,
+  );
+  DesktopEditorStateData copyWithCompanion(DesktopEditorStateCompanion data) {
+    return DesktopEditorStateData(
+      workspaceId: data.workspaceId.present
+          ? data.workspaceId.value
+          : this.workspaceId,
+      openTabsJson: data.openTabsJson.present
+          ? data.openTabsJson.value
+          : this.openTabsJson,
+      activeTabPath: data.activeTabPath.present
+          ? data.activeTabPath.value
+          : this.activeTabPath,
+      sidebarWidth: data.sidebarWidth.present
+          ? data.sidebarWidth.value
+          : this.sidebarWidth,
+      agentPanelWidth: data.agentPanelWidth.present
+          ? data.agentPanelWidth.value
+          : this.agentPanelWidth,
+      bottomPanelHeight: data.bottomPanelHeight.present
+          ? data.bottomPanelHeight.value
+          : this.bottomPanelHeight,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesktopEditorStateData(')
+          ..write('workspaceId: $workspaceId, ')
+          ..write('openTabsJson: $openTabsJson, ')
+          ..write('activeTabPath: $activeTabPath, ')
+          ..write('sidebarWidth: $sidebarWidth, ')
+          ..write('agentPanelWidth: $agentPanelWidth, ')
+          ..write('bottomPanelHeight: $bottomPanelHeight')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    workspaceId,
+    openTabsJson,
+    activeTabPath,
+    sidebarWidth,
+    agentPanelWidth,
+    bottomPanelHeight,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DesktopEditorStateData &&
+          other.workspaceId == this.workspaceId &&
+          other.openTabsJson == this.openTabsJson &&
+          other.activeTabPath == this.activeTabPath &&
+          other.sidebarWidth == this.sidebarWidth &&
+          other.agentPanelWidth == this.agentPanelWidth &&
+          other.bottomPanelHeight == this.bottomPanelHeight);
+}
+
+class DesktopEditorStateCompanion
+    extends UpdateCompanion<DesktopEditorStateData> {
+  final Value<String> workspaceId;
+  final Value<String> openTabsJson;
+  final Value<String?> activeTabPath;
+  final Value<double?> sidebarWidth;
+  final Value<double?> agentPanelWidth;
+  final Value<double?> bottomPanelHeight;
+  final Value<int> rowid;
+  const DesktopEditorStateCompanion({
+    this.workspaceId = const Value.absent(),
+    this.openTabsJson = const Value.absent(),
+    this.activeTabPath = const Value.absent(),
+    this.sidebarWidth = const Value.absent(),
+    this.agentPanelWidth = const Value.absent(),
+    this.bottomPanelHeight = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  DesktopEditorStateCompanion.insert({
+    required String workspaceId,
+    required String openTabsJson,
+    this.activeTabPath = const Value.absent(),
+    this.sidebarWidth = const Value.absent(),
+    this.agentPanelWidth = const Value.absent(),
+    this.bottomPanelHeight = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : workspaceId = Value(workspaceId),
+       openTabsJson = Value(openTabsJson);
+  static Insertable<DesktopEditorStateData> custom({
+    Expression<String>? workspaceId,
+    Expression<String>? openTabsJson,
+    Expression<String>? activeTabPath,
+    Expression<double>? sidebarWidth,
+    Expression<double>? agentPanelWidth,
+    Expression<double>? bottomPanelHeight,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (workspaceId != null) 'workspace_id': workspaceId,
+      if (openTabsJson != null) 'open_tabs_json': openTabsJson,
+      if (activeTabPath != null) 'active_tab_path': activeTabPath,
+      if (sidebarWidth != null) 'sidebar_width': sidebarWidth,
+      if (agentPanelWidth != null) 'agent_panel_width': agentPanelWidth,
+      if (bottomPanelHeight != null) 'bottom_panel_height': bottomPanelHeight,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  DesktopEditorStateCompanion copyWith({
+    Value<String>? workspaceId,
+    Value<String>? openTabsJson,
+    Value<String?>? activeTabPath,
+    Value<double?>? sidebarWidth,
+    Value<double?>? agentPanelWidth,
+    Value<double?>? bottomPanelHeight,
+    Value<int>? rowid,
+  }) {
+    return DesktopEditorStateCompanion(
+      workspaceId: workspaceId ?? this.workspaceId,
+      openTabsJson: openTabsJson ?? this.openTabsJson,
+      activeTabPath: activeTabPath ?? this.activeTabPath,
+      sidebarWidth: sidebarWidth ?? this.sidebarWidth,
+      agentPanelWidth: agentPanelWidth ?? this.agentPanelWidth,
+      bottomPanelHeight: bottomPanelHeight ?? this.bottomPanelHeight,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (workspaceId.present) {
+      map['workspace_id'] = Variable<String>(workspaceId.value);
+    }
+    if (openTabsJson.present) {
+      map['open_tabs_json'] = Variable<String>(openTabsJson.value);
+    }
+    if (activeTabPath.present) {
+      map['active_tab_path'] = Variable<String>(activeTabPath.value);
+    }
+    if (sidebarWidth.present) {
+      map['sidebar_width'] = Variable<double>(sidebarWidth.value);
+    }
+    if (agentPanelWidth.present) {
+      map['agent_panel_width'] = Variable<double>(agentPanelWidth.value);
+    }
+    if (bottomPanelHeight.present) {
+      map['bottom_panel_height'] = Variable<double>(bottomPanelHeight.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesktopEditorStateCompanion(')
+          ..write('workspaceId: $workspaceId, ')
+          ..write('openTabsJson: $openTabsJson, ')
+          ..write('activeTabPath: $activeTabPath, ')
+          ..write('sidebarWidth: $sidebarWidth, ')
+          ..write('agentPanelWidth: $agentPanelWidth, ')
+          ..write('bottomPanelHeight: $bottomPanelHeight, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $DesktopTerminalStateTable extends DesktopTerminalState
+    with TableInfo<$DesktopTerminalStateTable, DesktopTerminalStateData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DesktopTerminalStateTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _workspaceIdMeta = const VerificationMeta(
+    'workspaceId',
+  );
+  @override
+  late final GeneratedColumn<String> workspaceId = GeneratedColumn<String>(
+    'workspace_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sessionsJsonMeta = const VerificationMeta(
+    'sessionsJson',
+  );
+  @override
+  late final GeneratedColumn<String> sessionsJson = GeneratedColumn<String>(
+    'sessions_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [workspaceId, sessionsJson];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'desktop_terminal_state';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<DesktopTerminalStateData> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('workspace_id')) {
+      context.handle(
+        _workspaceIdMeta,
+        workspaceId.isAcceptableOrUnknown(
+          data['workspace_id']!,
+          _workspaceIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_workspaceIdMeta);
+    }
+    if (data.containsKey('sessions_json')) {
+      context.handle(
+        _sessionsJsonMeta,
+        sessionsJson.isAcceptableOrUnknown(
+          data['sessions_json']!,
+          _sessionsJsonMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_sessionsJsonMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {workspaceId};
+  @override
+  DesktopTerminalStateData map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DesktopTerminalStateData(
+      workspaceId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}workspace_id'],
+      )!,
+      sessionsJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}sessions_json'],
+      )!,
+    );
+  }
+
+  @override
+  $DesktopTerminalStateTable createAlias(String alias) {
+    return $DesktopTerminalStateTable(attachedDatabase, alias);
+  }
+}
+
+class DesktopTerminalStateData extends DataClass
+    implements Insertable<DesktopTerminalStateData> {
+  final String workspaceId;
+  final String sessionsJson;
+  const DesktopTerminalStateData({
+    required this.workspaceId,
+    required this.sessionsJson,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['workspace_id'] = Variable<String>(workspaceId);
+    map['sessions_json'] = Variable<String>(sessionsJson);
+    return map;
+  }
+
+  DesktopTerminalStateCompanion toCompanion(bool nullToAbsent) {
+    return DesktopTerminalStateCompanion(
+      workspaceId: Value(workspaceId),
+      sessionsJson: Value(sessionsJson),
+    );
+  }
+
+  factory DesktopTerminalStateData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DesktopTerminalStateData(
+      workspaceId: serializer.fromJson<String>(json['workspaceId']),
+      sessionsJson: serializer.fromJson<String>(json['sessionsJson']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'workspaceId': serializer.toJson<String>(workspaceId),
+      'sessionsJson': serializer.toJson<String>(sessionsJson),
+    };
+  }
+
+  DesktopTerminalStateData copyWith({
+    String? workspaceId,
+    String? sessionsJson,
+  }) => DesktopTerminalStateData(
+    workspaceId: workspaceId ?? this.workspaceId,
+    sessionsJson: sessionsJson ?? this.sessionsJson,
+  );
+  DesktopTerminalStateData copyWithCompanion(
+    DesktopTerminalStateCompanion data,
+  ) {
+    return DesktopTerminalStateData(
+      workspaceId: data.workspaceId.present
+          ? data.workspaceId.value
+          : this.workspaceId,
+      sessionsJson: data.sessionsJson.present
+          ? data.sessionsJson.value
+          : this.sessionsJson,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesktopTerminalStateData(')
+          ..write('workspaceId: $workspaceId, ')
+          ..write('sessionsJson: $sessionsJson')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(workspaceId, sessionsJson);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DesktopTerminalStateData &&
+          other.workspaceId == this.workspaceId &&
+          other.sessionsJson == this.sessionsJson);
+}
+
+class DesktopTerminalStateCompanion
+    extends UpdateCompanion<DesktopTerminalStateData> {
+  final Value<String> workspaceId;
+  final Value<String> sessionsJson;
+  final Value<int> rowid;
+  const DesktopTerminalStateCompanion({
+    this.workspaceId = const Value.absent(),
+    this.sessionsJson = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  DesktopTerminalStateCompanion.insert({
+    required String workspaceId,
+    required String sessionsJson,
+    this.rowid = const Value.absent(),
+  }) : workspaceId = Value(workspaceId),
+       sessionsJson = Value(sessionsJson);
+  static Insertable<DesktopTerminalStateData> custom({
+    Expression<String>? workspaceId,
+    Expression<String>? sessionsJson,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (workspaceId != null) 'workspace_id': workspaceId,
+      if (sessionsJson != null) 'sessions_json': sessionsJson,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  DesktopTerminalStateCompanion copyWith({
+    Value<String>? workspaceId,
+    Value<String>? sessionsJson,
+    Value<int>? rowid,
+  }) {
+    return DesktopTerminalStateCompanion(
+      workspaceId: workspaceId ?? this.workspaceId,
+      sessionsJson: sessionsJson ?? this.sessionsJson,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (workspaceId.present) {
+      map['workspace_id'] = Variable<String>(workspaceId.value);
+    }
+    if (sessionsJson.present) {
+      map['sessions_json'] = Variable<String>(sessionsJson.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesktopTerminalStateCompanion(')
+          ..write('workspaceId: $workspaceId, ')
+          ..write('sessionsJson: $sessionsJson, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $DesktopLayoutStateTable extends DesktopLayoutState
+    with TableInfo<$DesktopLayoutStateTable, DesktopLayoutStateData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DesktopLayoutStateTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _workspaceIdMeta = const VerificationMeta(
+    'workspaceId',
+  );
+  @override
+  late final GeneratedColumn<String> workspaceId = GeneratedColumn<String>(
+    'workspace_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _windowGeometryJsonMeta =
+      const VerificationMeta('windowGeometryJson');
+  @override
+  late final GeneratedColumn<String> windowGeometryJson =
+      GeneratedColumn<String>(
+        'window_geometry_json',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+      );
+  static const VerificationMeta _panelVisibilityJsonMeta =
+      const VerificationMeta('panelVisibilityJson');
+  @override
+  late final GeneratedColumn<String> panelVisibilityJson =
+      GeneratedColumn<String>(
+        'panel_visibility_json',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+      );
+  @override
+  List<GeneratedColumn> get $columns => [
+    workspaceId,
+    windowGeometryJson,
+    panelVisibilityJson,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'desktop_layout_state';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<DesktopLayoutStateData> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('workspace_id')) {
+      context.handle(
+        _workspaceIdMeta,
+        workspaceId.isAcceptableOrUnknown(
+          data['workspace_id']!,
+          _workspaceIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_workspaceIdMeta);
+    }
+    if (data.containsKey('window_geometry_json')) {
+      context.handle(
+        _windowGeometryJsonMeta,
+        windowGeometryJson.isAcceptableOrUnknown(
+          data['window_geometry_json']!,
+          _windowGeometryJsonMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_windowGeometryJsonMeta);
+    }
+    if (data.containsKey('panel_visibility_json')) {
+      context.handle(
+        _panelVisibilityJsonMeta,
+        panelVisibilityJson.isAcceptableOrUnknown(
+          data['panel_visibility_json']!,
+          _panelVisibilityJsonMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_panelVisibilityJsonMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {workspaceId};
+  @override
+  DesktopLayoutStateData map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DesktopLayoutStateData(
+      workspaceId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}workspace_id'],
+      )!,
+      windowGeometryJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}window_geometry_json'],
+      )!,
+      panelVisibilityJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}panel_visibility_json'],
+      )!,
+    );
+  }
+
+  @override
+  $DesktopLayoutStateTable createAlias(String alias) {
+    return $DesktopLayoutStateTable(attachedDatabase, alias);
+  }
+}
+
+class DesktopLayoutStateData extends DataClass
+    implements Insertable<DesktopLayoutStateData> {
+  final String workspaceId;
+  final String windowGeometryJson;
+  final String panelVisibilityJson;
+  const DesktopLayoutStateData({
+    required this.workspaceId,
+    required this.windowGeometryJson,
+    required this.panelVisibilityJson,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['workspace_id'] = Variable<String>(workspaceId);
+    map['window_geometry_json'] = Variable<String>(windowGeometryJson);
+    map['panel_visibility_json'] = Variable<String>(panelVisibilityJson);
+    return map;
+  }
+
+  DesktopLayoutStateCompanion toCompanion(bool nullToAbsent) {
+    return DesktopLayoutStateCompanion(
+      workspaceId: Value(workspaceId),
+      windowGeometryJson: Value(windowGeometryJson),
+      panelVisibilityJson: Value(panelVisibilityJson),
+    );
+  }
+
+  factory DesktopLayoutStateData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DesktopLayoutStateData(
+      workspaceId: serializer.fromJson<String>(json['workspaceId']),
+      windowGeometryJson: serializer.fromJson<String>(
+        json['windowGeometryJson'],
+      ),
+      panelVisibilityJson: serializer.fromJson<String>(
+        json['panelVisibilityJson'],
+      ),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'workspaceId': serializer.toJson<String>(workspaceId),
+      'windowGeometryJson': serializer.toJson<String>(windowGeometryJson),
+      'panelVisibilityJson': serializer.toJson<String>(panelVisibilityJson),
+    };
+  }
+
+  DesktopLayoutStateData copyWith({
+    String? workspaceId,
+    String? windowGeometryJson,
+    String? panelVisibilityJson,
+  }) => DesktopLayoutStateData(
+    workspaceId: workspaceId ?? this.workspaceId,
+    windowGeometryJson: windowGeometryJson ?? this.windowGeometryJson,
+    panelVisibilityJson: panelVisibilityJson ?? this.panelVisibilityJson,
+  );
+  DesktopLayoutStateData copyWithCompanion(DesktopLayoutStateCompanion data) {
+    return DesktopLayoutStateData(
+      workspaceId: data.workspaceId.present
+          ? data.workspaceId.value
+          : this.workspaceId,
+      windowGeometryJson: data.windowGeometryJson.present
+          ? data.windowGeometryJson.value
+          : this.windowGeometryJson,
+      panelVisibilityJson: data.panelVisibilityJson.present
+          ? data.panelVisibilityJson.value
+          : this.panelVisibilityJson,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesktopLayoutStateData(')
+          ..write('workspaceId: $workspaceId, ')
+          ..write('windowGeometryJson: $windowGeometryJson, ')
+          ..write('panelVisibilityJson: $panelVisibilityJson')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(workspaceId, windowGeometryJson, panelVisibilityJson);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DesktopLayoutStateData &&
+          other.workspaceId == this.workspaceId &&
+          other.windowGeometryJson == this.windowGeometryJson &&
+          other.panelVisibilityJson == this.panelVisibilityJson);
+}
+
+class DesktopLayoutStateCompanion
+    extends UpdateCompanion<DesktopLayoutStateData> {
+  final Value<String> workspaceId;
+  final Value<String> windowGeometryJson;
+  final Value<String> panelVisibilityJson;
+  final Value<int> rowid;
+  const DesktopLayoutStateCompanion({
+    this.workspaceId = const Value.absent(),
+    this.windowGeometryJson = const Value.absent(),
+    this.panelVisibilityJson = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  DesktopLayoutStateCompanion.insert({
+    required String workspaceId,
+    required String windowGeometryJson,
+    required String panelVisibilityJson,
+    this.rowid = const Value.absent(),
+  }) : workspaceId = Value(workspaceId),
+       windowGeometryJson = Value(windowGeometryJson),
+       panelVisibilityJson = Value(panelVisibilityJson);
+  static Insertable<DesktopLayoutStateData> custom({
+    Expression<String>? workspaceId,
+    Expression<String>? windowGeometryJson,
+    Expression<String>? panelVisibilityJson,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (workspaceId != null) 'workspace_id': workspaceId,
+      if (windowGeometryJson != null)
+        'window_geometry_json': windowGeometryJson,
+      if (panelVisibilityJson != null)
+        'panel_visibility_json': panelVisibilityJson,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  DesktopLayoutStateCompanion copyWith({
+    Value<String>? workspaceId,
+    Value<String>? windowGeometryJson,
+    Value<String>? panelVisibilityJson,
+    Value<int>? rowid,
+  }) {
+    return DesktopLayoutStateCompanion(
+      workspaceId: workspaceId ?? this.workspaceId,
+      windowGeometryJson: windowGeometryJson ?? this.windowGeometryJson,
+      panelVisibilityJson: panelVisibilityJson ?? this.panelVisibilityJson,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (workspaceId.present) {
+      map['workspace_id'] = Variable<String>(workspaceId.value);
+    }
+    if (windowGeometryJson.present) {
+      map['window_geometry_json'] = Variable<String>(windowGeometryJson.value);
+    }
+    if (panelVisibilityJson.present) {
+      map['panel_visibility_json'] = Variable<String>(
+        panelVisibilityJson.value,
+      );
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesktopLayoutStateCompanion(')
+          ..write('workspaceId: $workspaceId, ')
+          ..write('windowGeometryJson: $windowGeometryJson, ')
+          ..write('panelVisibilityJson: $panelVisibilityJson, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $DesktopAgentStateTable extends DesktopAgentState
+    with TableInfo<$DesktopAgentStateTable, DesktopAgentStateData> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DesktopAgentStateTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _workspaceIdMeta = const VerificationMeta(
+    'workspaceId',
+  );
+  @override
+  late final GeneratedColumn<String> workspaceId = GeneratedColumn<String>(
+    'workspace_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _agentStateJsonMeta = const VerificationMeta(
+    'agentStateJson',
+  );
+  @override
+  late final GeneratedColumn<String> agentStateJson = GeneratedColumn<String>(
+    'agent_state_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [workspaceId, agentStateJson];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'desktop_agent_state';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<DesktopAgentStateData> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('workspace_id')) {
+      context.handle(
+        _workspaceIdMeta,
+        workspaceId.isAcceptableOrUnknown(
+          data['workspace_id']!,
+          _workspaceIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_workspaceIdMeta);
+    }
+    if (data.containsKey('agent_state_json')) {
+      context.handle(
+        _agentStateJsonMeta,
+        agentStateJson.isAcceptableOrUnknown(
+          data['agent_state_json']!,
+          _agentStateJsonMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_agentStateJsonMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {workspaceId};
+  @override
+  DesktopAgentStateData map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DesktopAgentStateData(
+      workspaceId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}workspace_id'],
+      )!,
+      agentStateJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}agent_state_json'],
+      )!,
+    );
+  }
+
+  @override
+  $DesktopAgentStateTable createAlias(String alias) {
+    return $DesktopAgentStateTable(attachedDatabase, alias);
+  }
+}
+
+class DesktopAgentStateData extends DataClass
+    implements Insertable<DesktopAgentStateData> {
+  final String workspaceId;
+  final String agentStateJson;
+  const DesktopAgentStateData({
+    required this.workspaceId,
+    required this.agentStateJson,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['workspace_id'] = Variable<String>(workspaceId);
+    map['agent_state_json'] = Variable<String>(agentStateJson);
+    return map;
+  }
+
+  DesktopAgentStateCompanion toCompanion(bool nullToAbsent) {
+    return DesktopAgentStateCompanion(
+      workspaceId: Value(workspaceId),
+      agentStateJson: Value(agentStateJson),
+    );
+  }
+
+  factory DesktopAgentStateData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DesktopAgentStateData(
+      workspaceId: serializer.fromJson<String>(json['workspaceId']),
+      agentStateJson: serializer.fromJson<String>(json['agentStateJson']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'workspaceId': serializer.toJson<String>(workspaceId),
+      'agentStateJson': serializer.toJson<String>(agentStateJson),
+    };
+  }
+
+  DesktopAgentStateData copyWith({
+    String? workspaceId,
+    String? agentStateJson,
+  }) => DesktopAgentStateData(
+    workspaceId: workspaceId ?? this.workspaceId,
+    agentStateJson: agentStateJson ?? this.agentStateJson,
+  );
+  DesktopAgentStateData copyWithCompanion(DesktopAgentStateCompanion data) {
+    return DesktopAgentStateData(
+      workspaceId: data.workspaceId.present
+          ? data.workspaceId.value
+          : this.workspaceId,
+      agentStateJson: data.agentStateJson.present
+          ? data.agentStateJson.value
+          : this.agentStateJson,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesktopAgentStateData(')
+          ..write('workspaceId: $workspaceId, ')
+          ..write('agentStateJson: $agentStateJson')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(workspaceId, agentStateJson);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DesktopAgentStateData &&
+          other.workspaceId == this.workspaceId &&
+          other.agentStateJson == this.agentStateJson);
+}
+
+class DesktopAgentStateCompanion
+    extends UpdateCompanion<DesktopAgentStateData> {
+  final Value<String> workspaceId;
+  final Value<String> agentStateJson;
+  final Value<int> rowid;
+  const DesktopAgentStateCompanion({
+    this.workspaceId = const Value.absent(),
+    this.agentStateJson = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  DesktopAgentStateCompanion.insert({
+    required String workspaceId,
+    required String agentStateJson,
+    this.rowid = const Value.absent(),
+  }) : workspaceId = Value(workspaceId),
+       agentStateJson = Value(agentStateJson);
+  static Insertable<DesktopAgentStateData> custom({
+    Expression<String>? workspaceId,
+    Expression<String>? agentStateJson,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (workspaceId != null) 'workspace_id': workspaceId,
+      if (agentStateJson != null) 'agent_state_json': agentStateJson,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  DesktopAgentStateCompanion copyWith({
+    Value<String>? workspaceId,
+    Value<String>? agentStateJson,
+    Value<int>? rowid,
+  }) {
+    return DesktopAgentStateCompanion(
+      workspaceId: workspaceId ?? this.workspaceId,
+      agentStateJson: agentStateJson ?? this.agentStateJson,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (workspaceId.present) {
+      map['workspace_id'] = Variable<String>(workspaceId.value);
+    }
+    if (agentStateJson.present) {
+      map['agent_state_json'] = Variable<String>(agentStateJson.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesktopAgentStateCompanion(')
+          ..write('workspaceId: $workspaceId, ')
+          ..write('agentStateJson: $agentStateJson, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -7659,6 +9225,16 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $TelemetryLogsTable telemetryLogs = $TelemetryLogsTable(this);
   late final $OutboxEntriesTable outboxEntries = $OutboxEntriesTable(this);
   late final $SyncMetadataTable syncMetadata = $SyncMetadataTable(this);
+  late final $DesktopWorkspacesTable desktopWorkspaces =
+      $DesktopWorkspacesTable(this);
+  late final $DesktopEditorStateTable desktopEditorState =
+      $DesktopEditorStateTable(this);
+  late final $DesktopTerminalStateTable desktopTerminalState =
+      $DesktopTerminalStateTable(this);
+  late final $DesktopLayoutStateTable desktopLayoutState =
+      $DesktopLayoutStateTable(this);
+  late final $DesktopAgentStateTable desktopAgentState =
+      $DesktopAgentStateTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -7679,6 +9255,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     telemetryLogs,
     outboxEntries,
     syncMetadata,
+    desktopWorkspaces,
+    desktopEditorState,
+    desktopTerminalState,
+    desktopLayoutState,
+    desktopAgentState,
   ];
 }
 
@@ -11553,6 +13134,952 @@ typedef $$SyncMetadataTableProcessedTableManager =
       SyncMetadataData,
       PrefetchHooks Function()
     >;
+typedef $$DesktopWorkspacesTableCreateCompanionBuilder =
+    DesktopWorkspacesCompanion Function({
+      required String id,
+      required String rootPath,
+      required String displayName,
+      required DateTime lastOpenedAt,
+      Value<int> rowid,
+    });
+typedef $$DesktopWorkspacesTableUpdateCompanionBuilder =
+    DesktopWorkspacesCompanion Function({
+      Value<String> id,
+      Value<String> rootPath,
+      Value<String> displayName,
+      Value<DateTime> lastOpenedAt,
+      Value<int> rowid,
+    });
+
+class $$DesktopWorkspacesTableFilterComposer
+    extends Composer<_$AppDatabase, $DesktopWorkspacesTable> {
+  $$DesktopWorkspacesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get rootPath => $composableBuilder(
+    column: $table.rootPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastOpenedAt => $composableBuilder(
+    column: $table.lastOpenedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$DesktopWorkspacesTableOrderingComposer
+    extends Composer<_$AppDatabase, $DesktopWorkspacesTable> {
+  $$DesktopWorkspacesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get rootPath => $composableBuilder(
+    column: $table.rootPath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get lastOpenedAt => $composableBuilder(
+    column: $table.lastOpenedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$DesktopWorkspacesTableAnnotationComposer
+    extends Composer<_$AppDatabase, $DesktopWorkspacesTable> {
+  $$DesktopWorkspacesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get rootPath =>
+      $composableBuilder(column: $table.rootPath, builder: (column) => column);
+
+  GeneratedColumn<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get lastOpenedAt => $composableBuilder(
+    column: $table.lastOpenedAt,
+    builder: (column) => column,
+  );
+}
+
+class $$DesktopWorkspacesTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $DesktopWorkspacesTable,
+          DesktopWorkspace,
+          $$DesktopWorkspacesTableFilterComposer,
+          $$DesktopWorkspacesTableOrderingComposer,
+          $$DesktopWorkspacesTableAnnotationComposer,
+          $$DesktopWorkspacesTableCreateCompanionBuilder,
+          $$DesktopWorkspacesTableUpdateCompanionBuilder,
+          (
+            DesktopWorkspace,
+            BaseReferences<
+              _$AppDatabase,
+              $DesktopWorkspacesTable,
+              DesktopWorkspace
+            >,
+          ),
+          DesktopWorkspace,
+          PrefetchHooks Function()
+        > {
+  $$DesktopWorkspacesTableTableManager(
+    _$AppDatabase db,
+    $DesktopWorkspacesTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DesktopWorkspacesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$DesktopWorkspacesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$DesktopWorkspacesTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> rootPath = const Value.absent(),
+                Value<String> displayName = const Value.absent(),
+                Value<DateTime> lastOpenedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => DesktopWorkspacesCompanion(
+                id: id,
+                rootPath: rootPath,
+                displayName: displayName,
+                lastOpenedAt: lastOpenedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String rootPath,
+                required String displayName,
+                required DateTime lastOpenedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => DesktopWorkspacesCompanion.insert(
+                id: id,
+                rootPath: rootPath,
+                displayName: displayName,
+                lastOpenedAt: lastOpenedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$DesktopWorkspacesTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $DesktopWorkspacesTable,
+      DesktopWorkspace,
+      $$DesktopWorkspacesTableFilterComposer,
+      $$DesktopWorkspacesTableOrderingComposer,
+      $$DesktopWorkspacesTableAnnotationComposer,
+      $$DesktopWorkspacesTableCreateCompanionBuilder,
+      $$DesktopWorkspacesTableUpdateCompanionBuilder,
+      (
+        DesktopWorkspace,
+        BaseReferences<
+          _$AppDatabase,
+          $DesktopWorkspacesTable,
+          DesktopWorkspace
+        >,
+      ),
+      DesktopWorkspace,
+      PrefetchHooks Function()
+    >;
+typedef $$DesktopEditorStateTableCreateCompanionBuilder =
+    DesktopEditorStateCompanion Function({
+      required String workspaceId,
+      required String openTabsJson,
+      Value<String?> activeTabPath,
+      Value<double?> sidebarWidth,
+      Value<double?> agentPanelWidth,
+      Value<double?> bottomPanelHeight,
+      Value<int> rowid,
+    });
+typedef $$DesktopEditorStateTableUpdateCompanionBuilder =
+    DesktopEditorStateCompanion Function({
+      Value<String> workspaceId,
+      Value<String> openTabsJson,
+      Value<String?> activeTabPath,
+      Value<double?> sidebarWidth,
+      Value<double?> agentPanelWidth,
+      Value<double?> bottomPanelHeight,
+      Value<int> rowid,
+    });
+
+class $$DesktopEditorStateTableFilterComposer
+    extends Composer<_$AppDatabase, $DesktopEditorStateTable> {
+  $$DesktopEditorStateTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get workspaceId => $composableBuilder(
+    column: $table.workspaceId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get openTabsJson => $composableBuilder(
+    column: $table.openTabsJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get activeTabPath => $composableBuilder(
+    column: $table.activeTabPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get sidebarWidth => $composableBuilder(
+    column: $table.sidebarWidth,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get agentPanelWidth => $composableBuilder(
+    column: $table.agentPanelWidth,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get bottomPanelHeight => $composableBuilder(
+    column: $table.bottomPanelHeight,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$DesktopEditorStateTableOrderingComposer
+    extends Composer<_$AppDatabase, $DesktopEditorStateTable> {
+  $$DesktopEditorStateTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get workspaceId => $composableBuilder(
+    column: $table.workspaceId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get openTabsJson => $composableBuilder(
+    column: $table.openTabsJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get activeTabPath => $composableBuilder(
+    column: $table.activeTabPath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get sidebarWidth => $composableBuilder(
+    column: $table.sidebarWidth,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get agentPanelWidth => $composableBuilder(
+    column: $table.agentPanelWidth,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<double> get bottomPanelHeight => $composableBuilder(
+    column: $table.bottomPanelHeight,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$DesktopEditorStateTableAnnotationComposer
+    extends Composer<_$AppDatabase, $DesktopEditorStateTable> {
+  $$DesktopEditorStateTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get workspaceId => $composableBuilder(
+    column: $table.workspaceId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get openTabsJson => $composableBuilder(
+    column: $table.openTabsJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get activeTabPath => $composableBuilder(
+    column: $table.activeTabPath,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get sidebarWidth => $composableBuilder(
+    column: $table.sidebarWidth,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get agentPanelWidth => $composableBuilder(
+    column: $table.agentPanelWidth,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<double> get bottomPanelHeight => $composableBuilder(
+    column: $table.bottomPanelHeight,
+    builder: (column) => column,
+  );
+}
+
+class $$DesktopEditorStateTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $DesktopEditorStateTable,
+          DesktopEditorStateData,
+          $$DesktopEditorStateTableFilterComposer,
+          $$DesktopEditorStateTableOrderingComposer,
+          $$DesktopEditorStateTableAnnotationComposer,
+          $$DesktopEditorStateTableCreateCompanionBuilder,
+          $$DesktopEditorStateTableUpdateCompanionBuilder,
+          (
+            DesktopEditorStateData,
+            BaseReferences<
+              _$AppDatabase,
+              $DesktopEditorStateTable,
+              DesktopEditorStateData
+            >,
+          ),
+          DesktopEditorStateData,
+          PrefetchHooks Function()
+        > {
+  $$DesktopEditorStateTableTableManager(
+    _$AppDatabase db,
+    $DesktopEditorStateTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DesktopEditorStateTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$DesktopEditorStateTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$DesktopEditorStateTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> workspaceId = const Value.absent(),
+                Value<String> openTabsJson = const Value.absent(),
+                Value<String?> activeTabPath = const Value.absent(),
+                Value<double?> sidebarWidth = const Value.absent(),
+                Value<double?> agentPanelWidth = const Value.absent(),
+                Value<double?> bottomPanelHeight = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => DesktopEditorStateCompanion(
+                workspaceId: workspaceId,
+                openTabsJson: openTabsJson,
+                activeTabPath: activeTabPath,
+                sidebarWidth: sidebarWidth,
+                agentPanelWidth: agentPanelWidth,
+                bottomPanelHeight: bottomPanelHeight,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String workspaceId,
+                required String openTabsJson,
+                Value<String?> activeTabPath = const Value.absent(),
+                Value<double?> sidebarWidth = const Value.absent(),
+                Value<double?> agentPanelWidth = const Value.absent(),
+                Value<double?> bottomPanelHeight = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => DesktopEditorStateCompanion.insert(
+                workspaceId: workspaceId,
+                openTabsJson: openTabsJson,
+                activeTabPath: activeTabPath,
+                sidebarWidth: sidebarWidth,
+                agentPanelWidth: agentPanelWidth,
+                bottomPanelHeight: bottomPanelHeight,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$DesktopEditorStateTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $DesktopEditorStateTable,
+      DesktopEditorStateData,
+      $$DesktopEditorStateTableFilterComposer,
+      $$DesktopEditorStateTableOrderingComposer,
+      $$DesktopEditorStateTableAnnotationComposer,
+      $$DesktopEditorStateTableCreateCompanionBuilder,
+      $$DesktopEditorStateTableUpdateCompanionBuilder,
+      (
+        DesktopEditorStateData,
+        BaseReferences<
+          _$AppDatabase,
+          $DesktopEditorStateTable,
+          DesktopEditorStateData
+        >,
+      ),
+      DesktopEditorStateData,
+      PrefetchHooks Function()
+    >;
+typedef $$DesktopTerminalStateTableCreateCompanionBuilder =
+    DesktopTerminalStateCompanion Function({
+      required String workspaceId,
+      required String sessionsJson,
+      Value<int> rowid,
+    });
+typedef $$DesktopTerminalStateTableUpdateCompanionBuilder =
+    DesktopTerminalStateCompanion Function({
+      Value<String> workspaceId,
+      Value<String> sessionsJson,
+      Value<int> rowid,
+    });
+
+class $$DesktopTerminalStateTableFilterComposer
+    extends Composer<_$AppDatabase, $DesktopTerminalStateTable> {
+  $$DesktopTerminalStateTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get workspaceId => $composableBuilder(
+    column: $table.workspaceId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get sessionsJson => $composableBuilder(
+    column: $table.sessionsJson,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$DesktopTerminalStateTableOrderingComposer
+    extends Composer<_$AppDatabase, $DesktopTerminalStateTable> {
+  $$DesktopTerminalStateTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get workspaceId => $composableBuilder(
+    column: $table.workspaceId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get sessionsJson => $composableBuilder(
+    column: $table.sessionsJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$DesktopTerminalStateTableAnnotationComposer
+    extends Composer<_$AppDatabase, $DesktopTerminalStateTable> {
+  $$DesktopTerminalStateTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get workspaceId => $composableBuilder(
+    column: $table.workspaceId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get sessionsJson => $composableBuilder(
+    column: $table.sessionsJson,
+    builder: (column) => column,
+  );
+}
+
+class $$DesktopTerminalStateTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $DesktopTerminalStateTable,
+          DesktopTerminalStateData,
+          $$DesktopTerminalStateTableFilterComposer,
+          $$DesktopTerminalStateTableOrderingComposer,
+          $$DesktopTerminalStateTableAnnotationComposer,
+          $$DesktopTerminalStateTableCreateCompanionBuilder,
+          $$DesktopTerminalStateTableUpdateCompanionBuilder,
+          (
+            DesktopTerminalStateData,
+            BaseReferences<
+              _$AppDatabase,
+              $DesktopTerminalStateTable,
+              DesktopTerminalStateData
+            >,
+          ),
+          DesktopTerminalStateData,
+          PrefetchHooks Function()
+        > {
+  $$DesktopTerminalStateTableTableManager(
+    _$AppDatabase db,
+    $DesktopTerminalStateTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DesktopTerminalStateTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$DesktopTerminalStateTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$DesktopTerminalStateTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> workspaceId = const Value.absent(),
+                Value<String> sessionsJson = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => DesktopTerminalStateCompanion(
+                workspaceId: workspaceId,
+                sessionsJson: sessionsJson,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String workspaceId,
+                required String sessionsJson,
+                Value<int> rowid = const Value.absent(),
+              }) => DesktopTerminalStateCompanion.insert(
+                workspaceId: workspaceId,
+                sessionsJson: sessionsJson,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$DesktopTerminalStateTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $DesktopTerminalStateTable,
+      DesktopTerminalStateData,
+      $$DesktopTerminalStateTableFilterComposer,
+      $$DesktopTerminalStateTableOrderingComposer,
+      $$DesktopTerminalStateTableAnnotationComposer,
+      $$DesktopTerminalStateTableCreateCompanionBuilder,
+      $$DesktopTerminalStateTableUpdateCompanionBuilder,
+      (
+        DesktopTerminalStateData,
+        BaseReferences<
+          _$AppDatabase,
+          $DesktopTerminalStateTable,
+          DesktopTerminalStateData
+        >,
+      ),
+      DesktopTerminalStateData,
+      PrefetchHooks Function()
+    >;
+typedef $$DesktopLayoutStateTableCreateCompanionBuilder =
+    DesktopLayoutStateCompanion Function({
+      required String workspaceId,
+      required String windowGeometryJson,
+      required String panelVisibilityJson,
+      Value<int> rowid,
+    });
+typedef $$DesktopLayoutStateTableUpdateCompanionBuilder =
+    DesktopLayoutStateCompanion Function({
+      Value<String> workspaceId,
+      Value<String> windowGeometryJson,
+      Value<String> panelVisibilityJson,
+      Value<int> rowid,
+    });
+
+class $$DesktopLayoutStateTableFilterComposer
+    extends Composer<_$AppDatabase, $DesktopLayoutStateTable> {
+  $$DesktopLayoutStateTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get workspaceId => $composableBuilder(
+    column: $table.workspaceId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get windowGeometryJson => $composableBuilder(
+    column: $table.windowGeometryJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get panelVisibilityJson => $composableBuilder(
+    column: $table.panelVisibilityJson,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$DesktopLayoutStateTableOrderingComposer
+    extends Composer<_$AppDatabase, $DesktopLayoutStateTable> {
+  $$DesktopLayoutStateTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get workspaceId => $composableBuilder(
+    column: $table.workspaceId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get windowGeometryJson => $composableBuilder(
+    column: $table.windowGeometryJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get panelVisibilityJson => $composableBuilder(
+    column: $table.panelVisibilityJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$DesktopLayoutStateTableAnnotationComposer
+    extends Composer<_$AppDatabase, $DesktopLayoutStateTable> {
+  $$DesktopLayoutStateTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get workspaceId => $composableBuilder(
+    column: $table.workspaceId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get windowGeometryJson => $composableBuilder(
+    column: $table.windowGeometryJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get panelVisibilityJson => $composableBuilder(
+    column: $table.panelVisibilityJson,
+    builder: (column) => column,
+  );
+}
+
+class $$DesktopLayoutStateTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $DesktopLayoutStateTable,
+          DesktopLayoutStateData,
+          $$DesktopLayoutStateTableFilterComposer,
+          $$DesktopLayoutStateTableOrderingComposer,
+          $$DesktopLayoutStateTableAnnotationComposer,
+          $$DesktopLayoutStateTableCreateCompanionBuilder,
+          $$DesktopLayoutStateTableUpdateCompanionBuilder,
+          (
+            DesktopLayoutStateData,
+            BaseReferences<
+              _$AppDatabase,
+              $DesktopLayoutStateTable,
+              DesktopLayoutStateData
+            >,
+          ),
+          DesktopLayoutStateData,
+          PrefetchHooks Function()
+        > {
+  $$DesktopLayoutStateTableTableManager(
+    _$AppDatabase db,
+    $DesktopLayoutStateTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DesktopLayoutStateTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$DesktopLayoutStateTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$DesktopLayoutStateTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> workspaceId = const Value.absent(),
+                Value<String> windowGeometryJson = const Value.absent(),
+                Value<String> panelVisibilityJson = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => DesktopLayoutStateCompanion(
+                workspaceId: workspaceId,
+                windowGeometryJson: windowGeometryJson,
+                panelVisibilityJson: panelVisibilityJson,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String workspaceId,
+                required String windowGeometryJson,
+                required String panelVisibilityJson,
+                Value<int> rowid = const Value.absent(),
+              }) => DesktopLayoutStateCompanion.insert(
+                workspaceId: workspaceId,
+                windowGeometryJson: windowGeometryJson,
+                panelVisibilityJson: panelVisibilityJson,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$DesktopLayoutStateTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $DesktopLayoutStateTable,
+      DesktopLayoutStateData,
+      $$DesktopLayoutStateTableFilterComposer,
+      $$DesktopLayoutStateTableOrderingComposer,
+      $$DesktopLayoutStateTableAnnotationComposer,
+      $$DesktopLayoutStateTableCreateCompanionBuilder,
+      $$DesktopLayoutStateTableUpdateCompanionBuilder,
+      (
+        DesktopLayoutStateData,
+        BaseReferences<
+          _$AppDatabase,
+          $DesktopLayoutStateTable,
+          DesktopLayoutStateData
+        >,
+      ),
+      DesktopLayoutStateData,
+      PrefetchHooks Function()
+    >;
+typedef $$DesktopAgentStateTableCreateCompanionBuilder =
+    DesktopAgentStateCompanion Function({
+      required String workspaceId,
+      required String agentStateJson,
+      Value<int> rowid,
+    });
+typedef $$DesktopAgentStateTableUpdateCompanionBuilder =
+    DesktopAgentStateCompanion Function({
+      Value<String> workspaceId,
+      Value<String> agentStateJson,
+      Value<int> rowid,
+    });
+
+class $$DesktopAgentStateTableFilterComposer
+    extends Composer<_$AppDatabase, $DesktopAgentStateTable> {
+  $$DesktopAgentStateTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get workspaceId => $composableBuilder(
+    column: $table.workspaceId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get agentStateJson => $composableBuilder(
+    column: $table.agentStateJson,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$DesktopAgentStateTableOrderingComposer
+    extends Composer<_$AppDatabase, $DesktopAgentStateTable> {
+  $$DesktopAgentStateTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get workspaceId => $composableBuilder(
+    column: $table.workspaceId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get agentStateJson => $composableBuilder(
+    column: $table.agentStateJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$DesktopAgentStateTableAnnotationComposer
+    extends Composer<_$AppDatabase, $DesktopAgentStateTable> {
+  $$DesktopAgentStateTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get workspaceId => $composableBuilder(
+    column: $table.workspaceId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get agentStateJson => $composableBuilder(
+    column: $table.agentStateJson,
+    builder: (column) => column,
+  );
+}
+
+class $$DesktopAgentStateTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $DesktopAgentStateTable,
+          DesktopAgentStateData,
+          $$DesktopAgentStateTableFilterComposer,
+          $$DesktopAgentStateTableOrderingComposer,
+          $$DesktopAgentStateTableAnnotationComposer,
+          $$DesktopAgentStateTableCreateCompanionBuilder,
+          $$DesktopAgentStateTableUpdateCompanionBuilder,
+          (
+            DesktopAgentStateData,
+            BaseReferences<
+              _$AppDatabase,
+              $DesktopAgentStateTable,
+              DesktopAgentStateData
+            >,
+          ),
+          DesktopAgentStateData,
+          PrefetchHooks Function()
+        > {
+  $$DesktopAgentStateTableTableManager(
+    _$AppDatabase db,
+    $DesktopAgentStateTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DesktopAgentStateTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$DesktopAgentStateTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$DesktopAgentStateTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> workspaceId = const Value.absent(),
+                Value<String> agentStateJson = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => DesktopAgentStateCompanion(
+                workspaceId: workspaceId,
+                agentStateJson: agentStateJson,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String workspaceId,
+                required String agentStateJson,
+                Value<int> rowid = const Value.absent(),
+              }) => DesktopAgentStateCompanion.insert(
+                workspaceId: workspaceId,
+                agentStateJson: agentStateJson,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$DesktopAgentStateTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $DesktopAgentStateTable,
+      DesktopAgentStateData,
+      $$DesktopAgentStateTableFilterComposer,
+      $$DesktopAgentStateTableOrderingComposer,
+      $$DesktopAgentStateTableAnnotationComposer,
+      $$DesktopAgentStateTableCreateCompanionBuilder,
+      $$DesktopAgentStateTableUpdateCompanionBuilder,
+      (
+        DesktopAgentStateData,
+        BaseReferences<
+          _$AppDatabase,
+          $DesktopAgentStateTable,
+          DesktopAgentStateData
+        >,
+      ),
+      DesktopAgentStateData,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -11587,4 +14114,14 @@ class $AppDatabaseManager {
       $$OutboxEntriesTableTableManager(_db, _db.outboxEntries);
   $$SyncMetadataTableTableManager get syncMetadata =>
       $$SyncMetadataTableTableManager(_db, _db.syncMetadata);
+  $$DesktopWorkspacesTableTableManager get desktopWorkspaces =>
+      $$DesktopWorkspacesTableTableManager(_db, _db.desktopWorkspaces);
+  $$DesktopEditorStateTableTableManager get desktopEditorState =>
+      $$DesktopEditorStateTableTableManager(_db, _db.desktopEditorState);
+  $$DesktopTerminalStateTableTableManager get desktopTerminalState =>
+      $$DesktopTerminalStateTableTableManager(_db, _db.desktopTerminalState);
+  $$DesktopLayoutStateTableTableManager get desktopLayoutState =>
+      $$DesktopLayoutStateTableTableManager(_db, _db.desktopLayoutState);
+  $$DesktopAgentStateTableTableManager get desktopAgentState =>
+      $$DesktopAgentStateTableTableManager(_db, _db.desktopAgentState);
 }

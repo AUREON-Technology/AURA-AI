@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
 
+import '../../data/agent_config_repository.dart';
+import '../../data/agents_repository.dart';
 import '../../data/chat_repository.dart';
 import '../chat_view_model.dart';
 import 'voice_recorder_button.dart';
@@ -25,6 +27,7 @@ class ChatComposer extends ConsumerWidget {
     final chat = ref.watch(chatViewModelProvider);
     final isStreaming = ref.watch(streamingMessageIdProvider) != null;
     final locked = chat.composerLocked(isStreaming: isStreaming);
+    final (personaLabel, _) = personaDisplay(ref.watch(activeAgentIdProvider));
 
     return Container(
       padding: const EdgeInsets.all(AuraSpacing.xl),
@@ -67,8 +70,8 @@ class ChatComposer extends ConsumerWidget {
                   enabled: !locked,
                   decoration: InputDecoration(
                     hintText: locked
-                        ? 'Waiting for Copilot...'
-                        : (isMobile ? 'Ask Copilot...' : 'Ask Copilot anything...'),
+                        ? 'Waiting for $personaLabel...'
+                        : (isMobile ? 'Ask $personaLabel...' : 'Ask $personaLabel anything...'),
                   ),
                   style: TextStyle(color: palette.textPrimary),
                   onSubmitted: locked ? null : (_) => onSend(),

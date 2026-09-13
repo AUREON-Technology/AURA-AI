@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
 
+import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/hostd/hostd_control_client.dart';
@@ -96,7 +99,8 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
     final client = ref.read(hostdControlClientProvider);
     setState(() => _pairing = true);
     try {
-      final start = await client.startPairing(backendUrl: ref.read(backendUrlProvider));
+      final backendUrl = ref.read(backendUrlProvider);
+      final start = await client.startPairing(backendUrl: backendUrl);
       final userCode = start['user_code'] as String;
       final intervalS = (start['interval'] as num).toInt();
       final expiresIn = (start['expires_in'] as num).toInt();
@@ -111,7 +115,7 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('Enter this code in an AURA app you\'re already signed into:'),
+              const Text('Approving with your signed-in AURA session...'),
               const SizedBox(height: AuraSpacing.md),
               SelectableText(
                 userCode,
@@ -126,6 +130,29 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
           ),
         ),
       ));
+
+      // Self-approve: this desktop app is already signed in, and the daemon
+      // it's pairing runs on this same machine, so it can approve its own
+      // pairing request the same way an already-logged-in browser session
+      // can approve a new one -- no second device or separate approval UI
+      // is needed (see docs/architecture/011-desktop-engineer-agent.md's
+      // "known gaps" section: no approval screen exists anywhere yet, so
+      // without this the pairing code can never be approved at all).
+      final accessToken = await ref.read(tokenManagerProvider).getValidAccessToken();
+      if (accessToken == null) {
+        throw StateError('Sign in to AURA first -- pairing needs a valid session to approve with.');
+      }
+      final approveResponse = await http.post(
+        Uri.parse('$backendUrl/api/v3/auth/desktop/pair/approve'),
+        headers: {
+          'Authorization': 'Bearer $accessToken',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'user_code': userCode}),
+      );
+      if (approveResponse.statusCode != 200) {
+        throw StateError('Approval rejected: HTTP ${approveResponse.statusCode} ${approveResponse.body}');
+      }
 
       final deadline = DateTime.now().add(Duration(seconds: expiresIn));
       String? outcome;

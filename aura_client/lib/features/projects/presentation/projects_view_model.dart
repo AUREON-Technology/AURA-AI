@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:aura_client/features/projects/data/project_repository.dart';
 
 class ProjectsViewModel extends StateNotifier<AsyncValue<void>> {

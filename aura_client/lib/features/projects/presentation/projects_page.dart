@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import '../../auth/presentation/auth_provider.dart';
-import '../data/project_repository.dart';
 import '../data/project_providers.dart';
 import 'projects_view_model.dart';
 
@@ -14,8 +14,8 @@ class ProjectsPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final authState = ref.watch(authProvider);
     final projectsAsync = ref.watch(projectsStreamProvider);
-    final currentFilter = ref.watch(projectCategoryFilterProvider);
-    final ui = ref.watch(projectsViewModelProvider);
+    ref.watch(projectCategoryFilterProvider);
+    ref.watch(projectsViewModelProvider);
     final vm = ref.read(projectsViewModelProvider.notifier);
     final user = authState.value;
 

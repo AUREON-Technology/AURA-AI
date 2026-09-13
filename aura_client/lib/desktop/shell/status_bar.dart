@@ -6,8 +6,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
-import 'package:aura_client/desktop/state/state_notifiers.dart';
-import 'package:aura_client/desktop/state/desktop_application_state.dart';
+import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
 
 class StatusBar extends ConsumerWidget {
   const StatusBar({super.key});
@@ -16,8 +15,15 @@ class StatusBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = AuraPalette.of(context);
     final ideDensity = context.ideDensity;
-    final hostState = ref.watch(hostNotifierProvider);
-    final layoutState = ref.watch(layoutNotifierProvider);
+    // Same source as the sidebar's HostPanel (hostdStatusProvider actively
+    // polls /status) — do not read a separately-tracked connection flag here,
+    // or the two indicators can disagree (previously this watched
+    // hostNotifierProvider, which nothing ever refreshed, so it showed
+    // "Disconnected" even while HostPanel correctly showed the host running).
+    final statusAsync = ref.watch(hostdStatusProvider);
+    final status = statusAsync.value;
+    final reachable = status?.reachable ?? false;
+    final authenticated = status?.authenticated ?? false;
 
     return Container(
       height: ideDensity.statusBarHeight,
@@ -32,16 +38,20 @@ class StatusBar extends ConsumerWidget {
           ),
           // Hostd connection status
           _StatusItem(
-            icon: hostState.isConnected ? Icons.cloud_done : Icons.cloud_off,
-            text: hostState.isConnected ? 'Host Connected' : 'Host Disconnected',
-            color: hostState.isConnected ? palette.success : palette.danger,
+            icon: reachable ? Icons.cloud_done : Icons.cloud_off,
+            text: !reachable
+                ? 'Host Not Running'
+                : (authenticated ? 'Host Connected' : 'Host Not Paired'),
+            color: !reachable
+                ? palette.danger
+                : (authenticated ? palette.success : palette.warning),
             density: ideDensity,
           ),
           // Backend URL
-          if (hostState.backendUrl != null)
+          if (status?.backendUrl != null)
             _StatusItem(
               icon: Icons.dns_outlined,
-              text: hostState.backendUrl!,
+              text: status!.backendUrl!,
               density: ideDensity,
             ),
           const Spacer(),
