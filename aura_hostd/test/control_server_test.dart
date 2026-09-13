@@ -8,6 +8,7 @@ import 'dart:io';
 
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/control_server.dart';
+import 'package:aura_hostd/src/terminal_session_manager.dart';
 import 'package:aura_hostd/src/workspace_store.dart';
 import 'package:test/test.dart';
 
@@ -123,6 +124,7 @@ void main() {
       workspaceStore: workspaceStore,
       configStore: configStore,
       onPaired: (_) {},
+      terminalSessions: TerminalSessionManager(workspaceStore),
       logger: (_) {},
     );
     await server.start(configDir);
@@ -259,6 +261,7 @@ void main() {
       workspaceStore: WorkspaceStore.forConfigDir(pairingConfigDir),
       configStore: ConfigStore.forConfigDir(pairingConfigDir),
       onPaired: (token) => paired = token,
+      terminalSessions: TerminalSessionManager(WorkspaceStore.forConfigDir(pairingConfigDir)),
       logger: (_) {},
     );
     await pairingServer.start(pairingConfigDir);

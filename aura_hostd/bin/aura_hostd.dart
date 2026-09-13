@@ -27,6 +27,7 @@ import 'package:aura_hostd/src/control_server.dart';
 import 'package:aura_hostd/src/pairing_client.dart';
 import 'package:aura_hostd/src/rpc_client.dart';
 import 'package:aura_hostd/src/task_handler.dart';
+import 'package:aura_hostd/src/terminal_session_manager.dart';
 import 'package:aura_hostd/src/workspace_store.dart';
 
 Future<void> main(List<String> args) async {
@@ -187,6 +188,7 @@ Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) 
     // daemon without ever needing `run` restarted -- the control server exists before any token
     // does precisely so that path works.
     onPaired: (_) => backend.startIfAuthenticated(),
+    terminalSessions: TerminalSessionManager(workspaceStore),
   );
   await controlServer.start(resolveConfigDir());
 
