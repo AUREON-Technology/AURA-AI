@@ -368,28 +368,93 @@ class PlanningEngine:
 
 
 def _parse_json_object(text: str) -> dict[str, Any]:
-    """Tolerant JSON extraction -- models wrap objects in prose and fences."""
+    """Tolerant JSON extraction -- models wrap objects in prose and fences, and on a slow
+    CPU-only provider a long plan can also get hard-cut by ``max_output_tokens`` mid-JSON
+    (measured live: qwen2.5:3b given 21 tools and "Analyze the VELVET project." ran the full
+    12-step ceiling and hit ``finish_reason: "length"`` before its closing brackets). A plan
+    whose first N steps are complete, valid JSON is a working plan for those N steps -- discarding
+    all of it because step N+1 never finished is strictly worse than executing what's there, so
+    this salvages every complete ``{...}`` element out of a ``[...]``/``"steps": [...]`` array
+    even when that array's own closing bracket never arrived. The same qwen response also showed
+    the model dropping the ``{"steps": [...]}`` envelope and returning the bare array directly --
+    :func:`_salvage_array_elements` covers both shapes at once, since a bare array and an
+    unclosed ``"steps"`` array are the same recovery problem once the envelope is missing either
+    way.
+    """
     stripped = text.strip()
     if stripped.startswith("```"):
         stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", stripped, flags=re.S).strip()
     try:
         parsed = json.loads(stripped)
-        return parsed if isinstance(parsed, dict) else {}
+        if isinstance(parsed, dict):
+            return parsed
+        if isinstance(parsed, list):
+            return {"steps": parsed}
     except json.JSONDecodeError:
         pass
-    start = stripped.find("{")
-    if start < 0:
+
+    obj_start = stripped.find("{")
+    arr_start = stripped.find("[")
+    if arr_start >= 0 and (obj_start < 0 or arr_start < obj_start):
+        elements = _salvage_array_elements(stripped, arr_start)
+        if elements:
+            return {"steps": elements}
+    if obj_start < 0:
         return {}
+
     depth = 0
-    for index in range(start, len(stripped)):
+    for index in range(obj_start, len(stripped)):
         if stripped[index] == "{":
             depth += 1
         elif stripped[index] == "}":
             depth -= 1
             if depth == 0:
                 try:
-                    parsed = json.loads(stripped[start : index + 1])
-                    return parsed if isinstance(parsed, dict) else {}
+                    parsed = json.loads(stripped[obj_start : index + 1])
                 except json.JSONDecodeError:
                     return {}
+                return parsed if isinstance(parsed, dict) else {}
+
+    # The top-level object never closed -- most commonly `{"steps": [ ... ` cut off before its
+    # own `]}`. The array inside it may still have complete elements worth keeping.
+    steps_key = stripped.find('"steps"', obj_start)
+    if steps_key >= 0:
+        inner_arr = stripped.find("[", steps_key)
+        if inner_arr >= 0:
+            elements = _salvage_array_elements(stripped, inner_arr)
+            if elements:
+                return {"steps": elements}
     return {}
+
+
+def _salvage_array_elements(text: str, start: int) -> list[Any]:
+    """Every complete ``{...}`` object inside the array opened by ``text[start]`` (a literal
+    ``[``), stopping at -- and discarding -- the first element that never closes. A half-written
+    object is corrupt data, not a partial step; only whole elements are usable.
+    """
+    elements: list[Any] = []
+    index = start + 1
+    length = len(text)
+    while index < length:
+        while index < length and text[index] in " \t\r\n,":
+            index += 1
+        if index >= length or text[index] != "{":
+            break
+        elem_start = index
+        depth = 0
+        while index < length:
+            if text[index] == "{":
+                depth += 1
+            elif text[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            index += 1
+        if depth != 0:
+            break
+        try:
+            elements.append(json.loads(text[elem_start : index + 1]))
+        except json.JSONDecodeError:
+            break
+        index += 1
+    return elements

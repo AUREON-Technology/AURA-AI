@@ -117,6 +117,29 @@ class TestAgenticPersonaPlanning:
         request = _request("fix it", agent="engineer", capabilities=())
         assert container.kernel._should_plan(request, self._tools()) is False
 
+    async def test_the_engineer_persona_plans_a_bare_local_project_reference(self, container) -> None:
+        """`matching_repository_tool` (tools/coding.py) only recognises a GitHub/GitLab/Bitbucket
+        URL or `owner/repo.git` shape -- a short message naming a local project on a paired
+        desktop workspace (ADR-011), like "Analyze the VELVET project.", matches neither that
+        nor any `_MULTI_STEP_MARKERS` pattern, and is under the 40-character floor
+        (`test_a_bare_local_project_reference_is_not_recognised_by_the_heuristic_alone` in
+        test_planning_execution.py confirms `needs_plan` alone says no to it). The engineer
+        persona's tools here are host-workspace ones (`run_command`/`write_file`/`edit_file`),
+        not the repository tools that heuristic covers, so this exercises the general
+        `max_plan_iterations > 1` force in `_should_plan` rather than the repository-specific
+        carve-out -- the fix that actually makes this class of short, file/project-directed
+        Engineer turn reach a tool instead of a prose-only answer."""
+        await container.startup()
+        request = _request(
+            "Analyze the VELVET project.", agent="engineer", capabilities=("engineer_agent",),
+        )
+        tools = [
+            {"name": "run_command", "description": "Run a shell command on the paired desktop."},
+            {"name": "write_file", "description": "Write a file on the paired desktop."},
+            {"name": "edit_file", "description": "Edit a file on the paired desktop."},
+        ]
+        assert container.kernel._should_plan(request, tools) is True
+
 
 class TestAgentGrantEnforcement:
     """The exit criterion: a tool call outside an agent's grant fails closed and is audited."""
