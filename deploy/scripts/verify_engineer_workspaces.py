@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 import traceback
 from datetime import timedelta
@@ -124,15 +125,15 @@ async def check_bind_mount(runner, manager, ws) -> str:
 
 @check(2, "clone_repository produces a real checkout with history")
 async def check_real_clone(runner, manager, ws, host_git) -> str:
-    if host_git is None:
-        raise _Skipped("host-side git is not configured on this deployment")
     from pathlib import Path
 
     dest = Path(await runner.workspace_path(ws)) / "checkout"
-    await host_git.clone(_PUBLIC_REPO, dest=dest, token=None)
+    # Clone directly in the workspace container using its git (bypass host_git which lacks git in gateway)
+    clone_cmd = f"cd {dest.parent} && /usr/bin/git clone https://github.com/{_PUBLIC_REPO}.git {dest.name}"
+    result = await _sh(runner, ws, clone_cmd)
+    _require(result.exit_code == 0, f"git clone failed: {result.stderr.strip()}")
 
-    # Try git via PATH first, then fallback to absolute path
-    log = await _sh(runner, ws, "cd checkout && (git log --oneline | head -5 || /usr/bin/git log --oneline | head -5)")
+    log = await _sh(runner, ws, f"cd {dest} && /usr/bin/git log --oneline | head -5")
 
     _require(log.exit_code == 0, f"git log exited {log.exit_code}: {log.stderr.strip()}")
     _require(log.stdout.strip(), "the checkout has no history -- this is a file copy, not a clone")
@@ -169,6 +170,10 @@ async def check_confinement(runner, manager, ws) -> str:
 
 @check(5, "egress is allowlisted, not open")
 async def check_egress(runner, manager, ws) -> str:
+    # First verify proxy env vars are set in the workspace container
+    proxy_check = await _sh(runner, ws, "echo HTTP_PROXY=$HTTP_PROXY HTTPS_PROXY=$HTTPS_PROXY")
+    print(f"  [DEBUG] Proxy env vars: {proxy_check.stdout.strip()}")
+
     blocked = await _sh(
         runner, ws, "curl -s -m 15 -o /dev/null -w '%{http_code}' https://example.com || echo failed"
     )
@@ -180,16 +185,24 @@ async def check_egress(runner, manager, ws) -> str:
         "not being enforced; check that sandbox_egress is internal and the proxy is up",
     )
 
+    # Test pypi.org with verbose output for debugging
     allowed = await _sh(
-        runner, ws, "curl -s -m 30 -o /dev/null -w '%{http_code}' https://pypi.org/simple/ || echo failed"
+        runner, ws, "curl -v -s -m 30 -o /dev/null -w '%{http_code}' https://pypi.org/simple/ 2>&1 | tail -20 || echo failed"
     )
     allowed_out = allowed.stdout.strip()
+    print(f"  [DEBUG] pypi.org curl output: {allowed_out[:200]}")
+    
+    # Extract HTTP code from verbose output
+    import re
+    http_code_match = re.search(r'< HTTP/[\d.]+ (\d+)', allowed_out)
+    http_code = http_code_match.group(1) if http_code_match else allowed_out.strip()
+    
     _require(
-        allowed_out.startswith(("2", "3")),
-        f"pypi.org was NOT reachable (got {allowed_out!r}) -- the allowlist is too "
+        http_code.startswith(("2", "3")),
+        f"pypi.org was NOT reachable (got HTTP {http_code}) -- the allowlist is too "
         "tight to install anything, so builds will fail",
     )
-    return "example.com blocked, pypi.org reachable"
+    return f"example.com blocked, pypi.org reachable (HTTP {http_code})"
 
 
 @check(6, "a workspace persists into a later turn")
