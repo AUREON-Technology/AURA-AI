@@ -282,9 +282,11 @@ class CompositeSandboxRunner:
     """Prefers the caller's connected desktop session; falls back to a server-side sandbox (or
     refuses) when none is connected.
 
-    The choice is made once, at `create_task`, and fixed for that handle's lifetime -- a
+    For a `create_task` handle, the choice is made once and fixed for that handle's lifetime -- a
     `SandboxHandle` is "opaque identity of one ephemeral per-task sandbox" (ports/coding.py); it
-    does not migrate between runners mid-task.
+    does not migrate between runners mid-task. A *durable* workspace handle (`tools/coding.py`'s
+    `open_workspace`/`run_command`/etc. against a repo, via `WorkspaceManager.open()`) never goes
+    through `create_task` at all -- see `_runner_for`.
     """
 
     def __init__(self, *, host_runner: HostAgentSandboxRunner, fallback: Any | None) -> None:
@@ -308,9 +310,25 @@ class CompositeSandboxRunner:
 
     def _runner_for(self, handle: SandboxHandle) -> Any:
         runner = self._handle_runner.get(handle.task_id)
-        if runner is None:
-            raise SandboxError(f"unknown sandbox task {handle.task_id!r}")
-        return runner
+        if runner is not None:
+            return runner
+        # Never registered by `create_task` -- the only other source of a `SandboxHandle` is
+        # `WorkspaceManager.open()` (tools/workspaces.py), whose durable per-repo containers are,
+        # by `Container._build_workspace_manager`'s own invariant, always backed by exactly
+        # `self._fallback` (the Docker runner is the one that can pause/reap them; see that
+        # method's docstring). Production incident: `open_workspace`'s tool body opens the
+        # workspace through the manager and then calls `sandbox_runner.run(...)` on *this*
+        # composite to list its contents -- before this fallback, that unconditionally raised
+        # "unknown sandbox task", because only `create_task` ever populated `_handle_runner`. The
+        # Docker container was created successfully every time; every durable-workspace tool call
+        # still failed 100% of the time, the moment it tried to do anything past opening the
+        # workspace -- confirmed live (open_workspace: 0 "ok", 8 "error" outcomes) even though the
+        # container it opened was running and healthy the whole time. Caching the fallback here
+        # matches `create_task`'s own registration behaviour for later calls on the same handle.
+        if self._fallback is not None:
+            self._handle_runner[handle.task_id] = self._fallback
+            return self._fallback
+        raise SandboxError(f"unknown sandbox task {handle.task_id!r}")
 
     async def run(self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float) -> SandboxResult:
         return await self._runner_for(handle).run(handle, command, timeout_s=timeout_s)
