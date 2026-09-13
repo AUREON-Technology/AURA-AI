@@ -25,15 +25,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # No flutter-version pin. Pinning one here duplicates the Dart constraint that
-      # aura_client/pubspec.yaml already states (`sdk: ^3.11.4`), in a form that rots silently:
-      # this job was pinned to Flutter 3.35.0, which ships Dart 3.9.0, so `flutter pub get`
-      # failed version solving on every run and the analyze and test steps below had never
-      # executed. Resolving `stable` keeps the pubspec as the single source of truth for what
-      # the code needs. `^3.11.4` still excludes Dart 4, so this cannot silently jump a major.
+      # Pin Flutter to a version verified (by a real local run, not just claimed) to ship a
+      # Dart SDK satisfying pubspec.yaml's `sdk: ^3.11.4`. Two prior pins here (3.35.0 -> Dart
+      # 3.9.0, then 3.38.0 -> Dart 3.10.0-beta) both silently failed `flutter pub get`'s version
+      # solving on every run, so analyze/test never actually executed despite the job reporting
+      # green on unrelated grounds. 3.44.6 ships Dart 3.12.2, confirmed against this pubspec.
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.38.0"
+          flutter-version: "3.44.6"
 
       - name: Install dependencies
         run: flutter pub get
@@ -60,10 +59,12 @@ jobs:
       - uses: actions/checkout@v4
 
       # Pin Flutter to a version with Dart >= 3.11.4 (pubspec constraint: sdk: ^3.11.4).
-      # Flutter 3.38.0 ships Dart 3.11.0. Using a specific version ensures reproducible CI.
+      # 3.44.6 ships Dart 3.12.2, confirmed by a real local `flutter pub get`/`analyze`/`test`
+      # run against this pubspec — the previous 3.38.0 pin actually ships Dart 3.10.0-beta and
+      # failed version solving on every CI run.
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.38.0"
+          flutter-version: "3.44.6"
 
       - uses: actions/setup-java@v4
         with:
@@ -93,9 +94,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # See analyze-and-test's own comment: 3.44.6 ships Dart 3.12.2, satisfying pubspec.yaml's
+      # `sdk: ^3.11.4`; the previous 3.38.0 pin did not and failed `flutter pub get` on every run.
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.38.0"
+          flutter-version: "3.44.6"
 
       - name: Enable Windows desktop support
         run: flutter config --enable-windows-desktop
@@ -131,9 +134,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # See analyze-and-test's own comment: 3.44.6 ships Dart 3.12.2, satisfying pubspec.yaml's
+      # `sdk: ^3.11.4`; the previous 3.38.0 pin did not and failed `flutter pub get` on every run.
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.38.0"
+          flutter-version: "3.44.6"
 
       # Flutter's Linux desktop embedder needs GTK 3 and a native build toolchain that
       # ubuntu-latest doesn't ship by default. The rest of this list is not Flutter's own
