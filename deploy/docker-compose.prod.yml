@@ -354,7 +354,8 @@ services:
       AURA_SANDBOX_IMAGE: ${AURA_SANDBOX_IMAGE:-aura-sandbox:latest}
       # Proxy for egress from sandbox containers (tinyproxy on sandbox-proxy:8888)
       AURA_SANDBOX_PROXY_URL: ${AURA_SANDBOX_PROXY_URL:-http://sandbox-proxy:8888}
-      AURA_SANDBOX_NETWORK: sandbox_egress
+      # Network name must match docker-compose's actual network name (project_prefix + _ + network_name)
+      AURA_SANDBOX_NETWORK: ${AURA_SANDBOX_NETWORK:-aura_sandbox_egress}
       AURA_SANDBOX_MEMORY_LIMIT: ${AURA_SANDBOX_MEMORY_LIMIT:-512m}
       AURA_SANDBOX_CPU_LIMIT: ${AURA_SANDBOX_CPU_LIMIT:-1.0}
       # Where engineer-agent workspaces live. This value is a *host* path, and it is bind-mounted
