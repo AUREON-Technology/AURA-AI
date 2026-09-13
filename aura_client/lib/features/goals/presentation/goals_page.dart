@@ -177,14 +177,14 @@ class GoalsPage extends ConsumerWidget {
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
-                  value: status,
+                  initialValue: status,
                   items: ['active', 'achieved', 'abandoned'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
                   onChanged: (v) => setState(() => status = v!),
                   decoration: const InputDecoration(labelText: 'Status'),
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
-                  value: priority,
+                  initialValue: priority,
                   items: ['low', 'medium', 'high'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
                   onChanged: (v) => setState(() => priority = v!),
                   decoration: const InputDecoration(labelText: 'Priority'),

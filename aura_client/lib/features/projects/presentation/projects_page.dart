@@ -176,7 +176,7 @@ class ProjectsPage extends ConsumerWidget {
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
-                  value: status,
+                  initialValue: status,
                   items: ['active', 'completed', 'archived', 'on_hold'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
                   onChanged: (v) => setState(() => status = v!),
                   decoration: const InputDecoration(labelText: 'Status'),
