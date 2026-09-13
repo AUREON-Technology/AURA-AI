@@ -277,7 +277,7 @@ Write the updated summary as compact prose. No preamble.""",
     ),
     PromptTemplate(
         id="task.plan_decomposition",
-        version="1.1.0",
+        version="1.2.0",
         description="Decompose a goal into a dependency-ordered step list.",
         tags=("task", "planning"),
         variables=variables(
@@ -285,6 +285,20 @@ Write the updated summary as compact prose. No preamble.""",
             ("tools", "Available tools, each with its argument signature.", False),
             ("max_steps", "Upper bound on step count."),
         ),
+        # The JSON example below shows one concrete step, not a schema -- a production incident
+        # on the self-hosted CPU model (qwen2.5:3b) showed why that distinction matters. The
+        # previous example wrote `"kind": "tool|retrieve|recall|generate|verify|respond"` (the
+        # enum spelled out inline) and `"depends_on": ["s0"]` (a step id that never exists, s1
+        # being the first). A small instruction-tuned model reliably copied both literally: every
+        # step came back with that exact five-way-piped string as its "kind" (silently demoted to
+        # GENERATE by `_parse_steps`'s validation, discarding the tool call) and an `["s0"]`
+        # dependency it never meant. Both cost output tokens for no benefit, and on a plan long
+        # enough to need most of the 700-token completion budget (`PlanningEngine.plan()`), that
+        # padding was enough to push the JSON past the cap before its closing brackets -- logged
+        # as "planning produced no usable steps" for a real "Analyze the VELVET project" turn,
+        # because a truncated object never balances and `_parse_json_object` returns nothing.
+        # Naming the six valid kinds in prose instead, and showing a real single instantiation,
+        # measurably shortened the completion for the same goal/tools/model on a live rerun.
         body="""Break this goal into the smallest set of concrete steps that achieves it.
 
 Goal:
@@ -299,14 +313,17 @@ Rules:
 - At most {{max_steps}} steps. Fewer is better -- do not decompose what is already atomic.
 - Each step is one action with an observable result.
 - Declare dependencies only where a step genuinely needs a previous step's output. Independent
-  steps run in parallel, so a false dependency costs real time.
+  steps run in parallel, so a false dependency costs real time. Omit "depends_on" (or leave it
+  empty) for a step with no dependencies -- do not invent one.
 - Use a tool step only for a tool that is listed, and only with the argument names shown for it --
   "arguments" must be an object using exactly those names, every required (*) one present.
+- "kind" must be exactly one of these six words: tool, retrieve, recall, generate, verify, respond.
 
-Respond with JSON only:
-{"steps": [{"id": "s1", "kind": "tool|retrieve|recall|generate|verify|respond",
-            "description": "<what this step does>", "tool": "<tool name or null>",
-            "arguments": {}, "depends_on": ["s0"]}]}""",
+Respond with JSON only. This example shows the shape for one tool step -- substitute your own
+id/kind/description/tool/arguments/depends_on for each step in your actual plan, do not copy
+these values:
+{"steps": [{"id": "s1", "kind": "tool", "description": "Search the handbook for the expense cap",
+            "tool": "search_knowledge", "arguments": {"query": "expense cap"}, "depends_on": []}]}""",
     ),
     PromptTemplate(
         id="task.verification",

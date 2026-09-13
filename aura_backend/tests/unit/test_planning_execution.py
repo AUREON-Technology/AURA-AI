@@ -165,6 +165,25 @@ class TestPlanningGate:
         assert engine.needs_plan("log 500 ml of water", available_tools=tools) is True
         assert engine.needs_plan("remind me to call mom", available_tools=tools) is True
 
+    def test_a_bare_local_project_reference_is_not_recognised_by_the_heuristic_alone(self) -> None:
+        """`matching_repository_tool` only fires on a GitHub/GitLab/Bitbucket URL or an
+        `owner/repo.git` shape (`_REPO_REFERENCE`, tools/coding.py) -- a short message naming a
+        local project on a paired desktop workspace (ADR-011), like "Analyze the VELVET
+        project.", matches neither that nor any `_MULTI_STEP_MARKERS` pattern, and is 28
+        characters, under the 40-character floor. `needs_plan` alone therefore still says no
+        here, same as it would for any other short prose. This is not a bug in `needs_plan`
+        itself: `AIKernel._should_plan` (kernel.py) forces planning for any persona whose
+        `max_plan_iterations > 1` (today, `engineer`) before ever consulting this heuristic --
+        see `TestAgenticPersonaPlanning.test_the_engineer_persona_plans_a_bare_local_project_reference`
+        in test_agents.py for the path a real turn actually takes. This test exists only to keep
+        that division of responsibility visible: `needs_plan` stays persona-agnostic, and the
+        engineer-specific carve-out lives at the one layer that knows which persona is asking.
+        """
+        assert _engine().needs_plan(
+            "Analyze the VELVET project.",
+            available_tools=["run_command", "write_file", "edit_file"],
+        ) is False
+
 
 class TestPlanParsing:
     async def test_a_well_formed_plan_becomes_a_dag(self) -> None:
@@ -242,6 +261,32 @@ class TestPlanParsing:
             Goal(description="g"), available_tools=TOOLS, max_steps=100
         )
         assert len(plan.steps) == 4
+
+    async def test_a_truncated_engineer_plan_still_runs_its_completed_tool_steps(self) -> None:
+        """End-to-end version of the VELVET incident: a live qwen2.5:3b completion for "Analyze
+        the VELVET project." against the engineer's real tool set hit `finish_reason: "length"`
+        at 700 output tokens, cutting the JSON off mid-step and dropping the `{"steps": [...]}`
+        envelope. Before `_parse_json_object`'s array-salvage, this produced zero usable steps
+        and fell back to a single RESPOND -- prose with no tool call, holding tools that could
+        have done the job. The two complete steps here must survive as real TOOL steps."""
+        body = (
+            '[{"id": "s1", "kind": "tool", "description": "List the repository files", '
+            '"tool": "github_list_repository_files", '
+            '"arguments": {"repo": "VELVET", "ref": "main", "path_prefix": ""}, '
+            '"depends_on": []}, '
+            '{"id": "s2", "kind": "tool", "description": "Open the persistent workspace", '
+            '"tool": "open_workspace", "arguments": {"repo": "VELVET"}, "depends_on": ["s1"]}, '
+            '{"id": "s3", "kind": "tool", "description": "cut off mid-step'
+        )
+        tools = [
+            {"name": "github_list_repository_files", "description": "List files."},
+            {"name": "open_workspace", "description": "Open a workspace."},
+        ]
+        plan = await _engine(body).plan(Goal(description="Analyze the VELVET project."), available_tools=tools)
+
+        assert [s.tool for s in plan.steps] == ["github_list_repository_files", "open_workspace"]
+        assert all(s.kind is StepKind.TOOL for s in plan.steps)
+        assert plan.steps[1].depends_on == (StepId("s1"),)
 
 
 class TestPlanningFallback:
@@ -398,8 +443,11 @@ class TestTolerantJsonExtraction:
         text = 'prose {"outer": {"inner": {"deep": 1}}} more prose'
         assert _parse_json_object(text) == {"outer": {"inner": {"deep": 1}}}
 
-    def test_a_top_level_array_is_not_a_plan(self) -> None:
-        assert _parse_json_object('[{"description": "x"}]') == {}
+    def test_a_bare_top_level_array_is_treated_as_the_steps_list(self) -> None:
+        """A live qwen2.5:3b response for "Analyze the VELVET project." dropped the
+        `{"steps": [...]}` envelope and returned the array directly -- salvageable steps
+        should not be discarded just because the wrapper object is missing."""
+        assert _parse_json_object('[{"description": "x"}]') == {"steps": [{"description": "x"}]}
 
     def test_text_with_no_object_returns_empty(self) -> None:
         assert _parse_json_object("no json here at all") == {}
@@ -409,6 +457,32 @@ class TestTolerantJsonExtraction:
 
     def test_a_malformed_balanced_object_returns_empty(self) -> None:
         assert _parse_json_object("prose {not: valid, json} more") == {}
+
+    def test_a_truncated_bare_array_salvages_its_complete_elements(self) -> None:
+        """The same live incident: `max_output_tokens` cut generation off mid-step. The steps
+        that finished before the cutoff are complete, valid JSON and should survive; only the
+        half-written tail element is discarded."""
+        text = (
+            '[{"id": "s1", "kind": "tool", "description": "a", "tool": "t1", '
+            '"arguments": {}, "depends_on": []}, {"id": "s2", "kind": "tool", '
+            '"description": "b", "tool": "t2", "arguments": {}, "depends_on": ["s1"]}, '
+            '{"id": "s3", "kind": "tool", "description": "cut off half'
+        )
+        result = _parse_json_object(text)
+        assert [s["id"] for s in result["steps"]] == ["s1", "s2"]
+
+    def test_a_truncated_steps_envelope_salvages_its_complete_elements(self) -> None:
+        """Same recovery, but for a plan that kept the `{"steps": [...]}` envelope and got cut
+        off before its own closing `]}` rather than dropping the envelope outright."""
+        text = (
+            '{"steps": [{"id": "s1", "kind": "tool", "description": "a", "tool": "t1", '
+            '"arguments": {}, "depends_on": []}, {"id": "s2", "description": "cut half'
+        )
+        result = _parse_json_object(text)
+        assert [s["id"] for s in result["steps"]] == ["s1"]
+
+    def test_a_truncated_array_with_no_complete_elements_returns_empty(self) -> None:
+        assert _parse_json_object('[{"id": "s1", "description": "cut half') == {}
 
 
 class TestReplanning:
