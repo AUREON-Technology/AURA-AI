@@ -127,8 +127,9 @@ async def check_bind_mount(runner, manager, ws) -> str:
 async def check_real_clone(runner, manager, ws, host_git) -> str:
     from pathlib import Path
 
-    dest = Path(await runner.workspace_path(ws)) / "checkout"
-    # Clone directly in the workspace container using its git (bypass host_git which lacks git in gateway)
+    # Inside the workspace container, the workspace is always at /workspace
+    dest = Path("/workspace") / "checkout"
+    # Clone directly in the workspace container using its git
     clone_cmd = f"cd {dest.parent} && /usr/bin/git clone https://github.com/{_PUBLIC_REPO}.git {dest.name}"
     result = await _sh(runner, ws, clone_cmd)
     _require(result.exit_code == 0, f"git clone failed: {result.stderr.strip()}")

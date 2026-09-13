@@ -281,6 +281,8 @@ class DockerSandboxRunner:
         )
         if self._network:
             run_kwargs["network"] = self._network
+            # Use Docker's embedded DNS resolver for service name resolution on the network
+            run_kwargs["dns"] = ["127.0.0.11"]
         else:
             run_kwargs["network_disabled"] = True
         if self._proxy_url:
