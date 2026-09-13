@@ -1,0 +1,132 @@
+/// Owns every live [PtySession] created through the `/terminal` WebSocket
+/// route on [ControlServer]'s loopback HTTP server (see control_server.dart).
+///
+/// One connection = one session, created only once the client sends a
+/// `start` frame carrying the initial size -- the WebSocket itself is
+/// upgraded first so trust-gate failures can be reported as a clean `error`
+/// frame rather than an HTTP rejection the client has to interpret.
+library;
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'pty_session.dart';
+import 'workspace_store.dart';
+import 'containment.dart' show WorkspaceRoot;
+
+class TerminalSessionManager {
+  TerminalSessionManager(this._workspaceStore);
+
+  final WorkspaceStore _workspaceStore;
+  final Map<String, PtySession> _sessions = {};
+
+  /// Handles one `/terminal` WebSocket connection end to end: trust-checks
+  /// [rootPath] against granted roots (same bar `command_policy.dart` uses
+  /// for `run_command` -- a full interactive shell is at least as powerful),
+  /// then processes `start`/`input`/`resize`/`close` frames until the socket
+  /// closes, always tearing down its [PtySession] on the way out.
+  Future<void> handleConnection(WebSocket socket, {required String rootPath}) async {
+    final roots = _workspaceStore.load();
+    WorkspaceRoot? root;
+    for (final r in roots.all) {
+      if (r.canonicalPath == rootPath) {
+        root = r;
+        break;
+      }
+    }
+    if (root == null) {
+      await _sendError(socket, '$rootPath is not a granted root');
+      await socket.close();
+      return;
+    }
+    if (!root.trusted) {
+      await _sendError(
+        socket,
+        'workspace is not trusted -- run `aura_hostd trust "$rootPath"` first',
+      );
+      await socket.close();
+      return;
+    }
+
+    PtySession? session;
+    StreamSubscription<Uint8List>? outputSub;
+
+    Future<void> teardown() async {
+      final s = session;
+      if (s == null) return;
+      _sessions.remove(s.sessionId);
+      await outputSub?.cancel();
+      await s.dispose();
+    }
+
+    try {
+      await for (final data in socket) {
+        if (data is! String) continue;
+        Map<String, dynamic> msg;
+        try {
+          msg = jsonDecode(data) as Map<String, dynamic>;
+        } on FormatException {
+          continue;
+        }
+        switch (msg['type'] as String?) {
+          case 'start':
+            if (session != null) continue;
+            final cols = (msg['cols'] as num?)?.toInt() ?? 80;
+            final rows = (msg['rows'] as num?)?.toInt() ?? 24;
+            final sessionId = 'pty_${DateTime.now().microsecondsSinceEpoch}';
+            final s = PtySession(
+              sessionId: sessionId,
+              workingDirectory: root.canonicalPath,
+              initialCols: cols,
+              initialRows: rows,
+            );
+            try {
+              await s.start();
+            } catch (error) {
+              await _sendError(socket, 'failed to start terminal: $error');
+              continue;
+            }
+            _sessions[sessionId] = s;
+            session = s;
+            socket.add(jsonEncode({'type': 'started', 'session_id': sessionId, 'pid': s.pid}));
+            outputSub = s.output.listen((chunk) {
+              socket.add(jsonEncode({'type': 'output', 'data': base64Encode(chunk)}));
+            });
+            unawaited(s.exitCode.then((code) {
+              try {
+                socket.add(jsonEncode({'type': 'exited', 'exit_code': code}));
+              } catch (_) {
+                // Socket already closed -- nothing to notify.
+              }
+            }));
+          case 'input':
+            final b64 = msg['data'] as String?;
+            if (session != null && b64 != null) session.write(base64Decode(b64));
+          case 'resize':
+            final cols = (msg['cols'] as num?)?.toInt();
+            final rows = (msg['rows'] as num?)?.toInt();
+            if (session != null && cols != null && rows != null) session.resize(cols, rows);
+          case 'close':
+            await teardown();
+            await socket.close();
+            return;
+        }
+      }
+    } finally {
+      // Reached whether the client sent "close", the socket just dropped, or
+      // an error propagated out of the loop -- a session must never outlive
+      // its connection.
+      await teardown();
+    }
+  }
+
+  Future<void> _sendError(WebSocket socket, String message) async {
+    try {
+      socket.add(jsonEncode({'type': 'error', 'message': message}));
+    } catch (_) {
+      // Socket already closed -- nothing to notify.
+    }
+  }
+}

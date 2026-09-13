@@ -27,6 +27,7 @@ import 'package:path/path.dart' as p;
 import 'config.dart';
 import 'containment.dart';
 import 'pairing_client.dart';
+import 'terminal_session_manager.dart';
 import 'workspace_store.dart';
 
 /// Bounds how much of a file's content this server ever reads into memory to serve `GET /read`
@@ -40,11 +41,13 @@ class ControlServer {
     required this.workspaceStore,
     required this.configStore,
     required this.onPaired,
+    required this.terminalSessions,
     ControlServerLogger? logger,
   }) : _logger = logger ?? _defaultLogger;
 
   final WorkspaceStore workspaceStore;
   final ConfigStore configStore;
+  final TerminalSessionManager terminalSessions;
 
   /// Called once a `GET /pair/status` poll finds the pairing approved -- the caller (`bin/
   /// aura_hostd.dart`) uses this to start the backend WebSocket connection if it wasn't already
@@ -103,6 +106,8 @@ class ControlServer {
           await _handleList(request);
         case 'GET /read':
           await _handleRead(request);
+        case 'GET /terminal':
+          await _handleTerminalUpgrade(request);
         case 'POST /pair/start':
           await _handlePairStart(request);
         case 'GET /pair/status':
@@ -264,6 +269,22 @@ class ControlServer {
     } on RootNotFoundError {
       await _respond(request, 404, {'error': '$rootParam is not a granted root'});
     }
+  }
+
+  /// Upgrades to a WebSocket for an interactive terminal session (D4,
+  /// docs/architecture/015-desktop-ide.md) and hands it straight to
+  /// [terminalSessions] -- gated by the same bearer token as every route
+  /// here except `/status` (checked in `_handle` before this ever runs), with
+  /// the workspace-trust check happening inside `TerminalSessionManager`
+  /// itself so a rejection reaches the client as a clean `error` frame.
+  Future<void> _handleTerminalUpgrade(HttpRequest request) async {
+    final rootParam = request.uri.queryParameters['root'];
+    if (rootParam == null) {
+      await _respond(request, 400, {'error': 'root query parameter is required'});
+      return;
+    }
+    final socket = await WebSocketTransformer.upgrade(request);
+    unawaited(terminalSessions.handleConnection(socket, rootPath: rootParam));
   }
 
   /// Starts a pairing session (`pairing_client.dart::startPairing`, the same first step

@@ -15,8 +15,18 @@ environment:
 # runtime dependency is `path`, the Dart team's own zero-dependency path-manipulation package
 # (pure string logic, no I/O, no transitive deps), pinned to the same major version already
 # vetted in `aura_client/pubspec.yaml`.
+#
+# `win32` (D4, Terminal + PTY) is the exception that clears the same bar: it is the only route
+# from Dart to `CreatePseudoConsole`/`ResizePseudoConsole`/`ClosePseudoConsole` and the
+# `ProcThreadAttributeList` calls a real Windows terminal needs -- there is no dart:io equivalent.
+# It is FFI-only typed bindings generated from Microsoft's own API metadata (no native build step,
+# no C toolchain requirement), and is already present transitively in `aura_client`'s own
+# dependency tree, so this does not introduce a new supply-chain element for anyone already
+# auditing that app.
 dependencies:
   path: ^1.9.1
+  win32: ^5.15.0
+  ffi: ^2.1.0
 
 dev_dependencies:
   test: ^1.25.0
