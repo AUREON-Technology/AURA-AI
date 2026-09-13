@@ -24,7 +24,7 @@ from aura_core.adapters.host_agent import (
 )
 from aura_core.api import Principal, build_app
 from aura_core.domain.identifiers import UserId
-from aura_core.ports.coding import SandboxOutputEvent
+from aura_core.ports.coding import SandboxHandle, SandboxOutputEvent
 
 
 def _app(container, *, engineer_users: frozenset[str] = frozenset({"engineer-1"})):
@@ -505,3 +505,42 @@ class TestCompositeSandboxRunner:
         assert kinds == ["stdout", "done"]
         assert "hi" in events[0].data
         assert events[-1].exit_code == 0
+
+    @pytest.mark.anyio
+    async def test_a_durable_workspace_handle_routes_to_the_fallback_runner(self) -> None:
+        """Production incident: `open_workspace`'s tool body (tools/coding.py) opens a durable,
+        per-repo workspace through `WorkspaceManager` -- which `Container._build_workspace_manager`
+        always backs with the Docker runner, never this composite's `create_task` -- and then
+        calls `sandbox_runner.run(...)` on *this* composite to list the workspace's contents. That
+        handle was never registered by `create_task`, so `_runner_for` raised "unknown sandbox
+        task" unconditionally: the Docker container was created and running the whole time, but
+        every durable-workspace tool call still failed 100% of the time on its very next line.
+        Confirmed live: `open_workspace` recorded 0 "ok" and 8 "error" outcomes in production
+        while its own workspace container stayed up and healthy throughout. A handle `create_task`
+        never minted can only have come from `WorkspaceManager.open()`, which is always backed by
+        the fallback runner -- so it must resolve there instead of raising."""
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+
+        fallback = InMemorySandboxRunner()
+        composite = CompositeSandboxRunner(
+            host_runner=HostAgentSandboxRunner(HostAgentRegistry()), fallback=fallback
+        )
+        # Exactly what `WorkspaceManager.open()` does: calls `open_workspace` on the *fallback*
+        # runner directly, never touching `composite.create_task` or its `_handle_runner` map.
+        handle = await fallback.open_workspace("workspace-key-for-velvet")
+
+        result = await composite.run(handle, ["sh", "-c", "ls -A"], timeout_s=5)
+        assert result.exit_code == 0
+
+        await composite.write_file(handle, "probe.txt", "hi")
+        assert await composite.read_file(handle, "probe.txt") == "hi"
+
+    @pytest.mark.anyio
+    async def test_an_unregistered_handle_still_raises_with_no_fallback_configured(self) -> None:
+        """Without a fallback there is nothing a durable-workspace handle could legitimately
+        resolve to either, so this stays a hard failure rather than silently doing nothing."""
+        composite = CompositeSandboxRunner(
+            host_runner=HostAgentSandboxRunner(HostAgentRegistry()), fallback=None
+        )
+        with pytest.raises(SandboxError, match="unknown sandbox task"):
+            await composite.run(SandboxHandle(task_id="ghost"), ["sh", "-c", "x"], timeout_s=5)
