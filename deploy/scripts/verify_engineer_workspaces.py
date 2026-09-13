@@ -186,17 +186,12 @@ async def check_egress(runner, manager, ws) -> str:
         "not being enforced; check that sandbox_egress is internal and the proxy is up",
     )
 
-    # Test pypi.org with verbose output for debugging
+    # Test pypi.org - use simple HTTP code output to avoid regex issues
     allowed = await _sh(
-        runner, ws, "curl -v -s -m 30 -o /dev/null -w '%{http_code}' https://pypi.org/simple/ 2>&1 | tail -20 || echo failed"
+        runner, ws, "curl -s -m 30 -o /dev/null -w '%{http_code}' https://pypi.org/simple/ || echo failed"
     )
-    allowed_out = allowed.stdout.strip()
-    print(f"  [DEBUG] pypi.org curl output: {allowed_out[:200]}")
-    
-    # Extract HTTP code from verbose output
-    import re
-    http_code_match = re.search(r'< HTTP/[\d.]+ (\d+)', allowed_out)
-    http_code = http_code_match.group(1) if http_code_match else allowed_out.strip()
+    http_code = allowed.stdout.strip()
+    print(f"  [DEBUG] pypi.org HTTP code: {http_code}")
     
     _require(
         http_code.startswith(("2", "3")),
