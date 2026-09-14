@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/features/chat/presentation/widgets/sandbox_diff_view.dart';
 
 class StatusBar extends ConsumerWidget {
   const StatusBar({super.key});
@@ -116,20 +117,34 @@ void _showApprovalsDialog(BuildContext context, WidgetRef ref) {
                 separatorBuilder: (_, _) => const Divider(height: AuraSpacing.lg),
                 itemBuilder: (context, index) {
                   final approval = approvals[index];
-                  final command = approval.arguments['command'] as String? ?? approval.tool;
                   final root = approval.arguments['root'] as String?;
+                  // D6: a write-kind approval (queued by aura_hostd's write-gating retrofit, C.3)
+                  // carries a diff instead of a command string -- render it with the same
+                  // SandboxDiffView the Git panel and chat's own pending-tool-call previews use,
+                  // rather than a new widget.
+                  final isWrite = approval.tool == 'write_files';
+                  final paths = isWrite ? (approval.arguments['paths'] as List?)?.cast<String>() : null;
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        command,
-                        style: const TextStyle(fontFamily: 'Courier', fontSize: 13),
-                      ),
-                      if (root != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(root, style: TextStyle(fontSize: 11, color: palette.textSecondary)),
+                      if (isWrite) ...[
+                        Text(
+                          '${paths?.length ?? 0} file(s)${root != null ? ' in $root' : ''}',
+                          style: TextStyle(fontSize: 12, color: palette.textSecondary, fontWeight: FontWeight.w600),
                         ),
+                        const SizedBox(height: AuraSpacing.xs),
+                        SandboxDiffView(diffText: approval.arguments['diff_preview'] as String? ?? '', maxLines: 60),
+                      ] else ...[
+                        Text(
+                          approval.arguments['command'] as String? ?? approval.tool,
+                          style: const TextStyle(fontFamily: 'Courier', fontSize: 13),
+                        ),
+                        if (root != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(root, style: TextStyle(fontSize: 11, color: palette.textSecondary)),
+                          ),
+                      ],
                       const SizedBox(height: AuraSpacing.sm),
                       Row(
                         children: [

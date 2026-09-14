@@ -146,6 +146,75 @@ class TestSandboxToolDescriptionsAreHonestAboutRouting:
         commit_result = await tools["git_commit"].execute({"message": "add f.txt"}, ctx)
         assert "committed" in commit_result or commit_result
 
+    async def test_write_files_writes_multiple_files_atomically(self, ctx) -> None:
+        runner = InMemorySandboxRunner()
+        tools = _by_name(build_sandbox_tools(runner))
+        result = await tools["write_files"].execute(
+            {"operations": [{"path": "a.txt", "content": "A"}, {"path": "b.txt", "content": "B"}]},
+            ctx,
+        )
+        assert "2 file(s)" in result
+        readback_a = await tools["run_command"].execute({"command": "cat a.txt"}, ctx)
+        readback_b = await tools["run_command"].execute({"command": "cat b.txt"}, ctx)
+        assert "A" in readback_a
+        assert "B" in readback_b
+
+    async def test_write_files_supports_mixed_overwrite_and_find_replace_operations(self, ctx) -> None:
+        runner = InMemorySandboxRunner()
+        tools = _by_name(build_sandbox_tools(runner))
+        await tools["write_file"].execute({"path": "existing.txt", "content": "hello world"}, ctx)
+
+        await tools["write_files"].execute(
+            {
+                "operations": [
+                    {"path": "existing.txt", "find": "world", "replace": "there"},
+                    {"path": "new.txt", "content": "brand new"},
+                ]
+            },
+            ctx,
+        )
+        assert "hello there" in await tools["run_command"].execute({"command": "cat existing.txt"}, ctx)
+        assert "brand new" in await tools["run_command"].execute({"command": "cat new.txt"}, ctx)
+
+    async def test_write_files_fails_the_whole_call_before_writing_anything_if_any_operation_is_invalid(
+        self, ctx
+    ) -> None:
+        """Pre-validate-all-then-write-all (D6 plan decision 4): a find/replace target that
+        doesn't occur exactly once must fail the *entire* call, including the other, otherwise
+        valid operation in the same batch -- not write what it can and skip the rest."""
+        runner = InMemorySandboxRunner()
+        tools = _by_name(build_sandbox_tools(runner))
+        await tools["write_file"].execute({"path": "existing.txt", "content": "hello world"}, ctx)
+
+        with pytest.raises(ToolExecutionError):
+            await tools["write_files"].execute(
+                {
+                    "operations": [
+                        {"path": "new.txt", "content": "should not be written"},
+                        {"path": "existing.txt", "find": "not present anywhere", "replace": "x"},
+                    ]
+                },
+                ctx,
+            )
+        listing = await tools["run_command"].execute({"command": "ls"}, ctx)
+        assert "new.txt" not in listing
+
+    async def test_write_files_is_workspace_local_and_runs_without_confirmation(self, ctx) -> None:
+        registry = ToolRegistry(policy=ToolPolicy())
+        registry.register_all(build_sandbox_tools(InMemorySandboxRunner()))
+
+        result, report = await registry.execute(
+            ToolCall(
+                id=ToolCallId("1"), name="write_files",
+                arguments={"operations": [{"path": "a.txt", "content": "A"}]},
+            ),
+            ctx,
+            capabilities=("engineer_agent",),
+        )
+        assert result.ok
+        assert not report.needs_confirmation
+        assert report.policy_reason == "workspace_local_side_effect"
+
     async def test_workspace_local_work_runs_without_confirmation(self, ctx) -> None:
         """`run_command` is SYSTEM + side_effecting, which used to force `requires_confirmation`
         at declaration time and so gated every single command. It is now `workspace_local`
@@ -361,6 +430,35 @@ class TestGithubTools:
         )
         assert confirmed.ok
         assert "draft PR" in confirmed.content
+
+    async def test_github_commit_files_confirmation_carries_a_real_diff(self, ctx) -> None:
+        """D6 Part A.1: github_commit_files is CONFIDENTIAL + not workspace_local, so it already
+        reaches ToolRegistry's confirmation gate -- verify the new `preview` hook actually
+        produces a real diff against the file's current content, for both a modified existing
+        file and a brand-new one (no prior content to diff against)."""
+        client = InMemoryGitHubClient()
+        client.seed_file("acme/widgets", "main", "README.md", "# Widgets\nold line\n")
+        registry = ToolRegistry(policy=ToolPolicy())
+        registry.register_all(build_github_tools(_static_resolver(client), default_repo="acme/widgets"))
+
+        _, report = await registry.execute(
+            ToolCall(
+                id=ToolCallId("1"), name="github_commit_files",
+                arguments={
+                    "branch": "main", "message": "update",
+                    "files": {"README.md": "# Widgets\nnew line\n", "NEW.md": "brand new file"},
+                },
+            ),
+            ctx,
+            capabilities=("engineer_agent",),
+        )
+        assert report.needs_confirmation
+        assert report.diff_preview is not None
+        assert "-old line" in report.diff_preview
+        assert "+new line" in report.diff_preview
+        assert "+brand new file" in report.diff_preview
+        assert "a/README.md" in report.diff_preview
+        assert "a/NEW.md" in report.diff_preview
 
     async def test_commit_then_read_round_trips(self, ctx) -> None:
         client = InMemoryGitHubClient()

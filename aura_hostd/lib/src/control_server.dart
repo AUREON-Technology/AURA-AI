@@ -27,6 +27,7 @@ import 'package:path/path.dart' as p;
 import 'approval_queue.dart';
 import 'config.dart';
 import 'containment.dart';
+import 'diagnostics_service.dart';
 import 'git_service.dart';
 import 'pairing_client.dart';
 import 'terminal_session_manager.dart';
@@ -46,8 +47,10 @@ class ControlServer {
     required this.terminalSessions,
     required this.approvalQueue,
     GitService? gitService,
+    DiagnosticsService? diagnosticsService,
     ControlServerLogger? logger,
   })  : gitService = gitService ?? GitService(),
+        diagnosticsService = diagnosticsService ?? DiagnosticsService(),
         _logger = logger ?? _defaultLogger;
 
   final WorkspaceStore workspaceStore;
@@ -62,6 +65,10 @@ class ControlServer {
   /// D5's direct-loopback git execution for the Source Control panel -- see `git_service.dart`'s
   /// doc comment for why this is a hard human-only boundary, never reachable via `TaskHandler`.
   final GitService gitService;
+
+  /// D7 Part A.2's process-based batch linting -- see `diagnostics_service.dart`'s doc comment
+  /// for why this is a hard human-only boundary like git, never reachable via `TaskHandler`.
+  final DiagnosticsService diagnosticsService;
 
   /// Called once a `GET /pair/status` poll finds the pairing approved -- the caller (`bin/
   /// aura_hostd.dart`) uses this to start the backend WebSocket connection if it wasn't already
@@ -146,6 +153,10 @@ class ControlServer {
           await _handleGitCommit(request);
         case 'POST /git/checkout':
           await _handleGitCheckout(request);
+        case 'GET /diagnostics/detect':
+          await _handleDiagnosticsDetect(request);
+        case 'POST /diagnostics/run':
+          await _handleDiagnosticsRun(request);
         case 'POST /pair/start':
           await _handlePairStart(request);
         case 'GET /pair/status':
@@ -503,6 +514,49 @@ class ControlServer {
       await _respond(request, 415, {'error': error.message});
     } on GitCommandError catch (error) {
       await _respond(request, 500, {'error': error.message});
+    }
+  }
+
+  /// D7 Part A.2. No trust/approval gate: a lint run mutates nothing, the same precedent
+  /// `/git/status` etc. already establish for read-only human-only routes.
+  Future<void> _handleDiagnosticsDetect(HttpRequest request) async {
+    final rootParam = request.uri.queryParameters['root'];
+    if (rootParam == null) {
+      await _respond(request, 400, {'error': 'root query parameter is required'});
+      return;
+    }
+    try {
+      final root = _requireRoot(workspaceStore.load(), rootParam);
+      final tool = diagnosticsService.detect(root.canonicalPath);
+      await _respond(request, 200, {'tool': tool});
+    } on RootNotFoundError {
+      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+    }
+  }
+
+  Future<void> _handleDiagnosticsRun(HttpRequest request) async {
+    final body = await _readJsonBody(request);
+    final rootParam = body['root'] as String?;
+    final tool = body['tool'] as String?;
+    if (rootParam == null || tool == null) {
+      await _respond(request, 400, {'error': 'root and tool are required'});
+      return;
+    }
+    try {
+      final root = _requireRoot(workspaceStore.load(), rootParam);
+      final result = await diagnosticsService.run(root.canonicalPath, tool);
+      await _respond(request, 200, {
+        'tool': result.tool,
+        'exit_code': result.exitCode,
+        'stdout': result.stdout,
+        'stderr': result.stderr,
+        'truncated': result.truncated,
+        'not_found': result.notFound,
+      });
+    } on RootNotFoundError {
+      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+    } on ArgumentError catch (error) {
+      await _respond(request, 400, {'error': error.message});
     }
   }
 

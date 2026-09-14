@@ -15,6 +15,7 @@ import 'dart:io';
 import 'approval_queue.dart';
 import 'command_policy.dart';
 import 'containment.dart';
+import 'diff_util.dart';
 
 class RpcError implements Exception {
   RpcError(this.message);
@@ -62,6 +63,10 @@ class TaskHandler {
     return {'task_id': taskId};
   }
 
+  /// D6 plan section C.3 (the write-gating retrofit): the agent-facing write RPC now goes through
+  /// the same trust/approval-queue gate `run()` already had since D5 -- previously this and
+  /// `edit_file` (which routes through this same RPC on the backend, see `coding.py::edit_file`)
+  /// were the one place an agent could freely mutate any file in a granted-but-untrusted root.
   Future<Map<String, Object?>> writeFile(Map<String, dynamic> params) async {
     final path = _requireString(params, 'path');
     final content = _requireString(params, 'content');
@@ -73,10 +78,91 @@ class TaskHandler {
       );
     }
     final resolved = _roots.requireContained(root, path);
+
+    final verdict = evaluateWrite(workspaceTrusted: root.trusted);
+    if (verdict.decision == CommandDecision.needsApproval) {
+      await _awaitWriteApproval([WriteOp(path: path, finalContent: content)], cwd: root.canonicalPath, root: root);
+    }
+
     final file = File(resolved);
     file.parent.createSync(recursive: true);
     file.writeAsStringSync(content);
     return {'bytes_written': utf8.encode(content).length};
+  }
+
+  /// D6 plan section B.3: atomically write or find/replace-edit multiple files. Pre-validates
+  /// every operation (containment, and -- for a find/replace op -- that the find-text exists in
+  /// the target exactly once) before writing anything; if any operation fails validation, nothing
+  /// in the call is written (design decision 4: no rollback machinery needed, since writes only
+  /// start once every operation is already known-good). All operations in one call must resolve
+  /// within the same granted root -- a cross-root atomic batch would need per-operation trust
+  /// gating, which is out of this phase's scope.
+  Future<Map<String, Object?>> writeFiles(Map<String, dynamic> params) async {
+    final rawOps = params['operations'];
+    if (rawOps is! List || rawOps.isEmpty) {
+      throw RpcError('"operations" must be a non-empty list');
+    }
+
+    WorkspaceRoot? sharedRoot;
+    final resolved = <WriteOp>[];
+    for (final raw in rawOps) {
+      if (raw is! Map) {
+        throw RpcError('each operation must be an object');
+      }
+      final op = Map<String, dynamic>.from(raw);
+      final path = _requireString(op, 'path');
+      final root = _roots.findContainingRoot(path);
+      if (root == null) {
+        throw RpcError('no granted workspace root contains "$path"');
+      }
+      if (sharedRoot == null) {
+        sharedRoot = root;
+      } else if (root.canonicalPath != sharedRoot.canonicalPath) {
+        throw RpcError(
+          'all operations in a single write_files call must resolve within the same granted '
+          'workspace root ("$path" resolves under a different root than earlier operations)',
+        );
+      }
+      final absolute = _roots.requireContained(root, path);
+
+      final String finalContent;
+      if (op.containsKey('content')) {
+        finalContent = _requireString(op, 'content');
+      } else if (op.containsKey('find') && op.containsKey('replace')) {
+        final find = _requireString(op, 'find');
+        final replace = _requireString(op, 'replace');
+        if (!File(absolute).existsSync()) {
+          throw RpcError('"$path" does not exist');
+        }
+        final current = File(absolute).readAsStringSync();
+        final occurrences = _countOccurrences(current, find);
+        if (occurrences != 1) {
+          throw RpcError(
+            'expected exactly one occurrence of the given text in "$path", found $occurrences',
+          );
+        }
+        finalContent = current.replaceFirst(find, replace);
+      } else {
+        throw RpcError('each operation must have either "content", or both "find" and "replace"');
+      }
+      resolved.add(WriteOp(path: path, finalContent: finalContent));
+    }
+
+    final root = sharedRoot!;
+    final verdict = evaluateWrite(workspaceTrusted: root.trusted);
+    if (verdict.decision == CommandDecision.needsApproval) {
+      await _awaitWriteApproval(resolved, cwd: root.canonicalPath, root: root);
+    }
+
+    var totalBytes = 0;
+    for (final op in resolved) {
+      final absolute = _roots.requireContained(root, op.path);
+      final file = File(absolute);
+      file.parent.createSync(recursive: true);
+      file.writeAsStringSync(op.finalContent);
+      totalBytes += utf8.encode(op.finalContent).length;
+    }
+    return {'bytes_written': totalBytes};
   }
 
   Future<Map<String, Object?>> readFile(Map<String, dynamic> params) async {
@@ -212,7 +298,7 @@ class TaskHandler {
   /// 5). Throws [RpcError] on rejection, expiry, or a revalidation mismatch; returns normally only
   /// when the exact operation that was approved is still safe to run.
   Future<void> _awaitApproval(String command, {required String cwd, required WorkspaceRoot root}) async {
-    final approval = _approvals.create(canonicalCommand: command, cwd: cwd, rootPath: root.canonicalPath);
+    final approval = _approvals.createForCommand(canonicalCommand: command, cwd: cwd, rootPath: root.canonicalPath);
     final status = await _approvals.awaitDecision(approval);
     switch (status) {
       case ApprovalStatus.approved:
@@ -229,13 +315,90 @@ class TaskHandler {
     final currentRoot = _roots.findContainingRoot(cwd);
     final currentHash = currentRoot == null
         ? null
-        : PendingApproval.hashFor(command: command, cwd: cwd, rootPath: currentRoot.canonicalPath);
-    if (currentHash != approval.commandHash) {
+        : PendingApproval.hashForCommand(command: command, cwd: cwd, rootPath: currentRoot.canonicalPath);
+    if (currentHash != approval.operationHash) {
       throw RpcError(
         'command context changed since it was approved (workspace root no longer matches) -- '
         'refusing to run: $command',
       );
     }
+  }
+
+  /// Queues [operations] for interactive approval and blocks until a human answers or it times
+  /// out, mirroring [_awaitApproval]'s shape for commands. Generates the diff [operations] would
+  /// produce (reading each target's current on-disk content -- empty for a new file -- before the
+  /// approval is created, so the diff a human reviews matches [PendingApproval.diffPreview]
+  /// exactly) and captures a snapshot of that "before" content per path.
+  ///
+  /// On approval, re-reads each path's *current* on-disk content and compares it against the
+  /// snapshot captured when the diff was generated -- not a comparison of [operations] against
+  /// itself, which could never detect anything (the intended new content doesn't change while
+  /// waiting). This is the write-specific staleness a command doesn't have: the file(s) can
+  /// themselves change on disk between request and approval (the human edits it, or another write
+  /// lands first), so what must be revalidated is "does the approved diff still describe reality,"
+  /// not just "is the root still granted" (D6 plan section C.3).
+  Future<void> _awaitWriteApproval(
+    List<WriteOp> operations, {
+    required String cwd,
+    required WorkspaceRoot root,
+  }) async {
+    final beforeSnapshots = <String, String>{};
+    final diffParts = <String>[];
+    for (final op in operations) {
+      final absolute = _roots.requireContained(root, op.path);
+      final before = File(absolute).existsSync() ? File(absolute).readAsStringSync() : '';
+      beforeSnapshots[op.path] = before;
+      diffParts.add(unifiedDiff(path: op.path, before: before, after: op.finalContent));
+    }
+
+    final approval = _approvals.createForWrite(
+      operations: operations,
+      diffText: diffParts.join('\n'),
+      cwd: cwd,
+      rootPath: root.canonicalPath,
+    );
+    final pathList = operations.map((o) => o.path).join(', ');
+    final status = await _approvals.awaitDecision(approval);
+    switch (status) {
+      case ApprovalStatus.approved:
+        break;
+      case ApprovalStatus.rejected:
+        throw RpcError('write was rejected by the user: $pathList');
+      case ApprovalStatus.expired:
+        throw RpcError('write approval timed out waiting for a response: $pathList');
+      case ApprovalStatus.cancelled:
+        throw RpcError('write approval was cancelled: $pathList');
+      case ApprovalStatus.pending:
+        throw RpcError('write approval resolved with no decision -- this should not happen');
+    }
+
+    final currentRoot = _roots.findContainingRoot(cwd);
+    if (currentRoot == null) {
+      throw RpcError('workspace root is no longer granted -- refusing approved write: $pathList');
+    }
+    for (final op in operations) {
+      final absolute = _roots.requireContained(currentRoot, op.path);
+      final current = File(absolute).existsSync() ? File(absolute).readAsStringSync() : '';
+      if (current != beforeSnapshots[op.path]) {
+        throw RpcError(
+          'file "${op.path}" changed on disk since this write was approved -- the approved diff '
+          'no longer reflects the current file, refusing to write',
+        );
+      }
+    }
+  }
+
+  int _countOccurrences(String haystack, String needle) {
+    if (needle.isEmpty) return 0;
+    var count = 0;
+    var index = 0;
+    while (true) {
+      final found = haystack.indexOf(needle, index);
+      if (found == -1) break;
+      count++;
+      index = found + needle.length;
+    }
+    return count;
   }
 
   String _requireString(Map<String, dynamic> params, String key) {

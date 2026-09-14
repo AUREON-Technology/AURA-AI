@@ -32,6 +32,7 @@ existing decisions elsewhere in ``aura_core/tools/``:
 from __future__ import annotations
 
 import asyncio
+import difflib
 import re
 import time
 from typing import Any, Mapping, Sequence
@@ -41,7 +42,7 @@ from pathlib import Path
 from ..domain.errors import ToolExecutionError
 from ..domain.tools import ParameterSpec, ToolCategory, ToolSensitivity, ToolSpec
 from ..observability.logging import get_logger
-from ..ports.coding import McpToolDescriptor, SandboxResult, StreamingSandboxRunner
+from ..ports.coding import FileWriteOp, McpToolDescriptor, SandboxResult, StreamingSandboxRunner
 from ..ports.runtime import Tool, ToolContext
 from .base import FunctionTool, param, tool
 
@@ -330,15 +331,33 @@ class _SessionAdapter:
     that predates workspaces -- rather than forcing a second copy of every tool body.
     """
 
-    def __init__(self, *, cache: Any = None, resolver: Any = None) -> None:
+    def __init__(
+        self, *, cache: Any = None, resolver: Any = None, host_agent_registry: Any = None
+    ) -> None:
         self._cache = cache
         self._resolver = resolver
+        self._host_agent_registry = host_agent_registry
 
     @property
     def durable(self) -> bool:
         return self._resolver is not None
 
+    async def _desktop_active(self, context: ToolContext) -> bool:
+        """Whether this call's user has a live desktop (``aura_hostd``) pairing right now.
+
+        A durable, Docker-only workspace (``_WorkspaceResolver``) and a desktop pairing
+        (``CompositeSandboxRunner``, ADR-011) are two different places a file can live. Absent
+        this check, ``handle()`` below would route a paired user's every filesystem/command call
+        into their durable GitHub-repo workspace instead of the real folder they opened on their
+        own machine, whenever both happen to be configured on the same deployment.
+        """
+        if self._host_agent_registry is None:
+            return False
+        return await self._host_agent_registry.resolve(context.user_id) is not None
+
     async def handle(self, context: ToolContext, repo: str | None = None) -> Any:
+        if self._resolver is not None and self._cache is not None and await self._desktop_active(context):
+            return await self._cache.get(context)
         if self._resolver is not None:
             return await self._resolver.handle(context, repo)
         return await self._cache.get(context)
@@ -399,6 +418,7 @@ def build_sandbox_tools(
     workspace_manager: Any = None,
     host_git: Any = None,
     token_resolver: Any = None,
+    host_agent_registry: Any = None,
 ) -> list[Tool]:
     """Filesystem, command-execution, and git tools against one shared per-task sandbox.
 
@@ -409,8 +429,14 @@ def build_sandbox_tools(
     different container would be invisible to the very next tool call.
     """
     if workspace_manager is not None:
+        # Both paths are built even though a manager exists: `_SessionAdapter.handle()` picks the
+        # per-turn cache instead of the durable resolver, per call, whenever this user currently
+        # has a desktop pairing -- see its own docstring for why (`host_agent_registry` is what
+        # lets it tell).
         sessions = _SessionAdapter(
-            resolver=_WorkspaceResolver(workspace_manager, sandbox_runner)
+            cache=_SandboxSessionCache(sandbox_runner),
+            resolver=_WorkspaceResolver(workspace_manager, sandbox_runner),
+            host_agent_registry=host_agent_registry,
         )
     else:
         # No manager: per-turn sandboxes, exactly as before. This is the local/dev shape and the
@@ -466,6 +492,52 @@ def build_sandbox_tools(
             )
         await sandbox_runner.write_file(handle, path, current.replace(find, replace, 1))
         return f"Edited {path}"
+
+    @tool(
+        "write_files",
+        "Atomically write or find/replace-edit multiple files in the engineer agent's workspace "
+        "in one call. Every operation is validated first (path resolves inside the workspace, "
+        "and each find/replace operation's `find` text is present in its target exactly once) "
+        "before anything is written -- if any operation fails validation, nothing in this call "
+        "is written, including the other, otherwise-valid operations in the same call.",
+        param(
+            "operations", "array",
+            "Each item is an object with `path` and either `content` (full overwrite, same as "
+            "write_file) or both `find` and `replace` (find/replace edit, same rule as "
+            "edit_file: `find` must occur exactly once in the current file). A given item uses "
+            "exactly one shape.",
+            item_type="object",
+        ),
+        category=ToolCategory.DEVELOPMENT,
+        sensitivity=ToolSensitivity.PERSONAL,
+        side_effecting=True,
+        required_capability=_ENGINEER_CAPABILITY,
+        timeout_s=30.0,
+        # Same exemption as write_file/edit_file/run_command, for the same reason (ADR-014): this
+        # is D6's multi-file sibling of those single-file tools, not a new kind of effect.
+        workspace_local=True,
+    )
+    async def write_files(operations: list, context: ToolContext) -> str:
+        handle = await sessions.handle(context)
+        ops: list[FileWriteOp] = []
+        for raw in operations:
+            if not isinstance(raw, Mapping) or "path" not in raw:
+                raise ToolExecutionError(
+                    "each operation must be an object with a 'path'", tool="write_files"
+                )
+            path = str(raw["path"])
+            if "content" in raw:
+                ops.append(FileWriteOp(path=path, content=str(raw["content"])))
+            elif "find" in raw and "replace" in raw:
+                ops.append(FileWriteOp(path=path, find=str(raw["find"]), replace=str(raw["replace"])))
+            else:
+                raise ToolExecutionError(
+                    f"operation for {path!r} must have either 'content', or both 'find' and "
+                    "'replace'",
+                    tool="write_files",
+                )
+        await sandbox_runner.write_files(handle, ops)
+        return f"Wrote/edited {len(ops)} file(s): {', '.join(op.path for op in ops)}"
 
     @tool(
         "run_command",
@@ -719,7 +791,7 @@ def build_sandbox_tools(
         return f"Pushed {branch} to {slug}."
 
     tools: list[Tool] = [
-        write_file, edit_file, run_command, git_diff, git_commit, git_checkout_branch,
+        write_file, edit_file, write_files, run_command, git_diff, git_commit, git_checkout_branch,
         git_status,
     ]
     if host_git is not None:
@@ -1047,6 +1119,54 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         client = await _client(context)
         return await client.create_branch(_repo(repo), branch=branch, from_ref=from_ref)
 
+    # D6: caps how much diff text a single confirmation prompt ever carries -- mirrors
+    # run_command's max_result_chars / git_diff's own cap (this file's other size-cap
+    # precedents), so a bulk commit across many/large files cannot balloon a confirmation
+    # response instead of just truncating with a clear marker.
+    _MAX_DIFF_PREVIEW_CHARS = 20_000
+
+    async def _preview_github_commit_files(arguments: Mapping[str, Any], context: ToolContext) -> str | None:
+        """D6: a unified diff of what `github_commit_files` would change, shown alongside the
+        confirmation prompt this CONFIDENTIAL (non-workspace_local) tool already requires. Reads
+        each target file's *current* content from the forge via the same
+        `CodeHostClient.get_file_contents` port method already wired here -- a read failure
+        (typically "not found") is treated as a new file, empty before-text, matching `git diff`'s
+        own behavior for an added file.
+        """
+        try:
+            client = await _client(context)
+        except ToolExecutionError:
+            return None  # no GitHub connection to diff against -- confirmation proceeds without one
+        try:
+            repo = _repo(arguments.get("repo") if isinstance(arguments.get("repo"), str) else None)
+        except ToolExecutionError:
+            return None
+        branch = str(arguments.get("branch") or "")
+        files = arguments.get("files")
+        if not isinstance(files, Mapping):
+            return None
+
+        parts: list[str] = []
+        total = 0
+        remaining = len(files)
+        for path, new_content in files.items():
+            remaining -= 1
+            try:
+                before = await client.get_file_contents(repo, str(path), ref=branch)
+            except Exception:
+                before = ""
+            block = "".join(difflib.unified_diff(
+                before.splitlines(keepends=True),
+                str(new_content).splitlines(keepends=True),
+                fromfile=f"a/{path}", tofile=f"b/{path}",
+            ))
+            if total + len(block) > _MAX_DIFF_PREVIEW_CHARS:
+                parts.append(f"... diff truncated ({remaining + 1} more file(s) not shown)")
+                break
+            parts.append(block)
+            total += len(block)
+        return "\n".join(parts) if parts else None
+
     @tool(
         "github_commit_files",
         "Commit one or more file changes directly to a branch in a GitHub repository.",
@@ -1059,6 +1179,7 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         side_effecting=True,
         required_capability=_ENGINEER_CAPABILITY,
         timeout_s=60.0,
+        preview=_preview_github_commit_files,
     )
     async def github_commit_files(
         branch: str, message: str, files: Mapping[str, str], context: ToolContext,

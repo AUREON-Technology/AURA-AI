@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:aura_hostd/src/approval_queue.dart';
@@ -33,13 +34,18 @@ void main() {
   });
 
   group('write_file / read_file', () {
+    // D6 gates writeFile behind trust/approval just like run() -- these two tests exercise the
+    // plain read/write round-trip in a trusted workspace (no queueing); the untrusted-workspace
+    // gating behavior itself is covered in the "write-gating consent tier (D6)" group below.
     test('writes and reads back a file inside the granted root', () async {
+      roots.setTrusted(workspaceDir.path, true);
       await handler.writeFile({'path': 'notes.txt', 'content': 'hello'});
       final result = await handler.readFile({'path': 'notes.txt'});
       expect(result['content'], 'hello');
     });
 
     test('creates parent directories as needed', () async {
+      roots.setTrusted(workspaceDir.path, true);
       await handler.writeFile({'path': 'src/lib/main.dart', 'content': 'void main() {}'});
       expect(File(p.join(workspaceDir.path, 'src', 'lib', 'main.dart')).existsSync(), isTrue);
     });
@@ -237,5 +243,153 @@ void main() {
       expect(result['exit_code'], 0);
       expect(approvals.list(), isEmpty);
     }, testOn: '!windows');
+  });
+
+  group('write-gating consent tier (D6)', () {
+    late ApprovalQueue approvals;
+
+    setUp(() {
+      approvals = ApprovalQueue();
+      handler = TaskHandler(roots, approvals);
+    });
+
+    test('writeFile in an untrusted workspace queues for approval instead of writing immediately, '
+        'then writes once approved', () async {
+      final future = handler.writeFile({'path': 'notes.txt', 'content': 'hello'});
+      expect(approvals.list(), hasLength(1));
+      expect(approvals.list().single.kind, OperationKind.write);
+      expect(File(p.join(workspaceDir.path, 'notes.txt')).existsSync(), isFalse);
+
+      approvals.respond(approvals.list().single.id, true);
+      await future;
+      expect(File(p.join(workspaceDir.path, 'notes.txt')).readAsStringSync(), 'hello');
+    });
+
+    test('the queued write approval carries a real diff showing the proposed content', () async {
+      unawaited(handler.writeFile({'path': 'notes.txt', 'content': 'hello world'}));
+      final approval = approvals.list().single;
+      expect(approval.diffPreview, contains('+hello world'));
+      approvals.respond(approval.id, true);
+    });
+
+    test('rejecting a queued write throws and never writes it', () async {
+      final future = handler.writeFile({'path': 'notes.txt', 'content': 'hello'});
+      approvals.respond(approvals.list().single.id, false);
+      await expectLater(future, throwsA(isA<RpcError>()));
+      expect(File(p.join(workspaceDir.path, 'notes.txt')).existsSync(), isFalse);
+    });
+
+    test('an approved write is refused if the target file changed on disk while the approval was '
+        'pending (staleness revalidation)', () async {
+      final target = File(p.join(workspaceDir.path, 'notes.txt'))..writeAsStringSync('original');
+      final future = handler.writeFile({'path': 'notes.txt', 'content': 'proposed'});
+      final pending = approvals.list().single;
+      // Someone/something else changes the file while the approval is still pending.
+      target.writeAsStringSync('changed-out-from-under-it');
+      approvals.respond(pending.id, true);
+      await expectLater(future, throwsA(isA<RpcError>()));
+      expect(target.readAsStringSync(), 'changed-out-from-under-it');
+    });
+
+    test('a trusted workspace never queues a write -- it applies immediately', () async {
+      roots.setTrusted(workspaceDir.path, true);
+      await handler.writeFile({'path': 'notes.txt', 'content': 'hello'});
+      expect(approvals.list(), isEmpty);
+      expect(File(p.join(workspaceDir.path, 'notes.txt')).readAsStringSync(), 'hello');
+    });
+  });
+
+  group('writeFiles (D6 multi-file atomic edit)', () {
+    late ApprovalQueue approvals;
+
+    setUp(() {
+      approvals = ApprovalQueue();
+      handler = TaskHandler(roots, approvals);
+      roots.setTrusted(workspaceDir.path, true); // trust by default; untrusted case tested below
+    });
+
+    test('writes multiple files in one call', () async {
+      final result = await handler.writeFiles({
+        'operations': [
+          {'path': 'a.txt', 'content': 'A'},
+          {'path': 'b.txt', 'content': 'B'},
+        ],
+      });
+      expect(result['bytes_written'], 2);
+      expect(File(p.join(workspaceDir.path, 'a.txt')).readAsStringSync(), 'A');
+      expect(File(p.join(workspaceDir.path, 'b.txt')).readAsStringSync(), 'B');
+    });
+
+    test('supports a find/replace operation alongside a full-overwrite operation', () async {
+      File(p.join(workspaceDir.path, 'existing.txt')).writeAsStringSync('hello world');
+      await handler.writeFiles({
+        'operations': [
+          {'path': 'existing.txt', 'find': 'world', 'replace': 'there'},
+          {'path': 'new.txt', 'content': 'brand new'},
+        ],
+      });
+      expect(File(p.join(workspaceDir.path, 'existing.txt')).readAsStringSync(), 'hello there');
+      expect(File(p.join(workspaceDir.path, 'new.txt')).readAsStringSync(), 'brand new');
+    });
+
+    test('a find/replace target that does not occur exactly once fails the WHOLE call before '
+        'anything is written -- including other, valid operations', () async {
+      File(p.join(workspaceDir.path, 'existing.txt')).writeAsStringSync('hello world');
+      await expectLater(
+        handler.writeFiles({
+          'operations': [
+            {'path': 'new.txt', 'content': 'this must not be written'},
+            {'path': 'existing.txt', 'find': 'not present anywhere', 'replace': 'x'},
+          ],
+        }),
+        throwsA(isA<RpcError>()),
+      );
+      expect(File(p.join(workspaceDir.path, 'new.txt')).existsSync(), isFalse);
+      expect(File(p.join(workspaceDir.path, 'existing.txt')).readAsStringSync(), 'hello world');
+    });
+
+    test('a find/replace target that does not exist as a file fails validation before any write', () async {
+      await expectLater(
+        handler.writeFiles({
+          'operations': [
+            {'path': 'ok.txt', 'content': 'fine'},
+            {'path': 'missing.txt', 'find': 'x', 'replace': 'y'},
+          ],
+        }),
+        throwsA(isA<RpcError>()),
+      );
+      expect(File(p.join(workspaceDir.path, 'ok.txt')).existsSync(), isFalse);
+    });
+
+    test('refuses a batch spanning more than one granted root', () async {
+      final otherDir = Directory(p.join(tempDir.path, 'other'))..createSync();
+      roots.addRoot(otherDir.path, trusted: true);
+      await expectLater(
+        handler.writeFiles({
+          'operations': [
+            {'path': p.join(workspaceDir.path, 'a.txt'), 'content': 'A'},
+            {'path': p.join(otherDir.path, 'b.txt'), 'content': 'B'},
+          ],
+        }),
+        throwsA(isA<RpcError>()),
+      );
+    });
+
+    test('an untrusted workspace queues the whole batch as one approval', () async {
+      roots.setTrusted(workspaceDir.path, false);
+      final future = handler.writeFiles({
+        'operations': [
+          {'path': 'a.txt', 'content': 'A'},
+          {'path': 'b.txt', 'content': 'B'},
+        ],
+      });
+      expect(approvals.list(), hasLength(1));
+      final approval = approvals.list().single;
+      expect(approval.diffPreview, allOf(contains('+A'), contains('+B')));
+      approvals.respond(approval.id, true);
+      await future;
+      expect(File(p.join(workspaceDir.path, 'a.txt')).existsSync(), isTrue);
+      expect(File(p.join(workspaceDir.path, 'b.txt')).existsSync(), isTrue);
+    });
   });
 }

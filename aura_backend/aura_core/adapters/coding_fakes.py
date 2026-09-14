@@ -18,7 +18,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from ..ports.coding import McpToolDescriptor, RepoFile, RepoTree, SandboxHandle, SandboxResult
+from ..ports.coding import FileWriteOp, McpToolDescriptor, RepoFile, RepoTree, SandboxHandle, SandboxResult
 
 __all__ = ["InMemorySandboxRunner", "InMemoryGitHubClient", "InMemoryMcpClient"]
 
@@ -91,6 +91,31 @@ class InMemorySandboxRunner:
         if not target.is_file():
             raise RuntimeError(f"{path} is not a file in the sandbox workspace")
         return await asyncio.to_thread(target.read_text, "utf-8")
+
+    async def write_files(self, handle: SandboxHandle, operations: Sequence[FileWriteOp]) -> None:
+        """D6: pre-validate every operation, then write all of them -- mirrors
+        `DockerSandboxRunner.write_files` exactly, so tests exercise the same contract."""
+        plan: list[tuple[Any, str]] = []
+        for op in operations:
+            target = self._resolve_within(handle, op.path)
+            if op.content is not None:
+                plan.append((target, op.content))
+            elif op.find is not None and op.replace is not None:
+                if not target.is_file():
+                    raise RuntimeError(f"{op.path} does not exist")
+                current = target.read_text("utf-8")
+                occurrences = current.count(op.find)
+                if occurrences != 1:
+                    raise RuntimeError(
+                        f"expected exactly one occurrence of the given text in {op.path}, "
+                        f"found {occurrences}"
+                    )
+                plan.append((target, current.replace(op.find, op.replace, 1)))
+            else:
+                raise RuntimeError(f"operation for {op.path} must set either content, or both find and replace")
+        for target, content in plan:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(target.write_text, content, "utf-8")
 
     async def destroy(self, handle: SandboxHandle) -> None:
         scratch = self._scratch_dirs.pop(handle.task_id, None)

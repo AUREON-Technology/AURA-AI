@@ -204,6 +204,13 @@ class FocusTerminalRequested extends IdeEvent {
   const FocusTerminalRequested();
 }
 
+/// D6 Part D: the active editor should request one inline completion at the cursor.
+/// Carries no payload -- the listener (the currently-mounted editor content widget) reads its
+/// own controller's current cursor/text, since that's the only place with a live reference.
+class RequestInlineCompletionRequested extends IdeEvent {
+  const RequestInlineCompletionRequested();
+}
+
 /// Host events
 class HostConnected extends IdeEvent {
   const HostConnected(this.workspaceId);

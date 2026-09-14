@@ -5,6 +5,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/desktop/output/output_panel.dart';
 import 'package:aura_client/desktop/terminal/terminal_view.dart';
 
 class BottomPanel extends StatefulWidget {
@@ -66,27 +67,12 @@ class _BottomPanelState extends State<BottomPanel> with SingleTickerProviderStat
               controller: _tabController,
               children: const [
                 TerminalView(),
-                _OutputPlaceholder(),
+                OutputPanel(),
                 _ProblemsPlaceholder(),
               ],
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _OutputPlaceholder extends StatelessWidget {
-  const _OutputPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = AuraPalette.of(context);
-    return Center(
-      child: Text(
-        'Output (D4)',
-        style: TextStyle(color: palette.textSecondary),
       ),
     );
   }

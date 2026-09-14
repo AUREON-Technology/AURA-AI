@@ -224,12 +224,12 @@ class TestKernelAgentWiring:
     async def test_declared_tools_are_scoped_to_the_resolved_agent(self, container, user) -> None:
         await container.startup()
         orchestrator_tools = {
-            d["name"] for d in container.kernel._tool_declarations(
+            d["name"] for d in await container.kernel._tool_declarations(
                 _request(agent="orchestrator", user_id=user)
             )
         }
         finance_tools = {
-            d["name"] for d in container.kernel._tool_declarations(
+            d["name"] for d in await container.kernel._tool_declarations(
                 _request(agent="finance_advisor", user_id=user)
             )
         }
@@ -272,7 +272,7 @@ class TestKernelAgentWiring:
         assert context.allowed_tools == frozenset({"calculator"})
 
         declared = {
-            d["name"] for d in container.kernel._tool_declarations(
+            d["name"] for d in await container.kernel._tool_declarations(
                 _request(agent="finance_advisor", user_id=user, delegated_tool_grant=narrow_override)
             )
         }

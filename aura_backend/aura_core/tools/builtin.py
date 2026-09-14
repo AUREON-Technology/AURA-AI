@@ -548,6 +548,7 @@ def default_tools(
     workspace_manager: Any = None,
     host_git: Any = None,
     github_token_resolver: Any = None,
+    host_agent_registry: Any = None,
 ) -> list[Tool]:
     """Assemble the tool set for a deployment.
 
@@ -594,6 +595,7 @@ def default_tools(
             workspace_manager=workspace_manager,
             host_git=host_git,
             token_resolver=github_token_resolver,
+            host_agent_registry=host_agent_registry,
         )
     if github_client_resolver is not None:
         tools += build_github_tools(github_client_resolver, default_repo=github_default_repo)

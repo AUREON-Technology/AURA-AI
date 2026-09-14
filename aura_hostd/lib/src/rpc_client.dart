@@ -128,6 +128,8 @@ class HostAgentClient {
         );
       case 'write_file':
         return taskHandler.writeFile(params);
+      case 'write_files':
+        return taskHandler.writeFiles(params);
       case 'read_file':
         return taskHandler.readFile(params);
       default:

@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from ..observability.logging import get_logger
-from ..ports.coding import SandboxHandle, SandboxResult
+from ..ports.coding import FileWriteOp, SandboxHandle, SandboxResult
 
 __all__ = ["DockerSandboxRunner", "SandboxError", "docker_available"]
 
@@ -407,6 +407,39 @@ class DockerSandboxRunner:
         if not target.is_file():
             raise SandboxError(f"{path} is not a file in the sandbox workspace")
         return await asyncio.to_thread(target.read_text, "utf-8")
+
+    async def write_files(self, handle: SandboxHandle, operations: Sequence[FileWriteOp]) -> None:
+        """D6: pre-validate every operation, then write all of them -- see the port's own
+        docstring for why nothing is written until every operation has already passed."""
+
+        def _validate_and_plan() -> list[tuple[Path, str]]:
+            plan: list[tuple[Path, str]] = []
+            for op in operations:
+                target = self._resolve_within(handle, op.path)
+                if op.content is not None:
+                    plan.append((target, op.content))
+                elif op.find is not None and op.replace is not None:
+                    if not target.is_file():
+                        raise SandboxError(f"{op.path} does not exist")
+                    current = target.read_text("utf-8")
+                    occurrences = current.count(op.find)
+                    if occurrences != 1:
+                        raise SandboxError(
+                            f"expected exactly one occurrence of the given text in {op.path}, "
+                            f"found {occurrences}"
+                        )
+                    plan.append((target, current.replace(op.find, op.replace, 1)))
+                else:
+                    raise SandboxError(f"operation for {op.path} must set either content, or both find and replace")
+            return plan
+
+        def _write_all() -> None:
+            plan = _validate_and_plan()
+            for target, content in plan:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+
+        await asyncio.to_thread(_write_all)
 
     # -- durable workspaces ------------------------------------------------------------------
     #

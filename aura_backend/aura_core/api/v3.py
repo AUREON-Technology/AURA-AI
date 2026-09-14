@@ -129,6 +129,18 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         text: str = Field(min_length=1, max_length=4000)
         voice: str | None = None
 
+    class CodeCompletionRequest(BaseModel):
+        """D6 inline code completion (explicit-trigger, not continuous ghost-text -- see
+        docs/architecture/015-desktop-ide.md's D6 plan, decision 3). ``prefix``/``suffix`` are the
+        file content immediately before/after the cursor, not the whole file: bounding them here
+        (rather than trusting the client) keeps a worst-case request bounded regardless of what a
+        client sends."""
+
+        prefix: str = Field(default="", max_length=8_000)
+        suffix: str = Field(default="", max_length=4_000)
+        language: str | None = Field(default=None, max_length=40)
+        max_output_tokens: int = Field(default=64, ge=8, le=256)
+
     class SearchRequest(BaseModel):
         query: str = Field(min_length=1, max_length=1000)
         limit: int = Field(default=6, ge=1, le=25)
@@ -334,6 +346,70 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "X-Accel-Buffering": "no",
                 "X-Correlation-Id": (turn.correlation_id or CorrelationId.new()).value,
             },
+        )
+
+    @router.post("/complete")
+    async def complete_code(
+        request: Request,
+        payload: CodeCompletionRequest,
+        caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """D6 inline code completion -- one-shot, not a chat turn. Bypasses the kernel entirely
+        (no retrieval/memory/tool-planning/safety-guard-output pass) and calls the router
+        directly, the same low-level call ``PlanningEngine.plan()`` makes -- there is no session,
+        history, or citation for a fill-in-the-blank completion to carry, and a smaller unguarded
+        surface keeps this call's latency budget honest against the tighter deadline a human is
+        actively waiting on (see the timeout comment below).
+        """
+        from ..domain.llm import CompletionRequest as LlmCompletionRequest
+        from ..domain.llm import SamplingParams
+        from ..domain.messages import Conversation, Message
+
+        await enforce_rate_limit(request, caller, "complete")
+
+        language = payload.language or "code"
+        prompt = (
+            f"Complete the following {language} at <CURSOR>. Return only the code to insert "
+            "at <CURSOR> -- no explanation, no markdown code fences, no repetition of the "
+            "surrounding code.\n\n"
+            f"{payload.prefix}<CURSOR>{payload.suffix}"
+        )
+
+        try:
+            response = await container.router.complete(
+                LlmCompletionRequest(
+                    conversation=Conversation.of([Message.user(prompt)]),
+                    sampling=SamplingParams(temperature=0.2, max_output_tokens=payload.max_output_tokens),
+                    require_local=True,
+                    # Generous over the ~1-10s target the client's explicit-trigger UX promises
+                    # (see D6 plan Part D.1/D.2), not the 60-180s a full chat turn gets -- this is
+                    # a fill-in-the-blank, not a conversation, and a human is actively waiting.
+                    timeout_s=20.0,
+                )
+            )
+        except Exception as exc:
+            logger.warning("inline completion failed", extra={"error": type(exc).__name__})
+            return JSONResponse(
+                status_code=503,
+                content={"error": "completion_unavailable", "message": "Could not generate a completion."},
+            )
+
+        text = response.text.strip()
+        # Small instruct models reliably wrap output in a code fence even when told not to --
+        # strip one defensively rather than showing the fence markers as part of the suggestion.
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1] if "\n" in text else text.lstrip("`")
+            if text.endswith("```"):
+                text = text[: -3]
+            text = text.strip("\n")
+
+        return JSONResponse(
+            content={
+                "text": text,
+                "truncated": len(text) >= payload.max_output_tokens * 4,  # rough chars-per-token heuristic
+                "provider": response.provider,
+                "model": response.model,
+            }
         )
 
     # -- knowledge ---------------------------------------------------------------------

@@ -101,6 +101,7 @@ def tool(
     version: str = "1.0.0",
     tags: tuple[str, ...] = (),
     workspace_local: bool = False,
+    preview: Callable[[Mapping[str, Any], ToolContext], Awaitable[str | None]] | None = None,
 ) -> Callable[[Handler], FunctionTool]:
     """Decorator form.
 
@@ -132,6 +133,7 @@ def tool(
             version=version,
             tags=tags,
             workspace_local=workspace_local,
+            preview=preview,
         )
         return FunctionTool(spec, handler)
 

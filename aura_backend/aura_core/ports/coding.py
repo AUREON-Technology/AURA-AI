@@ -23,6 +23,7 @@ __all__ = [
     "CodeHostClient",
     "SandboxHandle",
     "SandboxResult",
+    "FileWriteOp",
     "SandboxRunner",
     "SandboxOutputEvent",
     "StreamingSandboxRunner",
@@ -134,6 +135,22 @@ class SandboxResult:
     exit_code: int
 
 
+@dataclass(frozen=True, slots=True)
+class FileWriteOp:
+    """One file operation in an atomic :meth:`SandboxRunner.write_files` batch (D6 --
+    ``docs/architecture/015-desktop-ide.md``): either a full overwrite (``content`` set) or a
+    find/replace edit (``find``/``replace`` set), mirroring ``write_file``/``edit_file``'s two
+    existing single-file tool shapes. A given instance uses exactly one shape -- constructing one
+    with both, or neither, is a caller bug, checked by the runner at validation time (see
+    :meth:`SandboxRunner.write_files`'s docstring), not enforced by the type itself.
+    """
+
+    path: str
+    content: str | None = None
+    find: str | None = None
+    replace: str | None = None
+
+
 @runtime_checkable
 class SandboxRunner(Protocol):
     """An isolated execution environment for agent work.
@@ -182,6 +199,23 @@ class SandboxRunner(Protocol):
         ...
 
     async def read_file(self, handle: SandboxHandle, path: str) -> str:
+        ...
+
+    async def write_files(self, handle: SandboxHandle, operations: Sequence[FileWriteOp]) -> None:
+        """Atomically write or find/replace-edit multiple files (D6, ``tools/coding.py::write_files``).
+
+        "Atomic" means pre-validate-all-then-write-all: every operation's path must resolve within
+        the sandbox and, for a find/replace operation, its ``find`` text must occur in the current
+        file exactly once -- all checked *before* any file is touched. If any operation fails
+        validation, the whole call raises and nothing in the batch is written. This is what makes
+        the guarantee real for a runner whose writes cross a wire (the desktop host-agent bridge):
+        looping individual `write_file`/`edit_file` calls could not make this promise, since
+        nothing would stop a crash or a concurrent write from landing between two of them.
+
+        Implementations should raise :class:`~aura_core.domain.errors.ToolExecutionError` (or let
+        the tool layer wrap whatever they raise) naming the first failing operation, exactly like
+        :meth:`write_file`'s existing failure contract.
+        """
         ...
 
     async def destroy(self, handle: SandboxHandle) -> None:

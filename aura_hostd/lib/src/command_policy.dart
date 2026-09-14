@@ -142,3 +142,26 @@ CommandVerdict evaluateCommand(
     'interactive approval requests',
   );
 }
+
+/// D6's write-gating sibling to [evaluateCommand] -- a file write isn't a shell command string, so
+/// this deliberately does not reuse `evaluateCommand`'s regex-based allow/deny/needsApproval logic.
+/// It is also structurally simpler: there is no shell-metacharacter concern for a write (nothing
+/// here is ever interpreted by a shell) and no read-only-allowlist tier (every write mutates by
+/// definition, so an untrusted workspace's only two outcomes are `needsApproval` or `deny`).
+///
+/// There is also no hard-denylist tier for writes today, unlike [hardDenylistPatterns] for
+/// commands -- containment (`containment.dart`'s `requireContained`, checked before this is ever
+/// called) already bounds *where* a write can land; there is no established equivalent yet for
+/// *what* it may contain or overwrite (e.g. a `.git/hooks/` file). This is D6's accepted floor, not
+/// an oversight: a human reviewing the diff before approving is the safety net for untrusted
+/// workspaces, the same way it already is for the read-only-allowlist gap in
+/// [readOnlyAllowlistPatterns]'s own doc comment.
+CommandVerdict evaluateWrite({required bool workspaceTrusted}) {
+  if (workspaceTrusted) {
+    return const CommandVerdict(CommandDecision.allow, 'workspace is marked trusted');
+  }
+  return const CommandVerdict(
+    CommandDecision.needsApproval,
+    'workspace is not trusted -- queued for interactive approval in the Desktop IDE',
+  );
+}

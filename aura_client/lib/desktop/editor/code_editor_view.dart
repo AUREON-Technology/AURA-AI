@@ -3,10 +3,14 @@
 /// Uses the EditorProvider abstraction to support multiple editor implementations.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/editor/editor_abstraction.dart';
+import 'package:aura_client/desktop/events/ide_event.dart';
+import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/editor/editor_tab.dart';
 import 'package:aura_client/desktop/editor/providers/flutter_code_editor_provider.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
@@ -71,11 +75,21 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
   InMemoryEditorDocument? _document;
   String? _loadError;
   bool _loading = true;
+  StreamSubscription<IdeEvent>? _ideEventSubscription;
+  StreamSubscription<EditorDocument>? _documentChangeSubscription;
 
   @override
   void initState() {
     super.initState();
     _initializeEditor();
+    // D6 Part D: the keybinding in desktop_shortcuts.dart publishes this rather than calling
+    // the controller directly, since the shell doesn't hold a reference to whichever editor
+    // instance is currently focused -- this widget is the only place that does.
+    _ideEventSubscription = ref.read(ideEventBusProvider).stream.listen((event) {
+      if (event is RequestInlineCompletionRequested) {
+        _controller?.executeCommand(const RequestInlineCompletionCommand());
+      }
+    });
   }
 
   Future<void> _initializeEditor() async {
@@ -107,6 +121,12 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
         languageId: languageId,
       );
       _controller = ref.read(editorProviderProvider).createController(_document!);
+      // A programmatic mutation (D6's inline-completion insertion, so far the only caller) sets
+      // the underlying text controller directly rather than going through a widget `onChanged`
+      // callback, which Flutter only fires for user-driven input -- so without this listener an
+      // accepted completion would render but never reach editorNotifierProvider, and a
+      // subsequent Save would silently drop it.
+      _documentChangeSubscription = _controller!.onDocumentChange.listen((doc) => _handleTextChange(doc.text));
       _loadError = loadError;
       _loading = false;
     });
@@ -131,6 +151,8 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
 
   @override
   void dispose() {
+    _ideEventSubscription?.cancel();
+    _documentChangeSubscription?.cancel();
     _controller?.dispose();
     super.dispose();
   }

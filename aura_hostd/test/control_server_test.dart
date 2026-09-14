@@ -236,7 +236,7 @@ void main() {
   });
 
   test('GET /approvals lists a pending approval with the redacted command, never the raw one', () async {
-    approvalQueue.create(
+    approvalQueue.createForCommand(
       canonicalCommand: 'curl -H "Authorization: Bearer sk-real-secret" https://example.com',
       cwd: workspaceRoot,
       rootPath: workspaceRoot,
@@ -252,7 +252,7 @@ void main() {
 
   test('POST /approvals/<id>/respond approves and removes it from the pending list', () async {
     final approval =
-        approvalQueue.create(canonicalCommand: 'npm test', cwd: workspaceRoot, rootPath: workspaceRoot);
+        approvalQueue.createForCommand(canonicalCommand: 'npm test', cwd: workspaceRoot, rootPath: workspaceRoot);
     final (status, body) =
         await client.request('POST', '/approvals/${approval.id}/respond', body: {'approved': true});
     expect(status, 200);
@@ -271,7 +271,7 @@ void main() {
 
   test('POST /approvals/<id>/respond is idempotent on an already-resolved id', () async {
     final approval =
-        approvalQueue.create(canonicalCommand: 'npm test', cwd: workspaceRoot, rootPath: workspaceRoot);
+        approvalQueue.createForCommand(canonicalCommand: 'npm test', cwd: workspaceRoot, rootPath: workspaceRoot);
     final (firstStatus, _) =
         await client.request('POST', '/approvals/${approval.id}/respond', body: {'approved': true});
     final (secondStatus, _) =
@@ -282,7 +282,7 @@ void main() {
   });
 
   test('POST /approvals/<id>/respond refuses a missing token like every other non-status route', () async {
-    approvalQueue.create(canonicalCommand: 'npm test', cwd: workspaceRoot, rootPath: workspaceRoot);
+    approvalQueue.createForCommand(canonicalCommand: 'npm test', cwd: workspaceRoot, rootPath: workspaceRoot);
     final (status, _) = await client.request(
       'GET',
       '/approvals',

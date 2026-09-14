@@ -25,7 +25,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 
 from ..domain.identifiers import UserId
 from ..observability.logging import get_logger
-from ..ports.coding import SandboxHandle, SandboxOutputEvent, SandboxResult, StreamingSandboxRunner
+from ..ports.coding import FileWriteOp, SandboxHandle, SandboxOutputEvent, SandboxResult, StreamingSandboxRunner
 from .docker_sandbox import SandboxError
 
 __all__ = ["HostAgentSession", "HostAgentRegistry", "HostAgentSandboxRunner", "CompositeSandboxRunner"]
@@ -234,7 +234,13 @@ class HostAgentSandboxRunner:
         await session.call(
             "write_file",
             {"task_id": handle.task_id, "path": path, "content": content},
-            timeout_s=self._call_timeout_s,
+            # D6: an untrusted-workspace write now queues for interactive approval on the daemon
+            # side (`task_handler.dart`'s gating retrofit), which can take as long as a human
+            # takes to respond -- up to the daemon's own 5-minute approval timeout -- not just
+            # network latency. Sized the same way `write_files` below is, so a slow human doesn't
+            # make this side time out and report failure while the daemon is still legitimately
+            # waiting for an answer.
+            timeout_s=max(self._call_timeout_s, 330.0),
         )
 
     async def read_file(self, handle: SandboxHandle, path: str) -> str:
@@ -245,6 +251,32 @@ class HostAgentSandboxRunner:
             timeout_s=self._call_timeout_s,
         )
         return str((result or {}).get("content", ""))
+
+    async def write_files(self, handle: SandboxHandle, operations: Sequence[FileWriteOp]) -> None:
+        """D6: a single `write_files` RPC to the daemon (`aura_hostd/lib/src/task_handler.dart`),
+        which does the pre-validate-all-then-write-all pass itself -- see the port's own docstring
+        for why this must be one RPC rather than a loop of single-file calls over this transport.
+        Also where an untrusted-workspace write queues for interactive approval on the daemon
+        side, so this call may take as long as a human takes to respond (bounded by the daemon's
+        own approval timeout), not just network latency -- hence the generous call timeout below,
+        matching `run`'s own `timeout_s + 5.0` margin discipline but sized for a human, not a
+        command.
+        """
+        session = await self._session_for(handle)
+        payload = []
+        for op in operations:
+            entry: dict[str, Any] = {"path": op.path}
+            if op.content is not None:
+                entry["content"] = op.content
+            else:
+                entry["find"] = op.find
+                entry["replace"] = op.replace
+            payload.append(entry)
+        await session.call(
+            "write_files",
+            {"task_id": handle.task_id, "operations": payload},
+            timeout_s=max(self._call_timeout_s, 330.0),  # daemon-side approval can wait up to 5m
+        )
 
     async def run_streaming(
         self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
@@ -361,6 +393,9 @@ class CompositeSandboxRunner:
 
     async def read_file(self, handle: SandboxHandle, path: str) -> str:
         return await self._runner_for(handle).read_file(handle, path)
+
+    async def write_files(self, handle: SandboxHandle, operations: Sequence[FileWriteOp]) -> None:
+        await self._runner_for(handle).write_files(handle, operations)
 
     async def destroy(self, handle: SandboxHandle) -> None:
         runner = self._handle_runner.pop(handle.task_id, None)

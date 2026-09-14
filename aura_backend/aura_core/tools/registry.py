@@ -48,7 +48,7 @@ class ToolExecutionReport:
     """Outcome of one dispatch, for telemetry and audit."""
 
     __slots__ = ("call_id", "tool", "allowed", "ok", "duration_ms", "error_kind",
-                 "policy_reason", "result_chars", "needs_confirmation", "arguments")
+                 "policy_reason", "result_chars", "needs_confirmation", "arguments", "diff_preview")
 
     def __init__(
         self,
@@ -63,6 +63,7 @@ class ToolExecutionReport:
         result_chars: int = 0,
         needs_confirmation: bool = False,
         arguments: Mapping[str, Any] | None = None,
+        diff_preview: str | None = None,
     ) -> None:
         self.call_id = call_id
         self.tool = tool
@@ -82,6 +83,11 @@ class ToolExecutionReport:
         # arguments, so they must be able to see them. Different artefact, different lifetime,
         # different audience.
         self.arguments = dict(arguments) if arguments else {}
+        # D6: a diff of what this call would change, produced by `spec.preview` (see
+        # `ToolSpec.preview`'s docstring) -- same confirmation-required-only lifetime/audience
+        # reasoning as `arguments` above. `None` for a tool with no `preview` hook, or if the hook
+        # itself declined/failed to produce one.
+        self.diff_preview = diff_preview
 
 
 class ToolRegistry:
@@ -223,7 +229,7 @@ class ToolRegistry:
         def finish(
             *, ok: bool, content: str, error_kind: str | None = None, allowed: bool = True,
             policy_reason: str = "", needs_confirmation: bool = False,
-            arguments: Mapping[str, Any] | None = None,
+            arguments: Mapping[str, Any] | None = None, diff_preview: str | None = None,
         ) -> tuple[ToolResult, ToolExecutionReport]:
             duration = (time.perf_counter() - started) * 1000.0
             result = ToolResult(
@@ -246,6 +252,7 @@ class ToolRegistry:
                 result_chars=len(content),
                 needs_confirmation=needs_confirmation,
                 arguments=arguments,
+                diff_preview=diff_preview,
             )
             return result, report
 
@@ -298,6 +305,16 @@ class ToolRegistry:
             )
         if decision.requires_confirmation and not confirmed:
             self._observe(name, outcome="needs_confirmation")
+            # D6: give the human something to review beyond the raw arguments, when the tool can
+            # produce one. A preview failure must never block confirmation itself -- the call is
+            # already going to sit in confirm-required limbo either way, so this degrades to "no
+            # diff" rather than turning a working confirmation flow into an error.
+            diff_preview: str | None = None
+            if spec.preview is not None:
+                try:
+                    diff_preview = await spec.preview(arguments, context)
+                except Exception:
+                    logger.exception("tool preview hook failed", extra={"tool": name})
             return finish(
                 ok=False,
                 content=f"The '{name}' tool requires the user's explicit confirmation before it "
@@ -306,6 +323,7 @@ class ToolRegistry:
                 policy_reason=decision.reason,
                 needs_confirmation=True,
                 arguments=arguments,
+                diff_preview=diff_preview,
             )
 
         # 4. Sandboxed execution

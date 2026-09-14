@@ -1,19 +1,55 @@
-/// Live, interactive terminal view for Desktop IDE (D4).
+/// Live, interactive terminal view for Desktop IDE (D4, upgraded to a real VT100 emulator).
 ///
-/// Replaces `bottom_panel.dart`'s `_TerminalPlaceholder`. Visual style copied
-/// from `SandboxTerminalView` (dark monospace block) -- that class itself is
-/// a different, read-only widget in the chat feature, not reused directly.
+/// Renders through the `xterm` package's [xterm.Terminal]/[xterm.TerminalView] rather than
+/// dumping raw PTY text into a `SelectableText` -- the previous approach showed escape sequences
+/// (cursor moves, clears, colors, OSC title-sets) as literal characters instead of interpreting
+/// them, since nothing parsed them. `TerminalNotifier` (`state_notifiers.dart`) owns one
+/// [xterm.Terminal] per session (`terminalFor`); this widget only renders it and forwards
+/// layout/keyboard/mouse events, which the package widget already implements in full -- this
+/// also resolves the "full xterm keymap is an explicit v1 scope cut" limitation D4 had, since the
+/// package's own input handler covers Home/End/PageUp/F-keys/Alt combos that the old hand-rolled
+/// `_translateKey` never did.
 library;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:xterm/xterm.dart' as xterm;
 
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 
 const _bg = Color(0xFF14161B);
 const _fg = Color(0xFFD4D4D4);
+
+/// Matches the rest of the Desktop IDE's dark chrome rather than the package's own
+/// `TerminalThemes.defaultTheme` (a very similar but not identical near-black) -- the ANSI
+/// 16-color entries are the package's own defaults, since Aura has no design-system opinion on
+/// terminal syntax colors.
+const _theme = xterm.TerminalTheme(
+  cursor: Color(0xAAD4D4D4),
+  selection: Color(0xAAD4D4D4),
+  foreground: _fg,
+  background: _bg,
+  black: Color(0xFF000000),
+  red: Color(0xFFCD3131),
+  green: Color(0xFF0DBC79),
+  yellow: Color(0xFFE5E510),
+  blue: Color(0xFF2472C8),
+  magenta: Color(0xFFBC3FBC),
+  cyan: Color(0xFF11A8CD),
+  white: Color(0xFFE5E5E5),
+  brightBlack: Color(0xFF666666),
+  brightRed: Color(0xFFF14C4C),
+  brightGreen: Color(0xFF23D18B),
+  brightYellow: Color(0xFFF5F543),
+  brightBlue: Color(0xFF3B8EEA),
+  brightMagenta: Color(0xFFD670D6),
+  brightCyan: Color(0xFF29B8DB),
+  brightWhite: Color(0xFFFFFFFF),
+  searchHitBackground: Color(0xFFFFFF2B),
+  searchHitBackgroundCurrent: Color(0xFF31FF26),
+  searchHitForeground: Color(0xFF000000),
+);
 
 class TerminalView extends ConsumerStatefulWidget {
   const TerminalView({super.key});
@@ -23,26 +59,7 @@ class TerminalView extends ConsumerStatefulWidget {
 }
 
 class _TerminalViewState extends ConsumerState<TerminalView> {
-  final _focusNode = FocusNode();
-  final _scrollController = ScrollController();
   String? _startedForWorkspaceId;
-  double? _charWidth;
-  double? _charHeight;
-  int _lastCols = 0;
-  int _lastRows = 0;
-  DateTime? _lastResizeSent;
-
-  @override
-  void dispose() {
-    _focusNode.dispose();
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  void _scrollToBottom() {
-    if (!_scrollController.hasClients) return;
-    _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-  }
 
   void _maybeAutoStart(String workspaceId, String rootPath, bool trusted) {
     if (_startedForWorkspaceId == workspaceId) return;
@@ -57,66 +74,6 @@ class _TerminalViewState extends ConsumerState<TerminalView> {
       if (!mounted) return;
       ref.read(terminalNotifierProvider.notifier).start(workspaceId: workspaceId, rootPath: rootPath);
     });
-  }
-
-  void _measureCharSize() {
-    if (_charWidth != null) return;
-    final painter = TextPainter(
-      text: const TextSpan(text: 'M', style: TextStyle(fontFamily: 'Courier', fontSize: 12, height: 1.4)),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    _charWidth = painter.width;
-    _charHeight = painter.height;
-  }
-
-  void _handleResize(BoxConstraints constraints, String sessionId) {
-    _measureCharSize();
-    if (_charWidth == null || _charHeight == null) return;
-    final cols = (constraints.maxWidth / _charWidth!).floor().clamp(20, 500);
-    final rows = (constraints.maxHeight / _charHeight!).floor().clamp(5, 200);
-    if (cols == _lastCols && rows == _lastRows) return;
-    _lastCols = cols;
-    _lastRows = rows;
-    final now = DateTime.now();
-    if (_lastResizeSent != null && now.difference(_lastResizeSent!) < const Duration(milliseconds: 150)) {
-      return;
-    }
-    _lastResizeSent = now;
-    ref.read(terminalNotifierProvider.notifier).resize(sessionId, cols, rows);
-  }
-
-  KeyEventResult _handleKey(FocusNode node, KeyEvent event, String sessionId) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
-    final bytes = _translateKey(event);
-    if (bytes == null) return KeyEventResult.ignored;
-    ref.read(terminalNotifierProvider.notifier).sendInput(sessionId, bytes);
-    return KeyEventResult.handled;
-  }
-
-  /// Translates a subset of keys to the VT byte sequences a shell expects --
-  /// a `TextField` can't do this (line-buffered, no per-keystroke raw
-  /// events). A full xterm keymap (Home/End/PageUp/F-keys/Alt combos) is an
-  /// explicit v1 scope cut, not an oversight (see D4 plan section B4).
-  Uint8List? _translateKey(KeyEvent event) {
-    final key = event.logicalKey;
-    if (HardwareKeyboard.instance.isControlPressed) {
-      if (key == LogicalKeyboardKey.keyC) return Uint8List.fromList([0x03]);
-      if (key == LogicalKeyboardKey.keyD) return Uint8List.fromList([0x04]);
-    }
-    if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
-      return Uint8List.fromList([0x0D]);
-    }
-    if (key == LogicalKeyboardKey.backspace) return Uint8List.fromList([0x7F]);
-    if (key == LogicalKeyboardKey.tab) return Uint8List.fromList([0x09]);
-    if (key == LogicalKeyboardKey.arrowUp) return Uint8List.fromList([0x1B, 0x5B, 0x41]);
-    if (key == LogicalKeyboardKey.arrowDown) return Uint8List.fromList([0x1B, 0x5B, 0x42]);
-    if (key == LogicalKeyboardKey.arrowRight) return Uint8List.fromList([0x1B, 0x5B, 0x43]);
-    if (key == LogicalKeyboardKey.arrowLeft) return Uint8List.fromList([0x1B, 0x5B, 0x44]);
-    final char = event.character;
-    if (char != null && char.isNotEmpty) {
-      return Uint8List.fromList(char.codeUnits);
-    }
-    return null;
   }
 
   @override
@@ -135,18 +92,12 @@ class _TerminalViewState extends ConsumerState<TerminalView> {
 
     _maybeAutoStart(workspace.id, rootPath, trusted);
 
-    final terminal = ref.watch(terminalNotifierProvider);
-    final session = terminal.sessions.where((s) => s.workspaceId == workspace.id).firstOrNull;
-
-    ref.listen(terminalNotifierProvider, (previous, next) {
-      final prevOutput = previous?.sessions.where((s) => s.id == session?.id).firstOrNull?.output;
-      final nextOutput = next.sessions.where((s) => s.id == session?.id).firstOrNull?.output;
-      if (prevOutput != nextOutput) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _scrollToBottom();
-        });
-      }
-    });
+    final notifier = ref.read(terminalNotifierProvider.notifier);
+    // Watched only for session bookkeeping (which session is active, whether it's still
+    // running) -- the terminal's actual screen content is driven by xterm.Terminal's own
+    // Observable/render-object plumbing below, not by rebuilding this widget per output byte.
+    final terminalState = ref.watch(terminalNotifierProvider);
+    final session = terminalState.sessions.where((s) => s.workspaceId == workspace.id).firstOrNull;
 
     if (session == null) {
       if (matchingRoot == null) {
@@ -161,53 +112,42 @@ class _TerminalViewState extends ConsumerState<TerminalView> {
       return _CenteredMessage(text: 'Starting terminal...', palette: palette);
     }
 
+    final terminal = notifier.terminalFor(session.id);
+    if (terminal == null) {
+      return _CenteredMessage(text: 'Starting terminal...', palette: palette);
+    }
+
     return Container(
       color: _bg,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          _handleResize(constraints, session.id);
-          return Focus(
-            focusNode: _focusNode,
-            autofocus: true,
-            onKeyEvent: (node, event) => _handleKey(node, event, session.id),
-            child: GestureDetector(
-              onTap: () => _focusNode.requestFocus(),
-              child: SingleChildScrollView(
-                controller: _scrollController,
-                padding: const EdgeInsets.all(AuraSpacing.sm),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SelectableText(
-                      session.output.isEmpty ? ' ' : session.output,
-                      style: const TextStyle(fontFamily: 'Courier', fontSize: 12, color: _fg, height: 1.4),
-                    ),
-                    if (!session.isRunning)
-                      Padding(
-                        padding: const EdgeInsets.only(top: AuraSpacing.sm),
-                        child: Row(
-                          children: [
-                            Text(
-                              'Session ended${session.exitCode != null ? ' (exit code ${session.exitCode})' : ''}.',
-                              style: TextStyle(color: palette.textDisabled, fontSize: 12),
-                            ),
-                            const SizedBox(width: AuraSpacing.sm),
-                            TextButton(
-                              onPressed: () => ref
-                                  .read(terminalNotifierProvider.notifier)
-                                  .restart(session.id, rootPath: rootPath),
-                              child: const Text('Restart'),
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
-                ),
+      child: Column(
+        children: [
+          Expanded(
+            child: xterm.TerminalView(
+              terminal,
+              theme: _theme,
+              textStyle: const xterm.TerminalStyle(fontFamily: 'Courier', fontSize: 12, height: 1.4),
+              autofocus: true,
+              padding: const EdgeInsets.all(AuraSpacing.sm),
+            ),
+          ),
+          if (!session.isRunning)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.sm, vertical: AuraSpacing.xs),
+              child: Row(
+                children: [
+                  Text(
+                    'Session ended${session.exitCode != null ? ' (exit code ${session.exitCode})' : ''}.',
+                    style: TextStyle(color: palette.textDisabled, fontSize: 12),
+                  ),
+                  const SizedBox(width: AuraSpacing.sm),
+                  TextButton(
+                    onPressed: () => notifier.restart(session.id, rootPath: rootPath),
+                    child: const Text('Restart'),
+                  ),
+                ],
               ),
             ),
-          );
-        },
+        ],
       ),
     );
   }

@@ -1,3 +1,3 @@
-Warning: no workspace roots granted yet -- every write_file/run_command call will be refused until you run `aura_hostd grant <path>`.
-[aura_hostd] control server listening on 127.0.0.1:62950
-No auth token configured yet -- run `aura_hostd auth pair`, or pair from the AURA app, to connect to the backend. The control server is up in the meantime.
+[aura_hostd] control server listening on 127.0.0.1:60770
+Connecting to https://169.58.188.43.nip.io ...
+[aura_hostd] connecting to wss://169.58.188.43.nip.io/api/v3/host/agent

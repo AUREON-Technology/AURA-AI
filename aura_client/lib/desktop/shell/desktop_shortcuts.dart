@@ -41,6 +41,11 @@ class DesktopShortcuts extends ConsumerWidget {
       // Toggle bottom panel
       const SingleActivator(LogicalKeyboardKey.keyJ, control: true, shift: true): const _ToggleBottomPanelIntent(),
       const SingleActivator(LogicalKeyboardKey.keyJ, meta: true, shift: true): const _ToggleBottomPanelIntent(),
+      // D6 Part D: request an inline completion at the cursor (explicit-trigger, not
+      // continuous -- see the D6 plan's Part D decision 3). Ctrl/Cmd+Space matches the
+      // "trigger suggestion" binding most editors already use.
+      const SingleActivator(LogicalKeyboardKey.space, control: true): const _RequestInlineCompletionIntent(),
+      const SingleActivator(LogicalKeyboardKey.space, meta: true): const _RequestInlineCompletionIntent(),
     };
 
     return Actions(
@@ -52,6 +57,7 @@ class DesktopShortcuts extends ConsumerWidget {
         _ToggleSidebarIntent: CallbackAction<_ToggleSidebarIntent>(onInvoke: (_) => _handleToggleSidebar(ref)),
         _ToggleSecondarySidebarIntent: CallbackAction<_ToggleSecondarySidebarIntent>(onInvoke: (_) => _handleToggleSecondarySidebar(ref)),
         _ToggleBottomPanelIntent: CallbackAction<_ToggleBottomPanelIntent>(onInvoke: (_) => _handleToggleBottomPanel(ref)),
+        _RequestInlineCompletionIntent: CallbackAction<_RequestInlineCompletionIntent>(onInvoke: (_) => _handleRequestInlineCompletion(ref)),
       },
       child: Shortcuts(shortcuts: shortcuts, child: Focus(autofocus: true, child: child)),
     );
@@ -102,6 +108,10 @@ class DesktopShortcuts extends ConsumerWidget {
   void _handleToggleBottomPanel(WidgetRef ref) {
     ref.read(layoutNotifierProvider.notifier).toggleBottomPanel();
   }
+
+  void _handleRequestInlineCompletion(WidgetRef ref) {
+    ref.read(ideEventBusProvider).publish(const RequestInlineCompletionRequested());
+  }
 }
 
 // Intent classes
@@ -112,3 +122,4 @@ class _FocusTerminalIntent extends Intent { const _FocusTerminalIntent(); }
 class _ToggleSidebarIntent extends Intent { const _ToggleSidebarIntent(); }
 class _ToggleSecondarySidebarIntent extends Intent { const _ToggleSecondarySidebarIntent(); }
 class _ToggleBottomPanelIntent extends Intent { const _ToggleBottomPanelIntent(); }
+class _RequestInlineCompletionIntent extends Intent { const _RequestInlineCompletionIntent(); }

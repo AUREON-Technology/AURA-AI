@@ -85,27 +85,43 @@ Future<HostdStatusSnapshot> _fetchStatus(HostdControlClient client) async {
   }
 }
 
-/// A pending approval as the client sees it -- `command` is always the daemon's redacted display
-/// string (`aura_hostd/lib/src/approval_queue.dart`'s `PendingApproval.displayCommand`); the real
-/// command never leaves the daemon.
+/// D6: what kind of operation a [PendingApprovalSnapshot] represents -- mirrors
+/// `approval_queue.dart`'s `OperationKind` exactly, so the client branches the same way the
+/// daemon's own JSON already discriminates.
+enum PendingApprovalKind { command, write }
+
+/// A pending approval as the client sees it. For [PendingApprovalKind.command], `command` is
+/// always the daemon's redacted display string
+/// (`aura_hostd/lib/src/approval_queue.dart`'s `PendingApproval.displayCommand`) -- the real
+/// command never leaves the daemon. For [PendingApprovalKind.write] (D6), `diffPreview` is the
+/// same redacted-diff role instead, and `paths` names the files it would touch.
 class PendingApprovalSnapshot {
   PendingApprovalSnapshot({
     required this.id,
-    required this.command,
+    required this.kind,
+    this.command,
+    this.diffPreview,
+    this.paths = const [],
     required this.cwd,
     required this.root,
     required this.requestedAt,
   });
 
   final String id;
-  final String command;
+  final PendingApprovalKind kind;
+  final String? command;
+  final String? diffPreview;
+  final List<String> paths;
   final String cwd;
   final String root;
   final DateTime requestedAt;
 
   factory PendingApprovalSnapshot.fromJson(Map<String, dynamic> json) => PendingApprovalSnapshot(
         id: json['id'] as String,
-        command: json['command'] as String,
+        kind: json['kind'] == 'write' ? PendingApprovalKind.write : PendingApprovalKind.command,
+        command: json['command'] as String?,
+        diffPreview: json['diff_preview'] as String?,
+        paths: (json['paths'] as List?)?.cast<String>() ?? const [],
         cwd: json['cwd'] as String,
         root: json['root'] as String,
         requestedAt: DateTime.parse(json['requested_at'] as String),

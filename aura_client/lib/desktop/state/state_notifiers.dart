@@ -9,6 +9,7 @@ import 'dart:convert';
 import 'package:collection/collection.dart';
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/legacy.dart';
+import 'package:xterm/xterm.dart' as xterm;
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/hostd/hostd_control_client.dart';
@@ -296,10 +297,41 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
   StreamSubscription? _eventSub;
   Timer? _saveDebounce;
 
+  /// One real VT100 emulator per live/restored session, keyed by session id --
+  /// not part of [TerminalState] since it's a mutable, listenable buffer object
+  /// (not an immutable value the Riverpod equality check should compare), the
+  /// same reasoning [EditorNotifier]'s in-memory tab buffer already documents.
+  /// `terminal_view.dart` reads this directly via [terminalFor] rather than
+  /// through `state`.
+  final Map<String, xterm.Terminal> _terminals = {};
+
   /// Mirrors `task_handler.dart`'s `_maxOutputCapChars` discipline on the
   /// daemon side -- a long-lived session must not grow this process's
   /// memory unboundedly.
   static const _maxScrollbackChars = 500000;
+
+  /// The live terminal emulator for [sessionId], if one has been created by
+  /// [start], [restart], or restoring a persisted session. `null` only
+  /// before the session's first frame builds.
+  xterm.Terminal? terminalFor(String sessionId) => _terminals[sessionId];
+
+  /// Creates (or reuses) the VT100 emulator backing [sessionId]. Reused on
+  /// [restart] so scrollback survives a session ending and being restarted in
+  /// place; a fresh one is only made when none exists yet (first start, or
+  /// restoring a session from a previous app run -- see [_loadSession]).
+  xterm.Terminal _terminalFor(String sessionId, {required int cols, required int rows}) {
+    final existing = _terminals[sessionId];
+    if (existing != null) return existing;
+    final terminal = xterm.Terminal(
+      maxLines: 10000,
+      platform: xterm.TerminalTargetPlatform.windows,
+    );
+    terminal.onOutput = (data) => sendInput(sessionId, Uint8List.fromList(utf8.encode(data)));
+    terminal.onResize = (width, height, pixelWidth, pixelHeight) => resize(sessionId, width, height);
+    terminal.resize(cols, rows);
+    _terminals[sessionId] = terminal;
+    return terminal;
+  }
 
   void _subscribeToEvents() {
     _eventSub = _eventBus.stream.listen((event) {
@@ -335,6 +367,13 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
                 rows: json['rows'] as int? ?? 24,
               ))
           .toList();
+      for (final session in sessions) {
+        // Replaying the raw scrollback through a fresh emulator (rather than
+        // just keeping the string around for display) reconstructs the actual
+        // last-rendered screen -- cursor position, colors, cleared regions --
+        // instead of showing the raw escape bytes as literal text.
+        _terminalFor(session.id, cols: session.cols, rows: session.rows).write(session.output);
+      }
       state = TerminalState(sessions: sessions, activeSessionId: sessions.firstOrNull?.id);
     } catch (_) {
       state = const TerminalState();
@@ -367,6 +406,7 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
       sessions: [...state.sessions, session],
       activeSessionId: sessionId,
     );
+    _terminalFor(sessionId, cols: cols, rows: rows);
 
     final client = HostdTerminalClient();
     _clients[sessionId] = client;
@@ -405,6 +445,9 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
     final existing = state.sessions.where((s) => s.id == sessionId).firstOrNull;
     if (existing == null || existing.isRunning) return;
     _updateSession(sessionId, (s) => s.copyWith(isRunning: true, clearExitCode: true));
+    // Reuses the existing emulator (created by _loadSession/start) so its scrollback survives
+    // the restart rather than starting from a blank screen.
+    _terminalFor(sessionId, cols: existing.cols, rows: existing.rows);
 
     final client = HostdTerminalClient();
     _clients[sessionId] = client;
@@ -423,6 +466,7 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
     final workspaceId = state.sessions.where((s) => s.id == sessionId).firstOrNull?.workspaceId;
     final client = _clients.remove(sessionId);
     await client?.dispose();
+    _terminals.remove(sessionId);
     final wasActive = state.activeSessionId == sessionId;
     state = state.copyWith(
       sessions: state.sessions.where((s) => s.id != sessionId).toList(),
@@ -439,6 +483,9 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
       combined = combined.substring(combined.length - _maxScrollbackChars);
     }
     _updateSession(sessionId, (s) => s.copyWith(output: combined, isRunning: exited ? false : s.isRunning));
+    // Feeds the real VT100 emulator so escape sequences (clear, cursor move, color) actually
+    // take effect instead of the terminal panel showing them as literal text.
+    _terminals[sessionId]?.write(text);
     _eventBus.publish(TerminalOutput(sessionId, text));
     _debouncedPersist(session.workspaceId);
   }
@@ -680,10 +727,22 @@ class ApprovalNotifier extends StateNotifier<ApprovalState> {
     final knownIds = state.pendingApprovals.map((a) => a.id).toSet();
     for (final snapshot in snapshots) {
       if (knownIds.contains(snapshot.id)) continue;
+      // D6: a write-kind snapshot carries a diff instead of a command string -- `tool` and
+      // `arguments` stay the same generic shape `ApprovalRequested`/`PendingApproval` already
+      // had (no client-side model change needed beyond this branch), just populated differently
+      // per kind so `status_bar.dart`'s dialog can tell which one it's rendering.
+      final arguments = snapshot.kind == PendingApprovalKind.write
+          ? <String, dynamic>{
+              'diff_preview': snapshot.diffPreview,
+              'paths': snapshot.paths,
+              'cwd': snapshot.cwd,
+              'root': snapshot.root,
+            }
+          : <String, dynamic>{'command': snapshot.command, 'cwd': snapshot.cwd, 'root': snapshot.root};
       _eventBus.publish(ApprovalRequested(
         snapshot.id,
-        'run_command',
-        {'command': snapshot.command, 'cwd': snapshot.cwd, 'root': snapshot.root},
+        snapshot.kind == PendingApprovalKind.write ? 'write_files' : 'run_command',
+        arguments,
         workspaceIdForRoot(snapshot.root),
       ));
     }
@@ -746,7 +805,22 @@ class NotificationNotifier extends StateNotifier<NotificationState> {
 final workspaceNotifierProvider = StateNotifierProvider<WorkspaceNotifier, WorkspaceState>((ref) {
   final db = ref.watch(databaseProvider);
   final eventBus = ref.watch(ideEventBusProvider);
-  return WorkspaceNotifier(db, eventBus);
+  final notifier = WorkspaceNotifier(db, eventBus);
+  // Keep hostdRoots in sync with the daemon's actual granted/trusted roots, the same way
+  // hostNotifierProvider mirrors hostdStatusProvider into its own grantedRoots. Without this,
+  // hostdRoots stayed at its default empty list until the user re-ran the "Open Folder" grant
+  // flow in *this* session (the only other writer, in workspace_welcome_page.dart /
+  // workspace_manager_page.dart) -- so reopening an already-granted workspace from Recent left
+  // GitPanel/TerminalView showing "Grant this workspace..." for a root the daemon already trusts.
+  ref.listen(hostdStatusProvider, (previous, next) {
+    final snapshot = next.value;
+    if (snapshot != null) {
+      notifier.updateHostdRoots(
+        snapshot.roots.map((r) => HostdRoot(path: r.path, trusted: r.trusted)).toList(),
+      );
+    }
+  }, fireImmediately: true);
+  return notifier;
 });
 
 /// Provider for editor notifier.

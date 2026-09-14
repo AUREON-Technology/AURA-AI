@@ -31,6 +31,7 @@ from aura_core.tools.workspaces import WorkspaceManager
 _EXPECTED_WORKSPACE_LOCAL = {
     "write_file",
     "edit_file",
+    "write_files",
     "run_command",
     "git_commit",
     "git_checkout_branch",

@@ -129,6 +129,20 @@ class ToolSpec:
     ADR-014, and `tests/architecture/test_workspace_local_tools.py`, which pins the exact set.
     """
 
+    preview: Any = None
+    """D6 (``docs/architecture/015-desktop-ide.md``): an optional
+    ``Callable[[Mapping[str, Any], ToolContext], Awaitable[str | None]]`` called by
+    ``ToolRegistry.execute()`` when this tool's call needs confirmation, to produce a diff a human
+    reviews alongside the confirmation prompt (``ToolExecutionReport.diff_preview`` ->
+    ``pending_tool_calls`` -> the client's existing ``SandboxDiffView``). Typed as ``Any`` rather
+    than importing ``ToolContext`` here: this module is domain (stdlib only, per the hexagonal
+    layering rule) and ``ToolContext`` lives in ``ports/runtime.py`` -- the callable is duck-typed
+    at the one call site (``tools/registry.py``) instead. Only meaningful for a tool that actually
+    reaches confirmation (``requires_confirmation`` true, or `workspace_local` false with
+    CONFIDENTIAL+ sensitivity) -- set on a `workspace_local` tool it would simply never be called,
+    since that path is exempted from confirmation entirely (see `workspace_local` above).
+    """
+
     _NAME_OK = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_")
 
     def __post_init__(self) -> None:

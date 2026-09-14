@@ -186,6 +186,10 @@ class KernelDependencies:
     clock: Any = None
     settings: Any = None
     models: Any = None
+    #: `HostAgentRegistry` (`adapters/host_agent.py`) -- `None` disables the desktop-pairing check
+    #: entirely, so `_tool_declarations` behaves exactly as before (matching every other optional
+    #: dependency's "absent means off" contract).
+    host_agent_registry: Any = None
 
 
 class AIKernel:
@@ -305,7 +309,7 @@ class AIKernel:
         plan_summary: list[Mapping[str, Any]] = []
         plan_steps = plan_revisions = 0
 
-        tool_declarations = self._tool_declarations(request)
+        tool_declarations = await self._tool_declarations(request)
         if self._should_plan(request, tool_declarations):
             stage_start = time.perf_counter()
             outcome = await self._plan_and_execute(request, message, tool_declarations, tainted)
@@ -333,6 +337,7 @@ class AIKernel:
                             "call_id": report.call_id,
                             "tool": report.tool,
                             "arguments": dict(report.arguments),
+                            "diff_preview": report.diff_preview,
                         })
                 await self._record_engineer_runs(
                     request, turn_id, correlation, resolved_agent, outcome
@@ -516,7 +521,7 @@ class AIKernel:
                         duration_ms=retrieval.duration_ms,
                     )
 
-                tool_declarations = self._tool_declarations(request)
+                tool_declarations = await self._tool_declarations(request)
                 tool_results: list[tuple[str, str]] = []
                 needs_confirmation: list[str] = []
                 pending_tool_calls: list[Mapping[str, Any]] = []
@@ -914,7 +919,19 @@ class AIKernel:
             effective_ceiling = min(base_ceiling, request.delegated_risk_ceiling)
         return effective_tools, effective_ceiling
 
-    def _tool_declarations(self, request: TurnRequest) -> tuple[Mapping[str, Any], ...]:
+    #: Durable-workspace tools (ADR-013, GitHub-repo-scoped) that make no sense once this user's
+    #: turn is running against a paired desktop session (ADR-011, a real local folder): the model
+    #: has nothing repository-shaped to give `open_workspace`'s required `repo` argument, and the
+    #: folder it already has needs no explicit "open" step at all.
+    _DESKTOP_ONLY_UNAVAILABLE = frozenset({"open_workspace", "list_workspaces", "destroy_workspace"})
+
+    async def _desktop_active(self, user_id: Any) -> bool:
+        registry = self._deps.host_agent_registry
+        if registry is None or user_id is None:
+            return False
+        return await registry.resolve(user_id) is not None
+
+    async def _tool_declarations(self, request: TurnRequest) -> tuple[Mapping[str, Any], ...]:
         deps = self._deps
         if not (request.use_tools and deps.tools is not None):
             return ()
@@ -924,6 +941,12 @@ class AIKernel:
             capabilities=request.capabilities,
             max_sensitivity=max_sensitivity if max_sensitivity is not None else ToolSensitivity.SYSTEM,
         )
+        if await self._desktop_active(getattr(request, "user_id", None)):
+            declarations = tuple(
+                d for d in declarations if d.get("name") not in self._DESKTOP_ONLY_UNAVAILABLE
+            )
+            if allowed_tools is not None:
+                allowed_tools = allowed_tools - self._DESKTOP_ONLY_UNAVAILABLE
         if allowed_tools is None:
             return declarations
         # Not advertised, not requested: a tool outside the agent's grant should not appear in

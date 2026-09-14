@@ -481,6 +481,7 @@ class Container:
                 clock=self.clock,
                 settings=settings,
                 models=self.models,
+                host_agent_registry=self.host_agent_registry,
             )
         )
         # After kernel exists, same reason as live_voice below: `delegate_to_agent`
@@ -995,6 +996,7 @@ class Container:
                 workspace_manager=self.workspace_manager,
                 host_git=self.host_git,
                 github_token_resolver=self._github_token_resolver,
+                host_agent_registry=self.host_agent_registry,
             )
         )
         return registry

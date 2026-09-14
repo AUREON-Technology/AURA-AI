@@ -148,6 +148,17 @@ class CodeActionCommand extends EditorCommand {
   const CodeActionCommand();
 }
 
+/// D6 Part D: request one inline completion at the current cursor position.
+///
+/// Deliberately a separate command from [CodeActionCommand] -- a completion is keyed to a
+/// cursor position and has no diagnostic behind it, whereas a code action is keyed to a
+/// diagnostic/selection and offers a menu of fixes. Explicit-trigger only (see
+/// `docs/architecture/015-desktop-ide.md`'s D6 plan, Part D decision 3): this command fires once
+/// per keybinding press, never continuously as the user types.
+class RequestInlineCompletionCommand extends EditorCommand {
+  const RequestInlineCompletionCommand();
+}
+
 /// Language mode configuration.
 @immutable
 class LanguageMode {
