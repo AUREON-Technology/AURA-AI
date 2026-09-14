@@ -27,6 +27,7 @@ import 'package:path/path.dart' as p;
 import 'approval_queue.dart';
 import 'config.dart';
 import 'containment.dart';
+import 'debug_session_manager.dart';
 import 'diagnostics_service.dart';
 import 'git_service.dart';
 import 'pairing_client.dart';
@@ -45,6 +46,7 @@ class ControlServer {
     required this.configStore,
     required this.onPaired,
     required this.terminalSessions,
+    required this.debugSessions,
     required this.approvalQueue,
     GitService? gitService,
     DiagnosticsService? diagnosticsService,
@@ -56,6 +58,10 @@ class ControlServer {
   final WorkspaceStore workspaceStore;
   final ConfigStore configStore;
   final TerminalSessionManager terminalSessions;
+
+  /// D7 Part A.3's Debug Console -- see `debug_session_manager.dart`'s doc comment for why this
+  /// mirrors [terminalSessions]'s shape exactly.
+  final DebugSessionManager debugSessions;
 
   /// D5's interactive consent queue -- the same instance `TaskHandler` queues commands into, so
   /// `GET /approvals` and `POST /approvals/<id>/respond` here act on exactly what `run` is
@@ -137,6 +143,8 @@ class ControlServer {
           await _handleRead(request);
         case 'GET /terminal':
           await _handleTerminalUpgrade(request);
+        case 'GET /debug':
+          await _handleDebugUpgrade(request);
         case 'GET /approvals':
           await _handleApprovalsList(request);
         case 'GET /git/status':
@@ -334,6 +342,20 @@ class ControlServer {
     }
     final socket = await WebSocketTransformer.upgrade(request);
     unawaited(terminalSessions.handleConnection(socket, rootPath: rootParam));
+  }
+
+  /// D7 Part A.3: upgrades to a WebSocket for a Debug Console session, handed straight to
+  /// [debugSessions] -- same shape as [_handleTerminalUpgrade] above, since spawning a
+  /// debuggable process and streaming DAP bytes bidirectionally is the same problem the terminal
+  /// already solved (trust-check happens inside [DebugSessionManager] itself).
+  Future<void> _handleDebugUpgrade(HttpRequest request) async {
+    final rootParam = request.uri.queryParameters['root'];
+    if (rootParam == null) {
+      await _respond(request, 400, {'error': 'root query parameter is required'});
+      return;
+    }
+    final socket = await WebSocketTransformer.upgrade(request);
+    unawaited(debugSessions.handleConnection(socket, rootPath: rootParam));
   }
 
   /// D5's approval queue (`approval_queue.dart`), read side -- lists every currently-pending

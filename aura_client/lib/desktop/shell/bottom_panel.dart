@@ -4,24 +4,28 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/desktop/debug/debug_console_view.dart';
+import 'package:aura_client/desktop/diagnostics/diagnostics_notifier.dart';
+import 'package:aura_client/desktop/diagnostics/problems_panel.dart';
 import 'package:aura_client/desktop/output/output_panel.dart';
 import 'package:aura_client/desktop/terminal/terminal_view.dart';
 
-class BottomPanel extends StatefulWidget {
+class BottomPanel extends ConsumerStatefulWidget {
   const BottomPanel({super.key});
 
   @override
-  State<BottomPanel> createState() => _BottomPanelState();
+  ConsumerState<BottomPanel> createState() => _BottomPanelState();
 }
 
-class _BottomPanelState extends State<BottomPanel> with SingleTickerProviderStateMixin {
+class _BottomPanelState extends ConsumerState<BottomPanel> with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -34,6 +38,7 @@ class _BottomPanelState extends State<BottomPanel> with SingleTickerProviderStat
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
     final ideDensity = context.ideDensity;
+    final problemsCount = ref.watch(diagnosticsNotifierProvider.select((s) => s.totalCount));
 
     return Container(
       color: palette.surface,
@@ -47,10 +52,11 @@ class _BottomPanelState extends State<BottomPanel> with SingleTickerProviderStat
             ),
             child: TabBar(
               controller: _tabController,
-              tabs: const [
-                Tab(text: 'Terminal'),
-                Tab(text: 'Output'),
-                Tab(text: 'Problems'),
+              tabs: [
+                const Tab(text: 'Terminal'),
+                const Tab(text: 'Output'),
+                Tab(text: problemsCount > 0 ? 'Problems ($problemsCount)' : 'Problems'),
+                const Tab(text: 'Debug Console'),
               ],
               labelColor: palette.textPrimary,
               unselectedLabelColor: palette.textSecondary,
@@ -68,26 +74,12 @@ class _BottomPanelState extends State<BottomPanel> with SingleTickerProviderStat
               children: const [
                 TerminalView(),
                 OutputPanel(),
-                _ProblemsPlaceholder(),
+                ProblemsPanel(),
+                DebugConsoleView(),
               ],
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ProblemsPlaceholder extends StatelessWidget {
-  const _ProblemsPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = AuraPalette.of(context);
-    return Center(
-      child: Text(
-        'Problems (D7)',
-        style: TextStyle(color: palette.textSecondary),
       ),
     );
   }

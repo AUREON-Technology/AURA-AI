@@ -88,6 +88,8 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
     _ideEventSubscription = ref.read(ideEventBusProvider).stream.listen((event) {
       if (event is RequestInlineCompletionRequested) {
         _controller?.executeCommand(const RequestInlineCompletionCommand());
+      } else if (event is RevealPositionRequested && event.path == widget.tab.path) {
+        _controller?.executeCommand(RevealPositionCommand(line: event.line, column: event.column));
       }
     });
   }

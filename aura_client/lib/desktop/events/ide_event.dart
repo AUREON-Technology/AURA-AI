@@ -211,6 +211,16 @@ class RequestInlineCompletionRequested extends IdeEvent {
   const RequestInlineCompletionRequested();
 }
 
+/// D7 Part A.2: the Problems panel asked to reveal a specific position -- the listening editor
+/// content widget only acts if its own open tab's path matches [path] (the caller is responsible
+/// for opening/activating that tab first via `EditorNotifier.openTab`).
+class RevealPositionRequested extends IdeEvent {
+  const RevealPositionRequested(this.path, this.line, this.column);
+  final String path;
+  final int line;
+  final int column;
+}
+
 /// Host events
 class HostConnected extends IdeEvent {
   const HostConnected(this.workspaceId);

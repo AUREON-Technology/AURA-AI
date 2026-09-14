@@ -25,6 +25,7 @@ import 'package:aura_hostd/src/approval_queue.dart';
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/containment.dart';
 import 'package:aura_hostd/src/control_server.dart';
+import 'package:aura_hostd/src/debug_session_manager.dart';
 import 'package:aura_hostd/src/pairing_client.dart';
 import 'package:aura_hostd/src/rpc_client.dart';
 import 'package:aura_hostd/src/task_handler.dart';
@@ -195,6 +196,7 @@ Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) 
     // does precisely so that path works.
     onPaired: (_) => backend.startIfAuthenticated(),
     terminalSessions: TerminalSessionManager(workspaceStore),
+    debugSessions: DebugSessionManager(workspaceStore),
     approvalQueue: approvalQueue,
   );
   await controlServer.start(resolveConfigDir());

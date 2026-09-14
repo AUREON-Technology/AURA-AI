@@ -327,7 +327,12 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
       platform: xterm.TerminalTargetPlatform.windows,
     );
     terminal.onOutput = (data) => sendInput(sessionId, Uint8List.fromList(utf8.encode(data)));
-    terminal.onResize = (width, height, pixelWidth, pixelHeight) => resize(sessionId, width, height);
+    // xterm invokes this synchronously from RenderTerminal.performLayout, so calling
+    // resize() (which mutates provider state) directly here throws Riverpod's
+    // "modify a provider while the widget tree was building" error. Defer to a
+    // microtask so the state update happens after the current frame finishes.
+    terminal.onResize = (width, height, pixelWidth, pixelHeight) =>
+        Future.microtask(() => resize(sessionId, width, height));
     terminal.resize(cols, rows);
     _terminals[sessionId] = terminal;
     return terminal;

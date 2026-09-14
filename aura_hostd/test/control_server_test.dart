@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:aura_hostd/src/approval_queue.dart';
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/control_server.dart';
+import 'package:aura_hostd/src/debug_session_manager.dart';
 import 'package:aura_hostd/src/terminal_session_manager.dart';
 import 'package:aura_hostd/src/workspace_store.dart';
 import 'package:test/test.dart';
@@ -128,6 +129,7 @@ void main() {
       configStore: configStore,
       onPaired: (_) {},
       terminalSessions: TerminalSessionManager(workspaceStore),
+      debugSessions: DebugSessionManager(workspaceStore),
       approvalQueue: approvalQueue,
       logger: (_) {},
     );
@@ -443,6 +445,7 @@ void main() {
       configStore: ConfigStore.forConfigDir(pairingConfigDir),
       onPaired: (token) => paired = token,
       terminalSessions: TerminalSessionManager(WorkspaceStore.forConfigDir(pairingConfigDir)),
+      debugSessions: DebugSessionManager(WorkspaceStore.forConfigDir(pairingConfigDir)),
       approvalQueue: ApprovalQueue(),
       logger: (_) {},
     );
@@ -542,6 +545,88 @@ void main() {
       );
       expect(status, 404);
       expect(body['error'], contains('not a granted root'));
+    });
+  });
+
+  group('debug console (D7 Part A.3)', () {
+    Future<WebSocket> connect() => WebSocket.connect(
+          'ws://127.0.0.1:${client.port}/debug?root=${Uri.encodeComponent(workspaceRoot)}',
+          headers: {HttpHeaders.authorizationHeader: 'Bearer ${client.token}'},
+        );
+
+    test('refuses an untrusted workspace with the terminal\'s own refusal shape', () async {
+      final ws = await connect();
+      addTearDown(ws.close);
+      final iterator = StreamIterator<dynamic>(ws);
+      addTearDown(iterator.cancel);
+      await iterator.moveNext();
+      final decoded = jsonDecode(iterator.current as String) as Map<String, dynamic>;
+      expect(decoded['type'], 'error');
+      expect(decoded['message'], contains('not trusted'));
+    });
+
+    test('start spawns a real debugpy process and tunnels DAP bytes both ways', () async {
+      final roots = workspaceStore.load();
+      roots.setTrusted(workspaceRoot, true);
+      workspaceStore.save(roots);
+      File('${workspaceDir.path}/script.py').writeAsStringSync('import time\ntime.sleep(30)\n');
+
+      final ws = await connect();
+      addTearDown(ws.close);
+      final iterator = StreamIterator<dynamic>(ws);
+      addTearDown(iterator.cancel);
+
+      ws.add(jsonEncode({'type': 'start', 'script_path': 'script.py'}));
+
+      // debugpy importing + binding a fresh interpreter can take a few seconds -- generous but
+      // bounded, matching _connectTimeout's own budget in debug_session_manager.dart.
+      await iterator.moveNext().timeout(const Duration(seconds: 20));
+      final started = jsonDecode(iterator.current as String) as Map<String, dynamic>;
+      expect(started['type'], 'started');
+      expect(started['session_id'], isA<String>());
+      expect(started['pid'], isA<int>());
+
+      // Send a real DAP `initialize` request over the tunnel and expect the daemon to relay
+      // debugpy's own reply back as a `dap` frame -- proves bytes actually flow both ways, not
+      // just that a process was spawned.
+      final initializeBody = jsonEncode({
+        'seq': 1,
+        'type': 'request',
+        'command': 'initialize',
+        'arguments': {'adapterID': 'aura_hostd_test', 'linesStartAt1': true, 'columnsStartAt1': true},
+      });
+      final framed = 'Content-Length: ${utf8.encode(initializeBody).length}\r\n\r\n$initializeBody';
+      ws.add(jsonEncode({'type': 'dap', 'data': base64Encode(utf8.encode(framed))}));
+
+      await iterator.moveNext().timeout(const Duration(seconds: 10));
+      final dapFrame = jsonDecode(iterator.current as String) as Map<String, dynamic>;
+      expect(dapFrame['type'], 'dap');
+      final relayed = utf8.decode(base64Decode(dapFrame['data'] as String));
+      expect(relayed, contains('Content-Length'));
+
+      ws.add(jsonEncode({'type': 'close'}));
+      // Give the killed debugpy child process (a real Windows process, not a mock) time to
+      // release its file handles on script.py before the shared tearDown deletes workspaceDir --
+      // otherwise that delete can race a process that received the kill signal but hasn't
+      // finished exiting yet.
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+    });
+
+    test('start refuses a script path outside the granted root', () async {
+      final roots = workspaceStore.load();
+      roots.setTrusted(workspaceRoot, true);
+      workspaceStore.save(roots);
+
+      final ws = await connect();
+      addTearDown(ws.close);
+      final iterator = StreamIterator<dynamic>(ws);
+      addTearDown(iterator.cancel);
+
+      ws.add(jsonEncode({'type': 'start', 'script_path': '../outside.py'}));
+      await iterator.moveNext().timeout(const Duration(seconds: 5));
+      final decoded = jsonDecode(iterator.current as String) as Map<String, dynamic>;
+      expect(decoded['type'], 'error');
+      expect(decoded['message'], contains('outside the granted workspace root'));
     });
   });
 }
