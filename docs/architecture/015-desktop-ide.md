@@ -204,7 +204,7 @@ D10 — Personal AI OS Desktop
 | `HostdControlClient` | Explorer read + grant roots |
 | `HostDaemonPage` | Full settings; slim `HostPanel` in IDE sidebar footer |
 | `HostFileBrowserPage` | Delegate listing to shared `ExplorerService` |
-| `SandboxFileView` / diff widgets | **Not moved yet** — D6 diff review |
+| `SandboxDiffView` | Reused directly in the D5 Git panel's diff view (imported, not reimplemented) |
 | `ChatPage` | Agent panel placeholder → embed or route `/chat` in secondary sidebar in D6 |
 | `engineer_run_repository` | Task center D8 |
 | `AuraPalette` / `AuraTypography` | Extend, don't replace |
