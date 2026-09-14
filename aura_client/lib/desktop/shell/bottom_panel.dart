@@ -5,6 +5,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/desktop/terminal/terminal_view.dart';
 
 class BottomPanel extends StatefulWidget {
   const BottomPanel({super.key});
@@ -64,31 +65,13 @@ class _BottomPanelState extends State<BottomPanel> with SingleTickerProviderStat
             child: TabBarView(
               controller: _tabController,
               children: const [
-                _TerminalPlaceholder(),
+                TerminalView(),
                 _OutputPlaceholder(),
                 _ProblemsPlaceholder(),
               ],
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _TerminalPlaceholder extends StatelessWidget {
-  const _TerminalPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = AuraPalette.of(context);
-    return Container(
-      color: Colors.black,
-      child: Center(
-        child: Text(
-          'Terminal (D4)',
-          style: TextStyle(color: palette.textSecondary, fontFamily: 'Courier', fontSize: 14),
-        ),
       ),
     );
   }
