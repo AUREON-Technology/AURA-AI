@@ -122,12 +122,20 @@ class _TerminalViewState extends ConsumerState<TerminalView> {
       child: Column(
         children: [
           Expanded(
-            child: xterm.TerminalView(
-              terminal,
-              theme: _theme,
-              textStyle: const xterm.TerminalStyle(fontFamily: 'Courier', fontSize: 12, height: 1.4),
-              autofocus: true,
-              padding: const EdgeInsets.all(AuraSpacing.sm),
+            // xterm.TerminalView emits a semantics node per visible cell/row, and repaints
+            // (output bursts, resizes) faster than the Windows embedder's native ui::AXTree
+            // bridge can reconcile within one update -- logged as "Nodes left pending by the
+            // update". Those per-cell nodes carry no meaningful label for a screen reader
+            // anyway, so excluding the whole grid from the semantics tree removes the churn
+            // at its source instead of just silencing the symptom.
+            child: ExcludeSemantics(
+              child: xterm.TerminalView(
+                terminal,
+                theme: _theme,
+                textStyle: const xterm.TerminalStyle(fontFamily: 'Courier', fontSize: 12, height: 1.4),
+                autofocus: true,
+                padding: const EdgeInsets.all(AuraSpacing.sm),
+              ),
             ),
           ),
           if (!session.isRunning)
