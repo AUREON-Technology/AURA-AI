@@ -133,6 +133,22 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # Desktop Engineer host daemon WebSocket (ADR-011). Same WS-vs-catch-all conflict as
+    # voice/live above -- must sit before the catch-all / location.
+    location /api/v3/host/agent {
+        proxy_pass http://127.0.0.1:__GATEWAY_PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     location /api/v3/chat/stream {
         limit_req zone=aura_chat burst=5 nodelay;
 

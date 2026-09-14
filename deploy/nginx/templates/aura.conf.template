@@ -134,6 +134,22 @@ server {
         include /etc/nginx/conf.d/proxy_headers.inc;
     }
 
+    # ------------------------------------------------------------ desktop Engineer host daemon
+    # Same WS-vs-generic-/api/ conflict as voice/live above: this is a WebSocket-only route
+    # (ADR-011, aura_core/api/host_agent.py -- @router.websocket, no plain-HTTP handler), so it
+    # must sit ahead of the generic /api/ location or nginx forwards a plain GET that the app
+    # can only answer with 404.
+    location /api/v3/host/agent {
+        proxy_pass http://aura_gateway;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        include /etc/nginx/conf.d/proxy_headers.inc;
+    }
+
     # ------------------------------------------------------------ streaming chat
     location /api/v3/chat/stream {
         limit_req zone=aura_chat burst=5 nodelay;
@@ -321,6 +337,19 @@ server {
     set $aura_dev_console aura-dev-console:3000;
 
     location /api/v3/voice/live {
+        proxy_pass http://$aura_dev_gateway;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        include /etc/nginx/conf.d/proxy_headers.inc;
+    }
+
+    # Same WS-vs-generic-/api/ conflict as voice/live above -- see the matching comment on the
+    # prod HTTPS server block.
+    location /api/v3/host/agent {
         proxy_pass http://$aura_dev_gateway;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
