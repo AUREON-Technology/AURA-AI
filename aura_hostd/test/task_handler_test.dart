@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:aura_hostd/src/approval_queue.dart';
 import 'package:aura_hostd/src/containment.dart';
 import 'package:aura_hostd/src/task_handler.dart';
 import 'package:path/path.dart' as p;
@@ -174,6 +175,67 @@ void main() {
       expect(result['exit_code'], 0);
       expect((result['stdout'] as String).length, lessThanOrEqualTo(500000));
       expect(result['stderr'], contains('truncated'));
+    }, testOn: '!windows');
+  });
+
+  group('needsApproval consent tier (D5)', () {
+    late ApprovalQueue approvals;
+
+    setUp(() {
+      approvals = ApprovalQueue();
+      handler = TaskHandler(roots, approvals);
+    });
+
+    test(
+        'a non-allowlisted command in an untrusted workspace queues for approval instead of '
+        'running immediately, then runs once approved', () async {
+      final future = handler.run({
+        'command': ['sh', '-c', 'echo hello > written.txt'],
+        'timeout_s': 5.0,
+      });
+      // `run()` executes synchronously up to the first real suspension point -- the queue
+      // registration below has already happened by the time `run()` returns a Future.
+      expect(approvals.list(), hasLength(1));
+      expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isFalse);
+
+      approvals.respond(approvals.list().single.id, true);
+      final result = await future;
+      expect(result['exit_code'], 0);
+      expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isTrue);
+    }, testOn: '!windows');
+
+    test('rejecting a queued command throws and never runs it', () async {
+      final future = handler.run({
+        'command': ['sh', '-c', 'echo hello > written.txt'],
+        'timeout_s': 5.0,
+      });
+      approvals.respond(approvals.list().single.id, false);
+      await expectLater(future, throwsA(isA<RpcError>()));
+      expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isFalse);
+    }, testOn: '!windows');
+
+    test(
+        'an approved command is refused if its workspace root was revoked while the approval '
+        'was pending (post-approval revalidation)', () async {
+      final future = handler.run({
+        'command': ['sh', '-c', 'echo hello > written.txt'],
+        'timeout_s': 5.0,
+      });
+      final pending = approvals.list().single;
+      roots.removeRoot(workspaceDir.path);
+      approvals.respond(pending.id, true);
+      await expectLater(future, throwsA(isA<RpcError>()));
+      expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isFalse);
+    }, testOn: '!windows');
+
+    test('a trusted workspace never queues -- the command runs immediately', () async {
+      roots.setTrusted(workspaceDir.path, true);
+      final result = await handler.run({
+        'command': ['sh', '-c', 'echo hello > written.txt'],
+        'timeout_s': 5.0,
+      });
+      expect(result['exit_code'], 0);
+      expect(approvals.list(), isEmpty);
     }, testOn: '!windows');
   });
 }

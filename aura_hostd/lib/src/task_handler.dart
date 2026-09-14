@@ -12,6 +12,7 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'approval_queue.dart';
 import 'command_policy.dart';
 import 'containment.dart';
 
@@ -44,9 +45,15 @@ const _maxOutputCapChars = 500000;
 typedef OutputChunkCallback = void Function(String stream, String data);
 
 class TaskHandler {
-  TaskHandler(this._roots);
+  TaskHandler(this._roots, [ApprovalQueue? approvalQueue]) : _approvals = approvalQueue ?? ApprovalQueue();
 
   final WorkspaceRoots _roots;
+
+  /// D5's interactive consent queue -- see `approval_queue.dart`. Defaults to a private instance
+  /// when not supplied, so every pre-D5 call site (a single positional `TaskHandler(roots)`, in
+  /// tests and in `bin/aura_hostd.dart`) keeps compiling unchanged; `bin/aura_hostd.dart` passes
+  /// the same queue instance `ControlServer` uses, so `GET /approvals` sees what `run` queues.
+  final ApprovalQueue _approvals;
   final Set<String> _activeTaskIds = {};
 
   Future<Map<String, Object?>> createTask(Map<String, dynamic> params) async {
@@ -116,8 +123,11 @@ class TaskHandler {
 
     final commandForPolicy = _effectiveShellCommand(commandArgv);
     final verdict = evaluateCommand(commandForPolicy, workspaceTrusted: root.trusted);
-    if (!verdict.isAllowed) {
+    if (verdict.decision == CommandDecision.deny) {
       throw RpcError('command refused: ${verdict.reason}');
+    }
+    if (verdict.decision == CommandDecision.needsApproval) {
+      await _awaitApproval(commandForPolicy, cwd: cwd, root: root);
     }
 
     final timeout = Duration(
@@ -191,6 +201,41 @@ class TaskHandler {
       'stderr': stderrBuf.toString(),
       'exit_code': exitCode,
     };
+  }
+
+  /// Queues [command] for interactive approval and blocks until a human answers or it times out
+  /// (`approval_queue.dart`'s [approvalTimeout]). On approval, re-derives the command's identity
+  /// hash from the *current* call context and compares it against the hash the approval was
+  /// bound to at request time -- if the root this [cwd] resolves under has changed (e.g. revoked)
+  /// since the request was queued, the hashes diverge and this refuses to run rather than
+  /// executing something the human no longer sees the same context for (D5 plan design decision
+  /// 5). Throws [RpcError] on rejection, expiry, or a revalidation mismatch; returns normally only
+  /// when the exact operation that was approved is still safe to run.
+  Future<void> _awaitApproval(String command, {required String cwd, required WorkspaceRoot root}) async {
+    final approval = _approvals.create(canonicalCommand: command, cwd: cwd, rootPath: root.canonicalPath);
+    final status = await _approvals.awaitDecision(approval);
+    switch (status) {
+      case ApprovalStatus.approved:
+        break;
+      case ApprovalStatus.rejected:
+        throw RpcError('command was rejected by the user: $command');
+      case ApprovalStatus.expired:
+        throw RpcError('command approval timed out waiting for a response: $command');
+      case ApprovalStatus.cancelled:
+        throw RpcError('command approval was cancelled: $command');
+      case ApprovalStatus.pending:
+        throw RpcError('command approval resolved with no decision -- this should not happen');
+    }
+    final currentRoot = _roots.findContainingRoot(cwd);
+    final currentHash = currentRoot == null
+        ? null
+        : PendingApproval.hashFor(command: command, cwd: cwd, rootPath: currentRoot.canonicalPath);
+    if (currentHash != approval.commandHash) {
+      throw RpcError(
+        'command context changed since it was approved (workspace root no longer matches) -- '
+        'refusing to run: $command',
+      );
+    }
   }
 
   String _requireString(Map<String, dynamic> params, String key) {

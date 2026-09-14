@@ -77,7 +77,11 @@ final List<RegExp> readOnlyAllowlistPatterns = [
   RegExp(r'^(node|python3?|dart|flutter)\s+--version\b'),
 ];
 
-enum CommandDecision { allow, deny }
+/// `needsApproval` is D5's interactive consent tier (`docs/architecture/015-desktop-ide.md`):
+/// a command that is neither hard-denied nor allowlisted, in an untrusted workspace, is queued
+/// for a human to approve or reject through the Desktop IDE rather than refused outright -- see
+/// `approval_queue.dart` and `task_handler.dart::run`, which is the only caller that acts on it.
+enum CommandDecision { allow, deny, needsApproval }
 
 class CommandVerdict {
   const CommandVerdict(this.decision, this.reason);
@@ -87,7 +91,15 @@ class CommandVerdict {
   bool get isAllowed => decision == CommandDecision.allow;
 }
 
-CommandVerdict evaluateCommand(String command, {required bool workspaceTrusted}) {
+/// [allowApprovalQueue] controls what the final, otherwise-unhandled case resolves to: a
+/// `needsApproval` verdict (default) when a human might be watching to answer it, or a flat
+/// `deny` when nobody is -- a future headless-only invocation path can pass `false` to keep the
+/// pre-D5 "refuse outright" behavior instead of queuing something nobody will ever see.
+CommandVerdict evaluateCommand(
+  String command, {
+  required bool workspaceTrusted,
+  bool allowApprovalQueue = true,
+}) {
   final trimmed = command.trim();
   for (final pattern in hardDenylistPatterns) {
     if (pattern.hasMatch(trimmed)) {
@@ -104,7 +116,8 @@ CommandVerdict evaluateCommand(String command, {required bool workspaceTrusted})
     return const CommandVerdict(
       CommandDecision.deny,
       'untrusted workspaces only run a single simple read-only command -- no chaining (&&, ;, '
-      '|), redirection, substitution, or backticks',
+      '|), redirection, substitution, or backticks -- this is a hard floor, never queued for '
+      'approval',
     );
   }
   for (final pattern in readOnlyAllowlistPatterns) {
@@ -115,10 +128,17 @@ CommandVerdict evaluateCommand(String command, {required bool workspaceTrusted})
       );
     }
   }
+  if (allowApprovalQueue) {
+    return const CommandVerdict(
+      CommandDecision.needsApproval,
+      'workspace is not trusted and this command is not on the read-only allowlist -- queued '
+      'for interactive approval in the Desktop IDE',
+    );
+  }
   return const CommandVerdict(
     CommandDecision.deny,
     'workspace is not trusted and this command is not on the read-only allowlist -- run '
-    '`aura_hostd trust <path>` for this workspace, or wait for interactive per-call approval '
-    '(not yet implemented -- see docs/architecture/011-desktop-engineer-agent.md)',
+    '`aura_hostd trust <path>` for this workspace, or connect a Desktop IDE session to answer '
+    'interactive approval requests',
   );
 }

@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:aura_hostd/src/approval_queue.dart';
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/control_server.dart';
 import 'package:aura_hostd/src/terminal_session_manager.dart';
@@ -106,6 +107,7 @@ void main() {
   late String workspaceRoot;
   late WorkspaceStore workspaceStore;
   late ConfigStore configStore;
+  late ApprovalQueue approvalQueue;
   late ControlServer server;
   late _ControlClient client;
 
@@ -120,11 +122,13 @@ void main() {
     workspaceRoot = roots.addRoot(workspaceDir.path, trusted: false).canonicalPath;
     workspaceStore.save(roots);
 
+    approvalQueue = ApprovalQueue();
     server = ControlServer(
       workspaceStore: workspaceStore,
       configStore: configStore,
       onPaired: (_) {},
       terminalSessions: TerminalSessionManager(workspaceStore),
+      approvalQueue: approvalQueue,
       logger: (_) {},
     );
     await server.start(configDir);
@@ -225,6 +229,183 @@ void main() {
     expect(status, 404);
   });
 
+  test('GET /approvals is empty when nothing is pending', () async {
+    final (status, body) = await client.request('GET', '/approvals');
+    expect(status, 200);
+    expect(body['approvals'], isEmpty);
+  });
+
+  test('GET /approvals lists a pending approval with the redacted command, never the raw one', () async {
+    approvalQueue.create(
+      canonicalCommand: 'curl -H "Authorization: Bearer sk-real-secret" https://example.com',
+      cwd: workspaceRoot,
+      rootPath: workspaceRoot,
+    );
+    final (status, body) = await client.request('GET', '/approvals');
+    expect(status, 200);
+    final approvals = body['approvals'] as List;
+    expect(approvals, hasLength(1));
+    final command = approvals.single['command'] as String;
+    expect(command, isNot(contains('sk-real-secret')));
+    expect(jsonEncode(body), isNot(contains('sk-real-secret')));
+  });
+
+  test('POST /approvals/<id>/respond approves and removes it from the pending list', () async {
+    final approval =
+        approvalQueue.create(canonicalCommand: 'npm test', cwd: workspaceRoot, rootPath: workspaceRoot);
+    final (status, body) =
+        await client.request('POST', '/approvals/${approval.id}/respond', body: {'approved': true});
+    expect(status, 200);
+    expect(body['ok'], true);
+    expect(await approval.decision, ApprovalStatus.approved);
+    final (_, listBody) = await client.request('GET', '/approvals');
+    expect(listBody['approvals'], isEmpty);
+  });
+
+  test('POST /approvals/<id>/respond 404s an unknown id', () async {
+    final (status, body) =
+        await client.request('POST', '/approvals/appr_does_not_exist/respond', body: {'approved': true});
+    expect(status, 404);
+    expect(body['error'], contains('no such pending approval'));
+  });
+
+  test('POST /approvals/<id>/respond is idempotent on an already-resolved id', () async {
+    final approval =
+        approvalQueue.create(canonicalCommand: 'npm test', cwd: workspaceRoot, rootPath: workspaceRoot);
+    final (firstStatus, _) =
+        await client.request('POST', '/approvals/${approval.id}/respond', body: {'approved': true});
+    final (secondStatus, _) =
+        await client.request('POST', '/approvals/${approval.id}/respond', body: {'approved': false});
+    expect(firstStatus, 200);
+    expect(secondStatus, 200, reason: 'a duplicate response is a harmless no-op, not an error');
+    expect(await approval.decision, ApprovalStatus.approved, reason: 'the first decision wins');
+  });
+
+  test('POST /approvals/<id>/respond refuses a missing token like every other non-status route', () async {
+    approvalQueue.create(canonicalCommand: 'npm test', cwd: workspaceRoot, rootPath: workspaceRoot);
+    final (status, _) = await client.request(
+      'GET',
+      '/approvals',
+      withToken: false,
+    );
+    expect(status, 401);
+  });
+
+  Future<void> initGitRepo() async {
+    Future<void> git(List<String> args) => Process.run('git', args, workingDirectory: workspaceDir.path);
+    await git(['init', '-q', '-b', 'main']);
+    await git(['config', 'user.name', 'Test User']);
+    await git(['config', 'user.email', 'test@example.com']);
+    await git(['add', 'hello.txt']);
+    await git(['commit', '-q', '-m', 'initial']);
+  }
+
+  test('GET /git/status on a non-git-repo workspace returns a clean 409, not a 500', () async {
+    final (status, body) = await client.request('GET', '/git/status?root=${Uri.encodeComponent(workspaceRoot)}');
+    expect(status, 409);
+    expect(body['error'], contains('not a git repository'));
+  });
+
+  test('GET /git/status reports a real change after init', () async {
+    await initGitRepo();
+    File('${workspaceDir.path}/hello.txt').writeAsStringSync('changed');
+    final (status, body) = await client.request('GET', '/git/status?root=${Uri.encodeComponent(workspaceRoot)}');
+    expect(status, 200);
+    expect(body['branch'], 'main');
+    expect((body['files'] as List).single['path'], 'hello.txt');
+  });
+
+  test('GET /git/diff distinguishes workingTree from staged scope', () async {
+    await initGitRepo();
+    File('${workspaceDir.path}/hello.txt').writeAsStringSync('changed content');
+    final (workingStatus, workingBody) = await client.request(
+      'GET',
+      '/git/diff?root=${Uri.encodeComponent(workspaceRoot)}',
+    );
+    expect(workingStatus, 200);
+    expect(workingBody['diff'], contains('changed content'));
+    final (stagedStatus, stagedBody) = await client.request(
+      'GET',
+      '/git/diff?root=${Uri.encodeComponent(workspaceRoot)}&staged=true',
+    );
+    expect(stagedStatus, 200);
+    expect(stagedBody['diff'], isEmpty);
+  });
+
+  test('GET /git/log lists the initial commit', () async {
+    await initGitRepo();
+    final (status, body) = await client.request('GET', '/git/log?root=${Uri.encodeComponent(workspaceRoot)}');
+    expect(status, 200);
+    expect((body['commits'] as List).single['subject'], 'initial');
+  });
+
+  test('POST /git/stage then /git/commit runs a real commit reflecting only what was staged', () async {
+    await initGitRepo();
+    File('${workspaceDir.path}/hello.txt').writeAsStringSync('staged change');
+    File('${workspaceDir.path}/untracked.txt').writeAsStringSync('not staged');
+
+    final (stageStatus, _) = await client.request(
+      'POST',
+      '/git/stage',
+      body: {
+        'root': workspaceRoot,
+        'paths': ['hello.txt'],
+      },
+    );
+    expect(stageStatus, 200);
+
+    final (commitStatus, commitBody) = await client.request(
+      'POST',
+      '/git/commit',
+      body: {'root': workspaceRoot, 'message': 'stage exactly what was staged'},
+    );
+    expect(commitStatus, 200);
+    expect(commitBody['ok'], true);
+
+    final (_, statusBody) = await client.request('GET', '/git/status?root=${Uri.encodeComponent(workspaceRoot)}');
+    final paths = (statusBody['files'] as List).map((f) => f['path']).toSet();
+    expect(paths, contains('untracked.txt'));
+    expect(paths, isNot(contains('hello.txt')));
+  });
+
+  test('POST /git/commit with nothing staged responds 409 with reason nothing_staged', () async {
+    await initGitRepo();
+    final (status, body) = await client.request(
+      'POST',
+      '/git/commit',
+      body: {'root': workspaceRoot, 'message': 'empty'},
+    );
+    expect(status, 409);
+    expect(body['reason'], 'nothing_staged');
+  });
+
+  test('POST /git/checkout create:true creates a branch', () async {
+    await initGitRepo();
+    final (status, body) = await client.request(
+      'POST',
+      '/git/checkout',
+      body: {'root': workspaceRoot, 'branch': 'feature-x', 'create': true},
+    );
+    expect(status, 200);
+    expect(body['branch'], 'feature-x');
+  });
+
+  test('git write routes work in an untrusted workspace (no root.trusted gate, no approval queue)', () async {
+    // workspaceRoot was granted with trusted: false in setUp -- this is the whole point of
+    // design decision 1: a human's own click in the Git panel is the consent.
+    await initGitRepo();
+    final (stageStatus, _) = await client.request(
+      'POST',
+      '/git/stage',
+      body: {
+        'root': workspaceRoot,
+        'paths': ['hello.txt'],
+      },
+    );
+    expect(stageStatus, 200);
+    expect(approvalQueue.list(), isEmpty, reason: 'a Git panel write never goes through the approval queue');
+  });
+
   test('POST /pair/start returns the code immediately, before any approval', () async {
     final fakeBackend = await _FakeAuthServer.start(
       userCode: 'AB3D-9XYZ',
@@ -262,6 +443,7 @@ void main() {
       configStore: ConfigStore.forConfigDir(pairingConfigDir),
       onPaired: (token) => paired = token,
       terminalSessions: TerminalSessionManager(WorkspaceStore.forConfigDir(pairingConfigDir)),
+      approvalQueue: ApprovalQueue(),
       logger: (_) {},
     );
     await pairingServer.start(pairingConfigDir);

@@ -24,8 +24,10 @@ import 'dart:math';
 
 import 'package:path/path.dart' as p;
 
+import 'approval_queue.dart';
 import 'config.dart';
 import 'containment.dart';
+import 'git_service.dart';
 import 'pairing_client.dart';
 import 'terminal_session_manager.dart';
 import 'workspace_store.dart';
@@ -42,12 +44,24 @@ class ControlServer {
     required this.configStore,
     required this.onPaired,
     required this.terminalSessions,
+    required this.approvalQueue,
+    GitService? gitService,
     ControlServerLogger? logger,
-  }) : _logger = logger ?? _defaultLogger;
+  })  : gitService = gitService ?? GitService(),
+        _logger = logger ?? _defaultLogger;
 
   final WorkspaceStore workspaceStore;
   final ConfigStore configStore;
   final TerminalSessionManager terminalSessions;
+
+  /// D5's interactive consent queue -- the same instance `TaskHandler` queues commands into, so
+  /// `GET /approvals` and `POST /approvals/<id>/respond` here act on exactly what `run` is
+  /// waiting on. See `approval_queue.dart`.
+  final ApprovalQueue approvalQueue;
+
+  /// D5's direct-loopback git execution for the Source Control panel -- see `git_service.dart`'s
+  /// doc comment for why this is a hard human-only boundary, never reachable via `TaskHandler`.
+  final GitService gitService;
 
   /// Called once a `GET /pair/status` poll finds the pairing approved -- the caller (`bin/
   /// aura_hostd.dart`) uses this to start the backend WebSocket connection if it wasn't already
@@ -95,6 +109,14 @@ class ControlServer {
         await _respond(request, 401, {'error': 'missing or invalid control token'});
         return;
       }
+      final segments = request.uri.pathSegments;
+      if (request.method == 'POST' &&
+          segments.length == 3 &&
+          segments[0] == 'approvals' &&
+          segments[2] == 'respond') {
+        await _handleApprovalRespond(request, segments[1]);
+        return;
+      }
       switch ('${request.method} ${request.uri.path}') {
         case 'GET /status':
           await _handleStatus(request);
@@ -108,6 +130,22 @@ class ControlServer {
           await _handleRead(request);
         case 'GET /terminal':
           await _handleTerminalUpgrade(request);
+        case 'GET /approvals':
+          await _handleApprovalsList(request);
+        case 'GET /git/status':
+          await _handleGitStatus(request);
+        case 'GET /git/diff':
+          await _handleGitDiff(request);
+        case 'GET /git/log':
+          await _handleGitLog(request);
+        case 'POST /git/stage':
+          await _handleGitStage(request, unstage: false);
+        case 'POST /git/unstage':
+          await _handleGitStage(request, unstage: true);
+        case 'POST /git/commit':
+          await _handleGitCommit(request);
+        case 'POST /git/checkout':
+          await _handleGitCheckout(request);
         case 'POST /pair/start':
           await _handlePairStart(request);
         case 'GET /pair/status':
@@ -285,6 +323,194 @@ class ControlServer {
     }
     final socket = await WebSocketTransformer.upgrade(request);
     unawaited(terminalSessions.handleConnection(socket, rootPath: rootParam));
+  }
+
+  /// D5's approval queue (`approval_queue.dart`), read side -- lists every currently-pending
+  /// approval a Desktop IDE session should surface to the user. Only [PendingApproval.displayCommand]
+  /// (redacted) ever leaves this process; [PendingApproval.canonicalCommand] is never serialized.
+  Future<void> _handleApprovalsList(HttpRequest request) async {
+    await _respond(request, 200, {'approvals': approvalQueue.list().map((a) => a.toJson()).toList()});
+  }
+
+  /// D5's approval queue, write side -- `POST /approvals/<id>/respond` with body
+  /// `{"approved": bool}`. `404` for an id that was never created; `200` idempotently for one
+  /// that already resolved (approved/rejected/expired), matching [ApprovalQueue.respond]'s own
+  /// idempotency so a duplicate click from the UI is harmless rather than an error.
+  Future<void> _handleApprovalRespond(HttpRequest request, String id) async {
+    final body = await _readJsonBody(request);
+    final approved = body['approved'];
+    if (approved is! bool) {
+      await _respond(request, 400, {'error': '"approved" (bool) is required'});
+      return;
+    }
+    final found = approvalQueue.respond(id, approved);
+    if (!found) {
+      await _respond(request, 404, {'error': 'no such pending approval (resolved or expired)'});
+      return;
+    }
+    await _respond(request, 200, {'ok': true});
+  }
+
+  /// D5's Source Control panel, read routes -- see `git_service.dart`'s doc comment for why
+  /// these (and the write routes below) are a hard human-only boundary, never reachable via
+  /// `TaskHandler`/the approval queue.
+  Future<void> _handleGitStatus(HttpRequest request) async {
+    final rootParam = request.uri.queryParameters['root'];
+    if (rootParam == null) {
+      await _respond(request, 400, {'error': 'root query parameter is required'});
+      return;
+    }
+    try {
+      final root = _requireRoot(workspaceStore.load(), rootParam);
+      await _respond(request, 200, await gitService.status(root.canonicalPath));
+    } on RootNotFoundError {
+      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+    } on GitNotARepositoryError {
+      await _respond(request, 409, {'error': 'not a git repository'});
+    } on GitDecodeError catch (error) {
+      await _respond(request, 415, {'error': error.message});
+    } on GitCommandError catch (error) {
+      await _respond(request, 500, {'error': error.message});
+    }
+  }
+
+  Future<void> _handleGitDiff(HttpRequest request) async {
+    final rootParam = request.uri.queryParameters['root'];
+    if (rootParam == null) {
+      await _respond(request, 400, {'error': 'root query parameter is required'});
+      return;
+    }
+    final relativeFile = request.uri.queryParameters['file'];
+    final scope =
+        request.uri.queryParameters['staged'] == 'true' ? GitDiffScope.staged : GitDiffScope.workingTree;
+    final roots = workspaceStore.load();
+    try {
+      final root = _requireRoot(roots, rootParam);
+      final resolvedFile = relativeFile == null ? null : roots.requireContained(root, relativeFile);
+      await _respond(request, 200, await gitService.diff(root.canonicalPath, file: resolvedFile, scope: scope));
+    } on RootNotFoundError {
+      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+    } on ContainmentViolation catch (error) {
+      await _respond(request, 403, {'error': error.message});
+    } on GitNotARepositoryError {
+      await _respond(request, 409, {'error': 'not a git repository'});
+    } on GitDecodeError catch (error) {
+      await _respond(request, 415, {'error': error.message});
+    } on GitCommandError catch (error) {
+      await _respond(request, 500, {'error': error.message});
+    }
+  }
+
+  Future<void> _handleGitLog(HttpRequest request) async {
+    final rootParam = request.uri.queryParameters['root'];
+    if (rootParam == null) {
+      await _respond(request, 400, {'error': 'root query parameter is required'});
+      return;
+    }
+    final limit = int.tryParse(request.uri.queryParameters['limit'] ?? '') ?? 30;
+    try {
+      final root = _requireRoot(workspaceStore.load(), rootParam);
+      await _respond(request, 200, await gitService.log(root.canonicalPath, limit: limit));
+    } on RootNotFoundError {
+      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+    } on GitNotARepositoryError {
+      await _respond(request, 409, {'error': 'not a git repository'});
+    } on GitDecodeError catch (error) {
+      await _respond(request, 415, {'error': error.message});
+    } on GitCommandError catch (error) {
+      await _respond(request, 500, {'error': error.message});
+    }
+  }
+
+  /// D5's Source Control panel, write routes -- reachable only by a human's own click in the Git
+  /// panel, so unlike every agent-facing command these run unconditionally: no `root.trusted`
+  /// check, no approval queue (design decision 1).
+  Future<void> _handleGitStage(HttpRequest request, {required bool unstage}) async {
+    final body = await _readJsonBody(request);
+    final rootParam = body['root'] as String?;
+    if (rootParam == null) {
+      await _respond(request, 400, {'error': 'root is required'});
+      return;
+    }
+    final all = body['all'] == true;
+    final rawPaths = (body['paths'] as List?)?.cast<Object?>().map((e) => e.toString()).toList() ?? const [];
+    if (!all && rawPaths.isEmpty) {
+      await _respond(request, 400, {'error': 'paths (or all: true) is required'});
+      return;
+    }
+    final roots = workspaceStore.load();
+    try {
+      final root = _requireRoot(roots, rootParam);
+      final paths = all ? ['.'] : rawPaths.map((relative) => roots.requireContained(root, relative)).toList();
+      final result = unstage
+          ? await gitService.unstage(root.canonicalPath, paths)
+          : await gitService.stage(root.canonicalPath, paths);
+      await _respond(request, 200, result);
+    } on RootNotFoundError {
+      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+    } on ContainmentViolation catch (error) {
+      await _respond(request, 403, {'error': error.message});
+    } on GitNotARepositoryError {
+      await _respond(request, 409, {'error': 'not a git repository'});
+    } on GitDecodeError catch (error) {
+      await _respond(request, 415, {'error': error.message});
+    } on GitCommandError catch (error) {
+      await _respond(request, 500, {'error': error.message});
+    }
+  }
+
+  Future<void> _handleGitCommit(HttpRequest request) async {
+    final body = await _readJsonBody(request);
+    final rootParam = body['root'] as String?;
+    final message = body['message'] as String?;
+    if (rootParam == null || message == null || message.trim().isEmpty) {
+      await _respond(request, 400, {'error': 'root and a non-empty message are required'});
+      return;
+    }
+    try {
+      final root = _requireRoot(workspaceStore.load(), rootParam);
+      final result = await gitService.commit(root.canonicalPath, message);
+      await _respond(request, result['ok'] == false ? 409 : 200, result);
+    } on RootNotFoundError {
+      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+    } on GitNotARepositoryError {
+      await _respond(request, 409, {'error': 'not a git repository'});
+    } on GitDecodeError catch (error) {
+      await _respond(request, 415, {'error': error.message});
+    } on GitCommandError catch (error) {
+      await _respond(request, 500, {'error': error.message});
+    }
+  }
+
+  Future<void> _handleGitCheckout(HttpRequest request) async {
+    final body = await _readJsonBody(request);
+    final rootParam = body['root'] as String?;
+    final branch = body['branch'] as String?;
+    final create = body['create'] == true;
+    if (rootParam == null || branch == null || branch.trim().isEmpty) {
+      await _respond(request, 400, {'error': 'root and branch are required'});
+      return;
+    }
+    try {
+      final root = _requireRoot(workspaceStore.load(), rootParam);
+      final result = await gitService.checkout(root.canonicalPath, branch, create: create);
+      await _respond(request, result['ok'] == false ? 409 : 200, result);
+    } on RootNotFoundError {
+      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+    } on GitNotARepositoryError {
+      await _respond(request, 409, {'error': 'not a git repository'});
+    } on GitDecodeError catch (error) {
+      await _respond(request, 415, {'error': error.message});
+    } on GitCommandError catch (error) {
+      await _respond(request, 500, {'error': error.message});
+    }
+  }
+
+  WorkspaceRoot _requireRoot(WorkspaceRoots roots, String rootParam) {
+    return roots.all.firstWhere(
+      (r) => r.canonicalPath == rootParam,
+      orElse: () => throw RootNotFoundError(rootParam),
+    );
   }
 
   /// Starts a pairing session (`pairing_client.dart::startPairing`, the same first step

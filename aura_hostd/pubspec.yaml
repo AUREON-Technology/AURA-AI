@@ -23,10 +23,16 @@ environment:
 # no C toolchain requirement), and is already present transitively in `aura_client`'s own
 # dependency tree, so this does not introduce a new supply-chain element for anyone already
 # auditing that app.
+#
+# `crypto` (D5, interactive consent tiers) is the dart.dev team's own hashing package -- pure Dart,
+# no FFI, no transitive deps -- used by `approval_queue.dart` to bind a pending approval to the
+# exact command/cwd/root/workspace it was requested for, so a decision made after a human's review
+# delay can be checked against tampering before it executes rather than trusted by id alone.
 dependencies:
   path: ^1.9.1
   win32: ^5.15.0
   ffi: ^2.1.0
+  crypto: ^3.0.6
 
 dev_dependencies:
   test: ^1.25.0

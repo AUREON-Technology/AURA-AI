@@ -21,6 +21,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 
+import 'package:aura_hostd/src/approval_queue.dart';
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/containment.dart';
 import 'package:aura_hostd/src/control_server.dart';
@@ -147,17 +148,21 @@ Future<void> _pair(ConfigStore configStore, String backendUrl) async {
 /// by the "already paired at startup" and "paired later via the control server" paths below, so
 /// pairing does not require restarting `run`.
 class _BackendConnection {
-  _BackendConnection(this.configStore, this.workspaceStore);
+  _BackendConnection(this.configStore, this.workspaceStore, this.approvalQueue);
 
   final ConfigStore configStore;
   final WorkspaceStore workspaceStore;
+
+  /// The same queue instance `ControlServer`'s `/approvals` routes act on -- see
+  /// `approval_queue.dart` and `task_handler.dart::TaskHandler`'s constructor doc.
+  final ApprovalQueue approvalQueue;
   HostAgentClient? _client;
 
   void startIfAuthenticated() {
     if (_client != null) return;
     final config = configStore.load();
     if (config.authToken == null || config.authToken!.isEmpty) return;
-    final handler = TaskHandler(workspaceStore.load());
+    final handler = TaskHandler(workspaceStore.load(), approvalQueue);
     final client = HostAgentClient(
       wsUrl: config.hostAgentWsUrl,
       authToken: config.authToken!,
@@ -180,7 +185,8 @@ Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) 
     );
   }
 
-  final backend = _BackendConnection(configStore, workspaceStore);
+  final approvalQueue = ApprovalQueue();
+  final backend = _BackendConnection(configStore, workspaceStore, approvalQueue);
   final controlServer = ControlServer(
     workspaceStore: workspaceStore,
     configStore: configStore,
@@ -189,6 +195,7 @@ Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) 
     // does precisely so that path works.
     onPaired: (_) => backend.startIfAuthenticated(),
     terminalSessions: TerminalSessionManager(workspaceStore),
+    approvalQueue: approvalQueue,
   );
   await controlServer.start(resolveConfigDir());
 
