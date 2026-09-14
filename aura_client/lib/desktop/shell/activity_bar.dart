@@ -6,6 +6,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 
 class ActivityBar extends ConsumerWidget {
@@ -41,8 +42,16 @@ class ActivityBar extends ConsumerWidget {
             icon: Icons.folder_outlined,
             selectedIcon: Icons.folder,
             label: 'Explorer',
-            isSelected: layoutState.showPrimarySidebar,
-            onTap: () => ref.read(layoutNotifierProvider.notifier).togglePrimarySidebar(),
+            isSelected: layoutState.showPrimarySidebar &&
+                layoutState.primarySidebarPanel == PrimarySidebarPanel.explorer,
+            onTap: () {
+              final notifier = ref.read(layoutNotifierProvider.notifier);
+              if (layoutState.showPrimarySidebar && layoutState.primarySidebarPanel == PrimarySidebarPanel.explorer) {
+                notifier.togglePrimarySidebar();
+              } else {
+                notifier.showExplorerPanel();
+              }
+            },
             density: ideDensity,
           ),
           _ActivityItem(
@@ -57,8 +66,17 @@ class ActivityBar extends ConsumerWidget {
             icon: Icons.source_outlined,
             selectedIcon: Icons.source,
             label: 'Source Control',
-            isSelected: false,
-            onTap: () {}, // D5 stub
+            isSelected: layoutState.showPrimarySidebar &&
+                layoutState.primarySidebarPanel == PrimarySidebarPanel.sourceControl,
+            onTap: () {
+              final notifier = ref.read(layoutNotifierProvider.notifier);
+              if (layoutState.showPrimarySidebar &&
+                  layoutState.primarySidebarPanel == PrimarySidebarPanel.sourceControl) {
+                notifier.togglePrimarySidebar();
+              } else {
+                notifier.showSourceControlPanel();
+              }
+            },
             density: ideDensity,
           ),
           _ActivityItem(

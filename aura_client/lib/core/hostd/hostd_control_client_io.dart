@@ -144,6 +144,43 @@ class HostdControlClient {
         '/read?root=${Uri.encodeQueryComponent(root)}&path=${Uri.encodeQueryComponent(path)}',
       );
 
+  /// D5's interactive consent queue (`aura_hostd/lib/src/approval_queue.dart`) -- lists every
+  /// currently-pending approval. `command` in each entry is already the redacted display string;
+  /// the daemon never serializes the real command it will execute.
+  Future<List<Map<String, dynamic>>> listApprovals() async {
+    final result = await _request('GET', '/approvals');
+    return (result['approvals'] as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<void> respondToApproval(String id, bool approved) =>
+      _request('POST', '/approvals/$id/respond', body: {'approved': approved});
+
+  /// D5's Source Control panel routes (`aura_hostd/lib/src/git_service.dart`) -- direct,
+  /// human-only local git execution, entirely independent of the agent-facing RPC surface.
+  Future<Map<String, dynamic>> gitStatus({required String root}) =>
+      _request('GET', '/git/status?root=${Uri.encodeQueryComponent(root)}');
+
+  Future<Map<String, dynamic>> gitDiff({required String root, String? file, bool staged = false}) {
+    final query = StringBuffer('root=${Uri.encodeQueryComponent(root)}&staged=$staged');
+    if (file != null) query.write('&file=${Uri.encodeQueryComponent(file)}');
+    return _request('GET', '/git/diff?$query');
+  }
+
+  Future<Map<String, dynamic>> gitLog({required String root, int limit = 30}) =>
+      _request('GET', '/git/log?root=${Uri.encodeQueryComponent(root)}&limit=$limit');
+
+  Future<Map<String, dynamic>> gitStage({required String root, required List<String> paths}) =>
+      _request('POST', '/git/stage', body: {'root': root, 'paths': paths});
+
+  Future<Map<String, dynamic>> gitUnstage({required String root, required List<String> paths}) =>
+      _request('POST', '/git/unstage', body: {'root': root, 'paths': paths});
+
+  Future<Map<String, dynamic>> gitCommit({required String root, required String message}) =>
+      _request('POST', '/git/commit', body: {'root': root, 'message': message});
+
+  Future<Map<String, dynamic>> gitCheckout({required String root, required String branch, bool create = false}) =>
+      _request('POST', '/git/checkout', body: {'root': root, 'branch': branch, 'create': create});
+
   Future<Map<String, dynamic>> startPairing({String? backendUrl}) =>
       _request('POST', '/pair/start', body: {'backend_url': ?backendUrl});
 

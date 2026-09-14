@@ -13,8 +13,10 @@ import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/hostd/hostd_control_client.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
+import 'package:aura_client/core/hostd/hostd_terminal_client.dart';
 import 'package:aura_client/desktop/editor/editor_abstraction.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
+import 'package:aura_client/desktop/state/git_notifier.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/editor/editor_tab.dart';
@@ -280,6 +282,220 @@ class EditorNotifier extends StateNotifier<EditorState> {
   }
 }
 
+/// Terminal state notifier (D4). Owns one [HostdTerminalClient] per live
+/// session, keyed by session id, and mirrors their output/exit into
+/// [TerminalState] for the UI to render.
+class TerminalNotifier extends StateNotifier<TerminalState> {
+  TerminalNotifier(this._db, this._eventBus) : super(const TerminalState()) {
+    _subscribeToEvents();
+  }
+
+  final AppDatabase _db;
+  final IdeEventBus _eventBus;
+  final Map<String, HostdTerminalClient> _clients = {};
+  StreamSubscription? _eventSub;
+  Timer? _saveDebounce;
+
+  /// Mirrors `task_handler.dart`'s `_maxOutputCapChars` discipline on the
+  /// daemon side -- a long-lived session must not grow this process's
+  /// memory unboundedly.
+  static const _maxScrollbackChars = 500000;
+
+  void _subscribeToEvents() {
+    _eventSub = _eventBus.stream.listen((event) {
+      if (event is WorkspaceOpened) _loadSession(event.workspaceId);
+    });
+    _eventSub?.onDone(() => _eventSub = null);
+  }
+
+  /// Restores persisted scrollback/metadata for [workspaceId]. The live OS
+  /// process cannot survive an app restart (ConPTY dies with the session
+  /// that created it), so every restored session comes back `isRunning:
+  /// false` regardless of what was last saved -- never a silent fake-resume.
+  Future<void> _loadSession(String workspaceId) async {
+    final row = await (_db.select(_db.desktopTerminalState)
+          ..where((t) => t.workspaceId.equals(workspaceId)))
+        .getSingleOrNull();
+    if (row == null) {
+      state = const TerminalState();
+      return;
+    }
+    try {
+      final decoded = jsonDecode(row.sessionsJson) as List<dynamic>;
+      final sessions = decoded
+          .cast<Map<String, dynamic>>()
+          .map((json) => TerminalSessionState(
+                id: json['id'] as String,
+                workspaceId: workspaceId,
+                command: json['command'] as String?,
+                output: json['output'] as String? ?? '',
+                isRunning: false,
+                exitCode: json['exitCode'] as int?,
+                cols: json['cols'] as int? ?? 80,
+                rows: json['rows'] as int? ?? 24,
+              ))
+          .toList();
+      state = TerminalState(sessions: sessions, activeSessionId: sessions.firstOrNull?.id);
+    } catch (_) {
+      state = const TerminalState();
+    }
+  }
+
+  /// Starts a new session against [rootPath] and makes it active. Does not
+  /// itself check workspace trust -- the daemon enforces that authoritatively
+  /// (see `TerminalSessionManager` in aura_hostd) and reports a rejection as
+  /// an `error` frame; callers with `ref` access (the UI) may still check
+  /// `HostdRoot.trusted` first purely to skip a round trip for the common
+  /// case, since that's a UX nicety, not the actual security boundary.
+  Future<String> start({
+    required String workspaceId,
+    required String rootPath,
+    String? command,
+    int cols = 80,
+    int rows = 24,
+  }) async {
+    final sessionId = 'term_${DateTime.now().microsecondsSinceEpoch}';
+    final session = TerminalSessionState(
+      id: sessionId,
+      workspaceId: workspaceId,
+      command: command,
+      isRunning: true,
+      cols: cols,
+      rows: rows,
+    );
+    state = state.copyWith(
+      sessions: [...state.sessions, session],
+      activeSessionId: sessionId,
+    );
+
+    final client = HostdTerminalClient();
+    _clients[sessionId] = client;
+    client.output.listen((bytes) => _appendOutput(sessionId, utf8.decode(bytes, allowMalformed: true)));
+    client.exitCode.listen((code) => _handleExit(sessionId, code));
+    client.errors.listen((message) => _appendOutput(sessionId, '\n[error] $message\n', exited: true));
+
+    try {
+      await client.connect(rootPath: rootPath, cols: cols, rows: rows);
+      _eventBus.publish(TerminalStarted(sessionId, workspaceId, command: command));
+    } catch (error) {
+      _appendOutput(sessionId, '[error] $error\n', exited: true);
+    }
+    return sessionId;
+  }
+
+  void setActive(String sessionId) {
+    if (state.sessions.any((s) => s.id == sessionId)) {
+      state = state.copyWith(activeSessionId: sessionId);
+    }
+  }
+
+  void sendInput(String sessionId, Uint8List bytes) {
+    _clients[sessionId]?.sendInput(bytes);
+  }
+
+  void resize(String sessionId, int cols, int rows) {
+    _clients[sessionId]?.resize(cols, rows);
+    _updateSession(sessionId, (s) => s.copyWith(cols: cols, rows: rows));
+  }
+
+  /// Restarts a session that already ended (restored from a previous run, or
+  /// exited in this one) -- reuses the same session id so the UI's scrollback
+  /// continues rather than spawning a new tab entry.
+  Future<void> restart(String sessionId, {required String rootPath}) async {
+    final existing = state.sessions.where((s) => s.id == sessionId).firstOrNull;
+    if (existing == null || existing.isRunning) return;
+    _updateSession(sessionId, (s) => s.copyWith(isRunning: true, clearExitCode: true));
+
+    final client = HostdTerminalClient();
+    _clients[sessionId] = client;
+    client.output.listen((bytes) => _appendOutput(sessionId, utf8.decode(bytes, allowMalformed: true)));
+    client.exitCode.listen((code) => _handleExit(sessionId, code));
+    client.errors.listen((message) => _appendOutput(sessionId, '\n[error] $message\n', exited: true));
+
+    try {
+      await client.connect(rootPath: rootPath, cols: existing.cols, rows: existing.rows);
+    } catch (error) {
+      _appendOutput(sessionId, '[error] $error\n', exited: true);
+    }
+  }
+
+  Future<void> closeSession(String sessionId) async {
+    final workspaceId = state.sessions.where((s) => s.id == sessionId).firstOrNull?.workspaceId;
+    final client = _clients.remove(sessionId);
+    await client?.dispose();
+    final wasActive = state.activeSessionId == sessionId;
+    state = state.copyWith(
+      sessions: state.sessions.where((s) => s.id != sessionId).toList(),
+      clearActiveSessionId: wasActive,
+    );
+    if (workspaceId != null) await _persist(workspaceId);
+  }
+
+  void _appendOutput(String sessionId, String text, {bool exited = false}) {
+    final session = state.sessions.where((s) => s.id == sessionId).firstOrNull;
+    if (session == null) return;
+    var combined = session.output + text;
+    if (combined.length > _maxScrollbackChars) {
+      combined = combined.substring(combined.length - _maxScrollbackChars);
+    }
+    _updateSession(sessionId, (s) => s.copyWith(output: combined, isRunning: exited ? false : s.isRunning));
+    _eventBus.publish(TerminalOutput(sessionId, text));
+    _debouncedPersist(session.workspaceId);
+  }
+
+  void _handleExit(String sessionId, int code) {
+    _updateSession(sessionId, (s) => s.copyWith(isRunning: false, exitCode: code));
+    _eventBus.publish(TerminalExited(sessionId, code));
+    final workspaceId = state.sessions.where((s) => s.id == sessionId).firstOrNull?.workspaceId;
+    if (workspaceId != null) unawaited(_persist(workspaceId));
+  }
+
+  void _updateSession(String sessionId, TerminalSessionState Function(TerminalSessionState) update) {
+    state = state.copyWith(
+      sessions: state.sessions.map((s) => s.id == sessionId ? update(s) : s).toList(),
+    );
+  }
+
+  void _debouncedPersist(String workspaceId) {
+    _saveDebounce?.cancel();
+    _saveDebounce = Timer(const Duration(seconds: 2), () => unawaited(_persist(workspaceId)));
+  }
+
+  /// Persists every session for [workspaceId], always as `isRunning: false`
+  /// regardless of live state -- a restored session must never look live.
+  Future<void> _persist(String? workspaceId) async {
+    if (workspaceId == null) return;
+    final sessions = state.sessions.where((s) => s.workspaceId == workspaceId).toList();
+    if (sessions.isEmpty) {
+      await (_db.delete(_db.desktopTerminalState)..where((t) => t.workspaceId.equals(workspaceId))).go();
+      return;
+    }
+    final sessionsJson = jsonEncode(sessions
+        .map((s) => {
+              'id': s.id,
+              'command': s.command,
+              'output': s.output,
+              'exitCode': s.exitCode,
+              'cols': s.cols,
+              'rows': s.rows,
+            })
+        .toList());
+    await _db.into(_db.desktopTerminalState).insertOnConflictUpdate(
+          DesktopTerminalStateCompanion.insert(workspaceId: workspaceId, sessionsJson: sessionsJson),
+        );
+  }
+
+  @override
+  void dispose() {
+    _eventSub?.cancel();
+    _saveDebounce?.cancel();
+    for (final client in _clients.values) {
+      unawaited(client.dispose());
+    }
+    super.dispose();
+  }
+}
+
 /// Layout state notifier.
 class LayoutNotifier extends StateNotifier<LayoutState> {
   LayoutNotifier(this._eventBus) : super(const LayoutState()) {
@@ -317,6 +533,17 @@ class LayoutNotifier extends StateNotifier<LayoutState> {
 
   void togglePrimarySidebar() {
     state = state.copyWith(showPrimarySidebar: !state.showPrimarySidebar);
+  }
+
+  /// Shows the Explorer panel in the primary sidebar -- opening it if it was collapsed, and
+  /// switching [LayoutState.primarySidebarPanel] to it if Source Control was showing instead.
+  void showExplorerPanel() {
+    state = state.copyWith(showPrimarySidebar: true, primarySidebarPanel: PrimarySidebarPanel.explorer);
+  }
+
+  /// Shows the Source Control (Git) panel in the primary sidebar -- D5's activity-bar wiring.
+  void showSourceControlPanel() {
+    state = state.copyWith(showPrimarySidebar: true, primarySidebarPanel: PrimarySidebarPanel.sourceControl);
   }
 
   void toggleSecondarySidebar() {
@@ -408,13 +635,16 @@ class HostNotifier extends StateNotifier<HostState> {
   }
 }
 
-/// Approval state notifier.
+/// Approval state notifier -- D5's interactive consent tier. Wired to [pendingApprovalsProvider]
+/// (a 2s poll of `GET /approvals`) at the provider definition below, mirroring
+/// [hostNotifierProvider]'s exact `ref.listen(..., fireImmediately: true)` pattern.
 class ApprovalNotifier extends StateNotifier<ApprovalState> {
-  ApprovalNotifier(this._eventBus) : super(const ApprovalState()) {
+  ApprovalNotifier(this._eventBus, this._hostdClient) : super(const ApprovalState()) {
     _subscribeToEvents();
   }
 
   final IdeEventBus _eventBus;
+  final HostdControlClient _hostdClient;
   StreamSubscription? _eventSub;
 
   void _subscribeToEvents() {
@@ -435,10 +665,49 @@ class ApprovalNotifier extends StateNotifier<ApprovalState> {
     _eventSub?.onDone(() => _eventSub = null);
   }
 
-  void respond(String approvalId, bool approved) {
+  /// Reconciles the polled [snapshots] against [ApprovalState.pendingApprovals]: publishes
+  /// [ApprovalRequested] for any id not already known (the listener above is the only thing that
+  /// actually appends to state, so this never double-adds) and directly drops any id no longer in
+  /// the snapshot (resolved or expired, possibly by another client or the daemon's own timeout --
+  /// there is no specific approve/reject outcome to report for that case, so no [ApprovalResponded]
+  /// is published for it). [workspaceIdForRoot] maps a daemon-side root path to this app's own
+  /// workspace id, the same way `terminal_view.dart` does for terminal sessions -- the daemon has
+  /// no `workspaceId` concept of its own (see `approval_queue.dart`'s doc comment).
+  void updateFromSnapshot(
+    List<PendingApprovalSnapshot> snapshots, {
+    required String Function(String root) workspaceIdForRoot,
+  }) {
+    final knownIds = state.pendingApprovals.map((a) => a.id).toSet();
+    for (final snapshot in snapshots) {
+      if (knownIds.contains(snapshot.id)) continue;
+      _eventBus.publish(ApprovalRequested(
+        snapshot.id,
+        'run_command',
+        {'command': snapshot.command, 'cwd': snapshot.cwd, 'root': snapshot.root},
+        workspaceIdForRoot(snapshot.root),
+      ));
+    }
+    final snapshotIds = snapshots.map((s) => s.id).toSet();
+    final stillPending = state.pendingApprovals.where((a) => snapshotIds.contains(a.id)).toList();
+    if (stillPending.length != state.pendingApprovals.length) {
+      state = state.copyWith(pendingApprovals: stillPending);
+    }
+  }
+
+  /// Removes [approvalId] from local state immediately (optimistic -- the UI shouldn't wait on
+  /// the round-trip) and tells the daemon. A failed daemon call is tolerated silently: the next
+  /// poll re-adds the approval if the daemon never actually saw this response, giving the human
+  /// another chance to answer it rather than losing the request.
+  Future<void> respond(String approvalId, bool approved) async {
     state = state.copyWith(
       pendingApprovals: state.pendingApprovals.where((a) => a.id != approvalId).toList(),
     );
+    try {
+      await _hostdClient.respondToApproval(approvalId, approved);
+    } catch (_) {
+      // Best-effort; see doc comment above.
+    }
+    _eventBus.publish(ApprovalResponded(approvalId, approved));
   }
 
   @override
@@ -487,6 +756,20 @@ final editorNotifierProvider = StateNotifierProvider<EditorNotifier, EditorState
   return EditorNotifier(db, eventBus);
 });
 
+/// Provider for terminal notifier.
+final terminalNotifierProvider = StateNotifierProvider<TerminalNotifier, TerminalState>((ref) {
+  final db = ref.watch(databaseProvider);
+  final eventBus = ref.watch(ideEventBusProvider);
+  return TerminalNotifier(db, eventBus);
+});
+
+/// Provider for git notifier (D5).
+final gitNotifierProvider = StateNotifierProvider<GitNotifier, GitState>((ref) {
+  final eventBus = ref.watch(ideEventBusProvider);
+  final hostdClient = ref.watch(hostdControlClientProvider);
+  return GitNotifier(eventBus, hostdClient);
+});
+
 /// Provider for layout notifier.
 final layoutNotifierProvider = StateNotifierProvider<LayoutNotifier, LayoutState>((ref) {
   final eventBus = ref.watch(ideEventBusProvider);
@@ -511,7 +794,21 @@ final hostNotifierProvider = StateNotifierProvider<HostNotifier, HostState>((ref
 /// Provider for approval notifier.
 final approvalNotifierProvider = StateNotifierProvider<ApprovalNotifier, ApprovalState>((ref) {
   final eventBus = ref.watch(ideEventBusProvider);
-  return ApprovalNotifier(eventBus);
+  final hostdClient = ref.watch(hostdControlClientProvider);
+  final notifier = ApprovalNotifier(eventBus, hostdClient);
+  // Keep this notifier in sync with the daemon's actual pending-approval list -- see
+  // ApprovalNotifier.updateFromSnapshot's doc comment.
+  ref.listen(pendingApprovalsProvider, (previous, next) {
+    final snapshots = next.value;
+    if (snapshots == null) return;
+    final workspaces = ref.read(workspaceNotifierProvider).workspaces;
+    notifier.updateFromSnapshot(
+      snapshots,
+      workspaceIdForRoot: (root) =>
+          workspaces.firstWhereOrNull((w) => w.rootPath == root)?.id ?? root,
+    );
+  }, fireImmediately: true);
+  return notifier;
 });
 
 /// Provider for notification notifier.

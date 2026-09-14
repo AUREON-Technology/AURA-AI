@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
+import 'package:aura_client/desktop/state/state_notifiers.dart';
 
 class StatusBar extends ConsumerWidget {
   const StatusBar({super.key});
@@ -24,6 +25,7 @@ class StatusBar extends ConsumerWidget {
     final status = statusAsync.value;
     final reachable = status?.reachable ?? false;
     final authenticated = status?.authenticated ?? false;
+    final pendingApprovals = ref.watch(approvalNotifierProvider).pendingApprovals;
 
     return Container(
       height: ideDensity.statusBarHeight,
@@ -47,6 +49,17 @@ class StatusBar extends ConsumerWidget {
                 : (authenticated ? palette.success : palette.warning),
             density: ideDensity,
           ),
+          // D5: pending interactive-approval count -- tap to review/approve/reject.
+          if (pendingApprovals.isNotEmpty)
+            InkWell(
+              onTap: () => _showApprovalsDialog(context, ref),
+              child: _StatusItem(
+                icon: Icons.pending_actions_outlined,
+                text: '${pendingApprovals.length} pending approval${pendingApprovals.length == 1 ? '' : 's'}',
+                color: palette.warning,
+                density: ideDensity,
+              ),
+            ),
           // Backend URL
           if (status?.backendUrl != null)
             _StatusItem(
@@ -77,6 +90,74 @@ class StatusBar extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// D5's approval review UI: every currently-pending approval, stacked (not a single blocking
+/// modal that would hide the others while more than one is queued), each with its own
+/// Approve/Reject.
+void _showApprovalsDialog(BuildContext context, WidgetRef ref) {
+  showDialog<void>(
+    context: context,
+    builder: (dialogContext) => Consumer(
+      builder: (context, dialogRef, _) {
+        final approvals = dialogRef.watch(approvalNotifierProvider).pendingApprovals;
+        final palette = AuraPalette.of(context);
+        if (approvals.isEmpty) Navigator.of(dialogContext).pop();
+        return AlertDialog(
+          backgroundColor: palette.surface,
+          title: const Text('Pending Approvals'),
+          content: SizedBox(
+            width: 480,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 400),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: approvals.length,
+                separatorBuilder: (_, _) => const Divider(height: AuraSpacing.lg),
+                itemBuilder: (context, index) {
+                  final approval = approvals[index];
+                  final command = approval.arguments['command'] as String? ?? approval.tool;
+                  final root = approval.arguments['root'] as String?;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        command,
+                        style: const TextStyle(fontFamily: 'Courier', fontSize: 13),
+                      ),
+                      if (root != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(root, style: TextStyle(fontSize: 11, color: palette.textSecondary)),
+                        ),
+                      const SizedBox(height: AuraSpacing.sm),
+                      Row(
+                        children: [
+                          AuraButton(
+                            label: 'Approve',
+                            onPressed: () => dialogRef.read(approvalNotifierProvider.notifier).respond(approval.id, true),
+                          ),
+                          const SizedBox(width: AuraSpacing.sm),
+                          AuraButton(
+                            label: 'Reject',
+                            variant: AuraButtonVariant.destructive,
+                            onPressed: () => dialogRef.read(approvalNotifierProvider.notifier).respond(approval.id, false),
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Close')),
+          ],
+        );
+      },
+    ),
+  );
 }
 
 class _StatusItem extends StatelessWidget {

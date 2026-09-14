@@ -14,11 +14,13 @@ import 'package:aura_client/desktop/shell/status_bar.dart';
 import 'package:aura_client/desktop/shell/desktop_shortcuts.dart';
 import 'package:aura_client/desktop/agent/agent_panel.dart';
 import 'package:aura_client/desktop/explorer/explorer_panel.dart';
+import 'package:aura_client/desktop/git/git_panel.dart';
 import 'package:aura_client/desktop/editor/editor_tab_bar.dart';
 import 'package:aura_client/desktop/editor/code_editor_view.dart';
 import 'package:aura_client/desktop/editor/quick_open_dialog.dart';
 import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
+import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 
 /// [child] is the currently routed `/ide/*` page (welcome or workspace
@@ -89,11 +91,14 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
                     width: ideDensity.activityBarWidth,
                     child: const ActivityBar(),
                   ),
-                  // Primary sidebar (Explorer)
+                  // Primary sidebar (Explorer or Source Control, per D5)
                   if (layoutState.showPrimarySidebar)
                     SizedBox(
                       width: layoutState.primarySidebarWidth,
-                      child: const ExplorerPanel(),
+                      child: switch (layoutState.primarySidebarPanel) {
+                        PrimarySidebarPanel.explorer => const ExplorerPanel(),
+                        PrimarySidebarPanel.sourceControl => const GitPanel(),
+                      },
                     ),
                   if (layoutState.showPrimarySidebar)
                     VerticalDivider(

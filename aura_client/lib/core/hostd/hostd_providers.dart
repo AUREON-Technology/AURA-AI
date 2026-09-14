@@ -85,6 +85,57 @@ Future<HostdStatusSnapshot> _fetchStatus(HostdControlClient client) async {
   }
 }
 
+/// A pending approval as the client sees it -- `command` is always the daemon's redacted display
+/// string (`aura_hostd/lib/src/approval_queue.dart`'s `PendingApproval.displayCommand`); the real
+/// command never leaves the daemon.
+class PendingApprovalSnapshot {
+  PendingApprovalSnapshot({
+    required this.id,
+    required this.command,
+    required this.cwd,
+    required this.root,
+    required this.requestedAt,
+  });
+
+  final String id;
+  final String command;
+  final String cwd;
+  final String root;
+  final DateTime requestedAt;
+
+  factory PendingApprovalSnapshot.fromJson(Map<String, dynamic> json) => PendingApprovalSnapshot(
+        id: json['id'] as String,
+        command: json['command'] as String,
+        cwd: json['cwd'] as String,
+        root: json['root'] as String,
+        requestedAt: DateTime.parse(json['requested_at'] as String),
+      );
+}
+
+/// Polls `GET /approvals` every 2s while something is watching it -- shorter than
+/// [hostdStatusProvider]'s 3s since a human is actively blocking an agent's command here, unlike
+/// daemon reachability. A pending approval is a low-frequency, human-paced signal (unlike D4's
+/// genuinely high-frequency terminal byte stream, which justified a WebSocket instead), so
+/// polling is the right fit -- see D5's plan design decision 7.
+final pendingApprovalsProvider = StreamProvider.autoDispose<List<PendingApprovalSnapshot>>((ref) async* {
+  final client = ref.watch(hostdControlClientProvider);
+  while (true) {
+    yield await _fetchApprovals(client);
+    await Future<void>.delayed(const Duration(seconds: 2));
+  }
+});
+
+Future<List<PendingApprovalSnapshot>> _fetchApprovals(HostdControlClient client) async {
+  try {
+    final raw = await client.listApprovals();
+    return raw.map(PendingApprovalSnapshot.fromJson).toList();
+  } on HostdControlUnavailable {
+    return const [];
+  } on HostdControlError {
+    return const [];
+  }
+}
+
 /// Buffers the daemon's own stdout/stderr (only populated when this app spawned it --
 /// [HostdSupervisor.isSpawnedHere]) for the log panel, capped so a chatty daemon can't grow this
 /// forever.

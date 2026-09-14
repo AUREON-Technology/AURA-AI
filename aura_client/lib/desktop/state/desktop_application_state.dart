@@ -88,17 +88,38 @@ class EditorState {
   }
 }
 
-/// Terminal state (placeholder for D4).
+/// Terminal state (D4).
 @immutable
 class TerminalState {
   const TerminalState({
     this.sessions = const [],
+    this.activeSessionId,
   });
 
   final List<TerminalSessionState> sessions;
 
-  TerminalState copyWith({List<TerminalSessionState>? sessions}) {
-    return TerminalState(sessions: sessions ?? this.sessions);
+  /// Which session the bottom panel's Terminal tab currently renders -- D4's
+  /// first pass shows one live session at a time (see D4 plan section B4);
+  /// a tab strip for concurrent sessions is a tracked follow-up.
+  final String? activeSessionId;
+
+  TerminalSessionState? get activeSession {
+    if (activeSessionId == null) return null;
+    for (final s in sessions) {
+      if (s.id == activeSessionId) return s;
+    }
+    return null;
+  }
+
+  TerminalState copyWith({
+    List<TerminalSessionState>? sessions,
+    String? activeSessionId,
+    bool clearActiveSessionId = false,
+  }) {
+    return TerminalState(
+      sessions: sessions ?? this.sessions,
+      activeSessionId: clearActiveSessionId ? null : (activeSessionId ?? this.activeSessionId),
+    );
   }
 }
 
@@ -111,36 +132,163 @@ class TerminalSessionState {
     this.output = '',
     this.isRunning = false,
     this.exitCode,
+    this.cols = 80,
+    this.rows = 24,
   });
 
   final String id;
   final String workspaceId;
   final String? command;
+
+  /// Scrollback buffer -- capped by the caller (mirrors `task_handler.dart`'s
+  /// `_maxOutputCapChars` discipline on the daemon side) since this grows on
+  /// every output chunk for the life of a session.
   final String output;
   final bool isRunning;
   final int? exitCode;
+  final int cols;
+  final int rows;
+
+  TerminalSessionState copyWith({
+    String? command,
+    String? output,
+    bool? isRunning,
+    int? exitCode,
+    bool clearExitCode = false,
+    int? cols,
+    int? rows,
+  }) {
+    return TerminalSessionState(
+      id: id,
+      workspaceId: workspaceId,
+      command: command ?? this.command,
+      output: output ?? this.output,
+      isRunning: isRunning ?? this.isRunning,
+      exitCode: clearExitCode ? null : (exitCode ?? this.exitCode),
+      cols: cols ?? this.cols,
+      rows: rows ?? this.rows,
+    );
+  }
 }
 
-/// Git state (placeholder for D5).
+/// Git state (D5).
 @immutable
 class GitState {
   const GitState({
-    this.branch,
-    this.status,
     this.workspaceId,
+    this.branch,
+    this.upstream,
+    this.ahead = 0,
+    this.behind = 0,
+    this.files = const [],
+    this.diffText,
+    this.diffScope,
+    this.diffTruncated = false,
+    this.commits = const [],
+    this.busy = false,
+    this.error,
   });
 
-  final String? branch;
-  final String? status;
   final String? workspaceId;
 
-  GitState copyWith({String? branch, String? status, String? workspaceId}) {
+  /// `null` covers both "no repo loaded yet" and a real detached-HEAD state -- the daemon's own
+  /// `git_service.dart` reports both the same way, so the UI must not assume non-null.
+  final String? branch;
+  final String? upstream;
+  final int ahead;
+  final int behind;
+  final List<GitFileChange> files;
+
+  /// The most recently loaded diff, if any, and which [GitDiffScope] it is for -- `null` scope
+  /// means nothing has been loaded yet.
+  final String? diffText;
+  final GitDiffScope? diffScope;
+  final bool diffTruncated;
+
+  final List<GitCommit> commits;
+
+  /// True while any write operation (stage/unstage/commit/checkout) is in flight -- checked by
+  /// [GitNotifier]'s write methods before starting (a no-op if already busy) and used by the Git
+  /// panel to disable its buttons, so a double-click can't fire two concurrent commits.
+  final bool busy;
+
+  final String? error;
+
+  GitState copyWith({
+    String? workspaceId,
+    String? branch,
+    bool clearBranch = false,
+    String? upstream,
+    int? ahead,
+    int? behind,
+    List<GitFileChange>? files,
+    String? diffText,
+    GitDiffScope? diffScope,
+    bool? diffTruncated,
+    List<GitCommit>? commits,
+    bool? busy,
+    String? error,
+    bool clearError = false,
+  }) {
     return GitState(
-      branch: branch ?? this.branch,
-      status: status ?? this.status,
       workspaceId: workspaceId ?? this.workspaceId,
+      branch: clearBranch ? null : (branch ?? this.branch),
+      upstream: upstream ?? this.upstream,
+      ahead: ahead ?? this.ahead,
+      behind: behind ?? this.behind,
+      files: files ?? this.files,
+      diffText: diffText ?? this.diffText,
+      diffScope: diffScope ?? this.diffScope,
+      diffTruncated: diffTruncated ?? this.diffTruncated,
+      commits: commits ?? this.commits,
+      busy: busy ?? this.busy,
+      error: clearError ? null : (error ?? this.error),
     );
   }
+}
+
+enum GitDiffScope { workingTree, staged }
+
+@immutable
+class GitFileChange {
+  const GitFileChange({
+    required this.path,
+    required this.indexStatus,
+    required this.worktreeStatus,
+    required this.staged,
+    this.renamedFrom,
+  });
+
+  final String path;
+  final String indexStatus;
+  final String worktreeStatus;
+  final bool staged;
+  final String? renamedFrom;
+
+  static GitFileChange fromJson(Map<String, dynamic> json) => GitFileChange(
+        path: json['path'] as String,
+        indexStatus: json['index_status'] as String,
+        worktreeStatus: json['worktree_status'] as String,
+        staged: json['staged'] as bool? ?? false,
+        renamedFrom: json['renamed_from'] as String?,
+      );
+}
+
+@immutable
+class GitCommit {
+  const GitCommit({required this.sha, required this.author, required this.date, required this.subject});
+
+  final String sha;
+  final String author;
+  final String date;
+  final String subject;
+
+  static GitCommit fromJson(Map<String, dynamic> json) => GitCommit(
+        sha: json['sha'] as String,
+        author: json['author'] as String,
+        date: json['date'] as String,
+        subject: json['subject'] as String,
+      );
 }
 
 /// Agent state (placeholder for D6).
@@ -217,6 +365,11 @@ class HostState {
   }
 }
 
+/// Which panel occupies the primary sidebar (D5) -- previously `DesktopShell` hardcoded
+/// `ExplorerPanel` there unconditionally, since Explorer was the only panel that had ever
+/// existed.
+enum PrimarySidebarPanel { explorer, sourceControl }
+
 /// Layout state.
 @immutable
 class LayoutState {
@@ -227,6 +380,7 @@ class LayoutState {
     this.showPrimarySidebar = true,
     this.showSecondarySidebar = false,
     this.showBottomPanel = false,
+    this.primarySidebarPanel = PrimarySidebarPanel.explorer,
     this.workspaceId,
   });
 
@@ -236,6 +390,7 @@ class LayoutState {
   final bool showPrimarySidebar;
   final bool showSecondarySidebar;
   final bool showBottomPanel;
+  final PrimarySidebarPanel primarySidebarPanel;
   final String? workspaceId;
 
   LayoutState copyWith({
@@ -245,6 +400,7 @@ class LayoutState {
     bool? showPrimarySidebar,
     bool? showSecondarySidebar,
     bool? showBottomPanel,
+    PrimarySidebarPanel? primarySidebarPanel,
     String? workspaceId,
   }) {
     return LayoutState(
@@ -254,6 +410,7 @@ class LayoutState {
       showPrimarySidebar: showPrimarySidebar ?? this.showPrimarySidebar,
       showSecondarySidebar: showSecondarySidebar ?? this.showSecondarySidebar,
       showBottomPanel: showBottomPanel ?? this.showBottomPanel,
+      primarySidebarPanel: primarySidebarPanel ?? this.primarySidebarPanel,
       workspaceId: workspaceId ?? this.workspaceId,
     );
   }
