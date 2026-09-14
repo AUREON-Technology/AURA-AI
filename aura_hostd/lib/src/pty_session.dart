@@ -230,10 +230,17 @@ class PtySession {
     _receivePort!.listen((message) {
       if (message is Uint8List) {
         if (!_outputController.isClosed) _outputController.add(message);
-      } else if (message is int) {
-        // Reader signals pipe closed (child exited) with the exit code sentinel.
-        if (!_exitCodeCompleter.isCompleted) _exitCodeCompleter.complete(message);
+      } else {
+        // Reader signals its pipe closed -- it has no idea what the real
+        // exit code is (or even whether the child has exited yet: the pipe
+        // can break for reasons other than the child dying), so it carries
+        // no code. If the child has in fact already exited, resolve the
+        // real exit code immediately via GetExitCodeProcess instead of
+        // waiting for `_exitWatcher`'s next 300ms tick; if it hasn't,
+        // leave `_exitCodeCompleter` alone and let that watcher resolve it
+        // correctly once the child really exits.
         if (!_outputController.isClosed) _outputController.close();
+        if (!_exitCodeCompleter.isCompleted && !isChildAlive) _handleChildExited();
       }
     });
   }
@@ -259,7 +266,9 @@ class PtySession {
     } finally {
       calloc.free(buffer);
       calloc.free(bytesRead);
-      sendPort.send(0);
+      // No exit code here -- just "the pipe is gone now"; see the listener
+      // in `_startReaderIsolate` for how the real exit code gets resolved.
+      sendPort.send(null);
     }
   }
 

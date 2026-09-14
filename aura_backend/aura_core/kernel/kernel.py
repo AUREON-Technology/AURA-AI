@@ -345,7 +345,7 @@ class AIKernel:
 
         # 7. Assemble context --------------------------------------------------------
         stage_start = time.perf_counter()
-        system_prompt = self._render_system_prompt(request, tool_declarations)
+        system_prompt = await self._render_system_prompt(request, tool_declarations)
         assembled = deps.context.assemble(
             ContextRequest(
                 system_prompt=system_prompt,
@@ -564,7 +564,7 @@ class AIKernel:
 
                 assembled = deps.context.assemble(
                     ContextRequest(
-                        system_prompt=self._render_system_prompt(request, tool_declarations),
+                        system_prompt=await self._render_system_prompt(request, tool_declarations),
                         user_message=message,
                         history=history,
                         memories=memories,
@@ -1145,7 +1145,7 @@ class AIKernel:
             return user_facing_citations(cites) if user_facing else cites
         return ()
 
-    def _render_system_prompt(
+    async def _render_system_prompt(
         self, request: TurnRequest, tools: Sequence[Mapping[str, Any]]
     ) -> str:
         agent = self._resolve_agent(request)
@@ -1155,6 +1155,12 @@ class AIKernel:
         )
         clock = self._deps.clock
         now = clock.now() if clock is not None else datetime.now(timezone.utc)
+        # Only `system.engineer` declares these two, so passing them for every persona is
+        # harmless (`PromptTemplate.render` ignores supplied keys a template didn't declare) --
+        # see that template's own two-branch body for why the distinction matters: a desktop
+        # session and a Docker-only sandbox need different instructions for reading a file and
+        # for whether `open_workspace` exists at all.
+        desktop_active = await self._desktop_active(getattr(request, "user_id", None))
         try:
             rendered = self._deps.prompts.render(
                 template_id,
@@ -1164,6 +1170,8 @@ class AIKernel:
                     "fence_rules": "",
                     "current_time": now.isoformat(timespec="minutes"),
                     "capabilities": self._format_tool_capabilities(tools),
+                    "desktop_paired": "true" if desktop_active else "",
+                    "sandbox_mode": "" if desktop_active else "true",
                 },
             )
             return rendered.text

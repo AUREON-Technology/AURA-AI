@@ -50,6 +50,9 @@ class HostdControlClient {
       _unavailable();
   Future<Map<String, dynamic>> gitCheckout({required String root, required String branch, bool create = false}) async =>
       _unavailable();
+  Future<Map<String, dynamic>> diagnosticsDetect({required String root}) async => _unavailable();
+  Future<Map<String, dynamic>> diagnosticsRun({required String root, required String tool}) async =>
+      _unavailable();
   Future<Map<String, dynamic>> startPairing({String? backendUrl}) async => _unavailable();
   Future<Map<String, dynamic>> pairingStatus() async => _unavailable();
   Future<void> shutdown() async => _unavailable();

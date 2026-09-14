@@ -212,10 +212,30 @@ class _FlutterCodeEditorController implements EditorController {
       case CodeActionCommand():
         // TODO: Implement code actions
         break;
+      case RevealPositionCommand(line: final line, column: final column):
+        _revealPosition(line, column);
+        break;
       case RequestInlineCompletionCommand():
         await _requestInlineCompletion();
         break;
     }
+  }
+
+  /// D7 Part A.2. Converts a 1-based line/column (the unit every diagnostics tool reports in)
+  /// into a character offset and collapses the selection there -- `CodeField` scrolls a focused
+  /// caret into view on its own, so no separate scroll call is needed.
+  void _revealPosition(int line, int column) {
+    final text = _codeController.text;
+    final lines = text.split('\n');
+    if (lines.isEmpty) return;
+    final clampedLine = line.clamp(1, lines.length);
+    var offset = 0;
+    for (var i = 0; i < clampedLine - 1; i++) {
+      offset += lines[i].length + 1;
+    }
+    final lineLength = lines[clampedLine - 1].length;
+    offset += (column - 1).clamp(0, lineLength);
+    _codeController.selection = TextSelection.collapsed(offset: offset);
   }
 
   /// D6 Part D. Slices the document at the cursor, asks the backend for one completion, and

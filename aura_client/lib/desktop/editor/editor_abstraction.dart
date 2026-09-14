@@ -148,6 +148,17 @@ class CodeActionCommand extends EditorCommand {
   const CodeActionCommand();
 }
 
+/// D7 Part A.2: move the cursor to a specific 1-based line/column and bring it into view --
+/// used by the Problems panel's click-to-navigate. Deliberately line/column (editor-facing units
+/// every diagnostics tool already reports in) rather than a raw character offset, so callers
+/// never need to know how the concrete editor implementation maps text to offsets.
+class RevealPositionCommand extends EditorCommand {
+  const RevealPositionCommand({required this.line, required this.column});
+
+  final int line;
+  final int column;
+}
+
 /// D6 Part D: request one inline completion at the current cursor position.
 ///
 /// Deliberately a separate command from [CodeActionCommand] -- a completion is keyed to a

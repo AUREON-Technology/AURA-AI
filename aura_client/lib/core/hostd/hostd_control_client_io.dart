@@ -181,6 +181,15 @@ class HostdControlClient {
   Future<Map<String, dynamic>> gitCheckout({required String root, required String branch, bool create = false}) =>
       _request('POST', '/git/checkout', body: {'root': root, 'branch': branch, 'create': create});
 
+  /// D7 Part A.2's diagnostics routes (`aura_hostd/lib/src/diagnostics_service.dart`) -- direct,
+  /// human-only batch linting, entirely independent of the agent-facing RPC surface (same
+  /// boundary as the git routes above).
+  Future<Map<String, dynamic>> diagnosticsDetect({required String root}) =>
+      _request('GET', '/diagnostics/detect?root=${Uri.encodeQueryComponent(root)}');
+
+  Future<Map<String, dynamic>> diagnosticsRun({required String root, required String tool}) =>
+      _request('POST', '/diagnostics/run', body: {'root': root, 'tool': tool});
+
   Future<Map<String, dynamic>> startPairing({String? backendUrl}) =>
       _request('POST', '/pair/start', body: {'backend_url': ?backendUrl});
 

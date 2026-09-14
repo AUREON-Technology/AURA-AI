@@ -16,10 +16,19 @@ import 'pty_session.dart';
 import 'workspace_store.dart';
 import 'containment.dart' show WorkspaceRoot;
 
+/// Logs one line of terminal-session lifecycle (start/exit/error) so a
+/// stuck or misbehaving session is visible in the daemon's own output
+/// instead of only surfacing as a client-side symptom.
+typedef TerminalSessionLogger = void Function(String message);
+
+void _defaultLogger(String message) => stdout.writeln('[aura_hostd] $message');
+
 class TerminalSessionManager {
-  TerminalSessionManager(this._workspaceStore);
+  TerminalSessionManager(this._workspaceStore, {TerminalSessionLogger? logger})
+      : _logger = logger ?? _defaultLogger;
 
   final WorkspaceStore _workspaceStore;
+  final TerminalSessionLogger _logger;
   final Map<String, PtySession> _sessions = {};
 
   /// Handles one `/terminal` WebSocket connection end to end: trust-checks
@@ -85,16 +94,19 @@ class TerminalSessionManager {
             try {
               await s.start();
             } catch (error) {
+              _logger('terminal $sessionId failed to start: $error');
               await _sendError(socket, 'failed to start terminal: $error');
               continue;
             }
             _sessions[sessionId] = s;
             session = s;
+            _logger('terminal $sessionId started (pid ${s.pid}, root $rootPath)');
             socket.add(jsonEncode({'type': 'started', 'session_id': sessionId, 'pid': s.pid}));
             outputSub = s.output.listen((chunk) {
               socket.add(jsonEncode({'type': 'output', 'data': base64Encode(chunk)}));
             });
             unawaited(s.exitCode.then((code) {
+              _logger('terminal $sessionId exited (code $code)');
               try {
                 socket.add(jsonEncode({'type': 'exited', 'exit_code': code}));
               } catch (_) {

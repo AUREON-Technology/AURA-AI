@@ -474,4 +474,74 @@ void main() {
 
     await pairingServer.stop();
   });
+
+  group('diagnostics (D7 Part A.2)', () {
+    test('GET /diagnostics/detect reports the marker-detected tool', () async {
+      File('${workspaceDir.path}/pubspec.yaml').writeAsStringSync('name: fixture\n');
+      final (status, body) = await client.request('GET', '/diagnostics/detect?root=$workspaceRoot');
+      expect(status, 200);
+      expect(body['tool'], 'dart_analyze');
+    });
+
+    test('GET /diagnostics/detect reports null when nothing matches', () async {
+      final (status, body) = await client.request('GET', '/diagnostics/detect?root=$workspaceRoot');
+      expect(status, 200);
+      expect(body['tool'], isNull);
+    });
+
+    test('GET /diagnostics/detect refuses an ungranted root', () async {
+      final (status, body) = await client.request('GET', '/diagnostics/detect?root=/not/granted');
+      expect(status, 404);
+      expect(body['error'], contains('not a granted root'));
+    });
+
+    test('POST /diagnostics/run reports a real tool run', () async {
+      // dart_analyze is guaranteed available in this test environment (the Dart SDK running
+      // these tests), so this exercises the real Process.run path end to end, not a fake.
+      File('${workspaceDir.path}/pubspec.yaml')
+          .writeAsStringSync('name: fixture\nenvironment:\n  sdk: ^3.0.0\n');
+      final (status, body) = await client.request(
+        'POST',
+        '/diagnostics/run',
+        body: {'root': workspaceRoot, 'tool': 'dart_analyze'},
+      );
+      expect(status, 200);
+      expect(body['tool'], 'dart_analyze');
+      expect(body['not_found'], false);
+      expect(body['exit_code'], isA<int>());
+    });
+
+    test('POST /diagnostics/run reports coherently whether or not the tool is installed', () async {
+      final (status, body) = await client.request(
+        'POST',
+        '/diagnostics/run',
+        body: {'root': workspaceRoot, 'tool': 'ruff'},
+      );
+      // Whether "ruff" happens to be installed on the machine running this test varies -- assert
+      // only that the route responds coherently either way, not on ruff's own presence.
+      expect(status, 200);
+      expect(body['tool'], 'ruff');
+      expect(body['not_found'], isA<bool>());
+    });
+
+    test('POST /diagnostics/run rejects an unknown tool', () async {
+      final (status, body) = await client.request(
+        'POST',
+        '/diagnostics/run',
+        body: {'root': workspaceRoot, 'tool': 'not_a_real_tool'},
+      );
+      expect(status, 400);
+      expect(body['error'], contains('unknown diagnostics tool'));
+    });
+
+    test('POST /diagnostics/run refuses an ungranted root', () async {
+      final (status, body) = await client.request(
+        'POST',
+        '/diagnostics/run',
+        body: {'root': '/not/granted', 'tool': 'dart_analyze'},
+      );
+      expect(status, 404);
+      expect(body['error'], contains('not a granted root'));
+    });
+  });
 }
