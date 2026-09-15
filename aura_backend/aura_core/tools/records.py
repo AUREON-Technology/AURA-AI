@@ -10,19 +10,25 @@ requires confirmation for a tainted context (ADR-006), but an untainted call fro
 ``propose_*`` tool for anything a deployment wants a human to approve first; these are for personas
 trusted to act without asking.
 
-Create and list only, for now -- update and delete are named follow-up (Phase C exit criteria),
-not silently out of scope: adding them is the same shape of change as create, once a deployment
-actually needs a kernel that revises its own writes rather than only accumulating them.
+Full CRUD now: ``update_*``/``delete_*`` were the named follow-up (Phase C exit criteria) and are
+the same shape of change as create -- fetch through the owner-scoped ``store.get``, merge fields
+via ``PersonalOsRecord.with_fields``, write back through ``store.update``/``store.delete``. Both
+re-check the fetched record's ``kind`` before acting: ``PersonalOsStore.get``/``delete`` are
+scoped by id and owner only, not kind, so without that check ``update_task``/``delete_task`` could
+reach a calendar event or finance record that happens to share this owner, given its id -- either
+silently corrupting its ``fields`` (an update merging task-shaped keys into an event) or deleting
+the wrong record kind outright.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Sequence
 
 from ..domain.identifiers import PersonalOsRecordId
 from ..domain.personal_os import PersonalOsRecord, RecordKind
-from ..domain.tools import ToolCategory, ToolSensitivity
+from ..domain.tools import ParameterSpec, ToolCategory, ToolSensitivity
 from ..ports.runtime import ToolContext
 from ..ports.storage import PersonalOsStore
 from .base import param, tool
@@ -40,15 +46,24 @@ def _list_summary(records: list[PersonalOsRecord], *, empty: str) -> str:
     return "\n".join(lines)
 
 
+def _as_optional(params: Sequence[ParameterSpec]) -> tuple[ParameterSpec, ...]:
+    """A create tool's parameters, but every one optional -- an update only names what changes.
+
+    ``create_task`` requires ``title``; requiring it again on ``update_task`` would force a caller
+    to resupply a field it has no intention of changing just to adjust, say, ``priority``.
+    """
+    return tuple(replace(p, required=False, default=None) for p in params)
+
+
 def _domain(
     *, kind: RecordKind, noun: str, plural: str, create_params, extra_fields=(),
 ):
-    """One (create, list) tool pair for a personal-OS record kind.
+    """The (create, list, update, delete) tool quartet for a personal-OS record kind.
 
-    A closure factory rather than four hand-written pairs: the CRUD logic is identical across
-    domains (put a record, list this owner's records of this kind); only the tool's declared
-    parameters and description differ, which is exactly what varies between the arguments passed
-    here.
+    A closure factory rather than four hand-written quartets: the CRUD logic is identical across
+    domains (put a record, list this owner's records of this kind, merge fields into one it
+    already owns, remove one); only the tool's declared parameters and description differ, which
+    is exactly what varies between the arguments passed here.
     """
 
     def register(builder: "_Builder") -> None:
@@ -84,8 +99,50 @@ def _domain(
             )
             return _list_summary(records, empty=f"No {plural.replace('_', ' ')} recorded yet.")
 
+        record_id_param = param(
+            "record_id", "string", f"The {noun}'s id, from create_{noun} or list_{plural}.",
+        )
+
+        @tool(
+            f"update_{noun}", f"Change one or more fields on an existing {noun.replace('_', ' ')} "
+            f"this user owns. Only the fields supplied are changed; the rest are left as they are.",
+            record_id_param, *_as_optional(create_params),
+            category=ToolCategory.PRODUCTIVITY,
+            sensitivity=ToolSensitivity.PERSONAL,
+            side_effecting=True,
+        )
+        async def update(context: ToolContext, record_id: str, **kwargs: Any) -> str:
+            record_id_typed = PersonalOsRecordId(record_id)
+            existing = await builder.store.get(record_id_typed, owner_id=context.user_id)
+            if existing is None or existing.kind != kind:
+                return f"No {noun} found with id {record_id}."
+            changes = {k: v for k, v in kwargs.items() if v is not None}
+            if not changes:
+                return f"Nothing to update for {noun} {record_id}."
+            updated = existing.with_fields(changes, updated_at=datetime.now(timezone.utc))
+            await builder.store.update(updated)
+            return f"Updated {noun} {record_id}."
+
+        @tool(
+            f"delete_{noun}", f"Permanently delete an existing {noun.replace('_', ' ')} "
+            f"this user owns.",
+            record_id_param,
+            category=ToolCategory.PRODUCTIVITY,
+            sensitivity=ToolSensitivity.PERSONAL,
+            side_effecting=True,
+        )
+        async def delete(context: ToolContext, record_id: str) -> str:
+            record_id_typed = PersonalOsRecordId(record_id)
+            existing = await builder.store.get(record_id_typed, owner_id=context.user_id)
+            if existing is None or existing.kind != kind:
+                return f"No {noun} found with id {record_id}."
+            await builder.store.delete(record_id_typed, owner_id=context.user_id)
+            return f"Deleted {noun} {record_id}."
+
         builder.tools.append(create)
         builder.tools.append(list_records)
+        builder.tools.append(update)
+        builder.tools.append(delete)
 
     return register
 
@@ -143,7 +200,8 @@ _DOMAINS = (
 
 
 def build_personal_os_crud_tools(store: PersonalOsStore) -> list:
-    """The create/list tool pair for every personal-OS record kind, backed by one store."""
+    """The create/list/update/delete tool quartet for every personal-OS record kind, backed by
+    one store."""
     builder = _Builder(store)
     for register in _DOMAINS:
         register(builder)
