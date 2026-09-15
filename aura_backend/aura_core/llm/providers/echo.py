@@ -37,7 +37,15 @@ from ...domain.messages import Role, ToolCall
 from ...ports.llm import HealthStatus
 from .base import BaseProvider
 
-__all__ = ["EchoProvider", "ScriptedTurn"]
+__all__ = ["EchoProvider", "ScriptedTurn", "ContextGroundedProvider"]
+
+_DATA_BLOCK = re.compile(
+    # The opening tag's ``source="..."`` attribute can itself contain a literal ``>`` (a
+    # section heading path like "kernel > Context" -- see aura_core/domain/context.py), which
+    # a ``[^>]*>>>`` header pattern would stop at prematurely. Matching up to the first literal
+    # ``>>>`` triple instead is what actually terminates the fence.
+    r"<<<AURA-DATA:[0-9a-f]+.*?>>>\s*(.*?)\s*<<<END-AURA-DATA:[0-9a-f]+>>>", re.S
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,3 +207,50 @@ class EchoProvider(BaseProvider):
         return "\n\n".join(
             m.content for m in self.calls[-1].conversation if m.role is Role.SYSTEM
         )
+
+
+class ContextGroundedProvider(EchoProvider):
+    """An :class:`EchoProvider` variant that answers from retrieved context, not the query.
+
+    ``EchoProvider`` echoes the user's own message, which can never exercise
+    :class:`~aura_core.evaluation.harness.AnswerEvaluator`'s groundedness or citation-precision
+    scoring: retrieved chunks are rendered into a *system*-channel ``<<<AURA-DATA:...>>>`` fence
+    (``aura_core/domain/context.py``), never into the echoed message, so with plain
+    ``EchoProvider`` those scores are either undefined (no citation-bearing sentence ever appears)
+    or an artifact of incidental word overlap between the query and the source -- not a signal a
+    regression could move. This provider is still a scripted stand-in, not a model -- it does no
+    reasoning -- but it stands in for a model that actually reads what it was shown: it pulls
+    content words from the fenced blocks and answers with those, so a real regression in
+    retrieval, context assembly, or citation wiring produces a real, measurable drop instead of a
+    number that can never change either way.
+
+    The excerpt is deliberately broken into short runs rather than quoted as whole sentences.
+    ``SystemPromptLeakGuard`` (``aura_core/safety/guards.py``) flags an answer that shares two or
+    more identical 8-word runs with the system prompt -- correctly so in general, since a model
+    that parrots its context back verbatim is indistinguishable from one leaking its instructions
+    -- and the fenced knowledge this provider reads *is* part of that same system prompt. Capping
+    each run at six words keeps every real regression this provider is meant to catch (retrieval
+    returning nothing, citations not resolving, fencing breaking) visible in the score, without
+    tripping a guard that exists to catch something else.
+    """
+
+    def _derive(self, request: CompletionRequest) -> str:
+        fenced = "\n".join(
+            m.content for m in request.conversation.system_messages
+            if "<<<AURA-DATA:" in m.content
+        )
+        # Every run goes into one flat list joined by the same "[...]" break, including the
+        # boundary *between* sentences -- two adjacent sentences from the same source are
+        # themselves a long real run, so joining their word-chunks with a plain space would
+        # silently reconstruct one and trip the leak guard anyway.
+        runs: list[str] = []
+        for block in _DATA_BLOCK.findall(fenced)[:2]:
+            sentences = [
+                s.strip() for s in re.split(r"(?<=[.!?])\s+", block.strip()) if s.strip()
+            ]
+            for sentence in sentences[:2]:
+                words = sentence.split()
+                runs.extend(" ".join(words[i : i + 6]) for i in range(0, len(words), 6))
+        if not runs:
+            return super()._derive(request)
+        return f"{self._prefix}{' [...] '.join(runs)}".strip()
