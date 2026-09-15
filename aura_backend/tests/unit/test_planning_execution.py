@@ -749,6 +749,31 @@ class TestExecution:
         assert outcome.tool_reports == []
         assert "s2" not in outcome.results
 
+    async def test_a_failed_tool_steps_error_kind_is_the_structured_reason_not_free_text(
+        self, tools, tool_context
+    ) -> None:
+        """`PlanStep.error_kind` must carry the tool's structured `error_kind`
+        ("unresolved_argument", "policy_denied", ...) rather than a truncated human-readable
+        message -- this is what `PlanningEngine.replan()`'s context block
+        ("Failed: ... (<error_kind>)") and `agentic_loop._replan_reason` actually key off of."""
+
+        @tool("needs_a_repo", "Takes a github_repo-shaped argument.",
+              param("repository", "string", "A repository.", format="github_repo"))
+        async def needs_a_repo(repository: str) -> str:  # pragma: no cover - never reached
+            return "unreachable"
+
+        tools.register(needs_a_repo)
+        plan = _plan(
+            PlanStep(id=StepId("s1"), kind=StepKind.TOOL, tool="needs_a_repo",
+                     description="Read a repo", arguments={"repository": "repo_for_README"}),
+        )
+        outcome = await ExecutionEngine(tools=tools).execute(plan, context=tool_context)
+
+        assert outcome.succeeded is False
+        step = outcome.plan.step(StepId("s1"))
+        assert step.status is StepStatus.FAILED
+        assert step.error_kind == "unresolved_argument"
+
     async def test_a_confirmation_required_tool_call_blocks_rather_than_fails(
         self, tool_context
     ) -> None:

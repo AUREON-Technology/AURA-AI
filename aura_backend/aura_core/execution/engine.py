@@ -27,6 +27,7 @@ from dataclasses import replace
 from typing import Any, AsyncIterator, Callable, Mapping, Sequence
 
 from ..domain.errors import BudgetExceededError, ExecutionError
+from ..domain.failure_kinds import FailureKind
 from ..domain.identifiers import ToolCallId
 from ..domain.messages import ToolCall
 from ..domain.planning import Plan, PlanStep, StepKind, StepStatus
@@ -258,7 +259,7 @@ class ExecutionEngine:
                     # BLOCKED) because this is the step's own argument that is bad, not a
                     # dependency that failed; `error_kind="unresolved_reference"` is what item 5's
                     # richer replan context and any test asserting "no false success" key off of.
-                    updated.append(step.failed("unresolved_reference", elapsed))
+                    updated.append(step.failed(FailureKind.UNRESOLVED_REFERENCE, elapsed))
                     await self._emit(
                         on_event,
                         StepEvent(
@@ -314,7 +315,14 @@ class ExecutionEngine:
                         ),
                     )
                 else:
-                    failed = step.failed(text[:120], elapsed)
+                    # Prefer the tool's own structured `error_kind` (e.g. "unresolved_argument",
+                    # "policy_denied", "timeout" -- see `domain/failure_kinds.py`) over the
+                    # truncated human-readable message: this `PlanStep.error_kind` is what
+                    # `PlanningEngine.replan()`'s context block surfaces to the model
+                    # ("Failed: ... (unresolved_argument)"), and a structured reason is something
+                    # a replanned attempt can actually act on, where free text is not.
+                    error_kind = getattr(report, "error_kind", None) or text[:120]
+                    failed = step.failed(error_kind, elapsed)
                     # Retry only when the step can be safely repeated. A side-effecting tool that
                     # failed may have already acted, so retrying could duplicate the effect.
                     if failed.can_retry and not self._is_side_effecting(step):
