@@ -590,6 +590,28 @@ numbers — **done**, and verified against real Postgres closely enough to catch
 serialisation bug. Multi-model routing proven against two real, simultaneously-running backends,
 not Ollama-plus-echo — **done**, with a permanent opt-in test reproducing the proof.
 
+- **G3. Fixed a real race `CLAUDE.md` claimed was already handled.** `CLAUDE.md` names
+  `PostgresPool._get_pool()` as "the canonical example" of lazy adapter initialization "behind an
+  `asyncio.Lock` when concurrent callers could race" — but the method had no lock at all. N
+  concurrent first callers each saw `self._pool is None` before any of them finished awaiting
+  `asyncpg.create_pool`, so each built its own pool; only the last write to `self._pool` survived,
+  and every other pool's connections leaked, never closed by anything. Found by reading the method
+  against the claim, not by a failure report — the in-memory-only default `pytest` suite has no way
+  to exercise real concurrent Postgres pool creation, so nothing before this pinned the gap between
+  the doc and the code. Fixed with double-checked locking: a new `self._pool_lock`
+  (`asyncio.Lock`), acquired only around pool *creation*, with a second `self._pool is None` check
+  once inside it (a caller that waited for the lock may find another caller already built the pool
+  while it queued). Schema readiness is deliberately left outside the lock, unchanged — its own
+  docstring already documents why: every statement is `IF NOT EXISTS`, so concurrent callers racing
+  it converge rather than one failing. No real Postgres exists in this environment, so
+  `tests/unit/test_postgres_pool_concurrency.py` (new, 6 cases) monkeypatches `asyncpg.create_pool`
+  with a fake that actually awaits (so a race has room to happen) and returns a distinct object per
+  call (so "did every caller get the *same* pool" is a real assertion, not a tautology): cold
+  start, 20 concurrent first callers, repeated calls after warm-up, failure during initialization,
+  recovery after failure, and concurrent callers all queued behind a failing attempt. Confirmed the
+  core test (20 concurrent callers) fails against the pre-fix code — 20 separate `create_pool`
+  calls instead of 1 — before counting it as a regression test.
+
 ### Phase J — Desktop Engineer agent
 
 **Started, 2026-09-08. Backend bridge, daemon core, output streaming, pairing auth (daemon and
