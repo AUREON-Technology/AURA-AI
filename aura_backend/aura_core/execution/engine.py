@@ -21,6 +21,7 @@ streamed to the client rather than appearing to hang.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import replace
 from typing import Any, AsyncIterator, Callable, Mapping, Sequence
@@ -38,6 +39,50 @@ logger = get_logger("execution")
 
 # Returned as the 4th `_run_step` slot when a kind has no handler. Not a tool report.
 _NO_HANDLER = object()
+
+# Returned as the 4th `_run_step` slot when a `${step_id.output}` reference in the step's
+# arguments could not be resolved against an actually-succeeded step -- the dispatch never
+# happened, so this is not a tool report either. See `_resolve_output_tokens`.
+_UNRESOLVED_REFERENCE = object()
+
+#: Mirrors `planning/engine.py`'s `_STEP_OUTPUT_TOKEN` -- the same token syntax, resolved here
+#: against real step results instead of merely being detected at parse time. Kept as a separate
+#: compiled pattern (rather than imported) so `execution/` does not import from `planning/`: the
+#: two engines are peers in the layering, and the convention itself is documented in both
+#: docstrings rather than shared code.
+_OUTPUT_TOKEN = re.compile(r"\$\{\s*([A-Za-z0-9_.\-]+)\.output\s*\}")
+
+
+def _resolve_output_tokens(
+    arguments: Mapping[str, Any], plan: Plan
+) -> tuple[dict[str, Any], list[str]]:
+    """Replace every ``${step_id.output}`` token in ``arguments`` with that step's actual result.
+
+    This is what stops a dependent step from ever calling its tool with LLM-fabricated content
+    standing in for "whatever the earlier step produced": a token that names a step which never
+    ran, is not yet SUCCEEDED, or produced no result is left unresolved and reported back, so the
+    caller can fail the step instead of dispatching it. Non-string argument values pass through
+    unchanged -- a token can only appear inside text a model wrote.
+    """
+    unresolved: list[str] = []
+    by_id = {s.id.value: s for s in plan.steps}
+
+    def resolve(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+
+        def repl(match: "re.Match[str]") -> str:
+            ref = match.group(1)
+            dep = by_id.get(ref)
+            if dep is None or dep.status is not StepStatus.SUCCEEDED or dep.result is None:
+                unresolved.append(ref)
+                return match.group(0)
+            return dep.result
+
+        return _OUTPUT_TOKEN.sub(repl, value)
+
+    resolved = {key: resolve(value) for key, value in arguments.items()}
+    return resolved, unresolved
 
 
 class StepEvent:
@@ -177,7 +222,7 @@ class ExecutionEngine:
                     self._run_step(
                         step, context=context, capabilities=capabilities,
                         confirmed_tools=confirmed_tools, confirmed_call_ids=confirmed_call_ids,
-                        handlers=handlers or {},
+                        handlers=handlers or {}, plan=current,
                     )
                     for step in running
                 ),
@@ -207,6 +252,21 @@ class ExecutionEngine:
                     continue
 
                 text, ok, elapsed, report = outcome
+                if report is _UNRESOLVED_REFERENCE:
+                    # The step's arguments named an earlier step's output via `${step_id.output}`
+                    # and it could not be resolved -- the tool was never dispatched. FAILED (not
+                    # BLOCKED) because this is the step's own argument that is bad, not a
+                    # dependency that failed; `error_kind="unresolved_reference"` is what item 5's
+                    # richer replan context and any test asserting "no false success" key off of.
+                    updated.append(step.failed("unresolved_reference", elapsed))
+                    await self._emit(
+                        on_event,
+                        StepEvent(
+                            step_id=step.id.value, kind=str(step.kind), status="failed",
+                            description=step.description, detail=text[:200], elapsed_ms=elapsed,
+                        ),
+                    )
+                    continue
                 if report is _NO_HANDLER:
                     # Configuration gap: skip, do not fail or retry, and do not count as a
                     # tool report. SKIPPED is terminal and treated as success for the plan.
@@ -305,15 +365,25 @@ class ExecutionEngine:
         confirmed_tools: Sequence[str],
         confirmed_call_ids: Sequence[str],
         handlers: Mapping[StepKind, Callable[[PlanStep], Any]],
+        plan: Plan,
     ) -> tuple[str, bool, float, Any]:
         started = time.perf_counter()
 
         if step.kind is StepKind.TOOL and step.tool:
+            arguments, unresolved = _resolve_output_tokens(step.arguments, plan)
+            if unresolved:
+                return (
+                    f"could not resolve reference(s) to an earlier step's output: "
+                    f"{', '.join(sorted(set(unresolved)))}",
+                    False,
+                    (time.perf_counter() - started) * 1000.0,
+                    _UNRESOLVED_REFERENCE,
+                )
             call_id = f"step_{step.id.value}"
             call = ToolCall(
                 id=ToolCallId(call_id),
                 name=step.tool,
-                arguments=dict(step.arguments),
+                arguments=arguments,
             )
             # Precise per-call confirmation first (two pending calls to the same tool in one
             # turn must be confirmable independently); tool-name matching remains for callers

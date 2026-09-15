@@ -50,6 +50,19 @@ _MULTI_STEP_MARKERS = (
 )
 _STEP_KINDS = {k.value for k in StepKind}
 
+#: ``${step_id.output}`` -- the data-flow token a plan step's argument uses to say "the actual
+#: value here is whatever an earlier step produced", instead of the model authoring free-text
+#: content itself. ``execution/engine.py`` resolves these against the referenced step's real
+#: ``PlanStep.result`` right before dispatch; here, at parse time, a token's mere presence forces
+#: the referenced step into ``depends_on`` even when the model's JSON omitted it -- belt and
+#: suspenders, since prompt compliance alone (``task.plan_decomposition``) is not something to
+#: trust for a dependency that determines whether ``Plan.ready_steps()`` can ever run this step
+#: with fabricated input. This is the root-cause fix for the video incident: a "write summary"
+#: step whose argument names ``${s1.output}`` cannot become ready until step s1 has actually
+#: SUCCEEDED (``domain/planning.py``'s already-correct DAG logic), where before it was an
+#: independent PENDING step with no edge to the read it was supposed to depend on.
+_STEP_OUTPUT_TOKEN = re.compile(r"\$\{\s*([A-Za-z0-9_.\-]+)\.output\s*\}")
+
 
 def _render_tool_line(tool: Mapping[str, Any]) -> str:
     """One prompt line per tool: name, its argument signature, then description.
@@ -255,24 +268,40 @@ class PlanningEngine:
             if kind is not StepKind.TOOL:
                 tool = None
 
-            depends = tuple(
+            self_id = f"s{index + 1}"
+            depends_set = {
                 StepId(declared[str(d)])
                 for d in (raw.get("depends_on") or [])
-                if str(d) in declared and declared[str(d)] != f"s{index + 1}"
-            )
+                if str(d) in declared and declared[str(d)] != self_id
+            }
 
             description = str(raw.get("description", "")).strip()
             if not description:
                 continue
 
+            arguments = dict(raw.get("arguments") or {})
+            declared_ids = set(declared.values())
+            for value in arguments.values():
+                for match in _STEP_OUTPUT_TOKEN.finditer(str(value)):
+                    ref = match.group(1)
+                    # The token may name either the model's own raw step id (resolved through
+                    # `declared`, same as `depends_on` above) or the canonical "sN" id directly --
+                    # a model that already numbers its steps "s1", "s2", ... (the convention the
+                    # prompt's example shows) produces a token that is already canonical.
+                    canonical = declared.get(ref) or (ref if ref in declared_ids else None)
+                    if canonical and canonical != self_id:
+                        depends_set.add(StepId(canonical))
+
+            depends = tuple(sorted(depends_set, key=lambda s: s.value))
+
             steps.append(
                 PlanStep(
-                    id=StepId(f"s{index + 1}"),
+                    id=StepId(self_id),
                     kind=kind,
                     description=description[:500],
                     depends_on=depends,
                     tool=tool,
-                    arguments=dict(raw.get("arguments") or {}),
+                    arguments=arguments,
                     priority=Priority.NORMAL,
                 )
             )
