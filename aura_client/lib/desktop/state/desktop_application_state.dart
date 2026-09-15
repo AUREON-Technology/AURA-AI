@@ -368,7 +368,7 @@ class HostState {
 /// Which panel occupies the primary sidebar (D5) -- previously `DesktopShell` hardcoded
 /// `ExplorerPanel` there unconditionally, since Explorer was the only panel that had ever
 /// existed.
-enum PrimarySidebarPanel { explorer, sourceControl }
+enum PrimarySidebarPanel { explorer, sourceControl, controlCenter }
 
 /// Layout state.
 @immutable

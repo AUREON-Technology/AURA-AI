@@ -13,6 +13,7 @@ import 'package:aura_client/desktop/shell/bottom_panel.dart';
 import 'package:aura_client/desktop/shell/status_bar.dart';
 import 'package:aura_client/desktop/shell/desktop_shortcuts.dart';
 import 'package:aura_client/desktop/agent/agent_panel.dart';
+import 'package:aura_client/desktop/control_center/control_center_panel.dart';
 import 'package:aura_client/desktop/explorer/explorer_panel.dart';
 import 'package:aura_client/desktop/git/git_panel.dart';
 import 'package:aura_client/desktop/editor/editor_tab_bar.dart';
@@ -98,6 +99,7 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
                       child: switch (layoutState.primarySidebarPanel) {
                         PrimarySidebarPanel.explorer => const ExplorerPanel(),
                         PrimarySidebarPanel.sourceControl => const GitPanel(),
+                        PrimarySidebarPanel.controlCenter => const ControlCenterPanel(),
                       },
                     ),
                   if (layoutState.showPrimarySidebar)

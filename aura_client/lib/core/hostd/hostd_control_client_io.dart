@@ -190,6 +190,35 @@ class HostdControlClient {
   Future<Map<String, dynamic>> diagnosticsRun({required String root, required String tool}) =>
       _request('POST', '/diagnostics/run', body: {'root': root, 'tool': tool});
 
+  /// D9's "Agent Review" panel routes (`aura_hostd/lib/src/control_server.dart` +
+  /// `isolated_task_registry.dart`) -- every isolated per-task worktree this daemon currently
+  /// knows about, and the human-only review/merge/discard actions on them. Entirely independent
+  /// of the agent-facing RPC surface, same boundary as the git routes above.
+  Future<List<Map<String, dynamic>>> tasksList() async {
+    final result = await _request('GET', '/tasks');
+    return (result['tasks'] as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> gitTaskDiff({required String taskKey, required String base}) => _request(
+        'GET',
+        '/git/task-diff?task_key=${Uri.encodeQueryComponent(taskKey)}&base=${Uri.encodeQueryComponent(base)}',
+      );
+
+  Future<Map<String, dynamic>> gitTaskDiffStat({required String taskKey, required String base}) => _request(
+        'GET',
+        '/git/task-diff-stat?task_key=${Uri.encodeQueryComponent(taskKey)}&base=${Uri.encodeQueryComponent(base)}',
+      );
+
+  Future<Map<String, dynamic>> gitMergeTask({
+    required String root,
+    required String taskBranch,
+    bool squash = false,
+  }) =>
+      _request('POST', '/git/merge-task', body: {'root': root, 'task_branch': taskBranch, 'squash': squash});
+
+  Future<Map<String, dynamic>> gitDiscardTask({required String taskKey}) =>
+      _request('POST', '/git/discard-task', body: {'task_key': taskKey});
+
   Future<Map<String, dynamic>> startPairing({String? backendUrl}) =>
       _request('POST', '/pair/start', body: {'backend_url': ?backendUrl});
 

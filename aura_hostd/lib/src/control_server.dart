@@ -30,6 +30,7 @@ import 'containment.dart';
 import 'debug_session_manager.dart';
 import 'diagnostics_service.dart';
 import 'git_service.dart';
+import 'isolated_task_registry.dart';
 import 'pairing_client.dart';
 import 'terminal_session_manager.dart';
 import 'workspace_store.dart';
@@ -48,6 +49,7 @@ class ControlServer {
     required this.terminalSessions,
     required this.debugSessions,
     required this.approvalQueue,
+    required this.isolatedTasks,
     GitService? gitService,
     DiagnosticsService? diagnosticsService,
     ControlServerLogger? logger,
@@ -75,6 +77,12 @@ class ControlServer {
   /// D7 Part A.2's process-based batch linting -- see `diagnostics_service.dart`'s doc comment
   /// for why this is a hard human-only boundary like git, never reachable via `TaskHandler`.
   final DiagnosticsService diagnosticsService;
+
+  /// D8/D9's shared per-task isolated-worktree bookkeeping -- **must** be the exact same instance
+  /// `TaskHandler` was constructed with (`bin/aura_hostd.dart` wires this), or D9's "Agent
+  /// Review" panel would see none of what the agent has actually isolated. See
+  /// `isolated_task_registry.dart`'s own doc comment.
+  final IsolatedTaskRegistry isolatedTasks;
 
   /// Called once a `GET /pair/status` poll finds the pairing approved -- the caller (`bin/
   /// aura_hostd.dart`) uses this to start the backend WebSocket connection if it wasn't already
@@ -165,6 +173,16 @@ class ControlServer {
           await _handleDiagnosticsDetect(request);
         case 'POST /diagnostics/run':
           await _handleDiagnosticsRun(request);
+        case 'GET /tasks':
+          await _handleTasksList(request);
+        case 'GET /git/task-diff':
+          await _handleGitTaskDiff(request);
+        case 'GET /git/task-diff-stat':
+          await _handleGitTaskDiffStat(request);
+        case 'POST /git/merge-task':
+          await _handleGitMergeTask(request);
+        case 'POST /git/discard-task':
+          await _handleGitDiscardTask(request);
         case 'POST /pair/start':
           await _handlePairStart(request);
         case 'GET /pair/status':
@@ -579,6 +597,114 @@ class ControlServer {
       await _respond(request, 404, {'error': '$rootParam is not a granted root'});
     } on ArgumentError catch (error) {
       await _respond(request, 400, {'error': error.message});
+    }
+  }
+
+  /// D9's "Agent Review" panel data source -- every isolated task this daemon currently knows
+  /// about. No trust/approval gate: listing metadata about a task's own worktree mutates nothing
+  /// and reveals nothing beyond what the Desktop IDE already shows for the parent project itself.
+  Future<void> _handleTasksList(HttpRequest request) async {
+    await _respond(request, 200, {'tasks': isolatedTasks.list().map((t) => t.toJson()).toList()});
+  }
+
+  /// D9: the branch-range diff between a task's branch and [base] (whatever ref the reviewer is
+  /// comparing against right now, typically the main worktree's current branch -- not something
+  /// recorded at task-creation time, since a merge target can move; see `git_service.dart`'s
+  /// `diff` doc comment on why triple-dot notation makes that the right comparison regardless).
+  Future<void> _handleGitTaskDiff(HttpRequest request) async {
+    final taskKey = request.uri.queryParameters['task_key'];
+    final base = request.uri.queryParameters['base'];
+    if (taskKey == null || base == null) {
+      await _respond(request, 400, {'error': 'task_key and base query parameters are required'});
+      return;
+    }
+    final info = isolatedTasks.infoFor(taskKey);
+    if (info == null) {
+      await _respond(request, 404, {'error': 'no isolated workspace is known for task_key "$taskKey"'});
+      return;
+    }
+    try {
+      final result = await gitService.diff(info.root.canonicalPath, scope: GitDiffScope.branchRange, base: base);
+      await _respond(request, 200, result);
+    } on GitNotARepositoryError {
+      await _respond(request, 409, {'error': 'not a git repository'});
+    } on GitDecodeError catch (error) {
+      await _respond(request, 415, {'error': error.message});
+    } on GitCommandError catch (error) {
+      await _respond(request, 500, {'error': error.message});
+    }
+  }
+
+  Future<void> _handleGitTaskDiffStat(HttpRequest request) async {
+    final taskKey = request.uri.queryParameters['task_key'];
+    final base = request.uri.queryParameters['base'];
+    if (taskKey == null || base == null) {
+      await _respond(request, 400, {'error': 'task_key and base query parameters are required'});
+      return;
+    }
+    final info = isolatedTasks.infoFor(taskKey);
+    if (info == null) {
+      await _respond(request, 404, {'error': 'no isolated workspace is known for task_key "$taskKey"'});
+      return;
+    }
+    try {
+      final result = await gitService.diffStat(info.root.canonicalPath, base);
+      await _respond(request, 200, result);
+    } on GitNotARepositoryError {
+      await _respond(request, 409, {'error': 'not a git repository'});
+    } on GitDecodeError catch (error) {
+      await _respond(request, 415, {'error': error.message});
+    } on GitCommandError catch (error) {
+      await _respond(request, 500, {'error': error.message});
+    }
+  }
+
+  /// D9: human-only, local-only merge of a task's branch into whatever the human currently has
+  /// checked out in [rootParam]'s main worktree -- structurally identical to `/git/commit`/
+  /// `/git/checkout` above (a human's own click is the consent: no approval queue, no trust
+  /// check), and entirely unrelated to `git_push`'s refusal to push the default branch, which
+  /// guards the *agent's own* `git_push` tool call, never invoked here.
+  Future<void> _handleGitMergeTask(HttpRequest request) async {
+    final body = await _readJsonBody(request);
+    final rootParam = body['root'] as String?;
+    final taskBranch = body['task_branch'] as String?;
+    if (rootParam == null || taskBranch == null) {
+      await _respond(request, 400, {'error': 'root and task_branch are required'});
+      return;
+    }
+    final squash = body['squash'] == true;
+    try {
+      final root = _requireRoot(workspaceStore.load(), rootParam);
+      final result = await gitService.mergeTask(root.canonicalPath, taskBranch, squash: squash);
+      await _respond(request, result['ok'] == false ? 409 : 200, result);
+    } on RootNotFoundError {
+      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+    } on GitNotARepositoryError {
+      await _respond(request, 409, {'error': 'not a git repository'});
+    } on GitDecodeError catch (error) {
+      await _respond(request, 415, {'error': error.message});
+    } on GitCommandError catch (error) {
+      await _respond(request, 500, {'error': error.message});
+    }
+  }
+
+  /// D9: tears down an isolated task's worktree/branch entirely -- a human's explicit "Discard,"
+  /// behind a mandatory confirmation dialog client-side (this destroys unpushed work). Never
+  /// reachable via the agent-facing RPC surface.
+  Future<void> _handleGitDiscardTask(HttpRequest request) async {
+    final body = await _readJsonBody(request);
+    final taskKey = body['task_key'] as String?;
+    if (taskKey == null) {
+      await _respond(request, 400, {'error': 'task_key is required'});
+      return;
+    }
+    try {
+      final result = await isolatedTasks.discard(taskKey);
+      await _respond(request, 200, result);
+    } on TaskNotFoundError catch (error) {
+      await _respond(request, 404, {'error': error.toString()});
+    } on GitCommandError catch (error) {
+      await _respond(request, 500, {'error': error.message});
     }
   }
 

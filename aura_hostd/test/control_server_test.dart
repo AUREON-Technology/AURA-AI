@@ -9,6 +9,7 @@ import 'dart:io';
 import 'package:aura_hostd/src/approval_queue.dart';
 import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/control_server.dart';
+import 'package:aura_hostd/src/isolated_task_registry.dart';
 import 'package:aura_hostd/src/debug_session_manager.dart';
 import 'package:aura_hostd/src/terminal_session_manager.dart';
 import 'package:aura_hostd/src/workspace_store.dart';
@@ -131,6 +132,7 @@ void main() {
       terminalSessions: TerminalSessionManager(workspaceStore),
       debugSessions: DebugSessionManager(workspaceStore),
       approvalQueue: approvalQueue,
+      isolatedTasks: IsolatedTaskRegistry(roots),
       logger: (_) {},
     );
     await server.start(configDir);
@@ -447,6 +449,7 @@ void main() {
       terminalSessions: TerminalSessionManager(WorkspaceStore.forConfigDir(pairingConfigDir)),
       debugSessions: DebugSessionManager(WorkspaceStore.forConfigDir(pairingConfigDir)),
       approvalQueue: ApprovalQueue(),
+      isolatedTasks: IsolatedTaskRegistry(WorkspaceStore.forConfigDir(pairingConfigDir).load()),
       logger: (_) {},
     );
     await pairingServer.start(pairingConfigDir);
@@ -627,6 +630,161 @@ void main() {
       final decoded = jsonDecode(iterator.current as String) as Map<String, dynamic>;
       expect(decoded['type'], 'error');
       expect(decoded['message'], contains('outside the granted workspace root'));
+    });
+  });
+
+  group('Agent Review / Part C routes (D9)', () {
+    Future<ProcessResult> git(String cwd, List<String> args) =>
+        Process.run('git', args, workingDirectory: cwd);
+
+    setUp(() async {
+      await git(workspaceDir.path, ['init', '-q', '-b', 'main']);
+      await git(workspaceDir.path, ['config', 'user.name', 'Test User']);
+      await git(workspaceDir.path, ['config', 'user.email', 'test@example.com']);
+      File('${workspaceDir.path}/a.txt').writeAsStringSync('original');
+      await git(workspaceDir.path, ['add', '--', 'a.txt']);
+      await git(workspaceDir.path, ['commit', '-q', '-m', 'initial commit']);
+    });
+
+    Future<String> createIsolatedTask(String taskKey) async {
+      const taskId = 'test-task-id';
+      server.isolatedTasks.registerConfig(taskId, taskKey: taskKey);
+      await server.isolatedTasks.resolve(taskId, workspaceRoot);
+      return taskKey;
+    }
+
+    test('GET /tasks lists every isolated task this daemon knows about', () async {
+      await createIsolatedTask('review-1');
+      final (status, body) = await client.request('GET', '/tasks');
+      expect(status, 200);
+      final tasks = (body['tasks'] as List).cast<Map<String, dynamic>>();
+      expect(tasks, hasLength(1));
+      expect(tasks.single['task_key'], 'review-1');
+      expect(tasks.single['branch'], 'aura/task-review-1');
+    });
+
+    test('GET /git/task-diff shows the real change the task branch made', () async {
+      final taskKey = await createIsolatedTask('review-2');
+      final worktreePath = '${workspaceDir.path}/.aura-workspaces/$taskKey';
+      File('$worktreePath/a.txt').writeAsStringSync('changed by the agent');
+      await git(worktreePath, ['commit', '-q', '-am', 'agent change']);
+
+      final (status, body) = await client.request(
+        'GET',
+        '/git/task-diff?task_key=$taskKey&base=main',
+      );
+      expect(status, 200);
+      expect(body['diff'] as String, contains('+changed by the agent'));
+    });
+
+    test('GET /git/task-diff-stat summarizes the change', () async {
+      final taskKey = await createIsolatedTask('review-3');
+      final worktreePath = '${workspaceDir.path}/.aura-workspaces/$taskKey';
+      File('$worktreePath/a.txt').writeAsStringSync('changed');
+      await git(worktreePath, ['commit', '-q', '-am', 'agent change']);
+
+      final (status, body) = await client.request(
+        'GET',
+        '/git/task-diff-stat?task_key=$taskKey&base=main',
+      );
+      expect(status, 200);
+      expect(body['stat'] as String, contains('a.txt'));
+    });
+
+    test('GET /git/task-diff 404s an unknown task_key', () async {
+      final (status, body) = await client.request(
+        'GET',
+        '/git/task-diff?task_key=never-created&base=main',
+      );
+      expect(status, 404);
+      expect(body['error'], contains('no isolated workspace'));
+    });
+
+    test('POST /git/merge-task merges the task branch into the main worktree, locally only',
+        () async {
+      final taskKey = await createIsolatedTask('review-4');
+      final worktreePath = '${workspaceDir.path}/.aura-workspaces/$taskKey';
+      File('$worktreePath/new_file.txt').writeAsStringSync('from the agent');
+      await git(worktreePath, ['add', '--', 'new_file.txt']);
+      await git(worktreePath, ['commit', '-q', '-m', 'agent adds a file']);
+
+      final (status, body) = await client.request(
+        'POST',
+        '/git/merge-task',
+        body: {'root': workspaceRoot, 'task_branch': 'aura/task-review-4'},
+      );
+      expect(status, 200);
+      expect(body['ok'], true);
+      expect(File('${workspaceDir.path}/new_file.txt').existsSync(), isTrue);
+      expect(File('${workspaceDir.path}/new_file.txt').readAsStringSync(), 'from the agent');
+    });
+
+    test('POST /git/merge-task with squash commits a single squashed commit', () async {
+      final taskKey = await createIsolatedTask('review-5');
+      final worktreePath = '${workspaceDir.path}/.aura-workspaces/$taskKey';
+      File('$worktreePath/squashed.txt').writeAsStringSync('squashed content');
+      await git(worktreePath, ['add', '--', 'squashed.txt']);
+      await git(worktreePath, ['commit', '-q', '-m', 'agent commit 1']);
+
+      final (status, body) = await client.request(
+        'POST',
+        '/git/merge-task',
+        body: {'root': workspaceRoot, 'task_branch': 'aura/task-review-5', 'squash': true},
+      );
+      expect(status, 200);
+      expect(body['ok'], true);
+      expect(body['committed'], true);
+      expect(File('${workspaceDir.path}/squashed.txt').existsSync(), isTrue);
+    });
+
+    test('POST /git/merge-task reports a conflict instead of silently failing or auto-resolving',
+        () async {
+      final taskKey = await createIsolatedTask('review-6');
+      final worktreePath = '${workspaceDir.path}/.aura-workspaces/$taskKey';
+      File('$worktreePath/a.txt').writeAsStringSync('changed in the task');
+      await git(worktreePath, ['commit', '-q', '-am', 'agent change']);
+
+      // A conflicting change lands on main in the meantime.
+      File('${workspaceDir.path}/a.txt').writeAsStringSync('changed on main');
+      await git(workspaceDir.path, ['commit', '-q', '-am', 'main change']);
+
+      final (status, body) = await client.request(
+        'POST',
+        '/git/merge-task',
+        body: {'root': workspaceRoot, 'task_branch': 'aura/task-review-6'},
+      );
+      expect(status, 409);
+      expect(body['ok'], false);
+      expect(body['reason'], 'conflict');
+      expect(body['conflicted_files'], contains('a.txt'));
+
+      // The main worktree is left resolvable, not silently aborted -- git itself is still
+      // mid-merge here, matching the plan's own "no automated conflict resolution" scope.
+      final status2 = await git(workspaceDir.path, ['status', '--short']);
+      expect(status2.stdout.toString(), isNotEmpty);
+      await git(workspaceDir.path, ['merge', '--abort']);
+    });
+
+    test('POST /git/discard-task removes the worktree and branch, and it disappears from GET /tasks',
+        () async {
+      final taskKey = await createIsolatedTask('review-7');
+      final worktreePath = '${workspaceDir.path}/.aura-workspaces/$taskKey';
+      expect(Directory(worktreePath).existsSync(), isTrue);
+
+      final (status, body) = await client.request('POST', '/git/discard-task', body: {'task_key': taskKey});
+      expect(status, 200);
+      expect(body['ok'], true);
+      expect(Directory(worktreePath).existsSync(), isFalse);
+
+      final (listStatus, listBody) = await client.request('GET', '/tasks');
+      expect(listStatus, 200);
+      expect(listBody['tasks'], isEmpty);
+    });
+
+    test('POST /git/discard-task 404s an unknown task_key', () async {
+      final (status, body) = await client.request('POST', '/git/discard-task', body: {'task_key': 'nope'});
+      expect(status, 404);
+      expect(body['error'], contains('no isolated workspace'));
     });
   });
 }

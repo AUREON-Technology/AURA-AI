@@ -91,8 +91,17 @@ class ActivityBar extends ConsumerWidget {
             icon: Icons.auto_awesome_outlined,
             selectedIcon: Icons.auto_awesome,
             label: 'AURA',
-            isSelected: false,
-            onTap: () {}, // D6 stub
+            isSelected: layoutState.showPrimarySidebar &&
+                layoutState.primarySidebarPanel == PrimarySidebarPanel.controlCenter,
+            onTap: () {
+              final notifier = ref.read(layoutNotifierProvider.notifier);
+              if (layoutState.showPrimarySidebar &&
+                  layoutState.primarySidebarPanel == PrimarySidebarPanel.controlCenter) {
+                notifier.togglePrimarySidebar();
+              } else {
+                notifier.showControlCenterPanel();
+              }
+            },
             density: ideDensity,
           ),
           const Spacer(),

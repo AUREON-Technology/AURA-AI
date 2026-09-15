@@ -26,6 +26,7 @@ import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/containment.dart';
 import 'package:aura_hostd/src/control_server.dart';
 import 'package:aura_hostd/src/debug_session_manager.dart';
+import 'package:aura_hostd/src/isolated_task_registry.dart';
 import 'package:aura_hostd/src/pairing_client.dart';
 import 'package:aura_hostd/src/rpc_client.dart';
 import 'package:aura_hostd/src/task_handler.dart';
@@ -149,7 +150,7 @@ Future<void> _pair(ConfigStore configStore, String backendUrl) async {
 /// by the "already paired at startup" and "paired later via the control server" paths below, so
 /// pairing does not require restarting `run`.
 class _BackendConnection {
-  _BackendConnection(this.configStore, this.workspaceStore, this.approvalQueue);
+  _BackendConnection(this.configStore, this.workspaceStore, this.approvalQueue, this.isolatedTasks);
 
   final ConfigStore configStore;
   final WorkspaceStore workspaceStore;
@@ -157,13 +158,18 @@ class _BackendConnection {
   /// The same queue instance `ControlServer`'s `/approvals` routes act on -- see
   /// `approval_queue.dart` and `task_handler.dart::TaskHandler`'s constructor doc.
   final ApprovalQueue approvalQueue;
+
+  /// The same instance `ControlServer` holds -- D9's "Agent Review" panel needs to see exactly
+  /// what this `TaskHandler` has isolated on the agent's behalf. See
+  /// `isolated_task_registry.dart`'s own doc comment.
+  final IsolatedTaskRegistry isolatedTasks;
   HostAgentClient? _client;
 
   void startIfAuthenticated() {
     if (_client != null) return;
     final config = configStore.load();
     if (config.authToken == null || config.authToken!.isEmpty) return;
-    final handler = TaskHandler(workspaceStore.load(), approvalQueue);
+    final handler = TaskHandler(workspaceStore.load(), approvalQueue, null, isolatedTasks);
     final client = HostAgentClient(
       wsUrl: config.hostAgentWsUrl,
       authToken: config.authToken!,
@@ -187,7 +193,12 @@ Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) 
   }
 
   final approvalQueue = ApprovalQueue();
-  final backend = _BackendConnection(configStore, workspaceStore, approvalQueue);
+  // D8/D9: one registry, shared between TaskHandler (agent-facing, created below once paired)
+  // and ControlServer (human-facing "Agent Review" panel) -- see
+  // isolated_task_registry.dart's own doc comment for why a separate instance per side would
+  // silently break Part C.
+  final isolatedTasks = IsolatedTaskRegistry(roots);
+  final backend = _BackendConnection(configStore, workspaceStore, approvalQueue, isolatedTasks);
   final controlServer = ControlServer(
     workspaceStore: workspaceStore,
     configStore: configStore,
@@ -198,6 +209,7 @@ Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) 
     terminalSessions: TerminalSessionManager(workspaceStore),
     debugSessions: DebugSessionManager(workspaceStore),
     approvalQueue: approvalQueue,
+    isolatedTasks: isolatedTasks,
   );
   await controlServer.start(resolveConfigDir());
 

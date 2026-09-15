@@ -31,7 +31,7 @@ import 'package:path/path.dart' as p;
 /// memory or the response body unboundedly.
 const _maxDiffCapChars = 500000;
 
-enum GitDiffScope { workingTree, staged }
+enum GitDiffScope { workingTree, staged, branchRange }
 
 class GitNotARepositoryError implements Exception {
   GitNotARepositoryError(this.message);
@@ -100,15 +100,35 @@ class GitService {
     };
   }
 
-  Future<Map<String, Object?>> diff(String cwd, {String? file, required GitDiffScope scope}) async {
+  /// [base] is required for [GitDiffScope.branchRange] (D9's "Agent Review" panel: the diff
+  /// between a task's branch and whatever it was carved from) and ignored otherwise. Uses git's
+  /// triple-dot notation (`base...HEAD`) rather than `base..HEAD` so the diff reflects only what
+  /// the branch itself changed, not anything [base] gained in the meantime.
+  Future<Map<String, Object?>> diff(
+    String cwd, {
+    String? file,
+    required GitDiffScope scope,
+    String? base,
+  }) async {
+    if (scope == GitDiffScope.branchRange && base == null) {
+      throw ArgumentError('base is required for GitDiffScope.branchRange');
+    }
     final result = await _runOk(cwd, [
       'diff',
       if (scope == GitDiffScope.staged) '--cached',
+      if (scope == GitDiffScope.branchRange) '$base...HEAD',
       if (file != null) ...['--', file],
     ]);
     final truncated = result.stdout.length > _maxDiffCapChars;
     final text = truncated ? result.stdout.substring(0, _maxDiffCapChars) : result.stdout;
     return {'diff': text, 'truncated': truncated};
+  }
+
+  /// D9: a compact per-file change summary for a task's branch against [base] -- the "Agent
+  /// Review" panel's card shows this instead of a full diff, which could be large.
+  Future<Map<String, Object?>> diffStat(String cwd, String base) async {
+    final result = await _runOk(cwd, ['diff', '--stat', '$base...HEAD']);
+    return {'stat': result.stdout};
   }
 
   Future<Map<String, Object?>> log(String cwd, {int limit = 30}) async {
@@ -238,6 +258,37 @@ class GitService {
     } on FormatException {
       // .git/info/exclude was not valid UTF-8 -- equally non-fatal.
     }
+  }
+
+  /// D9: merges [branch] (a task's isolated branch) into whatever is currently checked out in
+  /// [cwd] -- always the human's own main worktree, never the task's own worktree, and never a
+  /// call the agent itself can trigger (see `control_server.dart`'s `/git/merge-task` route doc
+  /// comment for why this is unrelated to `git_push`'s own default-branch guard). `--squash`
+  /// never auto-commits by git's own design, so this method commits it itself when requested,
+  /// keeping both merge styles a single, complete action from the human's one click.
+  Future<Map<String, Object?>> mergeTask(String cwd, String branch, {bool squash = false}) async {
+    final result = await _run(cwd, ['merge', squash ? '--squash' : '--no-ff', branch]);
+    if (result.exitCode != 0) {
+      if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
+      final conflicted = await _run(cwd, ['diff', '--name-only', '--diff-filter=U']);
+      final conflictedFiles =
+          const LineSplitter().convert(conflicted.stdout).where((line) => line.trim().isNotEmpty).toList();
+      if (conflictedFiles.isNotEmpty) {
+        return {'ok': false, 'reason': 'conflict', 'conflicted_files': conflictedFiles};
+      }
+      throw GitCommandError('git merge failed: ${result.stderr}');
+    }
+    if (!squash) {
+      return {'ok': true, 'committed': true};
+    }
+    final commitResult = await _run(cwd, ['commit', '-m', 'Merge task branch $branch (squashed)']);
+    if (commitResult.exitCode != 0) {
+      if (commitResult.stdout.contains('nothing to commit') || commitResult.stderr.contains('nothing to commit')) {
+        return {'ok': true, 'committed': false};
+      }
+      throw GitCommandError('git commit (squash merge) failed: ${commitResult.stderr}');
+    }
+    return {'ok': true, 'committed': true};
   }
 
   bool _looksLikeNotARepo(String stderr) => stderr.contains('not a git repository');

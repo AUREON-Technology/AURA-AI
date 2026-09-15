@@ -53,6 +53,18 @@ class HostdControlClient {
   Future<Map<String, dynamic>> diagnosticsDetect({required String root}) async => _unavailable();
   Future<Map<String, dynamic>> diagnosticsRun({required String root, required String tool}) async =>
       _unavailable();
+  Future<List<Map<String, dynamic>>> tasksList() async => _unavailable();
+  Future<Map<String, dynamic>> gitTaskDiff({required String taskKey, required String base}) async =>
+      _unavailable();
+  Future<Map<String, dynamic>> gitTaskDiffStat({required String taskKey, required String base}) async =>
+      _unavailable();
+  Future<Map<String, dynamic>> gitMergeTask({
+    required String root,
+    required String taskBranch,
+    bool squash = false,
+  }) async =>
+      _unavailable();
+  Future<Map<String, dynamic>> gitDiscardTask({required String taskKey}) async => _unavailable();
   Future<Map<String, dynamic>> startPairing({String? backendUrl}) async => _unavailable();
   Future<Map<String, dynamic>> pairingStatus() async => _unavailable();
   Future<void> shutdown() async => _unavailable();

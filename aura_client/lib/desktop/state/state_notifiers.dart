@@ -598,6 +598,12 @@ class LayoutNotifier extends StateNotifier<LayoutState> {
     state = state.copyWith(showPrimarySidebar: true, primarySidebarPanel: PrimarySidebarPanel.sourceControl);
   }
 
+  /// Shows the "Agent Review" panel in the primary sidebar -- D9's activity-bar wiring, closing
+  /// the D6 stub on `ActivityBar`'s "AURA" item.
+  void showControlCenterPanel() {
+    state = state.copyWith(showPrimarySidebar: true, primarySidebarPanel: PrimarySidebarPanel.controlCenter);
+  }
+
   void toggleSecondarySidebar() {
     state = state.copyWith(showSecondarySidebar: !state.showSecondarySidebar);
   }

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:aura_hostd/src/approval_queue.dart';
 import 'package:aura_hostd/src/containment.dart';
+import 'package:aura_hostd/src/isolated_task_registry.dart';
 import 'package:aura_hostd/src/task_handler.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -533,11 +534,14 @@ void main() {
     });
   });
 
-  group('discardTaskWorkspace (D9 primitive)', () {
+  group('IsolatedTaskRegistry.discard (D9 primitive)', () {
+    late IsolatedTaskRegistry isolatedTasks;
+
     Future<ProcessResult> git(List<String> args) => Process.run('git', args, workingDirectory: workspaceDir.path);
 
     setUp(() async {
-      handler = TaskHandler(roots);
+      isolatedTasks = IsolatedTaskRegistry(roots);
+      handler = TaskHandler(roots, null, null, isolatedTasks);
       await git(['init', '-q', '-b', 'main']);
       await git(['config', 'user.name', 'Test User']);
       await git(['config', 'user.email', 'test@example.com']);
@@ -553,7 +557,7 @@ void main() {
       final worktreePath = p.join(workspaceDir.path, '.aura-workspaces', 'session-7');
       expect(Directory(worktreePath).existsSync(), isTrue);
 
-      await handler.discardTaskWorkspace({'task_key': 'session-7'});
+      await isolatedTasks.discard('session-7');
       expect(Directory(worktreePath).existsSync(), isFalse);
 
       final branches = await git(['branch', '--list', 'aura/task-session-7']);
@@ -562,8 +566,8 @@ void main() {
 
     test('refuses to discard a task_key with no known isolated workspace', () async {
       await expectLater(
-        handler.discardTaskWorkspace({'task_key': 'never-created'}),
-        throwsA(isA<RpcError>()),
+        isolatedTasks.discard('never-created'),
+        throwsA(isA<TaskNotFoundError>()),
       );
     });
   });
