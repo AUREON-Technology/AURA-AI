@@ -18,15 +18,37 @@ Three behaviours that matter for tool calling specifically:
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 from ..domain.errors import ValidationError
+from ..domain.repository_identity import RepositoryIdentity
 from ..domain.tools import ParameterSpec, ToolSpec
 
 __all__ = ["validate_arguments", "coerce_value"]
 
 _TRUE = {"true", "yes", "1", "on"}
 _FALSE = {"false", "no", "0", "off"}
+
+#: ``${step_id.output}`` -- the data-flow token ``planning/engine.py``'s ``_parse_steps`` and
+#: ``execution/engine.py``'s dispatch path resolve against an earlier step's real result. One
+#: surviving unresolved here (the referenced step never ran, or the model emitted a token that
+#: does not name a real step) is a placeholder that must never reach a tool call -- this is the
+#: same failure class as ``repo_for_README``: LLM-authored text standing in for real data.
+_TEMPLATE_TOKEN = re.compile(r"\$\{[^}]*\}")
+
+
+def _validation_error(message: str, *, kind: str) -> ValidationError:
+    """A :class:`ValidationError` whose ``kind`` is overridden per-call-site.
+
+    ``AuraError.kind`` is a class attribute (``"validation_error"`` for every ``ValidationError``
+    instance); an instance override is how ``ToolRegistry.execute``'s ``exc.kind`` -- already
+    used as ``ToolResult.error_kind``/``ToolExecutionReport.error_kind`` -- gets a specific,
+    machine-readable reason instead of the generic one.
+    """
+    exc = ValidationError(message)
+    exc.kind = kind
+    return exc
 
 
 def coerce_value(spec: ParameterSpec, value: Any) -> Any:
@@ -179,6 +201,38 @@ def validate_arguments(tool: ToolSpec, arguments: Mapping[str, Any]) -> dict[str
         if value is None and not spec.required:
             continue
         _check_constraints(spec, value)
+        if isinstance(value, str):
+            _check_unresolved(spec, value)
         validated[name] = value
 
     return validated
+
+
+def _check_unresolved(spec: ParameterSpec, value: str) -> None:
+    """Reject a string argument that is still a placeholder rather than real data.
+
+    Two shapes are caught here, both pre-dispatch (no network call, no tool body reached):
+
+    * a ``${...}`` template token that survived to this point -- ``execution/engine.py`` resolves
+      ``${step_id.output}`` tokens against an earlier step's real result before a tool call is
+      built, so one reaching schema validation means the reference could not be resolved (the
+      referenced step never ran, or the model invented a token that names nothing); and
+    * a value that fails a parameter's declared ``format`` hint -- today only
+      ``"github_repo"``, checked against :class:`RepositoryIdentity`. This is what turns
+      ``repository="repo_for_README"`` into an immediate validation failure instead of a
+      network round trip that comes back 404/400.
+    """
+    if _TEMPLATE_TOKEN.search(value):
+        raise _validation_error(
+            f"parameter '{spec.name}' still contains an unresolved reference "
+            f"({value!r}); it should have been replaced with an earlier step's actual output "
+            "before this tool was called",
+            kind="unresolved_argument",
+        )
+    if spec.format == "github_repo" and RepositoryIdentity.parse_or_none(value) is None:
+        raise _validation_error(
+            f"parameter '{spec.name}' does not look like a GitHub repository "
+            f"({value!r}); expected 'owner/name' or a GitHub URL like "
+            "https://github.com/owner/name",
+            kind="unresolved_argument",
+        )

@@ -13,6 +13,7 @@ import json
 
 import pytest
 
+from aura_core.adapters.coding_fakes import InMemoryGitHubClient
 from aura_core.domain.errors import BudgetExceededError, PlanningError
 from aura_core.domain.identifiers import PlanId, StepId
 from aura_core.domain.planning import Goal, Plan, PlanStep, Priority, StepKind, StepStatus
@@ -21,6 +22,10 @@ from aura_core.execution.engine import ExecutionOutcome, StepEvent
 from aura_core.planning import PlanningEngine
 from aura_core.planning.engine import _parse_json_object, _render_tool_line
 from aura_core.prompts import build_default_registry
+from aura_core.tools.base import param, tool
+from aura_core.tools.coding import build_github_tools
+from aura_core.tools.policy import ToolPolicy
+from aura_core.tools.registry import ToolRegistry
 
 
 class _StubRouter:
@@ -287,6 +292,57 @@ class TestPlanParsing:
         assert [s.tool for s in plan.steps] == ["github_list_repository_files", "open_workspace"]
         assert all(s.kind is StepKind.TOOL for s in plan.steps)
         assert plan.steps[1].depends_on == (StepId("s1"),)
+
+    async def test_a_step_output_reference_forces_depends_on_even_when_the_model_omitted_it(
+        self,
+    ) -> None:
+        """The root-cause fix for the video incident: a model that references an earlier step's
+        output via ``${s1.output}`` but forgets (or never learns) to also declare `depends_on`
+        must not get a structurally-independent step -- belt and suspenders on top of the prompt
+        instruction (`task.plan_decomposition`) telling it to declare the dependency itself."""
+        body = json.dumps({"steps": [
+            {"id": "s1", "kind": "tool", "tool": "github_list_repository_files",
+             "description": "Read the README", "arguments": {"path": "README.md"}},
+            {"id": "s2", "kind": "tool", "tool": "open_workspace",
+             "description": "Write a summary",
+             "arguments": {"repo": "Summary: ${s1.output}"}},
+            # depends_on deliberately omitted on s2, reproducing the video's bug shape.
+        ]})
+        tools = [
+            {"name": "github_list_repository_files", "description": "Read."},
+            {"name": "open_workspace", "description": "Write."},
+        ]
+        plan = await _engine(body).plan(Goal(description="summarise"), available_tools=tools)
+
+        assert plan.steps[1].depends_on == (StepId("s1"),)
+
+    async def test_a_reference_to_the_models_own_raw_id_is_also_resolved(self) -> None:
+        """The token may name the model's own (non-canonical) raw id -- resolved through the
+        same `declared` mapping `depends_on` itself uses -- not only the canonical "sN" form."""
+        body = json.dumps({"steps": [
+            {"id": "read_readme", "kind": "tool", "tool": "github_list_repository_files",
+             "description": "Read the README", "arguments": {"path": "README.md"}},
+            {"id": "write_summary", "kind": "tool", "tool": "open_workspace",
+             "description": "Write a summary",
+             "arguments": {"repo": "Summary: ${read_readme.output}"}},
+        ]})
+        tools = [
+            {"name": "github_list_repository_files", "description": "Read."},
+            {"name": "open_workspace", "description": "Write."},
+        ]
+        plan = await _engine(body).plan(Goal(description="summarise"), available_tools=tools)
+        assert plan.steps[1].depends_on == (StepId("s1"),)
+
+    async def test_a_reference_to_an_undeclared_step_does_not_add_a_bogus_dependency(self) -> None:
+        """A malformed/hallucinated token must not crash parsing or invent a dependency on a
+        step that does not exist -- ``Plan``'s own construction already refuses that, but this
+        stays a clean no-op rather than raising."""
+        body = json.dumps({"steps": [
+            {"id": "s1", "kind": "generate", "description": "Write a summary",
+             "arguments": {"note": "${s99.output}"}},
+        ]})
+        plan = await _engine(body).plan(Goal(description="g"), available_tools=TOOLS)
+        assert plan.steps[0].depends_on == ()
 
 
 class TestPlanningFallback:
@@ -638,6 +694,90 @@ class TestExecution:
         assert "4" in outcome.results["s1"]
         assert len(outcome.tool_reports) == 1
 
+    async def test_a_dependent_step_dispatches_with_the_real_output_of_its_dependency(
+        self, tools, tool_context
+    ) -> None:
+        """`${s1.output}` in a dependent step's arguments must be replaced with the *actual*
+        result of step s1 before the tool is dispatched -- never with LLM-authored text standing
+        in for it. This is the positive case of the video-incident fix: a well-formed plan that
+        uses the token correctly runs end to end."""
+
+        @tool("echo_argument", "Echoes its 'text' argument back.",
+              param("text", "string", "Text to echo."))
+        async def echo_argument(text: str) -> str:
+            return text
+
+        tools.register(echo_argument)
+        plan = _plan(
+            PlanStep(id=StepId("s1"), kind=StepKind.TOOL, tool="calculator",
+                     description="Compute", arguments={"expression": "2+2"}),
+            PlanStep(id=StepId("s2"), kind=StepKind.TOOL, tool="echo_argument",
+                     description="Report the result", depends_on=(StepId("s1"),),
+                     arguments={"text": "Result was: ${s1.output}"}),
+        )
+        outcome = await ExecutionEngine(tools=tools).execute(plan, context=tool_context)
+
+        assert outcome.succeeded is True
+        assert outcome.plan.step(StepId("s1")).result is not None
+        assert outcome.results["s2"] == f"Result was: {outcome.plan.step(StepId('s1')).result}"
+
+    async def test_an_unresolvable_reference_blocks_dispatch_and_never_reports_success(
+        self, tools, tool_context
+    ) -> None:
+        """Belt-and-suspenders: even a step whose `depends_on` is missing the edge (an old-style
+        plan, or a plan built directly rather than through `PlanningEngine._parse_steps`'s
+        forced-dependency injection) must not dispatch its tool call with an unresolved
+        `${step_id.output}` token -- this is what makes "write succeeded" after "read failed"
+        (or, here, "read never ran") structurally impossible even if the dependency edge itself
+        is somehow missing."""
+
+        @tool("echo_argument", "Echoes its 'text' argument back.",
+              param("text", "string", "Text to echo."))
+        async def echo_argument(text: str) -> str:
+            return text
+
+        tools.register(echo_argument)
+        # s2 references s1's output but declares no dependency on it -- s1 is never run.
+        plan = _plan(
+            PlanStep(id=StepId("s2"), kind=StepKind.TOOL, tool="echo_argument",
+                     description="Report the result",
+                     arguments={"text": "Result was: ${s1.output}"}),
+        )
+        outcome = await ExecutionEngine(tools=tools).execute(plan, context=tool_context)
+
+        assert outcome.succeeded is False
+        step = outcome.plan.step(StepId("s2"))
+        assert step.status is StepStatus.FAILED
+        assert step.error_kind == "unresolved_reference"
+        # The tool was never actually dispatched -- no report was produced for it.
+        assert outcome.tool_reports == []
+        assert "s2" not in outcome.results
+
+    async def test_a_failed_tool_steps_error_kind_is_the_structured_reason_not_free_text(
+        self, tools, tool_context
+    ) -> None:
+        """`PlanStep.error_kind` must carry the tool's structured `error_kind`
+        ("unresolved_argument", "policy_denied", ...) rather than a truncated human-readable
+        message -- this is what `PlanningEngine.replan()`'s context block
+        ("Failed: ... (<error_kind>)") and `agentic_loop._replan_reason` actually key off of."""
+
+        @tool("needs_a_repo", "Takes a github_repo-shaped argument.",
+              param("repository", "string", "A repository.", format="github_repo"))
+        async def needs_a_repo(repository: str) -> str:  # pragma: no cover - never reached
+            return "unreachable"
+
+        tools.register(needs_a_repo)
+        plan = _plan(
+            PlanStep(id=StepId("s1"), kind=StepKind.TOOL, tool="needs_a_repo",
+                     description="Read a repo", arguments={"repository": "repo_for_README"}),
+        )
+        outcome = await ExecutionEngine(tools=tools).execute(plan, context=tool_context)
+
+        assert outcome.succeeded is False
+        step = outcome.plan.step(StepId("s1"))
+        assert step.status is StepStatus.FAILED
+        assert step.error_kind == "unresolved_argument"
+
     async def test_a_confirmation_required_tool_call_blocks_rather_than_fails(
         self, tool_context
     ) -> None:
@@ -955,3 +1095,143 @@ class TestProgressStreaming:
         first = await stream.__anext__()
         assert isinstance(first, StepEvent)
         await stream.aclose()  # must return promptly rather than waiting out the sleep
+
+
+class TestVelvetIncidentScenario:
+    """End-to-end reproduction of the E:\\VELVET README demo video: "summarise README.md" in an
+    already-open local workspace. The model invents a GitHub repository id (`repo_for_README`),
+    that read fails, and the video showed the dependent "write summary" step still reported as
+    succeeded, followed by the agent proposing to destroy the workspace.
+
+    Two scripted plans, one per case the analysis called out:
+
+    * the video's actual (buggy) plan shape -- a write step with fabricated content and no
+      `depends_on` at all -- shows what Items 1/2/4 alone do and do not fix: the read fails
+      cheaply and pre-network (Item 2/4), but a write step with no dependency edge and no
+      `${s1.output}` reference is not something any belt-and-suspenders check can retroactively
+      tie to the read -- nothing declared it depends on anything. This is exactly why Item 1 also
+      changes the *prompt* (`task.plan_decomposition`), not only the parser: the fix that
+      actually prevents the false "succeeded" is the model using `${s1.output}`, which the parser
+      then backs up by forcing `depends_on` even if the model's JSON omits it.
+    * a well-formed plan that *does* use `${s1.output}` -- the shape the updated prompt asks
+      for -- runs end to end with the write step's argument genuinely carrying the read step's
+      real content, and blocks correctly (never reporting success) when the read fails instead.
+    """
+
+    def _registry(self, github_client: InMemoryGitHubClient) -> ToolRegistry:
+        registry = ToolRegistry(policy=ToolPolicy())
+
+        async def resolver(user_id):
+            return github_client
+
+        registry.register_all(build_github_tools(resolver))
+
+        @tool("save_summary", "Save a text summary.",
+              param("content", "string", "The summary text to save."))
+        async def save_summary(content: str) -> str:
+            return f"Saved: {content}"
+
+        registry.register(save_summary)
+        return registry
+
+    async def test_the_videos_buggy_plan_shape_fails_the_read_cheaply_but_cannot_retroactively_block_an_unlinked_write(
+        self, tool_context
+    ) -> None:
+        github_client = InMemoryGitHubClient()  # nothing seeded -- repo_for_README is fabricated
+        registry = self._registry(github_client)
+
+        # Exactly the video's shape: the write step's content is LLM-authored prose, not a
+        # `${s1.output}` reference, and it declares no `depends_on` on the read step at all.
+        plan = _plan(
+            PlanStep(id=StepId("s1"), kind=StepKind.TOOL, tool="github_get_file_contents",
+                     description="Read README.md",
+                     arguments={"path": "README.md", "repo": "repo_for_README"}),
+            PlanStep(id=StepId("s2"), kind=StepKind.TOOL, tool="save_summary",
+                     description="Save the summary",
+                     arguments={"content": "This project is a well-organized Python application..."}),
+        )
+        outcome = await ExecutionEngine(tools=registry).execute(
+            plan, context=tool_context, capabilities=("engineer_agent",)
+        )
+
+        read_step = outcome.plan.step(StepId("s1"))
+        assert read_step.status is StepStatus.FAILED
+        assert read_step.error_kind == "unresolved_argument"
+        # The read never reached the network: schema validation rejected the fabricated
+        # repository before `_client`/`get_file_contents` was ever called.
+        write_step = outcome.plan.step(StepId("s2"))
+        assert write_step.status is StepStatus.SUCCEEDED
+        assert "This project is a well-organized" in (write_step.result or "")
+        # This is the residual gap Items 1/2/4 alone leave: a plan with no dependency edge and no
+        # data-flow token is not something a pre-dispatch check can retroactively tie together --
+        # the fix has to stop the model from producing this shape in the first place (the updated
+        # `task.plan_decomposition` prompt) and back that up when it is used correctly (below).
+
+    async def test_a_well_formed_plan_using_the_output_token_runs_end_to_end(
+        self, tool_context
+    ) -> None:
+        github_client = InMemoryGitHubClient()
+        github_client.seed_file("acme/velvet", "main", "README.md", "# VELVET\nA sample project.")
+        registry = self._registry(github_client)
+
+        body = json.dumps({"steps": [
+            {"id": "s1", "kind": "tool", "tool": "github_get_file_contents",
+             "description": "Read README.md",
+             "arguments": {"path": "README.md", "repo": "acme/velvet"}},
+            {"id": "s2", "kind": "tool", "tool": "save_summary",
+             "description": "Save the summary",
+             "arguments": {"content": "Summary: ${s1.output}"}},
+        ]})
+        tool_signatures = [
+            {"name": "github_get_file_contents", "description": "Read a file."},
+            {"name": "save_summary", "description": "Save a summary."},
+        ]
+        plan = await _engine(body).plan(
+            Goal(description="Summarize README.md and save the summary"),
+            available_tools=tool_signatures,
+        )
+        # The parser forced the dependency even without relying on the model's own depends_on.
+        assert plan.steps[1].depends_on == (StepId("s1"),)
+
+        outcome = await ExecutionEngine(tools=registry).execute(
+            plan, context=tool_context, capabilities=("engineer_agent",)
+        )
+
+        assert outcome.succeeded is True
+        assert outcome.plan.step(StepId("s1")).status is StepStatus.SUCCEEDED
+        assert outcome.results["s2"] == "Saved: Summary: # VELVET\nA sample project."
+
+    async def test_the_well_formed_shape_blocks_correctly_when_the_read_fails(
+        self, tool_context
+    ) -> None:
+        """The same well-formed shape, but the repository really is fabricated -- this is the
+        case the video should have shown: the write never dispatches and the plan never reports
+        success."""
+        github_client = InMemoryGitHubClient()
+        registry = self._registry(github_client)
+
+        body = json.dumps({"steps": [
+            {"id": "s1", "kind": "tool", "tool": "github_get_file_contents",
+             "description": "Read README.md",
+             "arguments": {"path": "README.md", "repo": "repo_for_README"}},
+            {"id": "s2", "kind": "tool", "tool": "save_summary",
+             "description": "Save the summary",
+             "arguments": {"content": "Summary: ${s1.output}"}},
+        ]})
+        tool_signatures = [
+            {"name": "github_get_file_contents", "description": "Read a file."},
+            {"name": "save_summary", "description": "Save a summary."},
+        ]
+        plan = await _engine(body).plan(
+            Goal(description="Summarize README.md and save the summary"),
+            available_tools=tool_signatures,
+        )
+        outcome = await ExecutionEngine(tools=registry).execute(
+            plan, context=tool_context, capabilities=("engineer_agent",)
+        )
+
+        assert outcome.succeeded is False
+        assert outcome.plan.step(StepId("s1")).status is StepStatus.FAILED
+        write_step = outcome.plan.step(StepId("s2"))
+        assert write_step.status is StepStatus.BLOCKED
+        assert "s2" not in outcome.results

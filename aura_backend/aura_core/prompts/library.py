@@ -289,7 +289,7 @@ Write the updated summary as compact prose. No preamble.""",
     ),
     PromptTemplate(
         id="task.plan_decomposition",
-        version="1.2.0",
+        version="1.3.0",
         description="Decompose a goal into a dependency-ordered step list.",
         tags=("task", "planning"),
         variables=variables(
@@ -327,6 +327,10 @@ Rules:
 - Declare dependencies only where a step genuinely needs a previous step's output. Independent
   steps run in parallel, so a false dependency costs real time. Omit "depends_on" (or leave it
   empty) for a step with no dependencies -- do not invent one.
+- If a step's argument is really "whatever an earlier step s<N> produced" (e.g. writing or
+  summarising content a previous step read), write that argument's value as exactly "${sN.output}"
+  -- never author the content yourself as if you already knew it. A step that uses "${sN.output}"
+  MUST also list "sN" in its "depends_on", so it never runs before sN has actually succeeded.
 - Use a tool step only for a tool that is listed, and only with the argument names shown for it --
   "arguments" must be an object using exactly those names, every required (*) one present.
 - "kind" must be exactly one of these six words: tool, retrieve, recall, generate, verify, respond.
@@ -335,7 +339,12 @@ Respond with JSON only. This example shows the shape for one tool step -- substi
 id/kind/description/tool/arguments/depends_on for each step in your actual plan, do not copy
 these values:
 {"steps": [{"id": "s1", "kind": "tool", "description": "Search the handbook for the expense cap",
-            "tool": "search_knowledge", "arguments": {"query": "expense cap"}, "depends_on": []}]}""",
+            "tool": "search_knowledge", "arguments": {"query": "expense cap"}, "depends_on": []}]}
+
+A second step consuming the first step's result would look like:
+{"id": "s2", "kind": "tool", "description": "Save the expense cap to notes.txt",
+ "tool": "write_file", "arguments": {"path": "notes.txt", "content": "${s1.output}"},
+ "depends_on": ["s1"]}""",
     ),
     PromptTemplate(
         id="task.verification",

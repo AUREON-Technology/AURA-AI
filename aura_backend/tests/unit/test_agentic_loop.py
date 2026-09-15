@@ -39,6 +39,7 @@ class _FakePlanner:
         self.max_replans = max_replans
         self.replan_calls = 0
         self.last_limit: int | None = None
+        self.last_reason: str | None = None
 
     def can_replan(self, plan: Plan, *, limit: int | None = None) -> bool:
         effective = self.max_replans if limit is None else limit
@@ -47,6 +48,7 @@ class _FakePlanner:
     async def replan(self, plan: Plan, *, reason: str, available_tools=(), limit: int | None = None) -> Plan:
         self.replan_calls += 1
         self.last_limit = limit
+        self.last_reason = reason
         if not self.can_replan(plan, limit=limit):
             raise RuntimeError("replanning limit reached")
         return plan.revised(steps=list(plan.steps), reason=reason)
@@ -110,6 +112,21 @@ class TestRun:
         assert outcome.succeeded
         assert executor.execute_calls == 2
         assert planner.replan_calls == 1
+
+    async def test_the_replan_reason_carries_the_failed_steps_error_kind(self, ctx) -> None:
+        """Item 5: a bare `blocked_reason` ("step_failed") tells a replanned attempt only that
+        *something* failed. `_replan_reason` folds each failed step's `error_kind` in, so the
+        planner -- and `PlanningEngine.replan()`'s own context block, which already surfaces
+        per-step `error_kind` -- gets the specific reason (e.g. "unresolved_argument"), not just
+        the fact of failure."""
+        plan = _plan()
+        executor = _ScriptedExecutor([False, True])
+        planner = _FakePlanner(max_replans=5)
+        agentic = AgenticExecutor(planner=planner, executor=executor)
+
+        await agentic.run(plan, context=ctx, max_iterations=5, deadline_s=10.0)
+
+        assert planner.last_reason == "step_failed (boom)"
 
     async def test_stops_at_the_iteration_budget_when_failures_never_stop(self, ctx) -> None:
         plan = _plan()

@@ -378,3 +378,33 @@ class TestArgumentValidation:
 
     def test_a_tool_with_no_parameters_accepts_an_empty_object(self) -> None:
         assert validate_arguments(self._tool(), {}) == {}
+
+    def test_an_unresolved_template_token_is_rejected_before_dispatch(self) -> None:
+        """`${step_id.output}` reaching schema validation means `execution/engine.py` could not
+        resolve it against an actually-succeeded step -- the placeholder must never reach a
+        tool body."""
+        tool = self._tool(_spec(name="content"))
+        with pytest.raises(ValidationError) as excinfo:
+            validate_arguments(tool, {"content": "Summary: ${s1.output}"})
+        assert excinfo.value.kind == "unresolved_argument"
+
+    def test_a_github_repo_shaped_parameter_accepts_a_real_repository(self) -> None:
+        tool = self._tool(_spec(name="repository", format="github_repo", required=False))
+        assert validate_arguments(tool, {"repository": "acme/widgets"}) == {
+            "repository": "acme/widgets"
+        }
+
+    def test_a_github_repo_shaped_parameter_rejects_a_fabricated_identifier(self) -> None:
+        """The video incident, at the schema layer: the model invents `repo_for_README` for a
+        local file it was actually asked to summarise. This must fail cheaply, before any
+        network call, with a machine-readable `error_kind` a replan can act on."""
+        tool = self._tool(_spec(name="repository", format="github_repo", required=False))
+        with pytest.raises(ValidationError) as excinfo:
+            validate_arguments(tool, {"repository": "repo_for_README"})
+        assert excinfo.value.kind == "unresolved_argument"
+
+    def test_an_omitted_optional_github_repo_parameter_is_not_checked(self) -> None:
+        """Omitting `repo` legitimately means "use the configured default" -- the format check
+        only fires when a value is actually supplied."""
+        tool = self._tool(_spec(name="repository", format="github_repo", required=False))
+        assert validate_arguments(tool, {}) == {}

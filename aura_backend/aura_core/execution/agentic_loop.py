@@ -43,6 +43,27 @@ _TERMINAL_BLOCKS = frozenset(
 )
 
 
+def _replan_reason(outcome: ExecutionOutcome) -> str:
+    """A `reason` string that carries the *specific* failure kind(s), not just the generic
+    ``blocked_reason``.
+
+    ``PlanningEngine.replan()`` already puts each failed step's ``error_kind`` into the revised
+    goal's context block (``f"Failed: {s.description} ({s.error_kind})"``) -- this only makes the
+    top-level ``reason`` (recorded on the ``PlanRevision`` for audit, and folded into the same
+    context by callers that pass it through) carry the same specificity, e.g.
+    ``"step_failed (unresolved_argument)"`` instead of the previous bare ``"step_failed"``. That
+    is the difference between a replan knowing only "something failed" and knowing "the
+    repository argument could not be resolved" -- Item 5's "richer replan context", implemented
+    as this plus the per-step detail `replan()` already had, rather than a new component.
+    """
+    reason = outcome.blocked_reason or "step_failed"
+    failing = outcome.plan.failed_steps or outcome.plan.blocked_steps()
+    kinds = sorted({s.error_kind for s in failing if s.error_kind})
+    if kinds:
+        return f"{reason} ({', '.join(kinds)})"
+    return reason
+
+
 class AgenticExecutor:
     """Wraps one planner/executor pair in a bounded observe-and-replan loop."""
 
@@ -76,7 +97,7 @@ class AgenticExecutor:
         try:
             return await self._planner.replan(
                 outcome.plan,
-                reason=outcome.blocked_reason or "step_failed",
+                reason=_replan_reason(outcome),
                 available_tools=available_tools,
                 limit=max_iterations,
             )

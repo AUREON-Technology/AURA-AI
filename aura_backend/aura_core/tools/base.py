@@ -33,6 +33,7 @@ def param(
     maximum: float | None = None,
     max_length: int | None = None,
     item_type: str | None = None,
+    format: str | None = None,
 ) -> ParameterSpec:
     return ParameterSpec(
         name=name,
@@ -45,6 +46,7 @@ def param(
         maximum=maximum,
         max_length=max_length,
         item_type=item_type,
+        format=format,
     )
 
 
