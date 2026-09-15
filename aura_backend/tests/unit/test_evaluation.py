@@ -472,6 +472,45 @@ class TestAgentEvaluator:
         assert payload["failures"][0]["case_id"] == "stuck"
 
 
+class TestAgentEvaluatorToolAccuracy:
+    """The class docstring claims ``AgentEvaluator`` measures "tool selection accuracy" and
+    "adherence to expected tool sequences" -- ``expected_tools`` was loaded by
+    ``load_agent_cases`` but never checked anywhere, so neither claim was actually true. These
+    pin the fix: a recall-style measure over the set of tools a run actually used."""
+
+    def test_no_expected_tools_is_a_vacuous_pass(self) -> None:
+        case = AgentCase(id="c", query="q")
+        assert AgentEvaluator._tool_accuracy(case, []) == 1.0
+        assert AgentEvaluator._tool_accuracy(case, ["anything"]) == 1.0
+
+    def test_every_expected_tool_used_scores_full(self) -> None:
+        case = AgentCase(id="c", query="q", expected_tools=("search_knowledge", "create_task"))
+        assert AgentEvaluator._tool_accuracy(
+            case, ["search_knowledge", "create_task", "calculator"]
+        ) == 1.0
+
+    def test_partial_overlap_is_fractional(self) -> None:
+        case = AgentCase(id="c", query="q", expected_tools=("search_knowledge", "create_task"))
+        assert AgentEvaluator._tool_accuracy(case, ["search_knowledge"]) == pytest.approx(0.5)
+
+    def test_no_overlap_scores_zero(self) -> None:
+        case = AgentCase(id="c", query="q", expected_tools=("search_knowledge",))
+        assert AgentEvaluator._tool_accuracy(case, ["calculator"]) == 0.0
+
+    async def test_run_populates_tool_accuracy_on_the_result(self, container, user) -> None:
+        """End-to-end, not just the static helper: a real run with EchoProvider (which never
+        triggers a tool call) against a case naming an expected tool should score 0.0, not the
+        1.0 a vacuous-pass bug would silently produce."""
+        await container.startup()
+        case = AgentCase(
+            id="c", query="hello", expected_tools=("search_knowledge",),
+            max_turns=1, owner_id=str(user),
+        )
+        result = await AgentEvaluator(container.kernel).run([case])
+        assert result.results[0].tool_accuracy == 0.0
+        assert result.metrics()["tool_accuracy"] == 0.0
+
+
 class TestLLMJudge:
     async def test_parses_a_score_out_of_a_json_response(self, router) -> None:
         class ScoringRouter:

@@ -23,6 +23,7 @@ branch for them rather than extending this function.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -88,6 +89,13 @@ class PostgresPool:
         self._max = max_size
         self._pool: Any = None
         self._schema_ready = False
+        # Guards pool *creation* only. N concurrent first callers must produce exactly one
+        # asyncpg pool -- without this, each sees ``self._pool is None`` before any of them
+        # finishes awaiting ``create_pool``, so each creates its own; only the last write wins,
+        # and every other pool leaks its connections uncollected. Schema readiness below is
+        # deliberately left outside the lock: `_ensure_schema`'s statements are all
+        # ``IF NOT EXISTS``, so concurrent callers racing it converge rather than one failing.
+        self._pool_lock = asyncio.Lock()
 
     async def acquire(self) -> Any:
         pool = await self._get_pool()
@@ -95,19 +103,23 @@ class PostgresPool:
 
     async def _get_pool(self) -> Any:
         if self._pool is None:
-            try:
-                import asyncpg
-            except ImportError as exc:  # pragma: no cover - dependency is declared
-                raise ConfigurationError(
-                    "postgres backends require the asyncpg package",
-                    details={"install": "pip install asyncpg"},
-                ) from exc
-            try:
-                self._pool = await asyncpg.create_pool(
-                    self._dsn, min_size=self._min, max_size=self._max
-                )
-            except Exception as exc:
-                raise _unavailable(f"could not connect to Postgres: {exc}") from exc
+            async with self._pool_lock:
+                # Re-check inside the lock: a caller that waited for it may find the pool
+                # another caller already built while it queued.
+                if self._pool is None:
+                    try:
+                        import asyncpg
+                    except ImportError as exc:  # pragma: no cover - dependency is declared
+                        raise ConfigurationError(
+                            "postgres backends require the asyncpg package",
+                            details={"install": "pip install asyncpg"},
+                        ) from exc
+                    try:
+                        self._pool = await asyncpg.create_pool(
+                            self._dsn, min_size=self._min, max_size=self._max
+                        )
+                    except Exception as exc:
+                        raise _unavailable(f"could not connect to Postgres: {exc}") from exc
         if not self._schema_ready:
             await self._ensure_schema()
             self._schema_ready = True

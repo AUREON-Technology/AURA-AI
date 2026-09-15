@@ -230,6 +230,22 @@ Small, and it removes ambiguity that Phase C would otherwise inherit. **Done**, 
   full `pytest`/`tests/architecture`/the legacy suite all green. Not addressed here, and not
   claimed: syncing these records to the Flutter client (still server-visible only, per C2's own
   note) and optimistic-concurrency/versioning on update (last write wins, same as `put`).
+- **C5. Fixed a docstring/implementation gap in `AgentEvaluator`, found while re-reading it.**
+  Its class docstring claims it measures "task completion, tool selection accuracy, tool success
+  rate, recovery from failures, and adherence to expected tool sequences" — but `AgentCase.
+  expected_tools` was loaded by `load_agent_cases` and never read anywhere in `run()`. A case
+  naming which tools mattered got no credit or penalty for using the wrong ones, or none at all.
+  Added `AgentCaseResult.tool_accuracy` (`AgentEvaluator._tool_accuracy`, new): a recall-style
+  measure over the *set* of tools used across the run, `1.0` when a case names no `expected_tools`
+  (nothing was specified to get wrong, the same vacuous-pass convention `tool_success_rate` already
+  uses). Exposed in `AgentSuiteResult.metrics()` as `tool_accuracy`. Deliberately does not change
+  `success`'s own pass/fail logic — a behavioural change to the existing gate's semantics is a
+  separate decision, not implied by fixing a measurement gap — so this is inert against the
+  current `agent_tasks.jsonl` baseline (no case in it sets `expected_tools` yet) and only matters
+  once a case does. 5 new tests in `tests/unit/test_evaluation.py`, including one that runs a real
+  case through `AgentEvaluator.run()` and confirms it scores `0.0` rather than the `1.0` a
+  vacuous-pass bug would silently produce; confirmed all three non-trivial tests fail when the
+  computation is stubbed back to always-`1.0`.
 
 **Exit criteria.** An agent's tool set is data, not code — **done** (C1). A tool call outside an
 agent's grant fails closed and is visible in the audit sink — **done**, proven against both a
@@ -573,6 +589,28 @@ Per this document's own standing rule, this phase is not "done" until those have
 numbers — **done**, and verified against real Postgres closely enough to catch a real
 serialisation bug. Multi-model routing proven against two real, simultaneously-running backends,
 not Ollama-plus-echo — **done**, with a permanent opt-in test reproducing the proof.
+
+- **G3. Fixed a real race `CLAUDE.md` claimed was already handled.** `CLAUDE.md` names
+  `PostgresPool._get_pool()` as "the canonical example" of lazy adapter initialization "behind an
+  `asyncio.Lock` when concurrent callers could race" — but the method had no lock at all. N
+  concurrent first callers each saw `self._pool is None` before any of them finished awaiting
+  `asyncpg.create_pool`, so each built its own pool; only the last write to `self._pool` survived,
+  and every other pool's connections leaked, never closed by anything. Found by reading the method
+  against the claim, not by a failure report — the in-memory-only default `pytest` suite has no way
+  to exercise real concurrent Postgres pool creation, so nothing before this pinned the gap between
+  the doc and the code. Fixed with double-checked locking: a new `self._pool_lock`
+  (`asyncio.Lock`), acquired only around pool *creation*, with a second `self._pool is None` check
+  once inside it (a caller that waited for the lock may find another caller already built the pool
+  while it queued). Schema readiness is deliberately left outside the lock, unchanged — its own
+  docstring already documents why: every statement is `IF NOT EXISTS`, so concurrent callers racing
+  it converge rather than one failing. No real Postgres exists in this environment, so
+  `tests/unit/test_postgres_pool_concurrency.py` (new, 6 cases) monkeypatches `asyncpg.create_pool`
+  with a fake that actually awaits (so a race has room to happen) and returns a distinct object per
+  call (so "did every caller get the *same* pool" is a real assertion, not a tautology): cold
+  start, 20 concurrent first callers, repeated calls after warm-up, failure during initialization,
+  recovery after failure, and concurrent callers all queued behind a failing attempt. Confirmed the
+  core test (20 concurrent callers) fails against the pre-fix code — 20 separate `create_pool`
+  calls instead of 1 — before counting it as a regression test.
 
 ### Phase J — Desktop Engineer agent
 
