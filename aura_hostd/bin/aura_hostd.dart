@@ -26,6 +26,7 @@ import 'package:aura_hostd/src/config.dart';
 import 'package:aura_hostd/src/containment.dart';
 import 'package:aura_hostd/src/control_server.dart';
 import 'package:aura_hostd/src/debug_session_manager.dart';
+import 'package:aura_hostd/src/git_service.dart';
 import 'package:aura_hostd/src/pairing_client.dart';
 import 'package:aura_hostd/src/rpc_client.dart';
 import 'package:aura_hostd/src/task_handler.dart';
@@ -41,6 +42,7 @@ Future<void> main(List<String> args) async {
   final configDir = resolveConfigDir();
   final configStore = ConfigStore.forConfigDir(configDir);
   final workspaceStore = WorkspaceStore.forConfigDir(configDir);
+  final taskWorkspaceStore = TaskWorkspaceStore.forConfigDir(configDir);
 
   switch (args.first) {
     case 'auth':
@@ -112,7 +114,7 @@ Future<void> main(List<String> args) async {
       break;
 
     case 'run':
-      await _runDaemon(configStore, workspaceStore);
+      await _runDaemon(configStore, workspaceStore, taskWorkspaceStore);
       break;
 
     default:
@@ -149,10 +151,15 @@ Future<void> _pair(ConfigStore configStore, String backendUrl) async {
 /// by the "already paired at startup" and "paired later via the control server" paths below, so
 /// pairing does not require restarting `run`.
 class _BackendConnection {
-  _BackendConnection(this.configStore, this.workspaceStore, this.approvalQueue);
+  _BackendConnection(this.configStore, this.workspaceStore, this.taskWorkspaceStore, this.approvalQueue);
 
   final ConfigStore configStore;
   final WorkspaceStore workspaceStore;
+
+  /// D8 per-task git worktree bindings (`docs/architecture/015-desktop-ide.md` Part B) -- see
+  /// `TaskWorkspaceStore`'s own doc comment. Passed through to [TaskHandler] so a daemon restart
+  /// self-heals isolated tasks that still exist on disk.
+  final TaskWorkspaceStore taskWorkspaceStore;
 
   /// The same queue instance `ControlServer`'s `/approvals` routes act on -- see
   /// `approval_queue.dart` and `task_handler.dart::TaskHandler`'s constructor doc.
@@ -163,7 +170,7 @@ class _BackendConnection {
     if (_client != null) return;
     final config = configStore.load();
     if (config.authToken == null || config.authToken!.isEmpty) return;
-    final handler = TaskHandler(workspaceStore.load(), approvalQueue);
+    final handler = TaskHandler(workspaceStore.load(), approvalQueue, GitService(), taskWorkspaceStore);
     final client = HostAgentClient(
       wsUrl: config.hostAgentWsUrl,
       authToken: config.authToken!,
@@ -177,7 +184,11 @@ class _BackendConnection {
   void stop() => _client?.stop();
 }
 
-Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) async {
+Future<void> _runDaemon(
+  ConfigStore configStore,
+  WorkspaceStore workspaceStore,
+  TaskWorkspaceStore taskWorkspaceStore,
+) async {
   final roots = workspaceStore.load();
   if (roots.all.isEmpty) {
     stdout.writeln(
@@ -187,7 +198,7 @@ Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) 
   }
 
   final approvalQueue = ApprovalQueue();
-  final backend = _BackendConnection(configStore, workspaceStore, approvalQueue);
+  final backend = _BackendConnection(configStore, workspaceStore, taskWorkspaceStore, approvalQueue);
   final controlServer = ControlServer(
     workspaceStore: workspaceStore,
     configStore: configStore,

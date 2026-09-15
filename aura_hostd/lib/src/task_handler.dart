@@ -7,6 +7,12 @@
 /// container: paths arrive workspace-relative from the tool layer's point of view, so each call
 /// resolves against whichever granted root actually contains it (`findContainingRoot`). A path
 /// outside every granted root is refused outright, matching ADR-011's "never merely confirmable."
+///
+/// D8 (`docs/architecture/015-desktop-ide.md` Part B) is the one exception to "no single owned
+/// root": `create_task` called with `isolate: true` carves a real `git worktree` out of a
+/// granted root and binds the returned `task_id` to it. From that point on, every call carrying
+/// that `task_id` resolves *only* against the worktree -- see `_resolveTaskRoot`'s own doc
+/// comment for why that must never fall back to the cross-all-roots search above.
 library;
 
 import 'dart:convert';
@@ -16,6 +22,8 @@ import 'approval_queue.dart';
 import 'command_policy.dart';
 import 'containment.dart';
 import 'diff_util.dart';
+import 'git_service.dart';
+import 'workspace_store.dart';
 
 class RpcError implements Exception {
   RpcError(this.message);
@@ -45,8 +53,41 @@ const _maxOutputCapChars = 500000;
 /// the caller a way to observe output before the command finishes.
 typedef OutputChunkCallback = void Function(String stream, String data);
 
+/// One D8 per-task git worktree bound into memory -- see `createWorktree`'s doc comment on
+/// [GitService] and `docs/architecture/015-desktop-ide.md` Part B. Two things about this are
+/// deliberate: it is keyed by *both* [taskId] (how backend RPCs reference it after `create_task`
+/// returns) and [taskKey] (the chat session it belongs to, for idempotent reuse across messages
+/// in that session), and [worktreeRoot] is never added to the daemon's persisted
+/// [WorkspaceRoots]/`workspaces.json` -- it must never appear in the Explorer's granted-roots UI
+/// or survive as a normal grant, only as this in-memory (and [TaskWorkspaceStore]-persisted)
+/// binding.
+class _TaskWorktree {
+  _TaskWorktree({
+    required this.taskId,
+    required this.taskKey,
+    required this.parentRoot,
+    required this.worktreeRoot,
+    required this.branch,
+  });
+
+  final String taskId;
+  final String taskKey;
+  final WorkspaceRoot parentRoot;
+  final WorkspaceRoot worktreeRoot;
+  final String branch;
+}
+
 class TaskHandler {
-  TaskHandler(this._roots, [ApprovalQueue? approvalQueue]) : _approvals = approvalQueue ?? ApprovalQueue();
+  TaskHandler(
+    this._roots, [
+    ApprovalQueue? approvalQueue,
+    GitService? git,
+    TaskWorkspaceStore? taskWorkspaceStore,
+  ])  : _approvals = approvalQueue ?? ApprovalQueue(),
+        _git = git ?? GitService(),
+        _taskStore = taskWorkspaceStore {
+    _restoreTaskWorktrees();
+  }
 
   final WorkspaceRoots _roots;
 
@@ -57,10 +98,221 @@ class TaskHandler {
   final ApprovalQueue _approvals;
   final Set<String> _activeTaskIds = {};
 
+  /// D8 (`docs/architecture/015-desktop-ide.md` Part B): git execution for provisioning/tearing
+  /// down a task's isolated worktree. A private instance by default so every pre-D8 call site
+  /// keeps compiling unchanged, exactly like [_approvals] above.
+  final GitService _git;
+
+  /// Durable bookkeeping for the maps below -- `null` (the pre-D8 default and every test that
+  /// does not exercise isolation) simply means bindings do not survive a restart, which matches
+  /// this class's pre-D8 behaviour exactly (nothing did).
+  final TaskWorkspaceStore? _taskStore;
+
+  final Map<String, _TaskWorktree> _byTaskId = {};
+  final Map<String, _TaskWorktree> _byTaskKey = {};
+
+  /// Best-effort self-healing on daemon startup: a worktree/branch created in a previous process
+  /// lifetime still exists on disk, so a restart should not orphan it or force a fresh
+  /// `create_task` (which would silently leave two worktrees for the same task). Entries whose
+  /// parent root is no longer granted, or whose worktree directory no longer exists (the human
+  /// deleted it, or `discard_task_workspace` ran while this daemon instance was down and only
+  /// partially completed), are dropped rather than trusted -- a stale row is worse than an absent
+  /// one, since [TaskHandler.writeFile]/[run] would otherwise resolve into a directory that is no
+  /// longer there.
+  void _restoreTaskWorktrees() {
+    final store = _taskStore;
+    if (store == null) return;
+    final saved = store.load();
+    final survivors = <TaskWorkspace>[];
+    for (final entrySaved in saved) {
+      final parentRoot = _roots.findContainingRoot(entrySaved.root);
+      if (parentRoot == null || !Directory(entrySaved.worktreePath).existsSync()) continue;
+      final entry = _TaskWorktree(
+        taskId: entrySaved.taskId,
+        taskKey: entrySaved.taskKey,
+        parentRoot: parentRoot,
+        worktreeRoot: WorkspaceRoot(canonicalPath: entrySaved.worktreePath, trusted: parentRoot.trusted),
+        branch: entrySaved.branch,
+      );
+      _byTaskId[entry.taskId] = entry;
+      _byTaskKey[entry.taskKey] = entry;
+      _activeTaskIds.add(entry.taskId);
+      survivors.add(entrySaved);
+    }
+    if (survivors.length != saved.length) {
+      store.save(survivors);
+    }
+  }
+
+  void _persistTaskWorktrees() {
+    _taskStore?.save(
+      _byTaskId.values
+          .map((e) => TaskWorkspace(
+                taskKey: e.taskKey,
+                taskId: e.taskId,
+                root: e.parentRoot.canonicalPath,
+                worktreePath: e.worktreeRoot.canonicalPath,
+                branch: e.branch,
+              ))
+          .toList(growable: false),
+    );
+  }
+
   Future<Map<String, Object?>> createTask(Map<String, dynamic> params) async {
+    if (params['isolate'] != true) {
+      final taskId = 't_${DateTime.now().microsecondsSinceEpoch}_${_activeTaskIds.length}';
+      _activeTaskIds.add(taskId);
+      return {'task_id': taskId};
+    }
+
+    final taskKey = _requireString(params, 'task_key');
+    final existing = _byTaskKey[taskKey];
+    if (existing != null) {
+      // "Task" = one chat session, not one turn: a second message in the same session reuses the
+      // worktree/branch already provisioned for it rather than re-isolating or losing context.
+      return {
+        'task_id': existing.taskId,
+        'root': existing.worktreeRoot.canonicalPath,
+        'parent_root': existing.parentRoot.canonicalPath,
+        'branch': existing.branch,
+      };
+    }
+
+    final rawRoot = params['root'] as String?;
+    final parentRoot = rawRoot != null
+        ? _roots.findContainingRoot(rawRoot)
+        : (_roots.all.length == 1 ? _roots.all.first : null);
+    if (parentRoot == null) {
+      throw RpcError(
+        rawRoot != null
+            ? 'no granted workspace root contains "$rawRoot"'
+            : 'cannot isolate a task without an explicit "root" -- more than one workspace root '
+                'is granted',
+      );
+    }
+
     final taskId = 't_${DateTime.now().microsecondsSinceEpoch}_${_activeTaskIds.length}';
     _activeTaskIds.add(taskId);
-    return {'task_id': taskId};
+    final branchName = 'aura/task-$taskId';
+    final worktree = await _git.createWorktree(
+      parentRoot.canonicalPath,
+      taskId: taskId,
+      branchName: branchName,
+      baseBranch: params['base_branch'] as String?,
+    );
+    // Confirmed scope: a task's ephemeral root inherits the parent project's trust level exactly
+    // -- no widening (a task in an untrusted project is not a backdoor to trusted execution) and
+    // no narrowing (no new approval friction for a project the human already trusted).
+    final worktreeRoot = WorkspaceRoot(canonicalPath: worktree.path, trusted: parentRoot.trusted);
+    final entry = _TaskWorktree(
+      taskId: taskId,
+      taskKey: taskKey,
+      parentRoot: parentRoot,
+      worktreeRoot: worktreeRoot,
+      branch: branchName,
+    );
+    _byTaskId[taskId] = entry;
+    _byTaskKey[taskKey] = entry;
+    _persistTaskWorktrees();
+    // `parent_root` is what a caller must send back as `reopen_task`'s own `root` param -- the
+    // granted root the worktree was carved out of, not the worktree path itself (which this
+    // response's `root` field carries, matching every other RPC's use of that name).
+    return {
+      'task_id': taskId,
+      'root': worktreeRoot.canonicalPath,
+      'parent_root': parentRoot.canonicalPath,
+      'branch': branchName,
+    };
+  }
+
+  /// Re-registers an isolated task's in-memory binding after this daemon has forgotten it (a
+  /// restart this instance's own [_restoreTaskWorktrees] could not self-heal -- e.g. the backend
+  /// remembers a task via its own durable `HostTaskStore` but this daemon's local
+  /// `task_workspaces.json` does not, or never did) without running `git worktree add` again,
+  /// which would fail outright against a branch name that already exists. Refuses if the
+  /// worktree directory the caller names is no longer actually there -- the caller
+  /// (`HostAgentSandboxRunner`) is expected to fall back to a fresh `create_task` in that case,
+  /// not treat this as a partial success.
+  Future<Map<String, Object?>> reopenTask(Map<String, dynamic> params) async {
+    final taskKey = _requireString(params, 'task_key');
+    final taskId = _requireString(params, 'task_id');
+    final worktreePath = _requireString(params, 'worktree_path');
+    final rootPath = _requireString(params, 'root');
+    final branch = _requireString(params, 'branch');
+
+    final byId = _byTaskId[taskId];
+    if (byId != null) {
+      return {
+        'task_id': byId.taskId,
+        'root': byId.worktreeRoot.canonicalPath,
+        'parent_root': byId.parentRoot.canonicalPath,
+        'branch': byId.branch,
+      };
+    }
+
+    final parentRoot = _roots.findContainingRoot(rootPath);
+    if (parentRoot == null) {
+      throw RpcError('workspace root "$rootPath" is no longer granted -- cannot reopen task "$taskId"');
+    }
+    if (!Directory(worktreePath).existsSync()) {
+      throw RpcError('worktree "$worktreePath" no longer exists on disk -- create a new task instead');
+    }
+    final entry = _TaskWorktree(
+      taskId: taskId,
+      taskKey: taskKey,
+      parentRoot: parentRoot,
+      worktreeRoot: WorkspaceRoot(
+        canonicalPath: Directory(worktreePath).resolveSymbolicLinksSync(),
+        trusted: parentRoot.trusted,
+      ),
+      branch: branch,
+    );
+    _byTaskId[taskId] = entry;
+    _byTaskKey[taskKey] = entry;
+    _activeTaskIds.add(taskId);
+    _persistTaskWorktrees();
+    return {
+      'task_id': taskId,
+      'root': entry.worktreeRoot.canonicalPath,
+      'parent_root': entry.parentRoot.canonicalPath,
+      'branch': branch,
+    };
+  }
+
+  /// Tears down an isolated task's worktree and branch. Deliberately **not** reachable from
+  /// [HostAgentClient]'s agent-facing RPC dispatch (`rpc_client.dart`) -- this is a human-only
+  /// action, wired into [ControlServer] instead (D9 plan section C.3: "invoked only by a human's
+  /// explicit... action, never by the agent"), matching [GitService]'s own human-only-write
+  /// precedent.
+  Future<Map<String, Object?>> discardTaskWorkspace(String taskId) async {
+    final entry = _byTaskId.remove(taskId);
+    if (entry == null) {
+      throw RpcError('unknown task "$taskId"');
+    }
+    _byTaskKey.remove(entry.taskKey);
+    await _git.removeWorktree(entry.parentRoot.canonicalPath, entry.worktreeRoot.canonicalPath, entry.branch);
+    _persistTaskWorktrees();
+    return {'ok': true};
+  }
+
+  /// Resolves the isolated [WorkspaceRoot] a call is bound to, if it names a `task_id` --
+  /// returns `null` for a call with no `task_id` (every pre-D8 caller). Once a `task_id` is
+  /// bound, every write/run for it must resolve **only** against that root: this deliberately
+  /// throws rather than returning `null` for an unrecognised `task_id`, so [writeFile]/
+  /// [writeFiles]/[readFile]/[run] never silently fall back to a cross-all-roots search that
+  /// could resolve an isolated call's path into the live checkout via a differently-granted root
+  /// that happens to also contain it (D8 plan section B.2, point 3).
+  WorkspaceRoot? _resolveTaskRoot(Map<String, dynamic> params) {
+    final taskId = params['task_id'] as String?;
+    if (taskId == null) return null;
+    final entry = _byTaskId[taskId];
+    if (entry == null) {
+      throw RpcError(
+        'unknown task "$taskId" -- it may have been discarded, or this daemon restarted and '
+        'forgot it; call create_task (or reopen_task) again',
+      );
+    }
+    return entry.worktreeRoot;
   }
 
   /// D6 plan section C.3 (the write-gating retrofit): the agent-facing write RPC now goes through
@@ -70,7 +322,7 @@ class TaskHandler {
   Future<Map<String, Object?>> writeFile(Map<String, dynamic> params) async {
     final path = _requireString(params, 'path');
     final content = _requireString(params, 'content');
-    final root = _roots.findContainingRoot(path);
+    final root = _resolveTaskRoot(params) ?? _roots.findContainingRoot(path);
     if (root == null) {
       throw RpcError(
         'no granted workspace root contains "$path" -- grant it (or its parent project folder) '
@@ -103,7 +355,8 @@ class TaskHandler {
       throw RpcError('"operations" must be a non-empty list');
     }
 
-    WorkspaceRoot? sharedRoot;
+    final taskRoot = _resolveTaskRoot(params);
+    WorkspaceRoot? sharedRoot = taskRoot;
     final resolved = <WriteOp>[];
     for (final raw in rawOps) {
       if (raw is! Map) {
@@ -111,7 +364,7 @@ class TaskHandler {
       }
       final op = Map<String, dynamic>.from(raw);
       final path = _requireString(op, 'path');
-      final root = _roots.findContainingRoot(path);
+      final root = taskRoot ?? _roots.findContainingRoot(path);
       if (root == null) {
         throw RpcError('no granted workspace root contains "$path"');
       }
@@ -167,7 +420,7 @@ class TaskHandler {
 
   Future<Map<String, Object?>> readFile(Map<String, dynamic> params) async {
     final path = _requireString(params, 'path');
-    final root = _roots.findContainingRoot(path);
+    final root = _resolveTaskRoot(params) ?? _roots.findContainingRoot(path);
     if (root == null) {
       throw RpcError('no granted workspace root contains "$path"');
     }
@@ -195,9 +448,11 @@ class TaskHandler {
     final cwdParam = params['cwd'] as String?; // not sent by the current backend; tolerated
     final requestedTimeout = (params['timeout_s'] as num?)?.toDouble() ?? 60.0;
 
-    final root = cwdParam != null
-        ? _roots.findContainingRoot(cwdParam)
-        : (_roots.all.isNotEmpty ? _roots.all.first : null);
+    final taskRoot = _resolveTaskRoot(params);
+    final root = taskRoot ??
+        (cwdParam != null
+            ? _roots.findContainingRoot(cwdParam)
+            : (_roots.all.isNotEmpty ? _roots.all.first : null));
     if (root == null) {
       throw RpcError(
         cwdParam != null

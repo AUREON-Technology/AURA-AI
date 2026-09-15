@@ -77,6 +77,16 @@ class ChatViewModel extends Notifier<ChatUiState> {
     ref.read(activeConversationIdProvider.notifier).setSession(newId);
   }
 
+  /// D8 (`docs/architecture/015-desktop-ide.md` Part B): the Desktop IDE's AgentPanel "New Task"
+  /// action -- a fresh session, marked isolated so every message sent in it carries
+  /// `desktop_task_isolation: true` and the engineer agent's sandbox tools work in a per-session
+  /// git worktree on the caller's paired desktop rather than the live checkout.
+  void startNewIsolatedTask() {
+    final newId = 'session_${DateTime.now().millisecondsSinceEpoch}';
+    ref.read(desktopTaskIsolationProvider.notifier).markIsolated(newId);
+    ref.read(activeConversationIdProvider.notifier).setSession(newId);
+  }
+
   void selectSession(String sessionId) {
     ref.read(activeConversationIdProvider.notifier).setSession(sessionId);
   }

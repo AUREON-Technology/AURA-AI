@@ -42,6 +42,7 @@ from ..domain.memory import MemoryKind, MemoryRecord
 from ..domain.personal_os import PersonalOsRecord, RecordKind
 from dataclasses import replace as _dc_replace
 from ..llm.embeddings import cosine_similarity
+from ..ports.coding import HostTaskWorkspace
 from ..ports.storage import VectorPoint
 
 __all__ = [
@@ -54,6 +55,7 @@ __all__ = [
     "InMemoryInsightSink",
     "InMemoryGitHubIdentityPort",
     "InMemoryWorkspaceStore",
+    "InMemoryHostTaskStore",
 ]
 
 
@@ -547,6 +549,28 @@ class InMemoryWorkspaceStore:
     async def delete(self, workspace_id: WorkspaceId) -> None:
         async with self._lock:
             self._by_id.pop(workspace_id.value, None)
+
+
+class InMemoryHostTaskStore:
+    """Reference implementation of :class:`~aura_core.ports.coding.HostTaskStore` (D8,
+    `docs/architecture/015-desktop-ide.md` Part B). No TTL/reaper -- see the port's own docstring
+    for why a row here needs none."""
+
+    def __init__(self) -> None:
+        self._by_key: dict[tuple[str, str], HostTaskWorkspace] = {}
+        self._lock = asyncio.Lock()
+
+    async def get(self, user_id: UserId, session_id: str) -> HostTaskWorkspace | None:
+        async with self._lock:
+            return self._by_key.get((user_id.value, session_id))
+
+    async def upsert(self, workspace: HostTaskWorkspace) -> None:
+        async with self._lock:
+            self._by_key[(workspace.user_id.value, workspace.session_id)] = workspace
+
+    async def delete(self, user_id: UserId, session_id: str) -> None:
+        async with self._lock:
+            self._by_key.pop((user_id.value, session_id), None)
 
 
 _FAR_FUTURE = datetime(9999, 12, 31, tzinfo=timezone.utc)

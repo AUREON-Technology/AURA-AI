@@ -23,6 +23,8 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 /// Bounds how much of a diff this service ever holds in memory or returns, matching
 /// `task_handler.dart`'s `_maxOutputCapChars` / `control_server.dart`'s `_maxReadBytes`
 /// discipline -- a very large diff (a vendored-file commit) should not grow this process's
@@ -50,6 +52,18 @@ class GitDecodeError implements Exception {
   final String message;
   @override
   String toString() => message;
+}
+
+/// One `git worktree add`ed checkout, created by [GitService.createWorktree] for D8's per-task
+/// isolation (`docs/architecture/015-desktop-ide.md`, Part B) -- a real, independently-writable
+/// working directory sharing the parent repository's object store and history.
+class GitWorktree {
+  GitWorktree({required this.path, required this.branch});
+
+  /// Symlink-resolved absolute path to the worktree's own working directory -- registered by the
+  /// caller (`task_handler.dart`) as an ephemeral [WorkspaceRoot], never a persisted one.
+  final String path;
+  final String branch;
 }
 
 class _GitResult {
@@ -173,6 +187,64 @@ class GitService {
       throw GitCommandError('git checkout failed: ${result.stderr}');
     }
     return {'ok': true, 'branch': branch};
+  }
+
+  /// Provisions one task's isolated working directory: `git worktree add -b <branchName>
+  /// <cwd>/.aura-workspaces/<taskId> <baseBranch ?? HEAD>`. Lives inside the already-granted
+  /// [cwd] root, so no new root-grant UI is needed (`task_handler.dart` registers the returned
+  /// path as an ephemeral [WorkspaceRoot], not a persisted one) -- and is excluded via
+  /// `.git/info/exclude` (local-only, never the user's own tracked `.gitignore`), so `git status`
+  /// in the parent checkout never shows it as an untracked directory.
+  Future<GitWorktree> createWorktree(
+    String cwd, {
+    required String taskId,
+    required String branchName,
+    String? baseBranch,
+  }) async {
+    final worktreePath = p.join(cwd, '.aura-workspaces', taskId);
+    final result = await _run(cwd, [
+      'worktree',
+      'add',
+      '-b',
+      branchName,
+      worktreePath,
+      if (baseBranch != null) baseBranch,
+    ]);
+    if (result.exitCode != 0) {
+      if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
+      throw GitCommandError('git worktree add failed: ${result.stderr}');
+    }
+    await _excludeTaskWorkspacesDir(cwd);
+    return GitWorktree(path: File(worktreePath).resolveSymbolicLinksSync(), branch: branchName);
+  }
+
+  /// Tears down a worktree [createWorktree] made: removes the working directory (`--force` since
+  /// a task's own dirty/untracked state should never block a human's explicit discard, D9 plan
+  /// section C.3) and deletes its branch. Best-effort past the `worktree remove` step -- a
+  /// worktree already missing from disk (the human deleted the folder by hand) should not stop
+  /// this from still pruning stale worktree metadata and deleting the now-orphaned branch.
+  Future<void> removeWorktree(String cwd, String worktreePath, String branchName) async {
+    await _run(cwd, ['worktree', 'remove', '--force', worktreePath]);
+    await _run(cwd, ['worktree', 'prune']);
+    await _run(cwd, ['branch', '-D', branchName]);
+  }
+
+  /// Adds `.aura-workspaces/` to the parent repository's *local*, untracked exclude file (never
+  /// the user's own `.gitignore`, which is tracked and shared with everyone else on the repo) so
+  /// task worktrees never show up as untracked clutter in `git status`/the Source Control panel.
+  /// Best-effort: a missing or unwritable `.git/info/exclude` must not fail worktree creation.
+  Future<void> _excludeTaskWorkspacesDir(String cwd) async {
+    const marker = '.aura-workspaces/';
+    try {
+      final excludeFile = File(p.join(cwd, '.git', 'info', 'exclude'));
+      final existing = excludeFile.existsSync() ? await excludeFile.readAsString() : '';
+      if (existing.contains(marker)) return;
+      excludeFile.parent.createSync(recursive: true);
+      final separator = existing.isEmpty || existing.endsWith('\n') ? '' : '\n';
+      await excludeFile.writeAsString('$existing$separator$marker\n', mode: FileMode.write);
+    } catch (_) {
+      // best-effort, see doc comment above.
+    }
   }
 
   bool _looksLikeNotARepo(String stderr) => stderr.contains('not a git repository');

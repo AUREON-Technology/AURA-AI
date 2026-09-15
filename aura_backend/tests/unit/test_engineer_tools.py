@@ -20,7 +20,7 @@ from aura_core.domain.errors import ToolExecutionError
 from aura_core.domain.identifiers import ToolCallId, UserId
 from aura_core.domain.messages import ToolCall
 from aura_core.domain.tools import ToolSensitivity
-from aura_core.ports.coding import McpToolDescriptor
+from aura_core.ports.coding import HostTaskWorkspace, McpToolDescriptor, SandboxHandle, SandboxResult
 from aura_core.ports.runtime import ToolContext
 from aura_core.tools.coding import (
     build_github_tools,
@@ -88,6 +88,189 @@ class TestSandboxTools:
 
         await tools["write_file"].execute({"path": "hello.txt", "content": "hi"}, ctx)
         assert seen_user_ids == [ctx.user_id]
+
+
+class _FakeIsolatingRunner:
+    """A minimal stand-in for `CompositeSandboxRunner` routed to a paired desktop, just enough
+    to exercise `_SandboxSessionCache`'s D8 isolation behaviour (`tools/coding.py`) without a
+    real `aura_hostd`/websocket round trip -- mirrors `HostAgentSandboxRunner`'s isolate/
+    `task_details`/`reopen_task` contract."""
+
+    def __init__(self) -> None:
+        self.create_task_calls: list[dict] = []
+        self.reopen_task_calls: list[dict] = []
+        self._next_id = 0
+        self._details: dict[str, dict] = {}
+        self.reopen_should_fail = False
+
+    async def create_task(self, *, user_id=None, isolate=False, task_key=None, base_branch=None):
+        self.create_task_calls.append(
+            {"user_id": user_id, "isolate": isolate, "task_key": task_key, "base_branch": base_branch}
+        )
+        self._next_id += 1
+        task_id = f"t{self._next_id}"
+        if isolate:
+            self._details[task_id] = {
+                "task_id": task_id,
+                "root": f"/repo/.aura-workspaces/{task_id}",
+                "parent_root": "/repo",
+                "branch": f"aura/task-{task_id}",
+            }
+        return SandboxHandle(task_id=task_id)
+
+    def task_details(self, task_id):
+        return self._details.get(task_id)
+
+    async def reopen_task(self, *, user_id, task_id, task_key, root, worktree_path, branch):
+        self.reopen_task_calls.append({
+            "user_id": user_id, "task_id": task_id, "task_key": task_key,
+            "root": root, "worktree_path": worktree_path, "branch": branch,
+        })
+        if self.reopen_should_fail:
+            raise RuntimeError("worktree is gone")
+        self._details[task_id] = {
+            "task_id": task_id, "root": worktree_path, "parent_root": root, "branch": branch,
+        }
+        return SandboxHandle(task_id=task_id)
+
+    async def destroy(self, handle):
+        pass
+
+    async def write_file(self, handle, path, content):
+        pass
+
+    async def read_file(self, handle, path):
+        return ""
+
+    async def run(self, handle, command, *, timeout_s):
+        return SandboxResult(stdout="", stderr="", exit_code=0)
+
+
+class _FakeHostTaskStore:
+    """A minimal in-memory stand-in for `HostTaskStore` -- see `memory_stores.InMemoryHostTaskStore`
+    for the real reference implementation this mirrors; kept local so these tests do not need the
+    full container-wired store."""
+
+    def __init__(self) -> None:
+        self._rows: dict[tuple[str, str], HostTaskWorkspace] = {}
+
+    async def get(self, user_id, session_id):
+        return self._rows.get((user_id.value, session_id))
+
+    async def upsert(self, workspace):
+        self._rows[(workspace.user_id.value, workspace.session_id)] = workspace
+
+    async def delete(self, user_id, session_id):
+        self._rows.pop((user_id.value, session_id), None)
+
+
+def _isolated_ctx(user, *, session_id: str, correlation_id: str) -> ToolContext:
+    return ToolContext(
+        user_id=user,
+        correlation_id=correlation_id,
+        deadline_s=30.0,
+        metadata={"desktop_task_isolation": True, "session_id": session_id},
+    )
+
+
+class TestSandboxSessionIsolation:
+    """D8 per-task desktop worktree isolation (`_SandboxSessionCache`, `docs/architecture/
+    015-desktop-ide.md` Part B)."""
+
+    async def test_a_call_with_no_isolation_metadata_is_unaffected(self, ctx) -> None:
+        runner = _FakeIsolatingRunner()
+        tools = _by_name(build_sandbox_tools(runner))
+        await tools["write_file"].execute({"path": "a.txt", "content": "hi"}, ctx)
+        assert runner.create_task_calls == [
+            {"user_id": ctx.user_id, "isolate": False, "task_key": None, "base_branch": None}
+        ]
+
+    async def test_isolation_requests_a_task_keyed_to_the_session_id(self, user) -> None:
+        runner = _FakeIsolatingRunner()
+        tools = _by_name(build_sandbox_tools(runner))
+        ctx = _isolated_ctx(user, session_id="session-1", correlation_id="corr-1")
+
+        await tools["write_file"].execute({"path": "a.txt", "content": "hi"}, ctx)
+        assert runner.create_task_calls == [
+            {"user_id": user, "isolate": True, "task_key": "session-1", "base_branch": None}
+        ]
+
+    async def test_a_second_message_in_the_same_session_reuses_the_worktree(self, user) -> None:
+        """Different correlation_id (a new turn), same session_id -- must not re-isolate."""
+        runner = _FakeIsolatingRunner()
+        tools = _by_name(build_sandbox_tools(runner))
+
+        first = _isolated_ctx(user, session_id="session-1", correlation_id="corr-1")
+        second = _isolated_ctx(user, session_id="session-1", correlation_id="corr-2")
+
+        await tools["write_file"].execute({"path": "a.txt", "content": "hi"}, first)
+        await tools["write_file"].execute({"path": "b.txt", "content": "hi"}, second)
+        assert len(runner.create_task_calls) == 1
+
+    async def test_two_different_sessions_get_two_different_tasks(self, user) -> None:
+        runner = _FakeIsolatingRunner()
+        tools = _by_name(build_sandbox_tools(runner))
+
+        a = _isolated_ctx(user, session_id="session-a", correlation_id="corr-1")
+        b = _isolated_ctx(user, session_id="session-b", correlation_id="corr-2")
+
+        await tools["write_file"].execute({"path": "a.txt", "content": "hi"}, a)
+        await tools["write_file"].execute({"path": "b.txt", "content": "hi"}, b)
+        assert [c["task_key"] for c in runner.create_task_calls] == ["session-a", "session-b"]
+
+    async def test_persists_the_binding_to_host_task_store_after_provisioning(self, user) -> None:
+        runner = _FakeIsolatingRunner()
+        store = _FakeHostTaskStore()
+        tools = _by_name(build_sandbox_tools(runner, host_task_store=store))
+        ctx = _isolated_ctx(user, session_id="session-1", correlation_id="corr-1")
+
+        await tools["write_file"].execute({"path": "a.txt", "content": "hi"}, ctx)
+        saved = await store.get(user, "session-1")
+        assert saved is not None
+        assert saved.task_id == "t1"
+        assert saved.worktree_path == "/repo/.aura-workspaces/t1"
+        assert saved.parent_root == "/repo"
+        assert saved.branch == "aura/task-t1"
+
+    async def test_a_fresh_cache_reopens_a_binding_the_store_remembers_instead_of_re_isolating(
+        self, user
+    ) -> None:
+        """Simulates a backend restart: a new `build_sandbox_tools` call (fresh
+        `_SandboxSessionCache`, so its in-memory handle map is empty) over the same
+        `HostTaskStore` and the same live runner must reopen the existing worktree, not
+        provision a second one."""
+        runner = _FakeIsolatingRunner()
+        store = _FakeHostTaskStore()
+        first_tools = _by_name(build_sandbox_tools(runner, host_task_store=store))
+        ctx1 = _isolated_ctx(user, session_id="session-1", correlation_id="corr-1")
+        await first_tools["write_file"].execute({"path": "a.txt", "content": "hi"}, ctx1)
+        assert len(runner.create_task_calls) == 1
+
+        second_tools = _by_name(build_sandbox_tools(runner, host_task_store=store))
+        ctx2 = _isolated_ctx(user, session_id="session-1", correlation_id="corr-2")
+        await second_tools["write_file"].execute({"path": "b.txt", "content": "hi"}, ctx2)
+
+        assert len(runner.create_task_calls) == 1  # unchanged -- no second isolation
+        assert len(runner.reopen_task_calls) == 1
+        assert runner.reopen_task_calls[0]["task_id"] == "t1"
+        assert runner.reopen_task_calls[0]["root"] == "/repo"
+        assert runner.reopen_task_calls[0]["worktree_path"] == "/repo/.aura-workspaces/t1"
+
+    async def test_a_failed_reopen_falls_back_to_provisioning_a_fresh_worktree(self, user) -> None:
+        runner = _FakeIsolatingRunner()
+        store = _FakeHostTaskStore()
+        first_tools = _by_name(build_sandbox_tools(runner, host_task_store=store))
+        ctx1 = _isolated_ctx(user, session_id="session-1", correlation_id="corr-1")
+        await first_tools["write_file"].execute({"path": "a.txt", "content": "hi"}, ctx1)
+
+        runner.reopen_should_fail = True
+        second_tools = _by_name(build_sandbox_tools(runner, host_task_store=store))
+        ctx2 = _isolated_ctx(user, session_id="session-1", correlation_id="corr-2")
+        result = await second_tools["write_file"].execute({"path": "b.txt", "content": "hi"}, ctx2)
+
+        assert "error" not in result.lower()
+        assert len(runner.reopen_task_calls) == 1
+        assert len(runner.create_task_calls) == 2  # the fresh fallback isolation
 
 
 class TestSandboxToolDescriptionsAreHonestAboutRouting:

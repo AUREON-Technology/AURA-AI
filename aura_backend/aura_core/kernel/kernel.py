@@ -121,6 +121,12 @@ class TurnRequest:
     #: its own persona ever declares). `None` for every ordinary turn (no override).
     delegated_tool_grant: frozenset[str] | None = None
     delegated_risk_ceiling: ToolSensitivity | None = None
+    #: D8 (`docs/architecture/015-desktop-ide.md` Part B): when true, the engineer agent's
+    #: sandbox tools (`tools/coding.py::_SandboxSessionCache`) isolate this turn's work into a
+    #: per-session `git worktree` on the caller's paired desktop, keyed by `session_id`, instead
+    #: of writing straight into the live checkout. `False` (every non-Desktop-IDE caller) is
+    #: exactly today's behaviour -- unchanged.
+    desktop_task_isolation: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -995,6 +1001,13 @@ class AIKernel:
             correlation_id=(request.correlation_id or CorrelationId.new()).value,
             deadline_s=deadline_s,
             tainted=tainted,
+            metadata={
+                # D8 per-task desktop isolation (`tools/coding.py::_SandboxSessionCache`) reads
+                # both of these -- `session_id` is what a worktree is actually keyed to, so it is
+                # carried even when isolation is off, at no cost, rather than only conditionally.
+                "session_id": request.session_id.value if request.session_id is not None else None,
+                "desktop_task_isolation": request.desktop_task_isolation,
+            },
             agent_id=agent.id if agent is not None else None,
             allowed_tools=allowed_tools,
             max_sensitivity=max_sensitivity,

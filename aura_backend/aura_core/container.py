@@ -329,6 +329,17 @@ class Container:
         from .adapters.host_agent import HostAgentRegistry
 
         self.host_agent_registry = HostAgentRegistry()
+        # D8 (`docs/architecture/015-desktop-ide.md` Part B): durable session->worktree bindings
+        # for per-task desktop isolation. Always in-memory for now, regardless of
+        # `infrastructure.memory_backend` -- unlike `self.workspaces` next to it, this is not yet
+        # wired to a Postgres adapter (a disclosed gap: isolation still works within one backend
+        # process's lifetime, it just re-isolates from scratch, rather than reopening the same
+        # worktree, across a backend restart -- see `HostTaskStore`'s own docstring for why that
+        # is a smaller cost than it sounds: the worktree itself is never lost, only the pointer
+        # to it, and `aura_hostd`'s own `TaskWorkspaceStore` self-heals independently on its side).
+        from .adapters.memory_stores import InMemoryHostTaskStore
+
+        self.host_task_store = InMemoryHostTaskStore()
         self.sandbox_runner = self._build_sandbox_runner()
         # After the runner, never before: the manager needs it, and a None runner is the signal
         # that this deployment has no workspaces at all.
@@ -997,6 +1008,7 @@ class Container:
                 host_git=self.host_git,
                 github_token_resolver=self._github_token_resolver,
                 host_agent_registry=self.host_agent_registry,
+                host_task_store=self.host_task_store,
             )
         )
         return registry

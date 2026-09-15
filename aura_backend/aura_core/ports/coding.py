@@ -29,6 +29,8 @@ __all__ = [
     "StreamingSandboxRunner",
     "EngineerRunStore",
     "WorkspaceStore",
+    "HostTaskWorkspace",
+    "HostTaskStore",
 ]
 
 
@@ -187,7 +189,21 @@ class SandboxRunner(Protocol):
     runner implements whichever half it can serve.
     """
 
-    async def create_task(self, *, user_id: UserId | None = None) -> SandboxHandle:
+    async def create_task(
+        self,
+        *,
+        user_id: UserId | None = None,
+        isolate: bool = False,
+        task_key: str | None = None,
+        base_branch: str | None = None,
+    ) -> SandboxHandle:
+        """``isolate``/``task_key``/``base_branch`` are D8's per-task desktop-worktree isolation
+        (`docs/architecture/015-desktop-ide.md` Part B) -- meaningful only to a runner that
+        routes to a real machine with a git checkout (the desktop host-agent bridge). Every other
+        implementation accepts and ignores them exactly like ``user_id`` above; a caller that
+        requests isolation from a runner that cannot provide it raises rather than silently
+        running unisolated (`CompositeSandboxRunner.create_task`'s own behaviour when no desktop
+        is paired)."""
         ...
 
     async def run(
@@ -379,4 +395,48 @@ class WorkspaceStore(Protocol):
         ...
 
     async def delete(self, workspace_id: WorkspaceId) -> None:
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class HostTaskWorkspace:
+    """Durable record of one D8 per-task git worktree (`docs/architecture/015-desktop-ide.md`
+    Part B) on a user's paired desktop, keyed by the chat session it belongs to.
+
+    ``worktree_path`` and ``parent_root`` are both host filesystem paths this process never
+    interprets -- they only ever round-trip back to `aura_hostd`'s `reopen_task` RPC
+    (`adapters/host_agent.py::HostAgentSandboxRunner.reopen_task`), which is the one place that
+    resolves them against the user's own disk.
+    """
+
+    user_id: UserId
+    session_id: str
+    task_id: str
+    worktree_path: str
+    parent_root: str
+    branch: str
+
+
+@runtime_checkable
+class HostTaskStore(Protocol):
+    """Persistence for :class:`HostTaskWorkspace` rows.
+
+    Deliberately far simpler than :class:`WorkspaceStore` above: a row here is a directory the
+    user's own machine already owns, not a resource competing for host capacity like a Docker
+    sandbox, so there is no TTL/capacity/reaper policy on this side at all -- only "what worktree
+    did we last provision for this session," so a backend restart does not have to re-isolate
+    (or, worse, silently lose track of and orphan) a task whose worktree still exists on the
+    user's disk. `aura_hostd` keeps its own, independent durable copy of the same binding
+    (`TaskWorkspaceStore`, `aura_hostd/lib/src/workspace_store.dart`) for the same reason on its
+    side of the connection; this store's job is only to let the backend ask `reopen_task` for the
+    right one again after *this* process restarts.
+    """
+
+    async def get(self, user_id: UserId, session_id: str) -> HostTaskWorkspace | None:
+        ...
+
+    async def upsert(self, workspace: HostTaskWorkspace) -> None:
+        ...
+
+    async def delete(self, user_id: UserId, session_id: str) -> None:
         ...

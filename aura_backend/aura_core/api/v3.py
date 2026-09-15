@@ -118,6 +118,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         confirmed_call_ids: list[str] = Field(default_factory=list)
         max_output_tokens: int = Field(default=1024, ge=16, le=8192)
         temperature: float = Field(default=0.3, ge=0.0, le=2.0)
+        #: D8 (`docs/architecture/015-desktop-ide.md` Part B): the Desktop IDE sets this when the
+        #: user starts a new isolated task, so the engineer agent's sandbox tools work in a
+        #: per-session `git worktree` on the caller's paired desktop rather than the live
+        #: checkout. `False` for every other caller -- unchanged behaviour.
+        desktop_task_isolation: bool = False
 
     class IngestRequest(BaseModel):
         title: str = Field(min_length=1, max_length=500)
@@ -256,6 +261,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             confirmed_call_ids=tuple(payload.confirmed_call_ids),
             max_output_tokens=payload.max_output_tokens,
             temperature=payload.temperature,
+            desktop_task_isolation=payload.desktop_task_isolation,
         )
 
     # -- chat --------------------------------------------------------------------------

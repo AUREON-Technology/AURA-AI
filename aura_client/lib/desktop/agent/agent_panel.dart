@@ -14,7 +14,8 @@ import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/features/chat/data/agent_config_repository.dart';
 import 'package:aura_client/features/chat/data/agents_repository.dart';
-import 'package:aura_client/features/chat/data/chat_repository.dart';
+import 'package:aura_client/features/chat/data/chat_repository.dart'
+    show activeConversationIdProvider, desktopTaskIsolationProvider;
 import 'package:aura_client/features/chat/presentation/chat_view_model.dart';
 import 'package:aura_client/features/chat/presentation/widgets/chat_composer.dart';
 import 'package:aura_client/features/chat/presentation/widgets/message_bubble.dart';
@@ -82,6 +83,11 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
     final messagesAsync = ref.watch(chatMessagesStreamProvider(conversationId));
     final workspaceRoot = ref.watch(workspaceNotifierProvider).activeWorkspace?.rootPath;
     final (personaLabel, personaIcon) = personaDisplay(_engineerAgentId);
+    // D8 (`docs/architecture/015-desktop-ide.md` Part B): re-render when this session's
+    // isolation membership changes (starting a new task marks the *new* session id, which this
+    // watch picks up even though the set reference itself changed rather than this session's
+    // membership).
+    final isIsolatedTask = ref.watch(desktopTaskIsolationProvider).contains(conversationId);
 
     ref.listen<AsyncValue<List<Message>>>(
       chatMessagesStreamProvider(conversationId),
@@ -111,6 +117,32 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
                   child: Text(
                     personaLabel,
                     style: TextStyle(fontWeight: FontWeight.w600, color: palette.textPrimary, fontSize: 13),
+                  ),
+                ),
+                if (isIsolatedTask)
+                  Padding(
+                    padding: const EdgeInsets.only(right: AuraSpacing.xs),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: palette.surfaceVariant,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        'Isolated task',
+                        style: TextStyle(fontSize: 10, color: palette.textSecondary),
+                      ),
+                    ),
+                  ),
+                Tooltip(
+                  message: 'New isolated task -- an independent git worktree, never the live '
+                      'checkout',
+                  child: IconButton(
+                    icon: Icon(Icons.add_box_outlined, size: 16, color: palette.textSecondary),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () =>
+                        ref.read(chatViewModelProvider.notifier).startNewIsolatedTask(),
                   ),
                 ),
               ],

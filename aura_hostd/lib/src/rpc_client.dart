@@ -114,6 +114,8 @@ class HostAgentClient {
     switch (method) {
       case 'create_task':
         return taskHandler.createTask(params);
+      case 'reopen_task':
+        return taskHandler.reopenTask(params);
       case 'run':
         // A `stream` frame per output chunk, sent as it arrives -- the caller
         // (HostAgentSandboxRunner.run_streaming, aura_backend) reads these as they're delivered,

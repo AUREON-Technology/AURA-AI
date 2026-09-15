@@ -193,4 +193,83 @@ void main() {
       expect(result['affected_files'], contains('a.txt'));
     });
   });
+
+  group('createWorktree / removeWorktree (D8 per-task isolation)', () {
+    test('creates a real, independently-writable checkout on a new branch', () async {
+      await commitFile('a.txt', 'hello');
+      final worktree = await git.createWorktree(
+        repoDir.path,
+        taskId: 't_1',
+        branchName: 'aura/task-t_1',
+      );
+      expect(worktree.branch, 'aura/task-t_1');
+      expect(Directory(worktree.path).existsSync(), isTrue);
+      expect(File(p.join(worktree.path, 'a.txt')).readAsStringSync(), 'hello');
+
+      // Writing in the worktree must not touch the parent checkout.
+      File(p.join(worktree.path, 'a.txt')).writeAsStringSync('changed in worktree');
+      expect(File(p.join(repoDir.path, 'a.txt')).readAsStringSync(), 'hello');
+
+      final worktreeStatus = await git.status(worktree.path);
+      expect(worktreeStatus['branch'], 'aura/task-t_1');
+    });
+
+    test('excludes .aura-workspaces/ via .git/info/exclude, not the tracked .gitignore', () async {
+      await commitFile('a.txt', 'hello');
+      await git.createWorktree(repoDir.path, taskId: 't_1', branchName: 'aura/task-t_1');
+
+      final excludeFile = File(p.join(repoDir.path, '.git', 'info', 'exclude'));
+      expect(excludeFile.existsSync(), isTrue);
+      expect(excludeFile.readAsStringSync(), contains('.aura-workspaces/'));
+      expect(File(p.join(repoDir.path, '.gitignore')).existsSync(), isFalse);
+
+      // The parent checkout's own status must not show the task worktree as untracked clutter.
+      final parentStatus = await git.status(repoDir.path);
+      expect(parentStatus['files'], isEmpty);
+    });
+
+    test('is idempotent about the exclude marker across repeated calls', () async {
+      await commitFile('a.txt', 'hello');
+      await git.createWorktree(repoDir.path, taskId: 't_1', branchName: 'aura/task-t_1');
+      await git.createWorktree(repoDir.path, taskId: 't_2', branchName: 'aura/task-t_2');
+      final excludeFile = File(p.join(repoDir.path, '.git', 'info', 'exclude'));
+      final marker = RegExp('.aura-workspaces/');
+      expect(marker.allMatches(excludeFile.readAsStringSync()), hasLength(1));
+    });
+
+    test('honors an explicit base branch', () async {
+      await commitFile('a.txt', 'on-main');
+      await _git(repoDir.path, ['checkout', '-q', '-b', 'other']);
+      await commitFile('b.txt', 'on-other');
+      await _git(repoDir.path, ['checkout', '-q', 'main']);
+
+      final worktree = await git.createWorktree(
+        repoDir.path,
+        taskId: 't_1',
+        branchName: 'aura/task-t_1',
+        baseBranch: 'other',
+      );
+      expect(File(p.join(worktree.path, 'b.txt')).existsSync(), isTrue);
+    });
+
+    test('removeWorktree deletes the working directory and the branch', () async {
+      await commitFile('a.txt', 'hello');
+      final worktree = await git.createWorktree(repoDir.path, taskId: 't_1', branchName: 'aura/task-t_1');
+      await git.removeWorktree(repoDir.path, worktree.path, worktree.branch);
+
+      expect(Directory(worktree.path).existsSync(), isFalse);
+      final branches = await _git(repoDir.path, ['branch', '--list', worktree.branch]);
+      expect(branches.stdout.toString().trim(), isEmpty);
+    });
+
+    test('removeWorktree is best-effort when the worktree directory is already gone', () async {
+      await commitFile('a.txt', 'hello');
+      final worktree = await git.createWorktree(repoDir.path, taskId: 't_1', branchName: 'aura/task-t_1');
+      Directory(worktree.path).deleteSync(recursive: true);
+
+      await git.removeWorktree(repoDir.path, worktree.path, worktree.branch);
+      final branches = await _git(repoDir.path, ['branch', '--list', worktree.branch]);
+      expect(branches.stdout.toString().trim(), isEmpty);
+    });
+  });
 }

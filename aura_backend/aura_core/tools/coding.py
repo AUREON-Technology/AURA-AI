@@ -42,7 +42,7 @@ from pathlib import Path
 from ..domain.errors import ToolExecutionError
 from ..domain.tools import ParameterSpec, ToolCategory, ToolSensitivity, ToolSpec
 from ..observability.logging import get_logger
-from ..ports.coding import FileWriteOp, McpToolDescriptor, SandboxResult, StreamingSandboxRunner
+from ..ports.coding import FileWriteOp, HostTaskWorkspace, McpToolDescriptor, SandboxResult, StreamingSandboxRunner
 from ..ports.runtime import Tool, ToolContext
 from .base import FunctionTool, param, tool
 
@@ -221,19 +221,34 @@ class _SandboxSessionCache:
     turn operate on the same container.
     """
 
-    def __init__(self, runner: Any, *, idle_ttl_s: float = 900.0) -> None:
+    def __init__(self, runner: Any, *, idle_ttl_s: float = 900.0, host_task_store: Any = None) -> None:
         self._runner = runner
         self._idle_ttl_s = idle_ttl_s
         self._handles: dict[str, tuple[Any, float]] = {}
         self._lock = asyncio.Lock()
+        # D8 (`docs/architecture/015-desktop-ide.md` Part B): durable session->worktree bindings,
+        # so a *backend* restart does not force re-isolating a task whose worktree still exists
+        # on the user's desktop -- see `HostTaskStore`'s own docstring. `None` (every pre-D8
+        # caller, and every deployment without the durable store wired) means isolation still
+        # works, it just does not survive this process restarting.
+        self._host_task_store = host_task_store
 
     async def get(self, context: ToolContext) -> Any:
-        correlation_id = context.correlation_id
+        # "Task" = one chat session, not one turn (D8 plan section B.2): an isolated call keys
+        # its cache entry -- and reuses/creates a worktree -- by `session_id`, not
+        # `correlation_id`, so a second message in the same conversation reuses the worktree the
+        # first message provisioned instead of re-isolating or losing context. A call that does
+        # not ask for isolation (`desktop_task_isolation` unset -- every pre-D8 caller) is
+        # entirely unaffected: same correlation_id-keyed, per-turn behaviour as before.
+        isolate = bool(context.metadata.get("desktop_task_isolation"))
+        session_id = str(context.metadata.get("session_id") or "") or None if isolate else None
+        key = f"session:{session_id}" if session_id else context.correlation_id
+
         async with self._lock:
             now = time.monotonic()
             stale = [
                 cid for cid, (_, last) in self._handles.items()
-                if cid != correlation_id and now - last > self._idle_ttl_s
+                if cid != key and now - last > self._idle_ttl_s
             ]
             for cid in stale:
                 handle, _ = self._handles.pop(cid)
@@ -242,14 +257,59 @@ class _SandboxSessionCache:
                 except Exception:
                     logger.debug("idle sandbox cleanup failed", extra={"correlation_id": cid})
 
-            if correlation_id in self._handles:
-                handle, _ = self._handles[correlation_id]
+            if key in self._handles:
+                handle, _ = self._handles[key]
+            elif session_id is not None:
+                handle = await self._get_or_reopen_isolated(context, session_id)
             else:
                 # `user_id` matters only to a runner that routes per-caller (the desktop
                 # host-agent bridge) -- every other runner accepts and ignores it (ports/coding.py).
                 handle = await self._runner.create_task(user_id=context.user_id)
-            self._handles[correlation_id] = (handle, now)
+            self._handles[key] = (handle, now)
             return handle
+
+    async def _get_or_reopen_isolated(self, context: ToolContext, session_id: str) -> Any:
+        """Provisions (or, after this process restarted and forgot its own in-memory binding,
+        reopens) the isolated worktree for one chat session. Falls back to a fresh
+        `create_task(isolate=True, ...)` whenever `reopen_task` is unavailable or fails -- a
+        worktree the human deleted by hand, or a daemon that has since forgotten it too, must not
+        wedge every future message in this session; it should simply isolate again."""
+        store = self._host_task_store
+        saved = await store.get(context.user_id, session_id) if store is not None else None
+        if saved is not None:
+            reopen = getattr(self._runner, "reopen_task", None)
+            if reopen is not None:
+                try:
+                    return await reopen(
+                        user_id=context.user_id,
+                        task_id=saved.task_id,
+                        task_key=session_id,
+                        root=saved.parent_root,
+                        worktree_path=saved.worktree_path,
+                        branch=saved.branch,
+                    )
+                except Exception:
+                    logger.debug(
+                        "reopen_task failed for an isolated session, provisioning a fresh "
+                        "worktree instead",
+                        extra={"session_id": session_id},
+                    )
+
+        handle = await self._runner.create_task(
+            user_id=context.user_id, isolate=True, task_key=session_id,
+        )
+        if store is not None:
+            details = getattr(self._runner, "task_details", lambda _tid: None)(handle.task_id)
+            if details:
+                await store.upsert(HostTaskWorkspace(
+                    user_id=context.user_id,
+                    session_id=session_id,
+                    task_id=handle.task_id,
+                    worktree_path=str(details.get("root") or ""),
+                    parent_root=str(details.get("parent_root") or ""),
+                    branch=str(details.get("branch") or ""),
+                ))
+        return handle
 
 
 
@@ -419,6 +479,7 @@ def build_sandbox_tools(
     host_git: Any = None,
     token_resolver: Any = None,
     host_agent_registry: Any = None,
+    host_task_store: Any = None,
 ) -> list[Tool]:
     """Filesystem, command-execution, and git tools against one shared per-task sandbox.
 
@@ -427,6 +488,11 @@ def build_sandbox_tools(
     next to the sandbox tools rather than with the GitHub ones, because it must write into the
     *same* per-turn sandbox handle ``run_command`` will then read from: a clone that landed in a
     different container would be invisible to the very next tool call.
+
+    ``host_task_store`` -- a :class:`~aura_core.ports.coding.HostTaskStore` -- lets D8's per-task
+    desktop worktree isolation (``_SandboxSessionCache``) survive this process restarting.
+    ``None`` (every pre-D8 caller) means isolation still works within one process's lifetime, it
+    just re-isolates from scratch after a restart rather than reopening the same worktree.
     """
     if workspace_manager is not None:
         # Both paths are built even though a manager exists: `_SessionAdapter.handle()` picks the
@@ -434,14 +500,14 @@ def build_sandbox_tools(
         # has a desktop pairing -- see its own docstring for why (`host_agent_registry` is what
         # lets it tell).
         sessions = _SessionAdapter(
-            cache=_SandboxSessionCache(sandbox_runner),
+            cache=_SandboxSessionCache(sandbox_runner, host_task_store=host_task_store),
             resolver=_WorkspaceResolver(workspace_manager, sandbox_runner),
             host_agent_registry=host_agent_registry,
         )
     else:
         # No manager: per-turn sandboxes, exactly as before. This is the local/dev shape and the
         # one every pre-workspace caller still gets.
-        sessions = _SessionAdapter(cache=_SandboxSessionCache(sandbox_runner))
+        sessions = _SessionAdapter(cache=_SandboxSessionCache(sandbox_runner, host_task_store=host_task_store))
 
     @tool(
         "write_file",

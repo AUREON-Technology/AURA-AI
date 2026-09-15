@@ -1,8 +1,50 @@
+import 'package:aura_client/features/chat/data/chat_repository.dart';
 import 'package:aura_client/features/chat/presentation/chat_view_model.dart';
 import 'package:aura_client/features/chat/presentation/pending_actions_executor.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  group('DesktopTaskIsolation (D8 per-task worktrees)', () {
+    test('a session is unisolated until explicitly marked', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final notifier = container.read(desktopTaskIsolationProvider.notifier);
+      expect(notifier.isIsolated('session-1'), isFalse);
+      notifier.markIsolated('session-1');
+      expect(notifier.isIsolated('session-1'), isTrue);
+      expect(notifier.isIsolated('session-2'), isFalse);
+    });
+  });
+
+  group('ChatViewModel.startNewIsolatedTask', () {
+    test('starts a fresh session and marks it isolated, leaving other sessions alone', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+
+      final before = container.read(activeConversationIdProvider);
+      container.read(chatViewModelProvider.notifier).startNewIsolatedTask();
+      final after = container.read(activeConversationIdProvider);
+
+      expect(after, isNot(before));
+      final isolation = container.read(desktopTaskIsolationProvider.notifier);
+      expect(isolation.isIsolated(after), isTrue);
+      expect(isolation.isIsolated(before), isFalse);
+    });
+
+    test('startNewSession (the ordinary "New Chat" action) never marks isolation', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+
+      container.read(chatViewModelProvider.notifier).startNewSession();
+      final sessionId = container.read(activeConversationIdProvider);
+      expect(
+        container.read(desktopTaskIsolationProvider.notifier).isIsolated(sessionId),
+        isFalse,
+      );
+    });
+  });
+
   group('ChatUiState', () {
     test('composer is locked while send is in flight or a stream is active', () {
       const idle = ChatUiState();

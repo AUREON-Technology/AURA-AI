@@ -50,4 +50,52 @@ void main() {
     store.save(roots);
     expect(File(p.join(nested.path, 'workspaces.json')).existsSync(), isTrue);
   });
+
+  group('TaskWorkspaceStore (D8 per-task worktree bindings)', () {
+    test('load() on a fresh config dir returns no entries', () {
+      final store = TaskWorkspaceStore.forConfigDir(tempDir);
+      expect(store.load(), isEmpty);
+    });
+
+    test('save() then load() round-trips every field', () {
+      final store = TaskWorkspaceStore.forConfigDir(tempDir);
+      final entry = TaskWorkspace(
+        taskKey: 'session-1',
+        taskId: 't_1',
+        root: '/repo',
+        worktreePath: '/repo/.aura-workspaces/t_1',
+        branch: 'aura/task-t_1',
+      );
+      store.save([entry]);
+
+      final reloaded = store.load();
+      expect(reloaded, hasLength(1));
+      expect(reloaded.single.taskKey, 'session-1');
+      expect(reloaded.single.taskId, 't_1');
+      expect(reloaded.single.root, '/repo');
+      expect(reloaded.single.worktreePath, '/repo/.aura-workspaces/t_1');
+      expect(reloaded.single.branch, 'aura/task-t_1');
+    });
+
+    test('load() tolerates an empty file rather than throwing', () {
+      final file = File(p.join(tempDir.path, 'task_workspaces.json'))..writeAsStringSync('');
+      final store = TaskWorkspaceStore(file);
+      expect(store.load(), isEmpty);
+    });
+
+    test('save() creates the config directory if missing', () {
+      final nested = Directory(p.join(tempDir.path, 'nested', 'config'));
+      final store = TaskWorkspaceStore.forConfigDir(nested);
+      store.save([
+        TaskWorkspace(
+          taskKey: 'session-1',
+          taskId: 't_1',
+          root: '/repo',
+          worktreePath: '/repo/.aura-workspaces/t_1',
+          branch: 'aura/task-t_1',
+        ),
+      ]);
+      expect(File(p.join(nested.path, 'task_workspaces.json')).existsSync(), isTrue);
+    });
+  });
 }

@@ -134,7 +134,16 @@ class ChatRepository {
     List<String> confirmedTools = const [],
     List<String> confirmedCallIds = const [],
     bool persistUserMessage = true,
+    // D8 (`docs/architecture/015-desktop-ide.md` Part B): `null` (every current caller) resolves
+    // from `desktopTaskIsolationProvider` for this conversation, so a caller forwarding a turn
+    // within an existing session (confirming a tool call, retrying a failed send, a plain
+    // follow-up message) cannot forget to carry isolation forward and silently drop a task out
+    // of its worktree mid-conversation. An explicit value is only for a caller that knows better
+    // than the provider -- none does today.
+    bool? desktopTaskIsolation,
   }) async {
+    final isolate = desktopTaskIsolation ??
+        _ref.read(desktopTaskIsolationProvider.notifier).isIsolated(conversationId);
     if (_ref.read(streamingMessageIdProvider) != null) {
       debugPrint("[ChatRepository] ignoring send while a stream is already in flight");
       return;
@@ -192,6 +201,7 @@ class ChatRepository {
         confirmedTools: confirmedTools,
         confirmedCallIds: confirmedCallIds,
         assistantMsgId: assistantMsgId,
+        desktopTaskIsolation: isolate,
       );
 
       if (sseOutcome.message != null) {
@@ -289,6 +299,7 @@ class ChatRepository {
     required List<String> confirmedTools,
     List<String> confirmedCallIds = const [],
     required String assistantMsgId,
+    bool desktopTaskIsolation = false,
   }) async {
     final stopwatch = Stopwatch()..start();
     String displayText = "";
@@ -309,6 +320,7 @@ class ChatRepository {
         useTools: useTools,
         confirmedTools: confirmedTools,
         confirmedCallIds: confirmedCallIds,
+        desktopTaskIsolation: desktopTaskIsolation,
       );
 
       await for (final event in stream) {
@@ -552,6 +564,24 @@ class ActiveConversation extends Notifier<String> {
 
 final activeConversationIdProvider = NotifierProvider<ActiveConversation, String>(() {
   return ActiveConversation();
+});
+
+/// D8 (`docs/architecture/015-desktop-ide.md` Part B): which chat sessions the Desktop IDE
+/// started as an isolated task, keyed by session id. A session not present here (every session
+/// outside the Desktop IDE's AgentPanel, and any Engineer session started the ordinary way) is
+/// unisolated -- `ChatRepository.sendChatMessage`'s `desktopTaskIsolation` default of `false` is
+/// exactly what a missing entry means, so this map only ever needs to record `true`s.
+class DesktopTaskIsolation extends Notifier<Set<String>> {
+  @override
+  Set<String> build() => {};
+
+  bool isIsolated(String sessionId) => state.contains(sessionId);
+
+  void markIsolated(String sessionId) => state = {...state, sessionId};
+}
+
+final desktopTaskIsolationProvider = NotifierProvider<DesktopTaskIsolation, Set<String>>(() {
+  return DesktopTaskIsolation();
 });
 
 /// How many of a conversation's most recent messages are loaded, per conversation. Starts at

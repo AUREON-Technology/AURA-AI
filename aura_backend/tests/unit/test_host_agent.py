@@ -398,6 +398,98 @@ class TestHostAgentSandboxRunner:
                 pass
 
 
+class TestHostAgentSandboxRunnerIsolation:
+    """D8 (`docs/architecture/015-desktop-ide.md` Part B): `create_task(isolate=True, ...)` and
+    `reopen_task` against a fake daemon."""
+
+    @pytest.mark.anyio
+    async def test_create_task_isolate_sends_isolate_and_task_key(self) -> None:
+        registry = HostAgentRegistry()
+        seen_params = []
+
+        async def send(frame):
+            seen_params.append(frame["params"])
+            session.resolve({
+                "type": "result",
+                "id": frame["id"],
+                "result": {"task_id": "t1", "root": "/repo/.aura-workspaces/t1", "parent_root": "/repo", "branch": "aura/task-t1"},
+            })
+
+        session = HostAgentSession(UserId("u1"), send)
+        await registry.register(session)
+        runner = HostAgentSandboxRunner(registry)
+
+        handle = await runner.create_task(user_id=UserId("u1"), isolate=True, task_key="session-1")
+        assert handle.task_id == "t1"
+        assert seen_params == [{"isolate": True, "task_key": "session-1"}]
+        assert runner.task_details("t1") == {
+            "task_id": "t1", "root": "/repo/.aura-workspaces/t1", "parent_root": "/repo", "branch": "aura/task-t1",
+        }
+
+    @pytest.mark.anyio
+    async def test_create_task_isolate_without_a_task_key_raises(self) -> None:
+        registry = HostAgentRegistry()
+        session = HostAgentSession(UserId("u1"), lambda frame: asyncio.sleep(0))
+        await registry.register(session)
+        runner = HostAgentSandboxRunner(registry)
+        with pytest.raises(SandboxError, match="task_key"):
+            await runner.create_task(user_id=UserId("u1"), isolate=True)
+
+    @pytest.mark.anyio
+    async def test_task_details_is_none_for_a_non_isolated_task(self) -> None:
+        registry = HostAgentRegistry()
+
+        async def send(frame):
+            session.resolve({"type": "result", "id": frame["id"], "result": {"task_id": "t1"}})
+
+        session = HostAgentSession(UserId("u1"), send)
+        await registry.register(session)
+        runner = HostAgentSandboxRunner(registry)
+        handle = await runner.create_task(user_id=UserId("u1"))
+        assert runner.task_details(handle.task_id) is None
+
+    @pytest.mark.anyio
+    async def test_reopen_task_sends_the_full_binding_and_registers_it(self) -> None:
+        registry = HostAgentRegistry()
+        seen = []
+
+        async def send(frame):
+            seen.append((frame["method"], frame["params"]))
+            session.resolve({
+                "type": "result",
+                "id": frame["id"],
+                "result": {"task_id": "t1", "root": "/repo/.aura-workspaces/t1", "parent_root": "/repo", "branch": "aura/task-t1"},
+            })
+
+        session = HostAgentSession(UserId("u1"), send)
+        await registry.register(session)
+        runner = HostAgentSandboxRunner(registry)
+
+        handle = await runner.reopen_task(
+            user_id=UserId("u1"),
+            task_id="t1",
+            task_key="session-1",
+            root="/repo",
+            worktree_path="/repo/.aura-workspaces/t1",
+            branch="aura/task-t1",
+        )
+        assert handle.task_id == "t1"
+        assert seen == [(
+            "reopen_task",
+            {"task_key": "session-1", "task_id": "t1", "root": "/repo", "worktree_path": "/repo/.aura-workspaces/t1", "branch": "aura/task-t1"},
+        )]
+        assert runner.task_details("t1") is not None
+
+    @pytest.mark.anyio
+    async def test_reopen_task_without_a_connected_session_raises(self) -> None:
+        runner = HostAgentSandboxRunner(HostAgentRegistry())
+        with pytest.raises(SandboxError, match="no desktop app"):
+            await runner.reopen_task(
+                user_id=UserId("nobody"), task_id="t1", task_key="s1",
+                root="/repo", worktree_path="/repo/.aura-workspaces/t1", branch="b",
+            )
+
+
 class TestCompositeSandboxRunner:
     @pytest.mark.anyio
     async def test_prefers_a_connected_host_session_over_the_fallback(self) -> None:
@@ -544,3 +636,75 @@ class TestCompositeSandboxRunner:
         )
         with pytest.raises(SandboxError, match="unknown sandbox task"):
             await composite.run(SandboxHandle(task_id="ghost"), ["sh", "-c", "x"], timeout_s=5)
+
+
+class TestCompositeSandboxRunnerIsolation:
+    """D8 per-task desktop worktree isolation routed through the composite."""
+
+    @pytest.mark.anyio
+    async def test_isolate_forwards_to_a_connected_host_session(self) -> None:
+        registry = HostAgentRegistry()
+        seen_params = []
+
+        async def send(frame):
+            seen_params.append(frame["params"])
+            session.resolve({
+                "type": "result", "id": frame["id"],
+                "result": {"task_id": "t1", "root": "/repo/.aura-workspaces/t1", "parent_root": "/repo", "branch": "b"},
+            })
+
+        session = HostAgentSession(UserId("u1"), send)
+        await registry.register(session)
+        composite = CompositeSandboxRunner(host_runner=HostAgentSandboxRunner(registry), fallback=None)
+
+        handle = await composite.create_task(user_id=UserId("u1"), isolate=True, task_key="session-1")
+        assert handle.task_id == "t1"
+        assert seen_params == [{"isolate": True, "task_key": "session-1"}]
+        assert composite.task_details("t1") == {
+            "task_id": "t1", "root": "/repo/.aura-workspaces/t1", "parent_root": "/repo", "branch": "b",
+        }
+
+    @pytest.mark.anyio
+    async def test_isolate_without_a_connected_host_session_refuses_rather_than_falling_back(
+        self,
+    ) -> None:
+        """Isolation without a desktop pairing has no substrate to isolate within (D8 plan
+        section B.2) -- it must refuse loudly, never silently fall back to the ephemeral Docker
+        sandbox unisolated."""
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+
+        fallback = InMemorySandboxRunner()
+        composite = CompositeSandboxRunner(
+            host_runner=HostAgentSandboxRunner(HostAgentRegistry()), fallback=fallback
+        )
+        with pytest.raises(SandboxError, match="paired desktop"):
+            await composite.create_task(user_id=UserId("u1"), isolate=True, task_key="session-1")
+
+    @pytest.mark.anyio
+    async def test_reopen_task_forwards_to_the_host_runner_and_registers_the_handle(self) -> None:
+        registry = HostAgentRegistry()
+
+        async def send(frame):
+            session.resolve({
+                "type": "result", "id": frame["id"],
+                "result": {"task_id": "t1", "root": "/repo/.aura-workspaces/t1", "parent_root": "/repo", "branch": "b"},
+            })
+
+        session = HostAgentSession(UserId("u1"), send)
+        await registry.register(session)
+        composite = CompositeSandboxRunner(host_runner=HostAgentSandboxRunner(registry), fallback=None)
+
+        handle = await composite.reopen_task(
+            user_id=UserId("u1"), task_id="t1", task_key="session-1",
+            root="/repo", worktree_path="/repo/.aura-workspaces/t1", branch="b",
+        )
+        assert handle.task_id == "t1"
+        # The reopened handle must route through the same host runner as `create_task` would.
+        await composite.write_file(handle, "a.txt", "hi")
+
+    @pytest.mark.anyio
+    async def test_task_details_is_none_when_never_isolated(self) -> None:
+        composite = CompositeSandboxRunner(
+            host_runner=HostAgentSandboxRunner(HostAgentRegistry()), fallback=None
+        )
+        assert composite.task_details("nonexistent") is None

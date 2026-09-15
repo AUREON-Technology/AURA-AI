@@ -130,6 +130,7 @@ class SseAgentClient {
     String? correlationId,
     int maxOutputTokens = 1024,
     double temperature = 0.3,
+    bool desktopTaskIsolation = false,
   }) async* {
     final client = http.Client();
     final cid = correlationId ?? _uuid.v4();
@@ -157,6 +158,10 @@ class SseAgentClient {
         "confirmed_call_ids": confirmedCallIds,
         "max_output_tokens": maxOutputTokens,
         "temperature": temperature,
+        // D8 (docs/architecture/015-desktop-ide.md Part B): set only by the Desktop IDE's
+        // AgentPanel for a session started as an isolated task -- `false` for every other
+        // caller (mobile chat, Home capture bar), matching the backend field's own default.
+        "desktop_task_isolation": desktopTaskIsolation,
       });
 
       var response = await client.send(request).timeout(kLlmConnectTimeout);

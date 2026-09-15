@@ -222,9 +222,20 @@ class DockerSandboxRunner:
                     extra={"path": str(scratch)},
                 )
 
-    async def create_task(self, *, user_id: Any | None = None) -> SandboxHandle:
+    async def create_task(
+        self,
+        *,
+        user_id: Any | None = None,
+        isolate: bool = False,
+        task_key: str | None = None,
+        base_branch: str | None = None,
+    ) -> SandboxHandle:
         # `user_id` is accepted for `SandboxRunner` protocol conformance (the desktop host-agent
         # bridge needs it to route per-user; this server-side sandbox does not) and ignored.
+        # `isolate`/`task_key`/`base_branch` (D8 per-task desktop worktrees) are meaningless for
+        # an ephemeral Docker container with no durable filesystem to isolate within -- also
+        # accepted and ignored, matching `CompositeSandboxRunner`'s own refusal to route an
+        # isolated request here in the first place.
         task_id = uuid.uuid4().hex
         scratch = await asyncio.to_thread(self._make_scratch, task_id)
         self._scratch_dirs[task_id] = scratch

@@ -3,9 +3,23 @@ import 'dart:io';
 
 import 'package:aura_hostd/src/approval_queue.dart';
 import 'package:aura_hostd/src/containment.dart';
+import 'package:aura_hostd/src/git_service.dart';
 import 'package:aura_hostd/src/task_handler.dart';
+import 'package:aura_hostd/src/workspace_store.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+
+Future<ProcessResult> _git(String cwd, List<String> args) =>
+    Process.run('git', args, workingDirectory: cwd);
+
+Future<void> _initRepo(String cwd) async {
+  await _git(cwd, ['init', '-q', '-b', 'main']);
+  await _git(cwd, ['config', 'user.name', 'Test User']);
+  await _git(cwd, ['config', 'user.email', 'test@example.com']);
+  File(p.join(cwd, 'README.md')).writeAsStringSync('hello');
+  await _git(cwd, ['add', '--', 'README.md']);
+  await _git(cwd, ['commit', '-q', '-m', 'initial']);
+}
 
 void main() {
   late Directory tempDir;
@@ -390,6 +404,260 @@ void main() {
       await future;
       expect(File(p.join(workspaceDir.path, 'a.txt')).existsSync(), isTrue);
       expect(File(p.join(workspaceDir.path, 'b.txt')).existsSync(), isTrue);
+    });
+  });
+
+  group('task isolation (D8 per-task git worktrees)', () {
+    setUp(() async {
+      await _initRepo(workspaceDir.path);
+      roots.setTrusted(workspaceDir.path, true);
+      handler = TaskHandler(roots);
+    });
+
+    test('isolate: false (or absent) keeps the pre-D8 behavior exactly', () async {
+      final result = await handler.createTask(const {});
+      expect(result['task_id'], isNotEmpty);
+      expect(result.containsKey('root'), isFalse);
+    });
+
+    test('isolate: true provisions a worktree and every write/run for that task_id resolves only '
+        'against it', () async {
+      final created = await handler.createTask({
+        'isolate': true,
+        'task_key': 'session-1',
+        'root': workspaceDir.path,
+      });
+      final taskId = created['task_id'] as String;
+      final taskRoot = created['root'] as String;
+      expect(taskRoot, isNot(workspaceDir.path));
+      expect(Directory(taskRoot).existsSync(), isTrue);
+
+      await handler.writeFile({'task_id': taskId, 'path': 'notes.txt', 'content': 'isolated'});
+      expect(File(p.join(taskRoot, 'notes.txt')).existsSync(), isTrue);
+      expect(File(p.join(workspaceDir.path, 'notes.txt')).existsSync(), isFalse);
+
+      final read = await handler.readFile({'task_id': taskId, 'path': 'notes.txt'});
+      expect(read['content'], 'isolated');
+    }, testOn: '!windows');
+
+    test('a second message in the same session (same task_key) reuses the existing worktree',
+        () async {
+      final first = await handler.createTask({
+        'isolate': true,
+        'task_key': 'session-1',
+        'root': workspaceDir.path,
+      });
+      final second = await handler.createTask({
+        'isolate': true,
+        'task_key': 'session-1',
+        'root': workspaceDir.path,
+      });
+      expect(second['task_id'], first['task_id']);
+      expect(second['root'], first['root']);
+    });
+
+    test('two different sessions get two different, independent worktrees', () async {
+      final first = await handler.createTask({
+        'isolate': true,
+        'task_key': 'session-1',
+        'root': workspaceDir.path,
+      });
+      final second = await handler.createTask({
+        'isolate': true,
+        'task_key': 'session-2',
+        'root': workspaceDir.path,
+      });
+      expect(second['task_id'], isNot(first['task_id']));
+      expect(second['root'], isNot(first['root']));
+    });
+
+    test('an isolated task inherits the parent root\'s trust level exactly', () async {
+      roots.setTrusted(workspaceDir.path, false);
+      final created = await handler.createTask({
+        'isolate': true,
+        'task_key': 'session-1',
+        'root': workspaceDir.path,
+      });
+      final taskId = created['task_id'] as String;
+      expect(
+        () => handler.run({
+          'task_id': taskId,
+          'command': ['sh', '-c', 'echo hi > x.txt'],
+          'timeout_s': 5.0,
+        }),
+        throwsA(isA<RpcError>()),
+      );
+    }, testOn: '!windows');
+
+    test('a write for an unknown task_id refuses rather than falling back to a cross-root search',
+        () async {
+      expect(
+        () => handler.writeFile({'task_id': 'not_a_real_task', 'path': 'notes.txt', 'content': 'x'}),
+        throwsA(isA<RpcError>()),
+      );
+      expect(File(p.join(workspaceDir.path, 'notes.txt')).existsSync(), isFalse);
+    });
+
+    test('run defaults its cwd to the task worktree and refuses a cwd outside it', () async {
+      final created = await handler.createTask({
+        'isolate': true,
+        'task_key': 'session-1',
+        'root': workspaceDir.path,
+      });
+      final taskId = created['task_id'] as String;
+      final taskRoot = created['root'] as String;
+
+      final result = await handler.run({
+        'task_id': taskId,
+        'command': ['sh', '-c', 'pwd'],
+        'timeout_s': 5.0,
+      });
+      expect((result['stdout'] as String).trim(), taskRoot);
+
+      expect(
+        () => handler.run({
+          'task_id': taskId,
+          'cwd': workspaceDir.path,
+          'command': ['sh', '-c', 'pwd'],
+          'timeout_s': 5.0,
+        }),
+        throwsA(isA<ContainmentViolation>()),
+      );
+    }, testOn: '!windows');
+
+    test('createTask with isolate: true and no explicit root when exactly one root is granted '
+        'uses it', () async {
+      final created = await handler.createTask({'isolate': true, 'task_key': 'session-1'});
+      expect(created['root'], isNot(isNull));
+    });
+
+    test('createTask with isolate: true refuses without an explicit root when more than one is '
+        'granted', () async {
+      final otherDir = Directory(p.join(tempDir.path, 'other'))..createSync();
+      await _initRepo(otherDir.path);
+      roots.addRoot(otherDir.path, trusted: true);
+      await expectLater(
+        handler.createTask({'isolate': true, 'task_key': 'session-1'}),
+        throwsA(isA<RpcError>()),
+      );
+    });
+
+    group('reopenTask', () {
+      test('re-registers a binding this handler instance never created, without a fresh git '
+          'worktree add', () async {
+        final other = TaskHandler(roots);
+        final created = await other.createTask({
+          'isolate': true,
+          'task_key': 'session-1',
+          'root': workspaceDir.path,
+        });
+
+        final reopened = await handler.reopenTask({
+          'task_key': 'session-1',
+          'task_id': created['task_id'],
+          'root': workspaceDir.path,
+          'worktree_path': created['root'],
+          'branch': 'aura/task-${created['task_id']}',
+        });
+        expect(reopened['task_id'], created['task_id']);
+
+        await handler.writeFile({
+          'task_id': created['task_id'],
+          'path': 'reopened.txt',
+          'content': 'still works',
+        });
+        expect(
+          File(p.join(created['root'] as String, 'reopened.txt')).readAsStringSync(),
+          'still works',
+        );
+      });
+
+      test('refuses when the named worktree no longer exists on disk', () async {
+        await expectLater(
+          handler.reopenTask({
+            'task_key': 'session-1',
+            'task_id': 't_ghost',
+            'root': workspaceDir.path,
+            'worktree_path': p.join(workspaceDir.path, '.aura-workspaces', 't_ghost'),
+            'branch': 'aura/task-t_ghost',
+          }),
+          throwsA(isA<RpcError>()),
+        );
+      });
+    });
+
+    group('discardTaskWorkspace', () {
+      test('removes the worktree/branch and forgets the binding', () async {
+        final created = await handler.createTask({
+          'isolate': true,
+          'task_key': 'session-1',
+          'root': workspaceDir.path,
+        });
+        final taskId = created['task_id'] as String;
+        final taskRoot = created['root'] as String;
+
+        final result = await handler.discardTaskWorkspace(taskId);
+        expect(result['ok'], isTrue);
+        expect(Directory(taskRoot).existsSync(), isFalse);
+        expect(
+          () => handler.readFile({'task_id': taskId, 'path': 'README.md'}),
+          throwsA(isA<RpcError>()),
+        );
+
+        // A discarded task's key is free to be re-isolated fresh.
+        final again = await handler.createTask({
+          'isolate': true,
+          'task_key': 'session-1',
+          'root': workspaceDir.path,
+        });
+        expect(again['task_id'], isNot(taskId));
+      });
+
+      test('refuses to discard an unknown task_id', () async {
+        await expectLater(handler.discardTaskWorkspace('nope'), throwsA(isA<RpcError>()));
+      });
+    });
+
+    group('restart durability via TaskWorkspaceStore', () {
+      late TaskWorkspaceStore store;
+
+      setUp(() {
+        store = TaskWorkspaceStore(File(p.join(tempDir.path, 'task_workspaces.json')));
+      });
+
+      test('a new TaskHandler instance self-heals a binding the store remembers', () async {
+        final first = TaskHandler(roots, null, GitService(), store);
+        final created = await first.createTask({
+          'isolate': true,
+          'task_key': 'session-1',
+          'root': workspaceDir.path,
+        });
+        final taskId = created['task_id'] as String;
+        final taskRoot = created['root'] as String;
+
+        // Simulate a daemon restart: a fresh TaskHandler over the same persisted store.
+        final second = TaskHandler(roots, null, GitService(), store);
+        await second.writeFile({'task_id': taskId, 'path': 'after_restart.txt', 'content': 'ok'});
+        expect(File(p.join(taskRoot, 'after_restart.txt')).existsSync(), isTrue);
+      }, testOn: '!windows');
+
+      test('drops a persisted binding whose worktree directory no longer exists on disk',
+          () async {
+        final first = TaskHandler(roots, null, GitService(), store);
+        final created = await first.createTask({
+          'isolate': true,
+          'task_key': 'session-1',
+          'root': workspaceDir.path,
+        });
+        Directory(created['root'] as String).deleteSync(recursive: true);
+
+        final second = TaskHandler(roots, null, GitService(), store);
+        expect(
+          () => second.readFile({'task_id': created['task_id'], 'path': 'README.md'}),
+          throwsA(isA<RpcError>()),
+        );
+        expect(store.load(), isEmpty);
+      });
     });
   });
 }

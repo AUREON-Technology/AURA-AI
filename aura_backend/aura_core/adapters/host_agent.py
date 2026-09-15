@@ -186,11 +186,25 @@ class HostAgentSandboxRunner:
         self._registry = registry
         self._call_timeout_s = call_timeout_s
         self._handle_owners: dict[str, UserId] = {}
+        # D8 (`docs/architecture/015-desktop-ide.md` Part B): the raw `create_task`/`reopen_task`
+        # result for every isolated task this runner has provisioned or reopened, keyed by
+        # `task_id`. Exists only so `_SandboxSessionCache` (`tools/coding.py`) can read back
+        # `root`/`parent_root`/`branch` to persist into `HostTaskStore` -- the `SandboxHandle`
+        # this class hands back everywhere else stays exactly `{task_id}`, matching every other
+        # `SandboxRunner` implementation's contract.
+        self._task_details: dict[str, Mapping[str, Any]] = {}
 
     async def has_session(self, user_id: UserId) -> bool:
         return await self._registry.resolve(user_id) is not None
 
-    async def create_task(self, *, user_id: UserId | None = None) -> SandboxHandle:
+    async def create_task(
+        self,
+        *,
+        user_id: UserId | None = None,
+        isolate: bool = False,
+        task_key: str | None = None,
+        base_branch: str | None = None,
+    ) -> SandboxHandle:
         if user_id is None:
             raise SandboxError("the host-agent sandbox requires a caller identity")
         session = await self._registry.resolve(user_id)
@@ -198,10 +212,58 @@ class HostAgentSandboxRunner:
             raise SandboxError(
                 "no desktop app is connected for this account -- open AURA Desktop and pair it"
             )
-        result = await session.call("create_task", {}, timeout_s=self._call_timeout_s)
-        task_id = str((result or {}).get("task_id") or uuid.uuid4().hex)
+        params: dict[str, Any] = {}
+        if isolate:
+            if not task_key:
+                raise SandboxError("an isolated task requires a task_key (the chat session id)")
+            params["isolate"] = True
+            params["task_key"] = task_key
+            if base_branch:
+                params["base_branch"] = base_branch
+        result = await session.call("create_task", params, timeout_s=self._call_timeout_s)
+        result = dict(result or {})
+        task_id = str(result.get("task_id") or uuid.uuid4().hex)
         self._handle_owners[task_id] = user_id
+        if isolate:
+            self._task_details[task_id] = result
         return SandboxHandle(task_id=task_id)
+
+    def task_details(self, task_id: str) -> Mapping[str, Any] | None:
+        """The raw `create_task`/`reopen_task` result for an isolated task -- `None` for a task
+        that was never isolated (nothing to look up) or that this runner instance has forgotten
+        about since a process restart (the caller, `_SandboxSessionCache`, falls back to
+        `HostTaskStore` for that case)."""
+        return self._task_details.get(task_id)
+
+    async def reopen_task(
+        self,
+        *,
+        user_id: UserId,
+        task_id: str,
+        task_key: str,
+        root: str,
+        worktree_path: str,
+        branch: str,
+    ) -> SandboxHandle:
+        """Re-registers an isolated task's binding on the daemon side after this process
+        restarted and lost `_task_details`/`_handle_owners` for it (`HostTaskStore` is what
+        remembers `root`/`worktree_path`/`branch` across that restart -- see
+        `_SandboxSessionCache._reopen_or_create_isolated`)."""
+        session = await self._registry.resolve(user_id)
+        if session is None:
+            raise SandboxError(
+                "no desktop app is connected for this account -- open AURA Desktop and pair it"
+            )
+        result = await session.call(
+            "reopen_task",
+            {"task_key": task_key, "task_id": task_id, "root": root, "worktree_path": worktree_path, "branch": branch},
+            timeout_s=self._call_timeout_s,
+        )
+        result = dict(result or {})
+        resolved_id = str(result.get("task_id") or task_id)
+        self._handle_owners[resolved_id] = user_id
+        self._task_details[resolved_id] = result
+        return SandboxHandle(task_id=resolved_id)
 
     async def _session_for(self, handle: SandboxHandle) -> HostAgentSession:
         user_id = self._handle_owners.get(handle.task_id)
@@ -326,11 +388,28 @@ class CompositeSandboxRunner:
         self._fallback = fallback
         self._handle_runner: dict[str, Any] = {}
 
-    async def create_task(self, *, user_id: UserId | None = None) -> SandboxHandle:
+    async def create_task(
+        self,
+        *,
+        user_id: UserId | None = None,
+        isolate: bool = False,
+        task_key: str | None = None,
+        base_branch: str | None = None,
+    ) -> SandboxHandle:
         if user_id is not None and await self._host.has_session(user_id):
-            handle = await self._host.create_task(user_id=user_id)
+            handle = await self._host.create_task(
+                user_id=user_id, isolate=isolate, task_key=task_key, base_branch=base_branch,
+            )
             self._handle_runner[handle.task_id] = self._host
             return handle
+        if isolate:
+            # Per-task isolation is meaningless without a real machine to carve a git worktree
+            # out of -- the server-side Docker sandbox has no durable filesystem to isolate
+            # within (D8 plan section B.2: "wrong substrate -- this is the user's own machine").
+            raise SandboxError(
+                "per-task workspace isolation requires a paired desktop app -- open AURA "
+                "Desktop and pair it"
+            )
         if self._fallback is None:
             raise SandboxError(
                 "no desktop app is connected and no server-side sandbox is configured -- "
@@ -338,6 +417,31 @@ class CompositeSandboxRunner:
             )
         handle = await self._fallback.create_task()
         self._handle_runner[handle.task_id] = self._fallback
+        return handle
+
+    def task_details(self, task_id: str) -> Mapping[str, Any] | None:
+        getter = getattr(self._host, "task_details", None)
+        return getter(task_id) if getter is not None else None
+
+    async def reopen_task(
+        self,
+        *,
+        user_id: UserId,
+        task_id: str,
+        task_key: str,
+        root: str,
+        worktree_path: str,
+        branch: str,
+    ) -> SandboxHandle:
+        handle = await self._host.reopen_task(
+            user_id=user_id,
+            task_id=task_id,
+            task_key=task_key,
+            root=root,
+            worktree_path=worktree_path,
+            branch=branch,
+        )
+        self._handle_runner[handle.task_id] = self._host
         return handle
 
     def _runner_for(self, handle: SandboxHandle) -> Any:
