@@ -65,14 +65,24 @@ class _StepRow extends StatelessWidget {
                 step.label ?? step.kind ?? 'step',
                 style: TextStyle(fontSize: 13, color: palette.textPrimary),
               ),
-              if (step.status == 'failed' &&
+              if ((step.status == 'failed' || step.status == 'blocked') &&
                   step.detail != null &&
                   step.detail!.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 2),
                   child: Text(
-                    step.detail!,
-                    style: TextStyle(fontSize: 12, color: palette.danger),
+                    // BLOCKED means a dependency failed, not that this step itself errored
+                    // (Plan.mark_blocked_steps/StepStatus.BLOCKED, aura_core/domain/planning.py)
+                    // -- worded and coloured distinctly so it never reads as "this step failed".
+                    step.status == 'blocked'
+                        ? 'Blocked: ${step.detail!}'
+                        : step.detail!,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: step.status == 'blocked'
+                          ? palette.warning
+                          : palette.danger,
+                    ),
                   ),
                 ),
             ],
