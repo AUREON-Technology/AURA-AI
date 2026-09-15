@@ -22,6 +22,7 @@ import ipaddress
 import math
 import operator
 import re
+import socket
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -407,6 +408,31 @@ def _assert_public_url(url: str, allowed_hosts: frozenset[str], tool_name: str) 
     return url
 
 
+async def _assert_resolves_publicly(host: str, tool_name: str) -> None:
+    """Reject a hostname whose DNS resolves to a private or internal address.
+
+    ``_assert_public_url`` only inspects the literal URL string: an IP-literal URL is checked
+    directly, but an allowlisted *hostname* is only checked against the allowlist, never against
+    what it actually resolves to. That gap is a DNS-rebinding SSRF -- an allowlisted domain whose
+    record points at ``169.254.169.254`` or ``127.0.0.1`` (now, or once the operator no longer
+    controls its DNS) would otherwise be fetched without complaint, string allowlist satisfied.
+    Resolving immediately before the request narrows, though does not eliminate, the TOCTOU window
+    a full IP-pinning fetch would close -- DNS could still change in the moment between this check
+    and the connection ``httpx`` makes a line later.
+    """
+    try:
+        infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
+    except socket.gaierror as exc:
+        raise ToolExecutionError(f"could not resolve host {host!r}: {exc}", tool=tool_name) from exc
+    for _family, _kind, _proto, _canon, sockaddr in infos:
+        address = ipaddress.ip_address(sockaddr[0])
+        if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved:
+            raise ToolExecutionError(
+                f"host {host!r} resolves to a private address ({address}); refusing to fetch",
+                tool=tool_name,
+            )
+
+
 def build_http_tool(*, allowed_hosts: Sequence[str], timeout_s: float = 15.0) -> list[Tool]:
     """Fetch a page from an allowlisted host.
 
@@ -436,6 +462,7 @@ def build_http_tool(*, allowed_hosts: Sequence[str], timeout_s: float = 15.0) ->
     )
     async def fetch_url(url: str) -> str:
         _assert_public_url(url, allowlist, "fetch_url")
+        await _assert_resolves_publicly(urlparse(url).hostname or "", "fetch_url")
         try:
             import httpx
         except ImportError as exc:  # pragma: no cover

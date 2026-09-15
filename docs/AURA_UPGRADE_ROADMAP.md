@@ -611,6 +611,25 @@ not Ollama-plus-echo — **done**, with a permanent opt-in test reproducing the 
   recovery after failure, and concurrent callers all queued behind a failing attempt. Confirmed the
   core test (20 concurrent callers) fails against the pre-fix code — 20 separate `create_pool`
   calls instead of 1 — before counting it as a regression test.
+- **G4. Closed a DNS-rebinding gap in `fetch_url`'s SSRF guard.** `_assert_public_url`
+  (`aura_core/tools/builtin.py`) rejects an IP-literal URL directly and checks a hostname against
+  the allowlist, but never checked what an allowlisted *hostname* actually resolves to — its own
+  comment already named the intended defence ("the private-range check is defence in depth for an
+  allowlisted name that resolves somewhere unexpected") without the code doing it. An allowlisted
+  domain whose DNS record points at `169.254.169.254` (cloud instance metadata) or `127.0.0.1`
+  would have been fetched without complaint, string allowlist satisfied. Added
+  `_assert_resolves_publicly`: resolves the hostname (`asyncio.to_thread(socket.getaddrinfo, ...)`,
+  off the event loop since DNS lookups block) and rejects if *any* returned address is
+  private/loopback/link-local/reserved, wired into `fetch_url` right before the request. Narrows,
+  rather than eliminates, the gap — a genuine TOCTOU window remains between this check and the
+  connection `httpx` makes a line later, disclosed in the function's own docstring rather than
+  claimed as closed; full IP-pinning would close it and is named as follow-up, not done here. 6 new
+  tests in `tests/unit/test_builtin_tools.py` (`TestDnsRebindingGuard`): public resolution passes,
+  rebinding to cloud metadata / loopback is refused, one private address among several A-records is
+  enough to refuse, unresolvable hosts are refused rather than silently allowed through, plus one
+  integration test calling the real `fetch_url` tool end-to-end (not just the guard function) to
+  prove the check is actually wired in, not just present and uncalled — confirmed to fail with the
+  wiring call removed before counting it as a regression test.
 
 ### Phase J — Desktop Engineer agent
 
