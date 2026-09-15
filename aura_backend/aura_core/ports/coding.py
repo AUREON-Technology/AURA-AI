@@ -187,7 +187,24 @@ class SandboxRunner(Protocol):
     runner implements whichever half it can serve.
     """
 
-    async def create_task(self, *, user_id: UserId | None = None) -> SandboxHandle:
+    async def create_task(
+        self,
+        *,
+        user_id: UserId | None = None,
+        session_id: str | None = None,
+        isolate: bool = False,
+    ) -> SandboxHandle:
+        """``session_id``/``isolate`` are D8's per-task isolated-workspace request (Desktop IDE
+        only): ``isolate=True`` asks the host-agent bridge's daemon to carve out a dedicated git
+        worktree for this task rather than writing into the user's live checkout, keyed by
+        ``session_id`` (stable across a chat session's many turns, unlike the fresh ``task_id``
+        this method mints on every call) so a multi-turn conversation keeps landing in the same
+        worktree. Every runner that doesn't implement isolation (the server-side Docker sandbox,
+        the in-memory test fake) accepts and ignores both -- they have their own, unrelated
+        durable-workspace story (``open_workspace``/``pause_workspace``/``destroy_workspace``
+        above), not per-task git worktrees. Defaults keep every existing caller's behavior
+        unchanged: only a caller that explicitly asks for isolation gets it.
+        """
         ...
 
     async def run(

@@ -105,7 +105,21 @@ class ChatRepository {
     final query = _db.selectOnly(_db.messages)
       ..addColumns([_db.messages.conversationId])
       ..groupBy([_db.messages.conversationId]);
-    
+
+    return query.map((row) => row.read(_db.messages.conversationId)!).watch();
+  }
+
+  /// Same as [watchConversations], scoped to conversations that have at least one assistant
+  /// message tagged with [agentId] -- `agentId` is only ever set on the assistant placeholder row
+  /// (`sendChatMessage` below), never the user's own message, so filtering on it is what makes
+  /// this "conversations involving this persona" rather than "every conversation in the app."
+  /// Used by the Desktop IDE's `AgentPanel` (D6/D7 Part B.D1) to show only Engineer-persona
+  /// sessions as switchable "tasks," not the mobile Copilot's sessions for other personas.
+  Stream<List<String>> watchConversationsForAgent(String agentId) {
+    final query = _db.selectOnly(_db.messages, distinct: true)
+      ..addColumns([_db.messages.conversationId])
+      ..where(_db.messages.agentId.equals(agentId));
+
     return query.map((row) => row.read(_db.messages.conversationId)!).watch();
   }
 
@@ -584,4 +598,11 @@ final chatMessagesStreamProvider = StreamProvider.family.autoDispose<List<Messag
 final conversationsStreamProvider = StreamProvider.autoDispose<List<String>>((ref) {
   final repository = ref.watch(chatRepositoryProvider);
   return repository.watchConversations();
+});
+
+/// Conversations involving one specific persona -- see [ChatRepository.watchConversationsForAgent].
+final agentConversationsStreamProvider =
+    StreamProvider.family.autoDispose<List<String>, String>((ref, agentId) {
+  final repository = ref.watch(chatRepositoryProvider);
+  return repository.watchConversationsForAgent(agentId);
 });

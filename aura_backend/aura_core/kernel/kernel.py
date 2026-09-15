@@ -121,6 +121,10 @@ class TurnRequest:
     #: its own persona ever declares). `None` for every ordinary turn (no override).
     delegated_tool_grant: frozenset[str] | None = None
     delegated_risk_ceiling: ToolSensitivity | None = None
+    #: D8 (docs/architecture/015-desktop-ide.md): opt-in per-task isolated git worktree, Desktop
+    #: IDE only. `False` for every other caller -- see `tools/coding.py::_SandboxSessionCache`'s
+    #: `create_task` call for where this actually takes effect.
+    desktop_task_isolation: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1001,6 +1005,16 @@ class AIKernel:
             memory_scope=agent.memory_scope if agent is not None else "shared",
             capabilities=request.capabilities,
             delegation_depth=request.delegation_depth,
+            # D8: carried via the existing free-form `metadata` field rather than a new
+            # `ToolContext` slot -- see `ports/runtime.py::ToolContext`'s own doc comment on why
+            # that field exists (policy inputs only get dedicated slots; this is caller data
+            # specific to one tool family's needs). `session_id` is `None` for any turn that
+            # doesn't carry one (e.g. a request with no `session_id`), which
+            # `_SandboxSessionCache` treats as "isolation not possible, ignore the flag."
+            metadata={
+                "session_id": str(request.session_id) if request.session_id else None,
+                "desktop_task_isolation": request.desktop_task_isolation,
+            },
         )
 
     async def _compose_plan(

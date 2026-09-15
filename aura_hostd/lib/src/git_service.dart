@@ -23,6 +23,8 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 /// Bounds how much of a diff this service ever holds in memory or returns, matching
 /// `task_handler.dart`'s `_maxOutputCapChars` / `control_server.dart`'s `_maxReadBytes`
 /// discipline -- a very large diff (a vendored-file commit) should not grow this process's
@@ -173,6 +175,69 @@ class GitService {
       throw GitCommandError('git checkout failed: ${result.stderr}');
     }
     return {'ok': true, 'branch': branch};
+  }
+
+  /// D8 Part B: creates a `git worktree` for one isolated agent task, sharing [cwd]'s object
+  /// store/history -- cheap, real git, and directly mergeable/discardable later (Part C). Lives
+  /// under a fixed `.aura-workspaces/<taskId>` subdirectory *inside* the already-granted root, so
+  /// no new root-grant UI is ever needed, and is kept out of the human's own `git status` via
+  /// `.git/info/exclude` (local-only, never the user's own committed `.gitignore`).
+  Future<Map<String, Object?>> createWorktree(
+    String cwd, {
+    required String taskId,
+    String? branchName,
+    String? baseBranch,
+  }) async {
+    final branch = branchName ?? 'aura/task-$taskId';
+    final worktreePath = p.join(cwd, '.aura-workspaces', taskId);
+
+    await _excludeFromGitStatus(cwd, '.aura-workspaces/');
+
+    final result = await _run(cwd, [
+      'worktree',
+      'add',
+      '-b',
+      branch,
+      worktreePath,
+      if (baseBranch != null) baseBranch,
+    ]);
+    if (result.exitCode != 0) {
+      if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
+      throw GitCommandError('git worktree add failed: ${result.stderr}');
+    }
+    return {'worktree_path': worktreePath, 'branch': branch};
+  }
+
+  /// D8/D9: tears down a task's worktree and its branch -- only ever invoked by a human's
+  /// explicit "Discard" action (Part C), never by the agent itself. Tolerates the worktree
+  /// already being gone (e.g. the daemon crashed mid-task and the directory was manually
+  /// cleaned up) rather than treating that as an error.
+  Future<Map<String, Object?>> removeWorktree(String cwd, String worktreePath, {required String branch}) async {
+    final result = await _run(cwd, ['worktree', 'remove', '--force', worktreePath]);
+    if (result.exitCode != 0 && !result.stderr.contains('is not a working tree')) {
+      throw GitCommandError('git worktree remove failed: ${result.stderr}');
+    }
+    final branchResult = await _run(cwd, ['branch', '-D', branch]);
+    return {'ok': true, 'branch_deleted': branchResult.exitCode == 0};
+  }
+
+  /// Appends [pattern] to `.git/info/exclude` if not already present -- best-effort and silently
+  /// skipped on any filesystem error, since this is a cosmetic nicety (keeping the human's own
+  /// `git status` clean of the isolation directory), not the actual isolation mechanism itself
+  /// (that's the separate worktree/root containment, unaffected by whether this succeeds).
+  Future<void> _excludeFromGitStatus(String cwd, String pattern) async {
+    try {
+      final excludeFile = File(p.join(cwd, '.git', 'info', 'exclude'));
+      if (!excludeFile.existsSync()) return;
+      final content = excludeFile.readAsStringSync();
+      if (content.split('\n').map((line) => line.trim()).contains(pattern)) return;
+      final separator = content.isEmpty || content.endsWith('\n') ? '' : '\n';
+      excludeFile.writeAsStringSync('$content$separator$pattern\n');
+    } on FileSystemException {
+      // Non-fatal -- see doc comment above.
+    } on FormatException {
+      // .git/info/exclude was not valid UTF-8 -- equally non-fatal.
+    }
   }
 
   bool _looksLikeNotARepo(String stderr) => stderr.contains('not a git repository');

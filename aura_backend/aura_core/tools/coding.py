@@ -247,7 +247,18 @@ class _SandboxSessionCache:
             else:
                 # `user_id` matters only to a runner that routes per-caller (the desktop
                 # host-agent bridge) -- every other runner accepts and ignores it (ports/coding.py).
-                handle = await self._runner.create_task(user_id=context.user_id)
+                #
+                # D8: `session_id`/`isolate` are threaded through `ToolContext.metadata` rather
+                # than dedicated `ToolContext` slots -- see `kernel.py::_tool_context`'s own
+                # comment on why (avoids widening a `__slots__` contract documented as
+                # policy-inputs-only for a Desktop-IDE-specific, opt-in capability). Every
+                # non-Desktop caller's `context.metadata` simply lacks these keys, so `.get(...)`
+                # below defaults to `isolate=False` -- identical behavior to before this existed.
+                handle = await self._runner.create_task(
+                    user_id=context.user_id,
+                    session_id=context.metadata.get("session_id"),
+                    isolate=bool(context.metadata.get("desktop_task_isolation", False)),
+                )
             self._handles[correlation_id] = (handle, now)
             return handle
 

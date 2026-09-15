@@ -12,10 +12,13 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 import 'approval_queue.dart';
 import 'command_policy.dart';
 import 'containment.dart';
 import 'diff_util.dart';
+import 'git_service.dart';
 
 class RpcError implements Exception {
   RpcError(this.message);
@@ -46,7 +49,9 @@ const _maxOutputCapChars = 500000;
 typedef OutputChunkCallback = void Function(String stream, String data);
 
 class TaskHandler {
-  TaskHandler(this._roots, [ApprovalQueue? approvalQueue]) : _approvals = approvalQueue ?? ApprovalQueue();
+  TaskHandler(this._roots, [ApprovalQueue? approvalQueue, GitService? gitService])
+      : _approvals = approvalQueue ?? ApprovalQueue(),
+        _git = gitService ?? GitService();
 
   final WorkspaceRoots _roots;
 
@@ -55,12 +60,133 @@ class TaskHandler {
   /// tests and in `bin/aura_hostd.dart`) keeps compiling unchanged; `bin/aura_hostd.dart` passes
   /// the same queue instance `ControlServer` uses, so `GET /approvals` sees what `run` queues.
   final ApprovalQueue _approvals;
+
+  /// D8 Part B's isolated-task worktrees -- see `_resolveTaskRoot`. A second, independent
+  /// `GitService` instance from `ControlServer`'s own (never shared): this one only ever runs
+  /// `worktree add`/`remove`/`branch -D` on the agent's behalf, still gated by the same
+  /// containment/trust rules every other agent-facing RPC in this class already enforces --
+  /// unlike `ControlServer`'s `GitService`, which is the deliberate human-only bypass
+  /// (`git_service.dart`'s own doc comment). Do not merge these two instances.
+  final GitService _git;
   final Set<String> _activeTaskIds = {};
+
+  /// task_id -> isolation config, recorded once at [createTask] time.
+  final Map<String, _TaskConfig> _taskConfigs = {};
+
+  /// task_id -> the ephemeral [WorkspaceRoot] resolved for it (set lazily, on the first call that
+  /// actually needs a root -- see `_resolveTaskRoot`).
+  final Map<String, WorkspaceRoot> _taskRoots = {};
+
+  /// task_key (the chat session id, stable across a session's many turns and thus many task_ids)
+  /// -> the isolated worktree already carved out for it. Keying by task_key rather than task_id
+  /// is what makes isolation survive a multi-message conversation: the backend mints a fresh
+  /// task_id per turn (`_SandboxSessionCache`, `aura_core/tools/coding.py`), but every turn in the
+  /// same chat session sends the same task_key.
+  final Map<String, _IsolatedTask> _taskKeyWorktrees = {};
 
   Future<Map<String, Object?>> createTask(Map<String, dynamic> params) async {
     final taskId = 't_${DateTime.now().microsecondsSinceEpoch}_${_activeTaskIds.length}';
     _activeTaskIds.add(taskId);
-    return {'task_id': taskId};
+
+    final isolate = params['isolate'] == true;
+    final taskKey = params['task_key'] as String?;
+    if (isolate && taskKey != null) {
+      _taskConfigs[taskId] = _TaskConfig(
+        taskKey: taskKey,
+        baseBranch: params['base_branch'] as String?,
+      );
+      // If this task_key already has a worktree (a later turn in the same chat session), bind
+      // it immediately rather than waiting for the first write/run call to discover it.
+      final existing = _taskKeyWorktrees[taskKey];
+      if (existing != null) _taskRoots[taskId] = existing.root;
+    }
+    return {'task_id': taskId, 'isolated': isolate && taskKey != null};
+  }
+
+  /// Resolves the effective [WorkspaceRoot] a [taskId]'s call should use: an already-bound
+  /// ephemeral root, a newly-discovered one (this task's first isolated call), or `null` to fall
+  /// back to the caller's own ordinary cross-all-roots search -- unchanged behavior for every
+  /// non-Desktop caller, since [taskId] is only ever isolated when [createTask] was asked to.
+  ///
+  /// [pathForRootLookup] is whatever path/cwd the actual RPC named -- used only to find *which*
+  /// granted root the worktree should be carved out of; once found, every subsequent call for
+  /// this task_id (any path) resolves against the worktree instead, never the search result
+  /// again (see D8 plan Part B.2.3 -- a task_id bound to an ephemeral root must never fall back
+  /// to the cross-all-roots search, or an isolated write could silently escape into the live
+  /// checkout via a path that also happens to resolve under a persisted root).
+  ///
+  /// Split from [_needsTaskRootResolution]/an already-bound lookup rather than folding
+  /// everything into one `async` method that every caller `await`s unconditionally: even a
+  /// no-op `await` on an `async` function that returns synchronously still costs one microtask
+  /// hop in Dart, which is enough to break call sites elsewhere in this codebase that check
+  /// `ApprovalQueue.list()` synchronously right after calling `writeFile` *without* awaiting it
+  /// (`test/task_handler_test.dart`'s write-gating tests) -- those rely on everything up to the
+  /// approval being queued happening in the same synchronous stack frame as the call. Callers
+  /// below only ever pay that hop for a task_id actually configured for isolation.
+  WorkspaceRoot? _boundTaskRoot(String? taskId) => taskId == null ? null : _taskRoots[taskId];
+
+  bool _needsTaskRootResolution(String? taskId) =>
+      taskId != null && _taskConfigs.containsKey(taskId) && _taskRoots[taskId] == null;
+
+  Future<WorkspaceRoot?> _resolveTaskRoot(String? taskId, String? pathForRootLookup) async {
+    if (taskId == null) return null;
+    final bound = _taskRoots[taskId];
+    if (bound != null) return bound;
+
+    final config = _taskConfigs[taskId];
+    if (config == null) return null;
+    final taskKey = config.taskKey;
+
+    final existing = _taskKeyWorktrees[taskKey];
+    if (existing != null) {
+      _taskRoots[taskId] = existing.root;
+      return existing.root;
+    }
+
+    final parentRoot = pathForRootLookup != null
+        ? _roots.findContainingRoot(pathForRootLookup)
+        : (_roots.all.isNotEmpty ? _roots.all.first : null);
+    if (parentRoot == null) return null;
+
+    final worktreePath = p.join(parentRoot.canonicalPath, '.aura-workspaces', taskKey);
+    final branch = 'aura/task-$taskKey';
+    String canonicalWorktreePath;
+    if (Directory(worktreePath).existsSync()) {
+      // Recovered across a daemon restart: the worktree/branch already exist on disk from an
+      // earlier run (the in-memory maps above don't survive a restart, but the worktree itself
+      // does) -- re-register rather than trying, and failing, to recreate it. This is what makes
+      // this daemon's own restart-durability story work without a separate `reopen_task` RPC or
+      // backend-side store: the filesystem is the durable source of truth, these maps are just a
+      // warm cache of it.
+      canonicalWorktreePath = Directory(worktreePath).resolveSymbolicLinksSync();
+    } else {
+      final created = await _git.createWorktree(
+        parentRoot.canonicalPath,
+        taskId: taskKey,
+        baseBranch: config.baseBranch,
+      );
+      canonicalWorktreePath = File(created['worktree_path'] as String).resolveSymbolicLinksSync();
+    }
+
+    // Inherits the parent root's trust exactly -- no widening, no narrowing (D8 plan, locked
+    // decision: an isolated task must never be more permissive than the project it's isolated
+    // from, and an already-trusted project should see no new friction).
+    final ephemeralRoot = WorkspaceRoot(canonicalPath: canonicalWorktreePath, trusted: parentRoot.trusted);
+    _taskKeyWorktrees[taskKey] =
+        _IsolatedTask(root: ephemeralRoot, parentRootPath: parentRoot.canonicalPath, branch: branch);
+    _taskRoots[taskId] = ephemeralRoot;
+    return ephemeralRoot;
+  }
+
+  /// D9 primitive (not yet reachable from any route in this D8 pass -- Part C wires a human-only
+  /// "Discard" action to this). Tears down the isolated worktree/branch for [taskKey] entirely.
+  Future<Map<String, Object?>> discardTaskWorkspace(Map<String, dynamic> params) async {
+    final taskKey = _requireString(params, 'task_key');
+    final info = _taskKeyWorktrees.remove(taskKey);
+    if (info == null) {
+      throw RpcError('no isolated workspace is known for task_key "$taskKey"');
+    }
+    return _git.removeWorktree(info.parentRootPath, info.root.canonicalPath, branch: info.branch);
   }
 
   /// D6 plan section C.3 (the write-gating retrofit): the agent-facing write RPC now goes through
@@ -70,7 +196,12 @@ class TaskHandler {
   Future<Map<String, Object?>> writeFile(Map<String, dynamic> params) async {
     final path = _requireString(params, 'path');
     final content = _requireString(params, 'content');
-    final root = _roots.findContainingRoot(path);
+    final taskId = params['task_id'] as String?;
+    var root = _boundTaskRoot(taskId);
+    if (root == null && _needsTaskRootResolution(taskId)) {
+      root = await _resolveTaskRoot(taskId, path);
+    }
+    root ??= _roots.findContainingRoot(path);
     if (root == null) {
       throw RpcError(
         'no granted workspace root contains "$path" -- grant it (or its parent project folder) '
@@ -102,8 +233,19 @@ class TaskHandler {
     if (rawOps is! List || rawOps.isEmpty) {
       throw RpcError('"operations" must be a non-empty list');
     }
+    final taskId = params['task_id'] as String?;
+    // Resolved once, from the first operation's path, then reused for every operation below --
+    // once a task_id is bound to an ephemeral root, every path in this batch must resolve only
+    // against it (D8 plan Part B.2.3), never fall back to searching other granted roots.
+    var taskRoot = _boundTaskRoot(taskId);
+    if (taskRoot == null && _needsTaskRootResolution(taskId)) {
+      final firstPath = rawOps.isNotEmpty && rawOps.first is Map
+          ? (Map<String, dynamic>.from(rawOps.first as Map)['path'] as String?)
+          : null;
+      taskRoot = await _resolveTaskRoot(taskId, firstPath);
+    }
 
-    WorkspaceRoot? sharedRoot;
+    WorkspaceRoot? sharedRoot = taskRoot;
     final resolved = <WriteOp>[];
     for (final raw in rawOps) {
       if (raw is! Map) {
@@ -111,7 +253,7 @@ class TaskHandler {
       }
       final op = Map<String, dynamic>.from(raw);
       final path = _requireString(op, 'path');
-      final root = _roots.findContainingRoot(path);
+      final root = taskRoot ?? _roots.findContainingRoot(path);
       if (root == null) {
         throw RpcError('no granted workspace root contains "$path"');
       }
@@ -167,7 +309,12 @@ class TaskHandler {
 
   Future<Map<String, Object?>> readFile(Map<String, dynamic> params) async {
     final path = _requireString(params, 'path');
-    final root = _roots.findContainingRoot(path);
+    final taskId = params['task_id'] as String?;
+    var root = _boundTaskRoot(taskId);
+    if (root == null && _needsTaskRootResolution(taskId)) {
+      root = await _resolveTaskRoot(taskId, path);
+    }
+    root ??= _roots.findContainingRoot(path);
     if (root == null) {
       throw RpcError('no granted workspace root contains "$path"');
     }
@@ -194,8 +341,13 @@ class TaskHandler {
     }
     final cwdParam = params['cwd'] as String?; // not sent by the current backend; tolerated
     final requestedTimeout = (params['timeout_s'] as num?)?.toDouble() ?? 60.0;
+    final taskId = params['task_id'] as String?;
 
-    final root = cwdParam != null
+    var root = _boundTaskRoot(taskId);
+    if (root == null && _needsTaskRootResolution(taskId)) {
+      root = await _resolveTaskRoot(taskId, cwdParam);
+    }
+    root ??= cwdParam != null
         ? _roots.findContainingRoot(cwdParam)
         : (_roots.all.isNotEmpty ? _roots.all.first : null);
     if (root == null) {
@@ -416,6 +568,25 @@ class TaskHandler {
     }
     return value.map((e) => e.toString()).toList(growable: false);
   }
+}
+
+/// D8 Part B: recorded once per task_id at [TaskHandler.createTask] time, so a task's later
+/// write/run calls (which only ever carry `task_id`, not the original `isolate`/`task_key`
+/// params) can still find their way to the right worktree.
+class _TaskConfig {
+  const _TaskConfig({required this.taskKey, this.baseBranch});
+  final String taskKey;
+  final String? baseBranch;
+}
+
+/// D8 Part B: one isolated task's worktree, keyed by task_key in
+/// [TaskHandler._taskKeyWorktrees] -- [parentRootPath]/[branch] are kept alongside [root] so
+/// [TaskHandler.discardTaskWorkspace] (D9) can tear both down without having to re-derive them.
+class _IsolatedTask {
+  const _IsolatedTask({required this.root, required this.parentRootPath, required this.branch});
+  final WorkspaceRoot root;
+  final String parentRootPath;
+  final String branch;
 }
 
 /// `["sh", "-c", "<command>"]` / `["cmd.exe", "/c", "<command>"]` -> `"<command>"`, so command

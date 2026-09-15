@@ -6,10 +6,8 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
-import 'package:aura_client/core/hostd/hostd_control_client.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/hostd/hostd_supervisor.dart';
-import 'package:aura_client/desktop/state/state_notifiers.dart';
 
 class HostPanel extends ConsumerWidget {
   const HostPanel({super.key});
@@ -19,7 +17,6 @@ class HostPanel extends ConsumerWidget {
     final palette = AuraPalette.of(context);
     final statusAsync = ref.watch(hostdStatusProvider);
     final supervisor = ref.watch(hostdSupervisorProvider);
-    final hostState = ref.watch(hostNotifierProvider);
 
     return Padding(
       padding: const EdgeInsets.all(AuraSpacing.md),

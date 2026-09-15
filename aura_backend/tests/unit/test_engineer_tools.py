@@ -79,7 +79,7 @@ class TestSandboxTools:
         seen_user_ids = []
         original_create_task = runner.create_task
 
-        async def recording_create_task(*, user_id=None):
+        async def recording_create_task(*, user_id=None, session_id=None, isolate=False):
             seen_user_ids.append(user_id)
             return await original_create_task(user_id=user_id)
 
@@ -303,7 +303,7 @@ class _ScriptedStreamingRunner:
     def __init__(self, events):
         self._events = events
 
-    async def create_task(self, *, user_id=None):
+    async def create_task(self, *, user_id=None, session_id=None, isolate=False):
         from aura_core.ports.coding import SandboxHandle
 
         return SandboxHandle(task_id="scripted-task")

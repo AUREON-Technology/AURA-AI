@@ -392,4 +392,179 @@ void main() {
       expect(File(p.join(workspaceDir.path, 'b.txt')).existsSync(), isTrue);
     });
   });
+
+  group('per-task isolated worktrees (D8 Part B)', () {
+    late ApprovalQueue approvals;
+
+    Future<ProcessResult> git(List<String> args) => Process.run('git', args, workingDirectory: workspaceDir.path);
+
+    setUp(() async {
+      approvals = ApprovalQueue();
+      handler = TaskHandler(roots, approvals);
+      await git(['init', '-q', '-b', 'main']);
+      await git(['config', 'user.name', 'Test User']);
+      await git(['config', 'user.email', 'test@example.com']);
+      File(p.join(workspaceDir.path, 'a.txt')).writeAsStringSync('original');
+      await git(['add', '--', 'a.txt']);
+      await git(['commit', '-q', '-m', 'initial commit']);
+      roots.setTrusted(workspaceDir.path, true);
+    });
+
+    test('an isolated task writes into its own worktree, not the live checkout', () async {
+      final created = await handler.createTask({'isolate': true, 'task_key': 'session-1'});
+      expect(created['isolated'], isTrue);
+      final taskId = created['task_id'] as String;
+
+      await handler.writeFile({'task_id': taskId, 'path': 'a.txt', 'content': 'changed by agent'});
+
+      // The live checkout must be untouched -- that is the entire point of isolation.
+      expect(File(p.join(workspaceDir.path, 'a.txt')).readAsStringSync(), 'original');
+
+      final worktreePath = p.join(workspaceDir.path, '.aura-workspaces', 'session-1');
+      expect(File(p.join(worktreePath, 'a.txt')).readAsStringSync(), 'changed by agent');
+
+      final worktreeList = await git(['worktree', 'list']);
+      expect(worktreeList.stdout.toString().replaceAll('\\', '/'), contains('session-1'));
+    });
+
+    test('a second task_id for the same task_key reuses the same worktree, not a new one', () async {
+      final first = await handler.createTask({'isolate': true, 'task_key': 'session-2'});
+      await handler.writeFile({'task_id': first['task_id'], 'path': 'a.txt', 'content': 'turn 1'});
+
+      // A brand-new task_id (as the backend mints per turn) but the same task_key (the chat
+      // session id, stable across turns) -- must land in the same worktree, on the same branch.
+      final second = await handler.createTask({'isolate': true, 'task_key': 'session-2'});
+      expect(second['task_id'], isNot(first['task_id']));
+      await handler.writeFile({'task_id': second['task_id'], 'path': 'b.txt', 'content': 'turn 2'});
+
+      final worktreePath = p.join(workspaceDir.path, '.aura-workspaces', 'session-2');
+      expect(File(p.join(worktreePath, 'a.txt')).readAsStringSync(), 'turn 1');
+      expect(File(p.join(worktreePath, 'b.txt')).readAsStringSync(), 'turn 2');
+
+      final branches = await git(['branch', '--list', 'aura/task-session-2']);
+      expect(branches.stdout.toString().trim(), isNotEmpty);
+    });
+
+    test('an isolated write is refused if the path resolves outside its own worktree', () async {
+      // A second, independently-granted root the task's worktree must never be able to reach
+      // into, even though it's a path this daemon otherwise knows about.
+      final otherDir = Directory(p.join(tempDir.path, 'other'))..createSync();
+      roots.addRoot(otherDir.path, trusted: true);
+
+      final created = await handler.createTask({'isolate': true, 'task_key': 'session-3'});
+      await handler.writeFile({'task_id': created['task_id'], 'path': 'a.txt', 'content': 'inside task'});
+
+      // Once bound, this task_id must resolve *only* against its own worktree -- never fall back
+      // to searching other granted roots, even for a path that would otherwise resolve cleanly
+      // under one of them (D8 plan Part B.2.3). Forcing `root` to the task's own worktree means
+      // this hits `requireContained`'s own raw `ContainmentViolation` directly (the same
+      // exception `writeFile` already lets propagate uncaught for any out-of-root path once a
+      // root has been chosen -- `RpcError` is only thrown one branch earlier, when no root at
+      // all could be found).
+      await expectLater(
+        handler.writeFile({
+          'task_id': created['task_id'],
+          'path': p.join(otherDir.path, 'escape.txt'),
+          'content': 'should not land here',
+        }),
+        throwsA(isA<ContainmentViolation>()),
+      );
+      expect(File(p.join(otherDir.path, 'escape.txt')).existsSync(), isFalse);
+    });
+
+    test('an isolated worktree inherits the parent root\'s trust -- no extra approval friction', () async {
+      // setUp already trusted workspaceDir; a write inside the isolated task must apply
+      // immediately too, exactly like a direct write to a trusted root would.
+      final created = await handler.createTask({'isolate': true, 'task_key': 'session-4'});
+      final result = await handler.writeFile({
+        'task_id': created['task_id'],
+        'path': 'a.txt',
+        'content': 'no approval needed',
+      });
+      expect(result['bytes_written'], greaterThan(0));
+      final worktreePath = p.join(workspaceDir.path, '.aura-workspaces', 'session-4');
+      expect(File(p.join(worktreePath, 'a.txt')).readAsStringSync(), 'no approval needed');
+    });
+
+    test('an isolated task in an untrusted parent still queues for approval', () async {
+      roots.setTrusted(workspaceDir.path, false);
+      final created = await handler.createTask({'isolate': true, 'task_key': 'session-5'});
+      final future = handler.writeFile({
+        'task_id': created['task_id'],
+        'path': 'a.txt',
+        'content': 'needs a human',
+      });
+      // Resolving the task root for its first call does real filesystem/git work
+      // (`git worktree add` as a subprocess) before reaching the approval queue, so poll rather
+      // than assume one microtask tick is enough -- unlike the non-isolated write-gating tests
+      // above, which stay fully synchronous up to the approval being queued.
+      for (var i = 0; i < 100 && approvals.list().isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      expect(approvals.list(), hasLength(1));
+      approvals.respond(approvals.list().single.id, true);
+      await future;
+
+      final worktreePath = p.join(workspaceDir.path, '.aura-workspaces', 'session-5');
+      expect(File(p.join(worktreePath, 'a.txt')).readAsStringSync(), 'needs a human');
+    });
+
+    test('recovers a worktree that already exists on disk instead of failing to recreate it', () async {
+      // Simulates a daemon restart: the worktree/branch exist on disk from an earlier run, but a
+      // fresh TaskHandler has no in-memory record of them.
+      final first = await handler.createTask({'isolate': true, 'task_key': 'session-6'});
+      await handler.writeFile({'task_id': first['task_id'], 'path': 'a.txt', 'content': 'before restart'});
+
+      final freshHandler = TaskHandler(roots, approvals);
+      final second = await freshHandler.createTask({'isolate': true, 'task_key': 'session-6'});
+      await freshHandler.writeFile({'task_id': second['task_id'], 'path': 'b.txt', 'content': 'after restart'});
+
+      final worktreePath = p.join(workspaceDir.path, '.aura-workspaces', 'session-6');
+      expect(File(p.join(worktreePath, 'a.txt')).readAsStringSync(), 'before restart');
+      expect(File(p.join(worktreePath, 'b.txt')).readAsStringSync(), 'after restart');
+    });
+
+    test('a non-isolated task_id (isolate not requested) behaves exactly as before', () async {
+      final created = await handler.createTask({});
+      expect(created['isolated'], isFalse);
+      await handler.writeFile({'task_id': created['task_id'], 'path': 'a.txt', 'content': 'direct write'});
+      expect(File(p.join(workspaceDir.path, 'a.txt')).readAsStringSync(), 'direct write');
+      expect(Directory(p.join(workspaceDir.path, '.aura-workspaces')).existsSync(), isFalse);
+    });
+  });
+
+  group('discardTaskWorkspace (D9 primitive)', () {
+    Future<ProcessResult> git(List<String> args) => Process.run('git', args, workingDirectory: workspaceDir.path);
+
+    setUp(() async {
+      handler = TaskHandler(roots);
+      await git(['init', '-q', '-b', 'main']);
+      await git(['config', 'user.name', 'Test User']);
+      await git(['config', 'user.email', 'test@example.com']);
+      File(p.join(workspaceDir.path, 'a.txt')).writeAsStringSync('original');
+      await git(['add', '--', 'a.txt']);
+      await git(['commit', '-q', '-m', 'initial commit']);
+      roots.setTrusted(workspaceDir.path, true);
+    });
+
+    test('tears down the worktree directory and its branch', () async {
+      final created = await handler.createTask({'isolate': true, 'task_key': 'session-7'});
+      await handler.writeFile({'task_id': created['task_id'], 'path': 'a.txt', 'content': 'x'});
+      final worktreePath = p.join(workspaceDir.path, '.aura-workspaces', 'session-7');
+      expect(Directory(worktreePath).existsSync(), isTrue);
+
+      await handler.discardTaskWorkspace({'task_key': 'session-7'});
+      expect(Directory(worktreePath).existsSync(), isFalse);
+
+      final branches = await git(['branch', '--list', 'aura/task-session-7']);
+      expect(branches.stdout.toString().trim(), isEmpty);
+    });
+
+    test('refuses to discard a task_key with no known isolated workspace', () async {
+      await expectLater(
+        handler.discardTaskWorkspace({'task_key': 'never-created'}),
+        throwsA(isA<RpcError>()),
+      );
+    });
+  });
 }

@@ -36,9 +36,11 @@ class InMemorySandboxRunner:
         self._scratch_dirs: dict[str, Path] = {}
         self._paused: set[str] = set()
 
-    async def create_task(self, *, user_id: Any | None = None) -> SandboxHandle:
-        # `user_id` accepted for `SandboxRunner` protocol conformance, ignored -- this
-        # fake has no concept of per-caller routing.
+    async def create_task(
+        self, *, user_id: Any | None = None, session_id: str | None = None, isolate: bool = False
+    ) -> SandboxHandle:
+        # `user_id`/`session_id`/`isolate` accepted for `SandboxRunner` protocol conformance,
+        # ignored -- this fake has no concept of per-caller routing or per-task git worktrees.
         task_id = uuid.uuid4().hex
         scratch = await asyncio.to_thread(tempfile.mkdtemp, prefix=f"aura-fake-sandbox-{task_id}-")
         self._scratch_dirs[task_id] = Path(scratch)

@@ -87,6 +87,7 @@ dependencies:
 
   crypto: any
   pointycastle: any
+  meta: ^1.15.0
   # Desktop IDE dependencies
   flutter_code_editor: ^0.3.5
   highlight: ^0.7.0

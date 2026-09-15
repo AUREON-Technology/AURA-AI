@@ -190,7 +190,13 @@ class HostAgentSandboxRunner:
     async def has_session(self, user_id: UserId) -> bool:
         return await self._registry.resolve(user_id) is not None
 
-    async def create_task(self, *, user_id: UserId | None = None) -> SandboxHandle:
+    async def create_task(
+        self,
+        *,
+        user_id: UserId | None = None,
+        session_id: str | None = None,
+        isolate: bool = False,
+    ) -> SandboxHandle:
         if user_id is None:
             raise SandboxError("the host-agent sandbox requires a caller identity")
         session = await self._registry.resolve(user_id)
@@ -198,7 +204,17 @@ class HostAgentSandboxRunner:
             raise SandboxError(
                 "no desktop app is connected for this account -- open AURA Desktop and pair it"
             )
-        result = await session.call("create_task", {}, timeout_s=self._call_timeout_s)
+        # D8: `isolate`/`task_key` ask the daemon (`task_handler.dart::createTask`) to carve out a
+        # dedicated git worktree for this task rather than writing into the user's live checkout.
+        # `task_key` is `session_id`, not the `task_id` this call mints below -- the backend mints
+        # a fresh `task_id` every turn (`_SandboxSessionCache` keys by `correlation_id`, which is
+        # also fresh every turn), so only `session_id` (stable across a chat session's many turns)
+        # lets the daemon recognize "this is the same task, reuse the worktree" on turn 2+.
+        params: dict[str, Any] = {}
+        if isolate and session_id:
+            params["isolate"] = True
+            params["task_key"] = session_id
+        result = await session.call("create_task", params, timeout_s=self._call_timeout_s)
         task_id = str((result or {}).get("task_id") or uuid.uuid4().hex)
         self._handle_owners[task_id] = user_id
         return SandboxHandle(task_id=task_id)
@@ -326,9 +342,15 @@ class CompositeSandboxRunner:
         self._fallback = fallback
         self._handle_runner: dict[str, Any] = {}
 
-    async def create_task(self, *, user_id: UserId | None = None) -> SandboxHandle:
+    async def create_task(
+        self,
+        *,
+        user_id: UserId | None = None,
+        session_id: str | None = None,
+        isolate: bool = False,
+    ) -> SandboxHandle:
         if user_id is not None and await self._host.has_session(user_id):
-            handle = await self._host.create_task(user_id=user_id)
+            handle = await self._host.create_task(user_id=user_id, session_id=session_id, isolate=isolate)
             self._handle_runner[handle.task_id] = self._host
             return handle
         if self._fallback is None:
@@ -336,6 +358,8 @@ class CompositeSandboxRunner:
                 "no desktop app is connected and no server-side sandbox is configured -- "
                 "pair AURA Desktop, or enable sandbox.enabled for the shared sandbox"
             )
+        # `isolate` is a Desktop-host-agent-only capability (D8) -- the Docker fallback has its
+        # own, unrelated durable-workspace story, so it isn't threaded through here.
         handle = await self._fallback.create_task()
         self._handle_runner[handle.task_id] = self._fallback
         return handle

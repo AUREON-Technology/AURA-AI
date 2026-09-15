@@ -113,6 +113,7 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
                     style: TextStyle(fontWeight: FontWeight.w600, color: palette.textPrimary, fontSize: 13),
                   ),
                 ),
+                _TaskSwitcher(activeSessionId: conversationId),
               ],
             ),
           ),
@@ -172,6 +173,69 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
           ChatComposer(controller: _controller, isMobile: true, onSend: _send),
         ],
       ),
+    );
+  }
+}
+
+/// D7 Part B prerequisite: lets a task = a chat session, the way Part B's per-task isolated git
+/// worktrees need. Scoped to Engineer-persona sessions only (`agentConversationsStreamProvider`),
+/// so this never shows a mobile Copilot session for a different persona.
+class _TaskSwitcher extends ConsumerWidget {
+  const _TaskSwitcher({required this.activeSessionId});
+
+  final String activeSessionId;
+
+  String _labelFor(String sessionId) {
+    if (sessionId == 'default_session') return 'Default';
+    final suffix = sessionId.split('_').last;
+    return 'Task ${suffix.length >= 5 ? suffix.substring(suffix.length - 5) : suffix}';
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final palette = AuraPalette.of(context);
+    final sessionsAsync = ref.watch(agentConversationsStreamProvider(_engineerAgentId));
+    final sessions = sessionsAsync.asData?.value ?? const <String>[];
+    final allSessions = sessions.contains(activeSessionId) ? sessions : [activeSessionId, ...sessions];
+
+    return PopupMenuButton<String>(
+      tooltip: 'Switch task',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.expand_more, size: 16, color: palette.textSecondary),
+          const SizedBox(width: 2),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 90),
+            child: Text(
+              _labelFor(activeSessionId),
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: palette.textSecondary),
+            ),
+          ),
+        ],
+      ),
+      itemBuilder: (context) => [
+        const PopupMenuItem(value: '__new__', child: Text('+ New Task')),
+        const PopupMenuDivider(),
+        ...allSessions.map((session) => PopupMenuItem(
+              value: session,
+              child: Row(
+                children: [
+                  SizedBox(width: 14, child: session == activeSessionId ? const Icon(Icons.check, size: 14) : null),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text(_labelFor(session), overflow: TextOverflow.ellipsis)),
+                ],
+              ),
+            )),
+      ],
+      onSelected: (value) {
+        if (value == '__new__') {
+          ref.read(chatViewModelProvider.notifier).startNewSession();
+        } else {
+          ref.read(chatViewModelProvider.notifier).selectSession(value);
+        }
+      },
     );
   }
 }

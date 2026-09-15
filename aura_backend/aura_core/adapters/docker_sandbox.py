@@ -222,9 +222,13 @@ class DockerSandboxRunner:
                     extra={"path": str(scratch)},
                 )
 
-    async def create_task(self, *, user_id: Any | None = None) -> SandboxHandle:
-        # `user_id` is accepted for `SandboxRunner` protocol conformance (the desktop host-agent
-        # bridge needs it to route per-user; this server-side sandbox does not) and ignored.
+    async def create_task(
+        self, *, user_id: Any | None = None, session_id: str | None = None, isolate: bool = False
+    ) -> SandboxHandle:
+        # `user_id`/`session_id`/`isolate` are accepted for `SandboxRunner` protocol conformance
+        # and ignored: this server-side sandbox has its own durable-workspace story
+        # (`open_workspace`/`pause_workspace`), not D8's per-task git worktrees, which only the
+        # desktop host-agent bridge (`adapters/host_agent.py`) implements.
         task_id = uuid.uuid4().hex
         scratch = await asyncio.to_thread(self._make_scratch, task_id)
         self._scratch_dirs[task_id] = scratch
