@@ -121,7 +121,9 @@ def build_default_agent_registry() -> AgentRegistry:
                 # is only whether a human approves first.
                 allowed_tools=_READ_TOOLS | {
                     "propose_task", "propose_event",
-                    "create_task", "list_tasks", "create_calendar_event", "list_calendar_events",
+                    "create_task", "list_tasks", "update_task", "delete_task",
+                    "create_calendar_event", "list_calendar_events",
+                    "update_calendar_event", "delete_calendar_event",
                     "prioritize_tasks", "find_calendar_slots",
                 },
                 risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="shared",
@@ -132,6 +134,7 @@ def build_default_agent_registry() -> AgentRegistry:
                 allowed_tools=_READ_TOOLS | {
                     "calculator", "propose_expense", "propose_income",
                     "create_finance_record", "list_finance_records",
+                    "update_finance_record", "delete_finance_record",
                 },
                 risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="shared",
             ),
@@ -140,6 +143,7 @@ def build_default_agent_registry() -> AgentRegistry:
                 prompt_template_id=AGENT_PROMPT_IDS["health_companion"],
                 allowed_tools=_READ_TOOLS | {
                     "propose_health_log", "create_health_record", "list_health_records",
+                    "update_health_record", "delete_health_record",
                 },
                 risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="shared",
             ),

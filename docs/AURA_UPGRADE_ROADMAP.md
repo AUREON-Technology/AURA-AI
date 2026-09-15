@@ -202,13 +202,38 @@ Small, and it removes ambiguity that Phase C would otherwise inherit. **Done**, 
   `evaluation/suites/agent_tasks_baseline.json`, mirroring `test_docs_corpus_gate.py`'s existing
   pattern (Phase A3) so it runs inside the ordinary `pytest` job on every PR — no new GitHub Actions
   workflow needed, since `backend-ci.yml` already runs `pytest tests` on every `pull_request`.
+- **C4. Done — the update/delete half of C2's own named follow-up.** `aura_core/tools/records.py`
+  had `create_*`/`list_*` only; `update_*`/`delete_*` were named as "the same shape of change as
+  create," not silently dropped, but never actually built. The storage layer was already there and
+  untouched by this change — `PersonalOsStore.get`/`update`/`delete` (`aura_core/ports/storage.py`)
+  and both adapters (`InMemoryPersonalOsStore`, `PostgresPersonalOsStore`) already implemented the
+  full port, owner-scoped and correct, so this is a tool-layer-only addition. `update_{noun}` takes
+  a `record_id` plus every `create_{noun}` field made optional (`_as_optional`, a
+  `dataclasses.replace` over each `ParameterSpec`) and merges only the supplied ones via
+  `PersonalOsRecord.with_fields`; `delete_{noun}` removes one outright. Both re-check the fetched
+  record's `kind` before acting — found while implementing, not in the original ask:
+  `PersonalOsStore.get`/`delete` are scoped by id and owner only, not kind, so without that check
+  `update_task` given a calendar event's id would have silently merged task-shaped fields into it,
+  and `delete_task` could have deleted a record of a different kind outright. Regression-tested by
+  temporarily removing the check and confirming the new cross-kind tests fail without it. Granted
+  to the three personas that already hold the matching `create_*`/`list_*` pair (`task_planner`:
+  `update_task`/`delete_task`/`update_calendar_event`/`delete_calendar_event`; `finance_advisor`:
+  `update_finance_record`/`delete_finance_record`; `health_companion`:
+  `update_health_record`/`delete_health_record`) in `aura_core/agents/registry.py`. 12 new tests in
+  `tests/unit/test_personal_os_records.py` (store-level `update`, plus tool-level partial-merge,
+  no-op, not-found, cross-kind, owner-scoping, idempotent-delete, and out-of-grant-denial cases),
+  full `pytest`/`tests/architecture`/the legacy suite all green. Not addressed here, and not
+  claimed: syncing these records to the Flutter client (still server-visible only, per C2's own
+  note) and optimistic-concurrency/versioning on update (last write wins, same as `put`).
 
 **Exit criteria.** An agent's tool set is data, not code — **done** (C1). A tool call outside an
 agent's grant fails closed and is visible in the audit sink — **done**, proven against both a
 synthetic tool (C1) and a real C2 tool (`create_health_record` denied for `finance_advisor`).
 Task-completion rate is measurable through the Phase A harness — **done** (C3): a task-completion
 evaluator exists, actually runs, and is gated in CI, with the caveat that the current 84% baseline
-measures the `EchoProvider` round trip and dataset wording, not real-model task quality.
+measures the `EchoProvider` round trip and dataset wording, not real-model task quality. Full CRUD
+against the server-owned personal-OS table — **done** (C4): create, read (via list), update, and
+delete all exist, are owner- and kind-scoped, and are granted to the personas that need them.
 
 ### Phase D — Projects, Goals, and prioritisation
 

@@ -4,6 +4,7 @@ proposal, kept off the zero-knowledge encrypted legacy tables."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 
@@ -80,6 +81,19 @@ class TestPersonalOsStore:
         assert await store.delete(record.id, owner_id=UserId("not-owner")) is False
         assert await store.delete(record.id, owner_id=UserId("owner")) is True
         assert await store.get(record.id, owner_id=UserId("owner")) is None
+
+    async def test_update_persists_a_merged_record(self, store: InMemoryPersonalOsStore) -> None:
+        owner = UserId("u1")
+        now = datetime.now(timezone.utc)
+        record = PersonalOsRecord(
+            id=PersonalOsRecordId.new(), owner_id=owner, kind=RecordKind.TASK,
+            fields={"title": "Buy milk", "priority": "low"}, created_at=now, updated_at=now,
+        )
+        await store.put(record)
+        merged = record.with_fields({"priority": "high"}, updated_at=now)
+        await store.update(merged)
+        fetched = await store.get(record.id, owner_id=owner)
+        assert fetched.fields == {"title": "Buy milk", "priority": "high"}
 
 
 class TestPersonalOsCrudTools:
@@ -160,6 +174,179 @@ class TestPersonalOsCrudTools:
         )
         assert not result.ok and report.policy_reason == "outside_agent_grant"
         assert await store.list_for_owner(UserId("u1"), kind=RecordKind.HEALTH_RECORD) == []
+
+
+class TestPersonalOsUpdateAndDeleteTools:
+    """Phase C3: the update/delete half of Phase C2's exit criterion."""
+
+    async def _create(self, registry: ToolRegistry, context: ToolContext, **arguments: Any) -> str:
+        result, _ = await registry.execute(
+            ToolCall(id=ToolCallId("create"), name="create_task", arguments=arguments), context,
+        )
+        assert result.ok
+        return result.content.split()[-1].rstrip(".")
+
+    async def test_update_changes_only_the_supplied_fields(
+        self, registry: ToolRegistry, store: InMemoryPersonalOsStore
+    ) -> None:
+        user = UserId("u1")
+        context = ToolContext(user_id=user, correlation_id="c", deadline_s=5)
+        record_id = await self._create(registry, context, title="Buy milk", priority="low")
+
+        result, report = await registry.execute(
+            ToolCall(id=ToolCallId("2"), name="update_task",
+                     arguments={"record_id": record_id, "priority": "high"}),
+            context,
+        )
+        assert result.ok and report.allowed and "Updated task" in result.content
+
+        record = await store.get(PersonalOsRecordId(record_id), owner_id=user)
+        assert record.fields == {"title": "Buy milk", "priority": "high"}
+
+    async def test_update_with_no_fields_is_a_reported_no_op(
+        self, registry: ToolRegistry
+    ) -> None:
+        user = UserId("u1")
+        context = ToolContext(user_id=user, correlation_id="c", deadline_s=5)
+        record_id = await self._create(registry, context, title="Buy milk")
+
+        result, _ = await registry.execute(
+            ToolCall(id=ToolCallId("2"), name="update_task", arguments={"record_id": record_id}),
+            context,
+        )
+        assert result.ok and "Nothing to update" in result.content
+
+    async def test_update_an_unknown_id_reports_not_found_rather_than_raising(
+        self, registry: ToolRegistry
+    ) -> None:
+        context = ToolContext(user_id=UserId("u1"), correlation_id="c", deadline_s=5)
+        result, _ = await registry.execute(
+            ToolCall(id=ToolCallId("1"), name="update_task",
+                     arguments={"record_id": "does-not-exist", "priority": "high"}),
+            context,
+        )
+        assert result.ok and "No task found" in result.content
+
+    async def test_update_cannot_reach_a_record_of_a_different_kind(
+        self, registry: ToolRegistry, store: InMemoryPersonalOsStore
+    ) -> None:
+        """``PersonalOsStore.get``/``update`` are scoped by id and owner only, not kind -- without
+        the tool layer's own check, ``update_task`` given a calendar event's id would merge
+        task-shaped fields into it."""
+        user = UserId("u1")
+        context = ToolContext(user_id=user, correlation_id="c", deadline_s=5)
+        event_result, _ = await registry.execute(
+            ToolCall(id=ToolCallId("1"), name="create_calendar_event",
+                     arguments={"title": "Standup", "start_time": "2026-01-01T09:00:00",
+                                "end_time": "2026-01-01T09:15:00"}),
+            context,
+        )
+        event_id = event_result.content.split()[-1].rstrip(".")
+
+        result, _ = await registry.execute(
+            ToolCall(id=ToolCallId("2"), name="update_task",
+                     arguments={"record_id": event_id, "priority": "high"}),
+            context,
+        )
+        assert result.ok and "No task found" in result.content
+
+        event = await store.get(PersonalOsRecordId(event_id), owner_id=user)
+        assert "priority" not in event.fields
+        assert event.fields["title"] == "Standup"
+
+    async def test_update_is_owner_scoped(self, registry: ToolRegistry) -> None:
+        owner = ToolContext(user_id=UserId("owner"), correlation_id="c1", deadline_s=5)
+        record_id = await self._create(registry, owner, title="Owner's task")
+
+        other = ToolContext(user_id=UserId("someone-else"), correlation_id="c2", deadline_s=5)
+        result, _ = await registry.execute(
+            ToolCall(id=ToolCallId("2"), name="update_task",
+                     arguments={"record_id": record_id, "priority": "high"}),
+            other,
+        )
+        assert result.ok and "No task found" in result.content
+
+    async def test_delete_removes_the_record(
+        self, registry: ToolRegistry, store: InMemoryPersonalOsStore
+    ) -> None:
+        user = UserId("u1")
+        context = ToolContext(user_id=user, correlation_id="c", deadline_s=5)
+        record_id = await self._create(registry, context, title="Buy milk")
+
+        result, report = await registry.execute(
+            ToolCall(id=ToolCallId("2"), name="delete_task", arguments={"record_id": record_id}),
+            context,
+        )
+        assert result.ok and report.allowed and "Deleted task" in result.content
+        assert await store.get(PersonalOsRecordId(record_id), owner_id=user) is None
+
+    async def test_delete_is_idempotent_rather_than_raising_on_a_second_call(
+        self, registry: ToolRegistry
+    ) -> None:
+        context = ToolContext(user_id=UserId("u1"), correlation_id="c", deadline_s=5)
+        record_id = await self._create(registry, context, title="Buy milk")
+
+        first, _ = await registry.execute(
+            ToolCall(id=ToolCallId("2"), name="delete_task", arguments={"record_id": record_id}),
+            context,
+        )
+        second, _ = await registry.execute(
+            ToolCall(id=ToolCallId("3"), name="delete_task", arguments={"record_id": record_id}),
+            context,
+        )
+        assert "Deleted task" in first.content
+        assert "No task found" in second.content
+
+    async def test_delete_cannot_reach_a_record_of_a_different_kind(
+        self, registry: ToolRegistry, store: InMemoryPersonalOsStore
+    ) -> None:
+        user = UserId("u1")
+        context = ToolContext(user_id=user, correlation_id="c", deadline_s=5)
+        event_result, _ = await registry.execute(
+            ToolCall(id=ToolCallId("1"), name="create_calendar_event",
+                     arguments={"title": "Standup", "start_time": "2026-01-01T09:00:00",
+                                "end_time": "2026-01-01T09:15:00"}),
+            context,
+        )
+        event_id = event_result.content.split()[-1].rstrip(".")
+
+        result, _ = await registry.execute(
+            ToolCall(id=ToolCallId("2"), name="delete_task", arguments={"record_id": event_id}),
+            context,
+        )
+        assert result.ok and "No task found" in result.content
+        assert await store.get(PersonalOsRecordId(event_id), owner_id=user) is not None
+
+    async def test_delete_is_owner_scoped(self, registry: ToolRegistry, store: InMemoryPersonalOsStore) -> None:
+        owner = ToolContext(user_id=UserId("owner"), correlation_id="c1", deadline_s=5)
+        record_id = await self._create(registry, owner, title="Owner's task")
+
+        other = ToolContext(user_id=UserId("someone-else"), correlation_id="c2", deadline_s=5)
+        result, _ = await registry.execute(
+            ToolCall(id=ToolCallId("2"), name="delete_task", arguments={"record_id": record_id}),
+            other,
+        )
+        assert result.ok and "No task found" in result.content
+        assert await store.get(PersonalOsRecordId(record_id), owner_id=UserId("owner")) is not None
+
+    async def test_update_task_outside_task_planners_grant_is_denied(
+        self, registry: ToolRegistry, store: InMemoryPersonalOsStore
+    ) -> None:
+        context = ToolContext(user_id=UserId("u1"), correlation_id="c", deadline_s=5)
+        record_id = await self._create(registry, context, title="Buy milk")
+
+        gated = ToolContext(
+            user_id=UserId("u1"), correlation_id="c", deadline_s=5,
+            agent_id="finance_advisor", allowed_tools=frozenset({"create_finance_record"}),
+        )
+        result, report = await registry.execute(
+            ToolCall(id=ToolCallId("2"), name="update_task",
+                     arguments={"record_id": record_id, "priority": "high"}),
+            gated,
+        )
+        assert not result.ok and report.policy_reason == "outside_agent_grant"
+        record = await store.get(PersonalOsRecordId(record_id), owner_id=UserId("u1"))
+        assert record.fields["priority"] != "high"
 
 
 class TestKernelWiring:
