@@ -72,6 +72,14 @@ class ParameterSpec:
     maximum: float | None = None
     max_length: int | None = None
     item_type: str | None = None
+    format: str | None = None
+    """An identifier-shape hint, checked pre-dispatch by ``tools/schema.py::validate_arguments``
+    (not part of the JSON-Schema sent to the model -- this is a stricter, AURA-specific check,
+    not a vendor-facing constraint). Currently only ``"github_repo"`` is recognised, verified
+    against :class:`~aura_core.domain.repository_identity.RepositoryIdentity`. Left as a free
+    string rather than an enum so a new shape can be added without a domain-wide migration; an
+    unrecognised value is simply not checked.
+    """
 
     _JSON_TYPES = frozenset({"string", "number", "integer", "boolean", "array", "object"})
 

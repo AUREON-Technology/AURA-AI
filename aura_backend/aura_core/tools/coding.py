@@ -40,6 +40,7 @@ from typing import Any, Mapping, Sequence
 from pathlib import Path
 
 from ..domain.errors import ToolExecutionError
+from ..domain.repository_identity import RepositoryIdentity
 from ..domain.tools import ParameterSpec, ToolCategory, ToolSensitivity, ToolSpec
 from ..observability.logging import get_logger
 from ..ports.coding import FileWriteOp, McpToolDescriptor, SandboxResult, StreamingSandboxRunner
@@ -117,20 +118,14 @@ def _normalize_repo(value: str) -> str:
     slash), and the model passes that string straight through as the ``repo`` argument. Every
     call below wants the ``owner/name`` slug the API is addressed by, so normalise once here
     rather than making each tool -- or the model -- get it right.
+
+    Delegates to :class:`~aura_core.domain.repository_identity.RepositoryIdentity`, the single
+    implementation this and :func:`_repo` (and the pre-dispatch schema check in
+    ``tools/schema.py``) now share -- this call keeps its original, permissive contract: it can
+    return a string that is *not* a valid ``owner/name`` slug, leaving the shape check to the
+    caller (``_repo()``/``clone_repository``'s own check below).
     """
-    repo = value.strip()
-    for prefix in ("https://", "http://", "ssh://", "git@", "www."):
-        if repo.startswith(prefix):
-            repo = repo[len(prefix):]
-    repo = repo.replace("github.com:", "github.com/")
-    if repo.startswith("github.com/"):
-        repo = repo[len("github.com/"):]
-    repo = repo.strip("/")
-    if repo.endswith(".git"):
-        repo = repo[: -len(".git")]
-    parts = [p for p in repo.split("/") if p]
-    # `owner/name/tree/main/subdir` and friends: the slug is the first two segments.
-    return "/".join(parts[:2])
+    return RepositoryIdentity.normalize_slug(value)
 
 
 #: The tools that can answer "look at this repository", best first. `clone_repository` gives the
@@ -648,7 +643,7 @@ def build_sandbox_tools(
         "task can continue across several messages. Use this to go back to a repository you "
         "were already working on.",
         param("repo", "string", "Repository this workspace is for, as 'owner/name'.",
-              max_length=400),
+              max_length=400, format="github_repo"),
         category=ToolCategory.DEVELOPMENT,
         sensitivity=ToolSensitivity.PERSONAL,
         side_effecting=True,
@@ -698,7 +693,8 @@ def build_sandbox_tools(
         "destroy_workspace",
         "Delete one of your persistent workspaces and everything in it, including any "
         "uncommitted work. Use when a task is finished or the checkout should be started fresh.",
-        param("repo", "string", "Repository whose workspace should be deleted.", max_length=400),
+        param("repo", "string", "Repository whose workspace should be deleted.", max_length=400,
+              format="github_repo"),
         category=ToolCategory.DEVELOPMENT,
         # CONFIDENTIAL + side_effecting is the existing idiom for "always confirm"
         # (ToolSpec.__post_init__). Deliberately NOT workspace_local: this destroys work the user
@@ -745,7 +741,7 @@ def build_sandbox_tools(
         param("branch", "string", "Branch to push. Must not be the default branch.",
               max_length=200),
         param("repo", "string", "Repository, as 'owner/name'. Defaults to the one you cloned.",
-              required=False, max_length=400),
+              required=False, max_length=400, format="github_repo"),
         category=ToolCategory.DEVELOPMENT,
         # The one tool here that publishes anything. CONFIDENTIAL + side_effecting makes
         # confirmation mandatory (ToolSpec.__post_init__), and it is deliberately not
@@ -808,7 +804,8 @@ def build_sandbox_tools(
         "clone, analyse, review, or work on a repository. Text files only, up to a size and "
         "count budget -- binaries and oversized files are skipped and the skips are reported.",
         param("repo", "string",
-              "Repository to copy, as 'owner/name' or its GitHub URL.", max_length=400),
+              "Repository to copy, as 'owner/name' or its GitHub URL.", max_length=400,
+              format="github_repo"),
         param("ref", "string", "Branch, tag, or commit SHA. Omit for the default branch.",
               required=False, max_length=200),
         param("destination", "string",
@@ -839,13 +836,14 @@ def build_sandbox_tools(
         weaker result -- no history, no push -- and it says so in what it returns rather than
         leaving the agent to discover that ``git log`` is empty.
         """
-        slug = _normalize_repo(repo)
-        if slug.count("/") != 1 or not all(slug.split("/")):
+        identity = RepositoryIdentity.parse_or_none(repo)
+        if identity is None:
             raise ToolExecutionError(
                 f"could not read a repository from {repo!r}; expected 'owner/name' or a "
                 "GitHub URL like https://github.com/owner/name",
                 tool="clone_repository",
             )
+        slug = identity.slug
         client = await code_host_resolver(context.user_id)
         if client is None:
             raise ToolExecutionError(
@@ -983,25 +981,26 @@ def build_github_tools(client_resolver: Any, *, default_repo: str = "") -> list[
         return client
 
     def _repo(explicit: str | None) -> str:
-        repo = _normalize_repo(explicit or default_repo)
-        if not repo:
+        given = explicit or default_repo
+        if not given:
             raise ToolExecutionError(
                 "no repo given and no default configured "
                 "(AURA_GITHUB_DEFAULT_OWNER/AURA_GITHUB_DEFAULT_REPO)",
                 tool="github",
             )
-        if repo.count("/") != 1:
+        identity = RepositoryIdentity.parse_or_none(given)
+        if identity is None:
             raise ToolExecutionError(
                 f"could not read a repository from {explicit!r}; expected 'owner/name' or a "
                 "GitHub URL like https://github.com/owner/name",
                 tool="github",
             )
-        return repo
+        return identity.slug
 
     _repo_param = param(
         "repo", "string",
         "Repository as 'owner/name' or its GitHub URL. Omit to use the configured default.",
-        required=False, max_length=400,
+        required=False, max_length=400, format="github_repo",
     )
 
     @tool(

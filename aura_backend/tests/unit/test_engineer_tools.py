@@ -541,6 +541,41 @@ class TestRepositoryExploration:
                 {"path": "README.md", "repo": "https://example.com/"}, ctx
             )
 
+    async def test_a_fabricated_repository_is_rejected_pre_dispatch_with_zero_network_calls(
+        self, ctx
+    ) -> None:
+        """The video incident, end to end at the tool-dispatch boundary: the model invents
+        ``repo_for_README`` for a local file it was actually asked to summarise. Going through
+        `ToolRegistry.execute` (unlike calling `.execute()` directly, which bypasses schema
+        validation) must fail with `error_kind="unresolved_argument"` before the fake GitHub
+        client is ever touched -- turning what used to be a live 404/400 round trip into a
+        cheap, immediate validation failure."""
+        client = self._seeded_client()
+        calls: list[str] = []
+        original = client.get_file_contents
+
+        async def counting_get_file_contents(*args, **kwargs):
+            calls.append(args[0] if args else kwargs.get("repo"))
+            return await original(*args, **kwargs)
+
+        client.get_file_contents = counting_get_file_contents
+        registry = ToolRegistry(policy=ToolPolicy())
+        registry.register_all(build_github_tools(_static_resolver(client)))
+
+        result, report = await registry.execute(
+            ToolCall(
+                id=ToolCallId("1"), name="github_get_file_contents",
+                arguments={"path": "README.md", "repo": "repo_for_README"},
+            ),
+            ctx,
+            capabilities=("engineer_agent",),
+        )
+
+        assert not result.ok
+        assert result.error_kind == "unresolved_argument"
+        assert report.error_kind == "unresolved_argument"
+        assert calls == []
+
 
 class TestCloneRepository:
     async def test_clone_lands_in_the_same_sandbox_run_command_reads(self, ctx) -> None:
