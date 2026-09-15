@@ -1,0 +1,278 @@
+{
+  "audit_meta": {
+    "timestamp_utc": "2026-09-16",
+    "repo_commit_context": "a69e0d7 (main, working tree with uncommitted changes to aura_client desktop explorer/state files)",
+    "machine_hostname": "desktop-9ojj2qc",
+    "evidence_classes": ["MEASURED", "CONFIGURED", "CALCULATED", "ESTIMATED", "UNVERIFIED"],
+    "notes": "Docker Desktop was deliberately NOT started and no images were pulled/built during this audit. C: had only 3.73 GiB free at audit time and already hosts a 26.6 GiB Docker WSL virtual disk; pulling or building the AURA stack's images risked exhausting the system drive, which the audit's own safety rules prohibit. Sections needing a live container runtime are therefore CALCULATED/ESTIMATED from configuration plus a REFERENCE benchmark (Phase A4) rather than freshly measured."
+  },
+  "cpu": {
+    "evidence": "MEASURED",
+    "name": "Intel(R) Core(TM) i7-9850H CPU @ 2.60GHz",
+    "manufacturer": "GenuineIntel",
+    "physical_cores": 6,
+    "logical_processors": 12,
+    "base_clock_mhz": 2592,
+    "current_clock_mhz_at_audit": 2592,
+    "l2_cache_kb": 1536,
+    "l3_cache_kb": 12288,
+    "wmi_virtualization_firmware_enabled": false,
+    "virtualization_caveat": "WMI reports VirtualizationFirmwareEnabled=False, but Hyper-V is demonstrably active (WSL2/Docker Desktop require it, and systeminfo confirms 'A hypervisor has been detected'). This is a known WMI artifact once a hypervisor already owns VT-x, not evidence that virtualization is actually disabled.",
+    "cpu_utilization_percent_single_sample": 76.8,
+    "utilization_sample_evidence": "MEASURED",
+    "utilization_sample_caveat": "Single Get-Counter sample taken while the machine was in normal active-developer use (Cursor, multiple Chrome tabs, Claude Code, ChatGPT desktop app, Flutter/Dart processes all running). Not an idle baseline.",
+    "max_turbo_ghz_public_spec": 4.6,
+    "max_turbo_evidence": "ESTIMATED (public Intel ARK spec for i7-9850H, not measured on this machine)"
+  },
+  "ram": {
+    "evidence": "MEASURED",
+    "total_bytes": 34166116352,
+    "total_gib": 31.83,
+    "manufacturer": "HP",
+    "model": "HP ZBook 15 G6",
+    "modules_manufacturer": "Micron",
+    "modules_count_reported": 2,
+    "module_capacity_speed_evidence": "UNVERIFIED (WMI returned blank Capacity/Speed/PartNumber fields for the physical memory modules in this session)",
+    "available_mb_at_audit": 4801,
+    "available_gib_at_audit": 4.69,
+    "used_gib_at_audit_estimate": 27.14,
+    "pagefile_path": "E:\\pagefile.sys",
+    "pagefile_allocated_mb": 19456,
+    "pagefile_current_usage_mb_at_audit": 121,
+    "top_processes_by_ram_at_audit": [
+      {"name": "Memory Compression", "ram_mb": 2791},
+      {"name": "rsEngineSvc", "ram_mb": 1703.5},
+      {"name": "dartaotruntime", "ram_mb": 1173},
+      {"name": "chrome", "ram_mb": 942.2},
+      {"name": "dartaotruntime", "ram_mb": 834.1},
+      {"name": "claude", "ram_mb": 662.5},
+      {"name": "ChatGPT Classic", "ram_mb": 621},
+      {"name": "Cursor", "ram_mb": 573.3},
+      {"name": "chrome", "ram_mb": 547},
+      {"name": "chrome", "ram_mb": 451.7},
+      {"name": "Cursor", "ram_mb": 451.5},
+      {"name": "dartvm", "ram_mb": 412.9}
+    ],
+    "max_supported_ram_gb_public_spec": 64,
+    "max_supported_ram_evidence": "ESTIMATED (HP ZBook 15 G6 public spec sheet, not verified by opening the chassis)"
+  },
+  "gpu": [
+    {
+      "evidence": "MEASURED (WMI display adapter enumeration)",
+      "name": "NVIDIA Quadro T1000",
+      "type": "dedicated",
+      "vram_bytes": 4293918720,
+      "vram_gib": 4.0,
+      "driver_version": "30.0.14.7284",
+      "architecture_public_spec": "Turing (TU117), compute capability 7.5, ~640 CUDA cores, GDDR5",
+      "architecture_evidence": "ESTIMATED (public NVIDIA spec, not queried on this machine)",
+      "nvidia_smi_available": false,
+      "nvidia_smi_evidence": "MEASURED absence — 'nvidia-smi' not found on PATH in both Bash and PowerShell shells this session",
+      "cuda_toolkit_installed": "UNVERIFIED",
+      "gpu_currently_used_by_aura_stack": false,
+      "gpu_usage_evidence": "CONFIGURED — requirements.lock pins torch==2.13.0+cpu (CPU-only wheel, deliberately avoiding ~6.5GB of CUDA/nvidia/triton packages per the backend Dockerfile's own comment) and docker-compose.prod.yml's ollama service has no GPU device reservation uncommented; the vllm GPU profile targets a 32B AWQ model requiring far more VRAM than 4GB provides."
+    },
+    {
+      "evidence": "MEASURED (WMI display adapter enumeration)",
+      "name": "Intel(R) UHD Graphics 630",
+      "type": "integrated",
+      "vram_bytes_reported": 1073741824,
+      "vram_gib_reported": 1.0,
+      "vram_caveat": "Integrated GPU shared-memory figure as reported by WMI, not a hard dedicated allocation.",
+      "driver_version": "31.0.101.2140",
+      "relevance_to_aura": "None — not used by any AURA component; DirectML/inference use is out of scope for the current CPU-first architecture."
+    }
+  ],
+  "os": {
+    "evidence": "MEASURED",
+    "caption": "Microsoft Windows 11 Pro",
+    "version": "10.0.22631",
+    "build_detailed": "22631.6199",
+    "architecture": "64-bit",
+    "last_boot": "2026-09-14T05:39:43",
+    "hyperv_hypervisor_detected": true
+  },
+  "wsl": {
+    "evidence": "MEASURED",
+    "wsl_version": "2.7.14.0",
+    "kernel_version": "6.1.18.33.2-2",
+    "wslg_version": "1.0.73.2",
+    "distributions": [
+      {"name": "docker-desktop", "state": "Stopped", "version": 2, "is_default": true}
+    ],
+    "general_purpose_linux_distro_installed": false,
+    "note": "No standalone Ubuntu/Debian-style WSL distro is registered — only Docker Desktop's internal distro, which was stopped for the duration of this audit."
+  },
+  "docker": {
+    "evidence": "MEASURED (CLI) / UNVERIFIED (daemon, deliberately not started)",
+    "client_version": "29.6.2",
+    "compose_version": "v5.3.1",
+    "daemon_running_at_audit": false,
+    "daemon_error": "failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine",
+    "reason_not_started": "C: had only 3.73 GiB free at audit time; Docker's own WSL virtual disk already occupies 26.6 GiB there. Pulling/building the AURA stack's images (nginx, postgres, redis, qdrant, ollama, grafana, loki, prometheus, alertmanager, node-exporter, promtail, plus backend/admin build contexts) risked exhausting the system drive.",
+    "wsl_disk_files": [
+      {"path": "C:\\Users\\HP\\AppData\\Local\\Docker\\wsl\\disk\\docker_data.vhdx", "size_mb": 26586},
+      {"path": "C:\\Users\\HP\\AppData\\Local\\Docker\\wsl\\main\\ext4.vhdx", "size_mb": 104}
+    ],
+    "live_container_inventory": "UNVERIFIED — daemon not running"
+  },
+  "ollama_native": {
+    "evidence": "MEASURED absence",
+    "installed": false,
+    "detail": "'ollama' command not found on PATH via Bash or PowerShell. AURA's own Ollama instance runs only inside the (not-started) Docker stack."
+  },
+  "storage": {
+    "evidence": "MEASURED",
+    "physical_disks": [
+      {"device_id": 0, "model": "ST500LM021-1KJ152", "media_type": "HDD", "bus": "SATA", "size_bytes": 500107862016, "size_gib": 465.75, "maps_to_volume": "E:"},
+      {"device_id": 1, "model": "WDC PC SN720 SDAPNTW-256G-1006", "media_type": "SSD", "bus": "NVMe", "size_bytes": 256060514304, "size_gib": 238.5, "maps_to_volume": "C:"},
+      {"device_id": 2, "model": "Msft Virtual Disk", "media_type": "SSD", "bus": "File Backed Virtual", "size_bytes": 53704916992, "size_gib": 50.03, "maps_to_volume": "UNVERIFIED — likely relates to D: (19.72 GiB volume) or another VHD-backed volume; exact disk-to-volume mapping not resolved this session"}
+    ],
+    "volumes": [
+      {"drive": "C:", "filesystem": "NTFS", "size_bytes": 255181451264, "size_gib": 237.62, "free_bytes": 4002111488, "free_gib": 3.73, "free_percent": 1.57, "status": "CRITICAL"},
+      {"drive": "D:", "filesystem": "NTFS", "size_bytes": 21181231104, "size_gib": 19.72, "free_bytes": 5402152960, "free_gib": 5.03, "free_percent": 25.5, "status": "LOW"},
+      {"drive": "E:", "filesystem": "NTFS", "size_bytes": 500105736192, "size_gib": 465.75, "free_bytes": 396826288128, "free_gib": 369.61, "free_percent": 79.4, "status": "OK", "note": "AURA AI repository and pagefile.sys (19 GiB reservation) live here; this volume is the SATA HDD, not the NVMe."}
+    ],
+    "c_drive_folder_breakdown": {
+      "evidence": "MEASURED (read-only recursive scan)",
+      "C:\\Users\\HP\\AppData\\Local_gb": 53.87,
+      "C:\\Windows_gb": 36.59,
+      "C:\\Program Files_gb": 36.92,
+      "C:\\Program Files (x86)_gb": 15.17,
+      "sum_itemized_gb": 142.55,
+      "total_used_estimate_gb": 233.9,
+      "unitemized_remainder_gb_estimate": 91.35,
+      "unitemized_note": "Remainder likely user profile data outside AppData\\Local, hiberfil.sys, System Volume Information, and Windows.old-style artifacts — not itemized this session (UNVERIFIED breakdown of the remainder)."
+    },
+    "repo_footprint": {
+      "evidence": "MEASURED (du -h -d 1)",
+      "total_gb": 16,
+      "breakdown": {
+        "aura_client": "11G",
+        "aura_backend": "1.4G",
+        ".git": "1.2G",
+        ".claude": "1.4G",
+        "docs": "427M",
+        "aura_admin": "526M",
+        "aura_hostd": "60M",
+        ".opencode": "60M",
+        "deploy": "403K"
+      }
+    },
+    "sequential_io_benchmark_e_drive": {
+      "evidence": "MEASURED",
+      "method": "256 MiB random-data file written then read via .NET File.WriteAllBytes/ReadAllBytes, deleted immediately after",
+      "write_mb_s": 50.1,
+      "write_ms": 5107,
+      "read_mb_s_raw": 1333.3,
+      "read_ms": 192,
+      "read_caveat": "The 1333 MB/s read figure is an OS page-cache artifact — the file was read back immediately after being written and was still cached in RAM, not served from the physical HDD. True cold sequential read speed is UNVERIFIED; ESTIMATED 80-150 MB/s typical for this drive's class (5400 RPM 2.5in SATA laptop HDD)."
+    },
+    "docker_disk_relocation_note": "Docker Desktop's disk image location defaults to C: (already 1.6% free). Relocating it to E: (79.4% free) via Docker Desktop Settings > Resources > Advanced is the smallest practical change to unblock any local Docker use."
+  },
+  "network": {
+    "evidence": "MEASURED (link state only)",
+    "interfaces": [
+      {"name": "Wi-Fi", "description": "Intel(R) Wi-Fi 6 AX200 160MHz", "status": "Up", "link_speed": "81 Mbps", "media_type": "Native 802.11"}
+    ],
+    "ethernet_adapter_up": false,
+    "link_speed_caveat": "81 Mbps is far below the AX200 adapter's Wi-Fi 6 potential (600+ Mbps), indicating a constrained access-point link rather than an adapter limitation. Not benchmarked further (throughput/latency/packet-loss) — this is out of scope for local AURA capacity since container-to-container and host-to-container traffic never crosses the Wi-Fi link.",
+    "further_network_benchmarks": "UNVERIFIED — not measured this session"
+  },
+  "aura_service_inventory": {
+    "evidence": "CONFIGURED (parsed from deploy/docker-compose.prod.yml and docker-compose.dev.yml)",
+    "prod_core_services": ["nginx", "console", "gateway", "worker-realtime", "worker-ingestion", "beat", "ollama", "postgres", "redis", "qdrant", "prometheus", "alertmanager", "grafana", "loki", "promtail", "node-exporter", "backup"],
+    "prod_optional_profile_services": {
+      "sandbox": ["docker-socket-proxy", "sandbox-image", "sandbox-proxy"],
+      "training": ["worker-training"],
+      "gpu": ["vllm"]
+    },
+    "dev_core_services": ["console", "dev-gateway", "worker-realtime", "worker-ingestion", "beat", "postgres", "redis", "qdrant"],
+    "dev_shares_ollama_with_prod": true,
+    "core_service_cpu_limit_sum_vcpu": 16.95,
+    "core_service_ram_limit_sum_gb": 25.13,
+    "cpu_oversubscription_vs_logical_threads": "16.95 vCPU requested against 12 logical threads on this machine (+41%). Docker CPU limits are soft caps, not reservations, so this manifests as contention under simultaneous full load rather than a hard failure."
+  },
+  "resource_requirement_matrix": {
+    "evidence": "CONFIGURED (deploy.resources.limits from docker-compose.prod.yml)",
+    "services": [
+      {"service": "nginx", "cpu_limit": 0.5, "ram_limit_mb": 256, "always_running": true},
+      {"service": "console (admin)", "cpu_limit": 0.5, "ram_limit_mb": 512, "always_running": true},
+      {"service": "gateway (FastAPI)", "cpu_limit": 2.0, "ram_limit_mb": 3072, "ram_reservation_mb": 1024, "always_running": true},
+      {"service": "worker-realtime (celery)", "cpu_limit": 1.0, "ram_limit_mb": 1024, "always_running": true},
+      {"service": "worker-ingestion (celery)", "cpu_limit": 1.5, "ram_limit_mb": 2048, "always_running": true},
+      {"service": "beat (celery scheduler)", "cpu_limit": 0.25, "ram_limit_mb": 256, "always_running": true},
+      {"service": "ollama", "cpu_limit": 6.0, "ram_limit_mb": 10240, "gpu": "none configured (CPU path)", "always_running": true},
+      {"service": "postgres", "cpu_limit": 1.0, "ram_limit_mb": 2048, "always_running": true},
+      {"service": "redis", "cpu_limit": 0.5, "ram_limit_mb": 768, "always_running": true},
+      {"service": "qdrant", "cpu_limit": 1.0, "ram_limit_mb": 2048, "always_running": true},
+      {"service": "prometheus", "cpu_limit": 0.5, "ram_limit_mb": 1024, "always_running": true},
+      {"service": "alertmanager", "cpu_limit": 0.25, "ram_limit_mb": 256, "always_running": true},
+      {"service": "grafana", "cpu_limit": 0.5, "ram_limit_mb": 512, "always_running": true},
+      {"service": "loki", "cpu_limit": 0.5, "ram_limit_mb": 768, "always_running": true},
+      {"service": "promtail", "cpu_limit": 0.25, "ram_limit_mb": 256, "always_running": true},
+      {"service": "node-exporter", "cpu_limit": 0.2, "ram_limit_mb": 128, "always_running": true},
+      {"service": "backup", "cpu_limit": 0.5, "ram_limit_mb": 512, "always_running": true},
+      {"service": "docker-socket-proxy (sandbox profile)", "cpu_limit": 0.25, "ram_limit_mb": 128, "always_running": false},
+      {"service": "sandbox-image (sandbox profile, build-only)", "cpu_limit": 0.5, "ram_limit_mb": 256, "always_running": false},
+      {"service": "sandbox-proxy (sandbox profile)", "cpu_limit": 0.25, "ram_limit_mb": 64, "always_running": false},
+      {"service": "worker-training (training profile)", "cpu_limit": 2.0, "ram_limit_mb": 4096, "always_running": false},
+      {"service": "vllm (gpu profile)", "cpu_limit": 4.0, "ram_limit_mb": 16384, "gpu_required": "NVIDIA + 20GB+ VRAM class for default 32B AWQ model", "always_running": false, "feasible_on_this_gpu": false}
+    ]
+  },
+  "ai_model_config": {
+    "evidence": "CONFIGURED (docker-compose.prod.yml environment + requirements.lock)",
+    "local_model": {
+      "name": "qwen2.5:3b-instruct-q4_K_M",
+      "params_b": 3,
+      "quantization": "Q4_K_M (GGUF)",
+      "estimated_file_size_gb": "2.0-2.3 (ESTIMATED, public Ollama library figure — Ollama is not installed on this machine to confirm the exact byte size)",
+      "context_window": "UNVERIFIED — not explicitly pinned in the reviewed compose environment"
+    },
+    "embedding_model": {
+      "provider": "sentence-transformers",
+      "name": "BAAI/bge-small-en-v1.5",
+      "dimension": 384,
+      "estimated_file_size_mb": "~130 (ESTIMATED, public Hugging Face figure)"
+    },
+    "stt": "faster-whisper (per requirements.lock); exact model size UNVERIFIED — not pinned in reviewed config",
+    "torch_wheel": "torch==2.13.0+cpu",
+    "torch_wheel_note": "CPU-only wheel pinned deliberately — the backend Dockerfile's own comment states the default Linux torch wheel would drag in ~6.5 GB of CUDA/nvidia/triton packages a CPU-only host can never execute. This means the Quadro T1000 GPU is architecturally unused by the shipped backend image as configured; using it would require deviating from the pinned lockfile, which is out of this audit's scope (architecture must be preserved).",
+    "ollama_runtime_config": {
+      "OLLAMA_MAX_LOADED_MODELS": 1,
+      "OLLAMA_KEEP_ALIVE": "30m",
+      "OLLAMA_NUM_PARALLEL": 1,
+      "container_cpu_limit": 6.0,
+      "container_ram_limit_gb": 10,
+      "gpu_device_reservation": "commented out in docker-compose.prod.yml — CPU path is what actually runs by default"
+    },
+    "documented_target_deployment_profile": "deploy/.env.example comments describe the reference deployment as an '8 cores, no NVIDIA' CPU-only VPS, with sandbox workspace defaults assuming a 'documented 24 GB host'. This laptop (6 physical/12 logical threads, 31.8 GB RAM) is in a broadly comparable class on RAM but has fewer physical cores than the VPS's 8 vCPU."
+  },
+  "reference_inference_benchmark": {
+    "evidence": "REFERENCE — measured in Phase A4 (docs/reports/phase-a4-load-test.md), on a DIFFERENT machine (a disposable 4-core/15 GB Linux sandbox), NOT this laptop. Included because it uses the identical model and Ollama config this audit's local stack would use, and is the only real measured CPU-inference data available without running a live benchmark here.",
+    "run_date": "2026-08-23",
+    "environment": "4-core / 15 GB Linux container, real Postgres/Qdrant/Redis/Ollama (not in-memory adapters), model qwen2.5:3b-instruct-q4_K_M, OLLAMA_NUM_PARALLEL=1, AURA_PROVIDER_LOCAL_MAX_CONCURRENCY=1",
+    "single_turn_latency_sequential_n20": {
+      "total_p50_s": 56.3,
+      "total_p95_s": 70.5,
+      "total_max_s": 70.5,
+      "pipeline_overhead_only_p50_ms": 244,
+      "pipeline_overhead_only_p95_ms": 19000
+    },
+    "concurrency_sweep": [
+      {"concurrency": 1, "wall_time_s": 28.1, "throughput_turns_s": 0.04, "per_turn_p50_s": 28.1, "per_turn_max_s": 28.1},
+      {"concurrency": 2, "wall_time_s": 36.0, "throughput_turns_s": 0.06, "per_turn_p50_s": 27.3, "per_turn_max_s": 36.0},
+      {"concurrency": 4, "wall_time_s": 81.5, "throughput_turns_s": 0.05, "per_turn_p50_s": 48.1, "per_turn_max_s": 81.5},
+      {"concurrency": 8, "wall_time_s": 143.9, "throughput_turns_s": 0.06, "per_turn_p50_s": 85.2, "per_turn_max_s": 143.9}
+    ],
+    "conclusion": "Throughput is flat from 1 to 8 concurrent requests — OLLAMA_NUM_PARALLEL=1 is the confirmed binding constraint, not CPU headroom. This is a configuration ceiling, not a hardware one, and would reproduce on this laptop's hardware as well regardless of its extra cores/RAM versus the A4 sandbox.",
+    "extrapolation_to_this_machine": "CALCULATED — this laptop has more physical cores (6c/12t vs 4c) and over 2x the RAM (31.8 GB vs 15 GB) of the A4 sandbox, so per-turn latency would plausibly be similar-to-modestly-better (CPU-bound GGUF token generation for a 3B model scales sublinearly with cores past ~4-6 due to memory-bandwidth limits), but the single-request concurrency ceiling would reproduce identically since it is a semaphore (OLLAMA_NUM_PARALLEL=1), not a hardware limit."
+  },
+  "safety_decisions": {
+    "docker_daemon_not_started": "C: had 3.73 GiB free; starting Docker Desktop is comparatively low-risk, but pulling/building the stack's images was avoided to prevent filling the drive.",
+    "no_images_pulled_or_built": "Would have consumed multiple GB on an already-critical C: drive, or required first relocating Docker's disk image — a configuration change beyond a read-only audit's scope to make unilaterally.",
+    "no_ollama_model_downloaded": "Same C:/disk-space reasoning; also, Ollama itself is not installed natively on this machine.",
+    "secrets_not_present": "deploy/secrets/ does not exist locally (only deploy/.env* files) — bootstrap-secrets.sh has not been run, so the prod compose cannot start as-is without first generating secrets.",
+    "local_env_file_note": "deploy/.env (not committed) is pre-populated with the production VPS's own AURA_DOMAIN (169.58.188.43.nip.io) and AURA_SANDBOX_ENABLED=true — it reads as a working copy of the production environment file rather than a local-only configuration, and was not modified or used to start anything during this audit."
+  }
+}
