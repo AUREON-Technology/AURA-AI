@@ -13,6 +13,7 @@ import json
 
 import pytest
 
+from aura_core.adapters.coding_fakes import InMemoryGitHubClient
 from aura_core.domain.errors import BudgetExceededError, PlanningError
 from aura_core.domain.identifiers import PlanId, StepId
 from aura_core.domain.planning import Goal, Plan, PlanStep, Priority, StepKind, StepStatus
@@ -22,6 +23,9 @@ from aura_core.planning import PlanningEngine
 from aura_core.planning.engine import _parse_json_object, _render_tool_line
 from aura_core.prompts import build_default_registry
 from aura_core.tools.base import param, tool
+from aura_core.tools.coding import build_github_tools
+from aura_core.tools.policy import ToolPolicy
+from aura_core.tools.registry import ToolRegistry
 
 
 class _StubRouter:
@@ -1091,3 +1095,143 @@ class TestProgressStreaming:
         first = await stream.__anext__()
         assert isinstance(first, StepEvent)
         await stream.aclose()  # must return promptly rather than waiting out the sleep
+
+
+class TestVelvetIncidentScenario:
+    """End-to-end reproduction of the E:\\VELVET README demo video: "summarise README.md" in an
+    already-open local workspace. The model invents a GitHub repository id (`repo_for_README`),
+    that read fails, and the video showed the dependent "write summary" step still reported as
+    succeeded, followed by the agent proposing to destroy the workspace.
+
+    Two scripted plans, one per case the analysis called out:
+
+    * the video's actual (buggy) plan shape -- a write step with fabricated content and no
+      `depends_on` at all -- shows what Items 1/2/4 alone do and do not fix: the read fails
+      cheaply and pre-network (Item 2/4), but a write step with no dependency edge and no
+      `${s1.output}` reference is not something any belt-and-suspenders check can retroactively
+      tie to the read -- nothing declared it depends on anything. This is exactly why Item 1 also
+      changes the *prompt* (`task.plan_decomposition`), not only the parser: the fix that
+      actually prevents the false "succeeded" is the model using `${s1.output}`, which the parser
+      then backs up by forcing `depends_on` even if the model's JSON omits it.
+    * a well-formed plan that *does* use `${s1.output}` -- the shape the updated prompt asks
+      for -- runs end to end with the write step's argument genuinely carrying the read step's
+      real content, and blocks correctly (never reporting success) when the read fails instead.
+    """
+
+    def _registry(self, github_client: InMemoryGitHubClient) -> ToolRegistry:
+        registry = ToolRegistry(policy=ToolPolicy())
+
+        async def resolver(user_id):
+            return github_client
+
+        registry.register_all(build_github_tools(resolver))
+
+        @tool("save_summary", "Save a text summary.",
+              param("content", "string", "The summary text to save."))
+        async def save_summary(content: str) -> str:
+            return f"Saved: {content}"
+
+        registry.register(save_summary)
+        return registry
+
+    async def test_the_videos_buggy_plan_shape_fails_the_read_cheaply_but_cannot_retroactively_block_an_unlinked_write(
+        self, tool_context
+    ) -> None:
+        github_client = InMemoryGitHubClient()  # nothing seeded -- repo_for_README is fabricated
+        registry = self._registry(github_client)
+
+        # Exactly the video's shape: the write step's content is LLM-authored prose, not a
+        # `${s1.output}` reference, and it declares no `depends_on` on the read step at all.
+        plan = _plan(
+            PlanStep(id=StepId("s1"), kind=StepKind.TOOL, tool="github_get_file_contents",
+                     description="Read README.md",
+                     arguments={"path": "README.md", "repo": "repo_for_README"}),
+            PlanStep(id=StepId("s2"), kind=StepKind.TOOL, tool="save_summary",
+                     description="Save the summary",
+                     arguments={"content": "This project is a well-organized Python application..."}),
+        )
+        outcome = await ExecutionEngine(tools=registry).execute(
+            plan, context=tool_context, capabilities=("engineer_agent",)
+        )
+
+        read_step = outcome.plan.step(StepId("s1"))
+        assert read_step.status is StepStatus.FAILED
+        assert read_step.error_kind == "unresolved_argument"
+        # The read never reached the network: schema validation rejected the fabricated
+        # repository before `_client`/`get_file_contents` was ever called.
+        write_step = outcome.plan.step(StepId("s2"))
+        assert write_step.status is StepStatus.SUCCEEDED
+        assert "This project is a well-organized" in (write_step.result or "")
+        # This is the residual gap Items 1/2/4 alone leave: a plan with no dependency edge and no
+        # data-flow token is not something a pre-dispatch check can retroactively tie together --
+        # the fix has to stop the model from producing this shape in the first place (the updated
+        # `task.plan_decomposition` prompt) and back that up when it is used correctly (below).
+
+    async def test_a_well_formed_plan_using_the_output_token_runs_end_to_end(
+        self, tool_context
+    ) -> None:
+        github_client = InMemoryGitHubClient()
+        github_client.seed_file("acme/velvet", "main", "README.md", "# VELVET\nA sample project.")
+        registry = self._registry(github_client)
+
+        body = json.dumps({"steps": [
+            {"id": "s1", "kind": "tool", "tool": "github_get_file_contents",
+             "description": "Read README.md",
+             "arguments": {"path": "README.md", "repo": "acme/velvet"}},
+            {"id": "s2", "kind": "tool", "tool": "save_summary",
+             "description": "Save the summary",
+             "arguments": {"content": "Summary: ${s1.output}"}},
+        ]})
+        tool_signatures = [
+            {"name": "github_get_file_contents", "description": "Read a file."},
+            {"name": "save_summary", "description": "Save a summary."},
+        ]
+        plan = await _engine(body).plan(
+            Goal(description="Summarize README.md and save the summary"),
+            available_tools=tool_signatures,
+        )
+        # The parser forced the dependency even without relying on the model's own depends_on.
+        assert plan.steps[1].depends_on == (StepId("s1"),)
+
+        outcome = await ExecutionEngine(tools=registry).execute(
+            plan, context=tool_context, capabilities=("engineer_agent",)
+        )
+
+        assert outcome.succeeded is True
+        assert outcome.plan.step(StepId("s1")).status is StepStatus.SUCCEEDED
+        assert outcome.results["s2"] == "Saved: Summary: # VELVET\nA sample project."
+
+    async def test_the_well_formed_shape_blocks_correctly_when_the_read_fails(
+        self, tool_context
+    ) -> None:
+        """The same well-formed shape, but the repository really is fabricated -- this is the
+        case the video should have shown: the write never dispatches and the plan never reports
+        success."""
+        github_client = InMemoryGitHubClient()
+        registry = self._registry(github_client)
+
+        body = json.dumps({"steps": [
+            {"id": "s1", "kind": "tool", "tool": "github_get_file_contents",
+             "description": "Read README.md",
+             "arguments": {"path": "README.md", "repo": "repo_for_README"}},
+            {"id": "s2", "kind": "tool", "tool": "save_summary",
+             "description": "Save the summary",
+             "arguments": {"content": "Summary: ${s1.output}"}},
+        ]})
+        tool_signatures = [
+            {"name": "github_get_file_contents", "description": "Read a file."},
+            {"name": "save_summary", "description": "Save a summary."},
+        ]
+        plan = await _engine(body).plan(
+            Goal(description="Summarize README.md and save the summary"),
+            available_tools=tool_signatures,
+        )
+        outcome = await ExecutionEngine(tools=registry).execute(
+            plan, context=tool_context, capabilities=("engineer_agent",)
+        )
+
+        assert outcome.succeeded is False
+        assert outcome.plan.step(StepId("s1")).status is StepStatus.FAILED
+        write_step = outcome.plan.step(StepId("s2"))
+        assert write_step.status is StepStatus.BLOCKED
+        assert "s2" not in outcome.results
