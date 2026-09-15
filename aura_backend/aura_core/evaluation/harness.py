@@ -401,6 +401,10 @@ class AgentCaseResult:
     success: bool
     tools_used: tuple[str, ...] = ()
     tool_success_rate: float = 0.0
+    #: Fraction of ``case.expected_tools`` actually reached for in ``tools_used``. ``1.0`` when
+    #: the case declares no ``expected_tools`` -- a case that never named which tools mattered
+    #: cannot be marked down for a "wrong" tool choice it never specified.
+    tool_accuracy: float = 1.0
     task_completed: bool = False
     turns: int = 0
     duration_ms: float = 0.0
@@ -424,6 +428,11 @@ class AgentSuiteResult:
         return sum(rates) / len(rates) if rates else 0.0
 
     @property
+    def avg_tool_accuracy(self) -> float:
+        rates = [r.tool_accuracy for r in self.results]
+        return sum(rates) / len(rates) if rates else 0.0
+
+    @property
     def task_completion_rate(self) -> float:
         completed = sum(1 for r in self.results if r.task_completed)
         return completed / len(self.results) if self.results else 0.0
@@ -433,6 +442,7 @@ class AgentSuiteResult:
         return {
             "pass_rate": round(self.pass_rate, 4),
             "tool_success_rate": round(self.avg_tool_success_rate, 4),
+            "tool_accuracy": round(self.avg_tool_accuracy, 4),
             "task_completion_rate": round(self.task_completion_rate, 4),
             "avg_turns": round(sum(r.turns for r in self.results) / len(self.results), 2) if self.results else 0.0,
             "avg_duration_ms": round(sum(r.duration_ms for r in self.results) / len(self.results), 1) if self.results else 0.0,
@@ -527,6 +537,7 @@ class AgentEvaluator:
 
                 duration_ms = (time.perf_counter() - case_started) * 1000.0
                 tool_success_rate = tool_success_count / tool_total if tool_total > 0 else 1.0
+                tool_accuracy = self._tool_accuracy(case, tools_used)
 
                 success = task_completed and tool_success_rate > 0.8
                 detail = "" if success else f"Task not completed or tool success rate {tool_success_rate:.2f}"
@@ -537,6 +548,7 @@ class AgentEvaluator:
                         success=success,
                         tools_used=tuple(tools_used),
                         tool_success_rate=tool_success_rate,
+                        tool_accuracy=tool_accuracy,
                         task_completed=task_completed,
                         turns=turns,
                         duration_ms=duration_ms,
@@ -552,6 +564,7 @@ class AgentEvaluator:
                         success=False,
                         tools_used=tuple(tools_used),
                         tool_success_rate=tool_success_count / tool_total if tool_total > 0 else 0.0,
+                        tool_accuracy=self._tool_accuracy(case, tools_used),
                         task_completed=False,
                         turns=turns,
                         duration_ms=(time.perf_counter() - case_started) * 1000.0,
@@ -566,6 +579,7 @@ class AgentEvaluator:
                         success=False,
                         tools_used=tuple(tools_used),
                         tool_success_rate=tool_success_count / tool_total if tool_total > 0 else 0.0,
+                        tool_accuracy=self._tool_accuracy(case, tools_used),
                         task_completed=False,
                         turns=turns,
                         duration_ms=(time.perf_counter() - case_started) * 1000.0,
@@ -582,6 +596,21 @@ class AgentEvaluator:
                 self._metrics.eval_score.labels(suite=suite_result.suite, metric=name).set(value)
             self._metrics.eval_runs_total.labels(suite=suite_result.suite, outcome="ok").inc()
         return suite_result
+
+    @staticmethod
+    def _tool_accuracy(case: AgentCase, tools_used: Sequence[str]) -> float:
+        """Fraction of ``case.expected_tools`` the run actually reached for.
+
+        A recall-style measure over the *set* of tools used across every turn, not a sequence
+        match -- a case naming ``("search_knowledge", "create_task")`` is checking that both were
+        used somewhere in solving the task, not that they ran in that exact order or exclusively.
+        ``1.0`` when the case names no expected tools: nothing was specified to get wrong.
+        """
+        if not case.expected_tools:
+            return 1.0
+        expected = set(case.expected_tools)
+        used = set(tools_used)
+        return len(expected & used) / len(expected)
 
     def _is_task_complete(self, text: str, case: AgentCase) -> bool:
         text_lower = text.lower()

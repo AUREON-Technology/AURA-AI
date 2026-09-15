@@ -230,6 +230,22 @@ Small, and it removes ambiguity that Phase C would otherwise inherit. **Done**, 
   full `pytest`/`tests/architecture`/the legacy suite all green. Not addressed here, and not
   claimed: syncing these records to the Flutter client (still server-visible only, per C2's own
   note) and optimistic-concurrency/versioning on update (last write wins, same as `put`).
+- **C5. Fixed a docstring/implementation gap in `AgentEvaluator`, found while re-reading it.**
+  Its class docstring claims it measures "task completion, tool selection accuracy, tool success
+  rate, recovery from failures, and adherence to expected tool sequences" — but `AgentCase.
+  expected_tools` was loaded by `load_agent_cases` and never read anywhere in `run()`. A case
+  naming which tools mattered got no credit or penalty for using the wrong ones, or none at all.
+  Added `AgentCaseResult.tool_accuracy` (`AgentEvaluator._tool_accuracy`, new): a recall-style
+  measure over the *set* of tools used across the run, `1.0` when a case names no `expected_tools`
+  (nothing was specified to get wrong, the same vacuous-pass convention `tool_success_rate` already
+  uses). Exposed in `AgentSuiteResult.metrics()` as `tool_accuracy`. Deliberately does not change
+  `success`'s own pass/fail logic — a behavioural change to the existing gate's semantics is a
+  separate decision, not implied by fixing a measurement gap — so this is inert against the
+  current `agent_tasks.jsonl` baseline (no case in it sets `expected_tools` yet) and only matters
+  once a case does. 5 new tests in `tests/unit/test_evaluation.py`, including one that runs a real
+  case through `AgentEvaluator.run()` and confirms it scores `0.0` rather than the `1.0` a
+  vacuous-pass bug would silently produce; confirmed all three non-trivial tests fail when the
+  computation is stubbed back to always-`1.0`.
 
 **Exit criteria.** An agent's tool set is data, not code — **done** (C1). A tool call outside an
 agent's grant fails closed and is visible in the audit sink — **done**, proven against both a
