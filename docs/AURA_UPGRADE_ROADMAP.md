@@ -175,13 +175,40 @@ Small, and it removes ambiguity that Phase C would otherwise inherit. **Done**, 
   adapter. **Still open, named rather than silently dropped:** update/delete tools (create+list
   only so far); syncing these new records to the Flutter client's existing UI (they are currently
   server-visible only — no new client work was in this PR's scope).
+- **C3. Fixed, not built new — the "Build Agent Evaluation System" commit (`41c3a95`) shipped a
+  task-completion evaluator that had never once completed a run.** `AgentEvaluator.run()`
+  (`aura_core/evaluation/harness.py`) referenced `TurnRequest` without importing it, so every
+  invocation raised `NameError` on the first turn; `evaluation/runner.py`, its only caller,
+  independently could not have reached that far — it built settings via bare `AuraSettings()`
+  instead of `load_settings()` (zero LLM providers configured, `ConfigurationError`), resolved
+  `BACKEND_ROOT` one directory too high (`.parents[2]` instead of `.parents[1]`, so the suite file
+  was never found), and copied a case's fields via `case.__dict__` on a frozen `slots=True`
+  dataclass, which does not have one. Stacked, these four bugs meant `eval-ci.yml` (manual
+  `workflow_dispatch`, already not merge-blocking) could never have succeeded even once. Separately,
+  the 50-case dataset (`evaluation/suites/agent_tasks.jsonl`) keys every case on
+  `expected_substrings`, a field `AgentCase`/`load_agent_cases` never read — the loader silently
+  dropped it, so every case fell through to a generic "does the reply contain a marker word like
+  'done'" check that nothing in the dataset was written to satisfy. All five fixed; `AgentCase`
+  gained the `expected_substrings` field, `_is_task_complete` checks it against the accumulated
+  turn text (falling back to `success_criteria`, then the marker heuristic, in that order), and 11
+  new tests in `tests/unit/test_evaluation.py` exercise the real kernel round trip against the
+  `container` fixture — each one verified to fail against the pre-fix code before being counted as
+  a regression test. First-ever real, measured result against the default `EchoProvider`: **84%
+  pass rate, 100% tool success rate (no case triggers a tool from an echoed reply), 84% task
+  completion, 50/50 cases**. The 8 failures are genuine dataset wording mismatches — e.g.
+  `expected_substrings` asks for `"17"` where the query says "5pm", or `"memory"` where the query
+  says "memories" — not harness bugs; tightening the dataset is named as follow-up, not done here.
+  Wired as an actual regression gate for the first time via `tests/e2e/test_agent_tasks_gate.py` +
+  `evaluation/suites/agent_tasks_baseline.json`, mirroring `test_docs_corpus_gate.py`'s existing
+  pattern (Phase A3) so it runs inside the ordinary `pytest` job on every PR — no new GitHub Actions
+  workflow needed, since `backend-ci.yml` already runs `pytest tests` on every `pull_request`.
 
 **Exit criteria.** An agent's tool set is data, not code — **done** (C1). A tool call outside an
 agent's grant fails closed and is visible in the audit sink — **done**, proven against both a
 synthetic tool (C1) and a real C2 tool (`create_health_record` denied for `finance_advisor`).
-Task-completion rate is measurable through the Phase A harness — **still open**: the harness has
-no task-completion evaluator today, and building one is a Phase-A-shaped follow-up, not implied by
-having something to measure.
+Task-completion rate is measurable through the Phase A harness — **done** (C3): a task-completion
+evaluator exists, actually runs, and is gated in CI, with the caveat that the current 84% baseline
+measures the `EchoProvider` round trip and dataset wording, not real-model task quality.
 
 ### Phase D — Projects, Goals, and prioritisation
 
@@ -842,7 +869,7 @@ Phase A, not by an estimate.
 | Concurrency ceiling | **Flat throughput (~0.04–0.06 turns/s) from 1 to 8 concurrent requests** — `OLLAMA_NUM_PARALLEL=1` is the binding constraint, confirmed rather than assumed ([A4 report](reports/phase-a4-load-test.md)); 478 turns/s remains an echo-provider artifact, not this number | Phase A4, measured |
 | Gateway image size | **2.34 GB**, down from 8.88 GB once CUDA was dropped ([A1 report](reports/phase-a1-first-boot.md)) | Phase A1 finding 2 |
 | Tool success rate | **Live** via `GET /api/v3/admin/scorecard` (`TelemetrySink.recent_summary`); no real production traffic yet to report a baseline number from | Phase G1, mechanism done |
-| Task completion rate | Unmeasured | Phase C |
+| Task completion rate | **84%** (50-case `agent_tasks` suite, `EchoProvider`, gated in CI) — the evaluator was broken (four stacked bugs) until this pass; the number reflects round-trip completion and dataset wording, not real-model quality | Phase C3 |
 | Scanned-document OCR | **Real**, Tesseract, proven on a genuinely scanned PDF end to end through `POST /knowledge/documents/upload`; no vision model (image/chart understanding) | Phase F1 |
 | Voice (STT/TTS) | **Real**, self-hosted (`faster-whisper` / Piper primary, espeak-ng fallback), proven with a real synthesize→transcribe round trip through `POST /voice/speak` and `/voice/transcribe` | Phase F2 |
 | Live voice duplex | **Scaffolding** — WS session + engine + Flutter `/voice`; not device-proven; load round-trip open | Phase H |

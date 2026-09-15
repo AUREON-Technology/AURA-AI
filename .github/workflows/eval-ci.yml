@@ -11,6 +11,7 @@ on:
       baseline:
         description: 'Path to baseline JSON for regression gate'
         required: false
+        default: 'evaluation/suites/agent_tasks_baseline.json'
         type: string
 
 permissions:
@@ -45,7 +46,7 @@ jobs:
           AURA_JWT_SECRET: test-secret
           AURA_ALLOW_REMOTE_INFERENCE: "false"
         run: |
-          python -m evaluation.runner --suite ${{ github.event.inputs.suite }} --max-turns 8 --timeout 60
+          python -m evaluation.runner --suite ${{ github.event.inputs.suite }} --max-turns 8 --timeout 60 --output evaluation-results.json
 
       - name: Upload results
         if: always()
