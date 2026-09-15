@@ -11,21 +11,20 @@ import asyncio
 import json
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 # Add backend to path
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_ROOT))
 
 from aura_core.evaluation.harness import (
     AgentEvaluator,
-    AgentCase,
-    AgentSuiteResult,
     RegressionGate,
     load_agent_cases,
 )
 from aura_core.container import Container
-from aura_core.config.settings import AuraSettings
+from aura_core.config.settings import load_settings
 
 
 async def main() -> int:
@@ -37,7 +36,7 @@ async def main() -> int:
     parser.add_argument("--timeout", type=float, default=120.0, help="Timeout per turn (seconds)")
     args = parser.parse_args()
 
-    settings = AuraSettings()
+    settings = load_settings(refresh=True)
     container = Container(settings)
     await container.startup()
 
@@ -49,7 +48,7 @@ async def main() -> int:
 
         cases = load_agent_cases(suite_path)
         # Override max_turns from CLI if provided
-        cases = [AgentCase(**{**case.__dict__, "max_turns": args.max_turns}) for case in cases]
+        cases = [replace(case, max_turns=args.max_turns) for case in cases]
         print(f"Loaded {len(cases)} cases from {suite_path}")
 
         evaluator = AgentEvaluator(

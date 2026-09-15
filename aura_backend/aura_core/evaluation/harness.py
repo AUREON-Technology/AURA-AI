@@ -22,6 +22,7 @@ import math
 import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from ..domain.errors import EvaluationError, ValidationError
@@ -377,13 +378,14 @@ class AgentCase:
     """One agent task evaluation case.
 
     Extends EvalCase with agent-specific expectations: expected tools, success criteria,
-    and maximum allowed turns.
+    expected substrings, and maximum allowed turns.
     """
 
     id: str
     query: str
     expected_tools: tuple[str, ...] = ()
     success_criteria: tuple[str, ...] = ()
+    expected_substrings: tuple[str, ...] = ()
     max_turns: int = 10
     owner_id: str | None = None
     tags: tuple[str, ...] = ()
@@ -474,6 +476,7 @@ class AgentEvaluator:
 
     async def run(self, cases: Sequence[AgentCase]) -> AgentSuiteResult:
         from ..domain.identifiers import UserId
+        from ..kernel.kernel import TurnRequest
 
         started = time.perf_counter()
         results = []
@@ -486,6 +489,7 @@ class AgentEvaluator:
             task_completed = False
             trace = []
             turns = 0
+            answer_text = ""
 
             try:
                 for turn_num in range(case.max_turns):
@@ -500,6 +504,7 @@ class AgentEvaluator:
                         ),
                         timeout=self._timeout_s,
                     )
+                    answer_text = f"{answer_text} {turn.text}" if answer_text else turn.text
 
                     trace.append({
                         "turn": turn_num + 1,
@@ -516,7 +521,7 @@ class AgentEvaluator:
                         if not getattr(tc, "error", None):
                             tool_success_count += 1
 
-                    if self._is_task_complete(turn.text, case):
+                    if self._is_task_complete(answer_text, case):
                         task_completed = True
                         break
 
@@ -579,11 +584,12 @@ class AgentEvaluator:
         return suite_result
 
     def _is_task_complete(self, text: str, case: AgentCase) -> bool:
-        if not case.success_criteria:
-            text_lower = text.lower()
-            return any(marker in text_lower for marker in ("done", "complete", "created", "finished", "success"))
         text_lower = text.lower()
-        return all(criterion.lower() in text_lower for criterion in case.success_criteria)
+        if case.expected_substrings:
+            return all(substring.lower() in text_lower for substring in case.expected_substrings)
+        if case.success_criteria:
+            return all(criterion.lower() in text_lower for criterion in case.success_criteria)
+        return any(marker in text_lower for marker in ("done", "complete", "created", "finished", "success"))
 
 
 _REFUSAL_MARKERS = (
@@ -721,6 +727,7 @@ def load_agent_cases(path: str | Path) -> list[AgentCase]:
                     query=payload["query"],
                     expected_tools=tuple(payload.get("expected_tools", ())),
                     success_criteria=tuple(payload.get("success_criteria", ())),
+                    expected_substrings=tuple(payload.get("expected_substrings", ())),
                     max_turns=int(payload.get("max_turns", 10)),
                     owner_id=payload.get("owner_id"),
                     tags=tuple(payload.get("tags", ())),

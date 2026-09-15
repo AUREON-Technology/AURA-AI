@@ -1,0 +1,8 @@
+{
+  "suite": "agent_tasks",
+  "metrics": {
+    "pass_rate": 0.84,
+    "tool_success_rate": 1.0,
+    "task_completion_rate": 0.84
+  }
+}

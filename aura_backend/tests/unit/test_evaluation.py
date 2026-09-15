@@ -15,6 +15,8 @@ import pytest
 from aura_core.domain import DocumentId
 from aura_core.domain.errors import EvaluationError, ValidationError
 from aura_core.evaluation.harness import (
+    AgentCase,
+    AgentEvaluator,
     AnswerEvaluator,
     CaseResult,
     EvalCase,
@@ -24,6 +26,7 @@ from aura_core.evaluation.harness import (
     RetrievalEvaluator,
     SuiteResult,
     build_suite,
+    load_agent_cases,
     summarise,
 )
 from aura_core.evaluation.harness import _mrr, _ndcg, _precision_at_k, _recall_at_k, _token_f1
@@ -351,6 +354,122 @@ class TestAnswerEvaluator:
         suite = EvalSuite(name="judged", cases=(EvalCase(id="c", query="hello"),))
         result = await AnswerEvaluator(container.kernel, judge=ConstantJudge()).run(suite)
         assert result.results[0].scores["judge"] == 0.75
+
+
+class TestLoadAgentCases:
+    """``AgentCase`` is a frozen, slotted dataclass loaded from the CI-facing JSONL dataset --
+    a mismatch between the two silently drops a field for every case in the suite."""
+
+    def test_reads_every_declared_field(self, tmp_path) -> None:
+        path = tmp_path / "suite.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "id": "t1",
+                    "query": "do the thing",
+                    "expected_tools": ("create_task",),
+                    "success_criteria": ("done",),
+                    "expected_substrings": ("the thing",),
+                    "max_turns": 3,
+                    "owner_id": "u1",
+                    "tags": ("smoke",),
+                }
+            )
+            + "\n"
+        )
+        cases = load_agent_cases(path)
+        assert len(cases) == 1
+        case = cases[0]
+        assert case.expected_tools == ("create_task",)
+        assert case.success_criteria == ("done",)
+        assert case.expected_substrings == ("the thing",)
+        assert case.max_turns == 3
+        assert case.owner_id == "u1"
+        assert case.tags == ("smoke",)
+
+    def test_defaults_and_blank_lines(self, tmp_path) -> None:
+        path = tmp_path / "suite.jsonl"
+        path.write_text('\n{"query": "minimal"}\n   \n')
+        cases = load_agent_cases(path)
+        assert len(cases) == 1
+        assert cases[0].id == "case-2"
+        assert cases[0].expected_substrings == ()
+        assert cases[0].max_turns == 10
+
+
+class TestAgentEvaluator:
+    """Exercises the real kernel round trip -- ``AgentEvaluator.run`` previously raised
+    ``NameError`` on its first turn (``TurnRequest`` was never imported), so every case below
+    also stands as the regression test for that crash."""
+
+    async def test_completes_as_soon_as_expected_substrings_are_present(
+        self, container, user
+    ) -> None:
+        await container.startup()
+        case = AgentCase(
+            id="c", query="How many days of annual leave?",
+            expected_substrings=("annual leave",), max_turns=5, owner_id=str(user),
+        )
+        result = await AgentEvaluator(container.kernel).run([case])
+
+        assert len(result.results) == 1
+        outcome = result.results[0]
+        assert outcome.task_completed is True
+        assert outcome.turns == 1  # stopped as soon as the substring appeared
+        assert outcome.success is True
+
+    async def test_never_completes_when_the_substring_never_appears(self, container, user) -> None:
+        await container.startup()
+        case = AgentCase(
+            id="c", query="hello",
+            expected_substrings=("a phrase that will never be echoed back",),
+            max_turns=2, owner_id=str(user),
+        )
+        result = await AgentEvaluator(container.kernel).run([case])
+
+        outcome = result.results[0]
+        assert outcome.task_completed is False
+        assert outcome.turns == 2  # exhausted every turn without matching
+        assert outcome.success is False
+        assert "not completed" in outcome.detail
+
+    async def test_falls_back_to_success_criteria_without_expected_substrings(
+        self, container, user
+    ) -> None:
+        await container.startup()
+        case = AgentCase(
+            id="c", query="How many days of annual leave?",
+            success_criteria=("annual leave",), max_turns=3, owner_id=str(user),
+        )
+        result = await AgentEvaluator(container.kernel).run([case])
+        assert result.results[0].task_completed is True
+
+    async def test_falls_back_to_generic_markers_without_criteria_or_substrings(
+        self, container, user
+    ) -> None:
+        await container.startup()
+        case = AgentCase(id="c", query="mark this task as done", max_turns=1, owner_id=str(user))
+        result = await AgentEvaluator(container.kernel).run([case])
+        assert result.results[0].task_completed is True
+
+    async def test_suite_metrics_summarise_across_cases(self, container, user) -> None:
+        await container.startup()
+        cases = [
+            AgentCase(id="ok", query="annual leave", expected_substrings=("annual leave",),
+                      max_turns=1, owner_id=str(user)),
+            AgentCase(id="stuck", query="hello", expected_substrings=("never present",),
+                      max_turns=1, owner_id=str(user)),
+        ]
+        result = await AgentEvaluator(container.kernel).run(cases)
+
+        assert result.pass_rate == pytest.approx(0.5)
+        assert result.task_completion_rate == pytest.approx(0.5)
+        assert result.metrics()["pass_rate"] == pytest.approx(0.5)
+        assert len(result.failures()) == 1
+        assert result.failures()[0].case_id == "stuck"
+        payload = result.as_dict()
+        assert payload["cases"] == 2
+        assert payload["failures"][0]["case_id"] == "stuck"
 
 
 class TestLLMJudge:
