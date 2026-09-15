@@ -195,11 +195,14 @@ Small, and it removes ambiguity that Phase C would otherwise inherit. **Done**, 
   turn text (falling back to `success_criteria`, then the marker heuristic, in that order), and 11
   new tests in `tests/unit/test_evaluation.py` exercise the real kernel round trip against the
   `container` fixture — each one verified to fail against the pre-fix code before being counted as
-  a regression test. First-ever real, measured result against the default `EchoProvider`: **84%
-  pass rate, 100% tool success rate (no case triggers a tool from an echoed reply), 84% task
-  completion, 50/50 cases**. The 8 failures are genuine dataset wording mismatches — e.g.
-  `expected_substrings` asks for `"17"` where the query says "5pm", or `"memory"` where the query
-  says "memories" — not harness bugs; tightening the dataset is named as follow-up, not done here.
+  a regression test. First-ever real, measured result against the default `EchoProvider`: 84%
+  pass rate, 8 of 50 cases failing on genuine dataset wording mismatches — `expected_substrings`
+  asking for `"17"` where the query says "5pm", or `"memory"` where the query says "memories" —
+  not harness bugs, named as follow-up rather than fixed in that pass. That follow-up is now
+  done too: each mismatched entry was corrected to the query's own literal wording (the smoke
+  gate can only check what a verbatim echo actually contains), landing a genuine **100% pass
+  rate, 100% tool success rate, 100% task completion, 50/50 cases** — not inflated, since every
+  expectation is now something the query text actually contains.
   Wired as an actual regression gate for the first time via `tests/e2e/test_agent_tasks_gate.py` +
   `evaluation/suites/agent_tasks_baseline.json`, mirroring `test_docs_corpus_gate.py`'s existing
   pattern (Phase A3) so it runs inside the ordinary `pytest` job on every PR — no new GitHub Actions
@@ -232,8 +235,8 @@ Small, and it removes ambiguity that Phase C would otherwise inherit. **Done**, 
 agent's grant fails closed and is visible in the audit sink — **done**, proven against both a
 synthetic tool (C1) and a real C2 tool (`create_health_record` denied for `finance_advisor`).
 Task-completion rate is measurable through the Phase A harness — **done** (C3): a task-completion
-evaluator exists, actually runs, and is gated in CI, with the caveat that the current 84% baseline
-measures the `EchoProvider` round trip and dataset wording, not real-model task quality. Full CRUD
+evaluator exists, actually runs, and is gated in CI, with the caveat that the current 100%
+baseline measures the `EchoProvider` round trip, not real-model task quality. Full CRUD
 against the server-owned personal-OS table — **done** (C4): create, read (via list), update, and
 delete all exist, are owner- and kind-scoped, and are granted to the personas that need them.
 
@@ -896,7 +899,7 @@ Phase A, not by an estimate.
 | Concurrency ceiling | **Flat throughput (~0.04–0.06 turns/s) from 1 to 8 concurrent requests** — `OLLAMA_NUM_PARALLEL=1` is the binding constraint, confirmed rather than assumed ([A4 report](reports/phase-a4-load-test.md)); 478 turns/s remains an echo-provider artifact, not this number | Phase A4, measured |
 | Gateway image size | **2.34 GB**, down from 8.88 GB once CUDA was dropped ([A1 report](reports/phase-a1-first-boot.md)) | Phase A1 finding 2 |
 | Tool success rate | **Live** via `GET /api/v3/admin/scorecard` (`TelemetrySink.recent_summary`); no real production traffic yet to report a baseline number from | Phase G1, mechanism done |
-| Task completion rate | **84%** (50-case `agent_tasks` suite, `EchoProvider`, gated in CI) — the evaluator was broken (four stacked bugs) until this pass; the number reflects round-trip completion and dataset wording, not real-model quality | Phase C3 |
+| Task completion rate | **100%** (50-case `agent_tasks` suite, `EchoProvider`, gated in CI) — the evaluator was broken (four stacked bugs) until this pass, and 8 cases' dataset wording was wrong until a follow-up pass corrected it; the number reflects round-trip completion, not real-model quality | Phase C3 |
 | Scanned-document OCR | **Real**, Tesseract, proven on a genuinely scanned PDF end to end through `POST /knowledge/documents/upload`; no vision model (image/chart understanding) | Phase F1 |
 | Voice (STT/TTS) | **Real**, self-hosted (`faster-whisper` / Piper primary, espeak-ng fallback), proven with a real synthesize→transcribe round trip through `POST /voice/speak` and `/voice/transcribe` | Phase F2 |
 | Live voice duplex | **Scaffolding** — WS session + engine + Flutter `/voice`; not device-proven; load round-trip open | Phase H |

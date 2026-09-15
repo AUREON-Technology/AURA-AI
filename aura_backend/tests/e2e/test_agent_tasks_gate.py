@@ -10,12 +10,13 @@ kernel/planning/tool-execution round trip that ``AgentEvaluator`` drives -- not 
 model would complete the task well. Real task-quality gating needs a real or scripted provider in
 CI, the same follow-up ``test_docs_corpus_gate.py`` names for answer-level retrieval gating.
 
-The recorded baseline (84% pass rate, 8 of 50 cases) is genuinely imperfect: those 8 cases'
-``expected_substrings`` assume a paraphrased answer (e.g. "17:00" for a query that says "5pm",
-"memory" for a query that says "memories") that a literal echo does not produce. That is a dataset
-wording mismatch worth tightening later, not a harness bug -- see the harness's own
-``_is_task_complete``. The gate exists to hold today's real, measured number steady and catch
-actual regressions in the round trip; it should not be inflated to hide dataset issues.
+The dataset originally shipped with 8 of 50 cases' ``expected_substrings`` assuming a paraphrased
+answer (e.g. "17" for a query that says "5pm", "memory" for a query that says "memories") that a
+literal echo does not produce -- a dataset wording mismatch, not a harness bug (see the harness's
+own ``_is_task_complete``). Fixed by matching each ``expected_substrings`` entry to the query's own
+literal wording rather than a paraphrase, since that is what this smoke gate can actually check.
+The recorded baseline is now a genuine 100% (50 of 50) -- not inflated to hide anything, since
+every case's expectation is now something the query text actually contains.
 """
 
 from __future__ import annotations
