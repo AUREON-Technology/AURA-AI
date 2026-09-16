@@ -11,6 +11,8 @@ Three of these are security controls wearing a feature's clothes, and they are t
 
 from __future__ import annotations
 
+import socket
+
 import pytest
 
 from aura_core.domain.errors import ToolExecutionError
@@ -19,6 +21,7 @@ from aura_core.domain.tools import ToolCategory, ToolSensitivity
 from aura_core.ports.runtime import ToolContext
 from aura_core.tools.builtin import (
     _assert_public_url,
+    _assert_resolves_publicly,
     build_file_tools,
     build_http_tool,
     build_knowledge_tools,
@@ -367,6 +370,63 @@ class TestUrlGuard:
             _assert_public_url("https:///path", self.ALLOWED, "t")
 
 
+class TestDnsRebindingGuard:
+    """``_assert_public_url`` only inspects the literal URL string -- an allowlisted *hostname*
+    is checked against the allowlist, never against what it actually resolves to. This is the
+    other half of the defence: reject a hostname whose DNS points at a private address, which an
+    IP-literal-only check can never catch."""
+
+    @staticmethod
+    def _fake_getaddrinfo(*addresses: str):
+        def resolve(host: str, port):
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", (addr, 0)) for addr in addresses
+            ]
+
+        return resolve
+
+    async def test_a_hostname_resolving_publicly_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(socket, "getaddrinfo", self._fake_getaddrinfo("93.184.216.34"))
+        await _assert_resolves_publicly("example.com", "t")
+
+    async def test_a_hostname_rebound_to_cloud_metadata_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The exact DNS-rebinding SSRF this guard exists for: an allowlisted domain whose
+        record now points at the cloud metadata endpoint."""
+        monkeypatch.setattr(socket, "getaddrinfo", self._fake_getaddrinfo("169.254.169.254"))
+        with pytest.raises(ToolExecutionError):
+            await _assert_resolves_publicly("example.com", "t")
+
+    async def test_a_hostname_resolving_to_loopback_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(socket, "getaddrinfo", self._fake_getaddrinfo("127.0.0.1"))
+        with pytest.raises(ToolExecutionError):
+            await _assert_resolves_publicly("example.com", "t")
+
+    async def test_one_private_address_among_several_is_enough_to_refuse(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A multi-A-record response is refused if *any* answer is private -- an attacker who
+        controls one of several records still reaches the internal network."""
+        monkeypatch.setattr(
+            socket, "getaddrinfo", self._fake_getaddrinfo("93.184.216.34", "10.0.0.5")
+        )
+        with pytest.raises(ToolExecutionError):
+            await _assert_resolves_publicly("example.com", "t")
+
+    async def test_an_unresolvable_host_is_refused_not_silently_allowed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def resolve(host: str, port):
+            raise socket.gaierror("Name or service not known")
+
+        monkeypatch.setattr(socket, "getaddrinfo", resolve)
+        with pytest.raises(ToolExecutionError):
+            await _assert_resolves_publicly("does-not-resolve.example.com", "t")
+
+
 class TestHttpTool:
     def test_an_empty_allowlist_produces_no_tool(self) -> None:
         """Advertising a capability that refuses every call wastes a generation and misleads."""
@@ -382,6 +442,20 @@ class TestHttpTool:
         (fetch,) = build_http_tool(allowed_hosts=["example.com"])
         with pytest.raises(ToolExecutionError):
             await fetch.execute({"url": "https://evil.test/"}, ctx)
+
+    async def test_an_allowlisted_host_rebound_to_a_private_address_is_refused(
+        self, ctx, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End-to-end through the real tool, not just the guard function directly: an allowlisted
+        host is still refused if its DNS resolves somewhere private -- proving the DNS check is
+        actually wired into ``fetch_url``, not just present and uncalled."""
+        monkeypatch.setattr(
+            socket, "getaddrinfo",
+            TestDnsRebindingGuard._fake_getaddrinfo("169.254.169.254"),
+        )
+        (fetch,) = build_http_tool(allowed_hosts=["example.com"])
+        with pytest.raises(ToolExecutionError):
+            await fetch.execute({"url": "https://example.com/"}, ctx)
 
 
 class TestWeatherTool:
