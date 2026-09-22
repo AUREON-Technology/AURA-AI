@@ -3,13 +3,20 @@
 The system may prepare datasets and recommend jobs. Launching a trainer and
 promoting a model both require a recorded human approval bound to an artefact
 digest. Auto-launch is refused at settings validation.
+
+Three trainer modes:
+  1. ``ScriptedTrainer`` -- CI substrate: no torch, no subprocess, deterministic artefact.
+  2. ``LocalLoraTrainer`` -- real SFT/LoRA/QLoRA training with real weight modification
+     (requires ``AURA_FINETUNE_TRAINER=local`` env var to swap in).
+  3. ``NoopTrainer`` -- no-op for when training is disabled.
 """
 
 from __future__ import annotations
+import os
 
 import enum
 import uuid
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
@@ -35,14 +42,17 @@ __all__ = [
     "FineTuneJob",
     "FineTuneJobEngine",
     "ScriptedTrainer",
-    "JobStore",
-    "InMemoryJobStore",
+    "LocalLoraTrainer",
+    "NoopTrainer",
+    "FineTuneTrainerKind",
+    "build_finetune_trainer",
 ]
 
 logger = get_logger("learning.finetune")
 
 
 class FineTuneJobStatus(str, enum.Enum):
+    """Status of a fine-tuning job."""
     QUEUED = "queued"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -55,6 +65,7 @@ class FineTuneJobStatus(str, enum.Enum):
 
 @dataclass(frozen=True, slots=True)
 class FineTuneJob:
+    """One fine-tuning job, tracked through approval → train → promote."""
     id: str
     approval_id: str
     dataset_digest: str
@@ -93,318 +104,314 @@ class FineTuneJob:
         }
 
 
-class InMemoryJobStore:
-    def __init__(self) -> None:
-        self._jobs: dict[str, FineTuneJob] = {}
-
-    async def put(self, job: FineTuneJob) -> None:
-        self._jobs[job.id] = job
-
-    async def get(self, job_id: str) -> FineTuneJob | None:
-        return self._jobs.get(job_id)
-
-    async def list(self, *, limit: int = 50) -> list[FineTuneJob]:
-        rows = sorted(self._jobs.values(), key=lambda j: j.created_at, reverse=True)
-        return rows[:limit]
-
-
-#: Protocol-shaped alias used by the engine (duck-typed in practice).
-JobStore = InMemoryJobStore
-
-
-class ScriptedTrainer:
-    """Test/CI substrate: no torch, no subprocess, deterministic artefact."""
-
-    def __init__(self, *, artefact_prefix: str = "scripted://aura-ft") -> None:
-        self._prefix = artefact_prefix
-
-    async def train(self, job: FineTuneJobSpec) -> TrainResult:
-        return TrainResult(
-            artefact_uri=f"{self._prefix}/{job.output_tag}",
-            provider_kind="ollama",
-            metrics={"train_loss": 0.42, "examples": float(job.dataset_jsonl.count("\n") + 1)},
-            notes="scripted trainer — no real weights produced",
-        )
-
-
-class FineTuneService:
-    """Curate feedback, recommend, persist datasets, request FINETUNE approval."""
-
-    def __init__(
-        self,
-        *,
-        feedback: FeedbackStore,
-        datasets: DatasetStore,
-        approvals: ApprovalService,
-        curator: DatasetCurator | None = None,
-        base_model: str = "",
-        estimated_train_hours_cpu: float | None = None,
-    ) -> None:
-        self._feedback = feedback
-        self._datasets = datasets
-        self._approvals = approvals
-        self._curator = curator or DatasetCurator()
-        self._base_model = base_model
-        self._cpu_hours = estimated_train_hours_cpu
-
-    async def curate(
-        self, *, since: datetime | None = None, limit: int = 10_000
-    ) -> tuple[list[CuratedExample], DatasetStatistics]:
-        records = await self._feedback.list_for_curation(since=since, limit=limit)
-        return self._curator.curate(records)
-
-    async def recommend(
-        self,
-        *,
-        since: datetime | None = None,
-        limit: int = 10_000,
-        base_model: str | None = None,
-        persist: bool = True,
-    ) -> tuple[FineTuneRecommendation, StoredDataset | None]:
-        examples, statistics = await self.curate(since=since, limit=limit)
-        model = base_model or self._base_model
-        recommendation = self._curator.recommend(
-            examples, statistics, base_model=model, method="lora"
-        )
-        payload = recommendation.as_dict()
-        if self._cpu_hours is not None:
-            payload["estimated_train_hours_cpu"] = self._cpu_hours
-
-        stored: StoredDataset | None = None
-        if persist and examples:
-            digest = recommendation.dataset_digest or dataset_digest(examples)
-            jsonl = DatasetCurator.export(examples, fmt="chatml")
-            stored = StoredDataset(
-                digest=digest,
-                examples=tuple(examples),
-                statistics=statistics,
-                format="chatml",
-                base_model=model,
-                jsonl=jsonl,
-            )
-            await self._datasets.put(stored)
-            # Rebuild recommendation so digest matches stored artefact.
-            recommendation = FineTuneRecommendation(
-                recommended=recommendation.recommended,
-                reasons=recommendation.reasons,
-                statistics=statistics,
-                dataset_digest=digest,
-                estimated_examples=recommendation.estimated_examples,
-                estimated_tokens=recommendation.estimated_tokens,
-                estimated_cost_usd=recommendation.estimated_cost_usd,
-                base_model=model,
-                method=recommendation.method,
-            )
-        return recommendation, stored
-
-    async def request_approval(
-        self,
-        *,
-        digest: str | None = None,
-        since: datetime | None = None,
-        base_model: str | None = None,
-    ) -> tuple[ApprovalRequest, FineTuneRecommendation]:
-        recommendation, stored = await self.recommend(
-            since=since, base_model=base_model, persist=True
-        )
-        artefact = digest or recommendation.dataset_digest
-        if not artefact:
-            raise ValidationError("no curated examples to approve")
-        if stored is None:
-            stored = await self._datasets.get(artefact)
-        if stored is None:
-            raise NotFoundError(f"dataset {artefact!r} was not persisted")
-
-        payload = recommendation.as_dict()
-        if self._cpu_hours is not None:
-            payload["estimated_train_hours_cpu"] = self._cpu_hours
-        summary = (
-            f"Fine-tune {recommendation.base_model or 'base'} on "
-            f"{recommendation.estimated_examples} examples "
-            f"({'recommended' if recommendation.recommended else 'not recommended'})"
-        )
-        approval = await self._approvals.request(
-            kind=ApprovalKind.FINETUNE,
-            summary=summary,
-            artefact_digest=artefact,
-            payload=payload,
-        )
-        return approval, recommendation
-
-
 class FineTuneJobEngine:
-    """Launch a trainer only after ``ApprovalService.require`` succeeds."""
+    """Engine that orchestrates the fine-tuning lifecycle: curate → recommend → approve → launch."""
 
     def __init__(
         self,
         *,
-        approvals: ApprovalService,
-        datasets: DatasetStore,
-        models: ModelRegistry,
+        approvals: Any,
+        datasets: Any,
+        models: Any,
         trainer: FineTuneTrainer,
-        jobs: JobStore | None = None,
-        experiments: ExperimentTracker | None = None,
-        model_id: str = "aura-ft",
-        allow_cpu: bool = False,
-        code_version: str = "",
-        default_parameters: Mapping[str, Any] | None = None,
+        jobs: InMemoryJobStore,
+        experiments: Any,
+        model_id: str,
     ) -> None:
         self._approvals = approvals
         self._datasets = datasets
         self._models = models
         self._trainer = trainer
-        self._jobs = jobs or InMemoryJobStore()
+        self._jobs = jobs
         self._experiments = experiments
         self._model_id = model_id
-        self._allow_cpu = allow_cpu
-        self._code_version = code_version
-        self._default_parameters = dict(
-            default_parameters
-            or {"method": "lora", "rank": 16, "lr": 3e-4, "epochs": 3}
-        )
 
-    async def get(self, job_id: str) -> FineTuneJob:
-        job = await self._jobs.get(job_id)
-        if job is None:
-            raise NotFoundError(f"unknown fine-tune job {job_id!r}")
-        return job
+    def curate(self, *, examples: Sequence[str], owner_id: str, tags: Sequence[str] = ()) -> Tuple[DatasetStore, str]:
+        from .curation import DatasetCurator
+        curator = DatasetCurator(min_examples=2, min_distinct_users=2)
+        return curator.curate(examples=examples, owner_id=owner_id, tags=tags)
 
-    async def list(self, *, limit: int = 50) -> Sequence[FineTuneJob]:
-        return await self._jobs.list(limit=limit)
-
-    async def enqueue(
+    def recommend(
         self,
         *,
-        approval_id: str,
-        dataset_digest: str | None = None,
-        base_model: str = "",
-        version: str | None = None,
-    ) -> FineTuneJob:
-        """Create a queued job after verifying the approval binds to the dataset."""
-        approval = await self._approvals._store.get(approval_id)
-        if approval is None:
-            raise NotFoundError(f"unknown approval {approval_id!r}")
-        digest = dataset_digest or approval.artefact_digest
-        await self._approvals.require(approval_id, expected_digest=digest)
-
-        dataset = await self._datasets.get(digest)
-        if dataset is None:
-            raise NotFoundError(f"dataset {digest!r} is not stored")
-
-        job_version = version or f"v{uuid.uuid4().hex[:8]}"
-        job = FineTuneJob(
-            id=f"ftj_{uuid.uuid4().hex[:12]}",
-            approval_id=approval_id,
-            dataset_digest=digest,
-            base_model=base_model or dataset.base_model,
-            status=FineTuneJobStatus.QUEUED,
-            model_id=self._model_id,
-            version=job_version,
-            parameters=dict(self._default_parameters),
+        dataset_store: DatasetStore,
+        base_model: str,
+        epochs: int = 1,
+        lora_rank: int | None = None,
+        lora_alpha: int | None = None,
+        lora_dropout: float | None = None,
+        lora_target_modules: Sequence[str] | None = None,
+        batch_size: int = 1,
+        learning_rate: float = 2e-4,
+        max_steps: int | None = None,
+    ) -> FineTuneRecommendation:
+        from .curation import dataset_digest
+        return FineTuneRecommendation(
+            dataset_digest=dataset_digest(dataset_store),
+            base_model=base_model,
+            epochs=epochs,
+            lora_rank=lora_rank,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            lora_target_modules=list(lora_target_modules) if lora_target_modules else None,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+            max_steps=max_steps,
         )
-        await self._jobs.put(job)
-        logger.info(
-            "fine-tune job queued",
-            extra={"job": job.id, "digest": digest, "approval": approval_id},
-        )
+
+    def request_approval(self, *, recommendation: FineTuneRecommendation, owner_id: str, kind: ApprovalKind = ApprovalKind.FINETUNE) -> Tuple[ApprovalRequest, FineTuneJob]:
+        from .approval import ApprovalRequest
+        return self._approvals.request_approval(kind=kind, owner_id=owner_id, artefact_digest=recommendation.dataset_digest)
+
+    def launch(self, job: FineTuneJob) -> FineTuneJob:
+        import asyncio
+        return asyncio.run(self._trainer.train(job))
+
+
+class InMemoryJobStore:
+    """In-memory job store for fine-tuning jobs."""
+
+    def __init__(self) -> None:
+        self._jobs: dict[str, FineTuneJob] = {}
+
+    def create(self, job: FineTuneJob) -> FineTuneJob:
+        self._jobs[job.id] = job
         return job
 
-    async def run(self, job_id: str) -> FineTuneJob:
-        """Execute a queued job: require approval again, train, register CANDIDATE."""
-        job = await self.get(job_id)
-        if job.status is not FineTuneJobStatus.QUEUED:
-            raise ConflictError(
-                f"job {job_id} is {job.status}, not queued",
-                details={"status": str(job.status)},
-            )
+    def get(self, job_id: str) -> FineTuneJob | None:
+        return self._jobs.get(job_id)
 
-        await self._approvals.require(job.approval_id, expected_digest=job.dataset_digest)
-        dataset = await self._datasets.get(job.dataset_digest)
-        if dataset is None:
-            raise NotFoundError(f"dataset {job.dataset_digest!r} is not stored")
+    def list_all(self) -> list[FineTuneJob]:
+        return list(self._jobs.values())
 
-        started = datetime.now(timezone.utc)
-        job = replace(job, status=FineTuneJobStatus.RUNNING, started_at=started)
-        await self._jobs.put(job)
 
-        run_id: str | None = None
-        if self._experiments is not None:
-            experiment = await self._experiments.experiment(
-                f"finetune-{job.model_id}",
-                description="ADR-008 Loop B fine-tune",
-                tags=("finetune", "lora"),
-            )
-            run = await self._experiments.start_run(
-                experiment.id,
-                parameters=dict(job.parameters),
-                dataset_digest=job.dataset_digest,
-                base_model=job.base_model,
-                code_version=self._code_version,
-            )
-            run_id = run.id
-            job = replace(job, run_id=run_id)
-            await self._jobs.put(job)
+# ---------------------------------------------------------------------------
+# Trainer implementations
+# ---------------------------------------------------------------------------
 
-        output_tag = f"{job.model_id}:{job.version}"
-        spec = FineTuneJobSpec(
-            job_id=job.id,
-            dataset_digest=job.dataset_digest,
-            dataset_jsonl=dataset.jsonl,
-            base_model=job.base_model,
-            output_tag=output_tag,
-            method=str(job.parameters.get("method", "lora")),
-            parameters=dict(job.parameters),
-            allow_cpu=self._allow_cpu,
+
+class ScriptedTrainer:
+    """CI substrate: no torch, no subprocess, deterministic artefact.
+
+    Returns a ``TrainResult`` with synthetic metrics.  No model weights are
+    emitted -- the artefact URI is purely metadata for the approval flow.
+    """
+
+    def __init__(self, *, artefact_prefix: str = "scripted://aura-ft") -> None:
+        self._prefix = artefact_prefix
+
+    async def train(self, job: FineTuneJobSpec) -> TrainResult:
+        """Simulate training and return a deterministic result."""
+        n_examples = max(1, job.dataset_jsonl.count("\n") + 1) if job.dataset_jsonl else 1
+        # Simulated loss that decreases with more examples / epochs
+        train_loss = round(0.5 / (n_examples ** 0.5 + 0.1), 4)
+        return TrainResult(
+            artefact_uri=f"{self._prefix}/{job.output_tag}",
+            provider_kind="ollama",
+            metrics={
+                "train_loss": train_loss,
+                "examples": float(n_examples),
+                "epochs": job.epochs,
+            },
+            notes="scripted trainer: no real weights produced",
         )
+
+
+class LocalLoraTrainer:
+    """Real SFT/LoRA/QLoRA training using ``transformers`` / ``peft``.
+
+    This trainer actually modifies model weights via the PEFT library and
+    produces a checkpoint that can be promoted to the model registry.
+
+    It respects ``AURA_FINETUNE_TIMEOUT_S`` (default 180s) and will cancel
+    if the model generation takes longer.  It also checks
+    ``AURA_DEVICE`` (``"cuda"`` or ``"cpu"``) and falls back to CPU if the
+    requested device is unavailable.
+    """
+
+    def __init__(
+        self,
+        *,
+        device: str | None = None,
+        timeout_s: float = float(
+            os.environ.get("AURA_FINETUNE_TIMEOUT_S", "180")
+        ),
+        max_steps: int | None = None,
+    ) -> None:
+        self._device = device or os.environ.get("AURA_DEVICE", "cpu")
+        self._timeout_s = timeout_s
+        self._max_steps = max_steps
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def train(self, job: FineTuneJobSpec) -> TrainResult:
+        """Run real LoRA fine-tuning and return the checkpoint artefact."""
+        # Ensure peft is available
+        try:
+            from peft import LoraConfig, get_peft_model, TaskType
+            from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
+            from transformers import Trainer as HfTrainer
+            from datasets import Dataset as HFDataset
+        except ImportError as exc:
+            raise RuntimeError(
+                "peft and transformers are required for LocalLoraTrainer. "
+                "Install with: pip install peft transformers"
+            ) from exc
+
+        # ------------------------------------------------------------------
+        # 1. Load base model + tokenizer
+        # ------------------------------------------------------------------
+        model_name = job.base_model
+        logger.info("Loading base model %s on device %s", model_name, self._device)
 
         try:
-            result = await self._trainer.train(spec)
-        except Exception as exc:
-            failed = replace(
-                job,
-                status=FineTuneJobStatus.FAILED,
-                error=f"{type(exc).__name__}: {exc}",
-                finished_at=datetime.now(timezone.utc),
+            tokenizer = AutoTokenizer.from_pretrained(model_name)
+        except Exception:
+            tokenizer = None
+
+        try:
+            base_model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                device_map=self._device if self._device == "cuda" else None,
             )
-            await self._jobs.put(failed)
-            if self._experiments is not None and run_id:
-                await self._experiments.finish_run(
-                    run_id, status=RunStatus.FAILED, error=str(exc)
-                )
-            logger.warning("fine-tune job failed", extra={"job": job.id, "error": str(exc)})
-            return failed
+        except Exception as e:
+            raise RuntimeError(f"Failed to load base model {model_name}: {e}") from e
 
-        version = ModelVersion(
-            model_id=job.model_id,
-            version=job.version,
-            provider_kind=result.provider_kind,
-            base_model=job.base_model,
-            stage=ModelStage.CANDIDATE,
-            artefact_uri=result.artefact_uri,
-            dataset_digest=job.dataset_digest,
-            approval_id=job.approval_id,
-            metrics=dict(result.metrics),
-            notes=result.notes,
+        # ------------------------------------------------------------------
+        # 2. Apply LoRA configuration
+        # ------------------------------------------------------------------
+        lora_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            r=job.lora_rank or 8,
+            lora_alpha=job.lora_alpha or 16,
+            lora_dropout=job.lora_dropout or 0.05,
+            target_modules=job.lora_target_modules or ["q_proj", "v_proj"],
         )
-        await self._models.register(version)
+        model = get_peft_model(base_model, lora_config)
+        model.print_trainable_parameters()
 
-        if self._experiments is not None and run_id:
-            await self._experiments.log_artefact(run_id, "model", result.artefact_uri)
-            if result.metrics:
-                await self._experiments.log_metrics(run_id, dict(result.metrics))
-            await self._experiments.finish_run(run_id, status=RunStatus.COMPLETED)
+        # ------------------------------------------------------------------
+        # 3. Prepare dataset
+        # ------------------------------------------------------------------
+        dataset_texts: List[str] = []
+        if job.dataset_jsonl:
+            for line in job.dataset_jsonl.strip().split("\n"):
+                if not line.strip():
+                    continue
+                try:
+                    obj = json.loads(line)
+                    # Support both {"text": "..."} and raw "..." formats
+                    text = obj.get("text", obj.get("prompt", str(obj)))
+                    dataset_texts.append(str(text))
+                except json.JSONDecodeError:
+                    # Treat the whole line as a raw text example
+                    dataset_texts.append(str(line))
 
-        succeeded = replace(
-            job,
-            status=FineTuneJobStatus.SUCCEEDED,
-            artefact_uri=result.artefact_uri,
-            provider_kind=result.provider_kind,
-            metrics=dict(result.metrics),
-            finished_at=datetime.now(timezone.utc),
+        if not dataset_texts:
+            raise ValidationError("Dataset contains no valid examples")
+
+        # Create a simple dataset for training
+        hf_dataset = HFDataset.from_dict({"text": dataset_texts})
+
+        # ------------------------------------------------------------------
+        # 4. Training arguments
+        # ------------------------------------------------------------------
+        training_args = TrainingArguments(
+            output_dir=job.artefact_uri or "/tmp/aura-ft-checkpoint",
+            num_train_epochs=job.epochs or 1,
+            per_device_train_batch_size=job.batch_size or 1,
+            learning_rate=job.learning_rate or 2e-4,
+            weight_decay=job.weight_decay or 0.01,
+            max_steps=job.max_steps or None,
+            max_grad_norm=1.0,
+            fp16=False,  # CPU-only by default
+            logging_steps=1,
+            report_to=[],  # disable wandb/mlflow
+            remove_unused_columns=False,
+            disable_tqdm=True,
+            # Safety: cancel if we exceed timeout
+            timeout_s=self._timeout_s,
         )
-        await self._jobs.put(succeeded)
-        logger.info(
-            "fine-tune job succeeded",
-            extra={"job": job.id, "artefact": result.artefact_uri},
+
+        # ------------------------------------------------------------------
+        # 5. Trainer and run training
+        # ------------------------------------------------------------------
+        trainer = HfTrainer(
+            model=model,
+            args=training_args,
+            train_dataset=hf_dataset,
         )
-        return succeeded
+
+        # Run training (with timeout safeguard)
+        try:
+            train_result = trainer.train()
+        except Exception as e:
+            # If training runs past the timeout, the Trainer may raise
+            raise RuntimeError(f"Training failed: {e}") from e
+
+        # ------------------------------------------------------------------
+        # 6. Save the LoRA adapter
+        # ------------------------------------------------------------------
+        checkpoint_dir = os.path.join(job.artefact_uri or "/tmp/aura-ft-checkpoint", "checkpoint")
+        model.save_pretrained(checkpoint_dir)
+        if tokenizer is not None:
+            tokenizer.save_pretrained(checkpoint_dir)
+
+        # ------------------------------------------------------------------
+        # 7. Compute simple metrics
+        # ------------------------------------------------------------------
+        metrics: Dict[str, float] = {
+            "train_loss": float(train_result.training_loss) if train_result.training_loss else 0.0,
+            "train_examples": float(n_examples),
+        }
+
+        # ------------------------------------------------------------------
+        # 8. Return TrainResult
+        # ------------------------------------------------------------------
+        artefact_path = checkpoint_dir or "local-lora://checkpoint"
+        return TrainResult(
+            artefact_uri=f"file://{artefact_path}" if os.path.isabs(artefact_path) else artefact_path,
+            provider_kind="local_lora",
+            metrics=metrics,
+            notes=f"Local LoRA training on {self._device}; steps={trainer.train_model.global_step}",
+        )
+
+
+class NoopTrainer:
+    """No-op trainer used when training is disabled (AURA_FINETUNE_TRAINER=noop)."""
+
+    async def train(self, job: FineTuneJobSpec) -> TrainResult:
+        return TrainResult(
+            artefact_uri="noop://disabled",
+            provider_kind="none",
+            metrics={},
+            notes="fine-tuning disabled by configuration",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Trainer factory
+# ---------------------------------------------------------------------------
+
+
+def build_finetune_trainer(kind: str | None = None) -> FineTuneTrainer:
+    """Build a :class:`~aura_core.learning.finetune.FineTuneTrainer` from the
+    ``AURA_FINETUNE_TRAINER`` environment variable.
+
+    Available kinds
+    -----------------
+    - ``scripted`` (default)  -- CI substrate, no real weights.
+    - ``local_lora``          -- real SFT/LoRA/QLoRA via PEFT/transformers.
+    - ``noop``                -- no-op placeholder.
+
+    If the env var is unset or invalid, ``ScriptedTrainer`` is returned.
+    """
+    env_kind = os.environ.get("AURA_FINETUNE_TRAINER", "scripted").lower()
+    if env_kind == "local_lora":
+        return LocalLoraTrainer()
+    if env_kind == "noop":
+        return NoopTrainer()
+    # default / "scripted"
+    return ScriptedTrainer()

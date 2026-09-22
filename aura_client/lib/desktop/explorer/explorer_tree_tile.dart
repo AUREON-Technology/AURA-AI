@@ -7,11 +7,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/explorer/explorer_service.dart';
+import 'package:aura_client/desktop/state/state_notifiers.dart';
 
 class ExplorerTreeTile extends ConsumerWidget {
   const ExplorerTreeTile({
     super.key,
     required this.entry,
+    required this.workspaceId,
     required this.workspaceRoot,
     required this.grantedRoots,
     required this.ideDensity,
@@ -19,6 +21,7 @@ class ExplorerTreeTile extends ConsumerWidget {
   });
 
   final FileSystemEntry entry;
+  final String workspaceId;
   final String workspaceRoot;
   final List<String> grantedRoots;
   final AuraIdeDensity ideDensity;
@@ -31,6 +34,7 @@ class ExplorerTreeTile extends ConsumerWidget {
     if (!entry.isDirectory) {
       return _FileTile(
         entry: entry,
+        workspaceId: workspaceId,
         depth: depth,
         ideDensity: ideDensity,
         palette: palette,
@@ -39,6 +43,7 @@ class ExplorerTreeTile extends ConsumerWidget {
 
     return _DirectoryTile(
       entry: entry,
+      workspaceId: workspaceId,
       workspaceRoot: workspaceRoot,
       grantedRoots: grantedRoots,
       ideDensity: ideDensity,
@@ -48,27 +53,29 @@ class ExplorerTreeTile extends ConsumerWidget {
   }
 }
 
-class _FileTile extends StatelessWidget {
+class _FileTile extends ConsumerWidget {
   const _FileTile({
     required this.entry,
+    required this.workspaceId,
     required this.depth,
     required this.ideDensity,
     required this.palette,
   });
 
   final FileSystemEntry entry;
+  final String workspaceId;
   final int depth;
   final AuraIdeDensity ideDensity;
   final AuraPalette palette;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Padding(
       padding: EdgeInsets.only(left: depth * ideDensity.treeRowHeight),
       child: SizedBox(
         height: ideDensity.treeRowHeight,
         child: InkWell(
-          onTap: () => _openFile(context, entry),
+          onTap: () => _openFile(ref),
           borderRadius: BorderRadius.circular(AuraRadius.sm),
           child: Row(
             children: [
@@ -96,8 +103,15 @@ class _FileTile extends StatelessWidget {
     );
   }
 
-  void _openFile(BuildContext context, FileSystemEntry entry) {
-    // TODO: Open in editor via EditorNotifier
+  /// Mirrors `desktop_shell.dart`'s `_showQuickOpen` open-file call exactly: `entry.path` is
+  /// already workspace-relative (see `FileSystemEntry.fromIO`/`.fromHostd`), so it doubles as
+  /// both the tab id and the path.
+  void _openFile(WidgetRef ref) {
+    ref.read(editorNotifierProvider.notifier).openTab(
+          tabId: entry.path,
+          path: entry.path,
+          workspaceId: workspaceId,
+        );
   }
 
   IconData _getFileIcon(String? ext) {
@@ -121,6 +135,7 @@ class _FileTile extends StatelessWidget {
 class _DirectoryTile extends ConsumerStatefulWidget {
   const _DirectoryTile({
     required this.entry,
+    required this.workspaceId,
     required this.workspaceRoot,
     required this.grantedRoots,
     required this.ideDensity,
@@ -129,6 +144,7 @@ class _DirectoryTile extends ConsumerStatefulWidget {
   });
 
   final FileSystemEntry entry;
+  final String workspaceId;
   final String workspaceRoot;
   final List<String> grantedRoots;
   final AuraIdeDensity ideDensity;
@@ -268,6 +284,7 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
       children: entries.map((entry) {
         return ExplorerTreeTile(
           entry: entry,
+          workspaceId: widget.workspaceId,
           workspaceRoot: widget.workspaceRoot,
           grantedRoots: widget.grantedRoots,
           ideDensity: ideDensity,
