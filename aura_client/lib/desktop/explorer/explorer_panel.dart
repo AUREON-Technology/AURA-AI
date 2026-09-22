@@ -10,11 +10,21 @@ import 'package:aura_client/desktop/explorer/explorer_tree_tile.dart';
 import 'package:aura_client/desktop/explorer/explorer_service.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 
-class ExplorerPanel extends ConsumerWidget {
+class ExplorerPanel extends ConsumerStatefulWidget {
   const ExplorerPanel({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ExplorerPanel> createState() => _ExplorerPanelState();
+}
+
+class _ExplorerPanelState extends ConsumerState<ExplorerPanel> {
+  // Lets the toolbar's Refresh button reach into the (stateful) tree below and re-fetch on
+  // demand, without the tree re-fetching on every unrelated rebuild -- see _ExplorerTree's own
+  // doc comment for the bug this replaced.
+  final _treeKey = GlobalKey<_ExplorerTreeState>();
+
+  @override
+  Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
     final ideDensity = context.ideDensity;
     final workspace = ref.watch(workspaceNotifierProvider).activeWorkspace;
@@ -66,7 +76,10 @@ class ExplorerPanel extends ConsumerWidget {
                 ),
               IconButton(
                 icon: Icon(Icons.refresh, size: 16, color: palette.textSecondary),
-                onPressed: () => ref.invalidate(explorerServiceProvider),
+                onPressed: () {
+                  ref.invalidate(explorerServiceProvider);
+                  _treeKey.currentState?.reload();
+                },
                 tooltip: 'Refresh',
               ),
             ],
@@ -75,6 +88,8 @@ class ExplorerPanel extends ConsumerWidget {
         // Tree
         Expanded(
           child: _ExplorerTree(
+            key: _treeKey,
+            workspaceId: workspace.id,
             workspaceRoot: workspace.rootPath,
             grantedRoots: hostState.grantedRoots,
             ideDensity: ideDensity,
@@ -85,56 +100,96 @@ class ExplorerPanel extends ConsumerWidget {
   }
 }
 
-class _ExplorerTree extends ConsumerWidget {
+/// Loads the workspace's top-level directory listing once per [workspaceRoot] rather than on
+/// every rebuild. The previous implementation called `service.listDirectory(...)` directly inside
+/// a stateless `build()` and fed the resulting (always-new) `Future` straight to a `FutureBuilder`
+/// -- since `ExplorerPanel` also watches `hostNotifierProvider` (which polls daemon status every
+/// few seconds), that meant a brand-new `Future` on every poll tick, which `FutureBuilder` treats
+/// as a fresh async operation: the whole tree reset to its loading spinner and re-fetched every
+/// few seconds, discarding scroll position and making a click land on a widget mid-teardown. This
+/// mirrors the explicit "refresh only when the key changes" guard `GitNotifier`/
+/// `DiagnosticsNotifier` already use for exactly this reason.
+class _ExplorerTree extends ConsumerStatefulWidget {
   const _ExplorerTree({
+    super.key,
+    required this.workspaceId,
     required this.workspaceRoot,
     required this.grantedRoots,
     required this.ideDensity,
   });
 
+  final String workspaceId;
   final String workspaceRoot;
   final List<String> grantedRoots;
   final AuraIdeDensity ideDensity;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_ExplorerTree> createState() => _ExplorerTreeState();
+}
+
+class _ExplorerTreeState extends ConsumerState<_ExplorerTree> {
+  DirectoryListing? _listing;
+  bool _loading = true;
+  String? _error;
+  String? _loadedForRoot;
+
+  @override
+  void initState() {
+    super.initState();
+    _maybeLoad();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ExplorerTree oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.workspaceRoot != widget.workspaceRoot) {
+      _loadedForRoot = null;
+      _maybeLoad();
+    }
+  }
+
+  void _maybeLoad() {
+    if (_loadedForRoot == widget.workspaceRoot) return;
+    _loadedForRoot = widget.workspaceRoot;
+    reload();
+  }
+
+  Future<void> reload() async {
+    if (mounted) setState(() => _loading = true);
+    final service = ref.read(explorerServiceProvider);
+    final listing = await service.listDirectory(relativePath: '', grantedRoots: widget.grantedRoots);
+    if (!mounted) return;
+    setState(() {
+      _listing = listing;
+      _error = listing.error;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
-    final service = ref.watch(explorerServiceProvider);
 
-    return FutureBuilder<DirectoryListing>(
-      future: service.listDirectory(
-        relativePath: '',
-        grantedRoots: grantedRoots,
-      ),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return Center(
-            child: CircularProgressIndicator(color: palette.brand),
-          );
-        }
+    if (_loading && _listing == null) {
+      return Center(child: CircularProgressIndicator(color: palette.brand));
+    }
 
-        final listing = snapshot.data;
-        if (listing?.error != null) {
-          return _ErrorView(
-            message: listing!.error!,
-            onRetry: () => ref.invalidate(explorerServiceProvider),
-            palette: palette,
-          );
-        }
+    if (_error != null) {
+      return _ErrorView(message: _error!, onRetry: reload, palette: palette);
+    }
 
-        final entries = listing?.entries ?? [];
-        return ListView.builder(
-          itemCount: entries.length,
-          itemBuilder: (context, index) {
-            final entry = entries[index];
-            return ExplorerTreeTile(
-              entry: entry,
-              workspaceRoot: workspaceRoot,
-              grantedRoots: grantedRoots,
-              ideDensity: ideDensity,
-              depth: 0,
-            );
-          },
+    final entries = _listing?.entries ?? [];
+    return ListView.builder(
+      itemCount: entries.length,
+      itemBuilder: (context, index) {
+        final entry = entries[index];
+        return ExplorerTreeTile(
+          entry: entry,
+          workspaceId: widget.workspaceId,
+          workspaceRoot: widget.workspaceRoot,
+          grantedRoots: widget.grantedRoots,
+          ideDensity: widget.ideDensity,
+          depth: 0,
         );
       },
     );

@@ -349,12 +349,27 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
   /// process cannot survive an app restart (ConPTY dies with the session
   /// that created it), so every restored session comes back `isRunning:
   /// false` regardless of what was last saved -- never a silent fake-resume.
+  ///
+  /// Runs off the `WorkspaceOpened` event, which fires around the same time
+  /// `TerminalView`'s auto-start logic schedules a brand-new live [start] for
+  /// that same workspace on the next frame -- there is no ordering guarantee
+  /// between this DB read and that call. Unconditionally replacing `state`
+  /// here (as this used to do) meant that whichever finished second won,
+  /// silently wiping out either a just-started live session or -- since
+  /// `state.sessions` spans every open workspace, not just this one -- every
+  /// *other* workspace's sessions too. Bailing out whenever a session for
+  /// [workspaceId] already exists (checked both before and after the await)
+  /// makes this idempotent against that race: a live session, once present,
+  /// always wins over restoring stale scrollback on top of it.
   Future<void> _loadSession(String workspaceId) async {
+    if (state.sessions.any((s) => s.workspaceId == workspaceId)) return;
     final row = await (_db.select(_db.desktopTerminalState)
           ..where((t) => t.workspaceId.equals(workspaceId)))
         .getSingleOrNull();
+    if (state.sessions.any((s) => s.workspaceId == workspaceId)) return;
+    final otherSessions = state.sessions.where((s) => s.workspaceId != workspaceId).toList();
     if (row == null) {
-      state = const TerminalState();
+      state = state.copyWith(sessions: otherSessions);
       return;
     }
     try {
@@ -379,9 +394,12 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
         // instead of showing the raw escape bytes as literal text.
         _terminalFor(session.id, cols: session.cols, rows: session.rows).write(session.output);
       }
-      state = TerminalState(sessions: sessions, activeSessionId: sessions.firstOrNull?.id);
+      state = TerminalState(
+        sessions: [...otherSessions, ...sessions],
+        activeSessionId: sessions.firstOrNull?.id ?? state.activeSessionId,
+      );
     } catch (_) {
-      state = const TerminalState();
+      state = state.copyWith(sessions: otherSessions);
     }
   }
 
