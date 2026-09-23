@@ -14,6 +14,7 @@ production swaps them by configuration.
 from __future__ import annotations
 
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from .adapters.memory_stores import (
@@ -171,6 +172,12 @@ class Container:
 
         self.prompts = build_default_registry()
         self.agents = build_default_agent_registry()
+
+        # ML Service (PyTorch/TensorFlow integration)
+        self.ml_service = create_ml_service(
+            checkpoint_dir=settings.learning.checkpoint_dir or "/tmp/aura-checkpoints",
+        )
+
         self.safety = SafetyPipeline.from_settings(
             settings.safety, metrics=self.metrics, event_bus=self.events, audit=self.audit
         )
@@ -392,6 +399,7 @@ class Container:
         )
         from .mlops.experiments import ExperimentTracker, InMemoryExperimentStore
         from .mlops.model_registry import InMemoryModelStore, ModelRegistry
+        from .adapters.ml import create_ml_service, CheckpointManager
 
         use_postgres = settings.infrastructure.document_backend == "postgres"
         if use_postgres:
@@ -541,9 +549,12 @@ class Container:
             from .adapters.local_lora_trainer import LocalLoraTrainer
 
             return LocalLoraTrainer(
-                ollama=self._ollama_provider(),
+                ml_service=self.ml_service,
+                experiment_tracker=self.experiments,
+                model_registry=self.models,
                 allow_cpu=self.settings.learning.finetune_allow_cpu,
                 cpu_base_allowlist=self.settings.learning.finetune_cpu_base_allowlist,
+                work_dir=Path(self.settings.learning.checkpoint_dir or "/tmp/aura-finetune"),
             )
         from .learning.finetune import ScriptedTrainer
 
