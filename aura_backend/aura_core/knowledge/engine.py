@@ -17,10 +17,12 @@ which is how a model ends up grounding a confident answer in noise.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
-from typing import Any, Mapping, Sequence
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Hashable, Mapping, Sequence
 
-from ..domain.errors import EmbeddingError, KnowledgeError, ValidationError
+from ..domain.errors import ConflictError, EmbeddingError, KnowledgeError, ValidationError
 from ..domain.events import DocumentIngested, DocumentSuperseded
 from ..domain.identifiers import DocumentId, UserId
 from ..domain.knowledge import (
@@ -41,7 +43,7 @@ from .documents import ExtractedBlock
 from .index_manager import IndexManager
 from .retrieval import BM25Index, HeuristicReranker, reciprocal_rank_fusion
 
-__all__ = ["KnowledgeEngine", "IngestionResult"]
+__all__ = ["KnowledgeEngine", "IngestionResult", "derive_document_id"]
 
 logger = get_logger("knowledge")
 
@@ -49,6 +51,43 @@ logger = get_logger("knowledge")
 #: rather than "copy everything not already a field": the payload also carries the content and the
 #: owner, and echoing those back into metadata would duplicate them on every retrieved chunk.
 _PROVENANCE_KEYS = ("modality", "page", "needs_ocr")
+
+
+def derive_document_id(title: str, owner_id: UserId | None) -> DocumentId:
+    """The id a document gets when the caller does not name one.
+
+    A pure function of ``(owner, title)``. It used to be ``hash(title)``, which is salted per
+    interpreter (``PYTHONHASHSEED``): the same upload retried on another gateway worker, a Celery
+    worker, or after a restart got a different id, so the retry could neither find nor overwrite
+    the first attempt's chunks -- and, being unscoped, two users uploading "Notes" collided on one
+    id and the second upload superseded the first user's document.
+    """
+    scope = owner_id.value if owner_id is not None else ""
+    digest = hashlib.sha256(f"{scope}\x00{title}".encode("utf-8")).hexdigest()[:20]
+    return DocumentId(f"doc-{digest}")
+
+
+class _KeyedLocks:
+    """One ``asyncio.Lock`` per key, dropped once nobody holds or awaits it."""
+
+    def __init__(self) -> None:
+        self._locks: dict[Hashable, tuple[asyncio.Lock, int]] = {}
+
+    @asynccontextmanager
+    async def hold(self, key: Hashable) -> AsyncIterator[None]:
+        lock, users = self._locks.get(key, (None, 0))
+        if lock is None:
+            lock = asyncio.Lock()
+        self._locks[key] = (lock, users + 1)
+        try:
+            async with lock:
+                yield
+        finally:
+            lock, users = self._locks[key]
+            if users <= 1:
+                del self._locks[key]
+            else:
+                self._locks[key] = (lock, users - 1)
 
 
 class IngestionResult:
@@ -124,6 +163,14 @@ class KnowledgeEngine:
         self._lexical = BM25Index()
         self._lexical_owner: dict[str, str] = {}
 
+        # Serialises the check-then-write section of `ingest` per content hash and per document
+        # id. Without it, concurrent duplicate submissions (a double tap, a client retry racing its
+        # original) all pass the content-hash check before any of them writes, and concurrent new
+        # versions of one document all compute the same next version number and overwrite each
+        # other. In-process only: across gateway workers the `Idempotency-Key` header is what
+        # absorbs a retried request (roadmap P1.4).
+        self._ingest_locks = _KeyedLocks()
+
     # -- ingestion ---------------------------------------------------------------------
 
     async def ingest(
@@ -163,16 +210,38 @@ class KnowledgeEngine:
                 details={"limit_bytes": self._max_bytes},
             )
 
-        doc_id = document_id or DocumentId(f"doc-{abs(hash(title)) % 10**12}")
+        doc_id = document_id or derive_document_id(title, owner_id)
 
-        # Idempotency on content hash. Without this the nightly refresh creates a new version of
-        # every unchanged document each night, which multiplies storage and forces a needless
-        # reindex (ADR-008 step 1).
         candidate = Document(
             id=doc_id, version=1, title=title, content=text, source_type=source_type,
             source_uri=source_uri, owner_id=owner_id, trust_tier=trust_tier,
             language=language, metadata=dict(metadata or {}),
         )
+        owner_key = owner_id.value if owner_id is not None else None
+        # Always hash-lock first, then id-lock: one global acquisition order, so two ingests can
+        # never each hold the lock the other is waiting for.
+        async with self._ingest_locks.hold(("hash", owner_key, candidate.content_hash)):
+            async with self._ingest_locks.hold(("document", doc_id.value)):
+                return await self._ingest_serialised(
+                    candidate, text=text, segments=segments, metadata=metadata,
+                    started=started,
+                )
+
+    async def _ingest_serialised(
+        self,
+        candidate: Document,
+        *,
+        text: str,
+        segments: Sequence[ExtractedBlock] | None,
+        metadata: Mapping[str, Any] | None,
+        started: float,
+    ) -> IngestionResult:
+        doc_id, owner_id, title = candidate.id, candidate.owner_id, candidate.title
+        source_type = candidate.source_type
+
+        # Idempotency on content hash. Without this the nightly refresh creates a new version of
+        # every unchanged document each night, which multiplies storage and forces a needless
+        # reindex (ADR-008 step 1).
         existing_by_hash = await self._documents.get_by_hash(
             candidate.content_hash, owner_id=owner_id
         )
@@ -184,6 +253,13 @@ class KnowledgeEngine:
             )
 
         previous = await self._documents.get(doc_id)
+        if previous is not None and previous.owner_id != owner_id:
+            # `get` is not owner-scoped, so without this an explicit `document_id` naming someone
+            # else's (or a global) document would become a new version of it -- overwriting their
+            # content with the caller's and leaving the result readable by the original owner.
+            raise ConflictError(
+                "document_id is already in use", details={"document_id": doc_id.value}
+            )
         document = (
             previous.next_version(
                 text,
@@ -366,7 +442,10 @@ class KnowledgeEngine:
 
     async def delete_document(self, document_id: DocumentId, *, owner_id: UserId | None) -> int:
         document = await self._documents.get(document_id)
-        if document is None:
+        if document is None or document.owner_id != owner_id:
+            # Someone else's document is reported exactly like an absent one. Checked here, not
+            # left to `tombstone`'s owner filter: the vector delete below runs first, and used to
+            # strip another user's chunks from the index even though their row survived.
             return 0
         identity = await self._indexes.resolve_for_read()
         chunks = await self._documents.chunks_for(document_id, document.version)
