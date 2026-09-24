@@ -713,6 +713,10 @@ class SecuritySettings:
     audit_enabled: bool = True
     trusted_proxy_count: int = 1
     model_allowlist: tuple[str, ...] = ()
+    #: `Idempotency-Key` (roadmap P1.4): how long a completed key replays its response, and how
+    #: long an in-progress claim holds before a retry may assume its holder died and re-run.
+    idempotency_ttl_hours: int = 24
+    idempotency_lease_s: int = 900
 
     @classmethod
     def from_env(cls) -> "SecuritySettings":
@@ -730,6 +734,8 @@ class SecuritySettings:
             audit_enabled=_bool("AUDIT_ENABLED", True),
             trusted_proxy_count=_int("TRUSTED_PROXY_COUNT", 1, minimum=0, maximum=5),
             model_allowlist=_list("MODEL_ALLOWLIST"),
+            idempotency_ttl_hours=_int("IDEMPOTENCY_TTL_HOURS", 24, minimum=1, maximum=24 * 30),
+            idempotency_lease_s=_int("IDEMPOTENCY_LEASE_S", 900, minimum=30, maximum=86_400),
         )
 
 

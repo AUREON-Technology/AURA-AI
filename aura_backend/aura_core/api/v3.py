@@ -170,6 +170,14 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         except AuraError as exc:
             raise HTTPException(status_code=exc.http_status, detail=exc.to_dict()) from exc
 
+    # Optional `Idempotency-Key` support (roadmap P1.4; see api/idempotency.py). Set before any
+    # route is declared: APIRouter reads `route_class` at decoration time. A route opts in with
+    # `dependencies=idempotent`; without the header the route behaves exactly as before.
+    from .idempotency import build_idempotency
+
+    router.route_class, _idempotency_guard = build_idempotency(container, principal=principal)
+    idempotent = [_idempotency_guard]
+
     async def enforce_rate_limit(request: Request, caller: Principal, route_class: str) -> None:
         if rate_limiter is None or not settings.security.rate_limit_enabled:
             return
@@ -265,7 +273,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- chat --------------------------------------------------------------------------
 
-    @router.post("/chat")
+    @router.post("/chat", dependencies=idempotent)
     async def chat(
         request: Request,
         payload: ChatRequest,
@@ -419,7 +427,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- knowledge ---------------------------------------------------------------------
 
-    @router.post("/knowledge/documents")
+    @router.post("/knowledge/documents", dependencies=idempotent)
     async def ingest_document(
         request: Request, payload: IngestRequest, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -446,7 +454,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
-    @router.post("/knowledge/documents/upload")
+    @router.post("/knowledge/documents/upload", dependencies=idempotent)
     async def upload_document(
         request: Request,
         file: UploadFile = File(...),
@@ -528,7 +536,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
-    @router.delete("/knowledge/documents/{document_id}")
+    @router.delete("/knowledge/documents/{document_id}", dependencies=idempotent)
     async def delete_document(
         request: Request, document_id: str, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -541,7 +549,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             await container.cag.on_document_changed(doc_id, owner_id=caller.user_id)
         return JSONResponse(content={"deleted": True, "chunks_removed": removed})
 
-    @router.post("/knowledge/documents/{document_id}/cag-pin")
+    @router.post("/knowledge/documents/{document_id}/cag-pin", dependencies=idempotent)
     async def pin_cag_document(
         request: Request, document_id: str, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -563,7 +571,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
-    @router.delete("/knowledge/documents/{document_id}/cag-pin")
+    @router.delete("/knowledge/documents/{document_id}/cag-pin", dependencies=idempotent)
     async def unpin_cag_document(
         request: Request, document_id: str, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -729,7 +737,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
-    @router.post("/memory")
+    @router.post("/memory", dependencies=idempotent)
     async def write_memory(
         request: Request, payload: MemoryWriteRequest, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -745,7 +753,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         )
         return JSONResponse(content={"id": record.id.value, "content": record.content})
 
-    @router.delete("/memory/{memory_id}")
+    @router.delete("/memory/{memory_id}", dependencies=idempotent)
     async def delete_memory(
         request: Request, memory_id: str, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -761,7 +769,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- feedback ----------------------------------------------------------------------
 
-    @router.post("/feedback")
+    @router.post("/feedback", dependencies=idempotent)
     async def submit_feedback(
         request: Request, payload: FeedbackRequest, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -883,7 +891,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
-    @router.delete("/engineering/workspaces/{workspace_id}")
+    @router.delete("/engineering/workspaces/{workspace_id}", dependencies=idempotent)
     async def delete_agent_workspace(
         workspace_id: str, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -968,7 +976,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
-    @router.post("/admin/index/rebuild")
+    @router.post("/admin/index/rebuild", dependencies=idempotent)
     async def rebuild_index(
         request: Request, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -1027,6 +1035,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         require_admin=require_admin,
         require_super_admin=require_super_admin,
         audit_admin=audit_admin,
+        idempotent=idempotent,
         Body=Body,
         Depends=Depends,
         HTTPException=HTTPException,

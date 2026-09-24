@@ -339,3 +339,28 @@ def reap_agent_workspaces_task() -> dict:
     except Exception as e:
         logger.error("Workspace reap task failed: %s", e, exc_info=True)
         return {"status": "error", "error": type(e).__name__}
+
+
+async def _run_idempotency_purge() -> dict:
+    container = await _ensure_worker_container()
+    store = getattr(container, "idempotency", None)
+    if store is None:
+        return {"status": "skipped", "reason": "idempotency_not_configured"}
+    purged = await store.purge_expired(now=container.clock.now())
+    return {"status": "ok", "purged": purged}
+
+
+@celery_app.task(name="tasks.purge_idempotency_keys_task", queue="realtime")
+def purge_idempotency_keys_task() -> dict:
+    """Delete `Idempotency-Key` records past their TTL (roadmap P1.4).
+
+    Correctness does not depend on this: an expired record is already treated as absent by
+    every claim. It only bounds the table's size -- each keyed request leaves one row, and a
+    client that keys every write would otherwise grow it forever.
+    """
+    logger.info("Celery task: Purging expired idempotency keys...")
+    try:
+        return asyncio.run(_run_idempotency_purge())
+    except Exception as e:
+        logger.error("Idempotency purge task failed: %s", e, exc_info=True)
+        return {"status": "error", "error": type(e).__name__}

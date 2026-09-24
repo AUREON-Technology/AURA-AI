@@ -213,7 +213,6 @@ class InMemoryDocumentStore:
     def __init__(self) -> None:
         self._documents: dict[tuple[str, int], Document] = {}
         self._chunks: dict[tuple[str, int], list[Chunk]] = {}
-        self._by_hash: dict[tuple[str | None, str], tuple[str, int]] = {}
         self._lock = asyncio.Lock()
 
     async def put(self, document: Document, chunks: Sequence[Chunk]) -> None:
@@ -221,8 +220,6 @@ class InMemoryDocumentStore:
         async with self._lock:
             self._documents[key] = document
             self._chunks[key] = list(chunks)
-            owner = document.owner_id.value if document.owner_id else None
-            self._by_hash[(owner, document.content_hash)] = key
 
     async def get(self, document_id: DocumentId, *, version: int | None = None) -> Document | None:
         if version is not None:
@@ -234,9 +231,18 @@ class InMemoryDocumentStore:
         return max(candidates, key=lambda d: d.version) if candidates else None
 
     async def get_by_hash(self, content_hash: str, *, owner_id: UserId | None) -> Document | None:
+        """The newest *active* version with this content, matching the Postgres adapter's
+        ``status = 'active'`` filter. Returning a superseded or tombstoned version made a
+        deleted document impossible to upload again, and a revert to earlier content a no-op --
+        both skipped as "unchanged" against a version nobody could retrieve any more."""
         owner = owner_id.value if owner_id else None
-        key = self._by_hash.get((owner, content_hash))
-        return self._documents.get(key) if key else None
+        matches = [
+            d for d in self._documents.values()
+            if d.status is DocumentStatus.ACTIVE
+            and (d.owner_id.value if d.owner_id else None) == owner
+            and d.content_hash == content_hash
+        ]
+        return max(matches, key=lambda d: d.version) if matches else None
 
     async def chunks_for(self, document_id: DocumentId, version: int) -> list[Chunk]:
         return list(self._chunks.get((document_id.value, version), []))

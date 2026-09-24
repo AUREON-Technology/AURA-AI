@@ -33,6 +33,14 @@ class TestBeatSchedule:
         assert "tasks.drain_event_outbox_task" in names
         assert "tasks.generate_daily_briefings_task" in names
         assert "tasks.drain_finetune_queue_task" in names
+        assert "tasks.purge_idempotency_keys_task" in names
+
+    def test_idempotency_purge_runs_on_the_realtime_queue(self) -> None:
+        from celery_app import celery_app
+
+        purge = celery_app.conf.beat_schedule["purge-idempotency-keys"]
+        assert purge["options"]["queue"] == "realtime"
+        assert purge["schedule"] <= 3600.0
 
     def test_refresh_runs_on_the_learning_queue(self) -> None:
         from celery_app import celery_app

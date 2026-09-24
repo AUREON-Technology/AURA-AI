@@ -152,6 +152,7 @@ class Container:
         self.audit = self._build_audit_sink()
         self.telemetry_sink = self._build_telemetry_sink()
         self.sources = self._build_source_registry()
+        self.idempotency = self._build_idempotency_store()
 
         self.providers = build_providers(
             settings.llm, model_allowlist=settings.security.model_allowlist
@@ -929,6 +930,20 @@ class Container:
                 self.settings.infrastructure.database_url, pool=self._postgres_pool()
             )
         return InMemoryEventOutbox()
+
+    def _build_idempotency_store(self) -> Any:
+        """`Idempotency-Key` bookkeeping (roadmap P1.4). Gated like the outbox: replay only means
+        something if it survives a restart and is shared by every gateway worker, which only the
+        Postgres table gives. In-memory is correct for tests and a single-process local run."""
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_idempotency import PostgresIdempotencyStore
+
+            return PostgresIdempotencyStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        from .adapters.idempotency import InMemoryIdempotencyStore
+
+        return InMemoryIdempotencyStore()
 
     def _build_insight_sink(self) -> Any:
         """The `InsightSink` (Phase E2): writes into the legacy `insights` table, the same

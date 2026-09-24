@@ -70,6 +70,7 @@ def register_admin_ops(
     JSONResponse: Any,
     Query: Any,
     Request: Any,
+    idempotent: Any = (),
 ) -> None:
     from pydantic import BaseModel, Field
 
@@ -147,7 +148,7 @@ def register_admin_ops(
         sources = await listing() if listing else await registry.list_enabled()
         return JSONResponse(content={"sources": [_source_payload(s) for s in sources]})
 
-    @router.post("/admin/sources")
+    @router.post("/admin/sources", dependencies=list(idempotent))
     async def create_source(
         request: Request, payload: SourceCreateRequest, caller=Depends(principal)
     ) -> JSONResponse:
@@ -325,7 +326,7 @@ def register_admin_ops(
         rows = await container.approvals._store.list(status=status_enum, kind=kind_enum)
         return JSONResponse(content={"approvals": [row.as_dict() for row in rows]})
 
-    @router.post("/admin/approvals/{approval_id}/decide")
+    @router.post("/admin/approvals/{approval_id}/decide", dependencies=list(idempotent))
     async def decide_approval(
         request: Request,
         approval_id: str,
@@ -397,7 +398,7 @@ def register_admin_ops(
             payload["dataset"] = stored.as_dict()
         return JSONResponse(content={"recommendation": payload})
 
-    @router.post("/admin/learning/request-approval")
+    @router.post("/admin/learning/request-approval", dependencies=list(idempotent))
     async def learning_request_approval(
         request: Request,
         payload: LearningApprovalRequest,
@@ -430,7 +431,7 @@ def register_admin_ops(
             content={"digest": digest, "format": format, "jsonl": text}
         )
 
-    @router.post("/admin/learning/jobs")
+    @router.post("/admin/learning/jobs", dependencies=list(idempotent))
     async def launch_finetune_job(
         request: Request,
         payload: FineTuneJobRequest,
@@ -469,7 +470,7 @@ def register_admin_ops(
         job = await container.finetune_jobs.get(job_id)
         return JSONResponse(content={"job": job.as_dict()})
 
-    @router.post("/admin/models/import")
+    @router.post("/admin/models/import", dependencies=list(idempotent))
     async def import_model_artefact(
         request: Request,
         payload: ModelImportRequest,
@@ -504,7 +505,7 @@ def register_admin_ops(
         )
         return JSONResponse(content={"model": registered.as_dict()})
 
-    @router.post("/admin/models/{model_id}/request-promotion")
+    @router.post("/admin/models/{model_id}/request-promotion", dependencies=list(idempotent))
     async def request_model_promotion(
         request: Request,
         model_id: str,

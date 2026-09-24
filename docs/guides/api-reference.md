@@ -44,6 +44,69 @@ retrying wastes a round trip and, on a metered provider, money.
 **Rate limiting** is cost-weighted, not per-request: a chat turn costs 10 and an agent turn 20
 against a health check's 0. Limits are layered per user then per IP.
 
+### Idempotency-Key (optional)
+
+Side-effecting routes accept an optional `Idempotency-Key` request header, following the IETF
+draft `draft-ietf-httpapi-idempotency-key-header`. Send a fresh random value (a UUIDv4) per
+logical operation and **reuse it verbatim on every retry of that operation** — after a timeout, a
+dropped connection, an app restart with a queued write. Omit the header and nothing changes: the
+request runs every time, exactly as it did before this existed.
+
+```bash
+curl -X POST "$AURA/api/v3/memory" -H "$AUTH" \
+  -H "Idempotency-Key: 5b0e9a4e-3c52-4f7e-9d0a-8f1f2a4c7e11" \
+  -H "Content-Type: application/json" -d '{"content": "I take my tea with milk."}'
+```
+
+| Situation | Answer |
+| --- | --- |
+| First request with this key | Runs normally |
+| Retry, same key and same request, first one finished | The first response, replayed byte for byte (same status and body) with `Idempotent-Replayed: true`. The operation does **not** run again |
+| Retry while the first is still running | `409 idempotency_key_in_progress`, `retryable: true`, `Retry-After: 1`. Retry and you get the replay |
+| Same key, different request | `422 idempotency_key_reused`, `retryable: false` — a client bug; generate a new key |
+| Malformed key (empty, over 255 chars, spaces or non-ASCII) | `400` |
+
+What counts as "the same request": the method, the concrete path (so `DELETE /memory/a` and
+`DELETE /memory/b` differ), the query string, and the body — JSON is compared after sorting keys,
+so a client that rebuilds its payload on retry still matches; a multipart upload is compared by
+its fields and each file's name, type and bytes. The key may be sent bare or as a quoted
+structured-field string (`"5b0e…"`); both are the same key.
+
+- **Scope.** A key is scoped to the authenticated user *and* the route (`POST /api/v3/memory` is
+  a different namespace from `DELETE /api/v3/memory/{id}`). Two users sending the same key never
+  see each other's responses or collide.
+- **What is stored.** A response the route *returned* with a status below 500. A 5xx, or an error
+  the route *raised* (a typed `4xx` such as `404 not_found`, a `422` body-validation error, a
+  `429`, a `503`), is not stored: the key is released and a retry runs the operation again.
+- **Lifetime.** A completed key replays for `AURA_IDEMPOTENCY_TTL_HOURS` (default 24); after that
+  the same key is a new key. If a request's process dies mid-flight, its claim is taken over by a
+  retry after `AURA_IDEMPOTENCY_LEASE_S` (default 900 s) rather than answering 409 for the whole
+  TTL. Expired rows are deleted hourly by the `purge-idempotency-keys` beat task.
+- **Durability.** With `AURA_DOCUMENT_BACKEND=postgres` keys live in `aura_idempotency_keys`
+  (Alembic `0006`), shared by every gateway worker and surviving restarts; the in-memory backend
+  is per-process.
+
+Routes that honour the header:
+
+| Route | Why |
+| --- | --- |
+| `POST /api/v3/chat` | A retried turn would re-run planning and any confirmed side-effecting tool |
+| `POST /api/v3/knowledge/documents`, `POST /api/v3/knowledge/documents/upload` | A retry otherwise re-embeds (and, if the content changed in between, versions) |
+| `DELETE /api/v3/knowledge/documents/{id}` | The retry gets the first answer instead of `chunks_removed: 0` |
+| `POST`/`DELETE /api/v3/knowledge/documents/{id}/cag-pin` | |
+| `POST /api/v3/memory`, `DELETE /api/v3/memory/{id}` | A retried delete otherwise answers 404 |
+| `POST /api/v3/feedback` | Each call otherwise records a separate rating |
+| `DELETE /api/v3/engineering/workspaces/{id}` | |
+| `POST /api/v3/admin/index/rebuild`, `POST /api/v3/admin/sources`, `POST /api/v3/admin/approvals/{id}/decide`, `POST /api/v3/admin/learning/request-approval`, `POST /api/v3/admin/learning/jobs`, `POST /api/v3/admin/models/import`, `POST /api/v3/admin/models/{id}/request-promotion` | Expensive or once-only operator actions |
+
+**Not covered, deliberately:** `POST /api/v3/chat/stream` and the WebSocket routes
+(`/voice/live`, `/host/agent`) ignore the header. A stream is delivered incrementally to a caller
+that has already rendered it; there is no single response to store, and replaying a recorded
+stream would re-render text the user already saw. Use `POST /api/v3/chat` with a key when a turn
+must run at most once. `POST /api/v3/sync` (cursor sync) does not need it: each mutation carries a
+client-minted UUID and a `client_updated_at`, so a replayed batch reports `conflict` per row
+instead of writing twice.
+
 ---
 
 ## Chat
@@ -155,7 +218,14 @@ data: {"type":"done","tainted":false,"guards_complete":true,"citations":[…],"t
 Returns `{ "document_id", "version", "chunks", "created", "quarantined_chunks", "skipped_reason" }`.
 
 `created: false` with `chunks: 0` means identical content was already ingested — re-ingestion is
-a no-op keyed on a content hash, which keeps nightly refreshes from churning the index.
+a no-op keyed on a content hash, which keeps nightly refreshes from churning the index. The hash
+is compared against the caller's *active* documents only, so re-uploading a deleted document, or
+reverting a document to earlier content, indexes it again.
+
+Without `document_id`, the id is derived deterministically from the caller and the title, so the
+same upload retried on another worker or after a restart lands on the same document (and
+overwrites any partially written chunks) instead of creating a duplicate. A `document_id` that
+already belongs to another user is refused with `409 conflict`.
 
 `quarantined > 0` means chunks contained instruction-shaped content and were fenced. They are
 still retrievable; they cannot issue instructions, and a turn that retrieves one cannot run a
