@@ -1,0 +1,55 @@
+"""Pins the Control Plane's and Inference Plane's duplicated model config against each other.
+
+Task requirement (docs/deployment/architecture.md §6): the two planes necessarily each carry
+their own copy of some model metadata (one process's environment can't read the other's), so a
+mismatch has to be caught in CI rather than discovered as a production truncation bug. This
+needs no Docker, network, or model -- it only parses the two config sources as text, matching
+the rest of the default `pytest` suite's no-infrastructure constraint.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+COMPOSE_FILE = REPO_ROOT / "deploy" / "docker-compose.prod.yml"
+ENTRYPOINT_FILE = REPO_ROOT / "deploy" / "spaces" / "inference-vllm" / "entrypoint.sh"
+
+
+def _default_int(text: str, pattern: str) -> int:
+    match = re.search(pattern, text)
+    assert match, f"pattern {pattern!r} not found"
+    return int(match.group(1))
+
+
+def test_context_window_matches_vllm_max_model_len() -> None:
+    """AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW must match VLLM_MAX_MODEL_LEN's default.
+
+    The Control Plane uses this to size prompts against what the Space can actually accept
+    (ProviderCapabilities.context_window); the Space uses it to size vLLM's KV cache. If these
+    drift apart, either the router over-fills the prompt (a runtime 400 from vLLM) or
+    under-uses context the Space could actually serve.
+    """
+    compose_default = _default_int(
+        COMPOSE_FILE.read_text(encoding="utf-8"),
+        r"AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW:-(\d+)",
+    )
+    entrypoint_default = _default_int(
+        ENTRYPOINT_FILE.read_text(encoding="utf-8"),
+        r'VLLM_MAX_MODEL_LEN:-(\d+)',
+    )
+    assert compose_default == entrypoint_default, (
+        "Control Plane's AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW default "
+        f"({compose_default}) no longer matches the Inference Plane's VLLM_MAX_MODEL_LEN "
+        f"default ({entrypoint_default}) -- update deploy/docker-compose.prod.yml or "
+        "deploy/spaces/inference-vllm/entrypoint.sh so they agree, per "
+        "docs/deployment/architecture.md §6."
+    )
+
+
+def test_entrypoint_still_refuses_to_boot_unauthenticated() -> None:
+    """Guards the one security property docs/deployment/inference-plane.md §5 depends on."""
+    text = ENTRYPOINT_FILE.read_text(encoding="utf-8")
+    assert 'VLLM_API_KEY:-' not in text or "FATAL: VLLM_API_KEY is not set" in text
+    assert "--api-key" in text
