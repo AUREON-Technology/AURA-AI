@@ -1,0 +1,83 @@
+name: Deploy Control Plane (Railway)
+
+# Deploys aura_backend/ to Railway after Backend CI succeeds on main. This is additive to the
+# existing "Deploy VPS" workflow (deploy-backend.yml) -- neither replaces the other. See
+# docs/deployment/architecture.md §5 for why both exist side by side until a deliberate cutover.
+#
+# Path-filtered against the Inference Plane's own workflow (inference-plane-deploy.yml): a
+# change under deploy/spaces/** alone never triggers this job, and a change under aura_backend/**
+# alone never triggers that one. See docs/deployment/control-plane.md for the Railway services
+# and environment variables this expects to already be configured.
+#
+# Required (repo Settings -> Secrets and variables -> Actions, or the `production` environment):
+#   secrets.RAILWAY_TOKEN         Railway project token (Railway dashboard -> project ->
+#                                 Settings -> Tokens). Until this secret exists, the deploy job
+#                                 is skipped rather than failed -- Railway isn't provisioned yet.
+#   vars.RAILWAY_SERVICE_GATEWAY  Railway service ID/name for the `gateway` (web) service.
+#
+# The worker-realtime/worker-ingestion/beat services (docs/deployment/control-plane.md §2) are
+# deployed the same way Railway deploys any service from a repo push: once they're created in
+# the Railway project pointed at this same repo, Railway redeploys them on push to main
+# automatically -- no extra CI step is needed for those three, only for anything this workflow
+# does beyond what Railway's own git integration already provides (health verification below).
+
+on:
+  workflow_run:
+    workflows: ["Backend CI"]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-control-plane
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: |
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') &&
+      secrets.RAILWAY_TOKEN != ''
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy gateway service
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_GATEWAY: ${{ vars.RAILWAY_SERVICE_GATEWAY }}
+        run: |
+          test -n "$RAILWAY_SERVICE_GATEWAY" || { echo "vars.RAILWAY_SERVICE_GATEWAY is not set" >&2; exit 1; }
+          railway up --service "$RAILWAY_SERVICE_GATEWAY" --detach aura_backend
+
+      - name: Wait for readiness
+        env:
+          RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL }}
+        run: |
+          test -n "$RAILWAY_HEALTH_URL" || { echo "vars.RAILWAY_HEALTH_URL is not set; skipping health verification" >&2; exit 1; }
+          for i in $(seq 1 30); do
+            if curl -fsS "$RAILWAY_HEALTH_URL" | grep -q '"status"'; then
+              echo "Control Plane is ready."
+              exit 0
+            fi
+            echo "Not ready yet ($i/30)..."
+            sleep 10
+          done
+          echo "Control Plane did not become ready in time." >&2
+          exit 1
+
+  skipped:
+    if: |
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') &&
+      secrets.RAILWAY_TOKEN == ''
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::notice::secrets.RAILWAY_TOKEN is not configured -- Railway deploy skipped. See docs/deployment/control-plane.md."

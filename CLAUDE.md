@@ -33,6 +33,14 @@ Supporting directories: `deploy/` (production stack), `docs/` (architecture, gui
 `infra/` (Terraform), `scripts/` (client build and Firebase helpers). Historical docs live under
 `docs/archive/`.
 
+The production stack above (Contabo VPS, `docker-compose.prod.yml`, `deploy-backend.yml`) is
+one of two supported deploy targets. `docs/deployment/` documents the other: a Railway Control
+Plane (`aura_backend/`) talking to a Hugging Face GPU Space Inference Plane
+(`deploy/spaces/inference-vllm/`) over the existing `openai_compatible` provider — read
+`docs/deployment/architecture.md` first for the ownership boundary and why this is a logical
+split within one repo rather than two physically separate ones. Both targets stay live side by
+side until a deliberate cutover; neither workflow redeploys the other.
+
 The end-user guide (tabs, personas, the Engineer persona's repository tools, troubleshooting) is
 published at https://claude.ai/code/artifact/2743a01b-ba92-4473-99e9-04f84996ba8a — not part of
 `docs/`, since it's written for people using the app rather than people changing it. It has to be

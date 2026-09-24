@@ -1,0 +1,108 @@
+# Inference Plane on Hugging Face (GPU)
+
+Promotes the existing `deploy/spaces/inference-vllm/` Space from *failover* (as
+`docs/guides/split-inference-deployment.md` §8 configures it) to **primary/sole** LLM inference
+provider — a config change, not a new build. The Space's Dockerfile, entrypoint, and security
+posture (refuses to boot without an API key, rejects unauthenticated requests) are unchanged;
+read that Space's own `README.md`/`Dockerfile`/`entrypoint.sh` first, since this document only
+describes what's different for the "primary" topology.
+
+## 1. What the Inference Plane is (and isn't)
+
+It is: `vllm/vllm-openai`, serving one model, exposing the OpenAI-compatible
+`/v1/chat/completions`, `/v1/models` and (implicitly, vLLM's own) health surface. That's the
+whole contract — see `docs/deployment/architecture.md` §7 for why no bespoke API was designed.
+
+It is not: a place for auth, RBAC, agents, memory, RAG orchestration, tool policy, or any
+application workflow. None of that exists in `deploy/spaces/inference-vllm/` today, and this
+migration adds none of it — those stay on the Control Plane per the task's own §3 boundary.
+
+ASR (Whisper), TTS (Piper), OCR (Tesseract) and reranking are **not** part of this plane; see
+`architecture.md` §3 for why they're intentionally left running inside the Control Plane
+container rather than moved here.
+
+## 2. Choosing "primary" instead of "failover"
+
+The only things that change from the existing §8 failover recipe:
+
+| | Failover (existing, §8) | Primary (this migration) |
+| --- | --- | --- |
+| `AURA_LLM_PROVIDERS` | `local,hfspace` | `hfspace` |
+| Ollama / `local` provider | still configured, still primary | removed — no CPU fallback exists |
+| `AURA_PROVIDER_HFSPACE_IS_LOCAL` | `false` (ranked behind `local`) | `false` (still accurate: it's rented compute) — with only one provider configured this flag no longer affects routing, `ProviderRouter` has nothing to rank it against |
+| Circuit breaker behavior | opens away from a healthy Space back to `local` | opens, and stays open — there is no second provider to fail over to. A GPU-plane outage is now a full outage, not a degradation. See `troubleshooting.md`. |
+
+Everything else — the Dockerfile, the entrypoint's key-required check, `VLLM_MODEL`,
+`VLLM_MAX_MODEL_LEN`, `VLLM_GPU_MEMORY_UTILIZATION` — is identical to the existing Space. This
+is a deliberate minimal change: promoting to primary is a routing decision
+(`AURA_LLM_PROVIDERS`), not a reason to touch the serving container.
+
+**Consequence worth stating plainly, because §18/§27 of the task both call for honesty about
+failure behavior:** removing the CPU/Ollama fallback means the Control Plane has exactly one
+inference provider. Every one of the failure modes in `troubleshooting.md` §Inference-plane-down
+becomes a full-system outage for generation, not a degraded-quality fallback. If that trade
+isn't wanted, keep `docs/guides/split-inference-deployment.md` §8's `local,hfspace` topology
+(Ollama on a VPS/GPU box you control as primary, this Space as insurance) instead of this
+primary-only one. This document doesn't choose for you; it documents both and defaults to
+neither.
+
+## 3. Creating the Space
+
+Identical to `split-inference-deployment.md` §8's "Create the Space" — same commands, same
+`hf repo create ... --flavor <gpu-flavor> --secrets "VLLM_API_KEY=$key"`, same
+`hf upload <user>/<space> deploy/spaces/inference-vllm . --repo-type space`. Choose an
+always-on GPU flavor (not a sleeping one) for the primary topology even more strongly than that
+section already recommends for failover-only use: with no fallback, a cold-start tax on every
+wake is now the *only* thing generation latency has, not a rare failover latency.
+
+## 4. Model selection for an L40S
+
+`docs/reports/AI_HARDWARE_CAPACITY_REPORT.md` is the existing hardware-sizing reference. This
+migration does not pin a specific model — that's an operational choice made when the Space is
+created (`VLLM_MODEL` / `--served-model-name`), same as it already is for the failover Space.
+Do not assume every AURA capability needs to stay resident in VRAM simultaneously: this Space
+serves one chat model. If embeddings-on-GPU is wanted later, add a second Space rather than
+multiplexing models in one vLLM process — matches the "no unnecessary microservices, but no
+conflated ones either" balance the task asks for, and matches the pattern
+`split-inference-deployment.md` §4 already uses.
+
+## 5. Authenticated service-to-service connection
+
+Already built, not added by this migration:
+
+- `VLLM_API_KEY` (Space secret) / `AURA_PROVIDER_HFSPACE_API_KEY` (Control Plane secret,
+  same value) — bearer-token auth on every request; `entrypoint.sh` refuses to start without it.
+- `AuraSettings`'s `_reject_external_base_url` (`aura_core/config/settings.py`) refuses any
+  `openai_compatible` base URL on a banned hosted-vendor host outright, and gates rented-compute
+  hosts (Hugging Face included) behind `AURA_ALLOW_REMOTE_INFERENCE=true`, logging a warning on
+  every boot while it's set — see `aura_core/config/external_inference.py` for the host lists,
+  shared with `tests/architecture/test_no_external_inference.py` so the runtime check and the
+  static fitness test can't disagree.
+- TLS is inherent to `https://*.hf.space` — no separate certificate management needed on this
+  side, unlike the Control Plane's own nginx/Let's Encrypt setup on the VPS.
+
+Rotation: rotate `VLLM_API_KEY` in the Space's secrets, then update
+`AURA_PROVIDER_HFSPACE_API_KEY` on Railway to match, then redeploy the `gateway` service (env
+var changes need a restart to take effect — `ProviderConfig.api_key` is read lazily but the
+provider is constructed once at `container.py` wiring time). There is a short window between the
+two updates where the old key is rejected; size it like any credential rotation (stage the new
+key as an *additional* accepted key on the Space first if zero-downtime rotation matters more
+than this migration's scope).
+
+## 6. Health, readiness, and what the Control Plane can see
+
+vLLM's `/v1/models` endpoint (already what the co-located `vllm` Compose service's healthcheck
+polls — see `deploy/docker-compose.prod.yml`'s `vllm.healthcheck`) is the readiness signal.
+There is no separate GPU/CUDA/model-loaded telemetry endpoint beyond what vLLM itself exposes;
+adding one would be new inference-plane functionality this deployment-only migration doesn't
+build. The Control Plane's own `/health` endpoint's `dependencies` block reports whatever the
+`hfspace` provider's circuit breaker currently believes (open/closed/probing) — see
+`operations.md` §2.
+
+## 7. CI
+
+`.github/workflows/inference-plane-deploy.yml` validates `deploy/spaces/inference-vllm/`
+(Dockerfile build, shellcheck on `entrypoint.sh`) on every PR touching that path, and — only on
+`main`, only when `HF_TOKEN`/`HF_SPACE_ID` secrets are configured — pushes the directory to the
+Space with `huggingface_hub`'s `upload_folder`. It never touches the Control Plane's Railway
+deploy.

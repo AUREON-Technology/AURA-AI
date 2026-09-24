@@ -1,0 +1,112 @@
+name: Deploy Inference Plane (Hugging Face)
+
+# Validates and (on main, once configured) deploys deploy/spaces/inference-vllm/ to a Hugging
+# Face Space. Independent of the Control Plane's Railway deploy (control-plane-deploy.yml) --
+# path-filtered so the two never trigger each other. See docs/deployment/inference-plane.md.
+#
+# Required for the deploy job (repo Settings -> Secrets and variables -> Actions):
+#   secrets.HF_TOKEN     Hugging Face access token with write access to the target Space.
+#   vars.HF_SPACE_ID     "<namespace>/<space-name>", e.g. "your-org/aura-inference-vllm".
+# Until secrets.HF_TOKEN exists, the deploy job is skipped rather than failed.
+
+on:
+  pull_request:
+    paths:
+      - "deploy/spaces/inference-vllm/**"
+      - ".github/workflows/inference-plane-deploy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "deploy/spaces/inference-vllm/**"
+
+concurrency:
+  group: deploy-inference-plane
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint entrypoint.sh
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck deploy/spaces/inference-vllm/entrypoint.sh
+
+      - name: Build the Space image
+        run: docker build -t aura-inference-vllm-ci deploy/spaces/inference-vllm
+
+      - name: Startup validation (must refuse to boot without VLLM_API_KEY)
+        run: |
+          set +e
+          out=$(docker run --rm aura-inference-vllm-ci 2>&1)
+          status=$?
+          set -e
+          echo "$out"
+          test "$status" -ne 0
+          echo "$out" | grep -q "FATAL: VLLM_API_KEY is not set"
+
+      - name: Configuration validation (Control Plane / Inference Plane contract)
+        working-directory: aura_backend
+        run: |
+          python -m pip install --quiet -r requirements-dev.txt -r requirements.lock 2>/dev/null || true
+          python -m pytest tests/deployment/test_inference_contract.py -q
+
+  deploy:
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.HF_TOKEN != ''
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install huggingface_hub
+        run: pip install -U huggingface_hub
+
+      - name: Publish/update Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+        run: |
+          test -n "$HF_SPACE_ID" || { echo "vars.HF_SPACE_ID is not set" >&2; exit 1; }
+          python -c "
+          import os
+          from huggingface_hub import HfApi
+          HfApi().upload_folder(
+              repo_id=os.environ['HF_SPACE_ID'],
+              repo_type='space',
+              folder_path='deploy/spaces/inference-vllm',
+          )
+          "
+
+      - name: Wait for the Space to build and report ready
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+        run: |
+          python -c "
+          import os, sys
+          from huggingface_hub import HfApi
+          api = HfApi()
+          info = api.space_runtime(os.environ['HF_SPACE_ID'])
+          print('stage:', info.stage)
+          sys.exit(0 if info.stage == 'RUNNING' else 1)
+          " || echo "::warning::Space did not report RUNNING immediately -- check the Space logs; cold builds can take several minutes."
+
+  skipped:
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.HF_TOKEN == ''
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::notice::secrets.HF_TOKEN is not configured -- Hugging Face Space deploy skipped. See docs/deployment/inference-plane.md."
