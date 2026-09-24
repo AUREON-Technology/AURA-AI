@@ -39,7 +39,14 @@ def hydrate_secrets_from_files() -> None:
         host = os.environ.get("REDIS_HOST", "redis")
         os.environ["AURA_REDIS_URL"] = f"redis://:{redis_password}@{host}:6379/0"
 
-    for variable in ("AURA_QDRANT_API_KEY", "AURA_JWT_SECRET", "AURA_SECRETS_ENCRYPTION_KEY"):
+    # AURA_DATA_ENCRYPTION_KEYS may hold several keys, one per line (newest first) -- the file's
+    # internal newlines survive strip() and aura_core splits on them (config.settings).
+    for variable in (
+        "AURA_QDRANT_API_KEY",
+        "AURA_JWT_SECRET",
+        "AURA_SECRETS_ENCRYPTION_KEY",
+        "AURA_DATA_ENCRYPTION_KEYS",
+    ):
         value = _read_secret_file(variable)
         if value and not os.environ.get(variable):
             os.environ[variable] = value

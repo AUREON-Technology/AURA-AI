@@ -5,6 +5,15 @@ Its own table, its own schema management, sharing only the connection pool -- th
 ``aura_core/domain/personal_os.py`` for why this is a separate table from the legacy
 ``tasks``/``calendar_events``/``finance_records``/``health_records`` (zero-knowledge encrypted,
 server has no key) rather than an extension of them.
+
+**``fields`` is encrypted at rest** (server-side, not end-to-end) when the container passes an
+enabled :class:`~aura_core.adapters.field_crypto.FieldCipher`: the whole mapping is sealed as one
+value and stored as ``{"_aura_enc": "aura-enc:v1:..."}``, so the column stays ``JSONB`` and no
+migration is needed. ``id``/``owner_id``/``kind``/``source``/timestamps stay in the clear -- they
+are the only things any statement here filters or sorts on. Nothing queries *inside* ``fields``
+(no ``fields->>'x'`` predicate exists); a future "records due this week" query must filter in
+Python after decrypting, not in SQL. Rows written before a key was configured are read as
+plaintext and sealed on their next write. See ``docs/architecture/004-memory-taxonomy.md``.
 """
 
 from __future__ import annotations
@@ -17,6 +26,7 @@ from typing import Any, Mapping
 from ..domain.errors import DependencyUnavailableError
 from ..domain.identifiers import PersonalOsRecordId, UserId
 from ..domain.personal_os import PersonalOsRecord, RecordKind
+from .field_crypto import FieldCipher
 from .postgres_store import PostgresPool
 
 logger = logging.getLogger(__name__)
@@ -54,9 +64,17 @@ def _utc(value: datetime | None) -> datetime | None:
 
 
 class PostgresPersonalOsStore:
-    def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
+    def __init__(
+        self, url: str, *, pool: PostgresPool | None = None, cipher: FieldCipher | None = None,
+    ) -> None:
         self._pool = pool or PostgresPool(url)
         self._schema_ready = False
+        self._cipher = cipher or FieldCipher.disabled()
+
+    @staticmethod
+    def encryption_context(record_id: str, owner_id: str) -> str:
+        """What sealed ``fields`` are bound to: copying them into another row fails to decrypt."""
+        return f"aura_personal_os_records:{record_id}:{owner_id}"
 
     async def _ensure_schema(self) -> None:
         if self._schema_ready:
@@ -71,15 +89,19 @@ class PostgresPersonalOsStore:
         self._schema_ready = True
 
     @staticmethod
-    def _record(row: Mapping[str, Any]) -> PersonalOsRecord:
+    def _record(row: Mapping[str, Any], cipher: FieldCipher | None = None) -> PersonalOsRecord:
         fields = row["fields"]
         if isinstance(fields, str):
             fields = json.loads(fields)
+        fields = (cipher or FieldCipher.disabled()).decrypt_mapping(
+            fields,
+            context=PostgresPersonalOsStore.encryption_context(row["id"], row["owner_id"]),
+        )
         return PersonalOsRecord(
             id=PersonalOsRecordId(row["id"]),
             owner_id=UserId(row["owner_id"]),
             kind=RecordKind(row["kind"]),
-            fields=dict(fields or {}),
+            fields=fields,
             source=row["source"],
             created_at=_utc(row["created_at"]),
             updated_at=_utc(row["updated_at"]),
@@ -99,7 +121,11 @@ class PostgresPersonalOsStore:
                         fields = EXCLUDED.fields, updated_at = EXCLUDED.updated_at
                     """,
                     record.id.value, record.owner_id.value, record.kind.value,
-                    json.dumps(dict(record.fields)), record.source,
+                    json.dumps(self._cipher.encrypt_mapping(
+                        record.fields,
+                        context=self.encryption_context(record.id.value, record.owner_id.value),
+                    )),
+                    record.source,
                     record.created_at, record.updated_at,
                 )
         except Exception as exc:
@@ -118,7 +144,7 @@ class PostgresPersonalOsStore:
                 )
         except Exception as exc:
             raise _unavailable(f"could not read personal-OS record: {exc}") from exc
-        return self._record(row) if row else None
+        return self._record(row, self._cipher) if row else None
 
     async def list_for_owner(
         self, owner_id: UserId, *, kind: RecordKind | None = None, limit: int = 100,
@@ -147,7 +173,7 @@ class PostgresPersonalOsStore:
                     )
         except Exception as exc:
             raise _unavailable(f"could not list personal-OS records: {exc}") from exc
-        return [self._record(row) for row in rows]
+        return [self._record(row, self._cipher) for row in rows]
 
     async def update(self, record: PersonalOsRecord) -> None:
         await self.put(record)

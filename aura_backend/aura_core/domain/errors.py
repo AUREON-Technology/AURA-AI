@@ -28,6 +28,7 @@ __all__ = [
     "ValidationError",
     "NotFoundError",
     "ConflictError",
+    "DataIntegrityError",
     "AuthenticationError",
     "AuthorizationError",
     "RateLimitedError",
@@ -121,6 +122,19 @@ class NotFoundError(AuraError):
 class ConflictError(AuraError):
     kind = "conflict"
     http_status = 409
+
+
+class DataIntegrityError(AuraError):
+    """Stored data failed an integrity check -- e.g. an encrypted-at-rest value whose
+    authentication tag does not verify (tampered, truncated, copied from another row, or sealed
+    under a key that is no longer configured; see ``adapters/field_crypto.py``).
+
+    Not retryable: the same bytes will fail the same way. Never recovered from by returning the
+    raw stored value, which would present ciphertext (or an attacker's substitution) as data.
+    """
+
+    kind = "data_integrity_error"
+    http_status = 500
 
 
 # --------------------------------------------------------------------------------------

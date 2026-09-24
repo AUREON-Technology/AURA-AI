@@ -119,6 +119,16 @@ secrets:
   # reconnect -- back it up the same way jwt_secret is backed up.
   secrets_encryption_key:
     file: ./secrets/secrets_encryption_key
+  # Server-side encryption at rest for memory content and personal-OS record fields
+  # (aura_core/adapters/field_crypto.py; ADR-004 "Encryption at rest"). NOT end-to-end: the
+  # gateway and workers hold it. REQUIRED -- settings.validate() refuses to start in
+  # staging/production without it. bootstrap-secrets.sh generates one; for rotation the file may
+  # hold several Fernet keys, one per line, NEWEST FIRST (then run
+  # `python scripts/reencrypt_fields.py` in the gateway before dropping the old line).
+  # Losing it makes every encrypted memory and record unreadable, and a database backup is
+  # useless without it -- back it up separately from the backups themselves.
+  data_encryption_keys:
+    file: ./secrets/data_encryption_keys
   # The GitHub App's client secret for the per-user OAuth connect flow
   # (api/v2/github_integration.py). bootstrap-secrets.sh fills this with a random placeholder
   # unconditionally (same "the file must exist for the service to start" reasoning as
@@ -305,6 +315,8 @@ services:
       # AURA_GITHUB_OAUTH_ENABLED is set, same as the sandbox/GitHub block further down.
       AURA_SECRETS_ENCRYPTION_KEY_FILE: /run/secrets/secrets_encryption_key
       AURA_GITHUB_OAUTH_CLIENT_SECRET_FILE: /run/secrets/github_oauth_client_secret
+      # Encryption at rest for memories/personal-OS records -- see the top-level `secrets:` block.
+      AURA_DATA_ENCRYPTION_KEYS_FILE: /run/secrets/data_encryption_keys
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       # config.py (the v1/v2 legacy settings, not aura_core) reads this directly as a file
@@ -402,6 +414,7 @@ services:
         hfspace_api_key,
         secrets_encryption_key,
         github_oauth_client_secret,
+        data_encryption_keys,
       ]
     volumes:
       - aura_workspace:/var/lib/aura/workspace
@@ -578,12 +591,15 @@ services:
       AURA_DATABASE_URL_FILE: /run/secrets/postgres_password
       AURA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
       AURA_QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
+      # Workers read and write memories too (memory consolidation), so they need the same
+      # encryption-at-rest key as the gateway -- see the top-level `secrets:` block.
+      AURA_DATA_ENCRYPTION_KEYS_FILE: /run/secrets/data_encryption_keys
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       DATA_DIR: /var/lib/aura/workspace
       AURA_LEARNING_DATASET_DIR: /var/lib/aura/datasets
       DEBUG_MODE: "false"
-    secrets: [postgres_password, redis_password, qdrant_api_key, hfspace_api_key]
+    secrets: [postgres_password, redis_password, qdrant_api_key, hfspace_api_key, data_encryption_keys]
     networks: [data]
     depends_on:
       postgres: {condition: service_healthy}
@@ -600,7 +616,7 @@ services:
     logging: *logging
     command: celery -A tasks worker -Q ingestion,learning -c 2 --loglevel=info --max-tasks-per-child=50
     environment: *worker_env
-    secrets: [postgres_password, redis_password, qdrant_api_key, hfspace_api_key]
+    secrets: [postgres_password, redis_password, qdrant_api_key, hfspace_api_key, data_encryption_keys]
     volumes:
       - aura_workspace:/var/lib/aura/workspace
       - aura_datasets:/var/lib/aura/datasets
@@ -630,7 +646,7 @@ services:
       <<: *worker_env
       AURA_FINETUNE_TRAINER: local
       AURA_LEARNING_DATASET_DIR: /var/lib/aura/datasets
-    secrets: [postgres_password, redis_password, qdrant_api_key, hfspace_api_key]
+    secrets: [postgres_password, redis_password, qdrant_api_key, hfspace_api_key, data_encryption_keys]
     volumes:
       - aura_workspace:/var/lib/aura/workspace
       - aura_datasets:/var/lib/aura/datasets
@@ -653,7 +669,7 @@ services:
     # worker-ingestion (`learning` queue), which has Postgres/Qdrant/Ollama.
     command: celery -A celery_app beat --loglevel=info
     environment: *worker_env
-    secrets: [postgres_password, redis_password, qdrant_api_key, hfspace_api_key]
+    secrets: [postgres_password, redis_password, qdrant_api_key, hfspace_api_key, data_encryption_keys]
     networks: [data]
     depends_on:
       redis: {condition: service_healthy}

@@ -23,6 +23,7 @@ from .errors import (
     BudgetExceededError,
     ConfigurationError,
     ConflictError,
+    DataIntegrityError,
     DependencyUnavailableError,
     EmbeddingError,
     EvaluationError,
@@ -154,7 +155,8 @@ __all__ = [
     # errors
     "AllProvidersFailedError", "ApprovalRequiredError", "AuraError", "AuthenticationError",
     "AuthorizationError", "BudgetExceededError", "ConfigurationError", "ConflictError",
-    "DependencyUnavailableError", "EmbeddingError", "EvaluationError", "ExecutionError",
+    "DataIntegrityError", "DependencyUnavailableError", "EmbeddingError", "EvaluationError",
+    "ExecutionError",
     "IndexNotReadyError", "KnowledgeError", "MemoryStoreError", "NotFoundError",
     "PlanningError", "ProviderError", "RateLimitedError", "ReasoningError",
     "SafetyViolationError", "TimeoutError", "ToolError", "ToolExecutionError",
