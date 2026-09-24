@@ -19,7 +19,19 @@ import tempfile
 import uuid
 from pathlib import Path
 
+import importlib.util
+
 import pytest
+
+# The default suite runs without the training stack (CLAUDE.md: no heavy deps in the default
+# run), so tests that genuinely need a framework skip when it is absent rather than fail.
+_needs_tensorflow = pytest.mark.skipif(
+    importlib.util.find_spec("tensorflow") is None, reason="tensorflow not installed"
+)
+_needs_training_stack = pytest.mark.skipif(
+    any(importlib.util.find_spec(m) is None for m in ("torch", "tensorflow", "sentence_transformers")),
+    reason="full ML training stack (torch, tensorflow, sentence-transformers) not installed",
+)
 
 # Add the aura_backend to the path
 import sys
@@ -123,6 +135,7 @@ def test_pytorch_adapter():
     print("PASS: PyTorch adapter tests passed")
 
 
+@_needs_tensorflow
 def test_tensorflow_adapter():
     """Test TensorFlow adapter basic operations."""
     import tensorflow as tf
@@ -233,6 +246,7 @@ def test_checkpoint_manager():
     print("PASS: Checkpoint manager tests passed")
 
 
+@_needs_tensorflow
 def test_ml_service():
     """Test unified ML service."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -369,6 +383,7 @@ def test_local_lora_trainer():
     print("PASS: LocalLoraTrainer tests passed")
 
 
+@_needs_tensorflow
 def test_cross_framework_compatibility():
     """Test that PyTorch and TensorFlow can coexist."""
     import torch
@@ -388,6 +403,7 @@ def test_cross_framework_compatibility():
     print("PASS: Cross-framework compatibility test passed")
 
 
+@_needs_training_stack
 def test_environment_verification():
     """Run the existing environment verification."""
     import subprocess
