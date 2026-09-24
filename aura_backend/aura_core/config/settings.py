@@ -14,9 +14,12 @@ Every setting is read from ``AURA_``-prefixed environment variables. The product
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
 from typing import Any, Mapping, Sequence
@@ -51,10 +54,35 @@ __all__ = [
     "McpSettings",
     "GitHubSettings",
     "SandboxSettings",
+    "DATA_ENCRYPTION_KEYS_ENV",
+    "data_encryption_keys",
     "load_settings",
 ]
 
 _TRUE = {"1", "true", "yes", "on"}
+
+#: Keys for server-side encryption at rest of memory content and personal-OS record fields
+#: (``adapters/field_crypto.py``). Comma- or whitespace-separated Fernet keys, **newest first**:
+#: the first encrypts, all decrypt. Like ``GitHubSettings.token`` it is read straight from the
+#: environment and never stored on a settings dataclass, so ``as_dict()`` cannot leak it.
+#: Required in staging/production (see ``AuraSettings.validate``); optional elsewhere, where its
+#: absence means plaintext storage and a startup warning (``container.build_field_cipher``).
+DATA_ENCRYPTION_KEYS_ENV = "AURA_DATA_ENCRYPTION_KEYS"
+
+
+def data_encryption_keys() -> list[str]:
+    """The configured data keys, newest first. Empty when none is configured."""
+    raw = os.environ.get(DATA_ENCRYPTION_KEYS_ENV, "") or ""
+    return [part for part in re.split(r"[\s,]+", raw.strip()) if part]
+
+
+def _is_fernet_key(key: str) -> bool:
+    """The same check ``cryptography.fernet.Fernet`` makes, done with the stdlib so the config
+    layer stays free of vendor imports: urlsafe base64 decoding to exactly 32 bytes."""
+    try:
+        return len(base64.urlsafe_b64decode(key.encode("ascii"))) == 32
+    except (binascii.Error, ValueError):
+        return False
 _FALSE = {"0", "false", "no", "off"}
 
 
@@ -1234,11 +1262,30 @@ class AuraSettings:
                         f"infrastructure.{label} must not be 'memory' in staging/production "
                         "(data would be lost on every restart)"
                     )
+            # P1.2/P5.1: server-side encryption at rest is fail-closed here. Without a key the
+            # stores would silently write memories and personal-OS records in plaintext -- the
+            # exact state this control exists to prevent -- so a missing key refuses to start
+            # rather than degrading. (Dev/test run without one; see container.build_field_cipher.)
+            if not data_encryption_keys():
+                problems.append(
+                    f"{DATA_ENCRYPTION_KEYS_ENV} must be set in staging/production -- memory "
+                    "content and personal-OS record fields are encrypted at rest with it "
+                    "(deploy/scripts/bootstrap-secrets.sh generates one)"
+                )
             if self.observability.trace_content_sampling > 0.0:
                 problems.append(
                     "observability.trace_content_sampling must be 0 in staging/production "
                     "unless explicitly reviewed -- it persists prompt and output text"
                 )
+
+        for position, key in enumerate(data_encryption_keys()):
+            if not _is_fernet_key(key):
+                problems.append(
+                    f"{DATA_ENCRYPTION_KEYS_ENV} entry {position} is not a valid Fernet key "
+                    "(32 url-safe base64-encoded bytes)"
+                )
+        if len(set(data_encryption_keys())) != len(data_encryption_keys()):
+            problems.append(f"{DATA_ENCRYPTION_KEYS_ENV} lists the same key more than once")
 
         # ADR-008: this must never be enabled. The setting exists so its absence is explicit and
         # testable rather than merely undocumented.

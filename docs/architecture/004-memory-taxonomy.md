@@ -47,6 +47,67 @@ score = w_sim · cosine + w_rec · exp(-Δt / τ_kind) + w_use · log1p(access_c
 record naming the turn and the extractor version, so a bad extractor version can be rolled back by
 query.
 
+## Encryption at rest (P1.2 / P5.1)
+
+**What it is.** Server-side, application-level authenticated encryption of the free-text payload
+of two Postgres tables: `aura_memories.content` and `aura_personal_os_records.fields`. It is
+**not end-to-end encryption**: the gateway and workers hold the key and decrypt on every read,
+because recall and the personal-OS tools must hand these values to the model. What it protects
+against is exposure of the *database* — a dump, a backup file, a copied volume, a read-only SQL
+credential — not a compromised application server. The legacy zero-knowledge tables
+(`tasks`/`calendar_events`/`finance_records`/`health_records`, client-encrypted, server has no key)
+are untouched.
+
+**Mechanism** (`aura_core/adapters/field_crypto.py`). Fernet (AES-128-CBC + HMAC-SHA256) from the
+already-required `cryptography` package, under its own key, separate from
+`AURA_SECRETS_ENCRYPTION_KEY` (third-party tokens) because the two have very different loss
+consequences. Stored form: `aura-enc:v1:<key-id>:<fernet-token>` in the `TEXT` column, and
+`{"_aura_enc": "aura-enc:v1:…"}` in the `JSONB` column — no schema change and no migration. The
+authenticated plaintext is bound to its row (`table:id:owner`), so ciphertext copied into another
+row is rejected rather than read as that row's data.
+
+**Keys and rotation.** `AURA_DATA_ENCRYPTION_KEYS` (Docker secret
+`deploy/secrets/data_encryption_keys`, hydrated from `AURA_DATA_ENCRYPTION_KEYS_FILE`) is a
+comma/newline-separated list, newest first: the first key encrypts, every key decrypts. Rotation
+is: prepend a new key → restart → `python scripts/reencrypt_fields.py` (idempotent, batched,
+owner-agnostic, `--dry-run`) → drop the old key once the script reports nothing left under it.
+Keys are loaded only in `container.build_field_cipher`; the adapters receive a cipher.
+
+**Failure behaviour.**
+
+| Situation | Behaviour |
+| --- | --- |
+| staging/production, no key | Refuses to start (`AuraSettings.validate`, repeated in `build_field_cipher`). Fail-closed: the alternative is silently storing personal data in plaintext. |
+| local/development/test, no key | Plaintext passthrough with a startup warning. In-memory adapters are always plaintext (process-local). |
+| Any environment, a key that is not a valid Fernet key | Refuses to start. |
+| Legacy plaintext row (written before a key existed) | Read as-is; sealed on its next write, or in bulk by the script. |
+| Encrypted row, no key configured | `ConfigurationError` — never returns ciphertext as content. |
+| Tampered / truncated / moved ciphertext, or key no longer configured | `DataIntegrityError` (`kind="data_integrity_error"`, not retryable). |
+
+**What stays in the clear, deliberately.** Everything a query filters, sorts, joins, or counts
+on: ids, `owner_id`, `kind`, timestamps, `confidence`, `access_count`, `superseded_by`,
+`expires_at`, all `prov_*` provenance columns, memory `subject` (a ≤64-char topic label used as
+an exact-match filter and for contradiction grouping), memory `metadata`, and personal-OS
+`source`. `subject` in particular can reveal *what kind* of fact is stored ("health", "diet")
+without its content.
+
+**Capability lost.** No SQL over the sealed columns: no `ILIKE`/full-text on memory content, no
+`fields->>'x'` predicates on personal-OS records. At the time of this change no such query
+existed (recall is vector similarity in Qdrant followed by `get_many` by id; personal-OS listing
+filters only on owner/kind), so nothing served today regressed. Any future content filter must
+run in Python after decryption, bounded by an owner/kind/time predicate that *can* run in SQL.
+
+**Residual leakage — stated, not hidden.**
+- **Embeddings.** Each memory's embedding lives in Qdrant (plaintext vector, with `owner_id`,
+  `kind`, and `subject` in its payload). Embeddings are derived from the content and are known to
+  be partially invertible; anyone who can read the Qdrant volume learns approximately what a
+  memory says. Encrypting the vector store is out of scope here.
+- **Other tables are unchanged:** `aura_documents`/`aura_chunks` (knowledge-base text),
+  `aura_feedback` (prompts/responses/corrections), graph entities/relations, telemetry, and the
+  session/episodic stores remain plaintext.
+- **Length and timing.** Ciphertext length tracks plaintext length; write times are visible.
+- **Dev and prod share `deploy/secrets/`**, so on the shared VPS both stacks use the same data key.
+
 ## Alternatives rejected
 
 | Alternative | Why rejected |
