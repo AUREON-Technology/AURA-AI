@@ -1,22 +1,29 @@
-"""Security hardening for production deployment.
+"""Security: cost-weighted rate limiting and proxy-aware client resolution.
 
-Implements ADR-012 security requirements: auth, authorization, secrets, encryption,
-rate limiting, SSRF protection, prompt injection defenses, tool injection defenses,
-sandbox isolation, and audit logs.
+Guards, PII handling, and output validation live in :mod:`aura_core.safety`; audit sinks are
+adapters behind :class:`aura_core.ports.runtime.AuditSink`.
 
-All features are opt-in via settings and degrade gracefully when infrastructure
-is unavailable (in-memory fallbacks, no external deps at import time).
+The gateway's live rate limiter is :class:`SlidingWindowRateLimiter` (``rate_limit.py``). The
+``policy``/``authenticator``/``rate_limiter``/``secret_manager`` modules are standalone helpers
+re-exported for callers that import them from here; nothing in the request path uses them yet.
 """
 
+from .authenticator import AuthenticationError, Authenticator, Principal
 from .policy import SecurityPolicy
-from .authenticator import Authenticator, Principal, AuthenticationError
-from .rate_limiter import RateLimiter, RateLimitManager, RateLimitExceeded
-from .secret_manager import SecretManager
-
-# Export security violation types for convenience
-from .secret_manager import SecurityViolation, SecurityViolationType
+from .rate_limit import (
+    ROUTE_COSTS,
+    RateLimitPolicy,
+    SlidingWindowRateLimiter,
+    extract_client_ip,
+)
+from .rate_limiter import RateLimiter, RateLimitExceeded, RateLimitManager
+from .secret_manager import SecretManager, SecurityViolation, SecurityViolationType
 
 __all__ = [
+    "SlidingWindowRateLimiter",
+    "RateLimitPolicy",
+    "ROUTE_COSTS",
+    "extract_client_ip",
     "SecurityPolicy",
     "Authenticator",
     "Principal",

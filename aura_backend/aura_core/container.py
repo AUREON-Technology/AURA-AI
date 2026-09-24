@@ -173,11 +173,6 @@ class Container:
         self.prompts = build_default_registry()
         self.agents = build_default_agent_registry()
 
-        # ML Service (PyTorch/TensorFlow integration)
-        self.ml_service = create_ml_service(
-            checkpoint_dir=settings.learning.checkpoint_dir or "/tmp/aura-checkpoints",
-        )
-
         self.safety = SafetyPipeline.from_settings(
             settings.safety, metrics=self.metrics, event_bus=self.events, audit=self.audit
         )
@@ -399,7 +394,6 @@ class Container:
         )
         from .mlops.experiments import ExperimentTracker, InMemoryExperimentStore
         from .mlops.model_registry import InMemoryModelStore, ModelRegistry
-        from .adapters.ml import create_ml_service, CheckpointManager
 
         use_postgres = settings.infrastructure.document_backend == "postgres"
         if use_postgres:
@@ -548,13 +542,15 @@ class Container:
         if kind == "local":
             from .adapters.local_lora_trainer import LocalLoraTrainer
 
+            # The ML service (torch/PEFT) is built by the trainer on first use, not here: the
+            # container is constructed during settings validation and in every test, and neither
+            # may pull torch in.
             return LocalLoraTrainer(
-                ml_service=self.ml_service,
                 experiment_tracker=self.experiments,
                 model_registry=self.models,
                 allow_cpu=self.settings.learning.finetune_allow_cpu,
                 cpu_base_allowlist=self.settings.learning.finetune_cpu_base_allowlist,
-                work_dir=Path(self.settings.learning.checkpoint_dir or "/tmp/aura-finetune"),
+                work_dir=Path(os.environ.get("AURA_FINETUNE_WORK_DIR") or "/tmp/aura-finetune"),
             )
         from .learning.finetune import ScriptedTrainer
 
