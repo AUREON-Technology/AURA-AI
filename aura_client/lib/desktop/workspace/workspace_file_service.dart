@@ -32,6 +32,51 @@ class WorkspaceFileService {
     await file.writeAsString(content);
   }
 
+  /// Renames or moves a file or directory within the workspace. [isDirectory] picks the right
+  /// `dart:io` entity type -- [File] and [Directory] each declare their own `rename`, with no
+  /// shared method on the [FileSystemEntity] base class to call generically. Both endpoints are
+  /// containment-checked, so this can't be used to move something out of the workspace root.
+  Future<void> rename(String oldRelativePath, String newRelativePath, {required bool isDirectory}) async {
+    final oldResolved = requireContainedClient(workspaceRoot, oldRelativePath);
+    final newResolved = requireContainedClient(workspaceRoot, newRelativePath);
+    if (isDirectory) {
+      await Directory(oldResolved).rename(newResolved);
+    } else {
+      await File(oldResolved).rename(newResolved);
+    }
+  }
+
+  /// Deletes a file or directory within the workspace. A directory is deleted recursively --
+  /// the caller (the Explorer's context menu) is responsible for confirming this with the human
+  /// first, since it can't be undone.
+  Future<void> delete(String relativePath, {required bool isDirectory}) async {
+    final resolvedPath = requireContainedClient(workspaceRoot, relativePath);
+    if (isDirectory) {
+      await Directory(resolvedPath).delete(recursive: true);
+    } else {
+      await File(resolvedPath).delete();
+    }
+  }
+
+  /// Creates a new, empty file within the workspace. Refuses to overwrite an existing file
+  /// (`exclusive: true`) rather than silently truncating something the human didn't mean to touch.
+  Future<void> createFile(String relativePath) async {
+    final resolvedPath = requireContainedClient(workspaceRoot, relativePath);
+    if (File(resolvedPath).existsSync() || Directory(resolvedPath).existsSync()) {
+      throw FileSystemException('Something already exists at this path', resolvedPath);
+    }
+    await File(resolvedPath).create(exclusive: true);
+  }
+
+  /// Creates a new, empty directory within the workspace.
+  Future<void> createDirectory(String relativePath) async {
+    final resolvedPath = requireContainedClient(workspaceRoot, relativePath);
+    if (File(resolvedPath).existsSync() || Directory(resolvedPath).existsSync()) {
+      throw FileSystemException('Something already exists at this path', resolvedPath);
+    }
+    await Directory(resolvedPath).create();
+  }
+
   /// Checks if a file exists.
   Future<bool> exists(String relativePath) async {
     try {

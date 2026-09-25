@@ -9,8 +9,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/explorer/explorer_access.dart';
+import 'package:aura_client/desktop/explorer/explorer_mutations.dart';
 import 'package:aura_client/desktop/explorer/explorer_service.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 
@@ -23,6 +25,7 @@ class ExplorerTreeTile extends ConsumerWidget {
     required this.grantedRoots,
     required this.ideDensity,
     required this.depth,
+    required this.onChanged,
   });
 
   final FileSystemEntry entry;
@@ -31,6 +34,12 @@ class ExplorerTreeTile extends ConsumerWidget {
   final List<String> grantedRoots;
   final AuraIdeDensity ideDensity;
   final int depth;
+
+  /// Called after this entry is renamed or deleted from its own context menu, so whichever
+  /// ancestor owns the listing this entry came from (`_ExplorerTree` at the workspace root, or
+  /// the parent `_DirectoryTile` one level up) re-fetches it -- this tile has no reference to
+  /// that ancestor otherwise.
+  final VoidCallback onChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -44,6 +53,7 @@ class ExplorerTreeTile extends ConsumerWidget {
         depth: depth,
         ideDensity: ideDensity,
         palette: palette,
+        onChanged: onChanged,
       );
     }
 
@@ -55,6 +65,7 @@ class ExplorerTreeTile extends ConsumerWidget {
       ideDensity: ideDensity,
       depth: depth,
       palette: palette,
+      onChanged: onChanged,
     );
   }
 }
@@ -67,6 +78,7 @@ class _FileTile extends ConsumerWidget {
     required this.depth,
     required this.ideDensity,
     required this.palette,
+    required this.onChanged,
   });
 
   final FileSystemEntry entry;
@@ -75,6 +87,7 @@ class _FileTile extends ConsumerWidget {
   final int depth;
   final AuraIdeDensity ideDensity;
   final AuraPalette palette;
+  final VoidCallback onChanged;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -131,21 +144,51 @@ class _FileTile extends ConsumerWidget {
       position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
       items: [
         _menuItem('open', Icons.open_in_new, 'Open'),
+        _menuItem('rename', Icons.drive_file_rename_outline, 'Rename'),
+        _menuItem('delete', Icons.delete_outline, 'Delete'),
         _menuItem('copy-path', Icons.content_copy, 'Copy path'),
         _menuItem('copy-relative-path', Icons.content_copy, 'Copy relative path'),
         _menuItem('reveal', Icons.folder_open, 'Reveal in filesystem'),
+        _menuItem('open-terminal', Icons.terminal, 'Open in Terminal'),
       ],
     );
     if (!context.mounted) return;
+    final absolutePath = _absolutePathOf(workspaceRoot, entry.path);
     switch (selected) {
       case 'open':
         _openFile(ref);
+      case 'rename':
+        await renameEntry(
+          context,
+          ref,
+          workspaceRoot: workspaceRoot,
+          workspaceId: workspaceId,
+          absolutePath: absolutePath,
+          currentName: entry.name,
+          isDirectory: false,
+          onDone: onChanged,
+        );
+      case 'delete':
+        await deleteEntry(
+          context,
+          ref,
+          workspaceRoot: workspaceRoot,
+          workspaceId: workspaceId,
+          absolutePath: absolutePath,
+          name: entry.name,
+          isDirectory: false,
+          onDone: onChanged,
+        );
       case 'copy-path':
-        await _copyToClipboard(context, _absolutePathOf(workspaceRoot, entry.path));
+        await _copyToClipboard(context, absolutePath);
       case 'copy-relative-path':
         await _copyToClipboard(context, _relativePathOf(workspaceRoot, entry.path));
       case 'reveal':
-        await _revealInFilesystem(context, _absolutePathOf(workspaceRoot, entry.path), isDirectory: false);
+        await _revealInFilesystem(context, absolutePath, isDirectory: false);
+      case 'open-terminal':
+        // Files aren't containers -- "open in terminal" on one opens the terminal in its
+        // *parent* directory, matching the common IDE convention for this action.
+        await openInTerminal(context, ref, workspaceId: workspaceId, absoluteDirPath: p.dirname(absolutePath));
     }
   }
 
@@ -176,6 +219,7 @@ class _DirectoryTile extends ConsumerStatefulWidget {
     required this.ideDensity,
     required this.depth,
     required this.palette,
+    required this.onChanged,
   });
 
   final FileSystemEntry entry;
@@ -185,6 +229,7 @@ class _DirectoryTile extends ConsumerStatefulWidget {
   final AuraIdeDensity ideDensity;
   final int depth;
   final AuraPalette palette;
+  final VoidCallback onChanged;
 
   @override
   ConsumerState<_DirectoryTile> createState() => _DirectoryTileState();
@@ -291,27 +336,74 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
       items: [
         _menuItem(_expanded ? 'collapse' : 'expand', _expanded ? Icons.expand_less : Icons.expand_more,
             _expanded ? 'Collapse' : 'Expand'),
+        _menuItem('new-file', Icons.note_add_outlined, 'New File'),
+        _menuItem('new-folder', Icons.create_new_folder_outlined, 'New Folder'),
+        _menuItem('rename', Icons.drive_file_rename_outline, 'Rename'),
+        _menuItem('delete', Icons.delete_outline, 'Delete'),
         _menuItem('refresh', Icons.refresh, 'Refresh'),
         _menuItem('copy-path', Icons.content_copy, 'Copy path'),
         _menuItem('copy-relative-path', Icons.content_copy, 'Copy relative path'),
         _menuItem('reveal', Icons.folder_open, 'Reveal in filesystem'),
+        _menuItem('open-terminal', Icons.terminal, 'Open in Terminal'),
       ],
     );
     if (!context.mounted) return;
+    final absolutePath = _absolutePathOf(widget.workspaceRoot, widget.entry.path);
     switch (selected) {
       case 'expand':
         if (!_expanded) _toggleExpand();
       case 'collapse':
         if (_expanded) _toggleExpand();
+      case 'new-file':
+        await createFileIn(
+          context,
+          ref,
+          workspaceRoot: widget.workspaceRoot,
+          workspaceId: widget.workspaceId,
+          parentAbsolutePath: absolutePath,
+          onDone: _refresh,
+        );
+      case 'new-folder':
+        await createFolderIn(
+          context,
+          ref,
+          workspaceRoot: widget.workspaceRoot,
+          workspaceId: widget.workspaceId,
+          parentAbsolutePath: absolutePath,
+          onDone: _refresh,
+        );
+      case 'rename':
+        await renameEntry(
+          context,
+          ref,
+          workspaceRoot: widget.workspaceRoot,
+          workspaceId: widget.workspaceId,
+          absolutePath: absolutePath,
+          currentName: widget.entry.name,
+          isDirectory: true,
+          onDone: widget.onChanged,
+        );
+      case 'delete':
+        await deleteEntry(
+          context,
+          ref,
+          workspaceRoot: widget.workspaceRoot,
+          workspaceId: widget.workspaceId,
+          absolutePath: absolutePath,
+          name: widget.entry.name,
+          isDirectory: true,
+          onDone: widget.onChanged,
+        );
       case 'refresh':
         _refresh();
       case 'copy-path':
-        await _copyToClipboard(context, _absolutePathOf(widget.workspaceRoot, widget.entry.path));
+        await _copyToClipboard(context, absolutePath);
       case 'copy-relative-path':
         await _copyToClipboard(context, _relativePathOf(widget.workspaceRoot, widget.entry.path));
       case 'reveal':
-        await _revealInFilesystem(context, _absolutePathOf(widget.workspaceRoot, widget.entry.path),
-            isDirectory: true);
+        await _revealInFilesystem(context, absolutePath, isDirectory: true);
+      case 'open-terminal':
+        await openInTerminal(context, ref, workspaceId: widget.workspaceId, absoluteDirPath: absolutePath);
     }
   }
 
@@ -409,6 +501,7 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
           grantedRoots: widget.grantedRoots,
           ideDensity: ideDensity,
           depth: widget.depth + 1,
+          onChanged: _refresh,
         );
       }).toList(),
     );
