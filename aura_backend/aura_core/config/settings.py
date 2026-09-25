@@ -863,10 +863,14 @@ class LearningSettings:
     finetune_model_id: str = "aura-ft"
     #: Allow LocalLoraTrainer on CPU — still limited to a small-model allowlist.
     finetune_allow_cpu: bool = False
+    #: Hugging Face repo ids (prefix match with a trailing ``*``). LocalLoraTrainer loads
+    #: transformers checkpoints, so Ollama tags (``name:tag``) can never match a trainable base;
+    #: they used to be listed here. 3B-class bases are deliberately absent: fp32 LoRA on a 3B
+    #: model does not fit worker-training's 4G memory limit, and CPU speed makes it moot.
     finetune_cpu_base_allowlist: tuple[str, ...] = (
-        "smollm2:135m",
-        "qwen2.5:3b-instruct-q4_K_M",
-        "qwen2.5:3b",
+        "HuggingFaceTB/SmolLM2-135M*",
+        "Qwen/Qwen2.5-0.5B*",
+        "hf-internal-testing/tiny-random-*",
     )
     #: Soft estimate shown in the recommendation packet (hours on CPU).
     finetune_estimated_cpu_hours: float | None = None
@@ -897,9 +901,9 @@ class LearningSettings:
             finetune_cpu_base_allowlist=tuple(
                 _list("LEARNING_FINETUNE_CPU_BASES")
                 or (
-                    "smollm2:135m",
-                    "qwen2.5:3b-instruct-q4_K_M",
-                    "qwen2.5:3b",
+                    "HuggingFaceTB/SmolLM2-135M*",
+                    "Qwen/Qwen2.5-0.5B*",
+                    "hf-internal-testing/tiny-random-*",
                 )
             ),
             finetune_estimated_cpu_hours=cpu_hours,

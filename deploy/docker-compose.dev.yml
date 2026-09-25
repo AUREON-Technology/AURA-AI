@@ -192,7 +192,12 @@ services:
       LEARNING_FINETUNE_MIN_EXAMPLES: ${LEARNING_FINETUNE_MIN_EXAMPLES:-12}
       LEARNING_FINETUNE_MIN_USERS: ${LEARNING_FINETUNE_MIN_USERS:-5}
       LEARNING_FINETUNE_ALLOW_CPU: ${LEARNING_FINETUNE_ALLOW_CPU:-true}
-      AURA_FINETUNE_TRAINER: ${AURA_FINETUNE_TRAINER:-local}
+      # The gateway never trains (GAP-017/018): `scripted` records every launched job as
+      # NOT_TRAINED and registers nothing. Real LoRA runs only on worker-training (profile
+      # `training`), which consumes the `training` queue. Fixed, not ${...}-overridable, and
+      # identical in docker-compose.prod.yml -- it used to default to `local` here, which ran
+      # the (then fake) trainer inside the gateway.
+      AURA_FINETUNE_TRAINER: scripted
       # Engineer agent (Phase J) -- off by default, same as prod. See
       # docker-compose.prod.yml's gateway env block for what each setting does.
       AURA_SANDBOX_ENABLED: ${AURA_SANDBOX_ENABLED:-false}
@@ -390,9 +395,13 @@ services:
     build:
       context: ../aura_backend
       dockerfile: Dockerfile
+      # The only image with requirements-train.txt (peft). Without it LocalLoraTrainer fails
+      # every job with a ConfigurationError -- see docs/guides/mlops-guide.md.
+      args:
+        AURA_TRAINING_DEPS: "true"
     <<: *restart
     logging: *logging
-    command: celery -A tasks worker -Q learning -c 1 --loglevel=info --max-tasks-per-child=1
+    command: celery -A tasks worker -Q training -c 1 --loglevel=info --max-tasks-per-child=1
     environment:
       <<: *worker_env
       AURA_FINETUNE_TRAINER: local

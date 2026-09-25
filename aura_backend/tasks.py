@@ -87,7 +87,7 @@ def build_lora_dataset_task(user_id: str) -> dict:
         return {"status": "error", "message": str(e)}
 
 
-@celery_app.task(name="tasks.finetune_job_task", queue="learning")
+@celery_app.task(name="tasks.finetune_job_task", queue="training")
 def finetune_job_task(job_id: str) -> dict:
     """Run an approved Loop B fine-tune job on the learning worker."""
     logger.info("Celery task: Running fine-tune job %s", job_id)
@@ -98,7 +98,7 @@ def finetune_job_task(job_id: str) -> dict:
         return {"status": "error", "error": type(e).__name__, "message": str(e)}
 
 
-@celery_app.task(name="tasks.drain_finetune_queue_task", queue="learning")
+@celery_app.task(name="tasks.drain_finetune_queue_task", queue="training")
 def drain_finetune_queue_task() -> dict:
     """Pick up QUEUED Loop B jobs left by the gateway (ADR-002: aura_core never imports tasks)."""
     logger.info("Celery task: Draining fine-tune queue...")
