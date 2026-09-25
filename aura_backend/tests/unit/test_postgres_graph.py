@@ -72,8 +72,10 @@ class TestPostgresGraphStore:
         conn = _FakePgConn()
         store = _store(conn)
         await store.revert("doc:1", owner_id=UserId("bob"))
-        deletes = [c for c in conn.calls if c[0] == "execute" and "DELETE FROM" in c[1]]
-        assert deletes
+        # Provenance deletes come back through fetch (DELETE ... RETURNING); fact deletes, if
+        # any, through execute. Every one of them must be scoped to the caller.
+        deletes = [c for c in conn.calls if c[0] in ("execute", "fetch") and "DELETE FROM" in c[1]]
+        assert len(deletes) >= 2
         assert all(c[2][0] == "bob" for c in deletes)
 
     async def test_row_mapping_round_trips_jsonb_shapes(self) -> None:
@@ -109,6 +111,32 @@ class TestPostgresGraphStore:
         assert decoded.aliases == entity.aliases
 
 
+    async def test_every_statement_apply_issues_is_owner_scoped(self) -> None:
+        conn = _FakePgConn()
+        store = _store(conn)
+        await store.apply(
+            GraphDelta(
+                entities=(_entity(), _entity("acme", name="Acme", type="organisation")),
+                relations=(_relation("sarah_chen", "works_at", "acme"),),
+            ),
+            owner_id=UserId("alice"),
+        )
+        statements = [c for c in conn.calls if c[0] not in ("BEGIN", "COMMIT", "ROLLBACK")]
+        assert statements
+        assert all(c[2][0] == "alice" for c in statements), [
+            c[1][:60] for c in statements if c[2][0] != "alice"
+        ]
+
+    async def test_retire_keeps_the_current_version(self) -> None:
+        conn = _FakePgConn()
+        store = _store(conn)
+        await store.retire_document("doc", owner_id=UserId("alice"), keep_version=3)
+        updates = [c for c in conn.calls if c[0] == "fetch" and "SET retired_at" in c[1]]
+        assert len(updates) == 2
+        assert all(c[2][:3] == ("alice", "doc", 3) for c in updates)
+        assert all("IS DISTINCT FROM" in c[1] for c in updates)
+
+
 class _FakeTransaction:
     def __init__(self, conn) -> None:
         self.conn = conn
@@ -142,6 +170,10 @@ class _FakePgConn:
     async def fetchrow(self, sql, *params):
         self.calls.append(("fetchrow", " ".join(sql.split()), params))
         return self.row
+
+    async def fetchval(self, sql, *params):
+        self.calls.append(("fetchval", " ".join(sql.split()), params))
+        return None
 
 
 class _FakePgPool:

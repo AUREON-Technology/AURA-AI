@@ -40,6 +40,7 @@ from ..ports.llm import EmbeddingProvider, Reranker
 from ..ports.storage import DocumentStore, VectorPoint, VectorStore
 from .chunking import ChunkingConfig, chunk_with_headings
 from .documents import ExtractedBlock
+from .graph_pipeline import KnowledgeGraphPipeline
 from .index_manager import IndexManager
 from .retrieval import BM25Index, HeuristicReranker, reciprocal_rank_fusion
 
@@ -141,6 +142,7 @@ class KnowledgeEngine:
         max_document_bytes: int = 8 * 1024 * 1024,
         metrics: Any = None,
         event_bus: Any = None,
+        graph_pipeline: KnowledgeGraphPipeline | None = None,
     ) -> None:
         self._documents = documents
         self._vectors = vectors
@@ -150,6 +152,13 @@ class KnowledgeEngine:
         self._safety = safety
         self._graph = graph
         self._extractor = extractor
+        # Every fact reaches the graph through the pipeline (normalise, validate, provenance,
+        # calibrate, dedupe) -- never as the extractor's raw output (ADR-005, "Knowledge graph").
+        self._graph_pipeline = graph_pipeline or (
+            KnowledgeGraphPipeline(graph=graph, extractor=extractor)
+            if graph is not None and extractor is not None
+            else None
+        )
         self._chunking = chunking or ChunkingConfig()
         self._top_k = top_k
         self._candidate_k = candidate_k
@@ -345,8 +354,14 @@ class KnowledgeEngine:
                 chunk.owner_id.value if chunk.owner_id else "global"
             )
 
-        if self._graph is not None and self._extractor is not None:
-            await self._extract_graph(document, text, owner_id)
+        if self._graph_pipeline is not None:
+            # Extract from what survived the context guard, not the raw upload: a quarantined
+            # (instruction-shaped) chunk must not reach long-term knowledge through the graph
+            # after being kept out of the index. With nothing quarantined this is the full text.
+            graph_text = text if quarantined == 0 else "\n\n".join(p for p, _ in pieces)
+            await self._extract_graph(
+                document, graph_text, owner_id, superseded=previous is not None
+            )
 
         duration = (time.perf_counter() - started) * 1000.0
         if self._metrics is not None:
@@ -436,15 +451,34 @@ class KnowledgeEngine:
             self._lexical.remove(chunk_id)
             self._lexical_owner.pop(chunk_id, None)
 
-    async def _extract_graph(self, document: Document, text: str, owner_id: UserId | None) -> None:
+    async def _extract_graph(
+        self, document: Document, text: str, owner_id: UserId | None, *, superseded: bool
+    ) -> None:
+        pipeline = self._graph_pipeline
+        assert pipeline is not None
         try:
-            delta = await self._extractor.extract(text, source=f"{document.id.value}@v{document.version}")
-            if delta:
-                await self._graph.apply(delta, owner_id=owner_id)
+            report = await pipeline.ingest(
+                document_id=document.id.value, version=document.version, text=text,
+                owner_id=owner_id,
+            )
+            logger.info("graph updated", extra=report.as_dict() | {"rejected": len(report.rejected)})
         except Exception:
             # Graph extraction is an enhancement. Failing it must not fail the ingestion that
             # the user actually asked for.
             logger.warning("graph extraction failed", extra={"document": document.id.value})
+        if superseded:
+            # Separate from extraction on purpose: even if the new version's extraction failed,
+            # what only the old version said must stop being a current fact.
+            try:
+                await pipeline.retire_superseded(
+                    document_id=document.id.value, current_version=document.version,
+                    owner_id=owner_id,
+                )
+            except Exception:
+                logger.warning(
+                    "graph retirement of superseded version failed",
+                    extra={"document": document.id.value},
+                )
 
     async def delete_document(self, document_id: DocumentId, *, owner_id: UserId | None) -> int:
         document = await self._documents.get(document_id)
@@ -460,6 +494,11 @@ class KnowledgeEngine:
         for chunk in chunks:
             self._lexical.remove(chunk.id.value)
             self._lexical_owner.pop(chunk.id.value, None)
+        if self._graph_pipeline is not None:
+            # Before the tombstone and allowed to raise: "delete my data" must include the facts
+            # derived from it, and a failure here leaves the document un-tombstoned so a retried
+            # delete does the whole job rather than reporting success over orphaned facts.
+            await self._graph_pipeline.purge(document_id=document_id.value, owner_id=owner_id)
         return await self._documents.tombstone(document_id, owner_id=owner_id)
 
     # -- retrieval ---------------------------------------------------------------------

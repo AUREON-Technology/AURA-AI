@@ -107,6 +107,16 @@ _PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
             r"\b(depend|depends|dependency|dependencies|related to|relationship|connected)\b",
             r"\b(who owns|what contains|which .* uses|upstream|downstream)\b",
             r"\b(impact of changing|what breaks if)\b",
+            # The graph's own predicates (domain/graph.py). Without these the router only sent
+            # dependency questions to the graph, so "who does Sarah report to" -- the question the
+            # extracted `reports_to` edge exists to answer -- never reached it.
+            r"\b(who|where) (does|do|did) .{1,60}\b(work|report|live)\b",
+            r"\bwhere (is|are|was|were) .{1,60}\b(located|based|headquartered)\b",
+            r"\b(reports? to|works? (at|for)|(located|based|headquartered) in)\b",
+            r"\bwho (runs|leads|heads|manages|owns|founded|acquired|works)\b",
+            r"\b(ceo|cto|cfo|coo|founder|head|director|manager|lead) of\b",
+            r"\b(acquired|bought) (by|whom|what|which)\b",
+            r"\b(is|are|was|a) (part|member|subsidiary) of\b",
         ),
     ),
     (

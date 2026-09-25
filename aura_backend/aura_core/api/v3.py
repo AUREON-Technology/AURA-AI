@@ -663,6 +663,107 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
+    # -- knowledge graph (Phase 11) --------------------------------------------------------
+
+    def _entity_json(entity: Any) -> dict[str, Any]:
+        return {
+            "key": entity.key,
+            "name": entity.name,
+            "type": entity.type,
+            "aliases": list(entity.aliases),
+            "confidence": round(entity.confidence, 4),
+            "mention_count": entity.mention_count,
+            "sources": list(entity.sources),
+            "valid_from": entity.valid_from.isoformat() if entity.valid_from else None,
+            "valid_to": entity.valid_to.isoformat() if entity.valid_to else None,
+        }
+
+    def _relation_json(relation: Any) -> dict[str, Any]:
+        return {
+            "subject": relation.subject_key,
+            "predicate": relation.predicate,
+            "object": relation.object_key,
+            "confidence": round(relation.confidence, 4),
+            "sources": list(relation.sources),
+            "valid_from": relation.valid_from.isoformat() if relation.valid_from else None,
+            "valid_to": relation.valid_to.isoformat() if relation.valid_to else None,
+        }
+
+    @router.get("/knowledge/graph")
+    async def knowledge_graph(
+        request: Request,
+        caller: Principal = Depends(principal),
+        query: str = Query(default="", max_length=200),
+        type: str | None = Query(default=None, max_length=40),
+        limit: int = Query(default=50, ge=1, le=200),
+        include_expired: bool = Query(default=False),
+    ) -> JSONResponse:
+        """The caller's own entities and the relations between them.
+
+        Owner-scoped by construction: every store call takes ``caller.user_id`` and nothing from
+        the request can name another owner. Global (``owner_id=None``) facts are not listed --
+        this is "what AURA has learned from *my* documents".
+        """
+        await enforce_rate_limit(request, caller, "read")
+        enabled = container.settings.knowledge.graph_enabled
+        entities = await container.graph.find_entities(
+            owner_id=caller.user_id, name=query or None, type=type, limit=limit,
+            include_expired=include_expired,
+        )
+        relations = await container.graph.list_relations(
+            owner_id=caller.user_id,
+            entity_keys=[e.key for e in entities] if query or type else None,
+            limit=limit * 2,
+            include_expired=include_expired,
+        )
+        return JSONResponse(
+            content={
+                "enabled": enabled,
+                "entities": [_entity_json(e) for e in entities],
+                "relations": [_relation_json(r) for r in relations],
+            }
+        )
+
+    @router.get("/knowledge/graph/entities/{entity_key}")
+    async def knowledge_graph_entity(
+        request: Request,
+        entity_key: str,
+        caller: Principal = Depends(principal),
+        depth: int = Query(default=1, ge=1, le=3),
+    ) -> JSONResponse:
+        """One of the caller's entities, its provenance, and its current neighbourhood.
+
+        Another user's key is reported exactly like an absent one (404).
+        """
+        await enforce_rate_limit(request, caller, "read")
+        entity = await container.graph.get_entity(entity_key, owner_id=caller.user_id)
+        if entity is None:
+            raise HTTPException(status_code=404, detail={"error": "not_found"})
+        neighbours, relations = await container.graph.neighbours(
+            entity_key, owner_id=caller.user_id, depth=depth, limit=100
+        )
+        provenance = await container.graph.provenance(
+            owner_id=caller.user_id, entity_key=entity_key
+        )
+        return JSONResponse(
+            content={
+                "entity": _entity_json(entity),
+                "provenance": [
+                    {
+                        "source": p.source_id,
+                        "document_id": p.document_id,
+                        "document_version": p.document_version,
+                        "extractor": p.extractor,
+                        "confidence": round(p.confidence, 4),
+                        "retired_at": p.retired_at.isoformat() if p.retired_at else None,
+                    }
+                    for p in provenance
+                ],
+                "neighbours": [_entity_json(e) for e in neighbours if e.key != entity_key],
+                "relations": [_relation_json(r) for r in relations],
+            }
+        )
+
     # -- voice (Phase F2) ----------------------------------------------------------------
 
     #: A voice note is short by nature; this is generous headroom, not a target -- unlike

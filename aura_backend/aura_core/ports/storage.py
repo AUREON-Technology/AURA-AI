@@ -8,10 +8,12 @@ argument that is ``None`` by default -- one missing argument leaks another user'
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 from ..domain.events import DomainEvent
 from ..domain.github_identity import GitHubIdentity
+from ..domain.graph import FactProvenance
 from ..domain.goals import GoalSnapshot
 from ..domain.identifiers import DocumentId, MemoryId, PersonalOsRecordId, UserId
 from ..domain.knowledge import (
@@ -262,28 +264,86 @@ class GraphStore(Protocol):
     """Entity/relation storage with neighbourhood queries."""
 
     async def apply(self, delta: GraphDelta, *, owner_id: UserId | None) -> None:
-        """Apply a delta transactionally. Entities merge on canonical key; relations upsert on
-        ``(subject, predicate, object)`` taking the higher confidence."""
+        """Apply a delta transactionally.
+
+        Entities merge on canonical key; relations upsert on ``(subject, predicate, object)``.
+        Each source in a fact's ``sources`` becomes one provenance record (the higher confidence
+        wins when the same source asserts the same fact twice), and the fact's confidence is
+        recomputed from its live provenance with :func:`~aura_core.domain.graph.combine_confidence`.
+        A fact with no source is stored under the empty source id -- the store does not refuse it,
+        but the ingestion pipeline never produces one (ADR-005, "Knowledge graph").
+        Re-asserting an expired fact makes it current again.
+        """
         ...
 
     async def get_entity(self, key: str, *, owner_id: UserId | None) -> Entity | None:
+        """One entity by key, current *or* expired -- the caller can read ``valid_to``."""
         ...
 
     async def find_entities(
         self, *, owner_id: UserId | None, name: str | None = None, type: str | None = None,
-        limit: int = 50,
+        limit: int = 50, include_expired: bool = False,
     ) -> Sequence[Entity]:
         ...
 
     async def neighbours(
         self, key: str, *, owner_id: UserId | None, depth: int = 1, limit: int = 50
     ) -> tuple[Sequence[Entity], Sequence[Relation]]:
-        """Bounded traversal. ``depth`` is capped by the implementation -- an unbounded graph
-        walk on user input is a denial-of-service primitive."""
+        """Bounded traversal over *current* facts. ``depth`` is capped by the implementation --
+        an unbounded graph walk on user input is a denial-of-service primitive."""
+        ...
+
+    async def list_relations(
+        self, *, owner_id: UserId | None, entity_keys: Sequence[str] | None = None,
+        limit: int = 100, include_expired: bool = False,
+    ) -> Sequence[Relation]:
+        """Relations of one owner, optionally only those touching ``entity_keys``."""
+        ...
+
+    async def provenance(
+        self, *, owner_id: UserId | None, entity_key: str | None = None,
+        relation_key: tuple[str, str, str] | None = None,
+    ) -> Sequence[FactProvenance]:
+        """Every provenance record (live and retired) of one entity or one relation."""
+        ...
+
+    async def retire_document(
+        self, document_id: str, *, owner_id: UserId | None, keep_version: int | None = None,
+        at: datetime | None = None,
+    ) -> int:
+        """A document was superseded: retire the provenance of every version but ``keep_version``.
+
+        Facts left with no live provenance are expired (``valid_to`` set), not deleted. Returns
+        the number of facts that expired.
+        """
+        ...
+
+    async def purge_document(self, document_id: str, *, owner_id: UserId | None) -> int:
+        """A document was deleted: remove its provenance (every version) and every fact left with
+        no provenance at all. Returns the number of facts removed."""
         ...
 
     async def revert(self, source: str, *, owner_id: UserId | None) -> int:
-        """Undo everything a given source contributed. Required for ADR-008 rollback."""
+        """Undo everything a given source contributed. Required for ADR-008 rollback.
+
+        Facts another source also asserts survive with that source's evidence only.
+        """
+        ...
+
+
+@runtime_checkable
+class EntityExtractor(Protocol):
+    """Text in, candidate graph delta out.
+
+    Output is a *candidate*: the ingestion pipeline (``knowledge/graph_pipeline.py``) normalises,
+    validates, attaches provenance and calibrates it before anything is stored. An extractor
+    backed by a model is untrusted in exactly the way retrieved text is -- its output is data to
+    validate, never instructions.
+    """
+
+    name: str
+
+    async def extract(self, text: str, *, source: str = "") -> GraphDelta:
         ...
 
 
