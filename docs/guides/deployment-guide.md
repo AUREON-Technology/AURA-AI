@@ -330,31 +330,47 @@ AURA_SHA=<commit> /opt/aura-stack/deploy/scripts/ci-deploy.sh
 
 ### Backups
 
-The `backup` service runs continuously, dumping Postgres daily, copying Qdrant snapshots into
-`$BACKUP_DIR`, and writing a Redis RDB, with verified dumps and a 14-day local retention. After
-a successful local cycle it `rclone copy`s `$BACKUP_DIR` to `BACKUP_S3_URI` when that is set
-(credentials from `deploy/secrets/rclone.conf` or `backup_s3_access_key` /
-`backup_s3_secret_key`, never from the image). Offsite retention defaults to local
-(`BACKUP_OFFSITE_RETENTION_DAYS`). `AuraBackupStale` and `AuraBackupOffsiteFailed` scrape the
-textfile metrics the sidecar writes.
+The `backup` service runs continuously. Each daily cycle dumps Postgres (verified restorable and
+non-empty), copies Qdrant snapshots and writes a Redis RDB, then **seals** them into one backup
+set, `backups/aura-<stamp>/`: every artifact encrypted with [age](https://age-encryption.org) to
+an offline-held key, an encrypted SHA-256 manifest of the plaintext, and a plain
+`CHECKSUMS.sha256` over the ciphertext. Retention is grandfather-father-son
+(`BACKUP_KEEP_DAILY`/`_WEEKLY`/`_MONTHLY`), and nothing is pruned unless the newest set verifies.
+When `BACKUP_S3_URI` is set the set is `rclone copy`'d offsite and the remote copy is verified
+(`rclone check` plus a comparison of the remote `CHECKSUMS.sha256`) before offsite retention runs.
+Credentials come from `deploy/secrets/rclone.conf` or `backup_s3_access_key` /
+`backup_s3_secret_key`, never from the image.
+
+**Encryption is on by default and fails closed.** Before the first deploy that includes it,
+generate the key pair and configure the public key, or the sidecar refuses to run
+(`AuraBackupMisconfigured`). Procedure, key storage, restore and rotation:
+[maintenance-guide.md → Backup encryption keys](maintenance-guide.md#backup-encryption-keys).
+`AuraBackupStale`, `AuraBackupOffsiteFailed`, `AuraBackupMisconfigured` and
+`AuraBackupUnencrypted` scrape the textfile metrics the sidecar writes.
 
 ```bash
 ls -lh backups/
-cat backups/.last_success | xargs -I{} date -d @{}     # last verified local backup
-rclone ls "$BACKUP_S3_URI"                             # last offsite objects
+cat backups/.last_success | xargs -I{} date -d @{}     # last verified local backup set
+./scripts/backup-open.sh --verify backups/aura-<stamp> # integrity check, needs no key
+rclone lsf "$BACKUP_S3_URI"                            # offsite sets
 ```
 
-Restore is deliberately interactive:
+Restore is deliberately interactive, verifies the whole set before touching the database, and
+needs the offline private key mounted for the duration of the restore only:
 
 ```bash
 docker compose -f docker-compose.prod.yml stop gateway worker-realtime worker-ingestion beat
-docker compose -f docker-compose.prod.yml run --rm backup /scripts/restore.sh /backups/postgres-<stamp>.dump
+docker compose -f docker-compose.prod.yml run --rm \
+  -v /path/to/aura-backup.agekey:/run/restore-key/age.key:ro \
+  -e BACKUP_AGE_IDENTITY_FILE=/run/restore-key/age.key \
+  --entrypoint /bin/sh backup /scripts/restore.sh /backups/aura-<stamp>
 docker compose -f docker-compose.prod.yml start gateway worker-realtime worker-ingestion beat
 curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" https://$AURA_DOMAIN/api/v3/admin/index/rebuild
 ```
 
-The final step matters: documents are the source of truth and the vector index is derived
-(ADR-007), so a restored database needs its index rebuilt.
+`--entrypoint /bin/sh` is required (see the maintenance guide for why). The final step matters:
+documents are the source of truth and the vector index is derived (ADR-007), so a restored
+database needs its index rebuilt.
 
 > Practise a restore on a staging copy before you need it. A restore procedure that has never
 > been run is not a recovery plan.
