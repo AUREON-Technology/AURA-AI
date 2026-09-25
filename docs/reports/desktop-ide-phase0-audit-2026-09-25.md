@@ -1,5 +1,15 @@
 # Desktop IDE Phase 0 audit (2026-09-25)
 
+**Update (2026-09-25):** the layout-persistence and resize gaps this audit found in §1 (Shell /
+State / Theme / Routing) are fixed — `LayoutNotifier` now loads/saves per-workspace layout via
+`desktopLayoutState` (widths debounced, visibility/panel-switch toggles immediate), and
+`DesktopShell` has real drag-to-resize handles (`aura_client/lib/desktop/shell/resize_handle.dart`)
+between the sidebars/bottom panel wired to clamped setters. See
+`aura_client/test/desktop/layout_notifier_test.dart` for coverage; unverified by a real run or CI
+for the same toolchain reasons as the rest of this document. §1's table entries for these two rows
+are left as originally written below (that's what Phase 0 found), with this note as the record of
+what changed since.
+
 Read-only static audit of `aura_client/lib/desktop/` and `aura_hostd/`, run against the claims in
 `docs/AURA_UPGRADE_ROADMAP.md` (Phase K) and ADR-011/013/014, as the mandatory Phase 0 step of the
 "AURA Desktop IDE — Production & Professional UX Upgrade Plan." No files were edited to produce
