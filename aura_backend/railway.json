@@ -9,6 +9,7 @@
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 5,
-    "preDeployCommand": "alembic upgrade head"
+    "preDeployCommand": "echo '=== MIGRATION START ===' && alembic upgrade head && echo '=== MIGRATION OK ===' || (echo '=== MIGRATION FAILED ==='; exit 1)",
+    "preDeployTimeoutSeconds": 300
   }
 }
