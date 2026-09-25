@@ -147,10 +147,11 @@ class PyTorchAdapter:
         logger.info("PyTorch model loaded successfully")
 
     def _build_model_from_config(self) -> Any:
-        """Build model from architecture configuration.
+        """Build a RANDOMLY INITIALISED 2-class classification transformer.
 
-        This is a placeholder - in practice, you'd use the ML specs
-        from aura_core.ml to build the model.
+        This never loads ``config.base_model`` or any pretrained weights: whatever it trains is a
+        toy classifier, not a language model and not a fine-tune of one (GAP-017). See the
+        package docstring.
         """
         # Import the ML spec builder
         from aura_core.ml import build, TransformerSpec, Architecture, Task
