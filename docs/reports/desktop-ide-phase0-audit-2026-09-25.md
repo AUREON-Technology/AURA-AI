@@ -20,7 +20,25 @@ gaps. Re-verified against the current tree, each read fully (not diffed):
   original scenario: `explorer_service.dart`'s `listDirectory` silently falls back to `dart:io` on
   any hostd failure (including "this root was never granted"), so the case this UI was meant for
   — opening a workspace hostd has no grant for — still won't show it; it only fires for a
-  containment violation or a genuine OS permission error. Not yet fixed as originally scoped.
+  containment violation or a genuine OS permission error. **Fixed in a later session (same day)**:
+  `listDirectory`/`readFile` now take a `hostConnected` flag and only fall back to `dart:io`
+  silently when hostd is actually unreachable (the D2-sanctioned "hostd down, read-only" case);
+  a reachable-but-ungranted root now returns `isAccessDenied: true` instead. Fixing this exposed a
+  second, more fundamental bug the naive gate would have made worse: the granted-root match
+  compared `relativePath` directly against each granted root, and the workspace root's own
+  top-level listing always calls this with `relativePath: ''` — which can never `startsWith` a
+  non-empty granted root, so a *properly-granted* workspace's own top-level listing could never
+  reach hostd at all. Without also fixing that (`_workspaceGrantCheckPath` now resolves an empty
+  `relativePath` to the workspace root before matching), gating the fallback on `hostConnected`
+  would have made *every* workspace show "Grant Access" as soon as hostd connects, granted or not
+  — confirmed by reading `aura_hostd/lib/src/control_server.dart`'s `_handleList` route, which
+  resolves `path` relative to `root` server-side (`path=''` → `.`, the root itself). The
+  subdirectory-tile inline listing (`explorer_tree_tile.dart`) had the same bug in a different
+  guise: a real error from `listDirectory` (e.g. `isAccessDenied`) still rendered as "Empty" since
+  it only ever checked `entries.isEmpty`, never `.error` — now shows an inline "Access required" /
+  "Grant" row (reusing the same grant flow, extracted to `explorer_access.dart` since hostd grants
+  a workspace root, never an arbitrary subfolder — the fix for either is identical). Covered by
+  `aura_client/test/desktop/explorer_service_test.dart`.
 - §2 Explorer context menu: only the read-only half landed — copy path, copy relative path,
   refresh, and reveal-in-filesystem (Windows-only) are real. Rename, delete, new file, new folder,
   and open-in-terminal are still entirely absent, and `HostdControlClient` has no
