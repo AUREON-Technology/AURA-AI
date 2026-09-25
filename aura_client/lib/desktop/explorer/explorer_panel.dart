@@ -211,6 +211,7 @@ class _ExplorerTreeState extends ConsumerState<_ExplorerTree> {
           grantedRoots: widget.grantedRoots,
           ideDensity: widget.ideDensity,
           depth: 0,
+          onChanged: reload,
         );
       },
     );

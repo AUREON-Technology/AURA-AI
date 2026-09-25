@@ -41,8 +41,23 @@ gaps. Re-verified against the current tree, each read fully (not diffed):
   `aura_client/test/desktop/explorer_service_test.dart`.
 - §2 Explorer context menu: only the read-only half landed — copy path, copy relative path,
   refresh, and reveal-in-filesystem (Windows-only) are real. Rename, delete, new file, new folder,
-  and open-in-terminal are still entirely absent, and `HostdControlClient` has no
-  rename/delete/create method for the panel to call even if the menu items existed. Still open.
+  and open-in-terminal were still entirely absent. **Fixed in a later session (same day)**: all
+  five now land as `dart:io`-direct operations via `WorkspaceFileService` (new `rename`/`delete`/
+  `createFile`/`createDirectory` methods) rather than through hostd — per this repo's own
+  CLAUDE.md, human writes go through `dart:io` against the workspace root, not through a hostd
+  grant, the same way the existing editor save path already does; no new `HostdControlClient`
+  method was needed after all. Rename/delete/new-file/new-folder dialogs and the destructive-delete
+  confirmation live in a new `explorer_mutations.dart`, shared by `_FileTile` and `_DirectoryTile`;
+  each mutation also publishes the corresponding `FileRenamed`/`FileDeleted`/`FileCreated` event,
+  wiring up what were previously dead entries in `ide_event.dart` (defined, never published).
+  "Open in terminal" turned out to need its own small fix first: `TerminalView` only ever renders
+  the *first* terminal session for a workspace (a session tab strip is a tracked, disclosed D4
+  follow-up, not built), so spawning a second session at the clicked directory would have been
+  invisible. It instead starts the first session there directly if none exists yet, or sends a
+  `cd` into the existing one, then reveals the bottom panel and switches its tab to Terminal —
+  which required actually implementing `FocusTerminalRequested`'s handling in `bottom_panel.dart`,
+  since that event was itself already being published by the Ctrl+`/Cmd+` shortcut with nothing
+  ever subscribed to it. Covered by `aura_client/test/desktop/workspace_file_service_test.dart`.
 - §4 Git fetch/pull/push: real and solid — full client→hostd→`git_service.dart`→real-`git` wiring
   for all three, a real branch-listing endpoint that's actually rendered in a branch-switcher
   dropdown (unlike the audit's `loadLog` dead-wiring finding), safe argv-only shell-out maintained,
