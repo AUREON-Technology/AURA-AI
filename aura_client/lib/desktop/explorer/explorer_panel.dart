@@ -10,6 +10,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/explorer/explorer_access.dart';
 import 'package:aura_client/desktop/explorer/explorer_tree_tile.dart';
 import 'package:aura_client/desktop/explorer/explorer_service.dart';
+import 'package:aura_client/desktop/host/host_panel.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 
 class ExplorerPanel extends ConsumerStatefulWidget {
@@ -97,6 +98,10 @@ class _ExplorerPanelState extends ConsumerState<ExplorerPanel> {
             ideDensity: ideDensity,
           ),
         ),
+        // Host daemon controls -- shown once the toolbar's "Host offline" badge above fires,
+        // since that badge itself isn't clickable and the full settings page
+        // (`/engineer-daemon`) has no other nav entry in this shell.
+        if (!hostState.isConnected) const HostPanel(),
       ],
     );
   }

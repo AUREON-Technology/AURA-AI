@@ -1,19 +1,39 @@
 /// Host panel for Desktop IDE sidebar.
 ///
-/// Extracted from HostDaemonPage for reuse in IDE sidebar footer.
+/// Start/Stop/Pair/Full Settings logic ported from `HostDaemonPage`
+/// (`features/engineering/presentation/host_daemon_page.dart`) -- that page's route
+/// (`/engineer-daemon`) is otherwise unreachable from the Desktop IDE shell (no nav item, no
+/// command-palette entry), so this sidebar panel is the only place a person using the IDE shell
+/// can actually control `aura_hostd`.
 library;
+
+import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
+
+import 'package:aura_client/core/auth/token_manager.dart';
+import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/hostd/hostd_supervisor.dart';
 
-class HostPanel extends ConsumerWidget {
+class HostPanel extends ConsumerStatefulWidget {
   const HostPanel({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HostPanel> createState() => _HostPanelState();
+}
+
+class _HostPanelState extends ConsumerState<HostPanel> {
+  bool _pairing = false;
+  bool _starting = false;
+
+  @override
+  Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
     final statusAsync = ref.watch(hostdStatusProvider);
     final supervisor = ref.watch(hostdSupervisorProvider);
@@ -31,11 +51,10 @@ class HostPanel extends ConsumerWidget {
               Expanded(
                 child: Text('Host Daemon', style: Theme.of(context).textTheme.titleSmall),
               ),
-              if (!supervisor.isSpawnedHere)
-                TextButton(
-                  onPressed: () => _showFullPage(context),
-                  child: const Text('Full Settings'),
-                ),
+              TextButton(
+                onPressed: () => context.push('/engineer-daemon'),
+                child: const Text('Full Settings'),
+              ),
             ],
           ),
           const SizedBox(height: AuraSpacing.sm),
@@ -89,9 +108,9 @@ class HostPanel extends ConsumerWidget {
           children: [
             if (!isRunning)
               _SmallAuraButton(
-                label: 'Start',
+                label: _starting ? 'Starting...' : 'Start',
                 icon: Icons.play_arrow,
-                onPressed: () => _startDaemon(context, ref),
+                onPressed: _starting ? null : () => _startDaemon(context, ref),
               ),
             if (isRunning)
               _SmallAuraButton(
@@ -102,10 +121,10 @@ class HostPanel extends ConsumerWidget {
               ),
             if (isRunning && !isPaired)
               _SmallAuraButton(
-                label: 'Pair',
+                label: _pairing ? 'Pairing...' : 'Pair',
                 icon: Icons.link,
                 variant: AuraButtonVariant.secondary,
-                onPressed: () => _pairDevice(context, ref),
+                onPressed: _pairing ? null : () => _pairDevice(context, ref),
               ),
           ],
         ),
@@ -156,19 +175,140 @@ class HostPanel extends ConsumerWidget {
   }
 
   Future<void> _startDaemon(BuildContext context, WidgetRef ref) async {
-    // Implementation from HostDaemonPage
+    final path = await ref.read(hostdExecutablePathProvider.future);
+    if (path == null || path.isEmpty) {
+      if (context.mounted) {
+        AuraSnackbar.show(
+          context,
+          message: 'Set the aura_hostd executable path in Full Settings first.',
+          kind: AuraSnackbarKind.error,
+        );
+      }
+      return;
+    }
+    setState(() => _starting = true);
+    try {
+      await ref.read(hostdSupervisorProvider).start(path);
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      ref.invalidate(hostdStatusProvider);
+    } catch (error) {
+      if (context.mounted) {
+        AuraSnackbar.show(context, message: 'Could not start aura_hostd: $error', kind: AuraSnackbarKind.error);
+      }
+    } finally {
+      if (mounted) setState(() => _starting = false);
+    }
   }
 
   Future<void> _stopDaemon(BuildContext context, WidgetRef ref, HostdSupervisor supervisor) async {
-    // Implementation from HostDaemonPage
+    if (supervisor.isSpawnedHere) {
+      supervisor.stop();
+    } else {
+      try {
+        await ref.read(hostdControlClientProvider).shutdown();
+      } catch (error) {
+        if (context.mounted) {
+          AuraSnackbar.show(context, message: 'Could not stop aura_hostd: $error', kind: AuraSnackbarKind.error);
+        }
+        return;
+      }
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    ref.invalidate(hostdStatusProvider);
   }
 
   Future<void> _pairDevice(BuildContext context, WidgetRef ref) async {
-    // Implementation from HostDaemonPage
-  }
+    final client = ref.read(hostdControlClientProvider);
+    setState(() => _pairing = true);
+    try {
+      final backendUrl = ref.read(backendUrlProvider);
+      final start = await client.startPairing(backendUrl: backendUrl);
+      final userCode = start['user_code'] as String;
+      final intervalS = (start['interval'] as num).toInt();
+      final expiresIn = (start['expires_in'] as num).toInt();
+      if (!context.mounted) return;
 
-  void _showFullPage(BuildContext context) {
-    // Navigate to full HostDaemonPage
+      unawaited(showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AuraDialog(
+          title: 'Pair this device',
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Approving with your signed-in AURA session...'),
+              const SizedBox(height: AuraSpacing.md),
+              SelectableText(
+                userCode,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontFamily: 'Courier', fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: AuraSpacing.lg),
+              const Center(child: CircularProgressIndicator()),
+              const SizedBox(height: AuraSpacing.sm),
+              const Text('Waiting for approval...', textAlign: TextAlign.center),
+            ],
+          ),
+        ),
+      ));
+
+      // Self-approve: this desktop app is already signed in, and the daemon it's pairing runs on
+      // this same machine, so it can approve its own pairing request -- see
+      // host_daemon_page.dart's identical comment for why this is safe and why it's needed at
+      // all (no separate pairing-approval UI exists anywhere yet).
+      final accessToken = await ref.read(tokenManagerProvider).getValidAccessToken();
+      if (accessToken == null) {
+        throw StateError('Sign in to AURA first -- pairing needs a valid session to approve with.');
+      }
+      final approveResponse = await http.post(
+        Uri.parse('$backendUrl/api/v3/auth/desktop/pair/approve'),
+        headers: {
+          'Authorization': 'Bearer $accessToken',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'user_code': userCode}),
+      );
+      if (approveResponse.statusCode != 200) {
+        throw StateError('Approval rejected: HTTP ${approveResponse.statusCode} ${approveResponse.body}');
+      }
+
+      final deadline = DateTime.now().add(Duration(seconds: expiresIn));
+      String? outcome;
+      String? failureReason;
+      while (mounted && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(Duration(seconds: intervalS > 0 ? intervalS : 2));
+        final status = await client.pairingStatus();
+        final statusValue = status['status'] as String?;
+        if (statusValue == 'approved') {
+          outcome = 'approved';
+          break;
+        }
+        if (statusValue != 'pending') {
+          outcome = 'failed';
+          failureReason = status['reason'] as String? ?? statusValue;
+          break;
+        }
+      }
+
+      if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
+      if (outcome == 'approved') {
+        ref.invalidate(hostdStatusProvider);
+        if (context.mounted) AuraSnackbar.show(context, message: 'Paired.', kind: AuraSnackbarKind.success);
+      } else if (context.mounted) {
+        AuraSnackbar.show(
+          context,
+          message: outcome == 'failed' ? 'Pairing failed: $failureReason' : 'Pairing code expired.',
+          kind: AuraSnackbarKind.error,
+        );
+      }
+    } catch (error) {
+      if (context.mounted) {
+        AuraSnackbar.show(context, message: 'Could not start pairing: $error', kind: AuraSnackbarKind.error);
+      }
+    } finally {
+      if (mounted) setState(() => _pairing = false);
+    }
   }
 }
 
