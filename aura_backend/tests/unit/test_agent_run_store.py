@@ -226,7 +226,7 @@ def test_the_migration_mirrors_the_adapter_schema() -> None:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module.revision == "0008"
-    assert module.down_revision == "0006"
+    assert module.down_revision == "0007"
     assert [_normalise(s) for s in module.UPGRADE_STATEMENTS] == [
         _normalise(s) for s in AGENT_RUNS_SCHEMA
     ]
