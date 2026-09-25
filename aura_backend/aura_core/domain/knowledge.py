@@ -326,6 +326,22 @@ class Entity:
     first_seen: datetime = field(default_factory=_utcnow)
     last_seen: datetime = field(default_factory=_utcnow)
     sources: tuple[str, ...] = ()
+    #: Calibrated belief that this is a real entity of this type (see ``domain/graph.py``). A
+    #: store recomputes it from the entity's live provenance, so it falls when a source that
+    #: asserted it is superseded or deleted.
+    confidence: float = 0.5
+    #: Validity interval. ``valid_to`` is set when every source asserting the entity has been
+    #: superseded -- the entity is then *expired*, kept for history, and invisible to retrieval.
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("confidence must be within [0, 1]")
+
+    @property
+    def is_current(self) -> bool:
+        return self.valid_to is None
 
     @staticmethod
     def canonical_key(name: str, type_: str) -> str:
@@ -345,6 +361,7 @@ class Entity:
             mention_count=self.mention_count + other.mention_count,
             last_seen=max(self.last_seen, other.last_seen),
             sources=tuple(dict.fromkeys((*self.sources, *other.sources))),
+            confidence=max(self.confidence, other.confidence),
         )
 
 
@@ -364,6 +381,10 @@ class Relation:
     sources: tuple[str, ...] = ()
     attributes: Mapping[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=_utcnow)
+    #: Validity interval, as on :class:`Entity`: an edge whose every asserting source has been
+    #: superseded is expired (``valid_to`` set) rather than silently kept as a current fact.
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:
@@ -372,6 +393,10 @@ class Relation:
     @property
     def key(self) -> tuple[str, str, str]:
         return (self.subject_key, self.predicate, self.object_key)
+
+    @property
+    def is_current(self) -> bool:
+        return self.valid_to is None
 
 
 @dataclass(frozen=True, slots=True)
