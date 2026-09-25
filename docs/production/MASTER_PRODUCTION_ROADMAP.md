@@ -1,5 +1,10 @@
 # AURA Master Production Roadmap
 
+> **Superseded as the forward plan (2026-09-25).** The canonical roadmap is now
+> [`docs/roadmaps/AURA_MASTER_UPGRADE_ROADMAP.md`](../roadmaps/AURA_MASTER_UPGRADE_ROADMAP.md); every phase in this file is mapped there by
+> [`AURA_ROADMAP_RECONCILIATION.md`](../roadmaps/AURA_ROADMAP_RECONCILIATION.md).
+> This file is kept as a historical evidence ledger; do not add new phases here.
+
 The plan that takes AURA from its current state (a well-architected, honestly documented,
 single-VPS, CPU-inference platform that serves one AI request at a time) to a production service
 for **50+ concurrent users**. It covers 27 phases (0–26). Each one is condensed to its goal, the

@@ -981,11 +981,14 @@ gaps:
     severity: P0
     current_state: >-
       GitHub Actions jobs on this repository die in about 3 seconds with no steps executed and no
-      runner assigned. Seen on main since 2026-09-22 and on PR #96, including after one re-run.
+      runner assigned. Corrected 2026-09-25 (docs/reports/AURA_FULL_SYSTEM_REVIEW.md sec. 1): the
+      last successful Backend CI on main is run #220 (78bdc83, 2026-09-13); every main run from #222
+      (2026-09-13 17:37Z) onward fails this way, so the outage began 2026-09-13, not 2026-09-22.
       This is consistent with an account-level Actions or billing block, not a workflow defect.
       While it lasts, no CI gate in .github/workflows runs (Backend CI, Client CI, Host Daemon CI),
-      Deploy VPS never fires (it needs a successful Backend CI via workflow_run), and no change
-      since 2026-09-22 has CI evidence -- local pytest runs are the only verification.
+      Deploy VPS never fires (it needs a successful Backend CI via workflow_run; last success is
+      run #151 at 78bdc83), and no change since 2026-09-13 has CI evidence -- local pytest runs
+      are the only verification.
     target_state: Actions jobs get a runner and execute their steps; Backend CI runs green on main and Deploy VPS fires.
     owner: repo-owner
     dependencies: []

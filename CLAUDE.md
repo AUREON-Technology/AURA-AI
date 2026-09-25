@@ -47,11 +47,14 @@ published at https://claude.ai/code/artifact/2743a01b-ba92-4473-99e9-04f84996ba8
 shared from the artifact's own share menu before this link works for anyone but the account that
 published it.
 
-`docs/AURA_UPGRADE_ROADMAP.md` is the current source of truth for what's actually built vs. only
-claimed — it's baselined against a specific commit and corrects stale claims with file:line
-citations. Check it before assuming a capability does or doesn't exist. Its standing rule also
-applies to any work you do here: **don't mark something done without the evidence its exit
-criteria name** — "built" and "tested" are not "proven."
+`docs/roadmaps/AURA_MASTER_UPGRADE_ROADMAP.md` is the one canonical roadmap (phases `M0`–`M15`),
+reconciled from every earlier plan in `docs/roadmaps/AURA_ROADMAP_RECONCILIATION.md` and backed by
+`docs/reports/AURA_FULL_SYSTEM_REVIEW.md`; open actionable items are in
+`docs/roadmaps/AURA_CRITICAL_BACKLOG.md`. `docs/AURA_UPGRADE_ROADMAP.md` (phases A–K) is kept as the
+historical evidence ledger for work done before 2026-09-25, and `docs/production/gap_register.yaml`
+stays the machine-checked gap status. Check these before assuming a capability does or doesn't
+exist. The standing rule applies to any work you do here: **don't mark something done without the
+evidence its exit criteria name** — "built" and "tested" are not "proven."
 
 ## Commands
 
@@ -160,7 +163,7 @@ permanent platform adapters mounted outside `aura_core` (ADR-002), not legacy co
 removal.
 
 Full ADR list and the ten essential decisions are in `docs/architecture/00-overview.md` and
-`docs/architecture/001-*.md`–`014-*.md` (there is no 012); read the relevant one before touching
+`docs/architecture/001-*.md`–`016-*.md` (there is no 012); read the relevant one before touching
 retrieval, memory, routing, safety, indexing, desktop hostd (011), or engineer workspaces
 (013/014) — each encodes a reason something is shaped the way it is, not just what it does.
 

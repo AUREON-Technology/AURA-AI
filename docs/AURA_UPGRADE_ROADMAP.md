@@ -1,5 +1,10 @@
 # AURA Upgrade Roadmap
 
+> **Superseded as the forward plan (2026-09-25).** The canonical roadmap is now
+> [`docs/roadmaps/AURA_MASTER_UPGRADE_ROADMAP.md`](roadmaps/AURA_MASTER_UPGRADE_ROADMAP.md); every phase in this file is mapped there by
+> [`AURA_ROADMAP_RECONCILIATION.md`](roadmaps/AURA_ROADMAP_RECONCILIATION.md).
+> This file is kept as a historical evidence ledger; do not add new phases here.
+
 Baselined against `8286b1a` on 2026-08-22. Supersedes the phase table in
 [`Doc/V2_BLUEPRINT.md`](../Doc/V2_BLUEPRINT.md) §13 and the forward-looking half of
 [`docs/analysis/03-missing-components-report.md`](analysis/03-missing-components-report.md).
