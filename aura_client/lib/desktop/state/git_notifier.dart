@@ -37,14 +37,16 @@ class GitNotifier extends StateNotifier<GitState> {
     try {
       final result = await _hostdClient.gitStatus(root: rootPath);
       final branches = await _loadBranchesQuietly(rootPath);
+      final files = _filesFrom(result);
       state = GitState(
         workspaceId: workspaceId,
         branch: result['branch'] as String?,
         upstream: result['upstream'] as String?,
         ahead: result['ahead'] as int? ?? 0,
         behind: result['behind'] as int? ?? 0,
-        files: _filesFrom(result),
+        files: files,
         branches: branches,
+        conflictedFiles: _unmergedPathsFrom(files),
       );
       _publishChanged();
     } on HostdControlError catch (error) {
@@ -152,6 +154,21 @@ class GitNotifier extends StateNotifier<GitState> {
         }
       });
 
+  /// D5 Git panel: merges [branch] into the human's own checked-out working tree. Deliberately
+  /// does not set [GitState.error]/[GitState.conflictedFiles] itself on a conflict result --
+  /// [_write] always calls [refresh] right after `op()` returns (success or a structured
+  /// `ok: false`, not just on a thrown error), and [refresh] derives [GitState.conflictedFiles]
+  /// straight from real `git status` unmerged-path codes, which is the authoritative source right
+  /// after a conflicted merge. Setting it here too would just be overwritten by that refresh a
+  /// moment later. The panel's resolution UI keys off `conflictedFiles.isNotEmpty`, not a
+  /// transient error string.
+  Future<void> mergeBranch(String branch) => _write(() => _hostdClient.gitMerge(root: _rootPath!, branch: branch));
+
+  /// Bails out of a merge [mergeBranch] left in conflict, restoring the working tree. The
+  /// subsequent [_write]-triggered [refresh] naturally reports an empty [GitState.conflictedFiles]
+  /// once `git status` no longer shows unmerged paths.
+  Future<void> abortMerge() => _write(() => _hostdClient.gitMergeAbort(root: _rootPath!));
+
   /// Human-only remote sync -- fetch is read-only w.r.t. the working tree,
   /// pull is fast-forward-only, push sends the checked-out branch to its own
   /// upstream (the daemon takes no refspec). All three refresh status on
@@ -214,5 +231,17 @@ class GitNotifier extends StateNotifier<GitState> {
   List<GitFileChange> _filesFrom(Map<String, dynamic> result) => ((result['files'] as List?) ?? const [])
       .cast<Map<String, dynamic>>()
       .map(GitFileChange.fromJson)
+      .toList();
+
+  /// `git status --short`'s unmerged-path codes (both `X`/`Y` columns non-space, and matching one
+  /// of `UU`/`AA`/`DD`/`AU`/`UD`/`UA`/`DU`) -- deriving [GitState.conflictedFiles] straight from
+  /// the real status on every [refresh] rather than trusting a one-time snapshot from whichever
+  /// call caused the conflict means it stays correct even after the human manually resolves and
+  /// stages a file outside this notifier's own knowledge (an editor save, a terminal `git add`).
+  static const _unmergedStatusPairs = {'UU', 'AA', 'DD', 'AU', 'UD', 'UA', 'DU'};
+
+  List<String> _unmergedPathsFrom(List<GitFileChange> files) => files
+      .where((f) => _unmergedStatusPairs.contains('${f.indexStatus}${f.worktreeStatus}'))
+      .map((f) => f.path)
       .toList();
 }

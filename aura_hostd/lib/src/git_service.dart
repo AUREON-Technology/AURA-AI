@@ -426,6 +426,42 @@ class GitService {
     return {'ok': true, 'committed': true};
   }
 
+  /// D5 Git panel: merges [branch] into whatever is currently checked out in [cwd] -- the human's
+  /// own working tree, not a task worktree (contrast [mergeTask], the agent-only equivalent gated
+  /// to `.aura-workspaces/<taskId>` checkouts). Conflict detection mirrors [mergeTask]'s own
+  /// technique exactly (`diff --name-only --diff-filter=U` after a failed merge). Unlike
+  /// [mergeTask], never auto-commits on success -- an ordinary (non-squash) merge that completes
+  /// clean already leaves a merge commit from `git merge` itself; this method only reports it.
+  Future<Map<String, Object?>> mergeBranch(String cwd, String branch) async {
+    final result = await _run(cwd, ['merge', '--no-ff', branch]);
+    if (result.exitCode != 0) {
+      if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
+      final conflicted = await _run(cwd, ['diff', '--name-only', '--diff-filter=U']);
+      final conflictedFiles =
+          const LineSplitter().convert(conflicted.stdout).where((line) => line.trim().isNotEmpty).toList();
+      if (conflictedFiles.isNotEmpty) {
+        return {'ok': false, 'reason': 'conflict', 'conflicted_files': conflictedFiles};
+      }
+      if (result.stderr.contains('Already up to date')) {
+        return {'ok': true, 'already_up_to_date': true};
+      }
+      throw GitCommandError('git merge failed: ${result.stderr}');
+    }
+    return {'ok': true};
+  }
+
+  /// Bails out of a merge left in conflict by [mergeBranch], restoring the working tree to its
+  /// pre-merge state (`git merge --abort` is only valid while `MERGE_HEAD` exists, i.e. mid-merge
+  /// -- git itself refuses otherwise, surfaced here as a normal [GitCommandError]).
+  Future<Map<String, Object?>> abortMerge(String cwd) async {
+    final result = await _run(cwd, ['merge', '--abort']);
+    if (result.exitCode != 0) {
+      if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
+      throw GitCommandError('git merge --abort failed: ${result.stderr}');
+    }
+    return {'ok': true};
+  }
+
   bool _looksLikeNotARepo(String stderr) => stderr.contains('not a git repository');
 
   List<String> _parseAffectedFiles(String stderr) {

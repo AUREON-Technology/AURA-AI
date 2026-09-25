@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'aura_ide_density.dart';
 import 'aura_palette.dart';
 import 'tokens.dart';
 import 'typography.dart';
@@ -38,7 +39,7 @@ class AuraThemeV2 {
       scaffoldBackgroundColor: palette.background,
       colorScheme: colorScheme,
       textTheme: AuraTypography.textTheme(palette),
-      extensions: [palette],
+      extensions: [palette, AuraIdeDensity.defaultDensity],
       // InkSparkle + ListTile tile/selected colors hides ink (Flutter asserts
       // "ListTile background color or ink splashes may be invisible").
       splashFactory: InkRipple.splashFactory,
