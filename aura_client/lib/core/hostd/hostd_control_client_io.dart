@@ -117,10 +117,19 @@ class HostdControlClient {
       if (decodedMap['ok'] == false) {
         return decodedMap;
       }
-      throw HostdControlError(
-        response.statusCode,
-        (decodedMap['error'] as String?) ?? 'HTTP ${response.statusCode}',
-      );
+      final message = (decodedMap['error'] as String?) ?? 'HTTP ${response.statusCode}';
+      // `control_server.dart`'s unmatched-route fallback is this exact literal string -- distinct
+      // from every other legitimate 404 in that file (a granted-root or path-not-found message).
+      // A stale daemon binary running server code that predates a route the client now calls
+      // reports it this way, which otherwise reaches the user as a bare, meaningless string.
+      if (response.statusCode == 404 && message == 'no such endpoint') {
+        throw HostdControlError(
+          response.statusCode,
+          'The local aura_hostd daemon does not recognize this request -- it may be out of '
+          'date. Rebuild and restart aura_hostd, then try again.',
+        );
+      }
+      throw HostdControlError(response.statusCode, message);
     }
     return decodedMap;
   }

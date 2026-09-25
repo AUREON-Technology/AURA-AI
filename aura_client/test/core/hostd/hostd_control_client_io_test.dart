@@ -116,6 +116,55 @@ void main() {
     }
   });
 
+  test('a stale-daemon "no such endpoint" 404 is enriched with a rebuild hint', () async {
+    final httpServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    unawaited(() async {
+      await for (final request in httpServer) {
+        request.response.statusCode = 404;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'error': 'no such endpoint'}));
+        await request.response.close();
+      }
+    }());
+    addTearDown(() => httpServer.close(force: true));
+    final client = HostdControlClient(
+      discoverEndpoint: () async => HostdControlEndpoint(port: httpServer.port, token: 't'),
+    );
+
+    try {
+      await client.roots();
+      fail('expected a HostdControlError');
+    } on HostdControlError catch (error) {
+      expect(error.statusCode, 404);
+      expect(error.message, contains('out of date'));
+      expect(error.message, contains('Rebuild and restart'));
+    }
+  });
+
+  test('a real "not a granted root" 404 keeps its own message unchanged', () async {
+    final httpServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    unawaited(() async {
+      await for (final request in httpServer) {
+        request.response.statusCode = 404;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'error': '/x is not a granted root'}));
+        await request.response.close();
+      }
+    }());
+    addTearDown(() => httpServer.close(force: true));
+    final client = HostdControlClient(
+      discoverEndpoint: () async => HostdControlEndpoint(port: httpServer.port, token: 't'),
+    );
+
+    try {
+      await client.roots();
+      fail('expected a HostdControlError');
+    } on HostdControlError catch (error) {
+      expect(error.statusCode, 404);
+      expect(error.message, '/x is not a granted root');
+    }
+  });
+
   test('listDirectory and readFile URL-encode their query parameters', () async {
     Uri? seenUri;
     final server = await _FakeControlServer.start(respond: (request, body) {

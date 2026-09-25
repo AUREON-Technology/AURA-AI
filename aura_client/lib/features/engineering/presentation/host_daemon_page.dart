@@ -11,6 +11,7 @@ import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/hostd/hostd_control_client.dart';
+import 'package:aura_client/core/hostd/hostd_error_messages.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/hostd/hostd_supervisor.dart';
 
@@ -71,7 +72,7 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
       ref.invalidate(hostdStatusProvider);
     } catch (error) {
       if (mounted) {
-        AuraSnackbar.show(context, message: 'Could not start aura_hostd: $error', kind: AuraSnackbarKind.error);
+        AuraSnackbar.show(context, message: 'Could not start aura_hostd: ${describeHostdError(error)}', kind: AuraSnackbarKind.error);
       }
     } finally {
       if (mounted) setState(() => _starting = false);
@@ -86,7 +87,7 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
         await ref.read(hostdControlClientProvider).shutdown();
       } catch (error) {
         if (mounted) {
-          AuraSnackbar.show(context, message: 'Could not stop aura_hostd: $error', kind: AuraSnackbarKind.error);
+          AuraSnackbar.show(context, message: 'Could not stop aura_hostd: ${describeHostdError(error)}', kind: AuraSnackbarKind.error);
         }
         return;
       }
@@ -185,7 +186,7 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
       }
     } catch (error) {
       if (mounted) {
-        AuraSnackbar.show(context, message: 'Could not start pairing: $error', kind: AuraSnackbarKind.error);
+        AuraSnackbar.show(context, message: 'Could not start pairing: ${describeHostdError(error)}', kind: AuraSnackbarKind.error);
       }
     } finally {
       if (mounted) setState(() => _pairing = false);
@@ -240,7 +241,7 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
           statusAsync.when(
             data: (status) => _buildStatusCard(palette, status, supervisor),
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, _) => Text('Could not check status: $error', style: TextStyle(color: palette.danger)),
+            error: (error, _) => Text('Could not check status: ${describeHostdError(error)}', style: TextStyle(color: palette.danger)),
           ),
           const SizedBox(height: AuraSpacing.lg),
           statusAsync.maybeWhen(
