@@ -110,6 +110,23 @@ def _is_binary_path(path: str) -> bool:
     return dot > 0 and name[dot:].lower() in _BINARY_SUFFIXES
 
 
+_PLAIN_BRANCH = re.compile(r"^[A-Za-z0-9._/-]+$")
+
+
+def _is_plain_branch_name(branch: str) -> bool:
+    """A branch *name* and nothing else: no refspec syntax (``:``, ``+``), no revision syntax
+    (``~ ^ @ ..``), no option (leading ``-``), no ``refs/`` path and not ``HEAD`` -- a subset of
+    ``git check-ref-format --branch`` that is strict enough to compare against the default
+    branch by name and mean it."""
+    if not _PLAIN_BRANCH.match(branch) or branch in ("HEAD", "@"):
+        return False
+    if branch.startswith(("-", "/", "refs/")) or branch.endswith(("/", ".", ".lock")):
+        return False
+    if ".." in branch or "//" in branch:
+        return False
+    return not any(part.startswith(".") for part in branch.split("/"))
+
+
 def _normalize_repo(value: str) -> str:
     """``owner/name`` from whatever form the user pasted.
 
@@ -783,6 +800,15 @@ def build_sandbox_tools(
                 tool="git_push",
             )
 
+        if not _is_plain_branch_name(branch):
+            # The default-branch check below compares *names*; a refspec (`HEAD:main`,
+            # `+x:main`, `:main`) or an option (`--mirror`) would pass it and still write to or
+            # delete the default branch (tests/security/test_workspace_boundaries.py).
+            raise ToolExecutionError(
+                f"{branch!r} is not a plain branch name; pass just the branch to push, "
+                "e.g. 'feature/login-fix'",
+                tool="git_push",
+            )
         # Refused here rather than left to the forge's branch protection: not every repository
         # has any, and "the agent pushed straight to main" is not a thing to discover afterwards.
         default_branch = await host_git.default_branch(checkout)

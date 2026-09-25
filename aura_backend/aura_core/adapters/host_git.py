@@ -275,8 +275,18 @@ class HostGitService:
     async def push(
         self, repo_dir: Path, *, branch: str, token: str | None = None, repo: str | None = None
     ) -> GitResult:
-        """Push ``branch`` to origin. Callers gate this; it does not gate itself."""
-        args = ["push", "--set-upstream", self.remote_url(repo) if repo else "origin", branch]
+        """Push ``branch`` to origin. Callers gate this; it does not gate itself.
+
+        The refspec is always spelled out (``refs/heads/X:refs/heads/X``) after ``--``, so the
+        branch can never be read as an option (``--mirror``, ``--force``) or as a refspec whose
+        destination differs from its name (``HEAD:main``) -- the caller's default-branch check
+        compares names, and this is what makes the name the destination.
+        """
+        ref = f"refs/heads/{branch}"
+        args = [
+            "push", "--set-upstream", "--",
+            self.remote_url(repo) if repo else "origin", f"{ref}:{ref}",
+        ]
         return await self._checked(args, cwd=repo_dir, token=token)
 
     async def log(self, repo_dir: Path, *, limit: int = 20) -> str:
