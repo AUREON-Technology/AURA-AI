@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable, Mapping
 
 from .knowledge import Entity
@@ -39,6 +39,7 @@ __all__ = [
     "normalize_surface",
     "normalize_alias",
     "combine_confidence",
+    "summarise_provenance",
     "MAX_COMBINED_CONFIDENCE",
 ]
 
@@ -137,6 +138,28 @@ class FactProvenance:
     @property
     def is_live(self) -> bool:
         return self.retired_at is None
+
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def summarise_provenance(
+    records: Iterable[FactProvenance],
+) -> tuple[float | None, tuple[str, ...], tuple[str, ...]]:
+    """``(confidence, live source ids, all source ids)`` for one fact's provenance.
+
+    ``confidence`` is ``None`` when nothing is live -- the fact is then expired, and keeps the
+    confidence it last had rather than dropping to zero, so its history still reads truthfully.
+    Both adapters call this, so the in-memory and Postgres stores cannot disagree about it.
+    """
+    ordered = sorted(records, key=lambda r: (r.recorded_at or _EPOCH, r.source_id))
+    live = [r for r in ordered if r.is_live]
+    confidence = combine_confidence(r.confidence for r in live) if live else None
+    return (
+        confidence,
+        tuple(r.source_id for r in live),
+        tuple(dict.fromkeys(r.source_id for r in ordered)),
+    )
 
 
 @dataclass(frozen=True, slots=True)

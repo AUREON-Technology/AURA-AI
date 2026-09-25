@@ -22,7 +22,15 @@ from .runtime import (
     Tool,
     ToolContext,
 )
-from .storage import Cache, DocumentStore, GraphStore, MemoryStore, VectorPoint, VectorStore
+from .storage import (
+    Cache,
+    DocumentStore,
+    EntityExtractor,
+    GraphStore,
+    MemoryStore,
+    VectorPoint,
+    VectorStore,
+)
 
 __all__ = [
     "LLMProvider",
@@ -34,6 +42,7 @@ __all__ = [
     "DocumentStore",
     "MemoryStore",
     "GraphStore",
+    "EntityExtractor",
     "Cache",
     "Tool",
     "ToolContext",
