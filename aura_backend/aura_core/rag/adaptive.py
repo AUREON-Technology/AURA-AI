@@ -111,6 +111,7 @@ _PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
             # dependency questions to the graph, so "who does Sarah report to" -- the question the
             # extracted `reports_to` edge exists to answer -- never reached it.
             r"\b(who|where) (does|do|did) .{1,60}\b(work|report|live)\b",
+            r"\bwhere (is|are|was|were) .{1,60}\b(located|based|headquartered)\b",
             r"\b(reports? to|works? (at|for)|(located|based|headquartered) in)\b",
             r"\bwho (runs|leads|heads|manages|owns|founded|acquired|works)\b",
             r"\b(ceo|cto|cfo|coo|founder|head|director|manager|lead) of\b",
