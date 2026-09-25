@@ -947,6 +947,20 @@ services:
       PGPASSFILE: /run/secrets/postgres_password
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
       BACKUP_OFFSITE_RETENTION_DAYS: ${BACKUP_OFFSITE_RETENTION_DAYS:-14}
+      # P1.3: encryption is ON by default and fails closed -- with no recipient configured the
+      # cycle refuses to run (AuraBackupMisconfigured) rather than write plaintext. Only the age
+      # PUBLIC key goes here or in deploy/secrets/backup_age_recipients.txt; the private key stays
+      # offline. See docs/guides/maintenance-guide.md "Backup encryption keys".
+      BACKUP_ENCRYPTION: ${BACKUP_ENCRYPTION:-age}
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
+      BACKUP_AGE_RECIPIENTS_FILE: /run/backup-secrets/backup_age_recipients.txt
+      BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-}
+      BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-4}
+      BACKUP_KEEP_MONTHLY: ${BACKUP_KEEP_MONTHLY:-6}
+      BACKUP_OFFSITE_KEEP_DAILY: ${BACKUP_OFFSITE_KEEP_DAILY:-}
+      BACKUP_OFFSITE_KEEP_WEEKLY: ${BACKUP_OFFSITE_KEEP_WEEKLY:-}
+      BACKUP_OFFSITE_KEEP_MONTHLY: ${BACKUP_OFFSITE_KEEP_MONTHLY:-}
+      BACKUP_OFFSITE_VERIFY: ${BACKUP_OFFSITE_VERIFY:-check}
       QDRANT_URL: http://qdrant:6333
       REDIS_HOST: redis
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
