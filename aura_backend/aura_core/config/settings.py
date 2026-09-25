@@ -23,7 +23,7 @@ from typing import Any, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from ..domain.errors import ConfigurationError
-from ..domain.llm import RoutingPolicy
+from ..domain.llm import Modality, ModelPool, RoutingPolicy
 from .external_inference import is_external_inference_host, is_remote_inference_host
 
 # Stdlib logging rather than aura_core.observability: settings is the lowest layer here and
@@ -207,6 +207,24 @@ class ProviderConfig:
     timeout_s: float = 60.0
     weight: int = 1
     enabled: bool = True
+    # Model-level metadata (roadmap P2.3) -- AURA_PROVIDER_<NAME>_{POOLS,SPEED_TIER,MEMORY_COST,
+    # GPU_COST,MODALITIES,SUPPORTS_REASONING,LANGUAGES,MODEL_REVISION,CAPACITY_GROUP}. Every
+    # default is "undeclared", which never excludes a provider: an env file written before these
+    # existed routes exactly as it did.
+    pools: tuple[str, ...] = ()
+    speed_tier: int = 2
+    memory_cost: float = 0.0
+    gpu_cost: float = 0.0
+    modalities: tuple[str, ...] = ("text",)
+    supports_reasoning: bool = False
+    languages: tuple[str, ...] = ()
+    model_revision: str = ""
+    capacity_group: str = ""
+    # Admission (roadmap P2.4) -- AURA_PROVIDER_<NAME>_{MAX_QUEUE,QUEUE_TIMEOUT_S}. None = inherit
+    # AURA_LLM_ADMISSION_MAX_QUEUE / AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S. The concurrency cap is
+    # the existing max_concurrency.
+    max_queue: int | None = None
+    queue_timeout_s: float | None = None
 
     # Self-hosted runtimes only. There is deliberately no vendor kind here: `ollama` and
     # `openai_compatible` between them cover Ollama, vLLM, llama.cpp's server, LocalAI, TGI and
@@ -226,7 +244,25 @@ class ProviderConfig:
             raise ConfigurationError(f"provider {self.name!r} must declare a model")
         if self.kind in {"openai_compatible", "ollama"} and not self.base_url:
             raise ConfigurationError(f"provider {self.name!r} must declare a base_url")
+        self._validate_model_metadata()
         self._reject_external_base_url()
+
+    def _validate_model_metadata(self) -> None:
+        """Fail at boot on a pool or modality name that would otherwise silently never match."""
+        known_pools = {p.value for p in ModelPool}
+        unknown = [p for p in self.pools if p not in known_pools]
+        if unknown:
+            raise ConfigurationError(
+                f"provider {self.name!r} declares unknown pool(s) {unknown}",
+                details={"supported": sorted(known_pools)},
+            )
+        known_mods = {m.value for m in Modality}
+        bad_mods = [m for m in self.modalities if m not in known_mods]
+        if bad_mods or not self.modalities:
+            raise ConfigurationError(
+                f"provider {self.name!r} declares unknown or empty modalities {bad_mods}",
+                details={"supported": sorted(known_mods)},
+            )
 
     def _reject_external_base_url(self) -> None:
         """Refuse a base_url on a hosted inference service; gate one on rented compute.
@@ -306,6 +342,23 @@ class ProviderConfig:
             timeout_s=_float(f"{p}_TIMEOUT_S", 60.0, minimum=1.0),
             weight=_int(f"{p}_WEIGHT", 1, minimum=1),
             enabled=_bool(f"{p}_ENABLED", True),
+            pools=tuple(v.lower() for v in _list(f"{p}_POOLS")),
+            speed_tier=_int(f"{p}_SPEED_TIER", 2, minimum=1, maximum=3),
+            memory_cost=_float(f"{p}_MEMORY_COST", 0.0, minimum=0.0),
+            gpu_cost=_float(f"{p}_GPU_COST", 0.0, minimum=0.0),
+            modalities=tuple(v.lower() for v in _list(f"{p}_MODALITIES", ("text",))),
+            supports_reasoning=_bool(f"{p}_SUPPORTS_REASONING", False),
+            languages=tuple(v.lower() for v in _list(f"{p}_LANGUAGES")),
+            model_revision=_env(f"{p}_MODEL_REVISION", "") or "",
+            capacity_group=_env(f"{p}_CAPACITY_GROUP", "") or "",
+            max_queue=(
+                _int(f"{p}_MAX_QUEUE", -1, minimum=-1) if _env(f"{p}_MAX_QUEUE") else None
+            ),
+            queue_timeout_s=(
+                _float(f"{p}_QUEUE_TIMEOUT_S", 0.0, minimum=0.0)
+                if _env(f"{p}_QUEUE_TIMEOUT_S")
+                else None
+            ),
         )
 
 
@@ -329,6 +382,14 @@ class LLMSettings:
     #: Assembled prompt cap (prefill). Independent of the provider context window so a local
     #: 8k model does not ingest 1k+ token RAG prompts that CPU Ollama cannot evaluate in time.
     max_prompt_tokens: int = 400
+    #: Admission defaults (P2.4), per capacity group unless a provider overrides them.
+    #: -1 = unbounded queue and 0 = no queue timeout: the pre-P2.4 behaviour, so nothing changes
+    #: until an operator opts in (the production compose file does).
+    admission_max_queue: int = -1
+    admission_queue_timeout_s: float = 0.0
+    #: Concurrent generations one user may hold across all pools (and queue as many more);
+    #: 0 disables the quota.
+    user_max_concurrent_generations: int = 0
 
     #: Used when nothing is configured, so ``aura_core`` is importable and testable out of the
     #: box. ``validate()`` refuses to let it run in staging/production.
@@ -367,6 +428,11 @@ class LLMSettings:
             semantic_cache_threshold=_float("LLM_SEMANTIC_CACHE_THRESHOLD", 0.97, minimum=0.5, maximum=1.0),
             max_generations_per_turn=_int("LLM_MAX_GENERATIONS_PER_TURN", 8, minimum=1, maximum=64),
             max_prompt_tokens=_int("LLM_MAX_PROMPT_TOKENS", 400, minimum=64, maximum=32768),
+            admission_max_queue=_int("LLM_ADMISSION_MAX_QUEUE", -1, minimum=-1),
+            admission_queue_timeout_s=_float("LLM_ADMISSION_QUEUE_TIMEOUT_S", 0.0, minimum=0.0),
+            user_max_concurrent_generations=_int(
+                "LLM_USER_MAX_CONCURRENT_GENERATIONS", 0, minimum=0
+            ),
         )
 
     @property

@@ -23,6 +23,7 @@ from ..domain.errors import (
     AuthenticationError,
     AuthorizationError,
     DependencyUnavailableError,
+    OverloadedError,
     RateLimitedError,
     ValidationError,
 )
@@ -281,15 +282,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             status = {"blocked": 400, "budget_exceeded": 429, "rate_limited": 429}.get(
                 result.telemetry.outcome.value, 503
             )
+            # Admission refusals (P2.4) carry a Retry-After: 503 for a saturated pool, 429 for
+            # a user over their concurrent-generation quota (outcome rate_limited above).
+            retry_after = result.retry_after_s
             return JSONResponse(
                 status_code=status,
                 content={
                     "error": result.telemetry.error_kind or "turn_failed",
                     "message": "The turn did not complete.",
                     "retryable": status in (429, 503),
-                    "details": {},
+                    "details": {"retry_after": retry_after} if retry_after else {},
                     "correlation_id": result.telemetry.correlation_id.value,
                 },
+                headers={"Retry-After": str(retry_after)} if retry_after else None,
             )
 
         return JSONResponse(
@@ -391,6 +396,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                     # a fill-in-the-blank, not a conversation, and a human is actively waiting.
                     timeout_s=20.0,
                 )
+            )
+        except OverloadedError as exc:
+            # No capacity (P2.4): tell the editor when to try again rather than a bare 503.
+            return JSONResponse(
+                status_code=exc.http_status,
+                content=exc.to_dict(),
+                headers={"Retry-After": str(exc.retry_after)},
             )
         except Exception as exc:
             logger.warning("inline completion failed", extra={"error": type(exc).__name__})
@@ -1074,9 +1086,14 @@ def build_app(container: Any, *, authenticator: Any, rate_limiter: Any = None) -
         Every error carries its own ``http_status`` and a stable ``kind`` slug, so clients
         branch on a machine-readable value rather than parsing prose.
         """
-        if exc.http_status >= 500:
+        if exc.http_status >= 500 and not isinstance(exc, OverloadedError):
             logger.error("request failed", extra={"error": exc.kind, "details": exc.details})
-        return JSONResponse(status_code=exc.http_status, content=exc.to_dict())
+        retry_after = getattr(exc, "retry_after", None)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content=exc.to_dict(),
+            headers={"Retry-After": str(retry_after)} if retry_after else None,
+        )
 
     @app.get("/health/live")
     async def liveness() -> JSONResponse:

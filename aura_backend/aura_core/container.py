@@ -52,7 +52,7 @@ from .knowledge.reranking import build_reranker
 from .kernel.kernel import AIKernel, KernelDependencies
 from .llm.cache import InMemoryCache, LLMCache
 from .llm.embeddings import HashEmbeddingProvider
-from .llm.registry import build_providers
+from .llm.registry import admission_limits_from_settings, build_providers
 from .llm.router import ProviderRouter
 from .agents import build_default_agent_registry
 from .memory.engine import MemoryEngine
@@ -158,6 +158,9 @@ class Container:
             clock=self.clock.monotonic,
             metrics=self.metrics,
             event_bus=self.events,
+            # Admission control (P2.4): per-capacity-group caps/queues from provider config.
+            group_limits=admission_limits_from_settings(settings.llm),
+            user_max_concurrent=settings.llm.user_max_concurrent_generations,
         )
 
         self.llm_cache = LLMCache(

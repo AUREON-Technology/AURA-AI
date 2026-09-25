@@ -36,7 +36,9 @@ from ..domain.errors import (
     AllProvidersFailedError,
     AuraError,
     BudgetExceededError,
+    OverloadedError,
     SafetyViolationError,
+    UserConcurrencyLimitError,
 )
 from ..domain.events import TurnCompleted, TurnFailed, TurnStarted
 from ..domain.context import user_facing_citations
@@ -49,6 +51,8 @@ from ..domain.llm import (
     RoutingPolicy,
     SamplingParams,
     TokenUsage,
+    WorkloadClass,
+    WorkloadHint,
 )
 from ..domain.memory import MemoryHit, MemoryKind, MemoryQuery
 from ..domain.messages import Conversation, Message
@@ -65,6 +69,7 @@ from ..domain.telemetry import (
 )
 from ..execution.engine import ExecutionOutcome, StepEvent
 from ..llm.router import TurnBudget
+from ..llm.workload import workload_for_turn, workload_scope
 from ..observability.logging import LogContext, get_logger
 from ..ports.runtime import ToolContext
 from ..prompts.library import AGENT_PROMPT_IDS
@@ -125,6 +130,10 @@ class TurnRequest:
     #: IDE only. `False` for every other caller -- see `tools/coding.py::_SandboxSessionCache`'s
     #: `create_task` call for where this actually takes effect.
     desktop_task_isolation: bool = False
+    #: Admission class for every generation this turn makes (roadmap P2.4). ``None`` derives it
+    #: from ``route``/``agent`` (``llm/workload.py``): Engineer -> coder pool at priority 2,
+    #: voice and chat -> general-fast at priority 1. Background callers set it explicitly.
+    workload: WorkloadClass | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +156,9 @@ class TurnResult:
     #: registry silently fell back to `orchestrator` (see `AgentRegistry.resolve()`'s docstring).
     #: Lets a caller detect that fallback instead of it being invisible.
     resolved_agent: str | None = None
+    #: Set when the turn was refused for lack of generation capacity (``OverloadedError``), so
+    #: the HTTP layer can send ``Retry-After`` instead of leaving the client to guess.
+    retry_after_s: int | None = None
 
     @property
     def degraded(self) -> bool:
@@ -225,7 +237,16 @@ class AIKernel:
                 )
             )
             try:
-                return await self._run_turn(request, correlation, turn_id, started)
+                with workload_scope(self._workload_hint(request)):
+                    return await self._run_turn(request, correlation, turn_id, started)
+            except UserConcurrencyLimitError as exc:
+                return self._error_result(
+                    request, correlation, turn_id, started, exc, TurnOutcome.RATE_LIMITED
+                )
+            except OverloadedError as exc:
+                return self._error_result(
+                    request, correlation, turn_id, started, exc, TurnOutcome.ERROR
+                )
             except SafetyViolationError as exc:
                 return self._error_result(
                     request, correlation, turn_id, started, exc, TurnOutcome.BLOCKED
@@ -488,7 +509,9 @@ class AIKernel:
         correlation = request.correlation_id or CorrelationId.new()
         turn_id = TurnId.new()
 
-        with LogContext(correlation_id=correlation.value, route=request.route):
+        with LogContext(correlation_id=correlation.value, route=request.route), workload_scope(
+            self._workload_hint(request)
+        ):
             try:
                 deps = self._deps
                 resolved_spec = self._resolve_agent(request)
@@ -814,6 +837,20 @@ class AIKernel:
             recall(), retrieve(), load_history(), load_goals(), load_cag()
         )
         return memories, retrieval, history, summary, goals, cag_prefix
+
+    def _workload_hint(self, request: TurnRequest) -> WorkloadHint:
+        """The ambient admission/routing hint for this turn's generations (P2.3/P2.4).
+
+        Uses the *resolved* persona, so a caller who asked for ``engineer`` without the
+        capability (and was silently given the orchestrator) is not queued as Engineer work.
+        """
+        spec = self._resolve_agent(request)
+        return workload_for_turn(
+            route=request.route,
+            agent=spec.id if spec is not None else request.agent,
+            user_key=request.user_id.value,
+            workload=request.workload,
+        )
 
     def _resolve_agent(self, request: TurnRequest) -> AgentSpec | None:
         """The turn's resolved persona (Phase C1), or ``None`` with no registry configured.
@@ -1447,7 +1484,9 @@ class AIKernel:
                 )
             )
         )
-        return TurnResult(text="", telemetry=telemetry)
+        return TurnResult(
+            text="", telemetry=telemetry, retry_after_s=getattr(exc, "retry_after", None)
+        )
 
     async def _record(self, telemetry: TurnTelemetry) -> None:
         if self._metrics is not None:

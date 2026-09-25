@@ -24,6 +24,13 @@ __all__ = [
     "CompletionResponse",
     "StreamChunk",
     "EmbeddingResult",
+    "ModelPool",
+    "Modality",
+    "WorkloadClass",
+    "WorkloadHint",
+    "GenerationTiming",
+    "GENERATIVE_POOLS",
+    "FALLBACK_POOLS",
 ]
 
 
@@ -57,6 +64,178 @@ class RoutingPolicy(str, enum.Enum):
 
     def __str__(self) -> str:
         return self.value
+
+
+class ModelPool(str, enum.Enum):
+    """A specialised serving pool a provider belongs to (roadmap P2.3).
+
+    A *pool* is a job a model is deployed for, not a vendor or a host: one vLLM server running a
+    coder model is the ``coder`` pool, whichever box it sits on. A provider may declare several
+    pools (a mid-size instruct model is reasonably both ``general-fast`` and ``reasoning``), and
+    declaring none keeps it a generalist -- which is what every provider configured before pools
+    existed is, so their routing is unchanged.
+
+    ``embedding``/``reranker``/``asr``/``tts`` are declared so the whole serving topology can be
+    described as data in one place; they are not text-generation pools, so the chat router never
+    sends a completion to a provider that declares only those.
+    """
+
+    GENERAL_FAST = "general-fast"
+    GENERAL_QUALITY = "general-quality"
+    REASONING = "reasoning"
+    CODER = "coder"
+    VISION = "vision"
+    EMBEDDING = "embedding"
+    RERANKER = "reranker"
+    ASR = "asr"
+    TTS = "tts"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+#: Pools that serve chat-style text generation. A provider declaring *only* pools outside this
+#: set (an embedding server, a TTS server) is never a completion candidate.
+GENERATIVE_POOLS = frozenset(
+    {
+        ModelPool.GENERAL_FAST,
+        ModelPool.GENERAL_QUALITY,
+        ModelPool.REASONING,
+        ModelPool.CODER,
+        ModelPool.VISION,
+    }
+)
+
+#: Pools whose providers may stand in for any other generative pool when that pool has no
+#: eligible member. A general instruct model answering an Engineer turn is worse than the coder
+#: model; it is much better than a 503 while the coder pool restarts.
+FALLBACK_POOLS = frozenset({ModelPool.GENERAL_FAST, ModelPool.GENERAL_QUALITY})
+
+
+class Modality(str, enum.Enum):
+    """Input modality a model can consume."""
+
+    TEXT = "text"
+    IMAGE = "image"
+    AUDIO = "audio"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class WorkloadClass(str, enum.Enum):
+    """Who is waiting on a generation, which decides its admission priority (roadmap P2.4).
+
+    Priorities are lower-is-sooner. Interactive chat and voice share the top class because a
+    person is waiting on both; background work yields to them whenever capacity frees.
+    """
+
+    INTERACTIVE = "interactive"
+    VOICE = "voice"
+    ENGINEER = "engineer"
+    BACKGROUND_INSIGHT = "background_insight"
+    RAG_INDEXING = "rag_indexing"
+    TRAINING = "training"
+
+    def __str__(self) -> str:
+        return self.value
+
+    @property
+    def priority(self) -> int:
+        return _WORKLOAD_PRIORITY[self]
+
+
+_WORKLOAD_PRIORITY = {
+    WorkloadClass.INTERACTIVE: 1,
+    WorkloadClass.VOICE: 1,
+    WorkloadClass.ENGINEER: 2,
+    WorkloadClass.BACKGROUND_INSIGHT: 3,
+    WorkloadClass.RAG_INDEXING: 4,
+    WorkloadClass.TRAINING: 5,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class WorkloadHint:
+    """Caller-declared requirements and priority for one generation.
+
+    A hint rather than a classifier: the caller already knows what it is (the kernel knows the
+    turn is an Engineer turn; the ingestion pipeline knows it is indexing), so guessing it back
+    from the prompt would add latency and a new way to be wrong. Every field defaults to "no
+    requirement", so a request without a hint routes exactly as it did before hints existed.
+
+    ``user_key`` is an opaque per-user key for the concurrent-generation quota. It never becomes
+    a metric label (see ``observability/metrics.py``'s cardinality rules).
+    """
+
+    workload: WorkloadClass = WorkloadClass.INTERACTIVE
+    pool: ModelPool | None = None
+    #: Refuse to fall back to a generalist when no provider in ``pool`` is eligible.
+    strict_pool: bool = False
+    modalities: tuple[Modality, ...] = ()
+    #: ISO-639-1 code (``"ar"``, ``"en"``); ``None`` means no language requirement.
+    language: str | None = None
+    needs_reasoning: bool = False
+    #: Minimum total context the provider must offer, independent of the router's own
+    #: prompt-plus-output estimate.
+    min_context: int = 0
+    user_key: str | None = None
+    #: Explicit override of the workload class's priority (1 = most urgent).
+    priority_override: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.priority_override is not None and not 1 <= self.priority_override <= 9:
+            raise ValueError("priority_override must be within [1, 9]")
+        if self.min_context < 0:
+            raise ValueError("min_context cannot be negative")
+
+    @property
+    def priority(self) -> int:
+        return self.priority_override or self.workload.priority
+
+    @property
+    def pool_label(self) -> str:
+        """Bounded metric-label value for the requested pool."""
+        return self.pool.value if self.pool is not None else "default"
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationTiming:
+    """Latency decomposition of one provider attempt (roadmap P2.5).
+
+    Produced by the router and handed to the metric catalogue as a value rather than emitted
+    piecemeal, per ADR-009: the component that measures returns a record, the observability
+    layer records it. Carries no prompt or response content -- durations, token counts, and
+    bounded labels only.
+
+    ``ttft_ms``/``decode_ms`` exist only for streamed generations; a non-streaming call reports
+    its whole provider time as ``service_ms``.
+    """
+
+    provider: str
+    model: str
+    pool: str
+    priority: int
+    outcome: str
+    streamed: bool
+    queue_wait_ms: float
+    service_ms: float
+    ttft_ms: float | None = None
+    decode_ms: float | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+    @property
+    def total_ms(self) -> float:
+        return self.queue_wait_ms + self.service_ms
+
+    @property
+    def tokens_per_second(self) -> float | None:
+        """Output throughput over the decode phase (the whole call when not streamed)."""
+        window_ms = self.decode_ms if self.streamed and self.decode_ms else self.service_ms
+        if not self.completion_tokens or not window_ms or window_ms <= 0:
+            return None
+        return self.completion_tokens / (window_ms / 1000.0)
 
 
 class ToolChoice(str, enum.Enum):
@@ -156,6 +335,29 @@ class ProviderCapabilities:
     cost_per_1k_input_usd: float = 0.0
     cost_per_1k_output_usd: float = 0.0
     max_concurrency: int = 8
+    # -- model-level metadata (roadmap P2.3). Every default means "undeclared", and an
+    # undeclared field never excludes a provider, so configurations written before these existed
+    # route exactly as they did. ``context_window`` is the model's context capacity and
+    # ``supports_tools`` its tool support; neither is duplicated here.
+    #: Serving pools this provider belongs to; empty = generalist.
+    pools: tuple[ModelPool, ...] = ()
+    #: 1 = slow, 2 = typical, 3 = fast. Seeds the latency prior before anything is measured.
+    speed_tier: int = 2
+    #: Relative resource cost (unitless, operator-assigned). Lets CHEAPEST/BALANCED prefer the
+    #: cheaper of two $0 self-hosted models -- a 7B on one GPU over a 70B on four.
+    memory_cost: float = 0.0
+    gpu_cost: float = 0.0
+    modalities: tuple[Modality, ...] = (Modality.TEXT,)
+    supports_reasoning: bool = False
+    #: ISO-639-1 codes the model is trusted in; empty = no declared restriction.
+    languages: tuple[str, ...] = ()
+    #: The exact weights revision served (a Hugging Face commit SHA for vLLM ``--revision``).
+    #: Informational -- the router does not filter on it -- but it is what an incident review
+    #: needs in order to know which weights actually answered.
+    model_revision: str = ""
+    #: Providers sharing a group share one admission queue and concurrency cap -- two model
+    #: names served by the same Ollama process are one capacity, not two. Empty = own group.
+    capacity_group: str = ""
 
     def __post_init__(self) -> None:
         if self.context_window <= 0:
@@ -168,6 +370,40 @@ class ProviderCapabilities:
             raise ValueError("providers declaring embedding support must declare a dimension")
         if not 1 <= self.quality_tier <= 3:
             raise ValueError("quality_tier must be 1, 2, or 3")
+        if not 1 <= self.speed_tier <= 3:
+            raise ValueError("speed_tier must be 1, 2, or 3")
+        if self.memory_cost < 0 or self.gpu_cost < 0:
+            raise ValueError("memory_cost and gpu_cost cannot be negative")
+        if not self.modalities:
+            raise ValueError("a provider must declare at least one input modality")
+
+    @property
+    def context_capacity(self) -> int:
+        """The P2.3 metadata name for ``context_window``."""
+        return self.context_window
+
+    @property
+    def effective_modalities(self) -> frozenset[Modality]:
+        mods = set(self.modalities)
+        if self.supports_vision:
+            mods.add(Modality.IMAGE)
+        return frozenset(mods)
+
+    @property
+    def is_generative(self) -> bool:
+        """False for a provider that declares only non-chat pools (embedding, TTS, ...)."""
+        return not self.pools or any(p in GENERATIVE_POOLS for p in self.pools)
+
+    @property
+    def resource_cost(self) -> float:
+        """The two operator-assigned resource costs as one relative number."""
+        return self.gpu_cost + 0.5 * self.memory_cost
+
+    def serves_language(self, language: str | None) -> bool:
+        if not language or not self.languages:
+            return True
+        wanted = language.split("-")[0].lower()
+        return any(code.split("-")[0].lower() == wanted for code in self.languages)
 
     def satisfies(
         self,
@@ -225,6 +461,9 @@ class CompletionRequest:
     prefix_tokens: int | None = None
     #: Provider-specific cache-control hint (e.g. OpenAI/Anthropic/vLLM). Unused today.
     cache_control: Mapping[str, Any] | None = None
+    #: Pool/priority/capability hint (P2.3/P2.4). ``None`` falls back to the ambient hint the
+    #: kernel sets for the turn (``aura_core.llm.workload``), then to "no requirement".
+    workload: WorkloadHint | None = None
 
     def with_conversation(self, conversation: Conversation) -> "CompletionRequest":
         return replace(self, conversation=conversation)
@@ -259,6 +498,8 @@ class CompletionResponse:
     cache_tier: str | None = None
     cost_usd: float = 0.0
     raw_metadata: Mapping[str, Any] = field(default_factory=dict)
+    #: Time spent waiting for an admission slot before the provider was called (P2.5).
+    queue_wait_ms: float = 0.0
 
     @property
     def has_tool_calls(self) -> bool:

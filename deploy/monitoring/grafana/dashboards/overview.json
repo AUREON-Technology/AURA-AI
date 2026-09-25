@@ -298,6 +298,264 @@
         },
         "overrides": []
       }
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Inference latency decomposition & admission (P2.4/P2.5)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "panels": []
+    },
+    {
+      "id": 11,
+      "title": "Queue wait p95 by pool",
+      "type": "timeseries",
+      "description": "Time a generation waited for an admission slot before reaching the model server.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 29
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aura_llm_generation_queue_wait_seconds_bucket[5m])) by (le, pool))",
+          "legendFormat": "{{pool}} p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 12,
+      "title": "Time to first token p95 by pool",
+      "type": "timeseries",
+      "description": "Admission to first streamed token: prefill plus first decode step, excluding queue wait.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 29
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aura_llm_generation_ttft_seconds_bucket[5m])) by (le, pool))",
+          "legendFormat": "{{pool}} p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 13,
+      "title": "Decode time p95 by provider",
+      "type": "timeseries",
+      "description": "First to last streamed token.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aura_llm_generation_decode_seconds_bucket[5m])) by (le, provider))",
+          "legendFormat": "{{provider}} p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 14,
+      "title": "Total generation time p95 by pool",
+      "type": "timeseries",
+      "description": "Queue wait plus provider time, successful attempts.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aura_llm_generation_total_seconds_bucket{outcome=\"success\"}[5m])) by (le, pool))",
+          "legendFormat": "{{pool}} p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 15,
+      "title": "Output tokens/sec (p50) by provider and model",
+      "type": "timeseries",
+      "description": "Decode throughput per generation.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 43
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(aura_llm_generation_tokens_per_second_bucket[5m])) by (le, provider, model))",
+          "legendFormat": "{{provider}} {{model}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 16,
+      "title": "Tokens by pool and direction",
+      "type": "timeseries",
+      "description": "Tokens per provider attempt (input/output).",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 43
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aura_llm_generation_tokens_total[5m])) by (pool, direction)",
+          "legendFormat": "{{pool}} {{direction}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 17,
+      "title": "Capacity group saturation",
+      "type": "timeseries",
+      "description": "Slots in use over slots available (1.0 = full), and queued requests.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 50
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum by (group) (aura_llm_group_inflight) / clamp_min(sum by (group) (aura_llm_group_capacity), 1)",
+          "legendFormat": "{{group}} in use",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (provider) (aura_llm_queue_depth)",
+          "legendFormat": "{{provider}} queued",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 18,
+      "title": "Admission outcomes",
+      "type": "timeseries",
+      "description": "admitted / queue_full / queue_timeout / preempted / user_quota / cancelled per second.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 50
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aura_llm_admission_total[5m])) by (group, outcome)",
+          "legendFormat": "{{group}} {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {}
+        },
+        "overrides": []
+      }
     }
   ],
   "schemaVersion": 39,

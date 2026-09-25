@@ -145,6 +145,15 @@ services:
       AURA_PROVIDER_LOCAL_IS_LOCAL: "true"
       AURA_PROVIDER_LOCAL_QUALITY_TIER: "1"
       AURA_PROVIDER_LOCAL_MAX_CONCURRENCY: ${AURA_PROVIDER_LOCAL_MAX_CONCURRENCY:-1}
+      # Admission control (roadmap P2.4, aura_core/llm/admission.py). With the local provider's
+      # cap of 1 (matching OLLAMA_NUM_PARALLEL=1), a request that finds Ollama busy now waits in
+      # AURA's bounded priority queue -- interactive/voice ahead of Engineer ahead of background
+      # work -- and is refused with 503 + Retry-After after the timeout, instead of piling up
+      # invisibly inside Ollama until the 180s provider timeout cancels it mid-generation.
+      # Per *process*: the effective cap on Ollama is this x AURA_WORKERS (+ Celery workers).
+      AURA_LLM_ADMISSION_MAX_QUEUE: ${AURA_LLM_ADMISSION_MAX_QUEUE:-4}
+      AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S: ${AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S:-90}
+      AURA_LLM_USER_MAX_CONCURRENT_GENERATIONS: ${AURA_LLM_USER_MAX_CONCURRENT_GENERATIONS:-2}
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
       AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
@@ -317,6 +326,10 @@ services:
       AURA_PROVIDER_LOCAL_IS_LOCAL: "true"
       AURA_PROVIDER_LOCAL_QUALITY_TIER: "1"
       AURA_PROVIDER_LOCAL_MAX_CONCURRENCY: "1"
+      # Admission control -- see the matching block on the gateway. Background work waits longer
+      # (nobody is watching a spinner) but still cannot queue without bound.
+      AURA_LLM_ADMISSION_MAX_QUEUE: ${AURA_LLM_ADMISSION_MAX_QUEUE:-4}
+      AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S: ${AURA_LLM_WORKER_ADMISSION_QUEUE_TIMEOUT_S:-300}
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
       AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
