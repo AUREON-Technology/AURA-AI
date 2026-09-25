@@ -17,6 +17,10 @@ trusted to mean "this change regressed quality" rather than "the model sampled d
   hash embedder (Phase A3).
 * ``docs_corpus_answer`` -- groundedness and citation coverage through the full kernel with
   ``ContextGroundedProvider``, a scripted provider that answers from the fenced retrieved content.
+* ``agent_runs`` -- run-level agent-loop metrics (GAP-024): completion, partial completion, tool
+  accuracy, iteration headroom, budget adherence, replan success and unsafe-action prevention,
+  read from the durable ``AgentRun`` each scripted scenario records
+  (``aura_core/evaluation/agent_runs.py``, ``evaluation/suites/agent_runs.jsonl``).
 
 The wiring deliberately mirrors ``tests/e2e/test_docs_corpus_gate.py`` and
 ``test_agent_tasks_gate.py`` (same container construction, same ``k``, same tolerances) so the
@@ -69,6 +73,11 @@ from aura_core.evaluation.harness import (  # noqa: E402
     RetrievalEvaluator,
     load_agent_cases,
 )
+from aura_core.adapters.runtime import FrozenClock  # noqa: E402
+from aura_core.evaluation.agent_runs import (  # noqa: E402
+    AgentRunEvaluator,
+    load_agent_run_scenarios,
+)
 from aura_core.llm.providers.echo import ContextGroundedProvider  # noqa: E402
 
 from evaluation.suites.docs_corpus_sources import load_docs_corpus_sources  # noqa: E402
@@ -77,6 +86,14 @@ from evaluation.suites.docs_corpus_sources import load_docs_corpus_sources  # no
 RETRIEVAL_K = 5
 #: Matches TestDocsCorpusAnswerGate: groundedness/cited vary slightly with context-budget ties.
 ANSWER_TOLERANCES: Mapping[str, float] = {"groundedness": 0.05, "cited": 0.05}
+#: The agent-run suite is fully scripted (planner responses, tool outcomes, a FrozenClock), so
+#: any movement is a real behaviour change, not noise: the tolerance is only float rounding.
+AGENT_RUN_TOLERANCES: Mapping[str, float] = {
+    metric: 0.001 for metric in (
+        "pass_rate", "completion_rate", "partial_completion", "tool_accuracy",
+        "iteration_headroom", "budget_adherence", "replan_success", "unsafe_prevention_rate",
+    )
+}
 
 
 @dataclass(slots=True)
@@ -183,6 +200,12 @@ async def _score_docs_answer(container: Container) -> Any:
     return await AnswerEvaluator(container.kernel).run(_docs_corpus_suite())
 
 
+async def _score_agent_runs(container: Container) -> Any:
+    scenarios = load_agent_run_scenarios(SUITE_DIR / "agent_runs.jsonl")
+    evaluator = AgentRunEvaluator.for_container(container, clock=FrozenClock())
+    return await evaluator.run(scenarios)
+
+
 @dataclass(frozen=True, slots=True)
 class GateSpec:
     name: str
@@ -197,6 +220,10 @@ GATES: tuple[GateSpec, ...] = (
     GateSpec(
         "docs_corpus_answer", "docs_corpus_answer_baseline.json", _score_docs_answer,
         tolerances=ANSWER_TOLERANCES,
+    ),
+    GateSpec(
+        "agent_runs", "agent_runs_baseline.json", _score_agent_runs,
+        tolerances=AGENT_RUN_TOLERANCES,
     ),
 )
 
