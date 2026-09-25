@@ -188,18 +188,26 @@ class TestEnsureIndex:
         assert created == [("create_collection", IDENTITY.physical_name, 4)]
 
     async def test_it_creates_payload_indexes_for_the_filtered_fields(self) -> None:
-        """Without them Qdrant scans every candidate's payload, so tenant filtering becomes the
-        dominant cost as the collection grows."""
+        """Without them Qdrant refuses the query outright (400) rather than scanning unindexed."""
         store, fake = _store()
         await store.ensure_index(IDENTITY)
         fields = {c[2] for c in fake.calls if c[0] == "create_payload_index"}
-        assert fields == {"owner_id", "document_id"}
+        assert fields == {"owner_id", "document_id", "kind"}
 
     async def test_an_existing_matching_collection_is_left_alone(self) -> None:
         store, fake = _store(collections=[IDENTITY.physical_name])
         await store.ensure_index(IDENTITY)
         assert not [c for c in fake.calls if c[0] == "create_collection"]
         assert not [c for c in fake.calls if c[0] == "delete_collection"]
+
+    async def test_an_existing_collection_still_gets_missing_payload_indexes(self) -> None:
+        """A collection that predates a newly-filtered field (e.g. `kind`, added after this
+        collection already existed in production) must self-heal on the next `ensure_index()`
+        rather than every matching search failing with Qdrant's 400 forever."""
+        store, fake = _store(collections=[IDENTITY.physical_name])
+        await store.ensure_index(IDENTITY)
+        fields = {c[2] for c in fake.calls if c[0] == "create_payload_index"}
+        assert fields == {"owner_id", "document_id", "kind"}
 
     async def test_a_dimension_mismatch_raises_and_deletes_nothing(self) -> None:
         """The defect this replaces: the legacy path deleted and recreated on mismatch, so a
