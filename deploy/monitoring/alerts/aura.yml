@@ -184,6 +184,41 @@ groups:
           summary: "{{ $labels.provider }} is at its concurrency limit"
           description: "Requests are queueing. Scale the inference tier (Scalability Report, Stage 1)."
 
+      # Admission control (roadmap P2.4). Both gauges are summed across worker processes, so the
+      # ratio is fleet-wide slots in use over fleet-wide slots.
+      - alert: AuraGenerationQueueSaturated
+        expr: |
+          (
+            sum by (group) (aura_llm_group_inflight)
+              >= sum by (group) (aura_llm_group_capacity)
+          )
+          and on (group)
+          (
+            sum by (group) (label_replace(aura_llm_queue_depth, "group", "$1", "provider", "(.*)")) > 0
+          )
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Capacity group {{ $labels.group }} has been full with a queue for 10 minutes"
+          description: >
+            Every generation slot is busy and requests are waiting in AURA's admission queue.
+            Users see growing latency, then 503 + Retry-After once the queue timeout or bound is
+            hit. Check aura_llm_generation_queue_wait_seconds on the overview dashboard; add
+            capacity (a GPU pool, docs/guides/gpu-hybrid-setup.md §6) or shed background work.
+
+      - alert: AuraGenerationAdmissionRefusals
+        expr: |
+          sum by (group) (
+            rate(aura_llm_admission_total{outcome=~"queue_full|queue_timeout|preempted"}[10m])
+          ) > 0.02
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Capacity group {{ $labels.group }} is refusing generations"
+          description: >
+            Requests are being refused for lack of capacity (503 with Retry-After). Nothing is
+            broken -- there is not enough serving capacity for the offered load.
+
       - alert: AuraCostSpike
         expr: sum(rate(aura_llm_cost_usd_total[1h])) * 24 > 25
         for: 1h
