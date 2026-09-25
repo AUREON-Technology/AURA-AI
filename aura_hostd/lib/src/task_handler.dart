@@ -267,7 +267,7 @@ class TaskHandler {
       milliseconds: (requestedTimeout * 1000).clamp(1000, _maxCommandTimeout.inMilliseconds).round(),
     );
 
-    final effectiveArgv = _lineBuffered(commandArgv);
+    final effectiveArgv = _resolveShellArgv(_lineBuffered(commandArgv));
     final process = await Process.start(
       effectiveArgv.first,
       effectiveArgv.sublist(1),
@@ -511,4 +511,72 @@ bool _stdbufAvailable() {
 List<String> _lineBuffered(List<String> argv) {
   if (!_stdbufAvailable()) return argv;
   return ['stdbuf', '-oL', '-eL', ...argv];
+}
+
+String? _windowsShellPathCache;
+
+/// The caller (`aura_backend/aura_core/tools/coding.py::run_command` and friends) always sends
+/// `["sh", "-c", "<command>"]` -- correct unconditionally for the Docker sandbox (always Linux),
+/// but on Windows there is no `sh` on `PATH` by default (confirmed: only `Git\cmd` is on `PATH`,
+/// not `Git\bin`/`Git\usr\bin`, where Git for Windows' bundled POSIX `sh.exe` actually lives), so
+/// `Process.start('sh', ...)` fails to spawn at all -- every `run_command` call against a Windows
+/// desktop fails identically regardless of workspace or command, which is exactly what surfaced as
+/// a bare `SandboxError` in the Desktop IDE with no further detail. The command's own contents
+/// (`cat`, `ls`, `grep`, ...) are POSIX tools too (`command_policy.dart`'s allowlist), so the fix is
+/// to find Git for Windows' real `sh.exe` and substitute it -- not to reinterpret the command
+/// through `cmd.exe`, which has none of those built-ins.
+String? _findWindowsShell() {
+  final cached = _windowsShellPathCache;
+  if (cached != null) return cached.isEmpty ? null : cached;
+
+  try {
+    final where = Process.runSync('where', ['sh']);
+    if (where.exitCode == 0) {
+      final first = (where.stdout as String).split(RegExp(r'\r?\n')).firstWhere(
+            (line) => line.trim().isNotEmpty,
+            orElse: () => '',
+          );
+      if (first.isNotEmpty) {
+        return _windowsShellPathCache = first.trim();
+      }
+    }
+  } catch (_) {
+    // `where` itself missing or erroring -- fall through to the well-known install locations.
+  }
+
+  final candidates = [
+    Platform.environment['ProgramFiles'],
+    Platform.environment['ProgramFiles(x86)'],
+    Platform.environment['LOCALAPPDATA'] != null
+        ? '${Platform.environment['LOCALAPPDATA']}\\Programs'
+        : null,
+  ].whereType<String>().expand((base) => [
+        '$base\\Git\\bin\\sh.exe',
+        '$base\\Git\\usr\\bin\\sh.exe',
+      ]);
+
+  for (final candidate in candidates) {
+    if (File(candidate).existsSync()) {
+      return _windowsShellPathCache = candidate;
+    }
+  }
+
+  _windowsShellPathCache = ''; // cache the miss too -- don't re-probe the filesystem every call
+  return null;
+}
+
+/// Substitutes a real shell executable for the bare `sh`/`bash` name on Windows; a no-op
+/// everywhere else, where normal `PATH` resolution already finds the real thing.
+List<String> _resolveShellArgv(List<String> argv) {
+  if (!Platform.isWindows || argv.isEmpty) return argv;
+  if (argv.first != 'sh' && argv.first != 'bash') return argv;
+  final resolved = _findWindowsShell();
+  if (resolved == null) {
+    throw RpcError(
+      'no POSIX shell found on this Windows machine -- install Git for Windows '
+      '(https://git-scm.com/download/win) so run_command has something to execute '
+      'the POSIX commands (cat, ls, grep, ...) Engineer generates against',
+    );
+  }
+  return [resolved, ...argv.sublist(1)];
 }
