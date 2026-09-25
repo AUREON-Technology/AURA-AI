@@ -181,6 +181,7 @@ class GitState {
     this.ahead = 0,
     this.behind = 0,
     this.files = const [],
+    this.branches = const [],
     this.diffText,
     this.diffScope,
     this.diffTruncated = false,
@@ -198,6 +199,10 @@ class GitState {
   final int ahead;
   final int behind;
   final List<GitFileChange> files;
+
+  /// All known branches from `GET /git/branches` (local plus `remotes/...`
+  /// remote-tracking ones) -- empty until [GitNotifier.loadBranches] runs.
+  final List<GitBranch> branches;
 
   /// The most recently loaded diff, if any, and which [GitDiffScope] it is for -- `null` scope
   /// means nothing has been loaded yet.
@@ -222,6 +227,7 @@ class GitState {
     int? ahead,
     int? behind,
     List<GitFileChange>? files,
+    List<GitBranch>? branches,
     String? diffText,
     GitDiffScope? diffScope,
     bool? diffTruncated,
@@ -237,6 +243,7 @@ class GitState {
       ahead: ahead ?? this.ahead,
       behind: behind ?? this.behind,
       files: files ?? this.files,
+      branches: branches ?? this.branches,
       diffText: diffText ?? this.diffText,
       diffScope: diffScope ?? this.diffScope,
       diffTruncated: diffTruncated ?? this.diffTruncated,
@@ -248,6 +255,40 @@ class GitState {
 }
 
 enum GitDiffScope { workingTree, staged }
+
+/// One branch from the daemon's `GET /git/branches` -- local or a
+/// `remotes/<remote>/<name>` remote-tracking entry. [checkoutName] is what the
+/// panel passes to `checkout`: the plain name for locals, the short name
+/// (remote prefix stripped) for remote-tracking branches so git DWIM-creates
+/// the local tracking branch.
+@immutable
+class GitBranch {
+  const GitBranch({
+    required this.name,
+    required this.current,
+    this.upstream,
+    this.isRemote = false,
+  });
+
+  final String name;
+  final bool current;
+  final String? upstream;
+  final bool isRemote;
+
+  String get checkoutName {
+    if (!isRemote) return name;
+    final parts = name.split('/');
+    if (parts.length >= 3 && parts.first == 'remotes') return parts.sublist(2).join('/');
+    return name;
+  }
+
+  static GitBranch fromJson(Map<String, dynamic> json) => GitBranch(
+        name: json['name'] as String,
+        current: json['current'] as bool? ?? false,
+        upstream: json['upstream'] as String?,
+        isRemote: json['is_remote'] as bool? ?? false,
+      );
+}
 
 @immutable
 class GitFileChange {

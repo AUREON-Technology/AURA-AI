@@ -854,6 +854,19 @@ belongs here until CI has actually run it — that applies to `aura_hostd`'s own
 
 ### Phase K — Desktop IDE (Windows-first)
 
+**Phase 0 production audit (2026-09-25):** the "AURA Desktop IDE — Production & Professional UX
+Upgrade Plan" mandates a read-only audit before any redesign work. That audit is done — see
+[`reports/desktop-ide-phase0-audit-2026-09-25.md`](reports/desktop-ide-phase0-audit-2026-09-25.md).
+Headline corrections to this section: D4 (Terminal/PTY) is further along than the phase map below
+implies (a real Win32 ConPTY exists, Windows-only, unexercised by CI); D5 (Git/Diff) and large
+parts of D6–D9 (AI coding layer, debug, agent workspace, control center) already have real,
+non-mocked implementations that this document's phase map had not caught up to. Conversely, two
+D1 exit criteria are not actually met: layout does not persist across restart despite a migrated
+Drift table for it, and sidebars/bottom panel are not resizable despite the setters existing.
+**Fixed (2026-09-25)**, per the audit report's own update note: `LayoutNotifier` now persists to
+`desktopLayoutState` and `DesktopShell` has real drag-to-resize handles. Read the audit before
+treating any D-phase status below as current.
+
 **Status:** D0 architecture phase done (ADR-015). D1–D3 scaffolding exists and has been fixed to
 compile and wired end-to-end (router → `DesktopShell` → Explorer/editor/quick-open/session
 persistence), but **this is not yet proven** — this environment has no Flutter/Dart toolchain, so
@@ -962,7 +975,7 @@ Phase A, not by an estimate.
 | Live voice duplex | **Scaffolding** — WS session + engine + Flutter `/voice`; not device-proven; load round-trip open | Phase H |
 | Transcript NLP | **Scaffolding** — `aura_core/nlp/` normalize + shallow intent; quality on real ASR unproven | Phase I |
 | Persistent engineer workspaces | **Built, not proven** — Units 1–11 on `main` (`91b6d5c` / #70; panel + dev parity in #72); VPS still `AURA_SANDBOX_ENABLED=false`, no sandbox profile; 10 live checks open | Phase J (workspaces), ADR-013/014 |
-| Desktop Engineer (`aura_hostd`) | **In tree, partial** — Units 1–9 done with disclosed cuts (real PTY / live xterm / restart-on-crash / a bundled `aura_hostd` binary / interactive tiered consent remain open); Desktop OAuth client now registered (2026-09-10); still unproven end to end — no Dart/Flutter toolchain run anywhere but CI ([ADR-011](architecture/011-desktop-engineer-agent.md)) | Phase J (Desktop) |
+| Desktop Engineer (`aura_hostd`) | **In tree, partial** — Units 1–9 done with disclosed cuts (live xterm / restart-on-crash / a bundled `aura_hostd` binary / interactive tiered consent remain open); Desktop OAuth client now registered (2026-09-10); still unproven end to end — no Dart/Flutter toolchain run anywhere but CI ([ADR-011](architecture/011-desktop-engineer-agent.md)). **Correction (2026-09-25):** the "real PTY... remain open" half of this line is now stale — Phase K/D4 added a genuine Win32 ConPTY (`aura_hostd/lib/src/pty_session.dart`), post-dating this row; it is Windows-only (no POSIX PTY exists) and has never been exercised by any toolchain or CI here (`hostd-ci.yml` runs `ubuntu-latest` only). See the [Desktop IDE Phase 0 audit](reports/desktop-ide-phase0-audit-2026-09-25.md) §3. | Phase J (Desktop) |
 | Multi-model routing | **Proven** against two real, simultaneously-running local models (135M and 3B params) — `FASTEST`/`QUALITY_FIRST`/`BALANCED`/failover all route on real measured behaviour; `CHEAPEST` ties (both cost `$0`) | Phase G2, `tests/load/test_multi_model_routing.py` |
 | Restore verified | **Yes for all three stores** — Postgres, Qdrant and Redis each restored from the `backup` service's own output ([A2 report](reports/phase-a2-restore-drill.md)); offsite copy and `restore.sh` still unexercised | Phase A2 |
 | Production deployments | **1 and counting** — the real VPS, 17 services, verified live over HTTPS on 2026-08-23 | Phase A1 |

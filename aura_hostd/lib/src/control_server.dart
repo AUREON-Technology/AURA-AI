@@ -169,6 +169,14 @@ class ControlServer {
           await _handleGitCommit(request);
         case 'POST /git/checkout':
           await _handleGitCheckout(request);
+        case 'GET /git/branches':
+          await _handleGitBranches(request);
+        case 'POST /git/fetch':
+          await _handleGitFetch(request);
+        case 'POST /git/pull':
+          await _handleGitPull(request);
+        case 'POST /git/push':
+          await _handleGitPush(request);
         case 'GET /diagnostics/detect':
           await _handleDiagnosticsDetect(request);
         case 'POST /diagnostics/run':
@@ -556,6 +564,63 @@ class ControlServer {
       await _respond(request, 500, {'error': error.message});
     }
   }
+
+  /// Human-only remote-sync routes -- same boundary as the other `/git/*` write
+  /// routes above (a click in the Git panel is the consent; no `root.trusted`
+  /// check, no approval queue). `push` intentionally takes no refspec, so the
+  /// panel can only ever push the checked-out branch to its own upstream.
+  Future<void> _handleGitBranches(HttpRequest request) async {
+    final rootParam = request.uri.queryParameters['root'];
+    if (rootParam == null) {
+      await _respond(request, 400, {'error': 'root query parameter is required'});
+      return;
+    }
+    try {
+      final root = _requireRoot(workspaceStore.load(), rootParam);
+      await _respond(request, 200, await gitService.branches(root.canonicalPath));
+    } on RootNotFoundError {
+      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+    } on GitNotARepositoryError {
+      await _respond(request, 409, {'error': 'not a git repository'});
+    } on GitDecodeError catch (error) {
+      await _respond(request, 415, {'error': error.message});
+    } on GitCommandError catch (error) {
+      await _respond(request, 500, {'error': error.message});
+    }
+  }
+
+  Future<void> _handleGitRemoteOp(HttpRequest request, String op) async {
+    final body = await _readJsonBody(request);
+    final rootParam = body['root'] as String?;
+    if (rootParam == null) {
+      await _respond(request, 400, {'error': 'root is required'});
+      return;
+    }
+    try {
+      final root = _requireRoot(workspaceStore.load(), rootParam);
+      final result = switch (op) {
+        'fetch' => await gitService.fetch(root.canonicalPath),
+        'pull' => await gitService.pull(root.canonicalPath),
+        'push' => await gitService.push(root.canonicalPath),
+        _ => throw StateError('unknown git remote op: $op'),
+      };
+      await _respond(request, result['ok'] == false ? 409 : 200, result);
+    } on RootNotFoundError {
+      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+    } on GitNotARepositoryError {
+      await _respond(request, 409, {'error': 'not a git repository'});
+    } on GitDecodeError catch (error) {
+      await _respond(request, 415, {'error': error.message});
+    } on GitCommandError catch (error) {
+      await _respond(request, 500, {'error': error.message});
+    }
+  }
+
+  Future<void> _handleGitFetch(HttpRequest request) => _handleGitRemoteOp(request, 'fetch');
+
+  Future<void> _handleGitPull(HttpRequest request) => _handleGitRemoteOp(request, 'pull');
+
+  Future<void> _handleGitPush(HttpRequest request) => _handleGitRemoteOp(request, 'push');
 
   /// D7 Part A.2. No trust/approval gate: a lint run mutates nothing, the same precedent
   /// `/git/status` etc. already establish for read-only human-only routes.

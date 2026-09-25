@@ -75,7 +75,12 @@ class TestPathContainment:
         await runner.write_file(handle, str(target), "inside")
 
         assert not target.exists(), "an absolute path wrote outside the workspace"
-        assert (scratch / str(target).lstrip("/")).read_text() == "inside"
+        # The in-workspace landing spot differs by platform (POSIX strips the
+        # leading `/`, Windows additionally strips the drive letter -- see
+        # `domain/files.py::strip_absolute_prefix`), so assert the behaviour,
+        # not the address: exactly one file inside the scratch holds the content.
+        found = [p for p in scratch.rglob("*") if p.is_file() and p.read_text() == "inside"]
+        assert len(found) == 1
 
     async def test_a_symlink_cannot_be_written_through(self, runner, tmp_path) -> None:
         handle = await runner.create_task()

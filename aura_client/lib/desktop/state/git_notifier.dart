@@ -36,6 +36,7 @@ class GitNotifier extends StateNotifier<GitState> {
     _lastWorkspaceId = workspaceId;
     try {
       final result = await _hostdClient.gitStatus(root: rootPath);
+      final branches = await _loadBranchesQuietly(rootPath);
       state = GitState(
         workspaceId: workspaceId,
         branch: result['branch'] as String?,
@@ -43,12 +44,47 @@ class GitNotifier extends StateNotifier<GitState> {
         ahead: result['ahead'] as int? ?? 0,
         behind: result['behind'] as int? ?? 0,
         files: _filesFrom(result),
+        branches: branches,
       );
       _publishChanged();
     } on HostdControlError catch (error) {
       state = GitState(workspaceId: workspaceId, error: error.message);
     } on HostdControlUnavailable catch (error) {
       state = GitState(workspaceId: workspaceId, error: error.message);
+    }
+  }
+
+  /// Branch listing is best-effort inside [refresh]: a status that loaded must
+  /// not be discarded just because the branch list failed, so failures here
+  /// degrade to an empty list the panel renders as "current branch only".
+  Future<List<GitBranch>> _loadBranchesQuietly(String rootPath) async {
+    try {
+      final result = await _hostdClient.gitBranches(root: rootPath);
+      return ((result['branches'] as List?) ?? const [])
+          .cast<Map<String, dynamic>>()
+          .map(GitBranch.fromJson)
+          .toList();
+    } on HostdControlError {
+      return const [];
+    } on HostdControlUnavailable {
+      return const [];
+    }
+  }
+
+  Future<void> loadBranches() async {
+    final root = _rootPath;
+    if (root == null) return;
+    try {
+      final result = await _hostdClient.gitBranches(root: root);
+      final branches = ((result['branches'] as List?) ?? const [])
+          .cast<Map<String, dynamic>>()
+          .map(GitBranch.fromJson)
+          .toList();
+      state = state.copyWith(branches: branches, clearError: true);
+    } on HostdControlError catch (error) {
+      state = state.copyWith(error: error.message);
+    } on HostdControlUnavailable catch (error) {
+      state = state.copyWith(error: error.message);
     }
   }
 
@@ -115,6 +151,36 @@ class GitNotifier extends StateNotifier<GitState> {
           );
         }
       });
+
+  /// Human-only remote sync -- fetch is read-only w.r.t. the working tree,
+  /// pull is fast-forward-only, push sends the checked-out branch to its own
+  /// upstream (the daemon takes no refspec). All three refresh status on
+  /// success via [_write]; structured daemon failures become panel errors.
+  Future<void> fetch() => _write(() => _hostdClient.gitFetch(root: _rootPath!));
+
+  Future<void> pull() => _write(() async {
+        final result = await _hostdClient.gitPull(root: _rootPath!);
+        if (result['ok'] == false) _applySyncFailure(result);
+      });
+
+  Future<void> push() => _write(() async {
+        final result = await _hostdClient.gitPush(root: _rootPath!);
+        if (result['ok'] == false) _applySyncFailure(result);
+      });
+
+  void _applySyncFailure(Map<String, dynamic> result) {
+    final affected = ((result['affected_files'] as List?) ?? const []).join(', ');
+    state = state.copyWith(
+      error: switch (result['reason']) {
+        'no_upstream' => 'The current branch has no upstream set.',
+        'diverged' => 'The branch has diverged -- pull (or push) cannot fast-forward.',
+        'local_changes_would_be_overwritten' => affected.isEmpty
+            ? 'Local changes would be overwritten.'
+            : 'Local changes would be overwritten in: $affected',
+        _ => 'Remote sync failed.',
+      },
+    );
+  }
 
   /// Runs [op] under the [GitState.busy] guard: a no-op while already busy (prevents a
   /// double-click firing two concurrent writes -- D5 plan design decision 10), then refreshes

@@ -29,7 +29,19 @@ RUN apt-get update \
 # Spaces run the container as uid 1000. If this breaks GPU device visibility on your chosen
 # hardware tier, drop back to USER root below and note why -- CUDA base images vary on this,
 # and it can only be verified against a real GPU build, which this repo cannot do for you.
-RUN useradd -m -u 1000 -s /bin/bash aura || true
+#
+# `useradd -u 1000 ... || true` used to swallow a UID collision silently: vllm-openai's base
+# image already has a uid-1000 user (Ray provisions one), so useradd failed, `|| true` hid it,
+# and no `aura` user ever existed -- USER aura then failed at container start with "references
+# a user that is not present in /etc/passwd" (caught live on a real GPU build). Renaming
+# whichever user already holds uid 1000 to `aura` -- or creating one fresh if none does --
+# guarantees `aura` exists at uid 1000 either way.
+RUN existing_user="$(getent passwd 1000 | cut -d: -f1)"; \
+    if [ -n "$existing_user" ]; then \
+        usermod -l aura -d /home/aura -m "$existing_user"; \
+    else \
+        useradd -m -u 1000 -s /bin/bash aura; \
+    fi
 
 COPY --chown=aura:aura entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

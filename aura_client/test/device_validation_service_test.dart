@@ -39,7 +39,7 @@ void main() {
       final headers = await DeviceValidationService.getAttestationHeaders(
         debugMode: true,
         platform: 'android',
-        backendUrl: 'https://169.58.188.43.nip.io',
+        backendUrl: 'https://aureon-ai.tech',
         client: _FakeAttestationClient(token: jws),
         httpClient: _fakeNonceClient(),
       );

@@ -3,7 +3,11 @@
 /// Recursive tree widget with expand/collapse, icons by extension.
 library;
 
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/explorer/explorer_service.dart';
@@ -35,6 +39,7 @@ class ExplorerTreeTile extends ConsumerWidget {
       return _FileTile(
         entry: entry,
         workspaceId: workspaceId,
+        workspaceRoot: workspaceRoot,
         depth: depth,
         ideDensity: ideDensity,
         palette: palette,
@@ -57,6 +62,7 @@ class _FileTile extends ConsumerWidget {
   const _FileTile({
     required this.entry,
     required this.workspaceId,
+    required this.workspaceRoot,
     required this.depth,
     required this.ideDensity,
     required this.palette,
@@ -64,6 +70,7 @@ class _FileTile extends ConsumerWidget {
 
   final FileSystemEntry entry;
   final String workspaceId;
+  final String workspaceRoot;
   final int depth;
   final AuraIdeDensity ideDensity;
   final AuraPalette palette;
@@ -76,6 +83,9 @@ class _FileTile extends ConsumerWidget {
         height: ideDensity.treeRowHeight,
         child: InkWell(
           onTap: () => _openFile(ref),
+          onSecondaryTapDown: (details) {
+            unawaited(_showContextMenu(context, ref, details.globalPosition));
+          },
           borderRadius: BorderRadius.circular(AuraRadius.sm),
           child: Row(
             children: [
@@ -112,6 +122,30 @@ class _FileTile extends ConsumerWidget {
           path: entry.path,
           workspaceId: workspaceId,
         );
+  }
+
+  Future<void> _showContextMenu(BuildContext context, WidgetRef ref, Offset position) async {
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      items: [
+        _menuItem('open', Icons.open_in_new, 'Open'),
+        _menuItem('copy-path', Icons.content_copy, 'Copy path'),
+        _menuItem('copy-relative-path', Icons.content_copy, 'Copy relative path'),
+        _menuItem('reveal', Icons.folder_open, 'Reveal in filesystem'),
+      ],
+    );
+    if (!context.mounted) return;
+    switch (selected) {
+      case 'open':
+        _openFile(ref);
+      case 'copy-path':
+        await _copyToClipboard(context, _absolutePathOf(workspaceRoot, entry.path));
+      case 'copy-relative-path':
+        await _copyToClipboard(context, _relativePathOf(workspaceRoot, entry.path));
+      case 'reveal':
+        await _revealInFilesystem(context, _absolutePathOf(workspaceRoot, entry.path), isDirectory: false);
+    }
   }
 
   IconData _getFileIcon(String? ext) {
@@ -159,6 +193,7 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
   bool _expanded = false;
   DirectoryListing? _children;
   bool _loading = false;
+  Offset? _menuPosition;
 
   @override
   Widget build(BuildContext context) {
@@ -175,7 +210,10 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
             height: ideDensity.treeRowHeight,
             child: InkWell(
               onTap: _toggleExpand,
-              onSecondaryTap: _showContextMenu,
+              onSecondaryTapDown: (details) => _menuPosition = details.globalPosition,
+              onSecondaryTap: () {
+                unawaited(_showContextMenu(context));
+              },
               borderRadius: BorderRadius.circular(AuraRadius.sm),
               child: Row(
                 children: [
@@ -242,8 +280,46 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
     }
   }
 
-  void _showContextMenu() {
-    // TODO: Show context menu (reveal in OS, copy path, etc.)
+  Future<void> _showContextMenu(BuildContext context) async {
+    final position = _menuPosition ?? Offset.zero;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(position.dx, position.dy, position.dx, position.dy),
+      items: [
+        _menuItem(_expanded ? 'collapse' : 'expand', _expanded ? Icons.expand_less : Icons.expand_more,
+            _expanded ? 'Collapse' : 'Expand'),
+        _menuItem('refresh', Icons.refresh, 'Refresh'),
+        _menuItem('copy-path', Icons.content_copy, 'Copy path'),
+        _menuItem('copy-relative-path', Icons.content_copy, 'Copy relative path'),
+        _menuItem('reveal', Icons.folder_open, 'Reveal in filesystem'),
+      ],
+    );
+    if (!context.mounted) return;
+    switch (selected) {
+      case 'expand':
+        if (!_expanded) _toggleExpand();
+      case 'collapse':
+        if (_expanded) _toggleExpand();
+      case 'refresh':
+        _refresh();
+      case 'copy-path':
+        await _copyToClipboard(context, _absolutePathOf(widget.workspaceRoot, widget.entry.path));
+      case 'copy-relative-path':
+        await _copyToClipboard(context, _relativePathOf(widget.workspaceRoot, widget.entry.path));
+      case 'reveal':
+        await _revealInFilesystem(context, _absolutePathOf(widget.workspaceRoot, widget.entry.path),
+            isDirectory: true);
+    }
+  }
+
+  /// Re-fetches this directory's children even when already expanded -- the
+  /// toolbar Refresh only reaches the tree root, this covers subtrees.
+  void _refresh() {
+    setState(() {
+      _expanded = true;
+      _children = null;
+      _loadChildren();
+    });
   }
 
   Widget _buildChildren() {
@@ -292,5 +368,68 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
         );
       }).toList(),
     );
+  }
+}
+
+/// Single context-menu row shared by file and directory tiles.
+PopupMenuItem<String> _menuItem(String value, IconData icon, String label) {
+  return PopupMenuItem<String>(
+    value: value,
+    child: Row(
+      children: [
+        Icon(icon, size: 16),
+        const SizedBox(width: 8),
+        Text(label, style: const TextStyle(fontSize: 13)),
+      ],
+    ),
+  );
+}
+
+Future<void> _copyToClipboard(BuildContext context, String text) async {
+  await Clipboard.setData(ClipboardData(text: text));
+  if (context.mounted) {
+    AuraSnackbar.show(context, message: 'Path copied', kind: AuraSnackbarKind.success);
+  }
+}
+
+/// hostd listings carry absolute paths (`<root>/<name>`), dart:io listings
+/// carry workspace-relative ones -- normalize to absolute for copy/reveal.
+String _absolutePathOf(String workspaceRoot, String entryPath) {
+  if (entryPath.startsWith(workspaceRoot)) return entryPath;
+  if (Platform.isWindows && RegExp(r'^[A-Za-z]:').hasMatch(entryPath)) return entryPath;
+  final sep = Platform.pathSeparator;
+  return '$workspaceRoot$sep${entryPath.replaceAll('/', sep)}';
+}
+
+/// Inverse of [_absolutePathOf] for the "copy relative path" action.
+String _relativePathOf(String workspaceRoot, String entryPath) {
+  final normalized = entryPath.replaceAll('\\', '/');
+  final root = workspaceRoot.replaceAll('\\', '/');
+  if (normalized.startsWith('$root/')) return normalized.substring(root.length + 1);
+  return entryPath;
+}
+
+Future<void> _revealInFilesystem(BuildContext context, String absolutePath,
+    {required bool isDirectory}) async {
+  if (!Platform.isWindows) {
+    AuraSnackbar.show(
+      context,
+      message: 'Reveal in filesystem is only supported on Windows for now',
+      kind: AuraSnackbarKind.info,
+    );
+    return;
+  }
+  try {
+    // `explorer <dir>` opens the folder; `explorer /select,<file>` opens the
+    // parent with the file highlighted. Pure argv list, no shell interpolation.
+    await Process.start(
+      'explorer',
+      isDirectory ? [absolutePath] : ['/select,', absolutePath],
+      runInShell: true,
+    );
+  } catch (e) {
+    if (context.mounted) {
+      AuraSnackbar.show(context, message: 'Could not open filesystem: $e', kind: AuraSnackbarKind.error);
+    }
   }
 }

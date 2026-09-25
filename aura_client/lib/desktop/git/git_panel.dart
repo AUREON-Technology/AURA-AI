@@ -24,11 +24,14 @@ class GitPanel extends ConsumerStatefulWidget {
 
 class _GitPanelState extends ConsumerState<GitPanel> {
   final _messageController = TextEditingController();
+  final _branchController = TextEditingController();
   String? _refreshedForKey;
+  bool _historyExpanded = false;
 
   @override
   void dispose() {
     _messageController.dispose();
+    _branchController.dispose();
     super.dispose();
   }
 
@@ -45,6 +48,25 @@ class _GitPanelState extends ConsumerState<GitPanel> {
     Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => GitDiffPage(filePath: path, scope: scope),
     ));
+  }
+
+  Future<void> _checkout(GitBranch branch) async {
+    if (branch.name == ref.read(gitNotifierProvider).branch) return;
+    await ref.read(gitNotifierProvider.notifier).checkout(branch.checkoutName);
+  }
+
+  Future<void> _showCreateBranchDialog() async {
+    _branchController.clear();
+    final name = await AuraDialog.show<String>(
+      context: context,
+      title: 'Create branch',
+      child: AuraTextField(controller: _branchController, hintText: 'Branch name'),
+      confirmLabel: 'Create',
+      cancelLabel: 'Cancel',
+      onConfirm: () => Navigator.of(context).pop(_branchController.text.trim()),
+    );
+    if (name == null || name.isEmpty || !mounted) return;
+    await ref.read(gitNotifierProvider.notifier).checkout(name, create: true);
   }
 
   @override
@@ -89,13 +111,7 @@ class _GitPanelState extends ConsumerState<GitPanel> {
               children: [
                 Icon(Icons.source_outlined, size: 16, color: palette.textSecondary),
                 const SizedBox(width: AuraSpacing.xs),
-                Expanded(
-                  child: Text(
-                    git.branch ?? '(detached HEAD)',
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: palette.textPrimary, fontWeight: FontWeight.w600),
-                  ),
-                ),
+                Expanded(child: _BranchSelector(git: git, busy: git.busy, onSelect: _checkout)),
                 if (git.ahead > 0 || git.behind > 0)
                   Text(
                     '${git.ahead > 0 ? '↑${git.ahead} ' : ''}${git.behind > 0 ? '↓${git.behind}' : ''}',
@@ -105,6 +121,37 @@ class _GitPanelState extends ConsumerState<GitPanel> {
                   icon: const Icon(Icons.refresh, size: 18),
                   tooltip: 'Refresh',
                   onPressed: () => ref.read(gitNotifierProvider.notifier).refresh(workspace.id, workspace.rootPath),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md),
+            child: Row(
+              children: [
+                _SyncButton(
+                  icon: Icons.cloud_download,
+                  tooltip: 'Fetch from all remotes',
+                  busy: git.busy,
+                  onPressed: () => ref.read(gitNotifierProvider.notifier).fetch(),
+                ),
+                _SyncButton(
+                  icon: Icons.arrow_downward,
+                  tooltip: 'Pull (fast-forward only)',
+                  busy: git.busy,
+                  onPressed: () => ref.read(gitNotifierProvider.notifier).pull(),
+                ),
+                _SyncButton(
+                  icon: Icons.arrow_upward,
+                  tooltip: 'Push current branch to its upstream',
+                  busy: git.busy,
+                  onPressed: () => ref.read(gitNotifierProvider.notifier).push(),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Branch'),
+                  onPressed: git.busy ? null : _showCreateBranchDialog,
                 ),
               ],
             ),
@@ -127,8 +174,37 @@ class _GitPanelState extends ConsumerState<GitPanel> {
                   : () async {
                       await ref.read(gitNotifierProvider.notifier).commit(_messageController.text.trim());
                       _messageController.clear();
+                      if (_historyExpanded) {
+                        await ref.read(gitNotifierProvider.notifier).loadLog();
+                      }
                     },
             ),
+          ),
+          ExpansionTile(
+            title: Text(
+              'History',
+              style: TextStyle(color: palette.textSecondary, fontSize: 11, fontWeight: FontWeight.w600),
+            ),
+            tilePadding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md),
+            initiallyExpanded: _historyExpanded,
+            onExpansionChanged: (expanded) {
+              setState(() => _historyExpanded = expanded);
+              if (expanded && ref.read(gitNotifierProvider).commits.isEmpty) {
+                ref.read(gitNotifierProvider.notifier).loadLog();
+              }
+            },
+            children: [
+              if (git.commits.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(AuraSpacing.md, 0, AuraSpacing.md, AuraSpacing.sm),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('No commits loaded.', style: TextStyle(color: palette.textDisabled, fontSize: 12)),
+                  ),
+                )
+              else
+                for (final commit in git.commits) _CommitRow(commit: commit, palette: palette),
+            ],
           ),
           Expanded(
             child: ListView(
@@ -182,6 +258,108 @@ class _GitPanelState extends ConsumerState<GitPanel> {
                   ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Branch switcher: a dropdown once the branch list has loaded, plain text
+/// before that (or on detached HEAD). Remote-tracking entries show a
+/// `(remote)` marker; picking one checks out its short name so git
+/// DWIM-creates the local tracking branch (see [GitBranch.checkoutName]).
+class _BranchSelector extends StatelessWidget {
+  const _BranchSelector({required this.git, required this.busy, required this.onSelect});
+
+  final GitState git;
+  final bool busy;
+  final ValueChanged<GitBranch> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    const nameStyle = TextStyle(fontWeight: FontWeight.w600, fontSize: 13);
+    if (git.branches.isEmpty) {
+      return Text(
+        git.branch ?? '(detached HEAD)',
+        overflow: TextOverflow.ellipsis,
+        style: nameStyle.copyWith(color: palette.textPrimary),
+      );
+    }
+    GitBranch? selected;
+    for (final branch in git.branches) {
+      if (branch.name == git.branch) selected = branch;
+    }
+    return DropdownButtonHideUnderline(
+      child: DropdownButton<GitBranch>(
+        value: selected,
+        isExpanded: true,
+        hint: Text('(detached HEAD)', style: nameStyle.copyWith(color: palette.textSecondary)),
+        style: nameStyle.copyWith(color: palette.textPrimary),
+        items: [
+          for (final branch in git.branches)
+            DropdownMenuItem(
+              value: branch,
+              child: Text(
+                branch.isRemote ? '${branch.name} (remote)' : branch.name,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
+        ],
+        onChanged: busy
+            ? null
+            : (branch) {
+                if (branch != null) onSelect(branch);
+              },
+      ),
+    );
+  }
+}
+
+class _SyncButton extends StatelessWidget {
+  const _SyncButton({required this.icon, required this.tooltip, required this.busy, required this.onPressed});
+
+  final IconData icon;
+  final String tooltip;
+  final bool busy;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = AuraPalette.of(context);
+    return IconButton(
+      icon: Icon(icon, size: 18, color: palette.textSecondary),
+      tooltip: tooltip,
+      onPressed: busy ? null : onPressed,
+    );
+  }
+}
+
+class _CommitRow extends StatelessWidget {
+  const _CommitRow({required this.commit, required this.palette});
+
+  final GitCommit commit;
+  final AuraPalette palette;
+
+  @override
+  Widget build(BuildContext context) {
+    final sha = commit.sha.length >= 7 ? commit.sha.substring(0, 7) : commit.sha;
+    final date = commit.date.length >= 10 ? commit.date.substring(0, 10) : commit.date;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md, vertical: AuraSpacing.xs),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            commit.subject,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: palette.textPrimary, fontSize: 13),
+          ),
+          Text(
+            '$sha · ${commit.author} · $date',
+            style: TextStyle(color: palette.textDisabled, fontSize: 11),
           ),
         ],
       ),

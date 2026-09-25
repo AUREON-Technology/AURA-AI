@@ -40,6 +40,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Sequence
 
+from ..domain.files import strip_absolute_prefix
 from ..observability.logging import get_logger
 from ..ports.coding import FileWriteOp, SandboxHandle, SandboxResult
 
@@ -392,7 +393,7 @@ class DockerSandboxRunner:
         root = self._scratch(handle).resolve()
         if "\x00" in relative:
             raise SandboxError("path contains a null byte")
-        candidate = (root / relative.lstrip("/")).resolve()
+        candidate = (root / strip_absolute_prefix(relative)).resolve()
         if candidate != root and root not in candidate.parents:
             raise SandboxError(f"path {relative!r} escapes the sandbox workspace")
         return candidate

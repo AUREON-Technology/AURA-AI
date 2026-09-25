@@ -392,8 +392,12 @@ gaps:
       every call is gated, the first tainting call runs alone). Clean batches keep full
       concurrency. tests/security/test_concurrent_taint.py (10) plus a kernel-level case in
       test_injection_end_to_end.py: 6 of 10 and the kernel case failed against the pre-fix
-      engine. The residual-gap comment in tools/registry.py is replaced. Not proven: no CI run
-      (GAP-043).
+      engine. The residual-gap comment in tools/registry.py is replaced. Locally re-verified
+      2026-09-25 with the project interpreter (CPython 3.14, pytest-asyncio 1.4.0):
+      test_concurrent_taint.py 10/10 green, test_injection_end_to_end.py +
+      test_prompt_injection.py 25/25 green. (An earlier all-red run in this same session was
+      the Windows Store python3 shim without the dev packages, not a code failure.) Not
+      proven: no CI run (GAP-043).
 
   - gap_id: GAP-015
     component: backend/idempotency

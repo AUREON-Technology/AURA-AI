@@ -293,8 +293,8 @@ from the old one. It was never true on the old host, because there was no Ollama
 
 Then rebuild the mobile client — **this is what fixes the 404s**, and no server-side change does.
 `BACKEND_URL` is compile-time and must equal `https://$AURA_DOMAIN` (the vhost `server_name` and
-the cert SAN). Debug `flutter run` stays on localhost. With no owned domain, `AURA_DOMAIN` is
-`169.58.188.43.nip.io` — not a bare IP.
+the cert SAN). Debug `flutter run` stays on localhost. `AURA_DOMAIN` is
+`aureon-ai.tech` — not a bare IP.
 
 ```bash
 # from the repo root, with AURA_DOMAIN set in deploy/.env

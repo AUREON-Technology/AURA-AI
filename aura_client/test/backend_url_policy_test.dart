@@ -9,13 +9,13 @@ void main() {
       expect(AppConfig.backendUrl, BackendUrlPolicy.localDevUrl);
     });
 
-    test('accepts an https hostname including nip.io', () {
+    test('accepts an https hostname', () {
       expect(
         BackendUrlPolicy.isSafeForRelease('https://aura.example.org'),
         isTrue,
       );
       expect(
-        BackendUrlPolicy.isSafeForRelease('https://169.58.188.43.nip.io'),
+        BackendUrlPolicy.isSafeForRelease('https://aureon-ai.tech'),
         isTrue,
       );
       expect(

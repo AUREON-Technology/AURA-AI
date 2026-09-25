@@ -68,6 +68,6 @@ function Assert-AuraReleaseBackendUrl {
     }
 
     if ($hostName -match '^\d+\.\d+\.\d+\.\d+$') {
-        throw "Release BACKEND_URL must be a hostname, not a raw IP ($hostName). Use the VPS nip.io name (https://<ip>.nip.io) when there is no domain."
+        throw "Release BACKEND_URL must be a hostname, not a raw IP ($hostName). Set AURA_DOMAIN to a real DNS name (e.g. https://aureon-ai.tech) in deploy/.env."
     }
 }

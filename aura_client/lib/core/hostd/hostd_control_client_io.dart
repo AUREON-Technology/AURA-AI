@@ -181,6 +181,21 @@ class HostdControlClient {
   Future<Map<String, dynamic>> gitCheckout({required String root, required String branch, bool create = false}) =>
       _request('POST', '/git/checkout', body: {'root': root, 'branch': branch, 'create': create});
 
+  /// Human-only remote-sync routes (`git_service.dart` branches/fetch/pull/push) --
+  /// same boundary as the git routes above. `push` takes no refspec server-side:
+  /// only the checked-out branch can ever go to its own upstream.
+  Future<Map<String, dynamic>> gitBranches({required String root}) =>
+      _request('GET', '/git/branches?root=${Uri.encodeQueryComponent(root)}');
+
+  Future<Map<String, dynamic>> gitFetch({required String root}) =>
+      _request('POST', '/git/fetch', body: {'root': root});
+
+  Future<Map<String, dynamic>> gitPull({required String root}) =>
+      _request('POST', '/git/pull', body: {'root': root});
+
+  Future<Map<String, dynamic>> gitPush({required String root}) =>
+      _request('POST', '/git/push', body: {'root': root});
+
   /// D7 Part A.2's diagnostics routes (`aura_hostd/lib/src/diagnostics_service.dart`) -- direct,
   /// human-only batch linting, entirely independent of the agent-facing RPC surface (same
   /// boundary as the git routes above).

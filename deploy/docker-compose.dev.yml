@@ -1,6 +1,6 @@
 # AURA AI â€” development stack (parallel to production on the same VPS).
 #
-# Prod ingress (nginx in docker-compose.prod.yml) routes dev.169.x.nip.io to
+# Prod ingress (nginx in docker-compose.prod.yml) routes dev.aureon-ai.tech to
 # this stack via the shared external network `aura_edge`. Ollama stays on prod
 # to save RAM; dev gateway reaches it at http://ollama:11434/v1 over aura_edge.
 #

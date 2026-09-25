@@ -29,6 +29,7 @@ from typing import Any, Callable, Sequence
 from urllib.parse import urlparse
 
 from ..domain.errors import ToolExecutionError
+from ..domain.files import strip_absolute_prefix
 from ..domain.memory import SHARED_MEMORY_SCOPE, MemoryKind, MemoryQuery, readable_scopes
 from ..domain.network import is_internal_address
 from ..domain.tools import ToolCategory, ToolSensitivity
@@ -311,7 +312,7 @@ def build_file_tools(workspace: str | Path, *, max_bytes: int = 512_000) -> list
     def resolve_within(relative: str) -> Path:
         if "\x00" in relative:
             raise ToolExecutionError("path contains a null byte", tool="read_file")
-        candidate = (root / relative.lstrip("/")).resolve()
+        candidate = (root / strip_absolute_prefix(relative)).resolve()
         if candidate != root and root not in candidate.parents:
             raise ToolExecutionError(
                 "path escapes the workspace directory", tool="read_file",
