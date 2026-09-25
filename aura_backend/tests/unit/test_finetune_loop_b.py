@@ -1,4 +1,4 @@
-"""Loop B fine-tune service: curation, approval, scripted train, registry (ADR-008)."""
+"""Loop B fine-tune service: curation, approval, job engine, registry (ADR-008)."""
 
 from __future__ import annotations
 
@@ -29,6 +29,27 @@ from aura_core.learning import (
 )
 from aura_core.mlops import InMemoryModelStore, ModelRegistry, ModelStage
 from aura_core.mlops.experiments import ExperimentTracker, InMemoryExperimentStore
+from aura_core.ports.mlops import FineTuneJobSpec, TrainResult
+
+
+class _WeightsChangedPortDouble:
+    """A port-level stand-in for a trainer that *did* update weights.
+
+    The default ``pytest`` run has no torch/PEFT stack, so the promotion-gate tests below need a
+    trainer that reports ``weights_changed=True`` with a named artefact. It is a test double of the
+    ``FineTuneTrainer`` port, not a claim that anything was trained; the real weight-delta proof is
+    the opt-in ``tests/training`` suite against ``LocalLoraTrainer``.
+    """
+
+    async def train(self, job: FineTuneJobSpec) -> TrainResult:
+        return TrainResult(
+            artefact_uri=f"/var/lib/aura/finetune/{job.job_id}/adapter",
+            provider_kind="peft_lora",
+            metrics={"train_loss": 0.42, "steps": 3.0},
+            notes="port double",
+            weights_changed=True,
+            artefact_digest="0" * 64,
+        )
 
 
 def _record(
@@ -85,7 +106,7 @@ def loop_b():
         approvals=approvals,
         datasets=datasets,
         models=models,
-        trainer=ScriptedTrainer(),
+        trainer=_WeightsChangedPortDouble(),
         jobs=InMemoryJobStore(),
         experiments=experiments,
         model_id="aura-ft",
@@ -149,7 +170,7 @@ class TestFineTuneJobEngine:
         with pytest.raises(ConflictError):
             await jobs.enqueue(approval_id=approval.id, dataset_digest="not-the-digest")
 
-    async def test_scripted_success_registers_candidate(self, loop_b) -> None:
+    async def test_trained_result_registers_candidate(self, loop_b) -> None:
         feedback, service, approvals, models, jobs = loop_b
         await _seed_two_users(feedback)
         approval, recommendation = await service.request_approval()
@@ -163,6 +184,42 @@ class TestFineTuneJobEngine:
         assert len(versions) == 1
         assert versions[0].stage is ModelStage.CANDIDATE
         assert versions[0].dataset_digest == recommendation.dataset_digest
+        assert "artefact_sha256=" + "0" * 64 in versions[0].notes
+
+    async def test_scripted_trainer_registers_nothing(self, loop_b) -> None:
+        """The gateway default ends NOT_TRAINED; see test_finetune_honesty for the full set."""
+        feedback, service, approvals, models, _ = loop_b
+        await _seed_two_users(feedback)
+        approval, _ = await service.request_approval()
+        await approvals.decide(approval.id, approved=True, by="admin@example.com")
+        engine = FineTuneJobEngine(
+            approvals=approvals,
+            datasets=service._datasets,
+            models=models,
+            trainer=ScriptedTrainer(),
+        )
+        job = await engine.enqueue(approval_id=approval.id)
+        done = await engine.run(job.id)
+        assert done.status is FineTuneJobStatus.NOT_TRAINED
+        assert list(await models.list_versions(model_id="aura-ft")) == []
+
+    async def test_bad_hyperparameter_fails_the_job_at_the_boundary(self, loop_b) -> None:
+        feedback, service, approvals, models, _ = loop_b
+        await _seed_two_users(feedback)
+        approval, _ = await service.request_approval()
+        await approvals.decide(approval.id, approved=True, by="admin@example.com")
+        engine = FineTuneJobEngine(
+            approvals=approvals,
+            datasets=service._datasets,
+            models=models,
+            trainer=_WeightsChangedPortDouble(),
+            default_parameters={"method": "lora", "epochs": "three"},
+        )
+        job = await engine.enqueue(approval_id=approval.id)
+        done = await engine.run(job.id)
+        assert done.status is FineTuneJobStatus.FAILED
+        assert "epochs" in (done.error or "")
+        assert list(await models.list_versions(model_id="aura-ft")) == []
 
 
 class TestPromotionGate:

@@ -23,9 +23,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # CUDA runtime that a CPU-only host can never execute. Four services build from this
 # context, so the cost is paid four times over. Re-compiling without the CPU index will
 # silently put all of it back.
-COPY requirements.lock .
+COPY requirements.lock requirements-train.txt ./
 
 RUN pip install --no-cache-dir --user -r requirements.lock
+
+# Optional LoRA training dependencies (peft; ADR-008 Loop B, GAP-017). Off by default so the
+# gateway and every other service never carry them; only `worker-training` builds with
+# AURA_TRAINING_DEPS=true. requirements-train.txt constrains itself to requirements.lock, so
+# this cannot move torch/transformers away from the gateway's pins.
+ARG AURA_TRAINING_DEPS=false
+RUN if [ "$AURA_TRAINING_DEPS" = "true" ]; then \
+        pip install --no-cache-dir --user -r requirements-train.txt; \
+    fi
 
 # ==========================================
 # STAGE 2: Runner

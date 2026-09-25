@@ -45,9 +45,15 @@ logger = get_logger("learning.finetune")
 class FineTuneJobStatus(str, enum.Enum):
     QUEUED = "queued"
     RUNNING = "running"
+    #: Model weights were updated and a digest-identified artefact was saved. Only this status
+    #: registers a CANDIDATE model version.
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    #: The trainer ran to completion but, by its own account, changed no weights (the default
+    #: gateway trainer, a dry run). ``FineTuneJob.error`` carries the reason. Terminal, never
+    #: registers a model version, so there is nothing to promote (GAP-018).
+    NOT_TRAINED = "not_trained"
 
     def __str__(self) -> str:
         return self.value
@@ -113,18 +119,86 @@ JobStore = InMemoryJobStore
 
 
 class ScriptedTrainer:
-    """Test/CI substrate: no torch, no subprocess, deterministic artefact."""
+    """The gateway's default trainer: it trains nothing, and says so.
 
-    def __init__(self, *, artefact_prefix: str = "scripted://aura-ft") -> None:
-        self._prefix = artefact_prefix
+    No torch, no subprocess. Every job it runs ends ``NOT_TRAINED`` with the reason below, and no
+    model version is registered — the approved dataset is the only output. It exists so the
+    approval → job → audit path works end to end on a host with no training worker, without
+    pretending that path produced a model. Real weight updates come only from
+    ``LocalLoraTrainer`` (``AURA_FINETUNE_TRAINER=local`` on the ``worker-training`` image).
+    """
+
+    REASON = (
+        "no trainer configured (AURA_FINETUNE_TRAINER=scripted): the approved dataset was "
+        "prepared, but no weights were changed and no model was produced"
+    )
 
     async def train(self, job: FineTuneJobSpec) -> TrainResult:
-        return TrainResult(
-            artefact_uri=f"{self._prefix}/{job.output_tag}",
-            provider_kind="ollama",
-            metrics={"train_loss": 0.42, "examples": float(job.dataset_jsonl.count("\n") + 1)},
-            notes="scripted trainer — no real weights produced",
+        return TrainResult.not_trained(
+            self.REASON,
+            metrics={"examples": float(_count_examples(job.dataset_jsonl))},
         )
+
+
+def _count_examples(jsonl: str) -> int:
+    return sum(1 for line in jsonl.splitlines() if line.strip())
+
+
+def _spec_hyperparameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
+    """Translate a job's ``parameters`` mapping into typed ``FineTuneJobSpec`` fields.
+
+    Accepts the short keys the engine has always stored (``rank``, ``lr``, ``epochs``) and the
+    spec's own field names. A value that cannot be coerced is a ``ValidationError`` here, at the
+    boundary, rather than an ``AttributeError`` or ``TypeError`` deep inside a trainer.
+    """
+    aliases = {
+        "rank": "lora_rank",
+        "alpha": "lora_alpha",
+        "dropout": "lora_dropout",
+        "lr": "learning_rate",
+        "target_modules": "lora_target_modules",
+        "revision": "base_model_revision",
+    }
+    casts: dict[str, Any] = {
+        "epochs": int,
+        "batch_size": int,
+        "learning_rate": float,
+        "max_steps": int,
+        "lora_rank": int,
+        "lora_alpha": int,
+        "lora_dropout": float,
+        "max_seq_len": int,
+        "seed": int,
+        "base_model_revision": str,
+    }
+    out: dict[str, Any] = {}
+    for key, value in parameters.items():
+        name = aliases.get(key, key)
+        if name == "lora_target_modules":
+            if isinstance(value, str):
+                value = [v for v in (p.strip() for p in value.split(",")) if v]
+            out[name] = tuple(str(v) for v in (value or ()))
+            continue
+        cast = casts.get(name)
+        if cast is None or value is None:
+            continue
+        try:
+            out[name] = cast(value)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                f"fine-tune parameter {key!r} is not a valid {cast.__name__}",
+                details={"parameter": key, "value": repr(value)},
+            ) from exc
+    for name in ("epochs", "batch_size", "lora_rank", "lora_alpha", "max_seq_len"):
+        if name in out and out[name] < 1:
+            raise ValidationError(f"fine-tune parameter {name!r} must be >= 1")
+    if "max_steps" in out and out["max_steps"] < 1:
+        raise ValidationError("fine-tune parameter 'max_steps' must be >= 1")
+    if "learning_rate" in out and not out["learning_rate"] > 0:
+        raise ValidationError("fine-tune parameter 'learning_rate' must be > 0")
+    if "lora_dropout" in out and not 0.0 <= out["lora_dropout"] < 1.0:
+        raise ValidationError("fine-tune parameter 'lora_dropout' must be within [0, 1)")
+    return out
 
 
 class FineTuneService:
@@ -346,34 +420,38 @@ class FineTuneJobEngine:
             await self._jobs.put(job)
 
         output_tag = f"{job.model_id}:{job.version}"
-        spec = FineTuneJobSpec(
-            job_id=job.id,
-            dataset_digest=job.dataset_digest,
-            dataset_jsonl=dataset.jsonl,
-            base_model=job.base_model,
-            output_tag=output_tag,
-            method=str(job.parameters.get("method", "lora")),
-            parameters=dict(job.parameters),
-            allow_cpu=self._allow_cpu,
-        )
 
         try:
-            result = await self._trainer.train(spec)
-        except Exception as exc:
-            failed = replace(
-                job,
-                status=FineTuneJobStatus.FAILED,
-                error=f"{type(exc).__name__}: {exc}",
-                finished_at=datetime.now(timezone.utc),
+            spec = FineTuneJobSpec(
+                job_id=job.id,
+                dataset_digest=job.dataset_digest,
+                dataset_jsonl=dataset.jsonl,
+                base_model=job.base_model,
+                output_tag=output_tag,
+                method=str(job.parameters.get("method", "lora")),
+                parameters=dict(job.parameters),
+                allow_cpu=self._allow_cpu,
+                **_spec_hyperparameters(job.parameters),
             )
-            await self._jobs.put(failed)
-            if self._experiments is not None and run_id:
-                await self._experiments.finish_run(
-                    run_id, status=RunStatus.FAILED, error=str(exc)
+            result = await self._trainer.train(spec)
+            if result.weights_changed and not (
+                result.artefact_uri.strip() and result.artefact_digest.strip()
+            ):
+                raise ValidationError(
+                    "trainer reported changed weights without naming the artefact "
+                    "(artefact_uri and artefact_digest are both required)"
                 )
-            logger.warning("fine-tune job failed", extra={"job": job.id, "error": str(exc)})
-            return failed
+        except Exception as exc:
+            return await self._finish_failed(job, run_id, f"{type(exc).__name__}: {exc}")
 
+        if not result.weights_changed:
+            return await self._finish_not_trained(job, run_id, result)
+
+        notes = result.notes
+        extras = [f"artefact_sha256={result.artefact_digest}"]
+        if result.base_model_revision:
+            extras.append(f"base_revision={result.base_model_revision}")
+        notes = (notes + " | " if notes else "") + " ".join(extras)
         version = ModelVersion(
             model_id=job.model_id,
             version=job.version,
@@ -384,7 +462,7 @@ class FineTuneJobEngine:
             dataset_digest=job.dataset_digest,
             approval_id=job.approval_id,
             metrics=dict(result.metrics),
-            notes=result.notes,
+            notes=notes,
         )
         await self._models.register(version)
 
@@ -405,6 +483,51 @@ class FineTuneJobEngine:
         await self._jobs.put(succeeded)
         logger.info(
             "fine-tune job succeeded",
-            extra={"job": job.id, "artefact": result.artefact_uri},
+            extra={
+                "job": job.id,
+                "artefact": result.artefact_uri,
+                "artefact_digest": result.artefact_digest,
+            },
         )
         return succeeded
+
+    async def _finish_failed(self, job: FineTuneJob, run_id: str | None, error: str
+                             ) -> FineTuneJob:
+        failed = replace(
+            job,
+            status=FineTuneJobStatus.FAILED,
+            error=error,
+            finished_at=datetime.now(timezone.utc),
+        )
+        await self._jobs.put(failed)
+        if self._experiments is not None and run_id:
+            await self._experiments.finish_run(run_id, status=RunStatus.FAILED, error=error)
+        logger.warning("fine-tune job failed", extra={"job": job.id, "error": error})
+        return failed
+
+    async def _finish_not_trained(
+        self, job: FineTuneJob, run_id: str | None, result: TrainResult
+    ) -> FineTuneJob:
+        """Terminal, honest, and deliberately not a success: nothing is registered."""
+        reason = result.notes.strip() or "trainer reported that no weights were changed"
+        outcome = replace(
+            job,
+            status=FineTuneJobStatus.NOT_TRAINED,
+            error=reason,
+            artefact_uri="",
+            provider_kind=result.provider_kind,
+            metrics=dict(result.metrics),
+            finished_at=datetime.now(timezone.utc),
+        )
+        await self._jobs.put(outcome)
+        if self._experiments is not None and run_id:
+            if result.metrics:
+                await self._experiments.log_metrics(run_id, dict(result.metrics))
+            # The run did not produce a model: an experiment "completed" would read as one.
+            await self._experiments.finish_run(
+                run_id, status=RunStatus.FAILED, error=f"not trained: {reason}"
+            )
+        logger.warning(
+            "fine-tune job finished without training", extra={"job": job.id, "reason": reason}
+        )
+        return outcome

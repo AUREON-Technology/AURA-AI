@@ -49,8 +49,10 @@ class TestBeatSchedule:
         assert refresh["options"]["queue"] == "learning"
         consolidate = celery_app.conf.beat_schedule["memory-consolidate-daily"]
         assert consolidate["options"]["queue"] == "learning"
+        # The fine-tune drain is deliberately NOT here: it runs on the `training` queue, which only
+        # worker-training consumes (tests/unit/test_finetune_deploy_parity.py).
         finetune = celery_app.conf.beat_schedule["drain-finetune-queue"]
-        assert finetune["options"]["queue"] == "learning"
+        assert finetune["options"]["queue"] == "training"
 
     def test_outbox_drain_runs_frequently_on_the_realtime_queue(self) -> None:
         from celery_app import celery_app
