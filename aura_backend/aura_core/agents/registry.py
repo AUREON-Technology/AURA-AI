@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
+from ..domain.agent_runs import AgentBudget
+from ..domain.memory import SHARED_MEMORY_SCOPE
 from ..domain.tools import ToolSensitivity
 from ..prompts.library import AGENT_PROMPT_IDS
 
@@ -42,11 +44,42 @@ class AgentSpec:
     allowed_tools: frozenset[str] | None = None
     required_capabilities: frozenset[str] = frozenset()
     risk_ceiling: ToolSensitivity = ToolSensitivity.SYSTEM
-    memory_scope: str = "shared"
+    #: Which memory partition this persona reads and writes (``domain/memory.py``). A persona
+    #: with its own scope writes there and reads its own scope *plus* the shared one; a persona
+    #: on ``"shared"`` reads and writes only the shared scope, so it never sees another
+    #: persona's private memories. Isolation is per ``(user, scope)`` -- the owner check that
+    #: already separated users is unchanged.
+    memory_scope: str = SHARED_MEMORY_SCOPE
     #: How many plan-execute-observe-replan iterations this persona's turn may run
     #: (``AIKernel``/``AgenticExecutor``). ``1`` -- the default, and every persona below except
     #: ``engineer`` -- preserves the pre-agentic-loop behaviour exactly: plan once, execute once.
+    #: ``> 1`` enables the replanning loop, with this many replans allowed after the first pass
+    #: (the meaning ``PlanningEngine.can_replan(limit=...)`` has always given it).
     max_plan_iterations: int = 1
+    #: The loop's other four bounds (GAP-024), as data. ``None`` means "not bounded by this
+    #: budget" -- the execution engine's per-pass step cap and the loop deadline still apply.
+    #: ``time_budget_s`` never loosens ``settings.reasoning.engineer_loop_deadline_s``.
+    token_budget: int | None = None
+    time_budget_s: float | None = None
+    tool_budget: int | None = None
+    risk_budget: int | None = None
+
+    @property
+    def loop_enabled(self) -> bool:
+        """Whether this persona may replan (the multi-iteration agent loop)."""
+        return self.max_plan_iterations > 1
+
+    @property
+    def budget(self) -> AgentBudget:
+        """The persona's run budget. A single-pass persona gets ``max_iterations=0``: it runs
+        through the same loop, and the loop makes exactly one pass."""
+        return AgentBudget(
+            max_iterations=self.max_plan_iterations if self.loop_enabled else 0,
+            token_budget=self.token_budget,
+            time_budget_s=self.time_budget_s,
+            tool_budget=self.tool_budget,
+            risk_budget=self.risk_budget,
+        )
 
 
 class AgentRegistry:
@@ -136,7 +169,7 @@ def build_default_agent_registry() -> AgentRegistry:
                     "create_finance_record", "list_finance_records",
                     "update_finance_record", "delete_finance_record",
                 },
-                risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="shared",
+                risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="finance",
             ),
             AgentSpec(
                 id="health_companion", name="Health Companion",
@@ -145,7 +178,7 @@ def build_default_agent_registry() -> AgentRegistry:
                     "propose_health_log", "create_health_record", "list_health_records",
                     "update_health_record", "delete_health_record",
                 },
-                risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="shared",
+                risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="health",
             ),
             AgentSpec(
                 id="research_agent", name="Research Agent",
@@ -198,7 +231,15 @@ def build_default_agent_registry() -> AgentRegistry:
                 required_capabilities=frozenset({"engineer_agent"}),
                 risk_ceiling=ToolSensitivity.SYSTEM,  # run_command needs SYSTEM
                 max_plan_iterations=8,
-                memory_scope="shared",
+                # The loop's tool and risk ceilings, made explicit at exactly the values the
+                # pre-GAP-024 loop already implied, so moving the engineer onto the standard loop
+                # changes nothing: 8 replans + the first pass = 9 passes, each capped at the
+                # ExecutionEngine's default 24 step executions = 216 dispatches at most, each
+                # costing at most 4 (SYSTEM sensitivity + side-effecting). Tighten from here as
+                # evidence says; token and time stay unset (the settings deadline governs time).
+                tool_budget=216,
+                risk_budget=864,
+                memory_scope="engineer",
             ),
         ]
     )

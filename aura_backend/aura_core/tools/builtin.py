@@ -29,7 +29,7 @@ from typing import Any, Callable, Sequence
 from urllib.parse import urlparse
 
 from ..domain.errors import ToolExecutionError
-from ..domain.memory import MemoryKind, MemoryQuery
+from ..domain.memory import SHARED_MEMORY_SCOPE, MemoryKind, MemoryQuery, readable_scopes
 from ..domain.network import is_internal_address
 from ..domain.tools import ToolCategory, ToolSensitivity
 from ..ports.runtime import Tool, ToolContext
@@ -252,7 +252,10 @@ def build_memory_tools(memory_engine: Any) -> list[Tool]:
     )
     async def recall_memory(query: str, context: ToolContext, limit: int = 5) -> str:
         hits = await memory_engine.recall(
-            MemoryQuery(owner_id=context.user_id, text=query, limit=limit)
+            MemoryQuery(
+                owner_id=context.user_id, text=query, limit=limit,
+                scopes=readable_scopes(getattr(context, "memory_scope", None) or SHARED_MEMORY_SCOPE),
+            )
         )
         if not hits:
             return f"Nothing recorded about {query!r}."
@@ -282,6 +285,7 @@ def build_memory_tools(memory_engine: Any) -> list[Tool]:
             kind=MemoryKind.SEMANTIC,
             subject=subject,
             source=f"tool:remember_fact:{context.correlation_id}",
+            scope=getattr(context, "memory_scope", None) or SHARED_MEMORY_SCOPE,
         )
         return f"Recorded: {record.content}"
 
