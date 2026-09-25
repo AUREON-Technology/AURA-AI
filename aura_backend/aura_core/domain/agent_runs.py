@@ -42,6 +42,7 @@ __all__ = [
     "goal_digest",
     "risk_cost",
     "safe_detail",
+    "run_metrics",
 ]
 
 
@@ -284,3 +285,38 @@ class AgentStep:
             "detail": dict(self.detail),
             "created_at": self.created_at.isoformat(),
         }
+
+
+def run_metrics(run: AgentRun) -> dict[str, Any]:
+    """Run-level evaluation metrics (GAP-024), derived from the run record alone.
+
+    * ``completed`` -- every plan step succeeded;
+    * ``partial_completion`` -- fraction of plan steps that succeeded (1.0 when completed);
+    * ``tool_accuracy`` -- dispatched tool calls that succeeded, over those dispatched (``None``
+      with no dispatch; confirmation-gated calls did not dispatch and are not counted);
+    * ``iteration_utilization`` -- replans used over replans allowed (``None`` for a
+      single-pass persona, whose allowance is zero);
+    * ``replan_success`` -- replans after which the next pass made progress, over replans made
+      (``None`` with no replan);
+    * ``unsafe_prevented`` -- calls refused before acting (policy, confirmation gate, budget).
+    """
+    completed = run.status == AgentRunStatus.COMPLETED
+    if completed:
+        partial = 1.0
+    elif run.plan_steps_total:
+        partial = run.plan_steps_succeeded / run.plan_steps_total
+    else:
+        partial = 0.0
+    return {
+        "completed": completed,
+        "partial_completion": round(partial, 4),
+        "tool_accuracy": round(run.tool_calls_ok / run.tool_calls, 4) if run.tool_calls else None,
+        "iterations": run.iterations,
+        "iteration_utilization": (
+            round(run.replans / run.budget.max_iterations, 4)
+            if run.budget.max_iterations else None
+        ),
+        "replan_success": round(run.replans_recovered / run.replans, 4) if run.replans else None,
+        "unsafe_prevented": run.unsafe_prevented,
+        "budget_exhausted": run.exhausted_budget,
+    }

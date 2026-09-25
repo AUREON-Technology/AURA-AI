@@ -315,6 +315,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "pending_tool_calls": list(result.pending_tool_calls),
                 "plan": list(result.plan_summary),
                 "resolved_agent": result.resolved_agent,
+                "agent_run_id": result.agent_run_id,
                 "correlation_id": result.telemetry.correlation_id.value,
                 "turn_id": result.telemetry.turn_id.value,
                 "usage": {
@@ -965,6 +966,56 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                     }
                     for r in runs
                 ]
+            }
+        )
+
+    # -- agent runs (GAP-024) -----------------------------------------------------------
+
+    @router.get("/agents/runs")
+    async def list_agent_runs(
+        request: Request,
+        caller: Principal = Depends(principal),
+        agent: str | None = Query(default=None, max_length=64),
+        status: str | None = Query(default=None, max_length=32),
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> JSONResponse:
+        """The caller's own agent runs, newest first, with run-level metrics. Owner-scoped in
+        the store (``user_id`` is a required argument of every read), not filtered here."""
+        await enforce_rate_limit(request, caller, "read")
+        from ..domain.agent_runs import run_metrics
+
+        store = getattr(container, "agent_runs", None)
+        if store is None:
+            return JSONResponse(content={"runs": []})
+        runs = await store.list_runs(caller.user_id, agent_id=agent, status=status, limit=limit)
+        return JSONResponse(
+            content={"runs": [{**r.as_dict(), "metrics": run_metrics(r)} for r in runs]}
+        )
+
+    @router.get("/agents/runs/{run_id}")
+    async def get_agent_run(
+        request: Request, run_id: str, caller: Principal = Depends(principal),
+    ) -> JSONResponse:
+        """One of the caller's runs with its steps. Another user's run id reads as 404 --
+        indistinguishable from an id that never existed."""
+        await enforce_rate_limit(request, caller, "read")
+        from ..domain.agent_runs import run_metrics
+        from ..domain.identifiers import AgentRunId
+
+        store = getattr(container, "agent_runs", None)
+        try:
+            ident = AgentRunId(run_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="run not found")
+        run = await store.get_run(ident, user_id=caller.user_id) if store is not None else None
+        if run is None:
+            raise HTTPException(status_code=404, detail="run not found")
+        steps = await store.list_steps(ident, user_id=caller.user_id)
+        return JSONResponse(
+            content={
+                **run.as_dict(),
+                "metrics": run_metrics(run),
+                "steps": [s.as_dict() for s in steps],
             }
         )
 
