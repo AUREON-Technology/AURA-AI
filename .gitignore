@@ -77,6 +77,15 @@ aura_client/ios/Pods/
 aura_client/scratch_test_*.tmp
 
 # ==========================================
+# Dart (aura_hostd) — compiled daemon binaries
+# ==========================================
+# A stale compiled aura_hostd.exe checked into git ran old server code well after the routes and
+# fixes it predated had landed in source -- the Desktop IDE kept calling into a daemon binary that
+# had never seen those changes, and nothing about `git log` or a merged PR made that visible.
+aura_hostd/build/
+aura_hostd/*.exe
+
+# ==========================================
 # IDE / OS
 # ==========================================
 .idea/
