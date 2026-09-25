@@ -247,7 +247,10 @@ class MemoryEngine:
                 filters={"kind": [str(k) for k in query.kinds]} if query.kinds else None,
             )
         except Exception as exc:
-            logger.warning("memory vector search failed", extra={"error": type(exc).__name__})
+            logger.warning(
+                "memory vector search failed",
+                extra={"error": type(exc).__name__, "detail": str(exc)},
+            )
             return []
 
         similarity_by_id = {payload.get("memory_id", point_id): score for point_id, score, payload in raw}

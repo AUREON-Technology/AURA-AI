@@ -26,6 +26,7 @@ bug that reads as a relevance problem.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Mapping, Sequence
 
@@ -442,20 +443,31 @@ class QdrantVectorStore:
         conditions = _filter_conditions(filters) + self._owner_filter(owner_id, include_global)
         query_filter = qmodels.Filter(must=conditions) if conditions else None
 
-        try:
-            response = await self._get_client().query_points(
-                collection_name=identity.physical_name,
-                query=list(vector),
-                limit=limit,
-                query_filter=query_filter,
-                score_threshold=score_threshold,
-                with_payload=True,
-            )
-        except Exception as exc:
+        # One retry after a short delay. Every reproduction attempt against the live deployment
+        # (idle-reuse, concurrent tasks, concurrent processes, matched event loop) came back clean,
+        # which points at a narrow, one-off timing window rather than a persistent fault -- so a
+        # transient hiccup here is worth absorbing rather than degrading the whole turn on it.
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            if attempt:
+                await asyncio.sleep(0.5)
+            try:
+                response = await self._get_client().query_points(
+                    collection_name=identity.physical_name,
+                    query=list(vector),
+                    limit=limit,
+                    query_filter=query_filter,
+                    score_threshold=score_threshold,
+                    with_payload=True,
+                )
+                break
+            except Exception as exc:
+                last_exc = exc
+        else:
             raise _unavailable(
-                f"could not search {identity.physical_name!r}: {exc}",
+                f"could not search {identity.physical_name!r}: {last_exc}",
                 index=identity.physical_name,
-            ) from exc
+            ) from last_exc
 
         results = []
         for scored in getattr(response, "points", response) or []:
