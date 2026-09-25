@@ -3,7 +3,7 @@ import json
 import logging
 from contextvars import ContextVar
 from typing import Optional, Dict, Any
-from config import debug_bypass_allowed, settings
+from config import debug_bypass_allowed, environment_is_production_like, settings
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 from infrastructure.redis_client import get_redis_client
@@ -110,7 +110,13 @@ def verify_device_integrity(attestation_token: Optional[str], platform: Optional
     # Explicit debug marker from current clients, plus legacy mock strings
     # from older APKs. `aura_attestation_unsupported` is never listed — that
     # is the release-build "we have no Play Integrity SDK" marker.
-    if settings.allow_mock_attestation and attestation_token in [
+    #
+    # Refused outright in staging/production, whatever the flag says -- the same defence in depth
+    # `debug_bypass_allowed` applies to DEBUG_MODE. The v3 production gate refuses the flag, but
+    # it reads AURA_ALLOW_MOCK_ATTESTATION first while this legacy `settings` reads only the
+    # unprefixed ALLOW_MOCK_ATTESTATION (and a .env file), so the two could disagree and the gate
+    # pass while this accepted mock tokens (tests/security/test_attestation.py).
+    if settings.allow_mock_attestation and not environment_is_production_like() and attestation_token in [
         "aura_dev_attestation",
         "android_play_integrity_mock_assertion_token_string",
         "ios_app_attest_mock_assertion_token_string",

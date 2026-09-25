@@ -158,11 +158,27 @@ class EpisodicMemory:
         self._ttl = ttl_s
         self._summariser = summariser
 
-    def _key(self, session_id: SessionId) -> str:
-        return f"{self._PREFIX}{session_id.value}"
+    def _key(self, session_id: SessionId, owner_id: UserId | None = None) -> str:
+        """The cache key for a session.
+
+        Namespaced by owner. Keyed by session id alone, the owner check in :meth:`load` stopped
+        a foreign user *reading* a conversation, but that user's turn then wrote its own fresh
+        state over the same key -- erasing the owner's history by naming their session id
+        (tests/security/test_idor.py). The owner's length is part of the key so no pair of
+        (owner, session id) strings can collide. ``owner_id=None`` is the pre-namespacing key,
+        read only as a fallback so conversations written before this change survive it.
+        """
+        if owner_id is None:
+            return f"{self._PREFIX}{session_id.value}"
+        owner = owner_id.value
+        return f"{self._PREFIX}u{len(owner)}:{owner}:{session_id.value}"
 
     async def load(self, session_id: SessionId, owner_id: UserId) -> SessionState:
-        raw = await self._cache.get(self._key(session_id))
+        raw = await self._cache.get(self._key(session_id, owner_id))
+        if raw is None:
+            # Legacy, un-namespaced state: honoured only for its own owner (checked below), and
+            # never written again -- the next append lands on the namespaced key.
+            raw = await self._cache.get(self._key(session_id))
         if raw is None:
             return SessionState(session_id=session_id, owner_id=owner_id)
         state = SessionState.from_json(raw)
@@ -206,15 +222,25 @@ class EpisodicMemory:
             turn_count=state.turn_count + 1,
             updated_at=time.time(),
         )
-        await self._cache.set(self._key(session_id), state.to_json().encode("utf-8"), ttl_s=self._ttl)
+        await self._cache.set(
+            self._key(session_id, owner_id), state.to_json().encode("utf-8"), ttl_s=self._ttl
+        )
         return state
 
     async def history(self, session_id: SessionId, owner_id: UserId) -> tuple[Conversation, str]:
         state = await self.load(session_id, owner_id)
         return Conversation.of(state.messages[-self._window * 2 :]), state.summary
 
-    async def clear(self, session_id: SessionId) -> None:
-        await self._cache.delete(self._key(session_id))
+    async def clear(self, session_id: SessionId, owner_id: UserId) -> None:
+        """Forget the owner's state for this session (and any legacy un-namespaced state it
+        owned). Takes the owner for the same reason :meth:`load` does: a session id alone must
+        not let one user clear another's conversation."""
+        await self._cache.delete(self._key(session_id, owner_id))
+        legacy = await self._cache.get(self._key(session_id))
+        if legacy is not None:
+            state = SessionState.from_json(legacy)
+            if state is None or state.owner_id == owner_id:
+                await self._cache.delete(self._key(session_id))
 
     async def _summarise(self, overflow: Sequence[Message], previous: str) -> str:
         """Fold overflow turns into the running summary.

@@ -20,7 +20,7 @@ import asyncio
 import time
 from typing import Any, Mapping, Sequence
 
-from ..domain.errors import EmbeddingError, KnowledgeError, ValidationError
+from ..domain.errors import AuthorizationError, EmbeddingError, KnowledgeError, ValidationError
 from ..domain.events import DocumentIngested, DocumentSuperseded
 from ..domain.identifiers import DocumentId, UserId
 from ..domain.knowledge import (
@@ -49,6 +49,10 @@ logger = get_logger("knowledge")
 #: rather than "copy everything not already a field": the payload also carries the content and the
 #: owner, and echoing those back into metadata would duplicate them on every retrieved chunk.
 _PROVENANCE_KEYS = ("modality", "page", "needs_ocr")
+
+
+def _owner_value(owner_id: UserId | None) -> str | None:
+    return owner_id.value if owner_id is not None else None
 
 
 class IngestionResult:
@@ -163,7 +167,11 @@ class KnowledgeEngine:
                 details={"limit_bytes": self._max_bytes},
             )
 
-        doc_id = document_id or DocumentId(f"doc-{abs(hash(title)) % 10**12}")
+        # A derived id includes the owner: derived from the title alone, two users uploading
+        # "Notes" landed on the same id and the second upload versioned the first user's document
+        # (tests/security/test_idor.py). Global documents keep the title-only derivation.
+        derivation = title if owner_id is None else (owner_id.value, title)
+        doc_id = document_id or DocumentId(f"doc-{abs(hash(derivation)) % 10**12}")
 
         # Idempotency on content hash. Without this the nightly refresh creates a new version of
         # every unchanged document each night, which multiplies storage and forces a needless
@@ -184,6 +192,14 @@ class KnowledgeEngine:
             )
 
         previous = await self._documents.get(doc_id)
+        if previous is not None and _owner_value(previous.owner_id) != _owner_value(owner_id):
+            # Versioning an existing id keeps the *existing* owner, so without this a caller who
+            # names someone else's document id (or a global one) writes new content straight into
+            # their knowledge base -- an integrity bug and an injection delivery channel at once.
+            raise AuthorizationError(
+                "this document id belongs to another owner",
+                details={"document_id": doc_id.value},
+            )
         document = (
             previous.next_version(
                 text,
@@ -367,6 +383,12 @@ class KnowledgeEngine:
     async def delete_document(self, document_id: DocumentId, *, owner_id: UserId | None) -> int:
         document = await self._documents.get(document_id)
         if document is None:
+            return 0
+        if _owner_value(document.owner_id) != _owner_value(owner_id):
+            # Checked before the index purge below, not left to the store's owner-scoped
+            # tombstone: that ran *after* the chunks had already left the vector and lexical
+            # indexes, so another user's delete reported 0 chunks removed while silently making
+            # the owner's document unretrievable. Same answer as for an unknown id.
             return 0
         identity = await self._indexes.resolve_for_read()
         chunks = await self._documents.chunks_for(document_id, document.version)

@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import secrets
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
@@ -85,16 +86,24 @@ def _refresh_store_set(token: str, user_info: dict, ttl: timedelta) -> None:
     _local_refresh_store[token] = {"user_info": user_info, "expires_at": datetime.now(timezone.utc) + ttl}
 
 
-def _refresh_store_get(token: str) -> Optional[dict]:
+_local_refresh_lock = threading.Lock()
+
+
+def _refresh_store_take(token: str) -> Optional[dict]:
+    """Atomically read *and* consume a refresh token -- the only safe primitive for rotation.
+
+    A GET followed by a DEL is two round trips: concurrent refreshes of one token (the gateway
+    runs several workers sharing Redis) could all read it before any deleted it, and each mint a
+    session -- the stolen-token race rotation exists to close. GETDEL (Redis >= 6.2; production
+    runs 7) is one command, so exactly one caller gets the value.
+    """
     redis_client = get_redis_client()
     if redis_client is not None:
-        raw = redis_client.get(f"{_REFRESH_PREFIX}{token}")
+        raw = redis_client.getdel(f"{_REFRESH_PREFIX}{token}")
         return json.loads(raw) if raw else None
-    entry = _local_refresh_store.get(token)
-    if entry is None:
-        return None
-    if entry["expires_at"] < datetime.now(timezone.utc):
-        del _local_refresh_store[token]
+    with _local_refresh_lock:
+        entry = _local_refresh_store.pop(token, None)
+    if entry is None or entry["expires_at"] < datetime.now(timezone.utc):
         return None
     return entry["user_info"]
 
@@ -218,10 +227,9 @@ def refresh_token_pair(refresh_token: str) -> Optional[Dict[str, Any]]:
     """Rotates the refresh token on every use (the old one stops working
     immediately) so a stolen-but-unused refresh token has a shrinking
     window of validity rather than living for the full 30 days."""
-    user_info = _refresh_store_get(refresh_token)
+    user_info = _refresh_store_take(refresh_token)
     if user_info is None:
         return None
-    _refresh_store_delete(refresh_token)
     from services.rbac import stamp_resolved_role
 
     return issue_token_pair(stamp_resolved_role(dict(user_info)))
