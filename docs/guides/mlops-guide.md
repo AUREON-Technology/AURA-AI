@@ -7,7 +7,9 @@ Training, fine-tuning, evaluation, and promotion. Covers both learning loops fro
   promotion. Gated automatically; no human in the path.
 - **Loop B — model.** Runs when someone decides to. Curated examples, fine-tuning, evaluation,
   promotion. **Requires a recorded human approval,** and the registry refuses the transition
-  without one.
+  without one. The gateway itself never changes weights. Real LoRA training happens only on the
+  opt-in `worker-training` service, and it has been proven only on a tiny test model. See
+  [What training does, and what it does not](#what-training-does-and-what-it-does-not).
 
 The distinction is the whole design. Loop A is reversible in seconds by repointing an alias, so
 it can be automated. Loop B produces an artefact that changes how the system reasons, and its
@@ -136,31 +138,108 @@ The approval binds **person + time + artefact digest**. Consequences:
 
 ### 4. Train
 
-Training runs outside the request path (Celery ``learning`` queue or an optional
-``worker-training`` compose profile). The gateway only enqueues.
+#### What training does, and what it does not
+
+Read this before believing a job status. As of 2026-09-25 (GAP-017 / GAP-018):
+
+| Claim | True? | Where it is shown |
+| --- | --- | --- |
+| The gateway changes model weights | **No, never.** Both compose files pin the gateway to `AURA_FINETUNE_TRAINER=scripted`. Every job it runs ends `not_trained` and registers nothing. | `learning/finetune.py` `ScriptedTrainer`; `deploy/docker-compose.{prod,dev}.yml` |
+| `LocalLoraTrainer` does real LoRA | **Yes.** It loads the base causal LM with `transformers`, wraps it with a PEFT LoRA adapter, trains on the approved dataset, and saves the adapter. | `adapters/local_lora_trainer.py`; `tests/training/test_lora_weights_change.py` |
+| The mechanism is proven | **Only on a tiny model.** `hf-internal-testing/tiny-random-gpt2` on CPU: all 5 `lora_B` tensors went from zero to non-zero, logits changed versus the base (max abs diff 0.56), and dataset loss fell (6.915 → 6.811). | opt-in `pytest tests/training -m training -s` |
+| A real AURA base model has been fine-tuned | **No.** No run against the production base, and no report in `docs/reports/`. This is GAP-017's exit condition, and it is still open. | — |
+| A trained adapter serves traffic | **No.** The artefact is a PEFT adapter *directory*: not merged, not converted to GGUF, not created in Ollama. The kernel won't send a path as a model name, so a promoted adapter falls back to the provider default. | `AIKernel._servable_model_tag` |
+| Training is evaluated against the production model | **No.** The only quality numbers are loss on the training dataset before and after (`dataset_loss_before` / `dataset_loss_after`). That shows the adapter fitted its data. It says nothing about answer quality. | — |
+| `aura_core/adapters/ml/` fine-tunes an LLM | **No.** It builds a randomly initialised 2-class classification transformer and never loads a base model. Nothing in production imports it any more. | package docstring |
+
+#### Job outcomes
+
+A job ends in exactly one of these states:
+
+| Status | Meaning | Model version registered? |
+| --- | --- | --- |
+| `succeeded` | The trainer reported `weights_changed=True` **and** named the artefact (`artefact_uri` + `artefact_digest`). | Yes, `CANDIDATE`, with `artefact_sha256=` and `base_revision=` in its notes |
+| `not_trained` | The trainer finished but, by its own account, changed no weights (the `scripted` default, or a LoRA run whose adapter did not move). The reason is in `error`. | **No.** Nothing exists to promote |
+| `failed` | The trainer raised: missing training dependencies, an Ollama tag as base model, an unloadable base, an empty or malformed dataset, a bad hyperparameter, a diverged loss. The exception is in `error`. | **No** |
+
+`TrainResult.weights_changed` defaults to `False`. A trainer must assert, positively, that it changed weights. There is no fallback artefact anywhere. The old trainer turned every exception into a `modelfile://` "success", and that path is gone. `tests/unit/test_finetune_honesty.py` pins this.
+
+#### Running real training
+
+Training runs outside the request path. The gateway only enqueues.
 
 ```python
 job = await finetune_jobs.enqueue(approval_id=approval.id)
 done = await finetune_jobs.run(job.id)  # or tasks.finetune_job_task.delay(job.id)
 ```
 
-``enqueue`` / ``run`` both call ``ApprovalService.require(approval_id,
-expected_digest=dataset_digest)`` **before** the trainer. A pending approval, an
-expired approval, or a digest mismatch raises — this is the ADR-008 gate.
+`enqueue` and `run` both call `ApprovalService.require(approval_id,
+expected_digest=dataset_digest)` **before** the trainer runs. A pending approval, an expired
+approval, or a digest mismatch raises. This is the ADR-008 gate.
 
-Trainers implement ``FineTuneTrainer``:
+| Trainer | Where | Dependencies |
+| --- | --- | --- |
+| `ScriptedTrainer` (`AURA_FINETUNE_TRAINER=scripted`, the default) | gateway, every worker except `worker-training`, pytest | none; trains nothing |
+| `LocalLoraTrainer` (`AURA_FINETUNE_TRAINER=local`) | `worker-training` only (compose profile `training`) | `requirements-train.txt` (peft, accelerate), installed only when the image is built with `AURA_TRAINING_DEPS=true` |
 
-| Adapter | When |
-| --- | --- |
-| ``ScriptedTrainer`` | Default in the gateway and in pytest — no torch, deterministic artefact |
-| ``LocalLoraTrainer`` | ``AURA_FINETUNE_TRAINER=local`` on the training worker; imports torch only inside ``train()`` |
+Any other `AURA_FINETUNE_TRAINER` value is a `ConfigurationError` at startup. It used to fall
+back to `scripted` silently.
 
-CPU-only hosts refuse ``LocalLoraTrainer`` unless ``AURA_FINETUNE_ALLOW_CPU=true`` and the
-base is on the small-model allowlist. Contabo-style VPS deployments should train elsewhere
-and use ``POST /api/v3/admin/models/import`` to register a local Ollama tag as ``CANDIDATE``.
+To run a real job:
 
-On success the job registers a ``ModelVersion`` at stage ``CANDIDATE`` with the dataset
-digest and training approval id.
+1. Start the worker: `docker compose -f deploy/docker-compose.prod.yml --profile training up -d worker-training`.
+   It consumes only the Celery `training` queue. Neither `finetune_job_task` nor
+   `drain_finetune_queue_task` goes to `learning` any more, because `worker-ingestion` consumes
+   `learning` and cannot train. Without this profile, a queued job stays `queued`.
+2. Launch with `POST /api/v3/admin/learning/jobs` and `{"approval_id": ..., "base_model":
+   "<HF repo id>", "run_inline": false}`. `run_inline: true` (the API default) runs the
+   gateway's `scripted` trainer and ends `not_trained`.
+3. The base model must be a Hugging Face repo id or a local transformers checkpoint directory.
+   **An Ollama tag (`qwen2.5:3b-instruct-q4_K_M`) is refused**, because a quantised GGUF inside
+   Ollama has no trainable weights. Use the matching HF checkpoint (e.g. `Qwen/Qwen2.5-3B-Instruct`)
+   on a host that can hold it.
+4. On a CPU-only host, also set `LEARNING_FINETUNE_ALLOW_CPU=true`. The base must match
+   `LEARNING_FINETUNE_CPU_BASES`, which defaults to `HuggingFaceTB/SmolLM2-135M*`,
+   `Qwen/Qwen2.5-0.5B*` and `hf-internal-testing/tiny-random-*`. A 3B model in fp32 does not fit
+   the worker's 4G memory limit.
+
+Hyperparameters come from the job's `parameters`. They are typed fields on `FineTuneJobSpec`
+with defaults, and bad values fail the job at the boundary:
+
+| Key (alias) | Default | |
+| --- | --- | --- |
+| `epochs` | 3 (engine default) | |
+| `rank` (`lora_rank`) | 16 (engine default) | |
+| `lr` (`learning_rate`) | 3e-4 (engine default) | |
+| `alpha` (`lora_alpha`), `dropout` (`lora_dropout`) | 16, 0.05 | |
+| `batch_size`, `max_steps`, `max_seq_len`, `seed` | 1, none, 512, 0 | |
+| `target_modules` | PEFT's per-architecture default | |
+| `revision` (`base_model_revision`) | resolved at load and recorded | |
+
+The loss is causal-LM cross-entropy on the assistant/completion tokens only. Prompt tokens are
+masked. `chatml`, `alpaca` and `openai` dataset rows are accepted.
+
+A successful run writes `<AURA_FINETUNE_WORK_DIR>/<job_id>/adapter/`
+(`adapter_model.safetensors`, `adapter_config.json`) and `training_manifest.json` beside it. The
+manifest holds the base model and resolved revision, the dataset digest, the adapter sha256, the
+hyperparameters, the torch/transformers/peft versions, and these metrics: `steps`,
+`epochs_completed`, `train_loss_first`/`train_loss_last`, `dataset_loss_before`/`dataset_loss_after`,
+`lora_weight_delta_l2`, `trainable_params`, `total_params` and `duration_s`.
+
+To verify locally, use a separate venv. Never install the training deps into the gateway's venv:
+
+```bash
+pip install -r requirements.lock -r requirements-dev.txt -r requirements-train.txt
+pytest tests/training -m training -s   # downloads tiny-random-gpt2; skips without peft/network
+```
+
+`requirements-train.txt` constrains itself to `requirements.lock`, so the training image cannot
+drift from the gateway's torch/transformers pins. Contabo-style CPU hosts should train elsewhere
+and use `POST /api/v3/admin/models/import` to register a local Ollama tag as `CANDIDATE`.
+
+Every job is also tracked as an experiment run. A `not_trained` job closes its run as `failed`,
+with the reason attached, so an experiment list never shows a "completed" run that produced no
+model.
 
 ```python
 experiment = await tracker.experiment("finetune-qwen")
@@ -168,7 +247,7 @@ run = await tracker.start_run(
     experiment.id,
     parameters={"method": "lora", "rank": 16, "lr": 3e-4, "epochs": 3},
     dataset_digest=recommendation.dataset_digest,
-    base_model="qwen2.5:7b-instruct",
+    base_model="Qwen/Qwen2.5-0.5B-Instruct",
     code_version="git:deadbeef",
 )
 await tracker.log_metrics(run.id, {"train_loss": 0.42}, step=100)
@@ -176,14 +255,15 @@ await tracker.finish_run(run.id)
 ```
 
 `dataset_digest`, `base_model`, and `code_version` are the reproducibility inputs. Without them,
-"which data produced this model?" has no answer six months later — and that question is always
-asked at the worst possible moment.
+"which data produced this model?" has no answer six months later, and someone always asks it at
+the worst possible moment.
 
-LoRA is the default method. Full fine-tuning of a 7B model needs multiple high-memory GPUs; LoRA
-adapters train on one, are a few dozen megabytes, and can be swapped without redeploying the base
-weights. Architecture specifications (`aura_core/ml/nn.py`) are declared as **data**, so
-parameter counts and memory footprints are computable with no torch installed — an operator can
-answer "does this fit?" before provisioning anything.
+LoRA is the only method implemented. Full fine-tuning of a 7B model needs multiple high-memory
+GPUs. LoRA adapters train on one GPU, are a few dozen megabytes, and can be swapped without
+redeploying the base weights. Architecture specifications (`aura_core/ml/nn.py`) are declared as
+**data**, so parameter counts and memory footprints can be computed with no torch installed. An
+operator can check whether a model fits before provisioning anything. Those specs are sizing
+tools, not the trainer.
 
 ### 5. Compare
 
@@ -229,8 +309,12 @@ await registry.transition(
 ```
 
 The kernel resolves ``CompletionRequest.model`` from ``ModelRegistry.assign`` when
-unset, so canary/production artefacts serve traffic. Shadow versions receive a
-fire-and-forget mirrored completion whose tokens are never returned to the user.
+unset, so a canary/production artefact serves traffic **only if it is an inference model tag**
+(e.g. an imported Ollama tag). A path or URI artefact, which includes every adapter
+``LocalLoraTrainer`` produces, is ignored with a warning, and the provider default serves.
+Promoting a trained adapter therefore changes nothing a user sees until a merge/convert/serve
+step exists, and that step is not built. Shadow versions receive a fire-and-forget mirrored
+completion whose tokens are never returned to the user.
 
 ### 7. Roll back
 
