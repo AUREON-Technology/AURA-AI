@@ -102,6 +102,37 @@ run it on before this change, and GAP-043 (every GitHub Actions job dying before
 blocks it from running immediately regardless. "Built, not proven" applies here exactly as it does
 elsewhere in this repo's own roadmap until a green run is observed.
 
+**Update (2026-09-25, a fifth pass):** two more passes closed out most of the remaining §1/§2/§4
+gaps (PR #111 — `AuraIdeDensity` theme registration, the dead `LayoutChanged`/
+`PanelVisibilityChanged` events, `HostFileBrowserPage`/`ExplorerService` duplication, cursor/
+selection session restore, quick-open fuzzy matching, and a human-facing git merge with real
+conflict detection/resolution in the Git panel — see that PR's description for the full list and
+for a real pre-existing bug found and fixed along the way, `hostd_control_client_io.dart`
+discarding structured `{'ok': false, ...}` response bodies on any non-2xx status), then §3's two
+open findings:
+
+- **OS-specific shell selection**: fixed. `posix_pty_session.dart`'s `PosixPtySession` (see next
+  item) picks `$SHELL`, falling back to `/bin/zsh` on macOS / `/bin/bash` on Linux, rather than
+  hardcoding one shell.
+- **"No POSIX PTY anywhere in the repo"**: addressed, but flagged **UNTESTED** rather than
+  `VERIFIED` — read that file's own top doc comment before trusting this row. `aura_hostd/lib/src/
+  posix_pty_session.dart` adds a real `posix_openpt`/`grantpt`/`unlockpt`/`ptsname_r`-based PTY for
+  Linux/macOS behind the new `PtySessionInterface` both backends now implement
+  (`pty_session_interface.dart`), wired into `terminal_session_manager.dart` by
+  `Platform.isWindows`. Two things worth being precise about: (1) this environment had no Dart
+  toolchain to compile or run it against, so — same discipline as the Windows junction test above —
+  nothing here is `VERIFIED` until a real `ubuntu-latest`/macOS run is observed (a new
+  `posix_pty_session_test.dart` exists specifically to do that, a genuine round-trip that spawns a
+  real shell, echoes a marker, and checks the exit code, not just a compile check); (2) an earlier
+  draft of this backend called `fork()` directly from Dart FFI and was caught and redesigned before
+  landing — the Dart VM is multi-threaded internally, and POSIX `fork()` only duplicates the
+  calling thread, a well-known deadlock hazard for the child's fork-to-exec window that `dart:io`'s
+  own `Process.start` avoids by never exposing raw `fork()` to userland Dart in the first place.
+  The shipped version never calls `fork()` either: it opens the pty master directly (safe, no
+  forking), then spawns a small Perl one-liner through `Process.start` itself (the VM's own vetted
+  fork+exec) which does `setsid()`/`ioctl(TIOCSCTTY)`/stdio redirection/`exec` from within its own
+  freshly-`exec`'d, single-threaded process image, where none of that is a threading hazard at all.
+
 Read-only static audit of `aura_client/lib/desktop/` and `aura_hostd/`, run against the claims in
 `docs/AURA_UPGRADE_ROADMAP.md` (Phase K) and ADR-011/013/014, as the mandatory Phase 0 step of the
 "AURA Desktop IDE — Production & Professional UX Upgrade Plan." No files were edited to produce
