@@ -219,7 +219,7 @@ class Container:
             index_manager=self.index_manager,
             safety=self.safety if settings.safety.context_guards_enabled else None,
             graph=self.graph if settings.knowledge.graph_enabled else None,
-            extractor=RuleEntityExtractor() if settings.knowledge.graph_enabled else None,
+            extractor=self._build_entity_extractor() if settings.knowledge.graph_enabled else None,
             chunking=ChunkingConfig(
                 target_tokens=settings.knowledge.chunk_target_tokens,
                 max_tokens=settings.knowledge.chunk_max_tokens,
@@ -958,6 +958,16 @@ class Container:
                 self.settings.infrastructure.database_url, pool=self._postgres_pool()
             )
         return InMemoryInsightSink()
+
+    def _build_entity_extractor(self) -> Any:
+        """Rules always; the model extractor only when explicitly enabled."""
+        if not self.settings.knowledge.graph_llm_extraction:
+            return RuleEntityExtractor()
+        from .knowledge.extraction import CompositeExtractor, LLMEntityExtractor
+
+        return CompositeExtractor(
+            [RuleEntityExtractor(), LLMEntityExtractor(router=self.router, prompts=self.prompts)]
+        )
 
     def _build_graph_store(self) -> Any:
         if self.settings.infrastructure.document_backend == "postgres":

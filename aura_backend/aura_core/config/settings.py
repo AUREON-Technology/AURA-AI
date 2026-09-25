@@ -489,6 +489,10 @@ class KnowledgeSettings:
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     mmr_lambda: float = 0.7
     graph_enabled: bool = True
+    #: Adds the model-backed extractor after the rule extractor. Off by default: it costs one
+    #: generation per ingested document, and its output is only ever a candidate that the graph
+    #: pipeline validates like any other (ADR-005, "Knowledge graph").
+    graph_llm_extraction: bool = False
     max_document_bytes: int = 8 * 1024 * 1024
     #: Character cap applied when a chunk is *injected into the prompt*. Stored chunks stay at
     #: ``chunk_max_tokens``; this is the citation budget the model actually sees.
@@ -535,6 +539,7 @@ class KnowledgeSettings:
             or "cross-encoder/ms-marco-MiniLM-L-6-v2",
             mmr_lambda=_float("KNOWLEDGE_MMR_LAMBDA", 0.7, minimum=0.0, maximum=1.0),
             graph_enabled=_bool("KNOWLEDGE_GRAPH_ENABLED", True),
+            graph_llm_extraction=_bool("KNOWLEDGE_GRAPH_LLM_EXTRACTION", False),
             max_document_bytes=_int("KNOWLEDGE_MAX_DOC_BYTES", 8 * 1024 * 1024, minimum=1024),
             prompt_chunk_max_chars=_int("KNOWLEDGE_PROMPT_CHUNK_CHARS", 280, minimum=64, maximum=4000),
             ocr_enabled=_bool("KNOWLEDGE_OCR_ENABLED", True),
