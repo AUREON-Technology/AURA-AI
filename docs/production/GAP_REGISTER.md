@@ -83,9 +83,9 @@ hygiene and doc accuracy.
 
 | Severity | open | in_progress | built_not_proven | proven | closed_stale |
 | --- | --- | --- | --- | --- | --- |
-| P0 | 5 | 0 | 1 | 0 | 0 |
+| P0 | 5 | 0 | 2 | 0 | 0 |
 | P1 | 10 | 0 | 3 | 0 | 1 |
-| P2 | 15 | 0 | 3 | 0 | 1 |
+| P2 | 14 | 0 | 4 | 0 | 1 |
 | P3 | 6 | 0 | 1 | 0 | 1 |
 
 ## All gaps
@@ -100,6 +100,7 @@ Sorted by status (`closed_stale` last), then severity. The full text, citations 
 | GAP-012 | P0 | `open` | inference/gpu-host | platform-ops | (2026-09-25) deploy/docker-compose.gpu.yml (15a7dbd) defines general, coder and embed vLLM pools on vllm/vllm-openai:v0.29.0 pinned by digest, with a required… | GPU host serving a pinned model via the gateway, with a report in docs/reports/. | — |
 | GAP-041 | P0 | `open` | load-testing/evidence | platform-ops | (2026-09-25) The harness now exists (c6e7675): aura_backend/scripts/loadtest (python -m scripts.loadtest), matrix 1..100, scenarios A-F plus a non-LLM API mix,… | Report in docs/reports/ covering the full matrix. | GAP-011, GAP-036 |
 | GAP-043 | P0 | `open` | process/github-actions | repo-owner | GitHub Actions jobs on this repository die in about 3 seconds with no steps executed and no runner assigned. Seen on main since 2026-09-22 and on PR #96, inclu… | Account Actions/billing status restored (GitHub Settings -> Billing / Actions), and a linked Backend CI run on main shows every job executing its steps to completion. | — |
+| GAP-048 | P0 | `built_not_proven` | security/regression-suite | security | The P1.5 security regression pass (merged 371bdc1) found and fixed eleven vulnerabilities in the live tree besides the taint gap, each with a regression test t… | Backend CI green on these suites on main, the fixes deployed, and the POST /api/v3/insights/{id}/dismiss owner check (Postgres-only, code-inspected so far) exercised against a real Postgres. | GAP-043, GAP-005 |
 | GAP-006 | P1 | `built_not_proven` | evaluation/ci | ml | (2026-09-25) eval-ci.yml was also invalid YAML (unquoted sqlite+aiosqlite:///:memory: at line 45), so GitHub recorded a failed run on every push and it had nev… | A PR that deliberately regresses recall is shown blocked by CI (linked run), and a scheduled real-model eval run is linked from docs/reports/. | GAP-021 |
 | GAP-009 | P1 | `built_not_proven` | security/secret-manager | security | (2026-09-25) Fixed in b16d168: AES-256-GCM (cryptography AESGCM, imported lazily) with the secret id as associated data; rotate_key rewritten (it also called t… | Module removed or fixed, with the wrong-key test failing on the current code. | — |
 | GAP-016 | P1 | `built_not_proven` | data/encryption-at-rest | security | (2026-09-25) Column encryption built in f11b543: aura_memories.content and aura_personal_os_records.fields sealed with Fernet (envelope aura-enc:v1:<key id>:..… | Decision recorded as an ADR; chosen controls implemented and a restore from an encrypted backup drilled. | — |
@@ -117,7 +118,7 @@ Sorted by status (`closed_stale` last), then severity. The full text, citations 
 | GAP-008 | P2 | `open` | backend/unreviewed-packages | backend | 43a2d5c added aura_core/engineering2 (pipeline/models/policy), aura_core/proactive (detector/event/loop/signal), aura_core/continuous_intelligence, and aura_co… | Every one of these modules has tests and a caller, or is removed, via reviewed PR. | GAP-005 |
 | GAP-010 | P2 | `open` | repo/hygiene | repo-admin | Tracked build artefacts and strays: aura_hostd/build/aura_hostd.exe (a Windows binary built on a developer machine, last changed in 43a2d5c), aura_hostd/build/… | Files removed via reviewed PR; guard test added. | GAP-005 |
 | GAP-013 | P2 | `open` | client/reach | client | Backend surfaces with no Flutter caller (re-verified by grep of aura_client/lib): all /api/v3/learning/* (client /learning route redirects to /feedback, core/r… | Inventory checked in; each gap either wired in the client (Client CI green) or documented as non-client. | — |
-| GAP-014 | P2 | `open` | safety/taint | security | Concurrent-batch taint visibility gap, still present and self-documented at aura_core/tools/registry.py:378-389: a step in the same asyncio.gather batch (aura_… | Test added and green; residual either removed or documented as proven-harmless. | — |
+| GAP-014 | P2 | `built_not_proven` | safety/taint | security | (2026-09-25) Fixed in the P1.5 merge (371bdc1): ExecutionEngine._taint_ordered and ToolRegistry.execute_many defer any side-effecting, non-workspace_local call… | Test added and green; residual either removed or documented as proven-harmless. | — |
 | GAP-015 | P2 | `built_not_proven` | backend/idempotency | backend | (2026-09-25) Built in 9b9f9e5: IdempotencyStore port, in-memory and Postgres adapters, Alembic 0006, opt-in route dependency on 11 v3 and 6 admin side-effectin… | Middleware + tests green, verified against real Postgres. | — |
 | GAP-019 | P2 | `open` | multimodal/vision-video | ml | No vision or video understanding. Only a capability flag exists (aura_core/domain/llm.py:148 supports_vision, :178-188 needs_vision filter); no adapter, no end… | Vision turn served end to end with a pinned model and an eval report. | GAP-012 |
 | GAP-020 | P2 | `open` | voice/stt-language | ml | STT default is faster-whisper `tiny.en` (aura_core/config/settings.py:1048, :1080), English-only, while TTS ships an Arabic Piper voice (ar_JO-kareem-medium, a… | WER report in docs/reports/ for both languages on the production ASR model. | GAP-012 |

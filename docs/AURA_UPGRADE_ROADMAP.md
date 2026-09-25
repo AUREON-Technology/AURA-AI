@@ -981,7 +981,7 @@ other direction (ingestion idempotency — see below).
 
 What the first wave landed, and how far each item is proven. **None of it has run in CI**: every
 GitHub Actions job on the repo has died before reaching a runner since 2026-09-22 (GAP-043), so the
-evidence below is local suite runs (pytest 2349 passed / 49 skipped / 0 failed, legacy unittest 100
+evidence below is local suite runs (pytest 2610 passed / 49 skipped / 0 failed, legacy unittest 100
 OK) plus the real-infrastructure runs named per row.
 
 | Item | State | Evidence / what is still missing |
@@ -993,6 +993,7 @@ OK) plus the real-infrastructure runs named per row.
 | Ingestion idempotency — **was a cross-user leak** | **Fixed, not deployed** | Document ids were `hash(title)` (per-process salted, not owner-scoped): same-titled uploads by two users became versions of one document owned by the first. 11 regression tests; GAP-004 |
 | GAP-009 `SecretManager` "AES-256-CTR" never used its key | **Fixed** (`b16d168`) | AES-256-GCM; wrong-key/tamper/rotation tests fail on the old code |
 | P2 capability routing across model pools, admission control (priority queue, 503/429 + Retry-After), latency decomposition, opt-in vLLM GPU profile | **Built, not proven** | 48 tests with FrozenClock; no GPU host exists (GAP-012); bounds the Ollama queue, adds no throughput (GAP-011) |
+| P1.5 security regression suite — 257 tests; **11 live vulnerabilities fixed** plus the concurrent-taint gap | **Built, not proven** | Session overwrite via foreign `session_id`, refresh-token double spend, mock attestation in production, WebSocket reauth as another user, GitHub allowlist bypass via unescaped paths, SSRF gaps, `git_push` to the default branch via refspecs, `ingest_pdf_task` path escape; each with a test that failed first (GAP-014, GAP-048) |
 | P3 1→100-user load harness | **Built** | In-process echo self-validation only — explicitly not a capacity number; the 50/75/100-user gates need the GPU deployment (GAP-041) |
 | P14 evaluation gates PRs | **Built, not proven** | Pass on the tree, fail on a deliberate ranking regression; `eval-ci.yml` had been invalid YAML and never ran; blocks nothing until branch protection requires it |
 

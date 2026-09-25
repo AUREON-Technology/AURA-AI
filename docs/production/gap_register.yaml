@@ -365,7 +365,16 @@ gaps:
     test: execution-engine test with a fetch_url step and a side-effecting step in one batch
     metric: aura_turns_tainted_total; 0 unauthorized tool executions (PRODUCTION_SLO)
     exit_condition: Test added and green; residual either removed or documented as proven-harmless.
-    status: open
+    status: built_not_proven
+    reverified_2026_09_25: >-
+      Fixed in the P1.5 merge (371bdc1): ExecutionEngine._taint_ordered and
+      ToolRegistry.execute_many defer any side-effecting, non-workspace_local call in a batch
+      that also contains an untrusted_content call until the tainting call has returned (if
+      every call is gated, the first tainting call runs alone). Clean batches keep full
+      concurrency. tests/security/test_concurrent_taint.py (10) plus a kernel-level case in
+      test_injection_end_to_end.py: 6 of 10 and the kernel case failed against the pre-fix
+      engine. The residual-gap comment in tools/registry.py is replaced. Not proven: no CI run
+      (GAP-043).
 
   - gap_id: GAP-015
     component: backend/idempotency
@@ -990,3 +999,31 @@ gaps:
     metric: n/a
     exit_condition: Dev stack uses its own key file; documented in deployment-guide.md.
     status: open
+
+  - gap_id: GAP-048
+    component: security/regression-suite
+    severity: P0
+    current_state: >-
+      The P1.5 security regression pass (merged 371bdc1) found and fixed eleven vulnerabilities in the
+      live tree besides the taint gap, each with a regression test that failed first: conversation
+      history overwritten via another user's session_id (memory/session.py); refresh-token double
+      spend under concurrent refresh (non-atomic GET+DEL in services/jwt_auth.py); mock attestation
+      accepted in production through the legacy ALLOW_MOCK_ATTESTATION flag; WebSocket reauth
+      accepting a different user's token (voice_live.py, host_agent.py); GitHub repo-allowlist bypass
+      through unescaped path/ref segments, including a PUT via commit_files (github_client.py); SSRF
+      gaps (100.64.0.0/10 incl. 100.100.100.200, multicast, IPv6 site-local; the nightly refresh
+      fetcher never checked DNS resolution); git_push reaching the default branch via refspecs
+      (HEAD:main, :main, --mirror); ingest_pdf_task following symlinks / reading other users' staged
+      files / deleting arbitrary files in the data volume; and the three document-ownership bugs also
+      fixed by P1.4 (GAP-004). 257 tests under tests/security/, including route-enumerating auth and
+      IDOR suites that fail on any new unprotected or uncovered route.
+    target_state: The fixes deployed, and the suites gating every PR.
+    owner: security
+    dependencies: [GAP-043, GAP-005]
+    test: aura_backend/tests/security/ (default pytest run)
+    metric: open security findings from the suite (target 0)
+    exit_condition: >-
+      Backend CI green on these suites on main, the fixes deployed, and the POST
+      /api/v3/insights/{id}/dismiss owner check (Postgres-only, code-inspected so far) exercised
+      against a real Postgres.
+    status: built_not_proven
