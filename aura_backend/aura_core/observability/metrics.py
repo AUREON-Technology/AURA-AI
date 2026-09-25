@@ -405,6 +405,21 @@ class Metrics:
         self.plan_revisions_total = self._counter(
             "plan_revisions_total", "Replanning events.", ("reason",)
         )
+        # -- agent runs (GAP-024) -------------------------------------------------------
+        # `agent` is the resolved persona id -- a bounded set from the AgentRegistry, never the
+        # caller's raw request value, so it is safe as a label.
+        self.agent_runs_total = self._counter(
+            "agent_runs_total", "Agent runs by persona and terminal status.", ("agent", "status")
+        )
+        self.agent_run_iterations = self._histogram(
+            "agent_run_iterations", "Execution passes per agent run.", ("agent",),
+            (1, 2, 3, 4, 5, 6, 7, 8, 9, 12),
+        )
+        self.agent_budget_exhausted_total = self._counter(
+            "agent_budget_exhausted_total",
+            "Agent runs stopped by a budget (iterations, tokens, time, tools, risk).",
+            ("agent", "budget"),
+        )
         self.reasoning_strategy_total = self._counter(
             "reasoning_strategy_total", "Turns per reasoning strategy.", ("strategy",)
         )

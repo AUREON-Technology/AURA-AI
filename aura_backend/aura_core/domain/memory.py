@@ -20,6 +20,9 @@ from typing import Any, Mapping
 from .identifiers import MemoryId, SessionId, TurnId, UserId
 
 __all__ = [
+    "SHARED_MEMORY_SCOPE",
+    "SCOPE_METADATA_KEY",
+    "readable_scopes",
     "MemoryKind",
     "MemoryPolicy",
     "MEMORY_POLICIES",
@@ -29,6 +32,27 @@ __all__ = [
     "MemoryHit",
     "ConsolidationOutcome",
 ]
+
+
+#: The scope every persona can read (GAP-024). A record with no scope -- everything written
+#: before scopes existed -- is in it, so scoping never hides a pre-existing memory.
+SHARED_MEMORY_SCOPE = "shared"
+#: Where a record's scope lives: in ``MemoryRecord.metadata`` rather than a new column, so every
+#: memory store (in-memory, Postgres ``aura_memories.metadata`` JSONB) carries it unchanged.
+SCOPE_METADATA_KEY = "memory_scope"
+
+
+def readable_scopes(scope: str | None) -> tuple[str, ...] | None:
+    """The scopes a persona on ``scope`` may read: its own plus the shared one.
+
+    ``None`` means "every scope" and is only for the memory's *owner* acting directly (the v3
+    ``/memory`` endpoints) -- never for a persona's turn.
+    """
+    if scope is None:
+        return None
+    if scope == SHARED_MEMORY_SCOPE:
+        return (SHARED_MEMORY_SCOPE,)
+    return (scope, SHARED_MEMORY_SCOPE)
 
 
 class MemoryKind(str, enum.Enum):
@@ -201,6 +225,11 @@ class MemoryRecord:
         return MEMORY_POLICIES[self.kind]
 
     @property
+    def scope(self) -> str:
+        """The persona scope this memory belongs to (``SHARED_MEMORY_SCOPE`` if unset)."""
+        return str(self.metadata.get(SCOPE_METADATA_KEY) or SHARED_MEMORY_SCOPE)
+
+    @property
     def is_active(self) -> bool:
         if self.superseded_by is not None:
             return False
@@ -270,6 +299,9 @@ class MemoryQuery:
     token_budget: int | None = None
     include_superseded: bool = False
     subject: str | None = None
+    #: Which persona scopes to read (``readable_scopes``). ``None`` reads every scope -- the
+    #: owner's own view; a persona's turn always passes its scopes.
+    scopes: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.limit <= 0:

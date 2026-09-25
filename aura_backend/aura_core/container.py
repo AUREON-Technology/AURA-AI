@@ -144,6 +144,9 @@ class Container:
         self.memory_store = self._build_memory_store()
         self.personal_os_store = self._build_personal_os_store()
         self.engineer_runs = self._build_engineer_run_store()
+        # GAP-024: the same store, under the name of the port it now fully implements
+        # (`AgentRunStore` extends `EngineerRunStore`) -- one adapter, one pool, both ledgers.
+        self.agent_runs = self.engineer_runs
         self.workspaces = self._build_workspace_store()
         self.goals = self._build_goals_port()
         self.github_identities = self._build_github_identity_port()
@@ -389,7 +392,10 @@ class Container:
         # The engineer agent's bounded plan-execute-observe-replan loop (execution/agentic_loop.py)
         # -- `None` when planning itself is disabled, since there is nothing to loop.
         self.agentic_executor = (
-            AgenticExecutor(planner=self.planner, executor=self.executor, metrics=self.metrics)
+            AgenticExecutor(
+                planner=self.planner, executor=self.executor, metrics=self.metrics,
+                clock=self.clock, runs=self.agent_runs,
+            )
             if self.planner is not None
             else None
         )

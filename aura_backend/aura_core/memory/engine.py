@@ -12,6 +12,15 @@ Retrieval blends three signals with weights that differ per kind
 (:class:`~aura_core.domain.memory.MemoryPolicy`): similarity, recency, and reinforcement. A fact
 stated a year ago is still a fact; a conversational detail from last month usually is not. That
 difference is data here, not scattered conditionals.
+
+**Scopes (GAP-024).** Every record belongs to one persona scope (``MemoryRecord.scope``, stored
+in its metadata; ``"shared"`` when unset). ``remember(scope=...)`` writes into a scope,
+``MemoryQuery.scopes`` limits what ``recall`` returns, and duplicate detection and consolidation
+never cross a scope boundary -- a private fact must not reinforce, or supersede, a shared one.
+Users stay isolated exactly as before (every lookup is owner-filtered); scopes partition *within*
+one user. The filter is applied to the relational record after the vector search rather than in
+the vector payload, so records written before scopes existed (whose vector points carry no scope)
+are still found -- and still land in ``"shared"``.
 """
 
 from __future__ import annotations
@@ -27,6 +36,8 @@ from ..domain.identifiers import MemoryId, SessionId, UserId
 from ..domain.knowledge import IndexIdentity
 from ..domain.memory import (
     MEMORY_POLICIES,
+    SCOPE_METADATA_KEY,
+    SHARED_MEMORY_SCOPE,
     ConsolidationOutcome,
     MemoryHit,
     MemoryKind,
@@ -102,6 +113,7 @@ class MemoryEngine:
         extractor_version: str | None = None,
         document_ref: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        scope: str = SHARED_MEMORY_SCOPE,
     ) -> MemoryRecord:
         """Write one memory, merging with a near-duplicate if one exists.
 
@@ -117,7 +129,9 @@ class MemoryEngine:
         now = self._now()
 
         embedding = await self._embed(text)
-        duplicate = await self._find_duplicate(owner_id, kind, embedding, threshold=policy.duplicate_threshold)
+        duplicate = await self._find_duplicate(
+            owner_id, kind, embedding, threshold=policy.duplicate_threshold, scope=scope
+        )
         if duplicate is not None:
             # Restating a fact is reinforcement, not a second fact. Bumping access_count and
             # confidence is what makes repeated preferences outrank one-off mentions.
@@ -149,7 +163,7 @@ class MemoryEngine:
             # the same source that later decays and ranks it.
             created_at=now,
             last_accessed_at=now,
-            metadata=dict(metadata or {}),
+            metadata={**dict(metadata or {}), SCOPE_METADATA_KEY: scope or SHARED_MEMORY_SCOPE},
         )
 
         await self._enforce_quota(owner_id)
@@ -166,6 +180,7 @@ class MemoryEngine:
                         "kind": str(kind),
                         "owner_id": owner_id.value,
                         "subject": subject or "",
+                        "scope": scope or SHARED_MEMORY_SCOPE,
                     },
                 )
             ],
@@ -219,9 +234,9 @@ class MemoryEngine:
             logger.warning("memory recall skipped: embedding failed", extra={"error": exc.kind})
             return []
 
-        # Over-fetch: post-filtering by kind and re-ranking by recency/reinforcement can promote
-        # a candidate that vector similarity alone placed outside the top-k.
-        candidate_limit = max(query.limit * 4, 20)
+        # Over-fetch: post-filtering by kind and scope, and re-ranking by recency/reinforcement,
+        # can promote a candidate that vector similarity alone placed outside the top-k.
+        candidate_limit = max(query.limit * 4, 20) * (2 if query.scopes is not None else 1)
         try:
             raw = await self._vectors.search(
                 self._identity,
@@ -250,6 +265,8 @@ class MemoryEngine:
             if record.kind not in query.kinds:
                 continue
             if query.subject and record.subject != query.subject:
+                continue
+            if query.scopes is not None and record.scope not in query.scopes:
                 continue
             if query.session_id and record.session_id and record.session_id != query.session_id:
                 continue
@@ -324,7 +341,9 @@ class MemoryEngine:
             records = await self._store.list_for_owner(owner_id, kinds=[kind], limit=5000)
             examined += len(records)
 
-            by_subject: dict[str, list[MemoryRecord]] = {}
+            # Keyed by (scope, subject): a persona's private fact never supersedes a shared one
+            # (or another persona's), even on the same subject.
+            by_subject: dict[tuple[str, str], list[MemoryRecord]] = {}
             for record in records:
                 if not record.is_active:
                     continue
@@ -341,7 +360,9 @@ class MemoryEngine:
                     await self._store.update(decayed_record)
                     decayed += 1
                 if decayed_record.subject:
-                    by_subject.setdefault(decayed_record.subject, []).append(decayed_record)
+                    by_subject.setdefault(
+                        (decayed_record.scope, decayed_record.subject), []
+                    ).append(decayed_record)
 
             # Within a subject, the newest record wins and older ones are marked superseded
             # rather than deleted -- the user may be correcting the newer one, and an audit
@@ -415,14 +436,20 @@ class MemoryEngine:
         return result.first
 
     async def _find_duplicate(
-        self, owner_id: UserId, kind: MemoryKind, embedding: Sequence[float], *, threshold: float
+        self,
+        owner_id: UserId,
+        kind: MemoryKind,
+        embedding: Sequence[float],
+        *,
+        threshold: float,
+        scope: str = SHARED_MEMORY_SCOPE,
     ) -> MemoryRecord | None:
         try:
             await self._ensure_index()
             raw = await self._vectors.search(
                 self._identity,
                 embedding,
-                limit=3,
+                limit=6,
                 owner_id=owner_id,
                 include_global=False,
                 filters={"kind": [str(kind)]},
@@ -432,7 +459,7 @@ class MemoryEngine:
         for point_id, score, payload in raw:
             if score >= threshold:
                 record = await self._store.get(MemoryId(payload.get("memory_id", point_id)))
-                if record is not None and record.is_active:
+                if record is not None and record.is_active and record.scope == scope:
                     return record
         return None
 

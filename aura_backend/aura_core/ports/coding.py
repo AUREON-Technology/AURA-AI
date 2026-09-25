@@ -12,8 +12,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, AsyncIterator, Mapping, Protocol, Sequence, runtime_checkable
 
+from ..domain.agent_runs import AgentRun, AgentStep
 from ..domain.engineering import AgentWorkspace, EngineerRun
-from ..domain.identifiers import UserId, WorkspaceId
+from ..domain.identifiers import AgentRunId, UserId, WorkspaceId
 
 __all__ = [
     "McpToolDescriptor",
@@ -28,6 +29,7 @@ __all__ = [
     "SandboxOutputEvent",
     "StreamingSandboxRunner",
     "EngineerRunStore",
+    "AgentRunStore",
     "WorkspaceStore",
 ]
 
@@ -338,6 +340,46 @@ class EngineerRunStore(Protocol):
     async def list_for_user(
         self, user_id: UserId, *, since: datetime | None = None, limit: int = 200,
     ) -> Sequence[EngineerRun]:
+        ...
+
+
+@runtime_checkable
+class AgentRunStore(EngineerRunStore, Protocol):
+    """:class:`EngineerRunStore`, generalised to every agent's run (GAP-024).
+
+    An extension of the engineer-runs port rather than a parallel one: the same adapter holds
+    both ledgers (``aura_engineer_runs`` for per-engineer-tool-call rows, ``aura_agent_runs`` /
+    ``aura_agent_steps`` for per-run state of any persona), shares one connection pool and one
+    schema bootstrap, and a deployment that wires one has wired both.
+
+    Every read is owner-scoped by construction -- ``user_id`` is a required argument, not a
+    filter a caller may forget -- so a run id guessed or leaked across users reads as absent.
+    Runs are upserted by id (live state: iterations and budgets move while the loop runs);
+    steps are append-only, like engineer runs.
+    """
+
+    async def save_run(self, run: AgentRun) -> None:
+        ...
+
+    async def append_step(self, step: AgentStep) -> None:
+        ...
+
+    async def get_run(self, run_id: AgentRunId, *, user_id: UserId) -> AgentRun | None:
+        ...
+
+    async def list_runs(
+        self,
+        user_id: UserId,
+        *,
+        agent_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> Sequence[AgentRun]:
+        ...
+
+    async def list_steps(
+        self, run_id: AgentRunId, *, user_id: UserId, limit: int = 500,
+    ) -> Sequence[AgentStep]:
         ...
 
 
