@@ -92,6 +92,8 @@ COVERED = {
         "TestKnowledgeDocuments::test_bob_cannot_pin_alices_document",
     ("DELETE", "/api/v3/knowledge/documents/{document_id}/cag-pin"):
         "TestKnowledgeDocuments::test_bob_cannot_unpin_alices_document",
+    ("GET", "/api/v3/knowledge/graph/entities/{entity_key}"):
+        "TestKnowledgeGraph::test_bob_cannot_read_alices_entity_by_key",
     ("DELETE", "/api/v3/memory/{memory_id}"):
         "TestMemory::test_bob_cannot_delete_alices_memory",
     ("DELETE", "/api/v3/engineering/workspaces/{workspace_id}"):
@@ -251,6 +253,66 @@ class TestKnowledgeDocuments:
         client.post(f"/api/v3/knowledge/documents/{document_id}/cag-pin", headers=AUTH_A)
         preview = client.get("/api/v3/knowledge/cag", headers=AUTH_B).json()
         assert "PELICAN" not in str(preview)
+
+
+# --------------------------------------------------------------------------------------
+# Knowledge graph
+# --------------------------------------------------------------------------------------
+
+
+class TestKnowledgeGraph:
+    """Facts extracted from Alice's document are Alice's: not listed, not readable by key."""
+
+    GRAPH_TEXT = (
+        "Sarah Chen works at Pelican Holdings. Sarah Chen reports to Omar Farouk. "
+        "Pelican Holdings is located in Lisbon District."
+    )
+
+    def _alice_graph(self, client) -> None:
+        response = _ingest(
+            client, headers=AUTH_A, title="Alice org chart", content=self.GRAPH_TEXT,
+            document_id="alice-org",
+        )
+        assert response.status_code == 200, response.text
+        mine = client.get("/api/v3/knowledge/graph", headers=AUTH_A).json()
+        assert any(e["key"] == "person:sarah-chen" for e in mine["entities"]), mine
+        assert any(r["predicate"] == "reports_to" for r in mine["relations"]), mine
+
+    def test_bob_cannot_list_alices_entities_or_relations(self, client) -> None:
+        self._alice_graph(client)
+        listing = client.get("/api/v3/knowledge/graph", headers=AUTH_B).json()
+        assert listing["entities"] == [] and listing["relations"] == []
+        searched = client.get(
+            "/api/v3/knowledge/graph", params={"query": "sarah"}, headers=AUTH_B
+        ).json()
+        assert searched["entities"] == []
+
+    def test_bob_cannot_read_alices_entity_by_key(self, client) -> None:
+        self._alice_graph(client)
+        response = client.get(
+            "/api/v3/knowledge/graph/entities/person:sarah-chen", headers=AUTH_B
+        )
+        assert response.status_code == 404
+        own = client.get("/api/v3/knowledge/graph/entities/person:sarah-chen", headers=AUTH_A)
+        assert own.status_code == 200, own.text
+        body = own.json()
+        assert body["provenance"][0]["document_id"] == "alice-org"
+        assert {r["predicate"] for r in body["relations"]} >= {"works_at", "reports_to"}
+
+    def test_bob_deleting_alices_document_does_not_touch_her_facts(self, client) -> None:
+        self._alice_graph(client)
+        client.delete("/api/v3/knowledge/documents/alice-org", headers=AUTH_B)
+        mine = client.get("/api/v3/knowledge/graph", headers=AUTH_A).json()
+        assert any(r["predicate"] == "reports_to" for r in mine["relations"])
+
+    def test_alice_deleting_her_document_removes_its_facts(self, client) -> None:
+        self._alice_graph(client)
+        response = client.delete("/api/v3/knowledge/documents/alice-org", headers=AUTH_A)
+        assert response.status_code == 200
+        mine = client.get(
+            "/api/v3/knowledge/graph", params={"include_expired": "true"}, headers=AUTH_A
+        ).json()
+        assert mine["entities"] == [] and mine["relations"] == []
 
 
 # --------------------------------------------------------------------------------------
