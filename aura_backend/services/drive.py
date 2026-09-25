@@ -123,7 +123,19 @@ def download_drive_file(
         return b""
 
 
-def stage_drive_pdf(access_token: str, file_id: str) -> str:
+def staging_dir(user_id: Optional[str]) -> str:
+    """The per-user directory a staged Drive PDF lives in.
+
+    Per user so that `tasks.ingest_pdf_task` can require a staged file to sit in the directory of
+    the `user_id` it was queued for: crafted task arguments then cannot claim another user's
+    staged document (tests/security/test_celery_boundaries.py). The user id is reduced to a
+    single safe path component, so it cannot steer the directory either.
+    """
+    owner = _SAFE_FILE_ID.sub("_", user_id or "global")[:80].strip("_") or "global"
+    return os.path.join(settings.data_dir, "drive_ingest", owner)
+
+
+def stage_drive_pdf(access_token: str, file_id: str, *, user_id: Optional[str] = None) -> str:
     """Download a Drive PDF in-process and write it under the shared workspace.
 
     Returns the absolute path, or an empty string on failure. The Celery task
@@ -133,7 +145,7 @@ def stage_drive_pdf(access_token: str, file_id: str) -> str:
     if not pdf_bytes:
         return ""
 
-    dest_dir = os.path.join(settings.data_dir, "drive_ingest")
+    dest_dir = staging_dir(user_id)
     os.makedirs(dest_dir, exist_ok=True)
     safe_id = _SAFE_FILE_ID.sub("_", file_id)[:80] or "file"
     local_path = os.path.abspath(os.path.join(dest_dir, f"{safe_id}_{uuid.uuid4().hex}.pdf"))
@@ -146,7 +158,7 @@ def queue_drive_pdf_ingest(
     file_id: str, file_name: str, access_token: str, user_id: Optional[str]
 ) -> dict:
     """Stage a Drive PDF locally, then queue ingestion with a workspace path only."""
-    local_path = stage_drive_pdf(access_token, file_id)
+    local_path = stage_drive_pdf(access_token, file_id, user_id=user_id or "global")
     if not local_path:
         return {"error": "Failed to download PDF from Google Drive."}
     from tasks import ingest_pdf_task

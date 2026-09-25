@@ -90,6 +90,10 @@ class _KeyedLocks:
                 self._locks[key] = (lock, users - 1)
 
 
+def _owner_value(owner_id: UserId | None) -> str | None:
+    return owner_id.value if owner_id is not None else None
+
+
 class IngestionResult:
     __slots__ = ("document", "chunks", "created", "quarantined", "duration_ms", "skipped_reason")
 
@@ -253,10 +257,12 @@ class KnowledgeEngine:
             )
 
         previous = await self._documents.get(doc_id)
-        if previous is not None and previous.owner_id != owner_id:
-            # `get` is not owner-scoped, so without this an explicit `document_id` naming someone
-            # else's (or a global) document would become a new version of it -- overwriting their
-            # content with the caller's and leaving the result readable by the original owner.
+        if previous is not None and _owner_value(previous.owner_id) != _owner_value(owner_id):
+            # `get` is not owner-scoped, and versioning an existing id keeps the *existing* owner, so
+            # without this an explicit `document_id` naming someone else's (or a global) document
+            # would write the caller's content straight into their knowledge base -- an integrity
+            # bug and an injection delivery channel at once (tests/security/test_idor.py,
+            # tests/unit/test_ingestion_idempotency.py).
             raise ConflictError(
                 "document_id is already in use", details={"document_id": doc_id.value}
             )
@@ -442,10 +448,11 @@ class KnowledgeEngine:
 
     async def delete_document(self, document_id: DocumentId, *, owner_id: UserId | None) -> int:
         document = await self._documents.get(document_id)
-        if document is None or document.owner_id != owner_id:
+        if document is None or _owner_value(document.owner_id) != _owner_value(owner_id):
             # Someone else's document is reported exactly like an absent one. Checked here, not
-            # left to `tombstone`'s owner filter: the vector delete below runs first, and used to
-            # strip another user's chunks from the index even though their row survived.
+            # left to the store's owner-scoped tombstone: that ran *after* the chunks had already
+            # left the vector and lexical indexes, so another user's delete reported 0 chunks
+            # removed while silently making the owner's document unretrievable.
             return 0
         identity = await self._indexes.resolve_for_read()
         chunks = await self._documents.chunks_for(document_id, document.version)

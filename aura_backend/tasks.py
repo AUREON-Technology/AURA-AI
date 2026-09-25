@@ -27,10 +27,22 @@ def ingest_pdf_task(file_id: str, file_name: str, local_path: str, user_id: str)
     and the PDF bytes must never appear on the Redis broker.
     """
     logger.info(f"Celery task: Ingesting Google Drive PDF '{file_name}' ({file_id}) for user {user_id}...")
-    workspace = os.path.abspath(settings.data_dir)
-    resolved = os.path.abspath(local_path)
-    if resolved != workspace and not resolved.startswith(workspace + os.sep):
-        logger.error(f"Refusing ingest path outside workspace: {local_path}")
+    # Task arguments come off the broker, so they are checked, not trusted: the file must be a
+    # regular file (not a symlink) directly inside *this* user's staging directory, judged after
+    # resolving symlinks and `..`. The old lexical "somewhere under data_dir" check let crafted
+    # arguments follow a symlink out of the volume, claim another user's staged PDF, and -- since
+    # the file is deleted below -- remove any file in the shared volume
+    # (tests/security/test_celery_boundaries.py).
+    from services.drive import staging_dir
+
+    expected_dir = os.path.realpath(staging_dir(user_id))
+    resolved = os.path.realpath(local_path)
+    if (
+        os.path.islink(local_path)
+        or os.path.dirname(resolved) != expected_dir
+        or not os.path.isfile(resolved)
+    ):
+        logger.error(f"Refusing ingest path outside this user's staging area: {local_path}")
         return False
 
     try:
