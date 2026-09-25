@@ -346,13 +346,14 @@ def scenario_availability(name: str, cfg: RunConfig, pre: Preflight) -> tuple[bo
 async def setup_user_documents(gw: Gateway, vu: VU) -> list[Sample]:
     """Unmeasured setup: give one identity the documents the RAG scenarios retrieve from.
 
-    Idempotent per identity (fixed ``document_id`` values): re-running a matrix does not grow
-    the corpus, and knowledge is owner-scoped so every identity needs its own copy.
+    Idempotent per identity (``document_id`` fixed per identity index): re-running a matrix does
+    not grow the corpus. The id carries the identity index because knowledge is owner-scoped and
+    the gateway refuses (409) a caller-supplied ``document_id`` another user already owns.
     """
     samples = []
     for doc_id, title, content in (
-        (HANDBOOK_ID, "Load test handbook", HANDBOOK),
-        (CORPUS_ID, "Load test policy compendium", corpus_document()),
+        (f"{HANDBOOK_ID}-{vu.index}", "Load test handbook", HANDBOOK),
+        (f"{CORPUS_ID}-{vu.index}", "Load test policy compendium", corpus_document()),
     ):
         sample, _ = await gw.request(
             vu, scenario="setup", op="ingest", kind="api", method="POST",
