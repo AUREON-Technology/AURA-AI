@@ -862,8 +862,10 @@ implies (a real Win32 ConPTY exists, Windows-only, unexercised by CI); D5 (Git/D
 parts of D6–D9 (AI coding layer, debug, agent workspace, control center) already have real,
 non-mocked implementations that this document's phase map had not caught up to. Conversely, two
 D1 exit criteria are not actually met: layout does not persist across restart despite a migrated
-Drift table for it, and sidebars/bottom panel are not resizable despite the setters existing. Read
-the audit before treating any D-phase status below as current.
+Drift table for it, and sidebars/bottom panel are not resizable despite the setters existing.
+**Fixed (2026-09-25)**, per the audit report's own update note: `LayoutNotifier` now persists to
+`desktopLayoutState` and `DesktopShell` has real drag-to-resize handles. Read the audit before
+treating any D-phase status below as current.
 
 **Status:** D0 architecture phase done (ADR-015). D1–D3 scaffolding exists and has been fixed to
 compile and wired end-to-end (router → `DesktopShell` → Explorer/editor/quick-open/session
