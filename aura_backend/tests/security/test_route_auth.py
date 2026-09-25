@@ -149,7 +149,8 @@ class TestInventory:
         """The public allowlist is a list of probes, docs and session bootstrap -- nothing under
         a data prefix may join it."""
         data_prefixes = ("/api/v3/chat", "/api/v3/knowledge", "/api/v3/memory", "/api/v3/sync",
-                         "/api/v3/engineering", "/api/v3/admin", "/api/v3/insights")
+                         "/api/v3/engineering", "/api/v3/admin", "/api/v3/insights",
+                         "/api/v3/agents")
         assert not [p for _, p in PUBLIC if p.startswith(data_prefixes)]
 
 

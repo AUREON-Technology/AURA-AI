@@ -104,10 +104,16 @@ _beat_schedule = {
         "options": {"queue": "realtime"},
     },
     # Loop B: pick up fine-tune jobs left QUEUED when launch used run_inline=false.
+    # The `training` queue is consumed only by `worker-training` (compose profile `training`),
+    # the one service built with requirements-train.txt and AURA_FINETUNE_TRAINER=local. It
+    # used to be `learning`, which worker-ingestion also consumes -- with the default
+    # (non-training) trainer, so a queued job could be "run" by a worker that cannot train.
+    # `expires` stops drain messages piling up in Redis while the profile is not running;
+    # jobs themselves stay QUEUED in the job store until a training worker exists.
     "drain-finetune-queue": {
         "task": "tasks.drain_finetune_queue_task",
         "schedule": 120.0,
-        "options": {"queue": "learning"},
+        "options": {"queue": "training", "expires": 110},
     },
 }
 

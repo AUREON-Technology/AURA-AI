@@ -92,3 +92,32 @@ transaction-like unit with a repair job), and reranking adds 20–150 ms dependi
 **Impact:** answer quality is the primary win; token cost *drops* because fewer, better chunks are
 sent; scalability is unaffected at Stage 0 and has a documented path (Postgres FTS → OpenSearch) for
 Stage 2.
+
+## Knowledge graph (2026-09-25)
+
+The graph is a third retrieval signal beside BM25 and dense vectors, stored in Postgres; no
+separate graph database was introduced. Entities, relations, aliases and a type vocabulary live
+in owner-scoped `aura_graph_*` tables (Alembic `0007`, mirrored by `PostgresGraphStore`'s
+`IF NOT EXISTS` bootstrap), with an equivalent in-memory adapter for the default test run.
+
+**No fact enters long-term knowledge without its evidence.** Every ingest runs extract → normalize
+(case, whitespace, aliases) → validate against `DEFAULT_GRAPH_SCHEMA`'s allowed entity and
+relation types → attach provenance → combine confidence → merge duplicates → insert. The default
+extractor is the deterministic `RuleEntityExtractor`. `LLMEntityExtractor` exists behind the
+`EntityExtractor` port, is off by default, and its output passes the same validation as data,
+never as instructions.
+
+**Provenance drives lifecycle.** Each fact keeps one `FactProvenance` per source (document id and
+version) that asserted it, and its confidence is recomputed from the *live* sources, so it rises
+when another document corroborates it and falls when a source is withdrawn. Deleting a document
+removes the facts only it supported; superseding one expires its version's facts (`valid_to`), so
+the graph never keeps answering from a document the user has replaced.
+
+**Retrieval.** The adaptive router classifies relational questions and composes `GraphRAG` with
+text retrieval rather than replacing it. Owner-scoped `GET /api/v3/knowledge/graph` and
+`/api/v3/knowledge/graph/entities/{entity_key}` expose a user's graph (route-auth and IDOR tested).
+
+**Proven so far:** the pipeline, lifecycle and cross-user isolation on the in-memory substrate,
+and store, lifecycle and migration round-trip on a real Postgres 16 (opt-in
+`tests/load/test_knowledge_graph_postgres.py`). **Not proven:** extraction quality on real
+documents, and any client view of the graph.

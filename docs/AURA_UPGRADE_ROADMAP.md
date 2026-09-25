@@ -1010,6 +1010,21 @@ OK) plus the real-infrastructure runs named per row.
 | P3 1→100-user load harness | **Built** | In-process echo self-validation only — explicitly not a capacity number; the 50/75/100-user gates need the GPU deployment (GAP-041) |
 | P14 evaluation gates PRs | **Built, not proven** | Pass on the tree, fail on a deliberate ranking regression; `eval-ci.yml` had been invalid YAML and never ran; blocks nothing until branch protection requires it |
 
+### Wave 2 (2026-09-25)
+
+Knowledge graph, agent platform, Flutter/admin reach, and the fine-tuning honesty fix. Local suite
+on the merged tree: **pytest 2697 passed / 56 skipped / 0 failed**, legacy unittest 100 OK; still no
+CI run (GAP-043).
+
+| Item | State | Evidence / what is still missing |
+| --- | --- | --- |
+| GAP-018 — training failures recorded as SUCCEEDED | **Fixed, not deployed** | Non-training outcomes are `NOT_TRAINED`, register nothing and cannot be promoted; tests written first |
+| GAP-017 — trainer never changed weights | **Mechanism proven** | Real PEFT LoRA or a hard failure (no fake fallback). First weight-changing run in the repo: `pytest tests/training -m training` on `tiny-random-gpt2`, LoRA delta L2 2.56, loss 6.90 → 6.81, logits differ. Nothing trained on the production base model; quality unmeasured |
+| Phase 11 knowledge graph (GAP-023) | **Built, not proven** | Provenance-gated pipeline, delete/supersede lifecycle, relational routing, owner-scoped read API ([ADR-005](architecture/005-hybrid-retrieval.md) §Knowledge graph); real Postgres 16 store/lifecycle/migration tests pass; extraction quality on real documents unmeasured |
+| Phase 7 agent platform (GAP-024) | **Built, not proven** | One bounded loop for every persona with five budgets, durable content-free runs, per-(user, scope) memory, run API, `agent_runs` eval suite ([ADR-016](architecture/016-agent-platform.md)); no production traffic yet |
+| Phase 16 client reach (GAP-013) | **In progress** | Generated, test-gated [API reachability matrix](guides/api-reachability.md): 74 of 97 routes called, 16 uncalled and triaged. Flutter sends `Idempotency-Key` and handles overload/`Retry-After` — **not compiled or tested** (no Dart toolchain here, Client CI blocked) |
+| Phase 17 admin (GAP-007) | **Open** | No admin Playwright specs this wave; node and Chromium are available for the next |
+
 ---
 
 Related: [Production Readiness Score](reports/AURA_AI_PRODUCTION_READINESS_SCORE.md) ·

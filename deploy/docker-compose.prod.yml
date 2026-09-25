@@ -367,6 +367,11 @@ services:
       AURA_VOICE_LIVE_MAX_SESSIONS: ${AURA_VOICE_LIVE_MAX_SESSIONS:-8}
       # Loop B: digest-addressed ChatML artefacts shared with learning workers.
       AURA_LEARNING_DATASET_DIR: /var/lib/aura/datasets
+      # The gateway never trains (GAP-017/018): `scripted` records every launched job as
+      # NOT_TRAINED and registers nothing. Real LoRA runs only on worker-training (profile
+      # `training`), which consumes the `training` queue. Same fixed value in
+      # docker-compose.dev.yml.
+      AURA_FINETUNE_TRAINER: scripted
       # Engineer agent (Phase J). Every one of these defaults to inert/off; enabling any is a
       # deliberate per-deployment decision, not a side effect of upgrading.
       AURA_SANDBOX_ENABLED: ${AURA_SANDBOX_ENABLED:-false}
@@ -643,18 +648,24 @@ services:
       resources:
         limits: {cpus: "1.5", memory: 2G}
 
-  # Optional Loop B trainer. Not started by default — keep torch/CUDA out of the
-  # gateway image (Phase A1). Bring up with:
+  # Optional Loop B trainer: real PEFT LoRA (LocalLoraTrainer). Not started by default, and
+  # the only image built with requirements-train.txt (peft stays out of the gateway). Bring up:
   #   docker compose -f deploy/docker-compose.prod.yml --profile training up -d worker-training
-  # Set AURA_FINETUNE_TRAINER=local and (on CPU-only hosts) AURA_FINETUNE_ALLOW_CPU=true.
+  # Consumes only the `training` queue. On a CPU-only host also set
+  # LEARNING_FINETUNE_ALLOW_CPU=true; the base model must be a Hugging Face id on
+  # LEARNING_FINETUNE_CPU_BASES (Ollama tags cannot be trained). See docs/guides/mlops-guide.md.
   worker-training:
     profiles: [training]
     build:
       context: ../aura_backend
       dockerfile: Dockerfile
+      # The only image with requirements-train.txt (peft). Without it LocalLoraTrainer fails
+      # every job with a ConfigurationError -- see docs/guides/mlops-guide.md.
+      args:
+        AURA_TRAINING_DEPS: "true"
     <<: *restart
     logging: *logging
-    command: celery -A tasks worker -Q learning -c 1 --loglevel=info --max-tasks-per-child=1
+    command: celery -A tasks worker -Q training -c 1 --loglevel=info --max-tasks-per-child=1
     environment:
       <<: *worker_env
       AURA_FINETUNE_TRAINER: local

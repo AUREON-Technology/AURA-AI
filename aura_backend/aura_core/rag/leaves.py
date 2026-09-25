@@ -12,8 +12,10 @@ import re
 from dataclasses import replace
 from typing import Any
 
-from ..domain.knowledge import RetrievalResult
-from ..domain.memory import MemoryKind, MemoryQuery
+from ..domain.graph import parse_source
+from ..domain.identifiers import ChunkId, DocumentId
+from ..domain.knowledge import Chunk, RetrievalResult, RetrievedChunk, TrustTier
+from ..domain.memory import SHARED_MEMORY_SCOPE, MemoryKind, MemoryQuery
 from .base import BaseStrategy, RetrievalOutcome, RetrievalRequest, StrategyTrace
 
 __all__ = ["SimpleRAG", "MemoryRAG", "GraphRAG"]
@@ -111,6 +113,9 @@ class MemoryRAG(BaseStrategy):
                         kinds=self._kinds,
                         session_id=request.session_id,
                         limit=self._limit,
+                        # A retrieval request carries no persona, so it cannot know whose
+                        # private scope it may read: shared only (GAP-024 memory scopes).
+                        scopes=(SHARED_MEMORY_SCOPE,),
                     )
                 )
                 memories = tuple(hits)
@@ -158,6 +163,13 @@ class GraphRAG(BaseStrategy):
 
     ``max_hops`` defaults to 2. Three hops on a well-connected graph reaches most of it, producing a
     context full of loosely-related edges -- worse than not using the graph at all.
+
+    **The facts also travel as chunks.** The kernel reads only ``RetrievalResult.chunks`` through
+    the ``StrategyFacade``, so ``graph_paths`` alone never reached a prompt. With ``emit_chunks``
+    (the default) the traversed edges are rendered as one synthetic chunk *per source document*,
+    placed ahead of the passages. Grouping by source keeps provenance honest -- the chunk's citation
+    names the document version the facts were extracted from -- and, being ordinary chunks, they go
+    through the kernel's context guard and are fenced as DATA like any retrieved passage (ADR-006).
     """
 
     name = "graph"
@@ -171,9 +183,13 @@ class GraphRAG(BaseStrategy):
         max_entities: int = 6,
         max_paths: int = 24,
         min_confidence: float = 0.0,
+        emit_chunks: bool = True,
+        max_fact_chunks: int = 2,
         metrics: Any = None,
     ) -> None:
         super().__init__(metrics=metrics)
+        self._emit_chunks = emit_chunks
+        self._max_fact_chunks = max_fact_chunks
         self._graph = graph
         self._inner = inner
         self._max_hops = max_hops
@@ -256,6 +272,7 @@ class GraphRAG(BaseStrategy):
         # what makes this possible without a lookup per edge.
         names: dict[str, str] = {entity.key: entity.name for entity in seeds}
         seen_edges: set[tuple[str, str, str]] = set()
+        traversed: list[Any] = []
 
         for entity in seeds:
             if len(paths) >= self._max_paths:
@@ -282,6 +299,7 @@ class GraphRAG(BaseStrategy):
                 if triple_key in seen_edges:
                     continue
                 seen_edges.add(triple_key)
+                traversed.append(relation)
                 paths.append(
                     (
                         names.get(relation.subject_key, relation.subject_key),
@@ -302,6 +320,15 @@ class GraphRAG(BaseStrategy):
             result = inner_outcome.result
             children = (inner_outcome.trace,)
 
+        fact_chunks = self._fact_chunks(traversed, names, request) if self._emit_chunks else ()
+        if fact_chunks:
+            passages = tuple(
+                c for c in result.chunks
+                if c.chunk.id.value not in {f.chunk.id.value for f in fact_chunks}
+            )
+            result = replace(result, chunks=fact_chunks + passages, strategy=result.strategy)
+            notes.append(f"fact chunks={len(fact_chunks)}")
+
         return RetrievalOutcome(
             result=result,
             graph_paths=tuple(paths),
@@ -313,3 +340,37 @@ class GraphRAG(BaseStrategy):
                 children=children,
             ),
         )
+
+    def _fact_chunks(
+        self, relations: list[Any], names: dict[str, str], request: RetrievalRequest
+    ) -> tuple[RetrievedChunk, ...]:
+        """Render traversed edges as one chunk per source document, strongest group first."""
+        groups: dict[str, list[Any]] = {}
+        for relation in relations:
+            source = relation.sources[0] if relation.sources else ""
+            groups.setdefault(source, []).append(relation)
+
+        rendered: list[RetrievedChunk] = []
+        for source, members in groups.items():
+            members.sort(key=lambda r: r.confidence, reverse=True)
+            document_id, version = parse_source(source)
+            lines = [
+                f"{names.get(r.subject_key, r.subject_key)} {r.predicate.replace('_', ' ')} "
+                f"{names.get(r.object_key, r.object_key)} (confidence {r.confidence:.2f})."
+                for r in members
+            ]
+            doc = DocumentId(document_id or source or "knowledge-graph")
+            chunk = Chunk(
+                id=ChunkId(f"{doc.value}:v{version or 0}:graph"),
+                document_id=doc,
+                document_version=version or 0,
+                index=0,
+                content="Knowledge-graph facts: " + " ".join(lines),
+                heading_path=("knowledge graph",),
+                owner_id=request.owner_id,
+                trust_tier=TrustTier.COMMUNITY,
+                metadata={"modality": "graph", "source": source, "facts": len(members)},
+            )
+            rendered.append(RetrievedChunk(chunk=chunk, score=members[0].confidence))
+        rendered.sort(key=lambda c: c.score, reverse=True)
+        return tuple(rendered[: self._max_fact_chunks])

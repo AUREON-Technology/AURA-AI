@@ -54,7 +54,7 @@ from ..domain.llm import (
     WorkloadClass,
     WorkloadHint,
 )
-from ..domain.memory import MemoryHit, MemoryKind, MemoryQuery
+from ..domain.memory import MemoryHit, MemoryKind, MemoryQuery, readable_scopes
 from ..domain.messages import Conversation, Message
 from ..domain.planning import StepKind
 from ..domain.reasoning import ReasoningStrategy
@@ -67,6 +67,7 @@ from ..domain.telemetry import (
     TurnOutcome,
     TurnTelemetry,
 )
+from ..execution.agentic_loop import AgentRunContext
 from ..execution.engine import ExecutionOutcome, StepEvent
 from ..llm.router import TurnBudget
 from ..llm.workload import workload_for_turn, workload_scope
@@ -159,6 +160,9 @@ class TurnResult:
     #: Set when the turn was refused for lack of generation capacity (``OverloadedError``), so
     #: the HTTP layer can send ``Retry-After`` instead of leaving the client to guess.
     retry_after_s: int | None = None
+    #: The durable agent run this turn's plan/execute loop recorded (GAP-024), readable via
+    #: ``GET /api/v3/agents/runs/{id}``; ``None`` when the turn planned nothing.
+    agent_run_id: str | None = None
 
     @property
     def degraded(self) -> bool:
@@ -193,6 +197,8 @@ class KernelDependencies:
     agentic_executor: Any = None
     #: `EngineerRunStore` (`ports/coding.py`) -- `None` disables recording engineer-agent tool
     #: outcomes entirely (matching every other optional dependency's "absent means off" contract).
+    #: Per-run agent state (GAP-024) is recorded by `agentic_executor` itself, through the
+    #: `AgentRunStore` extension of this same port.
     engineer_runs: Any = None
     episodic: Any = None
     cache: Any = None
@@ -333,13 +339,18 @@ class AIKernel:
         pending_tool_calls: list[Mapping[str, Any]] = []
         plan_summary: list[Mapping[str, Any]] = []
         plan_steps = plan_revisions = 0
+        agent_run_id: str | None = None
 
         tool_declarations = await self._tool_declarations(request)
         if self._should_plan(request, tool_declarations):
             stage_start = time.perf_counter()
-            outcome = await self._plan_and_execute(request, message, tool_declarations, tainted)
+            outcome = await self._plan_and_execute(
+                request, message, tool_declarations, tainted,
+                turn_id=turn_id, correlation=correlation,
+            )
             timings["planning"] = (time.perf_counter() - stage_start) * 1000.0
             if outcome is not None:
+                agent_run_id = getattr(outcome, "run_id", None)
                 tool_results = outcome.summary_for_context()
                 plan_steps = len(outcome.plan.steps)
                 plan_revisions = len(outcome.plan.revisions)
@@ -487,6 +498,7 @@ class AIKernel:
             pending_tool_calls=tuple(pending_tool_calls),
             plan_summary=tuple(plan_summary),
             resolved_agent=resolved_agent,
+            agent_run_id=agent_run_id,
         )
 
     # -- streaming ---------------------------------------------------------------------
@@ -557,7 +569,8 @@ class AIKernel:
                 if self._should_plan(request, tool_declarations):
                     try:
                         async for item in self._iter_execution(
-                            request, message, tool_declarations, tainted
+                            request, message, tool_declarations, tainted,
+                            turn_id=turn_id, correlation=correlation,
                         ):
                             if isinstance(item, StepEvent):
                                 yield {"type": "step", **item.as_dict()}
@@ -727,6 +740,7 @@ class AIKernel:
                     "pending_tool_calls": pending_tool_calls,
                     "plan_summary": plan_summary,
                     "resolved_agent": resolved_agent,
+                    "agent_run_id": getattr(outcome, "run_id", None),
                     "turn_id": turn_id.value,
                     "correlation_id": correlation.value,
                     # Stream does not run the reasoner; null is honest, not a fake score.
@@ -776,6 +790,10 @@ class AIKernel:
         (Performance Report §1).
         """
         deps = self._deps
+        # GAP-024: a persona reads its own memory scope plus the shared one. No registry means
+        # no personas, so every scope (the pre-scope behaviour).
+        spec = self._resolve_agent(request)
+        scopes = readable_scopes(spec.memory_scope) if spec is not None else None
 
         async def recall() -> list[MemoryHit]:
             if not (request.use_memory and deps.memory is not None):
@@ -791,6 +809,7 @@ class AIKernel:
                         token_budget=getattr(
                             getattr(deps.settings, "memory", None), "token_budget", 80
                         ),
+                        scopes=scopes,
                     )
                 )
             except Exception:
@@ -1080,12 +1099,51 @@ class AIKernel:
             getattr(getattr(self._deps.settings, "reasoning", None), "engineer_loop_deadline_s", 600.0)
         )
 
+    def _loop_arguments(
+        self,
+        request: TurnRequest,
+        message: str,
+        tools: Sequence[Mapping[str, Any]],
+        tainted: bool,
+        turn_id: TurnId | None,
+        correlation: CorrelationId | None,
+    ) -> dict[str, Any] | None:
+        """How this turn runs through the standard agent loop (GAP-024), or ``None`` for the
+        pre-registry direct path (no ``AgentRegistry`` or no ``agentic_executor`` wired).
+
+        Every persona goes through the one loop; its ``AgentSpec.budget`` decides how far.
+        ``engineer`` (``max_plan_iterations=8``) gets exactly the replan limit and deadline it
+        always had; a single-pass persona gets ``max_iterations=0`` -- one pass, as before.
+        """
+        deps = self._deps
+        agent = self._resolve_agent(request)
+        if agent is None or deps.agentic_executor is None:
+            return None
+        budget = agent.budget
+        return {
+            "max_iterations": budget.max_iterations,
+            "deadline_s": self._agentic_loop_deadline_s(),
+            "budget": budget,
+            "run_context": AgentRunContext(
+                user_id=request.user_id,
+                agent_id=agent.id,
+                turn_id=(turn_id or TurnId.new()).value,
+                correlation_id=(correlation or request.correlation_id or CorrelationId.new()).value,
+                goal=message,
+                tools_available=len(tools),
+                tainted=tainted,
+            ),
+        }
+
     async def _plan_and_execute(
         self,
         request: TurnRequest,
         message: str,
         tools: Sequence[Mapping[str, Any]],
         tainted: bool,
+        *,
+        turn_id: TurnId | None = None,
+        correlation: CorrelationId | None = None,
     ) -> Any:
         deps = self._deps
         try:
@@ -1093,9 +1151,8 @@ class AIKernel:
             if plan is None:
                 return None
             context = self._tool_context(request, tainted)
-            agent = self._resolve_agent(request)
-            max_iterations = agent.max_plan_iterations if agent is not None else 1
-            if max_iterations > 1 and deps.agentic_executor is not None:
+            loop = self._loop_arguments(request, message, tools, tainted, turn_id, correlation)
+            if loop is not None:
                 return await deps.agentic_executor.run(
                     plan,
                     context=context,
@@ -1103,8 +1160,7 @@ class AIKernel:
                     confirmed_tools=request.confirmed_tools,
                     confirmed_call_ids=request.confirmed_call_ids,
                     available_tools=tools,
-                    max_iterations=max_iterations,
-                    deadline_s=self._agentic_loop_deadline_s(),
+                    **loop,
                 )
             return await deps.executor.execute(
                 plan,
@@ -1123,6 +1179,9 @@ class AIKernel:
         message: str,
         tools: Sequence[Mapping[str, Any]],
         tainted: bool,
+        *,
+        turn_id: TurnId | None = None,
+        correlation: CorrelationId | None = None,
     ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
         """Yield step progress, then the outcome. Prefer ``executor.stream``."""
         deps = self._deps
@@ -1130,9 +1189,8 @@ class AIKernel:
         if plan is None:
             return
         context = self._tool_context(request, tainted)
-        agent = self._resolve_agent(request)
-        max_iterations = agent.max_plan_iterations if agent is not None else 1
-        if max_iterations > 1 and deps.agentic_executor is not None:
+        loop = self._loop_arguments(request, message, tools, tainted, turn_id, correlation)
+        if loop is not None:
             async for item in deps.agentic_executor.stream(
                 plan,
                 context=context,
@@ -1140,8 +1198,7 @@ class AIKernel:
                 confirmed_tools=request.confirmed_tools,
                 confirmed_call_ids=request.confirmed_call_ids,
                 available_tools=tools,
-                max_iterations=max_iterations,
-                deadline_s=self._agentic_loop_deadline_s(),
+                **loop,
             ):
                 yield item
             return
@@ -1296,8 +1353,9 @@ class AIKernel:
     def _servable_model_tag(artefact_uri: str | None) -> str | None:
         """Use a registry artefact only when it is an inference tag, not a file URI.
 
-        ScriptedTrainer writes ``scripted://...`` placeholders. Sending those as
-        ``CompletionRequest.model`` makes Ollama 404 before the first token.
+        Older registry rows hold ``scripted://...`` placeholders, and ``LocalLoraTrainer``
+        registers a PEFT adapter *directory* (not merged, not an Ollama model). Sending either
+        as ``CompletionRequest.model`` makes Ollama 404 before the first token.
         """
         if not artefact_uri or not artefact_uri.strip():
             return None

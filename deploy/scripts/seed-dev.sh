@@ -34,7 +34,7 @@ say() { printf '\n==> %s\n' "$*"; }
 say "Building dev gateway and worker-training (seed + Celery fixes)"
 "${COMPOSE[@]}" build dev-gateway worker-training
 
-say "Recreating worker-training with dev env (CPU LoRA flag)"
+say "Recreating worker-training with dev env (CPU LoRA flag; image built with requirements-train.txt)"
 "${COMPOSE[@]}" --profile training up -d --force-recreate worker-training
 sleep 10
 

@@ -24,6 +24,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Mapping, Sequence
 
+from ..domain.agent_runs import AgentRun, AgentStep
 from ..domain.engineering import AgentWorkspace, EngineerRun
 from ..domain.errors import ConflictError, NotFoundError, ValidationError
 from ..domain.github_identity import GitHubIdentity
@@ -38,6 +39,7 @@ from ..domain.knowledge import (
     IndexIdentity,
     Relation,
 )
+from ..domain.graph import FactProvenance, normalize_alias, summarise_provenance
 from ..domain.memory import MemoryKind, MemoryRecord
 from ..domain.personal_os import PersonalOsRecord, RecordKind
 from dataclasses import replace as _dc_replace
@@ -450,13 +452,65 @@ class InMemoryPersonalOsStore:
 
 
 class InMemoryEngineerRunStore:
-    """Reference implementation of
-    :class:`~aura_core.ports.coding.EngineerRunStore`. Read-only from a caller's perspective
-    beyond :meth:`record` -- see that port's docstring."""
+    """Reference implementation of :class:`~aura_core.ports.coding.AgentRunStore` -- the
+    engineer-run ledger plus the per-run agent state that generalises it (GAP-024). Engineer
+    runs are read-only from a caller's perspective beyond :meth:`record`; agent runs are
+    upserted by id and their steps appended, exactly as the Postgres adapter does."""
 
     def __init__(self) -> None:
         self._runs: list[EngineerRun] = []
+        self._agent_runs: dict[str, AgentRun] = {}
+        self._agent_steps: dict[str, list[AgentStep]] = {}
         self._lock = asyncio.Lock()
+
+    # -- agent runs (any persona) ----------------------------------------------------------
+
+    async def save_run(self, run: AgentRun) -> None:
+        async with self._lock:
+            existing = self._agent_runs.get(run.id.value)
+            if existing is not None and existing.user_id != run.user_id:
+                # The Postgres upsert keys on id alone; a second owner claiming an existing id is
+                # a bug upstream, and silently re-owning the row would be a cross-user write.
+                raise ValueError("agent run id already belongs to another user")
+            self._agent_runs[run.id.value] = run
+
+    async def append_step(self, step: AgentStep) -> None:
+        async with self._lock:
+            self._agent_steps.setdefault(step.run_id.value, []).append(step)
+
+    async def get_run(self, run_id: Any, *, user_id: UserId) -> AgentRun | None:
+        run = self._agent_runs.get(run_id.value)
+        if run is None or run.user_id != user_id:
+            return None
+        return run
+
+    async def list_runs(
+        self,
+        user_id: UserId,
+        *,
+        agent_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[AgentRun]:
+        matches = [
+            r for r in self._agent_runs.values()
+            if r.user_id == user_id
+            and (agent_id is None or r.agent_id == agent_id)
+            and (status is None or r.status == status)
+        ]
+        matches.sort(key=lambda r: (r.created_at, r.id.value), reverse=True)
+        return matches[:limit]
+
+    async def list_steps(
+        self, run_id: Any, *, user_id: UserId, limit: int = 500,
+    ) -> list[AgentStep]:
+        if await self.get_run(run_id, user_id=user_id) is None:
+            return []
+        steps = [s for s in self._agent_steps.get(run_id.value, []) if s.user_id == user_id]
+        steps.sort(key=lambda s: s.seq)
+        return steps[:limit]
+
+    # -- engineer runs -----------------------------------------------------------------------
 
     async def record(self, run: EngineerRun) -> None:
         async with self._lock:
@@ -633,52 +687,217 @@ class InMemoryInsightSink:
 
 
 class InMemoryGraphStore:
+    """The reference implementation of the ``GraphStore`` port, provenance and validity included.
+
+    Every fact keeps one :class:`FactProvenance` per source that asserted it. Confidence, the
+    ``sources`` a fact reports, and whether it is current are all *derived* from those records by
+    :func:`summarise_provenance` -- the same function ``PostgresGraphStore`` uses -- so superseding
+    or deleting a document changes what the graph believes, not just a label on it.
+    """
+
     def __init__(self) -> None:
         self._entities: dict[tuple[str | None, str], Entity] = {}
         self._relations: dict[tuple[str | None, str, str, str], Relation] = {}
+        self._entity_prov: dict[tuple[str | None, str], dict[str, FactProvenance]] = {}
+        self._relation_prov: dict[
+            tuple[str | None, str, str, str], dict[str, FactProvenance]
+        ] = {}
         self._lock = asyncio.Lock()
+
+    # -- writes --------------------------------------------------------------------------
 
     async def apply(self, delta: GraphDelta, *, owner_id: UserId | None) -> None:
         owner = owner_id.value if owner_id else None
+        now = datetime.now(timezone.utc)
         async with self._lock:
             for entity in delta.entities:
                 key = (owner, entity.key)
                 existing = self._entities.get(key)
                 # Merge rather than overwrite: a second mention of the same entity should add
                 # attributes and aliases, not replace what was already known.
-                self._entities[key] = existing.merged_with(entity) if existing else entity
+                merged = existing.merged_with(entity) if existing else entity
+                self._entities[key] = _dc_replace(
+                    merged,
+                    owner_id=owner_id,
+                    valid_from=_continuing_from(existing, now),
+                    valid_to=None,
+                )
+                _record(self._entity_prov, key, entity.sources, entity.confidence,
+                        str(entity.attributes.get("extractor", "")), now)
+                self._refresh_entity(key, now)
             for relation in delta.relations:
                 key = (owner, relation.subject_key, relation.predicate, relation.object_key)
                 existing = self._relations.get(key)
-                if existing is None or relation.confidence > existing.confidence:
-                    self._relations[key] = relation
+                attributes = dict(existing.attributes) if existing else {}
+                attributes.update(relation.attributes)
+                self._relations[key] = _dc_replace(
+                    relation,
+                    owner_id=owner_id,
+                    attributes=attributes,
+                    created_at=existing.created_at if existing else relation.created_at,
+                    confidence=existing.confidence if existing else relation.confidence,
+                    valid_from=_continuing_from(existing, now),
+                    valid_to=None,
+                )
+                _record(self._relation_prov, key, relation.sources, relation.confidence,
+                        str(relation.attributes.get("extractor", "")), now)
+                self._refresh_relation(key, now)
+
+    async def retire_document(
+        self, document_id: str, *, owner_id: UserId | None, keep_version: int | None = None,
+        at: datetime | None = None,
+    ) -> int:
+        owner = owner_id.value if owner_id else None
+        when = at or datetime.now(timezone.utc)
+
+        def doomed(record: FactProvenance) -> bool:
+            return (
+                record.is_live
+                and record.document_id == document_id
+                and record.document_version != keep_version
+            )
+
+        expired = 0
+        async with self._lock:
+            for table, refresh in (
+                (self._entity_prov, self._refresh_entity),
+                (self._relation_prov, self._refresh_relation),
+            ):
+                for key, records in table.items():
+                    if key[0] != owner:
+                        continue
+                    touched = False
+                    for source, record in list(records.items()):
+                        if doomed(record):
+                            records[source] = _dc_replace(record, retired_at=when)
+                            touched = True
+                    if touched and refresh(key, when):
+                        expired += 1
+        return expired
+
+    async def purge_document(self, document_id: str, *, owner_id: UserId | None) -> int:
+        return await self._remove_provenance(
+            owner_id, lambda record: record.document_id == document_id
+        )
+
+    async def revert(self, source: str, *, owner_id: UserId | None) -> int:
+        return await self._remove_provenance(owner_id, lambda record: record.source_id == source)
+
+    async def _remove_provenance(self, owner_id: UserId | None, matches: Any) -> int:
+        owner = owner_id.value if owner_id else None
+        now = datetime.now(timezone.utc)
+        removed = 0
+        async with self._lock:
+            for table, facts, refresh in (
+                (self._relation_prov, self._relations, self._refresh_relation),
+                (self._entity_prov, self._entities, self._refresh_entity),
+            ):
+                for key in [k for k in table if k[0] == owner]:
+                    records = table[key]
+                    doomed = [s for s, r in records.items() if matches(r)]
+                    if not doomed:
+                        continue
+                    for source in doomed:
+                        records.pop(source, None)
+                    if records:
+                        refresh(key, now)
+                    else:
+                        # No source asserts it any more, live or retired: it is gone, not expired.
+                        table.pop(key, None)
+                        facts.pop(key, None)  # type: ignore[call-overload]
+                        removed += 1
+        return removed
+
+    def _refresh_entity(self, key: tuple[str | None, str], now: datetime) -> bool:
+        """Re-derive confidence, sources and validity. True when the entity just expired."""
+        entity = self._entities.get(key)
+        if entity is None:
+            return False
+        confidence, live, every = summarise_provenance(self._entity_prov.get(key, {}).values())
+        if confidence is not None:
+            self._entities[key] = _dc_replace(
+                entity, confidence=confidence, sources=live, valid_to=None
+            )
+            return False
+        self._entities[key] = _dc_replace(entity, sources=every, valid_to=entity.valid_to or now)
+        return entity.valid_to is None
+
+    def _refresh_relation(self, key: tuple[str | None, str, str, str], now: datetime) -> bool:
+        """Re-derive confidence, sources and validity. True when the relation just expired."""
+        relation = self._relations.get(key)
+        if relation is None:
+            return False
+        confidence, live, every = summarise_provenance(
+            self._relation_prov.get(key, {}).values()
+        )
+        if confidence is not None:
+            self._relations[key] = _dc_replace(
+                relation, confidence=confidence, sources=live, valid_to=None
+            )
+            return False
+        self._relations[key] = _dc_replace(
+            relation, sources=every, valid_to=relation.valid_to or now
+        )
+        return relation.valid_to is None
+
+    # -- reads ---------------------------------------------------------------------------
 
     async def get_entity(self, key: str, *, owner_id: UserId | None) -> Entity | None:
         return self._entities.get((owner_id.value if owner_id else None, key))
 
     async def find_entities(
         self, *, owner_id: UserId | None, name: str | None = None, type: str | None = None,
-        limit: int = 50,
+        limit: int = 50, include_expired: bool = False,
     ) -> list[Entity]:
         owner = owner_id.value if owner_id else None
-        needle = name.lower() if name else None
+        needle = normalize_alias(name) if name else None
         matches = [
             e for (o, _), e in self._entities.items()
             if o == owner
+            and (include_expired or e.is_current)
             and (type is None or e.type == type)
             and (
                 needle is None
-                or needle in e.name.lower()
-                or any(needle in alias.lower() for alias in e.aliases)
+                or needle in normalize_alias(e.name)
+                or any(needle in normalize_alias(alias) for alias in e.aliases)
             )
         ]
         matches.sort(key=lambda e: e.mention_count, reverse=True)
         return matches[:limit]
 
+    async def list_relations(
+        self, *, owner_id: UserId | None, entity_keys: Sequence[str] | None = None,
+        limit: int = 100, include_expired: bool = False,
+    ) -> list[Relation]:
+        owner = owner_id.value if owner_id else None
+        wanted = set(entity_keys) if entity_keys is not None else None
+        found = [
+            r for (o, s, _p, obj), r in self._relations.items()
+            if o == owner
+            and (include_expired or r.is_current)
+            and (wanted is None or s in wanted or obj in wanted)
+        ]
+        found.sort(key=lambda r: (-r.confidence, r.subject_key, r.predicate, r.object_key))
+        return found[:limit]
+
+    async def provenance(
+        self, *, owner_id: UserId | None, entity_key: str | None = None,
+        relation_key: tuple[str, str, str] | None = None,
+    ) -> list[FactProvenance]:
+        owner = owner_id.value if owner_id else None
+        records: Mapping[str, FactProvenance]
+        if entity_key is not None:
+            records = self._entity_prov.get((owner, entity_key), {})
+        elif relation_key is not None:
+            records = self._relation_prov.get((owner, *relation_key), {})
+        else:
+            return []
+        return sorted(records.values(), key=lambda r: (r.document_version or 0, r.source_id))
+
     async def neighbours(
         self, key: str, *, owner_id: UserId | None, depth: int = 1, limit: int = 50
     ) -> tuple[list[Entity], list[Relation]]:
-        """Breadth-first traversal with a hard depth cap.
+        """Breadth-first traversal over current facts, with a hard depth cap.
 
         Depth is clamped to 3 regardless of what the caller asks for: an unbounded graph walk
         driven by model-chosen arguments is a denial-of-service primitive.
@@ -692,7 +911,7 @@ class InMemoryGraphStore:
         for _ in range(depth):
             next_frontier: set[str] = set()
             for (o, subject, _predicate, obj), relation in self._relations.items():
-                if o != owner:
+                if o != owner or not relation.is_current:
                     continue
                 if subject in frontier and obj not in seen:
                     edges.append(relation)
@@ -707,24 +926,39 @@ class InMemoryGraphStore:
             if not frontier or len(edges) >= limit:
                 break
 
-        entities = [self._entities[(owner, k)] for k in seen if (owner, k) in self._entities]
+        entities = [
+            self._entities[(owner, k)] for k in seen
+            if (owner, k) in self._entities and self._entities[(owner, k)].is_current
+        ]
         return entities, edges[:limit]
-
-    async def revert(self, source: str, *, owner_id: UserId | None) -> int:
-        owner = owner_id.value if owner_id else None
-        async with self._lock:
-            doomed_relations = [
-                k for k, r in self._relations.items() if k[0] == owner and source in r.sources
-            ]
-            for k in doomed_relations:
-                self._relations.pop(k, None)
-            doomed_entities = [
-                k for k, e in self._entities.items()
-                if k[0] == owner and e.sources == (source,)
-            ]
-            for k in doomed_entities:
-                self._entities.pop(k, None)
-        return len(doomed_relations) + len(doomed_entities)
 
     def size(self) -> tuple[int, int]:
         return len(self._entities), len(self._relations)
+
+
+def _continuing_from(existing: Any, now: datetime) -> datetime:
+    """A current fact keeps its start; a new or revived one starts now."""
+    if existing is not None and existing.is_current and existing.valid_from is not None:
+        return existing.valid_from
+    return now
+
+
+def _record(
+    table: dict[Any, dict[str, FactProvenance]],
+    key: Any,
+    sources: Sequence[str],
+    confidence: float,
+    extractor: str,
+    now: datetime,
+) -> None:
+    records = table.setdefault(key, {})
+    for source in sources or ("",):
+        previous = records.get(source)
+        records[source] = FactProvenance.from_source(
+            source,
+            extractor=extractor or (previous.extractor if previous else ""),
+            # The same source asserting the same fact twice is one piece of evidence, not two:
+            # keep its stronger statement rather than letting noisy-OR count it again.
+            confidence=max(confidence, previous.confidence) if previous else confidence,
+            recorded_at=previous.recorded_at if previous and previous.is_live else now,
+        )

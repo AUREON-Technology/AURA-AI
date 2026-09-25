@@ -144,6 +144,9 @@ class Container:
         self.memory_store = self._build_memory_store()
         self.personal_os_store = self._build_personal_os_store()
         self.engineer_runs = self._build_engineer_run_store()
+        # GAP-024: the same store, under the name of the port it now fully implements
+        # (`AgentRunStore` extends `EngineerRunStore`) -- one adapter, one pool, both ledgers.
+        self.agent_runs = self.engineer_runs
         self.workspaces = self._build_workspace_store()
         self.goals = self._build_goals_port()
         self.github_identities = self._build_github_identity_port()
@@ -219,7 +222,7 @@ class Container:
             index_manager=self.index_manager,
             safety=self.safety if settings.safety.context_guards_enabled else None,
             graph=self.graph if settings.knowledge.graph_enabled else None,
-            extractor=RuleEntityExtractor() if settings.knowledge.graph_enabled else None,
+            extractor=self._build_entity_extractor() if settings.knowledge.graph_enabled else None,
             chunking=ChunkingConfig(
                 target_tokens=settings.knowledge.chunk_target_tokens,
                 max_tokens=settings.knowledge.chunk_max_tokens,
@@ -389,7 +392,10 @@ class Container:
         # The engineer agent's bounded plan-execute-observe-replan loop (execution/agentic_loop.py)
         # -- `None` when planning itself is disabled, since there is nothing to loop.
         self.agentic_executor = (
-            AgenticExecutor(planner=self.planner, executor=self.executor, metrics=self.metrics)
+            AgenticExecutor(
+                planner=self.planner, executor=self.executor, metrics=self.metrics,
+                clock=self.clock, runs=self.agent_runs,
+            )
             if self.planner is not None
             else None
         )
@@ -542,10 +548,16 @@ class Container:
         return None
 
     def _build_finetune_trainer(self) -> Any:
-        """Default to ScriptedTrainer in the gateway; LocalLoraTrainer only when opted in.
+        """Pick the Loop B trainer from ``AURA_FINETUNE_TRAINER``.
 
-        Keeping torch out of the gateway image is a Phase A1 invariant. The training
-        worker compose profile swaps ``AURA_FINETUNE_TRAINER=local``.
+        ``scripted`` (default, and the only value the gateway services use): trains nothing and
+        says so — every job ends ``NOT_TRAINED`` with no model version registered.
+        ``local``: ``LocalLoraTrainer``, real PEFT LoRA on a transformers base model. It needs
+        ``requirements-train.txt`` (peft), which only the ``worker-training`` image installs;
+        anywhere else its jobs fail loudly with a ConfigurationError naming that file.
+
+        Anything else is a configuration error rather than a silent fall back to ``scripted``:
+        a typo here would otherwise read as "training is configured" while nothing trains.
         """
         import os
 
@@ -553,15 +565,17 @@ class Container:
         if kind == "local":
             from .adapters.local_lora_trainer import LocalLoraTrainer
 
-            # The ML service (torch/PEFT) is built by the trainer on first use, not here: the
+            # torch/transformers/peft are imported by the trainer on first use, not here: the
             # container is constructed during settings validation and in every test, and neither
-            # may pull torch in.
+            # may pull them in.
             return LocalLoraTrainer(
-                experiment_tracker=self.experiments,
-                model_registry=self.models,
                 allow_cpu=self.settings.learning.finetune_allow_cpu,
                 cpu_base_allowlist=self.settings.learning.finetune_cpu_base_allowlist,
                 work_dir=Path(os.environ.get("AURA_FINETUNE_WORK_DIR") or "/tmp/aura-finetune"),
+            )
+        if kind != "scripted":
+            raise ConfigurationError(
+                f"AURA_FINETUNE_TRAINER={kind!r} is not a trainer; use 'scripted' or 'local'"
             )
         from .learning.finetune import ScriptedTrainer
 
@@ -958,6 +972,16 @@ class Container:
                 self.settings.infrastructure.database_url, pool=self._postgres_pool()
             )
         return InMemoryInsightSink()
+
+    def _build_entity_extractor(self) -> Any:
+        """Rules always; the model extractor only when explicitly enabled."""
+        if not self.settings.knowledge.graph_llm_extraction:
+            return RuleEntityExtractor()
+        from .knowledge.extraction import CompositeExtractor, LLMEntityExtractor
+
+        return CompositeExtractor(
+            [RuleEntityExtractor(), LLMEntityExtractor(router=self.router, prompts=self.prompts)]
+        )
 
     def _build_graph_store(self) -> Any:
         if self.settings.infrastructure.document_backend == "postgres":

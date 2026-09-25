@@ -1,32 +1,50 @@
-"""The agentic loop: plan, execute, observe, replan -- bounded.
+"""The agent loop: understand -> plan -> execute -> observe -> evaluate -> replan, bounded.
 
 ``PlanningEngine.replan`` (``planning/engine.py``) and ``ExecutionEngine.execute``
 (``execution/engine.py``) already do everything a Cursor/Antigravity-style agent loop needs; the
 one thing missing was an outer loop that calls them in sequence more than once per turn. That is
-all this module adds.
+all this module adds -- it is the one standard loop every persona runs through (GAP-024). A
+persona whose ``AgentSpec`` enables it (``max_plan_iterations > 1``; today ``engineer``) may
+replan; every other persona runs the same loop with a replan limit of zero, which is one pass --
+exactly what a single ``ExecutionEngine.execute`` call was before.
 
 Every iteration still goes through the same two engines a single-shot turn uses: a planner
 completion producing text-JSON, then registry-mediated tool dispatch. A model's own emitted
 ``tool_calls`` are never dispatched directly, here or anywhere else (ADR-006) -- looping only
 changes how many times the plan/execute pair runs, never how a tool call reaches the registry.
+The budget gate below can only *refuse* a dispatch before it happens; an admitted call still goes
+through ``ToolRegistry.execute`` and ``ToolPolicy`` unchanged.
 
-Budgets, all bounded: ``max_iterations`` caps replans (via ``PlanningEngine.can_replan``'s
-``limit`` argument), ``deadline_s`` caps the whole loop's wall-clock time independent of any
-single ``ExecutionEngine.execute`` call's own ``deadline_s``, and each iteration still respects
-the execution engine's own step-count budget.
+Five bounds, all data on the persona's :class:`~aura_core.domain.agent_runs.AgentBudget`:
+
+* ``max_iterations`` -- replans after the first pass (``PlanningEngine.can_replan``'s ``limit``);
+* ``token_budget`` -- planner-generation tokens (``Plan.generation_tokens``) summed across the
+  first plan and every revision; checked before spending another replan;
+* ``time_budget_s`` -- wall time on the injected clock's ``monotonic()`` (``FrozenClock`` in
+  tests), never tighter than the caller's own ``deadline_s`` allows;
+* ``tool_budget`` / ``risk_budget`` -- enforced *before* dispatch by :class:`RunBudgetGate`, so a
+  pass cannot overshoot them mid-batch.
+
+Each iteration also still respects the execution engine's own per-pass step and deadline budget.
+When a run context is supplied, :class:`~aura_core.execution.run_recorder.RunRecorder` persists
+the run and its steps through the ``AgentRunStore`` port.
 """
 
 from __future__ import annotations
 
+import inspect
 import time
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Mapping, Sequence
 
-from ..domain.planning import Plan
+from ..domain.agent_runs import AgentBudget, BudgetKind, risk_cost
+from ..domain.planning import Plan, PlanStep, StepStatus
 from ..observability.logging import get_logger
 from ..ports.runtime import ToolContext
 from .engine import ExecutionEngine, ExecutionOutcome, StepEvent
+from .run_recorder import AgentRunContext, RunRecorder
 
-__all__ = ["AgenticExecutor"]
+__all__ = ["AgenticExecutor", "AgentRunContext", "RunBudgetGate", "BudgetRefusal"]
 
 logger = get_logger("agentic_loop")
 
@@ -36,11 +54,25 @@ logger = get_logger("agentic_loop")
 # for a different reason: it is not exhaustion, it is the turn correctly waiting on the user, and
 # no revised plan makes a confirm-gated tool stop needing confirmation. Without it here, the loop
 # would replan past a pending confirmation and the outcome carrying it -- the only place the
-# kernel can find it -- gets overwritten by the next iteration's outcome (`run`/`stream` below
-# only ever keep the latest `outcome`), silently dropping the confirmation request.
+# kernel can find it -- gets overwritten by the next iteration's outcome (the loop only ever
+# keeps the latest `outcome`), silently dropping the confirmation request.
 _TERMINAL_BLOCKS = frozenset(
-    {"deadline_exceeded", "step_budget_exceeded", "budget_exceeded", "needs_confirmation"}
+    {
+        "deadline_exceeded", "step_budget_exceeded", "budget_exceeded", "needs_confirmation",
+        "tool_budget_exceeded", "risk_budget_exceeded",
+    }
 )
+
+#: Which run-level budget a terminal block reason exhausted. ``deadline_exceeded`` and
+#: ``step_budget_exceeded`` are the execution engine's own per-pass bounds; ``budget_exceeded``
+#: is the turn's generation budget (``BudgetExceededError``).
+_BLOCK_BUDGET = {
+    "deadline_exceeded": BudgetKind.TIME,
+    "step_budget_exceeded": BudgetKind.TOOLS,
+    "budget_exceeded": BudgetKind.TOKENS,
+    "tool_budget_exceeded": BudgetKind.TOOLS,
+    "risk_budget_exceeded": BudgetKind.RISK,
+}
 
 
 def _replan_reason(outcome: ExecutionOutcome) -> str:
@@ -51,10 +83,7 @@ def _replan_reason(outcome: ExecutionOutcome) -> str:
     goal's context block (``f"Failed: {s.description} ({s.error_kind})"``) -- this only makes the
     top-level ``reason`` (recorded on the ``PlanRevision`` for audit, and folded into the same
     context by callers that pass it through) carry the same specificity, e.g.
-    ``"step_failed (unresolved_argument)"`` instead of the previous bare ``"step_failed"``. That
-    is the difference between a replan knowing only "something failed" and knowing "the
-    repository argument could not be resolved" -- Item 5's "richer replan context", implemented
-    as this plus the per-step detail `replan()` already had, rather than a new component.
+    ``"step_failed (unresolved_argument)"`` instead of the previous bare ``"step_failed"``.
     """
     reason = outcome.blocked_reason or "step_failed"
     failing = outcome.plan.failed_steps or outcome.plan.blocked_steps()
@@ -64,28 +93,126 @@ def _replan_reason(outcome: ExecutionOutcome) -> str:
     return reason
 
 
-class AgenticExecutor:
-    """Wraps one planner/executor pair in a bounded observe-and-replan loop."""
+@dataclass(frozen=True, slots=True)
+class BudgetRefusal:
+    step_id: str
+    call_id: str
+    tool: str
+    reason: str
+    risk: int
+    side_effecting: bool
 
-    def __init__(self, *, planner: Any, executor: ExecutionEngine, metrics: Any = None) -> None:
+
+class RunBudgetGate:
+    """Pre-dispatch admission for one run's ``tool_budget`` and ``risk_budget``.
+
+    Charged at admission, per dispatch attempt (a retried step is a second dispatch and pays
+    again). Also records each admitted call's risk cost by call id, so the run record can show
+    what every call spent even when neither budget is set.
+    """
+
+    def __init__(self, budget: AgentBudget) -> None:
+        self._budget = budget
+        self.tools_used = 0
+        self.risk_spent = 0
+        self.costs: dict[str, int] = {}
+        self._refusals: list[BudgetRefusal] = []
+
+    def admit(self, step: PlanStep, spec: Any) -> str | None:
+        sensitivity = int(getattr(spec, "sensitivity", 0) or 0) if spec is not None else 0
+        # An unknown tool is refused by the registry anyway; for budgeting assume the worst
+        # about whether it would have acted.
+        side_effecting = bool(getattr(spec, "side_effecting", True)) if spec is not None else True
+        cost = risk_cost(sensitivity, side_effecting=side_effecting) if spec is not None else 0
+        reason: str | None = None
+        if self._budget.tool_budget is not None and self.tools_used + 1 > self._budget.tool_budget:
+            reason = "tool_budget_exceeded"
+        elif (
+            self._budget.risk_budget is not None
+            and self.risk_spent + cost > self._budget.risk_budget
+        ):
+            reason = "risk_budget_exceeded"
+        call_id = f"step_{step.id.value}"
+        if reason is not None:
+            self._refusals.append(BudgetRefusal(
+                step_id=step.id.value, call_id=call_id, tool=step.tool or "", reason=reason,
+                risk=cost, side_effecting=side_effecting,
+            ))
+            return reason
+        self.tools_used += 1
+        self.risk_spent += cost
+        self.costs[call_id] = cost
+        return None
+
+    def take_refusals(self) -> list[BudgetRefusal]:
+        refusals, self._refusals = self._refusals, []
+        return refusals
+
+
+def _accepts(fn: Any, name: str) -> bool:
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
+class AgenticExecutor:
+    """Wraps one planner/executor pair in the bounded agent loop."""
+
+    def __init__(
+        self,
+        *,
+        planner: Any,
+        executor: ExecutionEngine,
+        metrics: Any = None,
+        clock: Any = None,
+        runs: Any = None,
+    ) -> None:
         self._planner = planner
         self._executor = executor
         self._metrics = metrics
+        self._clock = clock
+        #: ``AgentRunStore`` (``ports/coding.py``); ``None`` records nothing durable (metrics
+        #: are still emitted when a run context is given).
+        self._runs = runs
+        self._gate_execute = _accepts(getattr(executor, "execute", None), "gate")
+        self._gate_stream = _accepts(getattr(executor, "stream", None), "gate")
 
-    def _should_continue(
-        self, outcome: ExecutionOutcome, *, deadline: float, max_iterations: int
-    ) -> bool:
+    def _monotonic(self) -> float:
+        if self._clock is not None and hasattr(self._clock, "monotonic"):
+            return float(self._clock.monotonic())
+        return time.monotonic()
+
+    # -- evaluate --------------------------------------------------------------------------
+
+    def _evaluate(
+        self,
+        outcome: ExecutionOutcome,
+        *,
+        deadline: float,
+        max_iterations: int,
+        tokens_used: int,
+        budget: AgentBudget,
+    ) -> tuple[str | None, str | None]:
+        """``(stop_reason, exhausted_budget)``, or ``(None, None)`` to replan."""
         if outcome.succeeded:
-            return False
-        if time.monotonic() > deadline:
-            return False
+            return "completed", None
+        if self._monotonic() > deadline:
+            return "time_budget_exhausted", BudgetKind.TIME
         if outcome.blocked_reason in _TERMINAL_BLOCKS:
-            return False
+            return outcome.blocked_reason, _BLOCK_BUDGET.get(outcome.blocked_reason)
         if not outcome.plan.failed_steps and not outcome.plan.blocked_steps():
             # Nothing a revised plan could repair -- e.g. the plan is complete but some steps
             # were merely skipped, which is not a failure to react to.
-            return False
-        return self._planner.can_replan(outcome.plan, limit=max_iterations)
+            return "nothing_to_repair", None
+        if max_iterations <= 0:
+            return "single_pass", None
+        if budget.token_budget is not None and tokens_used >= budget.token_budget:
+            return "token_budget_exhausted", BudgetKind.TOKENS
+        if not self._planner.can_replan(outcome.plan, limit=max_iterations):
+            return "iteration_budget_exhausted", BudgetKind.ITERATIONS
+        return None, None
 
     async def _next_plan(
         self,
@@ -105,6 +232,134 @@ class AgenticExecutor:
             logger.warning("replan failed; stopping the agentic loop")
             return None
 
+    # -- one pass ----------------------------------------------------------------------------
+
+    async def _pass(
+        self,
+        plan: Plan,
+        *,
+        streaming: bool,
+        gate: RunBudgetGate,
+        context: ToolContext,
+        capabilities: Sequence[str],
+        confirmed_tools: Sequence[str],
+        confirmed_call_ids: Sequence[str],
+        on_event: Callable[[StepEvent], Any] | None,
+    ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
+        common = dict(
+            context=context, capabilities=capabilities,
+            confirmed_tools=confirmed_tools, confirmed_call_ids=confirmed_call_ids,
+        )
+        stream = getattr(self._executor, "stream", None)
+        if streaming and callable(stream):
+            if self._gate_stream:
+                common["gate"] = gate
+            async for item in stream(plan, **common):
+                yield item
+            return
+        if self._gate_execute:
+            common["gate"] = gate
+        yield await self._executor.execute(plan, on_event=on_event, **common)
+
+    # -- the loop ----------------------------------------------------------------------------
+
+    async def _drive(
+        self,
+        plan: Plan,
+        *,
+        streaming: bool,
+        context: ToolContext,
+        capabilities: Sequence[str],
+        confirmed_tools: Sequence[str],
+        confirmed_call_ids: Sequence[str],
+        available_tools: Sequence[Mapping[str, Any]],
+        max_iterations: int,
+        deadline_s: float,
+        on_event: Callable[[StepEvent], Any] | None,
+        budget: AgentBudget | None,
+        run_context: AgentRunContext | None,
+    ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
+        budget = budget or AgentBudget(max_iterations=max(0, max_iterations))
+        time_limit = deadline_s
+        if budget.time_budget_s is not None:
+            time_limit = min(deadline_s, budget.time_budget_s)
+        deadline = self._monotonic() + time_limit
+        gate = RunBudgetGate(budget)
+        recorder = (
+            RunRecorder(
+                context=run_context, budget=budget, store=self._runs, clock=self._clock,
+                metrics=self._metrics,
+            )
+            if run_context is not None else None
+        )
+        tokens_used = int(plan.generation_tokens)
+        stop_reason: str | None = None
+        exhausted: str | None = None
+        outcome: ExecutionOutcome | None = None
+        current = plan
+        iteration = 0
+        try:
+            if recorder is not None:
+                await recorder.start()
+                await recorder.planned(plan, iteration=1)
+            while True:
+                iteration += 1
+                succeeded_before = frozenset(
+                    s.id.value for s in current.steps if s.status is StepStatus.SUCCEEDED
+                )
+                outcome = None
+                async for item in self._pass(
+                    current, streaming=streaming, gate=gate, context=context,
+                    capabilities=capabilities, confirmed_tools=confirmed_tools,
+                    confirmed_call_ids=confirmed_call_ids, on_event=on_event,
+                ):
+                    if isinstance(item, StepEvent):
+                        yield item
+                    else:
+                        outcome = item
+                if outcome is None:
+                    stop_reason = "no_outcome"
+                    break
+                if recorder is not None:
+                    await recorder.observed(
+                        outcome, iteration=iteration, gate=gate,
+                        succeeded_before=succeeded_before,
+                    )
+                stop_reason, exhausted = self._evaluate(
+                    outcome, deadline=deadline, max_iterations=max_iterations,
+                    tokens_used=tokens_used, budget=budget,
+                )
+                if recorder is not None:
+                    await recorder.evaluated(iteration=iteration, stop_reason=stop_reason)
+                if stop_reason is not None:
+                    break
+                revised = await self._next_plan(
+                    outcome, available_tools=available_tools, max_iterations=max_iterations
+                )
+                if revised is None:
+                    stop_reason = "replan_failed"
+                    break
+                tokens_used += int(revised.generation_tokens)
+                if recorder is not None:
+                    await recorder.planned(
+                        revised, iteration=iteration + 1,
+                        replan_reason=outcome.blocked_reason or "step_failed",
+                    )
+                current = revised
+        except BaseException as exc:
+            if recorder is not None:
+                try:
+                    await recorder.crashed(exc)
+                except Exception:  # pragma: no cover - recording must never mask the error
+                    logger.debug("recording a crashed run failed", exc_info=True)
+            raise
+        if recorder is not None:
+            await recorder.finish(outcome, stop_reason=stop_reason, exhausted_budget=exhausted)
+            if outcome is not None:
+                outcome.run_id = recorder.run.id.value
+        if outcome is not None:
+            yield outcome
+
     async def run(
         self,
         plan: Plan,
@@ -117,25 +372,19 @@ class AgenticExecutor:
         max_iterations: int = 1,
         deadline_s: float = 600.0,
         on_event: Callable[[StepEvent], Any] | None = None,
-    ) -> ExecutionOutcome:
+        budget: AgentBudget | None = None,
+        run_context: AgentRunContext | None = None,
+    ) -> ExecutionOutcome | None:
         """Run ``plan`` to completion, replanning on failure up to ``max_iterations`` times."""
-        deadline = time.monotonic() + deadline_s
-        outcome = await self._executor.execute(
-            plan, context=context, capabilities=capabilities,
+        outcome: ExecutionOutcome | None = None
+        async for item in self._drive(
+            plan, streaming=False, context=context, capabilities=capabilities,
             confirmed_tools=confirmed_tools, confirmed_call_ids=confirmed_call_ids,
-            on_event=on_event,
-        )
-        while self._should_continue(outcome, deadline=deadline, max_iterations=max_iterations):
-            revised = await self._next_plan(
-                outcome, available_tools=available_tools, max_iterations=max_iterations
-            )
-            if revised is None:
-                break
-            outcome = await self._executor.execute(
-                revised, context=context, capabilities=capabilities,
-                confirmed_tools=confirmed_tools, confirmed_call_ids=confirmed_call_ids,
-                on_event=on_event,
-            )
+            available_tools=available_tools, max_iterations=max_iterations,
+            deadline_s=deadline_s, on_event=on_event, budget=budget, run_context=run_context,
+        ):
+            if isinstance(item, ExecutionOutcome):
+                outcome = item
         return outcome
 
     async def stream(
@@ -149,6 +398,8 @@ class AgenticExecutor:
         available_tools: Sequence[Mapping[str, Any]] = (),
         max_iterations: int = 1,
         deadline_s: float = 600.0,
+        budget: AgentBudget | None = None,
+        run_context: AgentRunContext | None = None,
     ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
         """Stream step progress across every iteration, then yield the final outcome.
 
@@ -158,27 +409,10 @@ class AgenticExecutor:
         outcome" contract so callers (``AIKernel._iter_execution``) need no special case for the
         looping path.
         """
-        deadline = time.monotonic() + deadline_s
-        current = plan
-        outcome: ExecutionOutcome | None = None
-        while True:
-            async for item in self._executor.stream(
-                current, context=context, capabilities=capabilities,
-                confirmed_tools=confirmed_tools, confirmed_call_ids=confirmed_call_ids,
-            ):
-                if isinstance(item, StepEvent):
-                    yield item
-                else:
-                    outcome = item
-            if outcome is None or not self._should_continue(
-                outcome, deadline=deadline, max_iterations=max_iterations
-            ):
-                break
-            revised = await self._next_plan(
-                outcome, available_tools=available_tools, max_iterations=max_iterations
-            )
-            if revised is None:
-                break
-            current = revised
-        if outcome is not None:
-            yield outcome
+        async for item in self._drive(
+            plan, streaming=True, context=context, capabilities=capabilities,
+            confirmed_tools=confirmed_tools, confirmed_call_ids=confirmed_call_ids,
+            available_tools=available_tools, max_iterations=max_iterations,
+            deadline_s=deadline_s, on_event=None, budget=budget, run_context=run_context,
+        ):
+            yield item

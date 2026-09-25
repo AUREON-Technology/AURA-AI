@@ -168,6 +168,7 @@ class PlanningEngine:
         """
         started = time.perf_counter()
         limit = min(max_steps or self._max_steps, self._max_steps)
+        generation_tokens = 0
 
         tool_lines = "\n".join(_render_tool_line(t) for t in available_tools)
         rendered = self._prompts.render(
@@ -194,6 +195,8 @@ class PlanningEngine:
                     timeout_s=self._request_timeout_s,
                 )
             )
+            usage = getattr(response, "usage", None)
+            generation_tokens = int(getattr(usage, "total_tokens", 0) or 0)
             steps = self._parse_steps(response.text, available_tools={t.get("name") for t in available_tools})
             if not steps:
                 # The router call succeeded -- this is not the except-block's "provider is
@@ -222,7 +225,10 @@ class PlanningEngine:
                 )
             ]
 
-        plan = Plan(id=PlanId.new(), goal=goal, steps=tuple(steps[:limit]), max_steps=self._max_steps)
+        plan = Plan(
+            id=PlanId.new(), goal=goal, steps=tuple(steps[:limit]), max_steps=self._max_steps,
+            generation_tokens=generation_tokens,
+        )
         if self._metrics is not None:
             self._metrics.plans_created_total.labels(agent="planner").inc()
             self._metrics.plan_steps.observe(len(plan.steps))
@@ -389,7 +395,10 @@ class PlanningEngine:
 
         if self._metrics is not None:
             self._metrics.plan_revisions_total.labels(reason=reason[:40]).inc()
-        return plan.revised(steps=[*completed, *renumbered], reason=reason)
+        return plan.revised(
+            steps=[*completed, *renumbered], reason=reason,
+            generation_tokens=fresh.generation_tokens,
+        )
 
     @staticmethod
     def goal_from_message(message: str, *, criteria: Sequence[str] = ()) -> Goal:

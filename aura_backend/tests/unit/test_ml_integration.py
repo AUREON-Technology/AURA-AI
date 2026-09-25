@@ -9,7 +9,11 @@ Tests the complete ML framework integration including:
 - Checkpoint management
 - Training service
 - ML Service
-- LocalLoraTrainer integration
+- LocalLoraTrainer refusing input it cannot train on (it is NOT built on this package)
+
+What this file does not test: LLM fine-tuning. ``aura_core.adapters.ml`` builds a randomly
+initialised classification transformer and never loads a base language model; see its package
+docstring. The real LoRA weight-change proof is ``tests/training`` (opt-in, ``-m training``).
 """
 
 import asyncio
@@ -52,7 +56,8 @@ from aura_core.adapters.ml import (
     get_device_info,
     get_device_manager,
 )
-from aura_core.adapters.local_lora_trainer import LocalLoraTrainer, create_local_lora_trainer
+from aura_core.adapters.local_lora_trainer import LocalLoraTrainer
+from aura_core.domain.errors import ValidationError
 from aura_core.ports.mlops import FineTuneJobSpec
 
 
@@ -339,48 +344,31 @@ def test_training_service():
 
 
 def test_local_lora_trainer():
-    """Test LocalLoraTrainer integration."""
+    """LocalLoraTrainer fails loudly on rows it cannot train on -- no fallback artefact.
+
+    This test used to accept a ``modelfile://`` "result" produced after the trainer swallowed
+    an AttributeError (GAP-018). ``{"text": ...}`` rows carry no target completion, so there is
+    nothing to compute a supervised loss on; the trainer must raise, not invent an outcome.
+    """
+    job = FineTuneJobSpec(
+        job_id="test-job",
+        dataset_digest="abc123",
+        dataset_jsonl="\n".join(json.dumps(r) for r in ({"text": "Hello world"},
+                                                          {"text": "Test example"})),
+        base_model="sshleifer/tiny-gpt2",
+        output_tag="aura-test-model",
+        epochs=1,
+        batch_size=1,
+        learning_rate=2e-4,
+        allow_cpu=True,
+    )
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Create a test dataset
-        dataset_path = Path(tmpdir) / "test_dataset.jsonl"
-        test_data = [
-            {"text": "Hello world"},
-            {"text": "Test example"},
-        ]
-        with open(dataset_path, "w") as f:
-            for item in test_data:
-                f.write(json.dumps(item) + "\n")
-
-        # Create job spec
-        job = FineTuneJobSpec(
-            job_id="test-job",
-            dataset_digest="abc123",
-            dataset_jsonl=Path(dataset_path).read_text(),
-            base_model="sshleifer/tiny-gpt2",
-            output_tag="aura-test-model",
-            parameters={
-                "epochs": 1,
-                "batch_size": 1,
-                "learning_rate": 2e-4,
-            },
-            allow_cpu=True,
+        trainer = LocalLoraTrainer(
+            work_dir=tmpdir, allow_cpu=True, cpu_base_allowlist=("sshleifer/tiny-gpt2",)
         )
-
-        # Create trainer
-        trainer = create_local_lora_trainer(
-            work_dir=tmpdir,
-            allow_cpu=True,
-            cpu_base_allowlist=("sshleifer/tiny-gpt2",),
-        )
-
-        # Run training (will fall back to Modelfile if deps not available)
-        result = asyncio.run(trainer.train(job))
-
-        assert result is not None
-        assert result.provider_kind in ("local_lora", "ollama")
-        print(f"LocalLoraTrainer result: {result.provider_kind} - {result.notes}")
-
-    print("PASS: LocalLoraTrainer tests passed")
+        with pytest.raises(ValidationError):
+            asyncio.run(trainer.train(job))
+        assert not any(Path(tmpdir).iterdir()), "nothing may be written for a refused job"
 
 
 @_needs_tensorflow

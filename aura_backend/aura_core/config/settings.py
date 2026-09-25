@@ -489,6 +489,10 @@ class KnowledgeSettings:
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     mmr_lambda: float = 0.7
     graph_enabled: bool = True
+    #: Adds the model-backed extractor after the rule extractor. Off by default: it costs one
+    #: generation per ingested document, and its output is only ever a candidate that the graph
+    #: pipeline validates like any other (ADR-005, "Knowledge graph").
+    graph_llm_extraction: bool = False
     max_document_bytes: int = 8 * 1024 * 1024
     #: Character cap applied when a chunk is *injected into the prompt*. Stored chunks stay at
     #: ``chunk_max_tokens``; this is the citation budget the model actually sees.
@@ -535,6 +539,7 @@ class KnowledgeSettings:
             or "cross-encoder/ms-marco-MiniLM-L-6-v2",
             mmr_lambda=_float("KNOWLEDGE_MMR_LAMBDA", 0.7, minimum=0.0, maximum=1.0),
             graph_enabled=_bool("KNOWLEDGE_GRAPH_ENABLED", True),
+            graph_llm_extraction=_bool("KNOWLEDGE_GRAPH_LLM_EXTRACTION", False),
             max_document_bytes=_int("KNOWLEDGE_MAX_DOC_BYTES", 8 * 1024 * 1024, minimum=1024),
             prompt_chunk_max_chars=_int("KNOWLEDGE_PROMPT_CHUNK_CHARS", 280, minimum=64, maximum=4000),
             ocr_enabled=_bool("KNOWLEDGE_OCR_ENABLED", True),
@@ -863,10 +868,14 @@ class LearningSettings:
     finetune_model_id: str = "aura-ft"
     #: Allow LocalLoraTrainer on CPU — still limited to a small-model allowlist.
     finetune_allow_cpu: bool = False
+    #: Hugging Face repo ids (prefix match with a trailing ``*``). LocalLoraTrainer loads
+    #: transformers checkpoints, so Ollama tags (``name:tag``) can never match a trainable base;
+    #: they used to be listed here. 3B-class bases are deliberately absent: fp32 LoRA on a 3B
+    #: model does not fit worker-training's 4G memory limit, and CPU speed makes it moot.
     finetune_cpu_base_allowlist: tuple[str, ...] = (
-        "smollm2:135m",
-        "qwen2.5:3b-instruct-q4_K_M",
-        "qwen2.5:3b",
+        "HuggingFaceTB/SmolLM2-135M*",
+        "Qwen/Qwen2.5-0.5B*",
+        "hf-internal-testing/tiny-random-*",
     )
     #: Soft estimate shown in the recommendation packet (hours on CPU).
     finetune_estimated_cpu_hours: float | None = None
@@ -897,9 +906,9 @@ class LearningSettings:
             finetune_cpu_base_allowlist=tuple(
                 _list("LEARNING_FINETUNE_CPU_BASES")
                 or (
-                    "smollm2:135m",
-                    "qwen2.5:3b-instruct-q4_K_M",
-                    "qwen2.5:3b",
+                    "HuggingFaceTB/SmolLM2-135M*",
+                    "Qwen/Qwen2.5-0.5B*",
+                    "hf-internal-testing/tiny-random-*",
                 )
             ),
             finetune_estimated_cpu_hours=cpu_hours,

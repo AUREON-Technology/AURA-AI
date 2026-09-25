@@ -92,10 +92,14 @@ COVERED = {
         "TestKnowledgeDocuments::test_bob_cannot_pin_alices_document",
     ("DELETE", "/api/v3/knowledge/documents/{document_id}/cag-pin"):
         "TestKnowledgeDocuments::test_bob_cannot_unpin_alices_document",
+    ("GET", "/api/v3/knowledge/graph/entities/{entity_key}"):
+        "TestKnowledgeGraph::test_bob_cannot_read_alices_entity_by_key",
     ("DELETE", "/api/v3/memory/{memory_id}"):
         "TestMemory::test_bob_cannot_delete_alices_memory",
     ("DELETE", "/api/v3/engineering/workspaces/{workspace_id}"):
         "TestEngineering::test_bob_cannot_delete_alices_workspace",
+    ("GET", "/api/v3/agents/runs/{run_id}"):
+        "TestAgentRuns::test_bob_cannot_read_alices_agent_run",
     ("POST", "/api/v3/insights/{insight_id}/dismiss"):
         "Postgres-only route (api/v2/insights.py): `row.user_id != user.id` -> 404; exercised "
         "against a real database by test_insights_integration.py in the legacy suite",
@@ -254,6 +258,66 @@ class TestKnowledgeDocuments:
 
 
 # --------------------------------------------------------------------------------------
+# Knowledge graph
+# --------------------------------------------------------------------------------------
+
+
+class TestKnowledgeGraph:
+    """Facts extracted from Alice's document are Alice's: not listed, not readable by key."""
+
+    GRAPH_TEXT = (
+        "Sarah Chen works at Pelican Holdings. Sarah Chen reports to Omar Farouk. "
+        "Pelican Holdings is located in Lisbon District."
+    )
+
+    def _alice_graph(self, client) -> None:
+        response = _ingest(
+            client, headers=AUTH_A, title="Alice org chart", content=self.GRAPH_TEXT,
+            document_id="alice-org",
+        )
+        assert response.status_code == 200, response.text
+        mine = client.get("/api/v3/knowledge/graph", headers=AUTH_A).json()
+        assert any(e["key"] == "person:sarah-chen" for e in mine["entities"]), mine
+        assert any(r["predicate"] == "reports_to" for r in mine["relations"]), mine
+
+    def test_bob_cannot_list_alices_entities_or_relations(self, client) -> None:
+        self._alice_graph(client)
+        listing = client.get("/api/v3/knowledge/graph", headers=AUTH_B).json()
+        assert listing["entities"] == [] and listing["relations"] == []
+        searched = client.get(
+            "/api/v3/knowledge/graph", params={"query": "sarah"}, headers=AUTH_B
+        ).json()
+        assert searched["entities"] == []
+
+    def test_bob_cannot_read_alices_entity_by_key(self, client) -> None:
+        self._alice_graph(client)
+        response = client.get(
+            "/api/v3/knowledge/graph/entities/person:sarah-chen", headers=AUTH_B
+        )
+        assert response.status_code == 404
+        own = client.get("/api/v3/knowledge/graph/entities/person:sarah-chen", headers=AUTH_A)
+        assert own.status_code == 200, own.text
+        body = own.json()
+        assert body["provenance"][0]["document_id"] == "alice-org"
+        assert {r["predicate"] for r in body["relations"]} >= {"works_at", "reports_to"}
+
+    def test_bob_deleting_alices_document_does_not_touch_her_facts(self, client) -> None:
+        self._alice_graph(client)
+        client.delete("/api/v3/knowledge/documents/alice-org", headers=AUTH_B)
+        mine = client.get("/api/v3/knowledge/graph", headers=AUTH_A).json()
+        assert any(r["predicate"] == "reports_to" for r in mine["relations"])
+
+    def test_alice_deleting_her_document_removes_its_facts(self, client) -> None:
+        self._alice_graph(client)
+        response = client.delete("/api/v3/knowledge/documents/alice-org", headers=AUTH_A)
+        assert response.status_code == 200
+        mine = client.get(
+            "/api/v3/knowledge/graph", params={"include_expired": "true"}, headers=AUTH_A
+        ).json()
+        assert mine["entities"] == [] and mine["relations"] == []
+
+
+# --------------------------------------------------------------------------------------
 # Memory
 # --------------------------------------------------------------------------------------
 
@@ -329,6 +393,64 @@ class TestEngineering:
         with TestClient(_app(container)) as client:
             assert client.get("/api/v3/engineering/runs", headers=AUTH_B).json()["runs"] == []
             assert len(client.get("/api/v3/engineering/runs", headers=AUTH_A).json()["runs"]) == 1
+
+
+class TestAgentRuns:
+    """GAP-024: agent runs and their steps are the caller's own, by id and by listing."""
+
+    @staticmethod
+    def _alice_run(container) -> str:
+        from datetime import datetime, timezone
+
+        from aura_core.domain.agent_runs import (
+            AgentPhase, AgentRun, AgentRunStatus, AgentStep, AgentStepKind,
+        )
+        from aura_core.domain.identifiers import AgentRunId, AgentStepId
+
+        now = datetime.now(timezone.utc)
+        run = AgentRun(
+            id=AgentRunId.new(), user_id=UserId(ALICE), agent_id="engineer", turn_id="t1",
+            correlation_id="c1", status=AgentRunStatus.COMPLETED, created_at=now, updated_at=now,
+        )
+        asyncio.run(container.agent_runs.save_run(run))
+        asyncio.run(container.agent_runs.append_step(AgentStep(
+            id=AgentStepId.new(), run_id=run.id, user_id=UserId(ALICE), seq=1, iteration=1,
+            phase=AgentPhase.EXECUTE, kind=AgentStepKind.TOOL_CALL, created_at=now,
+            status="succeeded", tool="git_status",
+        )))
+        return run.id.value
+
+    def test_bob_cannot_read_alices_agent_run(self, container) -> None:
+        from fastapi.testclient import TestClient
+
+        run_id = self._alice_run(container)
+        with TestClient(_app(container)) as client:
+            assert client.get(f"/api/v3/agents/runs/{run_id}", headers=AUTH_B).status_code == 404
+            mine = client.get(f"/api/v3/agents/runs/{run_id}", headers=AUTH_A)
+        assert mine.status_code == 200
+        assert [s["tool"] for s in mine.json()["steps"]] == ["git_status"]
+
+    def test_bob_cannot_list_alices_agent_runs(self, container) -> None:
+        from fastapi.testclient import TestClient
+
+        self._alice_run(container)
+        with TestClient(_app(container)) as client:
+            assert client.get("/api/v3/agents/runs", headers=AUTH_B).json()["runs"] == []
+            assert len(client.get("/api/v3/agents/runs", headers=AUTH_A).json()["runs"]) == 1
+
+    def test_bob_cannot_overwrite_alices_run_by_reusing_its_id(self, container) -> None:
+        """The store never re-owns a row: an upsert naming another user's run id is refused."""
+        from dataclasses import replace
+
+        run_id = self._alice_run(container)
+        from aura_core.domain.identifiers import AgentRunId
+
+        alices = asyncio.run(container.agent_runs.get_run(AgentRunId(run_id), user_id=UserId(ALICE)))
+        with pytest.raises(ValueError):
+            asyncio.run(container.agent_runs.save_run(replace(alices, user_id=UserId(BOB))))
+        assert asyncio.run(
+            container.agent_runs.get_run(AgentRunId(run_id), user_id=UserId(ALICE))
+        ) is not None
 
 
 # --------------------------------------------------------------------------------------
