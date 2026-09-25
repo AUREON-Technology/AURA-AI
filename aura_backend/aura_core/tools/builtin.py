@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 
 from ..domain.errors import ToolExecutionError
 from ..domain.memory import MemoryKind, MemoryQuery
+from ..domain.network import is_internal_address
 from ..domain.tools import ToolCategory, ToolSensitivity
 from ..ports.runtime import Tool, ToolContext
 from .base import param, tool
@@ -396,9 +397,7 @@ def _assert_public_url(url: str, allowed_hosts: frozenset[str], tool_name: str) 
         address = ipaddress.ip_address(host)
     except ValueError:
         address = None
-    if address is not None and (
-        address.is_private or address.is_loopback or address.is_link_local or address.is_reserved
-    ):
+    if address is not None and is_internal_address(address):
         raise ToolExecutionError("private and link-local addresses are not permitted", tool=tool_name)
     if not any(host == allowed or host.endswith(f".{allowed}") for allowed in allowed_hosts):
         raise ToolExecutionError(
@@ -425,8 +424,10 @@ async def _assert_resolves_publicly(host: str, tool_name: str) -> None:
     except socket.gaierror as exc:
         raise ToolExecutionError(f"could not resolve host {host!r}: {exc}", tool=tool_name) from exc
     for _family, _kind, _proto, _canon, sockaddr in infos:
-        address = ipaddress.ip_address(sockaddr[0])
-        if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved:
+        # getaddrinfo reports scoped IPv6 as "fe80::1%eth0"; the scope id is not part of the
+        # address and would make ip_address() raise instead of refusing.
+        address = ipaddress.ip_address(str(sockaddr[0]).split("%", 1)[0])
+        if is_internal_address(address):
             raise ToolExecutionError(
                 f"host {host!r} resolves to a private address ({address}); refusing to fetch",
                 tool=tool_name,

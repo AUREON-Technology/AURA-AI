@@ -27,6 +27,7 @@ from urllib.parse import urlparse
 from ..domain.errors import AuthorizationError, NotFoundError, ValidationError
 from ..domain.identifiers import DocumentId
 from ..domain.knowledge import KnowledgeSource, SourceType
+from ..domain.network import is_internal_address
 from ..observability.logging import get_logger
 
 __all__ = [
@@ -167,18 +168,37 @@ class HttpSourceFetcher:
             address = ipaddress.ip_address(host)
         except ValueError:
             return
-        if (
-            address.is_private
-            or address.is_loopback
-            or address.is_link_local
-            or address.is_reserved
-        ):
+        if is_internal_address(address):
             raise AuthorizationError(
                 "private and link-local addresses are not permitted", details={"host": host}
             )
 
+    @staticmethod
+    async def _assert_resolves_publicly(url: str) -> None:
+        """The DNS half of the policy -- what ``fetch_url`` already did and this did not. An
+        approved source is only ever checked by name above; if its DNS later points inside the
+        network (a lapsed domain, a rebinding record) the nightly job would fetch it unattended.
+        Same TOCTOU caveat as the tool: this narrows the window, IP pinning would close it."""
+        import socket
+
+        host = (urlparse(url).hostname or "").lower()
+        try:
+            infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
+        except socket.gaierror as exc:
+            raise ValidationError(
+                f"could not resolve source host {host!r}", details={"host": host}
+            ) from exc
+        for _family, _kind, _proto, _canon, sockaddr in infos:
+            address = ipaddress.ip_address(str(sockaddr[0]).split("%", 1)[0])
+            if is_internal_address(address):
+                raise AuthorizationError(
+                    "source host resolves to a private address; refusing to fetch",
+                    details={"host": host},
+                )
+
     async def fetch(self, source: KnowledgeSource) -> list[FetchedDocument]:
         self._assert_fetchable(source.uri)
+        await self._assert_resolves_publicly(source.uri)
         try:
             import httpx
         except ImportError as exc:  # pragma: no cover
