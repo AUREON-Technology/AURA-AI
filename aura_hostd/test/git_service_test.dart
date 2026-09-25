@@ -33,6 +33,34 @@ void main() {
     await _git(repoDir.path, ['commit', '-q', '-m', message]);
   }
 
+  /// Sets up a real bare "remote" repository with one commit, and a real clone of it -- for tests
+  /// that need fetch/pull/push to talk to a second, genuinely separate repository rather than
+  /// exercising only the no-remote/no-upstream failure paths the rest of this group covers.
+  Future<(Directory remote, Directory clone)> setUpRemoteWithClone() async {
+    final remoteDir = Directory.systemTemp.createTempSync('aura_hostd_git_service_test_remote_');
+    addTearDown(() => remoteDir.deleteSync(recursive: true));
+    await _git(remoteDir.path, ['init', '-q', '--bare', '-b', 'main']);
+
+    final seedDir = Directory.systemTemp.createTempSync('aura_hostd_git_service_test_seed_');
+    addTearDown(() => seedDir.deleteSync(recursive: true));
+    await _git(seedDir.path, ['init', '-q', '-b', 'main']);
+    await _git(seedDir.path, ['config', 'user.name', 'Test User']);
+    await _git(seedDir.path, ['config', 'user.email', 'test@example.com']);
+    File(p.join(seedDir.path, 'seed.txt')).writeAsStringSync('seed');
+    await _git(seedDir.path, ['add', '--', 'seed.txt']);
+    await _git(seedDir.path, ['commit', '-q', '-m', 'seed commit']);
+    await _git(seedDir.path, ['remote', 'add', 'origin', remoteDir.path]);
+    await _git(seedDir.path, ['push', '-q', 'origin', 'main']);
+
+    final cloneDir = Directory.systemTemp.createTempSync('aura_hostd_git_service_test_clone_');
+    addTearDown(() => cloneDir.deleteSync(recursive: true));
+    await _git(Directory.systemTemp.path, ['clone', '-q', remoteDir.path, cloneDir.path]);
+    await _git(cloneDir.path, ['config', 'user.name', 'Test User']);
+    await _git(cloneDir.path, ['config', 'user.email', 'test@example.com']);
+
+    return (remoteDir, cloneDir);
+  }
+
   group('status', () {
     test('a repo with no commits yet reports a null-safe state, not a crash', () async {
       final status = await git.status(repoDir.path);
@@ -315,5 +343,84 @@ void main() {
       expect(result['ok'], false);
       expect(result['reason'], 'no_upstream');
     });
+
+    test('fetch and pull retrieve a real commit made on a second local repository', () async {
+      final (remoteDir, cloneDir) = await setUpRemoteWithClone();
+
+      // A second commit lands on the remote after the clone was made, so fetch+pull have
+      // something real to bring down rather than trivially no-opping.
+      final pusherDir = Directory.systemTemp.createTempSync('aura_hostd_git_service_test_pusher_');
+      addTearDown(() => pusherDir.deleteSync(recursive: true));
+      await _git(Directory.systemTemp.path, ['clone', '-q', remoteDir.path, pusherDir.path]);
+      await _git(pusherDir.path, ['config', 'user.name', 'Test User']);
+      await _git(pusherDir.path, ['config', 'user.email', 'test@example.com']);
+      File(p.join(pusherDir.path, 'later.txt')).writeAsStringSync('later commit');
+      await _git(pusherDir.path, ['add', '--', 'later.txt']);
+      await _git(pusherDir.path, ['commit', '-q', '-m', 'later commit']);
+      await _git(pusherDir.path, ['push', '-q', 'origin', 'main']);
+
+      final fetchResult = await git.fetch(cloneDir.path);
+      expect(fetchResult['ok'], true);
+      expect(fetchResult['remotes'], ['origin']);
+
+      final branchesAfterFetch = await git.branches(cloneDir.path);
+      final remoteBranches = (branchesAfterFetch['branches'] as List).cast<Map<String, Object?>>();
+      expect(remoteBranches.any((b) => b['name'] == 'remotes/origin/main'), isTrue);
+      // Not yet in the clone's own working tree -- fetch only moves remote-tracking branches.
+      expect(File(p.join(cloneDir.path, 'later.txt')).existsSync(), isFalse);
+
+      final pullResult = await git.pull(cloneDir.path);
+      expect(pullResult['ok'], true);
+      expect(File(p.join(cloneDir.path, 'later.txt')).existsSync(), isTrue);
+    });
+
+    test('push sends a real local commit to a second local repository', () async {
+      final (remoteDir, cloneDir) = await setUpRemoteWithClone();
+
+      File(p.join(cloneDir.path, 'pushed.txt')).writeAsStringSync('pushed');
+      await _git(cloneDir.path, ['add', '--', 'pushed.txt']);
+      await _git(cloneDir.path, ['commit', '-q', '-m', 'from the clone']);
+
+      final pushResult = await git.push(cloneDir.path);
+      expect(pushResult['ok'], true);
+
+      // Verify it actually landed on the remote, not just that the client reported success --
+      // check out the bare remote's own main branch into a fresh directory and look for the file.
+      final checkoutDir = Directory.systemTemp.createTempSync('aura_hostd_git_service_test_checkout_');
+      addTearDown(() => checkoutDir.deleteSync(recursive: true));
+      await _git(Directory.systemTemp.path, ['clone', '-q', remoteDir.path, checkoutDir.path]);
+      expect(File(p.join(checkoutDir.path, 'pushed.txt')).existsSync(), isTrue);
+    });
+  });
+
+  group('network timeout (fetch/pull/push against an unresponsive remote)', () {
+    test('fetch against a remote that never responds is killed and reports a timeout, not a hang', () async {
+      // A raw TCP listener that accepts the connection and then never writes anything back --
+      // `git fetch` blocks forever waiting for the ref advertisement that never comes, the same
+      // way it would against a genuinely stalled network peer. No real network is involved: both
+      // ends are loopback-only.
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close());
+      final subscription = server.listen((socket) => socket.listen((_) {}));
+      addTearDown(subscription.cancel);
+
+      await commitFile('a.txt', 'hello');
+      await _git(repoDir.path, ['remote', 'add', 'origin', 'git://127.0.0.1:${server.port}/unresponsive.git']);
+
+      // A short override so this test doesn't have to wait out GitService's real default.
+      final impatientGit = GitService(networkTimeout: const Duration(milliseconds: 300));
+      final stopwatch = Stopwatch()..start();
+      await expectLater(
+        impatientGit.fetch(repoDir.path),
+        throwsA(isA<GitCommandError>().having((e) => e.message, 'message', contains('timed out'))),
+      );
+      stopwatch.stop();
+      // A generous upper bound relative to the 300ms timeout -- this is the assertion that
+      // actually distinguishes "the process was killed" from "the test merely gave up waiting on
+      // it," since the latter (a bare `Future.timeout` with no `Process.kill`) would leave the
+      // real `git fetch` process running in the background indefinitely while still making a
+      // weaker version of this test pass.
+      expect(stopwatch.elapsed, lessThan(const Duration(seconds: 5)));
+    }, timeout: const Timeout(Duration(seconds: 15)));
   });
 }

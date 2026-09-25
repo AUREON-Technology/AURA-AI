@@ -20,6 +20,7 @@
 /// shell string.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -62,6 +63,13 @@ class _GitResult {
 }
 
 class GitService {
+  /// [networkTimeout] bounds [fetch]/[pull]/[push] (see [_runNetwork]'s doc comment) --
+  /// overridable so a test can exercise the timeout-and-kill path deterministically without
+  /// waiting out a real 30-second hang.
+  GitService({Duration networkTimeout = const Duration(seconds: 30)}) : _networkTimeout = networkTimeout;
+
+  final Duration _networkTimeout;
+
   Future<Map<String, Object?>> status(String cwd) async {
     final result = await _runOk(cwd, ['-c', 'core.quotepath=false', 'status', '--short', '--branch']);
     final lines = const LineSplitter().convert(result.stdout);
@@ -268,7 +276,7 @@ class GitService {
         .where((line) => line.isNotEmpty)
         .toList();
     if (remotes.isEmpty) return {'ok': true, 'remotes': const <String>[]};
-    final result = await _run(cwd, ['fetch', '--prune', ...remotes]);
+    final result = await _runNetwork(cwd, ['fetch', '--prune', ...remotes]);
     if (result.exitCode != 0) {
       if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
       throw GitCommandError('git fetch failed: ${result.stderr}');
@@ -281,7 +289,7 @@ class GitService {
   /// unpushed-overwritable, and no-upstream states come back as structured
   /// `{ok: false, reason: ...}` results the panel renders, not exceptions.
   Future<Map<String, Object?>> pull(String cwd) async {
-    final result = await _run(cwd, ['pull', '--ff-only']);
+    final result = await _runNetwork(cwd, ['pull', '--ff-only']);
     if (result.exitCode != 0) {
       if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
       if (result.stderr.contains('would be overwritten by')) {
@@ -308,7 +316,7 @@ class GitService {
   /// guard the server-side `git_push` tool enforces on its own path). Like
   /// [pull], remote-moved and no-upstream states are structured results.
   Future<Map<String, Object?>> push(String cwd) async {
-    final result = await _run(cwd, ['push']);
+    final result = await _runNetwork(cwd, ['push']);
     if (result.exitCode != 0) {
       if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
       if (result.stderr.contains('has no upstream branch') ||
@@ -487,7 +495,14 @@ class GitService {
   }
 
   Future<_GitResult> _run(String cwd, List<String> args) async {
-    final result = await Process.run('git', args, workingDirectory: cwd, stdoutEncoding: null, stderrEncoding: null);
+    final result = await Process.run(
+      'git',
+      args,
+      workingDirectory: cwd,
+      environment: _gitEnvironment,
+      stdoutEncoding: null,
+      stderrEncoding: null,
+    );
     try {
       return _GitResult(
         exitCode: result.exitCode,
@@ -498,7 +513,40 @@ class GitService {
       throw GitDecodeError('git output is not valid UTF-8 text');
     }
   }
+
+  /// [fetch]/[pull]/[push] talk to a remote, so unlike every other command in this file they can
+  /// block on something outside this machine: a slow/unresponsive server, or -- absent
+  /// [_gitEnvironment]'s `GIT_TERMINAL_PROMPT=0` -- git itself blocking on a username/password
+  /// prompt this headless daemon has no way to answer. [_run]/[Process.run] has no timeout of its
+  /// own and doesn't expose the spawned [Process], so a hung call there can never be cancelled;
+  /// this uses [Process.start] instead specifically so a timeout can actually [Process.kill] it,
+  /// rather than merely giving up on waiting for it while it keeps running (and keeps the repo's
+  /// `.git/index.lock`, if any) in the background.
+  Future<_GitResult> _runNetwork(String cwd, List<String> args) async {
+    final process = await Process.start('git', args, workingDirectory: cwd, environment: _gitEnvironment);
+    final stdoutBytes = process.stdout.fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
+    final stderrBytes = process.stderr.fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
+    int exitCode;
+    try {
+      exitCode = await process.exitCode.timeout(_networkTimeout);
+    } on TimeoutException {
+      process.kill(ProcessSignal.sigkill);
+      throw GitCommandError('git ${args.join(' ')} timed out after ${_networkTimeout.inSeconds}s');
+    }
+    try {
+      return _GitResult(exitCode: exitCode, stdout: utf8.decode(await stdoutBytes), stderr: utf8.decode(await stderrBytes));
+    } on FormatException {
+      throw GitDecodeError('git output is not valid UTF-8 text');
+    }
+  }
 }
+
+/// Applied to every git invocation in this file: makes git fail fast with a normal non-zero exit
+/// (already handled by every caller here) instead of blocking on an interactive username/password
+/// prompt that this headless daemon process has no way to answer. Without it, a fetch/pull/push
+/// against a remote with no preconfigured credential helper can hang indefinitely from the human's
+/// point of view -- the Git panel's button just spins forever.
+const _gitEnvironment = {'GIT_TERMINAL_PROMPT': '0'};
 
 class _StatusHeader {
   const _StatusHeader({required this.branch, required this.upstream, required this.ahead, required this.behind});
