@@ -24,6 +24,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Mapping, Sequence
 
+from ..domain.agent_runs import AgentRun, AgentStep
 from ..domain.engineering import AgentWorkspace, EngineerRun
 from ..domain.errors import ConflictError, NotFoundError, ValidationError
 from ..domain.github_identity import GitHubIdentity
@@ -450,13 +451,65 @@ class InMemoryPersonalOsStore:
 
 
 class InMemoryEngineerRunStore:
-    """Reference implementation of
-    :class:`~aura_core.ports.coding.EngineerRunStore`. Read-only from a caller's perspective
-    beyond :meth:`record` -- see that port's docstring."""
+    """Reference implementation of :class:`~aura_core.ports.coding.AgentRunStore` -- the
+    engineer-run ledger plus the per-run agent state that generalises it (GAP-024). Engineer
+    runs are read-only from a caller's perspective beyond :meth:`record`; agent runs are
+    upserted by id and their steps appended, exactly as the Postgres adapter does."""
 
     def __init__(self) -> None:
         self._runs: list[EngineerRun] = []
+        self._agent_runs: dict[str, AgentRun] = {}
+        self._agent_steps: dict[str, list[AgentStep]] = {}
         self._lock = asyncio.Lock()
+
+    # -- agent runs (any persona) ----------------------------------------------------------
+
+    async def save_run(self, run: AgentRun) -> None:
+        async with self._lock:
+            existing = self._agent_runs.get(run.id.value)
+            if existing is not None and existing.user_id != run.user_id:
+                # The Postgres upsert keys on id alone; a second owner claiming an existing id is
+                # a bug upstream, and silently re-owning the row would be a cross-user write.
+                raise ValueError("agent run id already belongs to another user")
+            self._agent_runs[run.id.value] = run
+
+    async def append_step(self, step: AgentStep) -> None:
+        async with self._lock:
+            self._agent_steps.setdefault(step.run_id.value, []).append(step)
+
+    async def get_run(self, run_id: Any, *, user_id: UserId) -> AgentRun | None:
+        run = self._agent_runs.get(run_id.value)
+        if run is None or run.user_id != user_id:
+            return None
+        return run
+
+    async def list_runs(
+        self,
+        user_id: UserId,
+        *,
+        agent_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[AgentRun]:
+        matches = [
+            r for r in self._agent_runs.values()
+            if r.user_id == user_id
+            and (agent_id is None or r.agent_id == agent_id)
+            and (status is None or r.status == status)
+        ]
+        matches.sort(key=lambda r: (r.created_at, r.id.value), reverse=True)
+        return matches[:limit]
+
+    async def list_steps(
+        self, run_id: Any, *, user_id: UserId, limit: int = 500,
+    ) -> list[AgentStep]:
+        if await self.get_run(run_id, user_id=user_id) is None:
+            return []
+        steps = [s for s in self._agent_steps.get(run_id.value, []) if s.user_id == user_id]
+        steps.sort(key=lambda s: s.seq)
+        return steps[:limit]
+
+    # -- engineer runs -----------------------------------------------------------------------
 
     async def record(self, run: EngineerRun) -> None:
         async with self._lock:
