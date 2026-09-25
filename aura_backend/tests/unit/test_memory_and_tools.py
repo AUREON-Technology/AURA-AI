@@ -271,8 +271,10 @@ class TestToolDispatch:
         assert not result.ok
         assert result.error_kind == "tool_execution_error"
         assert "buggy" in result.content
-        # The exception type reaches the model so it can react; the stack trace does not.
-        assert "RuntimeError" in result.content
+        # The handler's own message reaches the model so it can react -- not just the exception
+        # type name, which erased every actionable detail (e.g. a SandboxError's "no desktop app
+        # is connected... pair it") before it ever got there. The stack trace still does not.
+        assert "boom" in result.content
         assert "Traceback" not in result.content
 
     async def test_results_are_truncated_and_marked(self, user) -> None:
