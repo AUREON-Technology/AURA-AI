@@ -188,6 +188,7 @@ class GitState {
     this.commits = const [],
     this.busy = false,
     this.error,
+    this.conflictedFiles = const [],
   });
 
   final String? workspaceId;
@@ -219,6 +220,12 @@ class GitState {
 
   final String? error;
 
+  /// Files left with unresolved conflict markers by a human-initiated [GitNotifier.mergeBranch]
+  /// that couldn't complete -- empty means no merge is currently stuck in conflict. Distinct from
+  /// the agent-only worktree-merge conflict surfaced in `control_center_notifier.dart`: that one
+  /// is on a task's isolated branch, this one is the human's own checked-out working tree.
+  final List<String> conflictedFiles;
+
   GitState copyWith({
     String? workspaceId,
     String? branch,
@@ -235,6 +242,7 @@ class GitState {
     bool? busy,
     String? error,
     bool clearError = false,
+    List<String>? conflictedFiles,
   }) {
     return GitState(
       workspaceId: workspaceId ?? this.workspaceId,
@@ -250,6 +258,7 @@ class GitState {
       commits: commits ?? this.commits,
       busy: busy ?? this.busy,
       error: clearError ? null : (error ?? this.error),
+      conflictedFiles: conflictedFiles ?? this.conflictedFiles,
     );
   }
 }

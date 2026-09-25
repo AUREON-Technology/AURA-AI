@@ -114,7 +114,19 @@ class TerminalExited extends IdeEvent {
   final int exitCode;
 }
 
-/// Agent events
+/// Agent events.
+///
+/// Deliberately still unpublished (audited 2026-09-25, re-checked when fixing the other four dead
+/// events in this file): `AgentPanel` talks to the Engineer persona entirely through the *shared*
+/// `chatViewModelProvider`/`chatRepositoryProvider` pipeline that mobile Copilot also uses --
+/// lifecycle (start/tool-call/complete) is inferred implicitly from the streamed message list and
+/// `PendingActionsCard`/`ToolCallChips`, not surfaced as discrete points in that shared view model.
+/// Publishing these from `agent_panel.dart` would mean guessing at start/complete boundaries from
+/// message-stream diffing without a toolchain here to verify the result, and any bug risks the
+/// mobile chat surface these types are shared with, not just the desktop Output panel that's
+/// waiting on them (`output_log_notifier.dart:69-71`). Needs either a real lifecycle signal added
+/// to the chat pipeline itself, or a Flutter toolchain to iterate against -- tracked as open, not
+/// silently dropped.
 class AgentStarted extends IdeEvent {
   const AgentStarted(this.taskId, this.agentId, this.workspaceId);
   final String taskId;

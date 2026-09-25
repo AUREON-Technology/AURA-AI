@@ -187,6 +187,10 @@ class ControlServer {
           await _handleGitTaskDiff(request);
         case 'GET /git/task-diff-stat':
           await _handleGitTaskDiffStat(request);
+        case 'POST /git/merge':
+          await _handleGitMerge(request);
+        case 'POST /git/merge-abort':
+          await _handleGitMergeAbort(request);
         case 'POST /git/merge-task':
           await _handleGitMergeTask(request);
         case 'POST /git/discard-task':
@@ -554,6 +558,54 @@ class ControlServer {
       final root = _requireRoot(workspaceStore.load(), rootParam);
       final result = await gitService.checkout(root.canonicalPath, branch, create: create);
       await _respond(request, result['ok'] == false ? 409 : 200, result);
+    } on RootNotFoundError {
+      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+    } on GitNotARepositoryError {
+      await _respond(request, 409, {'error': 'not a git repository'});
+    } on GitDecodeError catch (error) {
+      await _respond(request, 415, {'error': error.message});
+    } on GitCommandError catch (error) {
+      await _respond(request, 500, {'error': error.message});
+    }
+  }
+
+  /// D5 Git panel: merges [branch] into the human's own checked-out working tree -- same
+  /// human-only boundary as `/git/checkout` above (a click is the consent), distinct from
+  /// `/git/merge-task` below which only ever targets a task's isolated worktree.
+  Future<void> _handleGitMerge(HttpRequest request) async {
+    final body = await _readJsonBody(request);
+    final rootParam = body['root'] as String?;
+    final branch = body['branch'] as String?;
+    if (rootParam == null || branch == null || branch.trim().isEmpty) {
+      await _respond(request, 400, {'error': 'root and branch are required'});
+      return;
+    }
+    try {
+      final root = _requireRoot(workspaceStore.load(), rootParam);
+      final result = await gitService.mergeBranch(root.canonicalPath, branch);
+      await _respond(request, result['ok'] == false ? 409 : 200, result);
+    } on RootNotFoundError {
+      await _respond(request, 404, {'error': '$rootParam is not a granted root'});
+    } on GitNotARepositoryError {
+      await _respond(request, 409, {'error': 'not a git repository'});
+    } on GitDecodeError catch (error) {
+      await _respond(request, 415, {'error': error.message});
+    } on GitCommandError catch (error) {
+      await _respond(request, 500, {'error': error.message});
+    }
+  }
+
+  Future<void> _handleGitMergeAbort(HttpRequest request) async {
+    final body = await _readJsonBody(request);
+    final rootParam = body['root'] as String?;
+    if (rootParam == null) {
+      await _respond(request, 400, {'error': 'root is required'});
+      return;
+    }
+    try {
+      final root = _requireRoot(workspaceStore.load(), rootParam);
+      final result = await gitService.abortMerge(root.canonicalPath);
+      await _respond(request, 200, result);
     } on RootNotFoundError {
       await _respond(request, 404, {'error': '$rootParam is not a granted root'});
     } on GitNotARepositoryError {

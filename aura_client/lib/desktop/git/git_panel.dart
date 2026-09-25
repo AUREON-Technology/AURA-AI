@@ -55,6 +55,37 @@ class _GitPanelState extends ConsumerState<GitPanel> {
     await ref.read(gitNotifierProvider.notifier).checkout(branch.checkoutName);
   }
 
+  /// Lets the human merge another branch into whatever is checked out -- the manual counterpart to
+  /// `mergeTask`'s agent-worktree merge, which this panel never had (2026-09-25 audit follow-up).
+  /// A simple picker rather than [AuraDialog]'s single-child shape, since this needs to list and
+  /// select among [GitState.branches] rather than collect one text field.
+  Future<void> _showMergeDialog() async {
+    final git = ref.read(gitNotifierProvider);
+    final candidates = git.branches.where((b) => b.name != git.branch).toList();
+    if (candidates.isEmpty) return;
+    final chosen = await showDialog<GitBranch>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('Merge branch into current'),
+        children: [
+          for (final branch in candidates)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(dialogContext).pop(branch),
+              child: Text(branch.isRemote ? '${branch.name} (remote)' : branch.name),
+            ),
+        ],
+      ),
+    );
+    if (chosen == null || !mounted) return;
+    await ref.read(gitNotifierProvider.notifier).mergeBranch(chosen.checkoutName);
+  }
+
+  void _openConflictedFile(String path) {
+    final workspace = ref.read(workspaceNotifierProvider).activeWorkspace;
+    if (workspace == null) return;
+    ref.read(editorNotifierProvider.notifier).openTab(tabId: path, path: path, workspaceId: workspace.id);
+  }
+
   Future<void> _showCreateBranchDialog() async {
     _branchController.clear();
     final name = await AuraDialog.show<String>(
@@ -149,6 +180,11 @@ class _GitPanelState extends ConsumerState<GitPanel> {
                 ),
                 const Spacer(),
                 TextButton.icon(
+                  icon: const Icon(Icons.call_merge, size: 16),
+                  label: const Text('Merge'),
+                  onPressed: git.busy || git.branches.length < 2 ? null : _showMergeDialog,
+                ),
+                TextButton.icon(
                   icon: const Icon(Icons.add, size: 16),
                   label: const Text('Branch'),
                   onPressed: git.busy ? null : _showCreateBranchDialog,
@@ -156,6 +192,15 @@ class _GitPanelState extends ConsumerState<GitPanel> {
               ],
             ),
           ),
+          if (git.conflictedFiles.isNotEmpty)
+            _ConflictBanner(
+              conflictedFiles: git.conflictedFiles,
+              busy: git.busy,
+              palette: palette,
+              onOpenFile: _openConflictedFile,
+              onMarkResolved: (path) => ref.read(gitNotifierProvider.notifier).stage([path]),
+              onAbort: () => ref.read(gitNotifierProvider.notifier).abortMerge(),
+            ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md),
             child: AuraTextField(
@@ -313,6 +358,82 @@ class _BranchSelector extends StatelessWidget {
             : (branch) {
                 if (branch != null) onSelect(branch);
               },
+      ),
+    );
+  }
+}
+
+/// Shown when [GitState.conflictedFiles] is non-empty -- the human checkout/pull/merge path's
+/// resolution UI the 2026-09-25 audit found missing entirely (it existed only for the separate
+/// agent-worktree merge flow in Control Center). Each file opens in the editor for the human to
+/// resolve by hand; "Mark Resolved" just stages it (`git add`), same as the existing "Stage"
+/// action elsewhere in this panel -- git itself doesn't distinguish a conflict-resolving stage
+/// from any other. The merge finishes via this panel's existing Commit button once every
+/// conflicted file is staged, so no separate "complete merge" action is needed here.
+class _ConflictBanner extends StatelessWidget {
+  const _ConflictBanner({
+    required this.conflictedFiles,
+    required this.busy,
+    required this.palette,
+    required this.onOpenFile,
+    required this.onMarkResolved,
+    required this.onAbort,
+  });
+
+  final List<String> conflictedFiles;
+  final bool busy;
+  final AuraPalette palette;
+  final ValueChanged<String> onOpenFile;
+  final ValueChanged<String> onMarkResolved;
+  final VoidCallback onAbort;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: palette.danger.withValues(alpha: 0.08),
+      padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md, vertical: AuraSpacing.sm),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, size: 16, color: palette.danger),
+              const SizedBox(width: AuraSpacing.xs),
+              Expanded(
+                child: Text(
+                  '${conflictedFiles.length} file(s) have merge conflicts',
+                  style: TextStyle(color: palette.danger, fontWeight: FontWeight.w600, fontSize: 12),
+                ),
+              ),
+              TextButton(
+                onPressed: busy ? null : onAbort,
+                child: const Text('Abort Merge'),
+              ),
+            ],
+          ),
+          for (final path in conflictedFiles)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      onTap: () => onOpenFile(path),
+                      child: Text(
+                        path,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: palette.textPrimary, fontSize: 12, fontFamily: 'Courier'),
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: busy ? null : () => onMarkResolved(path),
+                    child: const Text('Mark Resolved', style: TextStyle(fontSize: 11)),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }

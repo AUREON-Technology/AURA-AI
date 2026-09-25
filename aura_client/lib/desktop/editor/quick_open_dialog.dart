@@ -8,6 +8,41 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/workspace/workspace_file_service.dart';
 
+/// Result of a successful [fuzzyMatch]: the matched candidate, a relevance [score] (higher is
+/// better), and the character indices in [text] that matched the query, for highlighting.
+class FuzzyMatch {
+  const FuzzyMatch(this.text, this.score, this.matchedIndices);
+
+  final String text;
+  final int score;
+  final List<int> matchedIndices;
+}
+
+/// Subsequence fuzzy match: every character of [query] must appear in [text], in order, but not
+/// necessarily contiguous (case-insensitive) -- e.g. "epdart" matches "editor/providers/
+/// flutter_code_editor_provider.dart". Returns `null` when [query] isn't a subsequence of [text]
+/// at all. Scoring rewards consecutive matched characters (tighter grouping reads as a better
+/// match than the same letters scattered across the string) and matches starting earlier in
+/// [text] (so a filename-prefix match outranks the same letters found deep in a path).
+FuzzyMatch? fuzzyMatch(String text, String query) {
+  final lowerText = text.toLowerCase();
+  final lowerQuery = query.toLowerCase();
+  final indices = <int>[];
+  var searchFrom = 0;
+  var score = 0;
+  int? lastMatchIndex;
+  for (final queryChar in lowerQuery.runes) {
+    final found = lowerText.indexOf(String.fromCharCode(queryChar), searchFrom);
+    if (found == -1) return null;
+    indices.add(found);
+    score += (lastMatchIndex != null && found == lastMatchIndex + 1) ? 10 : 1;
+    lastMatchIndex = found;
+    searchFrom = found + 1;
+  }
+  score -= indices.first;
+  return FuzzyMatch(text, score, indices);
+}
+
 class QuickOpenDialog extends ConsumerStatefulWidget {
   const QuickOpenDialog({super.key, required this.workspaceRoot, required this.onOpenFile});
 
@@ -63,11 +98,12 @@ class _QuickOpenDialogState extends ConsumerState<QuickOpenDialog> {
       if (query.trim().isEmpty) {
         _filteredFiles = _files;
       } else {
-        final lower = query.toLowerCase();
-        _filteredFiles = _files
-            .where((f) => f.toLowerCase().contains(lower))
-            .take(50)
-            .toList();
+        final matches = _files
+            .map((f) => fuzzyMatch(f, query))
+            .whereType<FuzzyMatch>()
+            .toList()
+          ..sort((a, b) => b.score.compareTo(a.score));
+        _filteredFiles = matches.map((m) => m.text).take(50).toList();
       }
     });
   }
@@ -199,12 +235,17 @@ class _FileItem extends StatelessWidget {
             ),
             const SizedBox(width: AuraSpacing.md),
             Expanded(
-              child: Text(
-                _highlightMatch(file, query),
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: palette.textPrimary,
-                  fontFamily: 'Courier',
-                  fontSize: 13,
+              child: Text.rich(
+                _highlightMatch(
+                  file,
+                  query,
+                  baseStyle: TextStyle(color: palette.textPrimary, fontFamily: 'Courier', fontSize: 13),
+                  matchStyle: TextStyle(
+                    color: palette.brand,
+                    fontFamily: 'Courier',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -233,9 +274,34 @@ class _FileItem extends StatelessWidget {
     }
   }
 
-  String _highlightMatch(String text, String query) {
-    if (query.isEmpty) return text;
-    // Simple highlighting - could be enhanced with RichText
-    return text;
+  /// Bolds the characters [fuzzyMatch] actually matched against [query], rather than just the
+  /// text unmodified -- re-runs the same matcher `_filterFiles` used to select this item in the
+  /// first place, so the highlighted characters are always exactly the ones that made it match.
+  InlineSpan _highlightMatch(
+    String text,
+    String query, {
+    required TextStyle baseStyle,
+    required TextStyle matchStyle,
+  }) {
+    final match = query.isEmpty ? null : fuzzyMatch(text, query);
+    if (match == null) return TextSpan(text: text, style: baseStyle);
+    final matched = match.matchedIndices.toSet();
+    final spans = <InlineSpan>[];
+    final buffer = StringBuffer();
+    bool? bufferIsMatch;
+    void flush() {
+      if (buffer.isEmpty) return;
+      spans.add(TextSpan(text: buffer.toString(), style: bufferIsMatch == true ? matchStyle : baseStyle));
+      buffer.clear();
+    }
+
+    for (var i = 0; i < text.length; i++) {
+      final isMatch = matched.contains(i);
+      if (bufferIsMatch != null && bufferIsMatch != isMatch) flush();
+      bufferIsMatch = isMatch;
+      buffer.write(text[i]);
+    }
+    flush();
+    return TextSpan(children: spans);
   }
 }
