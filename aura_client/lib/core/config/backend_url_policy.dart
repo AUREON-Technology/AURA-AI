@@ -15,6 +15,7 @@ class BackendUrlPolicy {
   static const Set<String> runtimeAllowlistedHosts = {
     'aureon-ai.tech',
     'dev.aureon-ai.tech',
+    'aura-ai-production-03a4.up.railway.app',
   };
 
   static final RegExp _ipv4Host = RegExp(r'^\d{1,3}(\.\d{1,3}){3}$');
