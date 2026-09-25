@@ -147,30 +147,34 @@ class QdrantVectorStore:
                     f"so this must be a new index rather than a mutation.",
                     details={"index": name, "existing": existing_distance},
                 )
-            return
-
-        try:
-            await client.create_collection(
-                collection_name=name,
-                vectors_config=qmodels.VectorParams(
-                    size=identity.dimension,
-                    distance=getattr(
-                        qmodels.Distance, _DISTANCES.get(identity.distance, "Cosine").upper()
+        else:
+            try:
+                await client.create_collection(
+                    collection_name=name,
+                    vectors_config=qmodels.VectorParams(
+                        size=identity.dimension,
+                        distance=getattr(
+                            qmodels.Distance, _DISTANCES.get(identity.distance, "Cosine").upper()
+                        ),
                     ),
-                ),
-            )
-        except Exception as exc:
-            # A concurrent creator is not an error: two workers starting together both find the
-            # collection absent and both try. Re-check rather than failing the caller.
-            if await self.index_exists(identity):
-                logger.info("index %s was created concurrently", name)
-            else:
-                raise _unavailable(f"could not create index {name!r}: {exc}", index=name) from exc
+                )
+            except Exception as exc:
+                # A concurrent creator is not an error: two workers starting together both find the
+                # collection absent and both try. Re-check rather than failing the caller.
+                if await self.index_exists(identity):
+                    logger.info("index %s was created concurrently", name)
+                else:
+                    raise _unavailable(
+                        f"could not create index {name!r}: {exc}", index=name
+                    ) from exc
 
-        # Payload indexes for the fields every query filters on. Without them Qdrant scans the
-        # payload of every candidate, which turns tenant filtering into the dominant cost as a
-        # collection grows.
-        for field in ("owner_id", "document_id"):
+        # Payload indexes for the fields queries filter on. Without them Qdrant refuses the query
+        # outright (400 "Index required but not found") rather than scanning unindexed -- ensured
+        # on every call, not only on first creation, so a collection that predates a newly-filtered
+        # field (e.g. "kind", added after this collection already existed in production) self-heals
+        # instead of every matching search failing forever. _ensure_index() memoizes this per
+        # process, so it still runs at most once per worker's lifetime, not once per search.
+        for field in ("owner_id", "document_id", "kind"):
             try:
                 await client.create_payload_index(
                     collection_name=name,
