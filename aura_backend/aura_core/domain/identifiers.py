@@ -32,6 +32,8 @@ __all__ = [
     "PersonalOsRecordId",
     "EngineerRunId",
     "WorkspaceId",
+    "AgentRunId",
+    "AgentStepId",
     "deterministic_uuid",
 ]
 
@@ -154,6 +156,19 @@ class WorkspaceId(Identifier):
     Distinct from :class:`EngineerRunId`, which identifies one recorded *tool call*: a workspace
     outlives many runs, and unlike a run it is mutable, live state rather than a ledger row.
     """
+
+
+@dataclass(frozen=True, slots=True)
+class AgentRunId(Identifier):
+    """One bounded agent run (``domain/agent_runs.py``): every plan-execute-observe-replan pass a
+    single turn's persona made, for any persona -- not only ``engineer``. Distinct from
+    :class:`EngineerRunId`, which identifies one engineer *tool call* inside such a run."""
+
+
+@dataclass(frozen=True, slots=True)
+class AgentStepId(Identifier):
+    """One recorded step (observation, decision, tool call, approval, evaluation, failure,
+    completion) of an :class:`AgentRunId`'s run."""
 
 
 def deterministic_uuid(*parts: str, namespace: str = "aura") -> uuid.UUID:
