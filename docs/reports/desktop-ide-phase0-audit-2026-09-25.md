@@ -10,6 +10,35 @@ for the same toolchain reasons as the rest of this document. §1's table entries
 are left as originally written below (that's what Phase 0 found), with this note as the record of
 what changed since.
 
+**Update (2026-09-25, later the same day):** an unrelated-looking commit (`35f0371`, "Update
+backend URLs across the project to use the new domain") bundled in real work on three more §2/§4
+gaps. Re-verified against the current tree, each read fully (not diffed):
+
+- §2 Explorer access-denied UI ("Grant Access"): now real — `explorer_panel.dart`'s `_ErrorView`
+  branches on a real `isAccessDenied` check and wires a `Grant Access` button to a real
+  `HostdControlClient.grantRoot` call. But it's gated on the wrong condition for the audit's
+  original scenario: `explorer_service.dart`'s `listDirectory` silently falls back to `dart:io` on
+  any hostd failure (including "this root was never granted"), so the case this UI was meant for
+  — opening a workspace hostd has no grant for — still won't show it; it only fires for a
+  containment violation or a genuine OS permission error. Not yet fixed as originally scoped.
+- §2 Explorer context menu: only the read-only half landed — copy path, copy relative path,
+  refresh, and reveal-in-filesystem (Windows-only) are real. Rename, delete, new file, new folder,
+  and open-in-terminal are still entirely absent, and `HostdControlClient` has no
+  rename/delete/create method for the panel to call even if the menu items existed. Still open.
+- §4 Git fetch/pull/push: real and solid — full client→hostd→`git_service.dart`→real-`git` wiring
+  for all three, a real branch-listing endpoint that's actually rendered in a branch-switcher
+  dropdown (unlike the audit's `loadLog` dead-wiring finding), safe argv-only shell-out maintained,
+  and structured `no_upstream`/`diverged`/`local_changes_would_be_overwritten` failures surfaced to
+  the UI rather than silently swallowed. One real gap found: `git_service.dart`'s `_run` never set
+  `GIT_TERMINAL_PROMPT=0` or a timeout, so a private remote with no configured credential helper
+  could leave `git` blocking on an interactive prompt this headless daemon has no way to answer, or
+  a slow/dead remote could hang the panel's Fetch/Pull/Push button indefinitely — **fixed in this
+  same session**: `_run`/the new `_runNetwork` now set `GIT_TERMINAL_PROMPT=0` on every git
+  invocation and fetch/pull/push run through `Process.start` with a 30s timeout that actually kills
+  the process (not just gives up waiting on it), covered by
+  `aura_hostd/test/git_service_test.dart`'s new "network timeout" group and two new real two-repo
+  fetch/pull/push success tests (the prior suite only covered the no-remote/no-upstream paths).
+
 Read-only static audit of `aura_client/lib/desktop/` and `aura_hostd/`, run against the claims in
 `docs/AURA_UPGRADE_ROADMAP.md` (Phase K) and ADR-011/013/014, as the mandatory Phase 0 step of the
 "AURA Desktop IDE — Production & Professional UX Upgrade Plan." No files were edited to produce
