@@ -7,10 +7,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
-import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
+import 'package:aura_client/desktop/explorer/explorer_access.dart';
 import 'package:aura_client/desktop/explorer/explorer_tree_tile.dart';
 import 'package:aura_client/desktop/explorer/explorer_service.dart';
-import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 
 class ExplorerPanel extends ConsumerStatefulWidget {
@@ -166,7 +165,12 @@ class _ExplorerTreeState extends ConsumerState<_ExplorerTree> {
   Future<void> reload() async {
     if (mounted) setState(() => _loading = true);
     final service = ref.read(explorerServiceProvider);
-    final listing = await service.listDirectory(relativePath: '', grantedRoots: widget.grantedRoots);
+    final hostConnected = ref.read(hostNotifierProvider).isConnected;
+    final listing = await service.listDirectory(
+      relativePath: '',
+      grantedRoots: widget.grantedRoots,
+      hostConnected: hostConnected,
+    );
     if (!mounted) return;
     setState(() {
       _listing = listing;
@@ -294,7 +298,7 @@ class _ErrorView extends ConsumerWidget {
               AuraButton(
                 label: 'Grant Access',
                 icon: Icons.key,
-                onPressed: () => _grantAccess(context, ref),
+                onPressed: () => grantWorkspaceAccess(context, ref, workspaceRoot!, onGranted: onGranted),
               ),
             if (isAccessDenied && workspaceRoot != null) const SizedBox(height: AuraSpacing.sm),
             AuraButton(
@@ -307,36 +311,5 @@ class _ErrorView extends ConsumerWidget {
         ),
       ),
     );
-  }
-
-  /// Same grant flow as WorkspaceManagerPage._openFolder: confirm, grant via
-  /// the daemon control server, record the root locally, then reload.
-  Future<void> _grantAccess(BuildContext context, WidgetRef ref) async {
-    final root = workspaceRoot;
-    if (root == null) return;
-    final confirmed = await AuraDialog.show<bool>(
-      context: context,
-      title: 'Grant workspace to hostd?',
-      child: Text('This allows the AURA agent to read and write files in "$root".'),
-      confirmLabel: 'Grant',
-      cancelLabel: 'Not now',
-      onConfirm: () => Navigator.of(context).pop(true),
-    );
-    if (confirmed != true || !context.mounted) return;
-    try {
-      await ref.read(hostdControlClientProvider).grantRoot(root);
-      ref.read(workspaceNotifierProvider.notifier).updateHostdRoots([
-        ...ref.read(workspaceNotifierProvider).hostdRoots,
-        HostdRoot(path: root, trusted: false),
-      ]);
-      onGranted?.call();
-      if (context.mounted) {
-        AuraSnackbar.show(context, message: 'Workspace access granted', kind: AuraSnackbarKind.success);
-      }
-    } catch (e) {
-      if (context.mounted) {
-        AuraSnackbar.show(context, message: 'Could not grant root: $e', kind: AuraSnackbarKind.error);
-      }
-    }
   }
 }

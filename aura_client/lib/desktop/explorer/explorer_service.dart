@@ -89,14 +89,39 @@ class ExplorerService {
   final HostdControlClient _hostdClient;
   final String _workspaceRoot;
 
+  /// The actual absolute path a granted-root check should test [relativePath] against. An empty
+  /// `relativePath` means "the workspace root's own directory" (matching this class's `dart:io`
+  /// fallback, where `requireContainedClient(_workspaceRoot, '')` also resolves to the root
+  /// itself) -- resolving it to [_workspaceRoot] rather than testing the literal empty string is
+  /// what lets the workspace root's own top-level listing match a granted root at all.
+  /// Subdirectory paths are used as-is: hostd-sourced entries already carry an absolute path (see
+  /// `explorer_tree_tile.dart`'s own doc comment on this), so they already start with whichever
+  /// granted root covers them.
+  String _workspaceGrantCheckPath(String relativePath) => relativePath.isEmpty ? _workspaceRoot : relativePath;
+
   /// Lists a directory, preferring hostd when available and root is granted.
+  ///
+  /// [hostConnected] distinguishes two very different reasons a call can find no matching entry
+  /// in [grantedRoots]: hostd being unreachable entirely (the D2 exit criteria's sanctioned
+  /// "hostd down -> read via dart:io, read-only" fallback), versus hostd being reachable but
+  /// simply never having been granted this root (the plan's "AURA does not currently have access
+  /// to this folder -- Grant Access" case). Conflating the two -- as this method used to, by
+  /// falling back to dart:io silently either way -- means opening a workspace hostd has no grant
+  /// for never surfaces that at all, since the client process can usually still read the folder
+  /// itself via the OS (Phase 0 desktop audit, 2026-09-25).
   Future<DirectoryListing> listDirectory({
     required String relativePath,
     List<String> grantedRoots = const [],
+    required bool hostConnected,
   }) async {
-    // Check if path is under a granted root for hostd
+    // Check if path is under a granted root for hostd. `relativePath` is '' for the workspace
+    // root's own listing (see `_workspaceGrantCheckPath`'s doc comment) -- '' never starts with
+    // any non-empty granted root, so without resolving it to the actual workspace root first, a
+    // properly-granted workspace's *own* top-level listing could never match hostd at all, making
+    // the `hostConnected` branch below misfire "access required" on every workspace regardless of
+    // grant status.
     final hostdRoot = grantedRoots.firstWhere(
-      (root) => relativePath.startsWith(root) || root == '',
+      (root) => _workspaceGrantCheckPath(relativePath).startsWith(root) || root == '',
       orElse: () => '',
     );
 
@@ -108,11 +133,19 @@ class ExplorerService {
             .toList();
         return DirectoryListing(entries: entries);
       } catch (e) {
-        // Fall back to dart:io
+        // A *known-granted* root call failing is a transient/other problem, not a permissions
+        // one -- fall back to dart:io same as always.
       }
+    } else if (hostConnected) {
+      return const DirectoryListing(
+        entries: [],
+        error: 'This folder is outside every root granted to the host daemon.',
+        isAccessDenied: true,
+      );
     }
 
-    // Fallback to dart:io
+    // Fallback to dart:io -- hostd is offline, or a granted-root hostd call above failed
+    // transiently.
     try {
       final resolvedPath = requireContainedClient(_workspaceRoot, relativePath);
       final dir = Directory(resolvedPath);
@@ -130,13 +163,17 @@ class ExplorerService {
     }
   }
 
-  /// Reads a file, preferring hostd when available.
+  /// Reads a file, preferring hostd when available. See [listDirectory]'s doc comment for what
+  /// [hostConnected] is for -- the same ungranted-root-vs-hostd-down distinction applies here,
+  /// though this method's `String?` return can't carry the richer [DirectoryListing.isAccessDenied]
+  /// signal; an ungranted root and a genuine read failure both come back as `null`.
   Future<String?> readFile({
     required String relativePath,
     List<String> grantedRoots = const [],
+    required bool hostConnected,
   }) async {
     final hostdRoot = grantedRoots.firstWhere(
-      (root) => relativePath.startsWith(root) || root == '',
+      (root) => _workspaceGrantCheckPath(relativePath).startsWith(root) || root == '',
       orElse: () => '',
     );
 
@@ -147,6 +184,8 @@ class ExplorerService {
       } catch (_) {
         // Fall back to dart:io
       }
+    } else if (hostConnected) {
+      return null;
     }
 
     try {

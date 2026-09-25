@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/desktop/explorer/explorer_access.dart';
 import 'package:aura_client/desktop/explorer/explorer_service.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 
@@ -263,9 +264,11 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
     setState(() => _loading = true);
     try {
       final service = ref.read(explorerServiceProvider);
+      final hostConnected = ref.read(hostNotifierProvider).isConnected;
       final listing = await service.listDirectory(
         relativePath: widget.entry.path,
         grantedRoots: widget.grantedRoots,
+        hostConnected: hostConnected,
       );
       if (mounted) {
         setState(() {
@@ -342,7 +345,48 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
       );
     }
 
-    final entries = _children?.entries ?? [];
+    final children = _children;
+    final entries = children?.entries ?? [];
+
+    // A listing error (most commonly `isAccessDenied` -- see `ExplorerService.listDirectory`'s
+    // doc comment) also comes back with an empty `entries` list, so it must be checked before
+    // treating that as "genuinely empty" -- otherwise a folder hostd has no grant for renders as
+    // a plain empty directory instead of surfacing the same Grant Access remediation the
+    // top-level Explorer error view offers.
+    if (children?.error != null) {
+      return Padding(
+        padding: EdgeInsets.only(left: (widget.depth + 1) * ideDensity.treeRowHeight),
+        child: Row(
+          children: [
+            Icon(
+              children!.isAccessDenied ? Icons.lock_outline : Icons.error_outline,
+              size: 13,
+              color: palette.textDisabled,
+            ),
+            const SizedBox(width: AuraSpacing.xs),
+            Expanded(
+              child: Text(
+                children.isAccessDenied ? 'Access required' : 'Failed to load',
+                style: TextStyle(fontSize: 11, color: palette.textDisabled),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (children.isAccessDenied)
+              InkWell(
+                onTap: () => grantWorkspaceAccess(context, ref, widget.workspaceRoot, onGranted: _refresh),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Text(
+                    'Grant',
+                    style: TextStyle(fontSize: 11, color: palette.brand, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
     if (entries.isEmpty) {
       return Padding(
         padding: EdgeInsets.only(left: (widget.depth + 1) * ideDensity.treeRowHeight),
