@@ -120,14 +120,34 @@ groups:
             Check `docker compose logs backup`. Offsite copy is independent
             (`AuraBackupOffsiteFailed`).
 
+      - alert: AuraBackupMisconfigured
+        expr: aura_backup_config_error == 1
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "Backup cycle refused to run: invalid backup configuration"
+          description: >
+            Usually BACKUP_ENCRYPTION=age with no age recipient configured. The sidecar fails
+            closed rather than write plaintext, so NO new backups are being taken. Set
+            BACKUP_AGE_RECIPIENT or deploy/secrets/backup_age_recipients.txt (maintenance-guide).
+
+      - alert: AuraBackupUnencrypted
+        expr: aura_backup_encryption_enabled == 0
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "Backups are being written unencrypted (BACKUP_ENCRYPTION=none)"
+          description: >
+            Plaintext backup sets on the host, and offsite copy is refused for them.
+
       - alert: AuraBackupOffsiteFailed
         expr: aura_backup_offsite_configured == 1 and aura_backup_offsite_last_exit_code != 0
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: "Offsite rclone copy failed"
+          summary: "Offsite rclone copy or its remote verification failed"
           description: >
-            BACKUP_S3_URI is set but the last rclone copy exited non-zero.
+            BACKUP_S3_URI is set but the last upload, remote check, or cycle failed.
             Credentials live in deploy/secrets/; no keys are in the image.
 
       - alert: AuraEvalRegression
@@ -163,6 +183,41 @@ groups:
         annotations:
           summary: "{{ $labels.provider }} is at its concurrency limit"
           description: "Requests are queueing. Scale the inference tier (Scalability Report, Stage 1)."
+
+      # Admission control (roadmap P2.4). Both gauges are summed across worker processes, so the
+      # ratio is fleet-wide slots in use over fleet-wide slots.
+      - alert: AuraGenerationQueueSaturated
+        expr: |
+          (
+            sum by (group) (aura_llm_group_inflight)
+              >= sum by (group) (aura_llm_group_capacity)
+          )
+          and on (group)
+          (
+            sum by (group) (label_replace(aura_llm_queue_depth, "group", "$1", "provider", "(.*)")) > 0
+          )
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Capacity group {{ $labels.group }} has been full with a queue for 10 minutes"
+          description: >
+            Every generation slot is busy and requests are waiting in AURA's admission queue.
+            Users see growing latency, then 503 + Retry-After once the queue timeout or bound is
+            hit. Check aura_llm_generation_queue_wait_seconds on the overview dashboard; add
+            capacity (a GPU pool, docs/guides/gpu-hybrid-setup.md §6) or shed background work.
+
+      - alert: AuraGenerationAdmissionRefusals
+        expr: |
+          sum by (group) (
+            rate(aura_llm_admission_total{outcome=~"queue_full|queue_timeout|preempted"}[10m])
+          ) > 0.02
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Capacity group {{ $labels.group }} is refusing generations"
+          description: >
+            Requests are being refused for lack of capacity (503 with Retry-After). Nothing is
+            broken -- there is not enough serving capacity for the offered load.
 
       - alert: AuraCostSpike
         expr: sum(rate(aura_llm_cost_usd_total[1h])) * 24 > 25

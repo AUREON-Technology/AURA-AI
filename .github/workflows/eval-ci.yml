@@ -1,6 +1,75 @@
 name: Agent Evaluation
 
+# Two jobs, split by what they can be trusted to mean:
+#
+#   * `gate` runs on every PR (and push to main) that touches the engines whose behaviour the
+#     evaluation suites measure. It is deterministic and model-free by construction -- echo
+#     provider, ContextGroundedProvider (a scripted stand-in that answers from retrieved content),
+#     hash embedder, in-memory adapters -- so a red check means "this change moved a metric below
+#     its committed baseline", never "the model sampled differently". `evaluation/gate.py`
+#     refuses to run (exit 2) if the environment configures a real provider or datastore.
+#     Suites: agent_tasks (kernel round trip), docs_corpus retrieval (recall@5/MRR/nDCG over the
+#     repo's own ADRs), docs_corpus answer (groundedness + citation coverage).
+#
+#   * `dispatch-run` is the original manual run of `evaluation/runner.py` for a chosen agent
+#     suite and baseline. It stays workflow_dispatch-only.
+#
+# IMPORTANT: a check only *blocks* a merge if branch protection on `main` lists it as a required
+# status check ("Agent Evaluation / Evaluation regression gate"). That is a repository setting,
+# not something this file can do. Until it is marked required, a failing gate is visible on the PR
+# but does not prevent merging.
+#
+# The job also uploads the full JSON result and writes the metric-vs-baseline table to the job
+# summary. To accept an intentional metric change, re-record the affected
+# `aura_backend/evaluation/suites/*_baseline.json` from a genuine run in the same PR.
+
 on:
+  pull_request:
+    paths:
+      - "aura_backend/aura_core/kernel/**"
+      - "aura_backend/aura_core/rag/**"
+      - "aura_backend/aura_core/knowledge/**"
+      - "aura_backend/aura_core/planning/**"
+      - "aura_backend/aura_core/reasoning/**"
+      - "aura_backend/aura_core/agents/**"
+      - "aura_backend/aura_core/tools/**"
+      - "aura_backend/aura_core/safety/**"
+      - "aura_backend/aura_core/llm/**"
+      - "aura_backend/aura_core/context/**"
+      - "aura_backend/aura_core/memory/**"
+      - "aura_backend/aura_core/prompts/**"
+      - "aura_backend/aura_core/evaluation/**"
+      - "aura_backend/aura_core/container.py"
+      - "aura_backend/evaluation/**"
+      - "aura_backend/tests/e2e/test_agent_tasks_gate.py"
+      - "aura_backend/tests/e2e/test_docs_corpus_gate.py"
+      - "aura_backend/requirements.lock"
+      # The docs_corpus suite ingests these ADRs verbatim; editing one can move retrieval scores.
+      - "docs/architecture/**"
+      - ".github/workflows/eval-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "aura_backend/aura_core/kernel/**"
+      - "aura_backend/aura_core/rag/**"
+      - "aura_backend/aura_core/knowledge/**"
+      - "aura_backend/aura_core/planning/**"
+      - "aura_backend/aura_core/reasoning/**"
+      - "aura_backend/aura_core/agents/**"
+      - "aura_backend/aura_core/tools/**"
+      - "aura_backend/aura_core/safety/**"
+      - "aura_backend/aura_core/llm/**"
+      - "aura_backend/aura_core/context/**"
+      - "aura_backend/aura_core/memory/**"
+      - "aura_backend/aura_core/prompts/**"
+      - "aura_backend/aura_core/evaluation/**"
+      - "aura_backend/aura_core/container.py"
+      - "aura_backend/evaluation/**"
+      - "aura_backend/tests/e2e/test_agent_tasks_gate.py"
+      - "aura_backend/tests/e2e/test_docs_corpus_gate.py"
+      - "aura_backend/requirements.lock"
+      - "docs/architecture/**"
+      - ".github/workflows/eval-ci.yml"
   workflow_dispatch:
     inputs:
       suite:
@@ -9,7 +78,7 @@ on:
         default: 'agent_tasks'
         type: string
       baseline:
-        description: 'Path to baseline JSON for regression gate'
+        description: 'Path (relative to aura_backend/) to baseline JSON for regression gate'
         required: false
         default: 'evaluation/suites/agent_tasks_baseline.json'
         type: string
@@ -18,10 +87,13 @@ permissions:
   contents: read
 
 jobs:
-  eval:
-    name: Agent Evaluation
+  gate:
+    name: Evaluation regression gate
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: aura_backend
     steps:
       - uses: actions/checkout@v4
 
@@ -36,17 +108,63 @@ jobs:
             aura_backend/requirements-dev.txt
 
       - name: Install dependencies
+        run: pip install -r requirements.lock -r requirements-dev.txt
+
+      - name: Run deterministic evaluation gate
+        # No AURA_LLM_PROVIDERS / AURA_DATABASE_URL / AURA_REDIS_URL / AURA_QDRANT_URL on purpose:
+        # the gate refuses to run if any is set.
+        env:
+          AURA_ENVIRONMENT: "local"
+          AURA_JWT_SECRET: "test-secret"
+          AURA_ALLOW_REMOTE_INFERENCE: "false"
+        run: python -m evaluation.gate --output eval-gate-results.json --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-gate-results
+          path: aura_backend/eval-gate-results.json
+          if-no-files-found: ignore
+
+  dispatch-run:
+    name: Agent Evaluation (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
         working-directory: aura_backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            aura_backend/requirements.lock
+            aura_backend/requirements.txt
+            aura_backend/requirements-dev.txt
+
+      - name: Install dependencies
         run: pip install -r requirements.lock -r requirements-dev.txt
 
       - name: Run agent evaluation
-        working-directory: aura_backend
+        # Inputs arrive through env, never interpolated into the script text, so a crafted input
+        # cannot inject shell. Values are quoted: an unquoted `sqlite+aiosqlite:///:memory:` is
+        # invalid YAML ("mapping values are not allowed here") and made this whole workflow fail
+        # to parse on every push.
         env:
-          AURA_DATABASE_URL: sqlite+aiosqlite:///:memory:
-          AURA_JWT_SECRET: test-secret
+          AURA_DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          AURA_JWT_SECRET: "test-secret"
           AURA_ALLOW_REMOTE_INFERENCE: "false"
+          EVAL_SUITE: ${{ github.event.inputs.suite }}
+          EVAL_BASELINE: ${{ github.event.inputs.baseline }}
         run: |
-          python -m evaluation.runner --suite ${{ github.event.inputs.suite }} --max-turns 8 --timeout 60 --output evaluation-results.json
+          python -m evaluation.runner --suite "$EVAL_SUITE" --baseline "$EVAL_BASELINE" \
+            --max-turns 8 --timeout 60 --output evaluation-results.json
 
       - name: Upload results
         if: always()

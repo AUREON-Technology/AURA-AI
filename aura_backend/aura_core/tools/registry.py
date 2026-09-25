@@ -380,12 +380,13 @@ class ToolRegistry:
             # deps.safety.guard_context_items never scanned (that only covers RAG
             # retrieval, run once up front) -- taint the shared ToolContext so any
             # PERSONAL-sensitivity side-effecting tool called later in this same
-            # plan requires confirmation instead of auto-approving (M4). One
-            # residual gap: a step scheduled in the same concurrent execution
-            # batch as this one (no data dependency forcing sequencing) will not
-            # see this mutation before its own policy check -- acceptable because
-            # such a step's arguments cannot have been influenced by this tool's
-            # result in the first place.
+            # plan requires confirmation instead of auto-approving (M4). A call
+            # scheduled concurrently with this one would run its policy check
+            # before this mutation lands; the two batch schedulers
+            # (`execute_many` below and `ExecutionEngine._taint_ordered`) defer
+            # taint-gated calls until a tainting call in the same batch has
+            # finished, so the check always observes it
+            # (tests/security/test_concurrent_taint.py).
             context.tainted = True
 
         duration = (time.perf_counter() - started) * 1000.0
@@ -409,13 +410,41 @@ class ToolRegistry:
         """
         if not calls:
             return []
-        results = await asyncio.gather(
-            *(
-                self.execute(call, context, capabilities=capabilities, confirmed=confirmed)
-                for call in calls
-            )
-        )
-        return list(results)
+
+        async def run(batch: Sequence[ToolCall]) -> list[tuple[ToolResult, ToolExecutionReport]]:
+            return list(await asyncio.gather(
+                *(
+                    self.execute(call, context, capabilities=capabilities, confirmed=confirmed)
+                    for call in batch
+                )
+            ))
+
+        # A taint-gated call (side-effecting, not workspace-local) must not share a concurrent
+        # batch with an `untrusted_content` call: the taint lands when that call *returns*, after
+        # the gated call's own policy check has already auto-approved it. Run everything else
+        # concurrently first, then the gated calls one at a time, so each one's policy check
+        # observes any taint produced before it. Only the mix is split; a clean batch keeps its
+        # full concurrency. Mirrors `ExecutionEngine._taint_ordered`.
+        specs = [self._spec_or_none(call.name) for call in calls]
+        gated = [
+            i for i, spec in enumerate(specs)
+            if spec is not None and spec.side_effecting and not spec.workspace_local
+        ]
+        tainting = any(spec is not None and "untrusted_content" in spec.tags for spec in specs)
+        if context.tainted or not tainting or not gated:
+            return await run(calls)
+
+        results: list[tuple[ToolResult, ToolExecutionReport] | None] = [None] * len(calls)
+        first = [i for i in range(len(calls)) if i not in set(gated)]
+        for index, outcome in zip(first, await run([calls[i] for i in first])):
+            results[index] = outcome
+        for index in gated:
+            (results[index],) = await run([calls[index]])
+        return [outcome for outcome in results if outcome is not None]
+
+    def _spec_or_none(self, name: str) -> ToolSpec | None:
+        tool = self._tools.get(name)
+        return tool.spec if tool is not None and self._is_visible(tool.spec) else None
 
     # -- observation -------------------------------------------------------------------
 

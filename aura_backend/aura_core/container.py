@@ -38,7 +38,12 @@ from .adapters.runtime import (
     SystemClock,
 )
 from .cag import CagEngine
-from .config.settings import AuraSettings, load_settings
+from .config.settings import (
+    DATA_ENCRYPTION_KEYS_ENV,
+    AuraSettings,
+    data_encryption_keys,
+    load_settings,
+)
 from .context.engine import ContextEngine
 from .context.tokenizer import get_tokenizer
 from .domain.errors import ConfigurationError
@@ -52,7 +57,7 @@ from .knowledge.reranking import build_reranker
 from .kernel.kernel import AIKernel, KernelDependencies
 from .llm.cache import InMemoryCache, LLMCache
 from .llm.embeddings import HashEmbeddingProvider
-from .llm.registry import build_providers
+from .llm.registry import admission_limits_from_settings, build_providers
 from .llm.router import ProviderRouter
 from .agents import build_default_agent_registry
 from .memory.engine import MemoryEngine
@@ -70,7 +75,7 @@ from .tools.policy import ToolPolicy
 from .tools.registry import ToolRegistry
 from .triggers import DEFAULT_TRIGGER_SPECS, DURABLE_EVENT_TYPES, TriggerContext, TriggerEngine
 
-__all__ = ["Container", "build_container"]
+__all__ = ["Container", "build_container", "build_field_cipher"]
 
 logger = get_logger("container")
 
@@ -109,6 +114,8 @@ class Container:
 
         # Memoised by _postgres_pool(); declared before anything below asks for it.
         self._pg_pool: Any = None
+        # Memoised by _field_cipher(); only built when a Postgres store that encrypts asks.
+        self._cipher: Any = None
 
         # Extra readiness probes contributed by the layer above (see register_readiness_check).
         self._readiness_checks: dict[str, Any] = {}
@@ -145,6 +152,7 @@ class Container:
         self.audit = self._build_audit_sink()
         self.telemetry_sink = self._build_telemetry_sink()
         self.sources = self._build_source_registry()
+        self.idempotency = self._build_idempotency_store()
 
         self.providers = build_providers(
             settings.llm, model_allowlist=settings.security.model_allowlist
@@ -158,6 +166,9 @@ class Container:
             clock=self.clock.monotonic,
             metrics=self.metrics,
             event_bus=self.events,
+            # Admission control (P2.4): per-capacity-group caps/queues from provider config.
+            group_limits=admission_limits_from_settings(settings.llm),
+            user_max_concurrent=settings.llm.user_max_concurrent_generations,
         )
 
         self.llm_cache = LLMCache(
@@ -627,6 +638,12 @@ class Container:
             self._pg_pool = PostgresPool(self.settings.infrastructure.database_url)
         return self._pg_pool
 
+    def _field_cipher(self) -> Any:
+        """The data-at-rest cipher shared by every store that encrypts a column. Memoised."""
+        if self._cipher is None:
+            self._cipher = build_field_cipher(self.settings)
+        return self._cipher
+
     def _build_document_store(self) -> Any:
         backend = self.settings.infrastructure.document_backend
         if backend == "postgres":
@@ -645,7 +662,9 @@ class Container:
             from .adapters.postgres_store import PostgresMemoryStore
 
             return PostgresMemoryStore(
-                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+                self.settings.infrastructure.database_url,
+                pool=self._postgres_pool(),
+                cipher=self._field_cipher(),
             )
         if backend != "memory":
             raise ConfigurationError(f"unknown memory backend {backend!r}")
@@ -657,7 +676,9 @@ class Container:
             from .adapters.postgres_personal_os import PostgresPersonalOsStore
 
             return PostgresPersonalOsStore(
-                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+                self.settings.infrastructure.database_url,
+                pool=self._postgres_pool(),
+                cipher=self._field_cipher(),
             )
         if backend != "memory":
             raise ConfigurationError(f"unknown memory backend {backend!r}")
@@ -912,6 +933,20 @@ class Container:
                 self.settings.infrastructure.database_url, pool=self._postgres_pool()
             )
         return InMemoryEventOutbox()
+
+    def _build_idempotency_store(self) -> Any:
+        """`Idempotency-Key` bookkeeping (roadmap P1.4). Gated like the outbox: replay only means
+        something if it survives a restart and is shared by every gateway worker, which only the
+        Postgres table gives. In-memory is correct for tests and a single-process local run."""
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_idempotency import PostgresIdempotencyStore
+
+            return PostgresIdempotencyStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        from .adapters.idempotency import InMemoryIdempotencyStore
+
+        return InMemoryIdempotencyStore()
 
     def _build_insight_sink(self) -> Any:
         """The `InsightSink` (Phase E2): writes into the legacy `insights` table, the same
@@ -1294,6 +1329,43 @@ class Container:
         if checks:
             payload["checks"] = checks
         return payload
+
+
+def build_field_cipher(settings: AuraSettings) -> Any:
+    """Load the data-at-rest keys and build the cipher (P1.2/P5.1).
+
+    The only place ``AURA_DATA_ENCRYPTION_KEYS`` is turned into a key object -- the stores and
+    ``scripts/reencrypt_fields.py`` both get their cipher from here, so there is one answer to
+    "what happens without a key":
+
+    * **staging/production**: refuse (``ConfigurationError``). ``AuraSettings.validate`` already
+      refuses at startup; this repeats the check for callers that loaded settings with
+      ``validate=False``, because the failure mode it prevents -- personal data silently written
+      in plaintext -- is not one to leave to the caller remembering to validate.
+    * **local/development/test**: plaintext passthrough with a warning. Existing encrypted rows
+      are still refused on read (``FieldCipher.decrypt``), never returned as ciphertext.
+    """
+    from .adapters.field_crypto import FieldCipher
+
+    keys = data_encryption_keys()
+    if keys:
+        cipher = FieldCipher(keys)
+        logger.info(
+            "data encryption at rest enabled",
+            extra={"primary_key_id": cipher.primary_key_id, "key_count": len(keys)},
+        )
+        return cipher
+    if settings.environment.is_production_like:
+        raise ConfigurationError(
+            f"{DATA_ENCRYPTION_KEYS_ENV} must be set in staging/production",
+            details={"setting": DATA_ENCRYPTION_KEYS_ENV},
+        )
+    logger.warning(
+        "data encryption at rest DISABLED: no data key configured, memory content and "
+        "personal-OS record fields will be stored in plaintext",
+        extra={"setting": DATA_ENCRYPTION_KEYS_ENV, "environment": str(settings.environment)},
+    )
+    return FieldCipher.disabled()
 
 
 def build_container(settings: AuraSettings | None = None) -> Container:

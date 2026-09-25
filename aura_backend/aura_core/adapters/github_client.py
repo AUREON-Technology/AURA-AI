@@ -15,6 +15,7 @@ opinion about confirmation and does not need one.
 from __future__ import annotations
 
 import base64
+import re
 from typing import Any, Mapping
 from urllib.parse import quote
 
@@ -25,6 +26,30 @@ __all__ = ["GitHubClient", "GitHubApiError"]
 
 class GitHubApiError(RuntimeError):
     """Raised on any non-2xx response; carries enough detail for a tool to explain the failure."""
+
+
+_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+def _path_segments(value: str, *, what: str) -> str:
+    """A model-supplied path (file path, branch name) as URL path segments that cannot leave
+    the repository the request is scoped to.
+
+    Interpolated raw, ``..`` segments were resolved by the HTTP client before sending, so a file
+    path on an allowlisted repository could address ``/repos/<any>/<repo>/...`` -- a complete
+    bypass of ``allowed_repos``, writes included (tests/security/test_github_boundary.py). Dot
+    segments are refused rather than normalised: nothing legitimate in a repository path needs
+    them. Every segment is then percent-encoded, so ``?``, ``#`` and an already-encoded
+    ``%2e%2e`` stay part of a filename.
+    """
+    segments = value.lstrip("/").split("/")
+    if any(segment in ("", ".", "..") for segment in segments):
+        raise GitHubApiError(f"{what} {value!r} is not a plain repository path")
+    return "/".join(quote(segment, safe="") for segment in segments)
+
+
+def _query_value(value: str) -> str:
+    return quote(value, safe="")
 
 
 class GitHubClient:
@@ -43,6 +68,9 @@ class GitHubClient:
         self._client: Any = None
 
     def _assert_repo_allowed(self, repo: str) -> None:
+        owner, _, name = repo.partition("/")
+        if not _REPO.match(repo) or owner in (".", "..") or name in (".", ".."):
+            raise GitHubApiError(f"repo {repo!r} is not an owner/name repository reference")
         if self._allowed_repos and repo not in self._allowed_repos:
             raise GitHubApiError(
                 f"repo {repo!r} is not in the configured allowlist "
@@ -79,8 +107,9 @@ class GitHubClient:
 
     async def get_file_contents(self, repo: str, path: str, *, ref: str | None = None) -> str:
         self._assert_repo_allowed(repo)
-        params = f"?ref={ref}" if ref else ""
-        data = await self._request("GET", f"/repos/{repo}/contents/{path}{params}")
+        params = f"?ref={_query_value(ref)}" if ref else ""
+        safe_path = _path_segments(path, what="path")
+        data = await self._request("GET", f"/repos/{repo}/contents/{safe_path}{params}")
         if isinstance(data, list):
             return "\n".join(entry.get("name", "") for entry in data)
         if data.get("encoding") == "base64":
@@ -128,7 +157,8 @@ class GitHubClient:
 
     async def create_branch(self, repo: str, *, branch: str, from_ref: str) -> str:
         self._assert_repo_allowed(repo)
-        ref_data = await self._request("GET", f"/repos/{repo}/git/ref/heads/{from_ref}")
+        from_path = _path_segments(from_ref, what="from_ref")
+        ref_data = await self._request("GET", f"/repos/{repo}/git/ref/heads/{from_path}")
         sha = ref_data["object"]["sha"]
         await self._request(
             "POST", f"/repos/{repo}/git/refs",
@@ -146,12 +176,16 @@ class GitHubClient:
         committed rather than corrupting a single hand-built commit.
         """
         self._assert_repo_allowed(repo)
+        # Every path is validated before the first write, so one bad path cannot leave a
+        # partial commit behind.
+        safe_paths = {path: _path_segments(path, what="path") for path in files}
         committed = []
         for path, content in files.items():
             existing_sha = None
             try:
                 existing = await self._request(
-                    "GET", f"/repos/{repo}/contents/{path}?ref={branch}"
+                    "GET",
+                    f"/repos/{repo}/contents/{safe_paths[path]}?ref={_query_value(branch)}",
                 )
                 existing_sha = existing.get("sha") if isinstance(existing, Mapping) else None
             except GitHubApiError:
@@ -163,7 +197,7 @@ class GitHubClient:
             }
             if existing_sha:
                 payload["sha"] = existing_sha
-            await self._request("PUT", f"/repos/{repo}/contents/{path}", json=payload)
+            await self._request("PUT", f"/repos/{repo}/contents/{safe_paths[path]}", json=payload)
             committed.append(path)
         return f"Committed {len(committed)} file(s) to {repo}@{branch}: {', '.join(committed)}"
 

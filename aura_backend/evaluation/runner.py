@@ -69,7 +69,17 @@ async def main() -> int:
         print(f"Avg turns: {result.metrics()['avg_turns']}")
         print(f"Avg duration per case: {result.metrics()['avg_duration_ms']:.0f}ms")
 
-        if args.baseline and Path(args.baseline).exists():
+        # Written before the gate so a failing run still leaves its results to inspect.
+        if args.output:
+            output_path = Path(args.output)
+            output_path.write_text(json.dumps(result.as_dict(), indent=2))
+            print(f"\nResults written to {output_path}")
+
+        if args.baseline:
+            if not Path(args.baseline).exists():
+                # A named baseline that is missing is a misconfiguration, not a pass.
+                print(f"\nBaseline not found: {args.baseline}")
+                return 1
             with Path(args.baseline).open("r") as f:
                 baseline = json.load(f)
             gate = RegressionGate()
@@ -79,11 +89,6 @@ async def main() -> int:
                 print(f"  - {f}")
             if not ok:
                 return 1
-
-        if args.output:
-            output_path = Path(args.output)
-            output_path.write_text(json.dumps(result.as_dict(), indent=2))
-            print(f"\nResults written to {output_path}")
 
         return 0
 

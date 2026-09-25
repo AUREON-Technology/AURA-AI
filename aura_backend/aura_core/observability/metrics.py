@@ -46,6 +46,11 @@ _TURN_BUCKETS = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0, 60.0)
 _TTFT_BUCKETS = (0.05, 0.1, 0.2, 0.4, 0.8, 1.5, 3.0, 6.0, 12.0)
 _TOKEN_BUCKETS = (64, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768)
 _SCORE_BUCKETS = (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
+# Generation-phase buckets reach 240 s because CPU inference really does take that long (Phase A4
+# measured a 70 s p95); buckets that stop at 60 s would put every slow turn in +Inf.
+_GEN_BUCKETS = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0, 60.0, 120.0, 240.0)
+_QUEUE_BUCKETS = (0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0)
+_TPS_BUCKETS = (0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 40.0, 80.0, 160.0, 320.0)
 
 
 class _NoopMetric:
@@ -202,6 +207,62 @@ class Metrics:
         )
         self.provider_circuit_opens_total = self._counter(
             "provider_circuit_opens_total", "Circuit breaker openings.", ("provider",)
+        )
+
+        # -- llm admission and latency decomposition (roadmap P2.4/P2.5) ------------------
+        # `group` is a capacity group (one serving process); `pool` is the ModelPool the request
+        # asked for, or "default". Both are bounded by configuration/enum, and `priority` by the
+        # five workload classes -- no user id ever becomes a label.
+        self.llm_admission_total = self._counter(
+            "llm_admission_total",
+            "Admission decisions per capacity group: admitted, queue_full, queue_timeout, "
+            "preempted, user_quota, cancelled.",
+            ("group", "outcome", "priority"),
+        )
+        self.llm_group_capacity = self._gauge(
+            "llm_group_capacity",
+            "Concurrent generation slots per capacity group (summed across processes).",
+            ("group",),
+        )
+        self.llm_group_inflight = self._gauge(
+            "llm_group_inflight",
+            "Generations holding an admission slot per capacity group.",
+            ("group",),
+        )
+        self.llm_generation_queue_wait = self._histogram(
+            "llm_generation_queue_wait_seconds",
+            "Time a generation waited for an admission slot.",
+            ("provider", "model", "pool"),
+            _QUEUE_BUCKETS,
+        )
+        self.llm_generation_ttft = self._histogram(
+            "llm_generation_ttft_seconds",
+            "Admission to first streamed token (prefill + first decode step).",
+            ("provider", "model", "pool"),
+            _GEN_BUCKETS,
+        )
+        self.llm_generation_decode = self._histogram(
+            "llm_generation_decode_seconds",
+            "First to last streamed token.",
+            ("provider", "model", "pool"),
+            _GEN_BUCKETS,
+        )
+        self.llm_generation_total = self._histogram(
+            "llm_generation_total_seconds",
+            "Queue wait plus provider time for one attempt.",
+            ("provider", "model", "pool", "outcome"),
+            _GEN_BUCKETS,
+        )
+        self.llm_generation_tokens_total = self._counter(
+            "llm_generation_tokens_total",
+            "Tokens per provider attempt, as reported (or estimated) by the provider.",
+            ("provider", "model", "pool", "direction"),
+        )
+        self.llm_generation_tokens_per_second = self._histogram(
+            "llm_generation_tokens_per_second",
+            "Output tokens per second over the decode phase.",
+            ("provider", "model", "pool"),
+            _TPS_BUCKETS,
         )
 
         # -- cache ---------------------------------------------------------------------
@@ -475,6 +536,35 @@ class Metrics:
             self.turn_degraded_total.labels(reason="empty_retrieval").inc()
         if any(not t.ok for t in telemetry.tools):
             self.turn_degraded_total.labels(reason="tool_failure").inc()
+
+    def observe_generation(self, timing: Any) -> None:
+        """Fan one :class:`~aura_core.domain.llm.GenerationTiming` out to the catalogue.
+
+        The router builds the value; this is the only place it becomes series (ADR-009). No
+        content is available here to leak -- the value carries durations and counts only.
+        """
+        labels = {"provider": timing.provider, "model": timing.model, "pool": timing.pool}
+        self.llm_generation_queue_wait.labels(**labels).observe(timing.queue_wait_ms / 1000.0)
+        self.llm_generation_total.labels(**labels, outcome=timing.outcome).observe(
+            timing.total_ms / 1000.0
+        )
+        if timing.outcome != "success":
+            return
+        if timing.ttft_ms is not None:
+            self.llm_generation_ttft.labels(**labels).observe(timing.ttft_ms / 1000.0)
+        if timing.decode_ms is not None:
+            self.llm_generation_decode.labels(**labels).observe(timing.decode_ms / 1000.0)
+        if timing.prompt_tokens:
+            self.llm_generation_tokens_total.labels(**labels, direction="input").inc(
+                timing.prompt_tokens
+            )
+        if timing.completion_tokens:
+            self.llm_generation_tokens_total.labels(**labels, direction="output").inc(
+                timing.completion_tokens
+            )
+        tps = timing.tokens_per_second
+        if tps is not None:
+            self.llm_generation_tokens_per_second.labels(**labels).observe(tps)
 
     def set_insecure_modes(self, bypasses: Mapping[str, bool]) -> None:
         """Publish which security bypasses are active.

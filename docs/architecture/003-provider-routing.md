@@ -78,3 +78,29 @@ accurate (a wrong `context_window` causes truncation surprises). Mitigated by a 
 | Maintainability | Vendor churn is contained to one file per vendor. |
 | Security | Local-first policy keeps regulated data off third-party APIs; per-provider allowlisting. |
 | Cost | Directly controllable: cache hits, local overflow, and cheapest-capable routing are the three biggest levers on the bill. |
+
+## Addendum (2026-09) — model pools, admission control, latency decomposition
+
+Roadmap P2.2–P2.5 extend this router rather than adding a second one:
+
+- **Model-level metadata is data.** `ProviderCapabilities` gains `pools` (`general-fast`,
+  `general-quality`, `reasoning`, `coder`, `vision`, `embedding`, `reranker`, `asr`, `tts`),
+  `speed_tier`, `gpu_cost`/`memory_cost`, `modalities`, `supports_reasoning`, `languages`,
+  `model_revision` and `capacity_group`, all read from `AURA_PROVIDER_<NAME>_*`. Every default
+  means "undeclared" and never excludes a provider, so existing configurations route unchanged.
+- **The caller declares the workload.** A `WorkloadHint` (pool, priority class, modality,
+  language, user) rides on the request or, for a whole kernel turn, in an ambient context variable
+  (`llm/workload.py`). No prompt classifier: the kernel already knows a turn is an Engineer turn.
+  Selection filters on the hint, then orders pool members before generalist fallbacks, each tier
+  by the unchanged policy.
+- **Admission before dispatch** (`llm/admission.py`): per capacity group, a slot cap, a bounded
+  priority queue (interactive/voice 1, engineer 2, insight 3, indexing 4, training 5) with a
+  timeout, and a per-user concurrent quota. Refusal is a typed `OverloadedError` (503) or
+  `UserConcurrencyLimitError` (429), both with `Retry-After`. **Saturation does not trigger
+  failover** — decision 3's failover remains for provider *failures* before the first token.
+- **Latency is decomposed** into queue wait, TTFT, decode, total and tokens/sec per
+  provider/model/pool, returned as a `GenerationTiming` value and recorded by the ADR-009
+  catalogue.
+
+Limits are per process until a shared (Redis) controller exists. The GPU pool deployment
+(`deploy/docker-compose.gpu.yml`, `docs/guides/gpu-hybrid-setup.md` §6) is built, not proven.

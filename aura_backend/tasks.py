@@ -27,10 +27,22 @@ def ingest_pdf_task(file_id: str, file_name: str, local_path: str, user_id: str)
     and the PDF bytes must never appear on the Redis broker.
     """
     logger.info(f"Celery task: Ingesting Google Drive PDF '{file_name}' ({file_id}) for user {user_id}...")
-    workspace = os.path.abspath(settings.data_dir)
-    resolved = os.path.abspath(local_path)
-    if resolved != workspace and not resolved.startswith(workspace + os.sep):
-        logger.error(f"Refusing ingest path outside workspace: {local_path}")
+    # Task arguments come off the broker, so they are checked, not trusted: the file must be a
+    # regular file (not a symlink) directly inside *this* user's staging directory, judged after
+    # resolving symlinks and `..`. The old lexical "somewhere under data_dir" check let crafted
+    # arguments follow a symlink out of the volume, claim another user's staged PDF, and -- since
+    # the file is deleted below -- remove any file in the shared volume
+    # (tests/security/test_celery_boundaries.py).
+    from services.drive import staging_dir
+
+    expected_dir = os.path.realpath(staging_dir(user_id))
+    resolved = os.path.realpath(local_path)
+    if (
+        os.path.islink(local_path)
+        or os.path.dirname(resolved) != expected_dir
+        or not os.path.isfile(resolved)
+    ):
+        logger.error(f"Refusing ingest path outside this user's staging area: {local_path}")
         return False
 
     try:
@@ -338,4 +350,29 @@ def reap_agent_workspaces_task() -> dict:
         return asyncio.run(_run_workspace_reap())
     except Exception as e:
         logger.error("Workspace reap task failed: %s", e, exc_info=True)
+        return {"status": "error", "error": type(e).__name__}
+
+
+async def _run_idempotency_purge() -> dict:
+    container = await _ensure_worker_container()
+    store = getattr(container, "idempotency", None)
+    if store is None:
+        return {"status": "skipped", "reason": "idempotency_not_configured"}
+    purged = await store.purge_expired(now=container.clock.now())
+    return {"status": "ok", "purged": purged}
+
+
+@celery_app.task(name="tasks.purge_idempotency_keys_task", queue="realtime")
+def purge_idempotency_keys_task() -> dict:
+    """Delete `Idempotency-Key` records past their TTL (roadmap P1.4).
+
+    Correctness does not depend on this: an expired record is already treated as absent by
+    every claim. It only bounds the table's size -- each keyed request leaves one row, and a
+    client that keys every write would otherwise grow it forever.
+    """
+    logger.info("Celery task: Purging expired idempotency keys...")
+    try:
+        return asyncio.run(_run_idempotency_purge())
+    except Exception as e:
+        logger.error("Idempotency purge task failed: %s", e, exc_info=True)
         return {"status": "error", "error": type(e).__name__}

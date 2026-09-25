@@ -33,6 +33,7 @@ from ..domain.errors import ConfigurationError, DependencyUnavailableError, NotF
 from ..domain.identifiers import ChunkId, DocumentId, MemoryId, SessionId, TurnId, UserId
 from ..domain.knowledge import Chunk, Document, DocumentStatus, SourceType, TrustTier
 from ..domain.memory import MemoryKind, MemoryRecord, Provenance
+from .field_crypto import FieldCipher
 from dataclasses import replace as _replace
 
 logger = logging.getLogger(__name__)
@@ -692,21 +693,45 @@ class PostgresMemoryStore:
     ``embedding_ref``. What lives here are the relational questions memory actually asks: this
     owner's active semantic records, everything from one extractor version, everything derived from
     one document.
+
+    **``content`` is encrypted at rest** when the container hands this store an enabled
+    :class:`~aura_core.adapters.field_crypto.FieldCipher` (``AURA_DATA_ENCRYPTION_KEYS``; see
+    ``docs/architecture/004-memory-taxonomy.md``, "Encryption at rest"). Every other column stays
+    in the clear because a query needs it: ``owner_id``/``kind``/``subject``/``superseded_by``/
+    ``expires_at`` are ``WHERE`` predicates, ``created_at`` is the sort key, ``prov_source`` is
+    what ``delete_by_provenance`` matches. No statement here filters on ``content`` -- similarity
+    search runs in the vector store against embeddings -- so encrypting it removes no query this
+    adapter serves. Rows written before a key was configured are read as plaintext and sealed on
+    their next write.
     """
 
-    def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
+    def __init__(
+        self, url: str, *, pool: PostgresPool | None = None, cipher: FieldCipher | None = None,
+    ) -> None:
         self._pool = pool or PostgresPool(url)
+        self._cipher = cipher or FieldCipher.disabled()
 
     @staticmethod
-    def _record(row: Mapping[str, Any]) -> MemoryRecord:
+    def encryption_context(memory_id: str, owner_id: str) -> str:
+        """What a sealed ``content`` value is bound to: moving it to another row fails to decrypt."""
+        return f"aura_memories:{memory_id}:{owner_id}"
+
+    @staticmethod
+    def _record(row: Mapping[str, Any], cipher: FieldCipher | None = None) -> MemoryRecord:
         metadata = row["metadata"]
         if isinstance(metadata, str):
             metadata = json.loads(metadata)
+        # A passthrough cipher returns legacy plaintext unchanged and refuses (rather than
+        # returns) a sealed value it has no key for.
+        content = (cipher or FieldCipher.disabled()).decrypt(
+            row["content"],
+            context=PostgresMemoryStore.encryption_context(row["id"], row["owner_id"]),
+        )
         return MemoryRecord(
             id=MemoryId(row["id"]),
             kind=MemoryKind(row["kind"]),
             owner_id=UserId(row["owner_id"]),
-            content=row["content"],
+            content=content,
             provenance=Provenance(
                 source=row["prov_source"],
                 turn_id=TurnId(row["prov_turn_id"]) if row["prov_turn_id"] else None,
@@ -729,13 +754,17 @@ class PostgresMemoryStore:
         )
 
     @staticmethod
-    def _params(record: MemoryRecord) -> tuple:
+    def _params(record: MemoryRecord, cipher: FieldCipher | None = None) -> tuple:
         p = record.provenance
+        content = (cipher or FieldCipher.disabled()).encrypt(
+            record.content,
+            context=PostgresMemoryStore.encryption_context(record.id.value, record.owner_id.value),
+        )
         return (
             record.id.value,
             record.kind.value,
             record.owner_id.value,
-            record.content,
+            content,
             record.subject,
             record.confidence,
             record.embedding_ref,
@@ -778,7 +807,7 @@ class PostgresMemoryStore:
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
-                await conn.execute(self._UPSERT, *self._params(record))
+                await conn.execute(self._UPSERT, *self._params(record, self._cipher))
         except Exception as exc:
             raise _unavailable(f"could not write memory {record.id.value!r}: {exc}") from exc
 
@@ -801,7 +830,7 @@ class PostgresMemoryStore:
                 )
         except Exception as exc:
             raise _unavailable(f"could not read memory {memory_id.value!r}: {exc}") from exc
-        return self._record(row) if row else None
+        return self._record(row, self._cipher) if row else None
 
     async def get_many(self, memory_ids: Sequence[MemoryId]) -> Sequence[MemoryRecord]:
         """One round trip after a vector search returns ids, not N.
@@ -821,7 +850,7 @@ class PostgresMemoryStore:
                 )
         except Exception as exc:
             raise _unavailable(f"could not batch-read memories: {exc}") from exc
-        by_id = {row["id"]: self._record(row) for row in rows}
+        by_id = {row["id"]: self._record(row, self._cipher) for row in rows}
         return [by_id[mid] for mid in wanted if mid in by_id]
 
     async def list_for_owner(
@@ -861,7 +890,7 @@ class PostgresMemoryStore:
                 rows = await conn.fetch(sql, *params)
         except Exception as exc:
             raise _unavailable(f"could not list memories: {exc}") from exc
-        return [self._record(row) for row in rows]
+        return [self._record(row, self._cipher) for row in rows]
 
     async def delete(self, memory_id: MemoryId, *, owner_id: UserId) -> bool:
         """Hard delete, scoped by owner.

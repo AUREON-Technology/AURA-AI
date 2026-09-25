@@ -1,0 +1,1042 @@
+# AURA production gap register -- machine-readable source of truth.
+#
+# GAP_REGISTER.md is a rendered summary of this file; if they disagree, this file wins.
+# Schema is enforced by aura_backend/tests/architecture/test_gap_register_schema.py.
+#
+# Baseline: tree at 11abb50 (branch claude/aura-production-roadmap-5x08so), verified 2026-09-24.
+# Seeded from docs/reports/FULL_SYSTEM_ARCHITECTURE_AUDIT.md (audit baseline dd88f95, 2026-09-13),
+# every finding re-verified against the current tree with file:line citations. Line numbers are
+# as of 11abb50 and will drift; re-verify before acting on one.
+#
+# Required fields per entry:
+#   gap_id, component, severity (P0-P3), current_state, target_state, owner, dependencies,
+#   test, metric, exit_condition, status
+# status is one of: open, in_progress, built_not_proven, proven, closed_stale
+# `evidence` is required (non-empty) whenever status is `proven` or `closed_stale`.
+#
+# Severity:
+#   P0 blocks the 50+ concurrent-user production target outright, or is a live integrity risk.
+#   P1 must be closed before a production claim; a real correctness/security/honesty defect.
+#   P2 needed for the full target platform; not a launch blocker on its own.
+#   P3 hygiene, documentation accuracy, maintainability.
+#
+# Owners are roles, not people. Nothing here is assigned until someone takes it.
+
+schema_version: 1
+baseline_commit: 11abb50
+verified_on: "2026-09-24"
+audit_source: docs/reports/FULL_SYSTEM_ARCHITECTURE_AUDIT.md
+audit_baseline_commit: dd88f95
+
+gaps:
+
+  # ------------------------------------------------------------------ audit findings now stale
+
+  - gap_id: GAP-001
+    component: backend/adapters/postgres
+    severity: P1
+    current_state: >-
+      Audit (sec. 12, R2) reported PostgresPool._get_pool() had no asyncio.Lock. No longer true:
+      the lock exists and pool creation uses double-checked locking.
+    target_state: Exactly one asyncpg pool per PostgresPool under concurrent cold start.
+    owner: backend
+    dependencies: []
+    test: aura_backend/tests/unit/test_postgres_pool_concurrency.py (6 cases incl. 20 concurrent first callers)
+    metric: count of asyncpg.create_pool calls per PostgresPool instance (must be 1)
+    exit_condition: Lock present and regression test green in Backend CI.
+    status: closed_stale
+    evidence: >-
+      aura_backend/aura_core/adapters/postgres_store.py:98 (self._pool_lock = asyncio.Lock()),
+      :104-121 (_get_pool re-checks self._pool inside the lock); test file
+      tests/unit/test_postgres_pool_concurrency.py; commit 12bc502 (2026-09-15, roadmap Phase G3).
+      Residual not covered by this gap: no real-Postgres concurrent cold-start run is recorded.
+
+  - gap_id: GAP-002
+    component: backend/personal-os
+    severity: P2
+    current_state: >-
+      Audit (sec. 21, top-20 #5) said the v3 personal-OS store was create+list only. No longer
+      true: owner-scoped update and delete exist in the Postgres adapter and as tools.
+    target_state: Full CRUD on PersonalOsRecord, owner-scoped and kind-checked.
+    owner: backend
+    dependencies: []
+    test: aura_backend/tests/unit/test_personal_os_records.py (update/delete cases at :74, :85, :189-:300)
+    metric: n/a
+    exit_condition: update/delete exist in adapter and tools, with owner- and kind-scoping tests.
+    status: closed_stale
+    evidence: >-
+      aura_backend/aura_core/adapters/postgres_personal_os.py:152 (update), :155-166 (delete,
+      WHERE id = $1 AND owner_id = $2); aura_backend/aura_core/tools/records.py:107-145
+      (update_<kind>/delete_<kind> tools re-check the fetched record's kind); commit 3fbb811
+      (Phase C4). Client reach of this store is still absent -- tracked separately in GAP-013.
+
+  - gap_id: GAP-003
+    component: client/engineering
+    severity: P3
+    current_state: >-
+      Audit (sec. 22) listed GitHub integration connect/callback/status/disconnect as having zero
+      Flutter callers. No longer true for connect/status/disconnect.
+    target_state: Every user-facing integration route has a client caller.
+    owner: client
+    dependencies: []
+    test: none (client call sites verified by grep; Client CI is the verification of the Dart code)
+    metric: n/a
+    exit_condition: Client calls status/connect/disconnect.
+    status: closed_stale
+    evidence: >-
+      aura_client/lib/features/engineering/data/github_integration_repository.dart:43
+      (/api/v3/integrations/github/status), :62 (/connect), :81 (/disconnect). The OAuth
+      callback is a browser redirect target and correctly has no client caller.
+
+  - gap_id: GAP-004
+    component: backend/ingestion
+    severity: P0
+    current_state: >-
+      Audit (sec. 24, top-20 #12) flagged idempotency of legacy ingest_document_task as UNKNOWN.
+      That task has zero callers; the live v3 ingestion path is idempotent on content hash.
+    target_state: Re-ingesting unchanged content is a no-op on the live path.
+    owner: backend
+    dependencies: []
+    test: >-
+      aura_backend/tests/unit/test_knowledge.py:144 (test_ingestion_is_idempotent_on_content);
+      tests/integration/test_learning_pipeline.py:65
+    metric: n/a
+    exit_condition: Live ingestion path skips unchanged content, with a test.
+    status: built_not_proven
+    evidence: >-
+      aura_backend/aura_core/knowledge/engine.py:168-183 (content-hash lookup, skipped_reason
+      "unchanged_content"). aura_backend/tasks.py:11 ingest_document_task has no caller anywhere
+      in the tree; tasks.py:22 ingest_pdf_task is enqueued only from services/drive.py:154, reached
+      only from services/agent.py, which the v3 gateway never imports. Legacy upserts use
+      deterministic point ids (services/rag.py:237-252). Remaining concerns: concurrent duplicate
+      uploads on real Postgres (GAP-015) and dead legacy tasks (GAP-038).
+    reverified_2026_09_25: >-
+      Re-verified by the P1.4 stream; the closed_stale verdict above was wrong. v3 ingestion was
+      NOT idempotent and leaked across users: KnowledgeEngine derived document ids from Python's
+      per-process-salted hash(title), not scoped to an owner, so (a) a retry on another worker
+      or after a restart got a new id and duplicated every chunk, and (b) two users uploading
+      the same title shared one id -- the second upload became a new version of the first user's
+      document, still owned by the first user, who could then read it. A caller-supplied
+      document_id owned by someone else also overwrote their document, delete_document removed
+      other owners' vectors, the in-memory get_by_hash returned superseded versions, and
+      concurrent duplicates all indexed. Fixed in 9b9f9e5: ids are sha256(owner, title), a
+      foreign document_id is refused 409, deletes are owner-scoped, per-hash/per-id locks in-
+      process, Idempotency-Key across workers. 11 regression tests
+      (tests/unit/test_ingestion_idempotency.py; 8 failed before the fix), and ingestion
+      scenarios re-run against a real Postgres 16 PostgresDocumentStore. Not proven: not
+      deployed, CI cannot run (GAP-043), and existing production documents keep their old
+      hash(title) ids.
+
+  # ------------------------------------------------------------------ CI / process integrity
+
+  - gap_id: GAP-005
+    component: process/ci
+    severity: P0
+    current_state: >-
+      The breakage itself is fixed: commits 43a2d5c, e8a960b, 662af14, 53c9106 (plus merge
+      c3aa510) were pushed directly to main on 2026-09-23 and left the default pytest suite unable
+      to build a Container (~200 errors), which also blocks Deploy VPS (workflow_run on Backend CI
+      success). The repair, 11abb50, has been merged to main through PR #96. What remains open is
+      the process gap that allowed it: main is still not a protected branch, so the same direct
+      push can happen again. The merge could not be CI-verified either, because GitHub Actions is
+      not running at all on this repo (GAP-043).
+    target_state: >-
+      Branch protection on main requiring PRs and the Backend CI `test`, `pip-audit`,
+      `docker-build` checks (plus Client CI / Host Daemon CI for their paths); no direct pushes.
+    owner: repo-admin
+    dependencies: [GAP-043]
+    test: GitHub branch API reports main protected with required status checks.
+    metric: direct pushes to main per month (target 0)
+    exit_condition: >-
+      main protected with required checks, verified via the GitHub API or settings screenshot
+      recorded in docs/reports/, and the first post-protection merge shows green required checks.
+    status: open
+    evidence: >-
+      GitHub list_branches on 2026-09-24 (before PR #96 merged) returned main {"protected": false}.
+      Commit 11abb50 message documents the breakage and fix (pytest 2131 passed / 34 skipped);
+      coordinator reports PR #96 carrying 11abb50 merged to main. Branch protection is not
+      re-verified after the merge.
+
+  - gap_id: GAP-006
+    component: evaluation/ci
+    severity: P1
+    current_state: >-
+      .github/workflows/eval-ci.yml is workflow_dispatch-only (lines 3-4), so the agent/real
+      evaluation workflow never gates a merge or a deploy. Deterministic scripted-provider gates
+      DO run inside pytest (tests/e2e/test_docs_corpus_gate.py; agent_tasks suite) -- but no
+      evaluation with a real model gates anything, and no eval-ci.yml run is recorded in
+      docs/reports/.
+    target_state: >-
+      Deterministic eval suites gate every PR touching aura_core/{knowledge,rag,planning,
+      reasoning,safety,kernel}; a real-model eval runs on a schedule and before every release,
+      with RegressionGate failing the job.
+    owner: ml
+    dependencies: [GAP-021]
+    test: eval-ci.yml triggered on pull_request with path filters; RegressionGate exit code
+    metric: aura_eval_score{metric=...}; eval job pass/fail
+    exit_condition: >-
+      A PR that deliberately regresses recall is shown blocked by CI (linked run), and a scheduled
+      real-model eval run is linked from docs/reports/.
+    status: built_not_proven
+    reverified_2026_09_25: >-
+      eval-ci.yml was also invalid YAML (unquoted sqlite+aiosqlite:///:memory: at line 45), so
+      GitHub recorded a failed run on every push and it had never executed. Fixed in 8e85696: a
+      `gate` job runs on pull_request and push to main with path filters over
+      kernel/rag/knowledge/planning/
+      reasoning/agents/tools/safety/llm/context/memory/prompts/evaluation, running
+      aura_backend/evaluation/gate.py (agent_tasks with echo, docs_corpus retrieval with the
+      hash embedder, docs_corpus answers with ContextGroundedProvider) against committed
+      baselines, and writing a table to the job summary. Shown locally: exit 0 on the current
+      tree; exit 1 with dense/ lexical ranking deliberately reversed (recall@5 0.650 -> 0.550);
+      exit 1 against a raised baseline. tests/architecture/test_workflows_parse.py now parses
+      every workflow. Not proven: blocks nothing until branch protection marks "Agent Evaluation
+      / Evaluation regression gate" required, and no CI run exists (GAP-043). Scripted providers
+      only -- real-model quality is GAP-021.
+
+  - gap_id: GAP-007
+    component: admin/testing
+    severity: P2
+    current_state: >-
+      aura_admin has 2 Playwright specs (tests/e2e/admin.spec.ts, superadmin.spec.ts) across 9
+      console areas. admin-ci.yml runs only after "VPS Dev Ops" completes or on manual dispatch
+      (lines 7-17) -- it never runs on a PR touching aura_admin/**, so lint/build breakage merges
+      unchecked.
+    target_state: >-
+      Admin lint + build + Playwright (against tests/e2e/mock-gateway.mjs) on every PR touching
+      aura_admin/**; one spec per console page.
+    owner: admin
+    dependencies: [GAP-005]
+    test: admin-ci.yml pull_request trigger; Playwright specs per page
+    metric: console pages with >=1 e2e spec (target 9/9)
+    exit_condition: PR-triggered Admin CI green with per-page specs.
+    status: open
+
+  - gap_id: GAP-008
+    component: backend/unreviewed-packages
+    severity: P2
+    current_state: >-
+      43a2d5c added aura_core/engineering2 (pipeline/models/policy), aura_core/proactive
+      (detector/event/loop/signal), aura_core/continuous_intelligence, and
+      aura_core/security/{policy,authenticator,rate_limiter,secret_manager}.py (~2.8k LOC) without
+      review. Nothing outside their own package imports engineering2, proactive or
+      continuous_intelligence; the four security modules are only re-exported by
+      aura_core/security/__init__.py:13-21, whose own docstring says "nothing in the request path
+      uses them yet". No test file imports any of them. continuous_intelligence/__init__.py
+      declares __all__ names (ContinuousIntelligenceLoop, ...) that do not exist -- accessing
+      them raises AttributeError (reproduced). See GAP-009 for a concrete defect in
+      secret_manager.py.
+    target_state: Each package either reviewed, tested and wired through container.py, or deleted.
+    owner: backend
+    dependencies: [GAP-005]
+    test: per-package unit tests, or deletion with pytest + legacy unittest green
+    metric: unreviewed LOC in aura_core (target 0)
+    exit_condition: Every one of these modules has tests and a caller, or is removed, via reviewed PR.
+    status: open
+
+  - gap_id: GAP-009
+    component: security/secret-manager
+    severity: P1
+    current_state: >-
+      aura_core/security/secret_manager.py claims "AES-256-CTR encryption" (line 50) but
+      _aes_ctr_encrypt (lines 133-143) derives its keystream from sha256(counter) only -- the
+      `key` argument is never used. Any ciphertext it produces decrypts with any key (reproduced:
+      decrypting with 32 zero bytes returned the plaintext). Not currently called anywhere, but
+      exported from aura_core.security, so the next caller inherits a false sense of encryption.
+    target_state: >-
+      Module deleted, or replaced by an audited primitive (cryptography's AESGCM) with a
+      known-answer test and a test that a wrong key fails to decrypt.
+    owner: security
+    dependencies: []
+    test: wrong-key decryption must raise; KAT vectors
+    metric: n/a
+    exit_condition: Module removed or fixed, with the wrong-key test failing on the current code.
+    status: built_not_proven
+    reverified_2026_09_25: >-
+      Fixed in b16d168: AES-256-GCM (cryptography AESGCM, imported lazily) with the secret id as
+      associated data; rotate_key rewritten (it also called time.time() without importing time,
+      replaced the key before decrypting, and appended the new entry twice).
+      tests/unit/test_secret_manager_crypto.py -- wrong-key, tamper, wrong-secret-id and
+      rotation cases fail against the previous code and pass now. The exit condition is met
+      locally; awaiting a CI run (GAP-043). Still no caller in the request path.
+
+  - gap_id: GAP-010
+    component: repo/hygiene
+    severity: P2
+    current_state: >-
+      Tracked build artefacts and strays: aura_hostd/build/aura_hostd.exe (a Windows binary built
+      on a developer machine, last changed in 43a2d5c), aura_hostd/build/aura_hostd.log and
+      .log.err, repo-root test_personal_os.py, aura_backend/test_personal_os2.py,
+      repo-root ML_ENVIRONMENT_REPORT.md. An unreproducible binary in git is a supply-chain risk.
+    target_state: >-
+      No binaries or logs in git; the hostd binary is produced by CI from source with a checksum;
+      stray tests moved under tests/ or removed.
+    owner: repo-admin
+    dependencies: [GAP-005]
+    test: a fitness test refusing tracked *.exe / *.log files
+    metric: tracked binary artefacts (target 0)
+    exit_condition: Files removed via reviewed PR; guard test added.
+    status: open
+
+  # ------------------------------------------------------------------ inference / scale
+
+  - gap_id: GAP-011
+    component: inference/ollama
+    severity: P0
+    current_state: >-
+      Production serves one generation at a time: OLLAMA_NUM_PARALLEL "1"
+      (deploy/docker-compose.prod.yml:683), OLLAMA_MAX_LOADED_MODELS "1" (:679),
+      AURA_PROVIDER_LOCAL_MAX_CONCURRENCY 1 (:260), CPU-only. Measured (A4, 2026-08-23, 4-core/15GB
+      sandbox, qwen2.5:3b-instruct-q4_K_M, n=20 sequential): p50 56.3 s, p95 70.5 s; throughput
+      flat 0.04-0.06 turns/s from 1 to 8 concurrent (docs/reports/phase-a4-load-test.md:71-100).
+    target_state: >-
+      GPU inference plane (vLLM, specialized pools) sustaining the load matrix in
+      MASTER_PRODUCTION_ROADMAP Phase 3 at 50 concurrent users within PRODUCTION_SLO targets.
+    owner: platform-ops
+    dependencies: [GAP-012, GAP-018]
+    test: tests/load (opt-in) extended to the 1/5/10/25/50/100-user matrix
+    metric: aura_llm_ttft_seconds, aura_turn_duration_seconds, aura_llm_queue_depth, throughput
+    exit_condition: >-
+      Load report in docs/reports/ showing TTFT p95 < 2.5 s and answer p95 < 15 s at 50
+      concurrent users on the production topology.
+    status: open
+    reverified_2026_09_25: >-
+      P2 (15a7dbd) adds admission control in front of every provider: per-provider concurrency
+      caps (now also on stream()), a bounded priority queue (interactive/voice 1, Engineer 2,
+      insight 3, indexing 4, training 5), queue timeout -> 503 + Retry-After, per-user quota ->
+      429. The compose files set Ollama cap 1 / queue 4 / 90 s, so excess requests wait in AURA
+      with a deadline instead of inside Ollama until the provider timeout. This bounds the
+      queue; it does not add throughput. The gap stays open until GAP-012 lands and GAP-041
+      measures it.
+
+  - gap_id: GAP-012
+    component: inference/gpu-host
+    severity: P0
+    current_state: >-
+      No GPU inference host exists. The `vllm` service is behind the `gpu` compose profile
+      (docker-compose.prod.yml:707-735), image vllm/vllm-openai:latest (unpinned), default model
+      Qwen/Qwen2.5-32B-Instruct-AWQ; never run in production. docs/guides/gpu-hybrid-setup.md
+      describes a co-located GPU node; nothing is provisioned.
+    target_state: Dedicated GPU host(s) running pinned vLLM pools (chat, coder, vision, embed/rerank).
+    owner: platform-ops
+    dependencies: []
+    test: tests/load/test_multi_model_routing.py pattern against real vLLM pools
+    metric: aura_provider_healthy{provider=...}, aura_gpu_utilisation_ratio, aura_gpu_memory_used_bytes
+    exit_condition: GPU host serving a pinned model via the gateway, with a report in docs/reports/.
+    status: open
+    reverified_2026_09_25: >-
+      deploy/docker-compose.gpu.yml (15a7dbd) defines general, coder and embed vLLM pools on
+      vllm/vllm-openai:v0.29.0 pinned by digest, with a required --revision per model (compose
+      refuses to render without them), --max-num-seqs, prefix caching, a GPU reservation each,
+      no published ports. Router pool metadata routes the Engineer persona to coder -> general
+      -> Ollama. Built, not proven: no GPU host exists and nothing has run on one;
+      docs/guides/gpu-hybrid-setup.md section 6 lists the evidence required. PR #97 (merged to
+      main 2026-09-25, 56b54ea) documents a second path: a Railway control plane with the
+      existing deploy/spaces/inference-vllm Hugging Face GPU Space (AURA's own vLLM on rented
+      GPU, via openai_compatible) as the primary or sole provider (docs/deployment/). Either
+      path closes this gap only once one is running and GAP-041 measures it.
+
+  - gap_id: GAP-013
+    component: client/reach
+    severity: P2
+    current_state: >-
+      Backend surfaces with no Flutter caller (re-verified by grep of aura_client/lib): all
+      /api/v3/learning/* (client /learning route redirects to /feedback,
+      core/routing/router.dart:288), /insights/generate, and /admin/* (most /admin/* is reached by
+      aura_admin instead -- acceptable if declared ops-only). The v3 PersonalOsRecord store has no
+      REST route in aura_core/api and no client sync; it is reachable only through chat tools.
+    target_state: Every user-facing surface has a client caller, or is explicitly declared ops-only/tool-only in docs.
+    owner: client
+    dependencies: []
+    test: a route-inventory test listing v3 routes with their declared consumer
+    metric: user-facing routes without a consumer (target 0)
+    exit_condition: Inventory checked in; each gap either wired in the client (Client CI green) or documented as non-client.
+    status: open
+
+  - gap_id: GAP-014
+    component: safety/taint
+    severity: P2
+    current_state: >-
+      Concurrent-batch taint visibility gap, still present and self-documented at
+      aura_core/tools/registry.py:378-389: a step in the same asyncio.gather batch
+      (aura_core/execution/engine.py:208-230, batch of up to settings.tools.max_parallel) as an
+      untrusted_content tool does not see context.tainted before its own policy check. No
+      regression test pins the current behaviour.
+    target_state: >-
+      Either side-effecting steps never share a batch with an untrusted_content step, or the gap
+      is pinned by a test that proves such a step cannot consume the tainting output.
+    owner: security
+    dependencies: []
+    test: execution-engine test with a fetch_url step and a side-effecting step in one batch
+    metric: aura_turns_tainted_total; 0 unauthorized tool executions (PRODUCTION_SLO)
+    exit_condition: Test added and green; residual either removed or documented as proven-harmless.
+    status: built_not_proven
+    reverified_2026_09_25: >-
+      Fixed in the P1.5 merge (371bdc1): ExecutionEngine._taint_ordered and
+      ToolRegistry.execute_many defer any side-effecting, non-workspace_local call in a batch
+      that also contains an untrusted_content call until the tainting call has returned (if
+      every call is gated, the first tainting call runs alone). Clean batches keep full
+      concurrency. tests/security/test_concurrent_taint.py (10) plus a kernel-level case in
+      test_injection_end_to_end.py: 6 of 10 and the kernel case failed against the pre-fix
+      engine. The residual-gap comment in tools/registry.py is replaced. Not proven: no CI run
+      (GAP-043).
+
+  - gap_id: GAP-015
+    component: backend/idempotency
+    severity: P2
+    current_state: >-
+      No generic Idempotency-Key mechanism exists anywhere (grep for "idempotency-key" /
+      "idempotency_key" matches only the audit report). Retried POSTs (chat, upload, tool
+      confirmation, sync) rely on natural idempotency where it exists. Two concurrent uploads of
+      the same content on real Postgres are not tested (content-hash check is read-then-write).
+    target_state: >-
+      Idempotency-Key honoured on side-effecting v3 POSTs (stored response keyed by user+key with
+      TTL); duplicate concurrent ingest converges to one version.
+    owner: backend
+    dependencies: []
+    test: API test replaying a POST with the same key; concurrent-ingest test against testcontainers Postgres
+    metric: duplicate side effects on retry (target 0)
+    exit_condition: Middleware + tests green, verified against real Postgres.
+    status: built_not_proven
+    reverified_2026_09_25: >-
+      Built in 9b9f9e5: IdempotencyStore port, in-memory and Postgres adapters, Alembic 0006,
+      opt-in route dependency on 11 v3 and 6 admin side-effecting routes; replay with
+      Idempotent-Replayed: true, 409 in progress, 422 on a different body, 5xx releases the key,
+      in-progress lease with a per-claim token. Verified on a real Postgres 16: 31 contract
+      tests incl. a 20-way concurrent claim, alembic upgrade/downgrade, two gateway processes
+      sharing one table (12 concurrent same-key requests -> one execution). Not proven: no
+      client sends the header yet (knowledge_center.dart upload/ingest/delete/cag-pin,
+      memory_repository.dart, feedback_repository.dart, engineer_workspaces.dart destroy are the
+      callers that should), not deployed, no CI run.
+
+  - gap_id: GAP-016
+    component: data/encryption-at-rest
+    severity: P1
+    current_state: >-
+      Server-side memory, documents/chunks and v3 personal-OS records are plaintext:
+      aura_memories.content TEXT (aura_core/adapters/postgres_store.py:200-204),
+      aura_documents/aura_chunks content TEXT (:139-187), aura_personal_os_records.fields JSONB
+      (aura_core/adapters/postgres_personal_os.py:28-32). Backups are not encrypted before the
+      optional rclone offsite copy (deploy/scripts/backup.sh has no encryption step). Legacy v2
+      personal-OS tables remain client-side encrypted.
+    target_state: >-
+      Explicit, documented decision; at minimum encrypted volumes plus encrypted backups
+      (age/gpg or rclone crypt) with key custody off the VPS; column-level encryption for
+      memory/personal-OS if the threat model requires it.
+    owner: security
+    dependencies: []
+    test: round-trip test for any column encryption; restore drill of an encrypted backup
+    metric: n/a
+    exit_condition: Decision recorded as an ADR; chosen controls implemented and a restore from an encrypted backup drilled.
+    status: built_not_proven
+    reverified_2026_09_25: >-
+      Column encryption built in f11b543: aura_memories.content and
+      aura_personal_os_records.fields sealed with Fernet (envelope aura-enc:v1:<key id>:...,
+      bound to table:id:owner), key rotation via AURA_DATA_ENCRYPTION_KEYS (Docker secret
+      data_encryption_keys, generated by bootstrap-secrets.sh), staging/production refuse to
+      start without it, legacy plaintext read and sealed on next write,
+      scripts/reencrypt_fields.py for bulk. Verified on a real Postgres 16 (6 opt-in tests +
+      psql showing ciphertext). Backups encrypted in 3d9a318 (age, public key only on host,
+      manifest, fail-closed). Decision recorded in ADR-004 "Encryption at rest" -- server-side,
+      NOT end-to-end. Still plaintext: documents/chunks, Qdrant embeddings and payload, memory
+      subject/metadata, feedback, graph, telemetry. Not proven: no restore of an encrypted
+      backup has been drilled (GAP-028).
+
+  # ------------------------------------------------------------------ learning / ML
+
+  - gap_id: GAP-017
+    component: learning/fine-tuning
+    severity: P1
+    current_state: >-
+      No code path in the default or production configuration changes model weights, and none has
+      been run against a real base model. Production gateway uses ScriptedTrainer
+      (aura_core/container.py:533-557; AURA_FINETUNE_TRAINER unset). The opt-in `training` profile
+      (docker-compose.prod.yml:621-643) and dev-gateway (docker-compose.dev.yml:179, defaults to
+      `local`) use LocalLoraTrainer, which after e8a960b reads job.epochs/batch_size/lora_rank etc.
+      (aura_core/adapters/local_lora_trainer.py:127-146) -- fields FineTuneJobSpec does not have
+      (aura_core/ports/mlops.py:20-30). The AttributeError is caught by a blanket `except
+      Exception` (:112-115) and the trainer returns a modelfile://<tag> artefact whose notes claim
+      "training dependencies unavailable" (reproduced 2026-09-24). Even if reached, the new ML
+      service trains a randomly initialised 6-layer, 2-class classification transformer
+      (aura_core/adapters/ml/pytorch_adapter.py:149-170) -- it never loads the base LLM (no
+      from_pretrained); peft is not in requirements.lock. ML_ENVIRONMENT_REPORT.md verifies
+      generic torch/TF operations on a Windows/Python 3.14 laptop, not AURA fine-tuning.
+    target_state: >-
+      Either (a) a real LoRA/QLoRA trainer on the GPU host that loads the pinned base model,
+      trains on an approved dataset, produces a merged/adapter artefact, is evaluated against the
+      production model and promoted only through ApprovalService + RegressionGate; or (b) the
+      feature relabelled as "dataset preparation + approval workflow" everywhere.
+    owner: ml
+    dependencies: [GAP-012, GAP-018, GAP-006]
+    test: training-profile integration test on a tiny real base model asserting weights changed and eval ran
+    metric: fine-tune jobs SUCCEEDED with a real weight delta; eval delta vs production
+    exit_condition: A real run report in docs/reports/ with base-model revision, dataset digest, eval delta and approval record.
+    status: open
+
+  - gap_id: GAP-018
+    component: learning/trainer-failure-reporting
+    severity: P1
+    current_state: >-
+      A failed training attempt is recorded as success: LocalLoraTrainer.train falls back to a
+      Modelfile TrainResult on any exception (local_lora_trainer.py:104-118), and
+      FineTuneJobEngine.run marks the job SUCCEEDED with that artefact
+      (aura_core/learning/finetune.py:361, :399). The fallback does not even create the model in
+      Ollama (see the "In a real deployment, this would call Ollama" comment in _fallback_modelfile).
+    target_state: Training failures fail the job (FAILED status, error recorded, no registry entry).
+    owner: ml
+    dependencies: []
+    test: unit test where the trainer raises; job must end FAILED
+    metric: fine-tune jobs SUCCEEDED with modelfile:// artefacts (target 0)
+    exit_condition: Test green; blanket except removed.
+    status: open
+
+  # ------------------------------------------------------------------ multimodal / voice / NLP
+
+  - gap_id: GAP-019
+    component: multimodal/vision-video
+    severity: P2
+    current_state: >-
+      No vision or video understanding. Only a capability flag exists
+      (aura_core/domain/llm.py:148 supports_vision, :178-188 needs_vision filter); no adapter,
+      no endpoint, no client path. OCR (Tesseract) extracts text only.
+      aura_core/rag/agentic.py:119 still says "There is no OCR" -- stale since Phase F1.
+    target_state: Self-hosted VLM pool (e.g. Qwen3-VL-8B-Instruct) behind the router; image upload/understanding through the kernel.
+    owner: ml
+    dependencies: [GAP-012]
+    test: e2e test with a real image through a pinned VLM (opt-in load/bench)
+    metric: vision eval suite accuracy (to be defined)
+    exit_condition: Vision turn served end to end with a pinned model and an eval report.
+    status: open
+
+  - gap_id: GAP-020
+    component: voice/stt-language
+    severity: P2
+    current_state: >-
+      STT default is faster-whisper `tiny.en` (aura_core/config/settings.py:1048, :1080),
+      English-only, while TTS ships an Arabic Piper voice (ar_JO-kareem-medium,
+      aura_backend/Dockerfile:54-57). Arabic speech input is not supported by default. Live-voice
+      VAD is energy-based (aura_core/voice/vad.py); Phase H is scaffolding, not device-proven.
+    target_state: Multilingual self-hosted ASR (Arabic + English) with measured WER; neural VAD.
+    owner: ml
+    dependencies: [GAP-012]
+    test: synthesize->transcribe round trip in Arabic and English with WER threshold
+    metric: WER per language; voice round-trip latency
+    exit_condition: WER report in docs/reports/ for both languages on the production ASR model.
+    status: open
+
+  - gap_id: GAP-021
+    component: evaluation/real-model-quality
+    severity: P1
+    current_state: >-
+      All gated quality numbers use scripted providers: groundedness 0.94 / citation coverage 0.83
+      with ContextGroundedProvider, task completion 100% with EchoProvider (roadmap sec. 5).
+      Retrieval recall@5 0.65 / nDCG 0.51 / MRR 0.37 on a 10-doc corpus with the default hash
+      embedder (phase-a3-retrieval-corpus.md). No real-model answer-quality number exists; no
+      per-RAG-strategy comparison (A3 exit criterion still partial).
+    target_state: Real-model eval (production embedder + production LLM) meeting PRODUCTION_SLO RAG targets, per strategy.
+    owner: ml
+    dependencies: [GAP-012]
+    test: evaluation/runner.py against a real stack; per-strategy suite
+    metric: recall@10, groundedness, citation precision (PRODUCTION_SLO)
+    exit_condition: Report in docs/reports/ with real-model numbers and conditions.
+    status: open
+
+  - gap_id: GAP-022
+    component: safety/system-prompt-leak-guard
+    severity: P2
+    current_state: >-
+      The first time guards ran on real model output (A4), SystemPromptLeakGuard blocked 3 of 15
+      concurrency-test turns and GroundednessGuard flagged 9 (phase-a4-load-test.md:103-116).
+      Whether the blocks were true leaks or false positives was never established.
+    target_state: Guard precision/recall measured on real model output; false-positive rate bounded.
+    owner: security
+    dependencies: [GAP-021]
+    test: labelled leak/no-leak suite run against the production model
+    metric: aura_guard_verdicts_total{guard="system_prompt_leak",action="block"} rate; FP rate
+    exit_condition: Labelled evaluation report; thresholds tuned or confirmed.
+    status: open
+
+  # ------------------------------------------------------------------ knowledge graph / agents
+
+  - gap_id: GAP-023
+    component: knowledge/graph
+    severity: P2
+    current_state: >-
+      Audit scored the knowledge graph 0/UNKNOWN ("not located"). It exists:
+      RuleEntityExtractor (aura_core/knowledge/extraction.py) runs on every ingest when
+      KNOWLEDGE_GRAPH_ENABLED (default true, settings.py:397, :443; wired container.py:210-211;
+      engine.py:266-267, :357-361); PostgresGraphStore (aura_core/adapters/postgres_graph.py:107,
+      owner-scoped tables :27-67) is used whenever a database is configured
+      (container.py:927-934); multi-hop GraphRAG is a retrieval strategy
+      (aura_core/rag/leaves.py:143-265). Tests: tests/unit/test_postgres_graph.py (6 cases, fake
+      connection, SQL shape + owner scoping) and in-memory GraphRAG tests. Not verified against
+      a real Postgres; the default retrieval_strategy "simple" (settings.py:410) never reads the
+      graph, so production writes graph rows that no default turn consults.
+    target_state: Graph verified on real Postgres; graph/adaptive strategy evaluated against simple and enabled where it wins.
+    owner: backend
+    dependencies: [GAP-021]
+    test: testcontainers Postgres test for PostgresGraphStore; per-strategy eval including graph
+    metric: recall@10 delta graph vs simple on a multi-hop suite
+    exit_condition: Real-Postgres test green and a strategy comparison report.
+    status: built_not_proven
+
+  - gap_id: GAP-024
+    component: agents/autonomy-isolation
+    severity: P2
+    current_state: >-
+      8 personas are registered (aura_core/agents/registry.py:112-201; audit counted 7). Only
+      `engineer` has max_plan_iterations > 1 (=8, :200). Every persona uses memory_scope="shared"
+      (:114-201), so no per-agent memory isolation is exercised.
+    target_state: Deliberate autonomy decision per persona; memory_scope isolation implemented and tested where claimed.
+    owner: backend
+    dependencies: []
+    test: registry test asserting scope isolation for any persona declaring a non-shared scope
+    metric: n/a
+    exit_condition: ADR recording the decision; isolation tests if adopted.
+    status: open
+
+  - gap_id: GAP-025
+    component: engineer/workspaces
+    severity: P2
+    current_state: >-
+      Persistent Engineer workspaces (ADR-013/014, Phase J) are built but not proven: prod compose
+      defaults AURA_SANDBOX_ENABLED false and the sandbox profile is off; no
+      verify-engineer-workspaces report exists in docs/reports/.
+    target_state: VPS live checks pass via deploy/scripts/verify-engineer-workspaces.sh.
+    owner: platform-ops
+    dependencies: []
+    test: deploy/scripts/verify-engineer-workspaces.sh (writes docs/reports/)
+    metric: live checks passed (target 10/10)
+    exit_condition: The script's report committed under docs/reports/ with all checks passing.
+    status: built_not_proven
+
+  - gap_id: GAP-026
+    component: desktop/hostd
+    severity: P3
+    current_state: >-
+      aura_hostd Units 1-9 in tree with disclosed cuts (real PTY, live xterm, restart-on-crash,
+      bundled binary, interactive consent tiers per roadmap sec. 5); never proven end to end.
+    target_state: Desktop Engineer proven against a real daemon on Windows/macOS/Linux.
+    owner: client
+    dependencies: [GAP-010]
+    test: Host Daemon CI + a recorded end-to-end session report
+    metric: n/a
+    exit_condition: End-to-end report in docs/reports/.
+    status: built_not_proven
+
+  # ------------------------------------------------------------------ deploy / DR / supply chain
+
+  - gap_id: GAP-027
+    component: deploy/dev-prod-inference-sharing
+    severity: P1
+    current_state: >-
+      The aura-dev stack uses production's Ollama over the shared aura_edge network
+      (docker-compose.dev.yml:4-5, :142; docker-compose.prod.yml:48-51, ollama networks include
+      aura_edge). With OLLAMA_NUM_PARALLEL=1, any dev traffic queues production turns, and a dev
+      container can reach the production model server.
+    target_state: Dev inference isolated from prod (separate model server or strict quota), or dev load forbidden on the shared host.
+    owner: platform-ops
+    dependencies: [GAP-012]
+    test: compose parity/isolation fitness test asserting dev does not resolve prod ollama
+    metric: aura_llm_queue_depth during dev activity
+    exit_condition: Isolation implemented in both compose files in one commit, test green.
+    status: open
+
+  - gap_id: GAP-028
+    component: deploy/disaster-recovery
+    severity: P1
+    current_state: >-
+      Backup service and drill proven once in a disposable sandbox (A2, 2026-08-23, "No VPS or
+      production data was involved", phase-a2-restore-drill.md:17-18). Offsite rclone copy and
+      restore.sh have never been exercised (roadmap A2). No drill on the production VPS; no
+      measured RPO/RTO. Backups are local to the same VPS unless BACKUP_S3_URI is set.
+    target_state: Quarterly drills restoring production-sized data from the offsite copy to a fresh host, with measured RTO.
+    owner: platform-ops
+    dependencies: [GAP-016]
+    test: restore-drill.sh against an offsite copy; restore.sh on a staging host
+    metric: aura_backup_last_success_timestamp_seconds, aura_backup_offsite_last_exit_code; measured RTO
+    exit_condition: Drill report from offsite data with measured RPO/RTO in docs/reports/.
+    status: open
+    reverified_2026_09_25: >-
+      3d9a318 adds age-encrypted backup sets with an encrypted plaintext-hash manifest and a
+      keyless-checkable CHECKSUMS.sha256, GFS retention that never prunes when the newest set
+      fails verification, rclone check --one-way after upload plus remote checksum comparison,
+      restore.sh and restore-drill.sh verifying before touching the database, drill timing (RTO)
+      written to DRILL_RECORD, AuraBackupMisconfigured/AuraBackupUnencrypted alerts, and a
+      backup-scripts CI job (shellcheck + 56-case shell test with real age). DEPLOY
+      PRECONDITION: encryption defaults on and refuses to run without BACKUP_AGE_RECIPIENT or
+      deploy/secrets/backup_age_recipients.txt, so the public key must be on the VPS before this
+      reaches main or nightly backups stop (by design, with an alert). Still unproven: no
+      encrypted cycle, offsite upload or drill has run on the VPS.
+
+  - gap_id: GAP-029
+    component: deploy/single-host
+    severity: P2
+    current_state: >-
+      Entire platform (17 services + dev stack) runs on one VPS at /opt/aura-stack; single point
+      of failure (audit R6). Accepted by design until measured need.
+    target_state: Control-plane VPS + separate GPU inference host; documented failover/rebuild runbook (DEPLOYMENT_TOPOLOGY.md).
+    owner: platform-ops
+    dependencies: [GAP-012, GAP-028]
+    test: host-rebuild drill from backups (docs/guides/host-migration-runbook.md)
+    metric: availability SLO
+    exit_condition: Rebuild drill report; availability measured against PRODUCTION_SLO.
+    status: open
+
+  - gap_id: GAP-030
+    component: supply-chain/model-pinning-llm
+    severity: P1
+    current_state: >-
+      The production LLM is referenced by Ollama tag only (qwen2.5:3b-instruct-q4_K_M,
+      docker-compose.prod.yml:256; AURA_MODEL_ALLOWLIST is tag names, deploy/.env.example:187).
+      A re-pushed tag silently changes the model. The Ollama *image* is digest-pinned (:667).
+    target_state: Model artefacts pinned by digest (Ollama manifest digest or HF revision SHA) and verified at pull.
+    owner: platform-ops
+    dependencies: []
+    test: startup check comparing the loaded model digest to the pinned value
+    metric: n/a
+    exit_condition: Digest recorded in MODEL_REGISTRY.md and enforced at startup.
+    status: open
+
+  - gap_id: GAP-031
+    component: supply-chain/model-pinning-embed-stt
+    severity: P1
+    current_state: >-
+      Embedder BAAI/bge-small-en-v1.5 (docker-compose.prod.yml:289) is loaded with
+      SentenceTransformer(model_name) and no revision (aura_core/llm/embeddings.py:358), downloaded
+      from the HF Hub at runtime. faster-whisper `tiny.en` is loaded by size name with no revision
+      (aura_core/adapters/whisper_stt.py:63). The CrossEncoder reranker is opt-in (default
+      "heuristic", settings.py:394) and equally unpinned. An upstream change to the embedder
+      silently changes vectors under an existing index. Piper voices ARE sha256-pinned
+      (aura_backend/Dockerfile:44-80).
+    target_state: Embedding/reranker/ASR models pinned to a revision SHA and baked or mirrored, with offline mode.
+    owner: ml
+    dependencies: []
+    test: fitness test that every model load passes revision=; HF_HUB_OFFLINE in prod
+    metric: n/a
+    exit_condition: Revisions recorded in MODEL_REGISTRY.md and enforced by test.
+    status: open
+
+  - gap_id: GAP-032
+    component: supply-chain/container-images
+    severity: P2
+    current_state: >-
+      Tag-only (not digest-pinned) images: nginx:1.27-alpine (prod:142), postgres:16-alpine
+      (prod:737, dev:406, deploy/backup/Dockerfile:1), redis:7-alpine (prod:762, dev:430),
+      tecnativa/docker-socket-proxy:0.3.0 (prod:444, dev:239), vimagick/tinyproxy:latest (prod:506,
+      dev:285), vllm/vllm-openai:latest (prod:709, deploy/spaces/inference-vllm/Dockerfile:21),
+      ghcr.io/ggml-org/llama.cpp:server (deploy/spaces/inference/Dockerfile:16),
+      python:3.11-slim (aura_backend/Dockerfile:4,33), node:22-alpine (aura_admin/Dockerfile:1,6,22).
+      Digest-pinned: ollama, qdrant, prometheus, alertmanager, grafana, loki, promtail,
+      node-exporter, sandbox base python:3.12-slim.
+    target_state: Every image digest-pinned (tag@sha256) with a scheduled bump PR.
+    owner: platform-ops
+    dependencies: []
+    test: fitness test scanning compose files and Dockerfiles for image refs without @sha256
+    metric: unpinned image references (target 0)
+    exit_condition: Test green in Backend CI.
+    status: open
+
+  - gap_id: GAP-033
+    component: supply-chain/dev-tooling
+    severity: P3
+    current_state: >-
+      aura_backend/requirements-dev.txt uses ranges (pytest>=8.0, pytest-asyncio>=0.23,
+      pytest-cov>=5.0, testcontainers[postgres]>=4.0.0, pip-tools>=7.4); eval-ci.yml and
+      backend-ci.yml install them unpinned. Runtime deps are fully locked (requirements.lock).
+    target_state: Dev/test tooling locked like runtime deps.
+    owner: backend
+    dependencies: []
+    test: CI installs from a lock
+    metric: n/a
+    exit_condition: requirements-dev.lock generated and used by CI.
+    status: open
+
+  - gap_id: GAP-034
+    component: inference/remote-failover-policy
+    severity: P2
+    current_state: >-
+      A rented Hugging Face Space failover provider (`hfspace`) is supported behind
+      AURA_ALLOW_REMOTE_INFERENCE (docker-compose.prod.yml:271-287; docs/guides/
+      split-inference-deployment.md sec. 8). It is off by default, but when enabled it sends
+      prompts and retrieved document content off-host, which the production plan's "no hosted-AI
+      fallback" rule forbids.
+    target_state: Production refuses AURA_ALLOW_REMOTE_INFERENCE=true (settings validation in production env), or the exception is recorded as an ADR.
+    owner: security
+    dependencies: []
+    test: settings test asserting production env rejects remote inference
+    metric: aura_insecure_mode (extend) / provider list at boot
+    exit_condition: Validation + test, or ADR.
+    status: open
+    reverified_2026_09_25: >-
+      PR #97 (docs/deployment/inference-plane.md) makes the rented HF Space a supported
+      *primary* provider for the Railway target, with no Ollama fallback -- a GPU-plane outage
+      becomes a full generation outage, which that doc states. It is still AURA's own vLLM
+      serving self-hosted weights over openai_compatible (test_no_external_inference stays
+      green), so the open question here is policy, not the self-hosting invariant: production
+      should state which topology it runs and refuse the other. P2's admission control
+      deliberately does not fail over on a full queue, so a busy local pool never silently
+      spills onto the rented Space.
+
+  - gap_id: GAP-035
+    component: llm/circuit-breaker
+    severity: P3
+    current_state: >-
+      Circuit breaker thresholds are global (AURA_LLM_CIRCUIT_THRESHOLD / _OPEN_S) with no
+      per-provider override (split-inference-deployment.md "The circuit breaker is global").
+      Heterogeneous vLLM pools will need per-pool tuning.
+    target_state: Per-provider circuit settings.
+    owner: backend
+    dependencies: [GAP-012]
+    test: router unit test with two providers and different thresholds
+    metric: aura_provider_circuit_opens_total by provider
+    exit_condition: Setting + test.
+    status: open
+
+  # ------------------------------------------------------------------ observability
+
+  - gap_id: GAP-036
+    component: observability/http-metrics
+    severity: P1
+    current_state: >-
+      The metric catalogue (aura_core/observability/metrics.py) has turn/LLM/retrieval/tool/guard
+      metrics but no HTTP request metric (no per-route status/latency histogram). Availability,
+      non-LLM API latency and 5xx rate SLOs are therefore unmeasurable from Prometheus; only nginx
+      access logs via Loki could approximate them. Scrape config has one app job
+      (deploy/monitoring/prometheus.yml: aura-gateway).
+    target_state: Bounded-cardinality http_requests_total{route,method,status} and http_request_duration_seconds; external blackbox probe for availability.
+    owner: platform-ops
+    dependencies: []
+    test: metrics unit test asserting labels are route templates, not raw paths
+    metric: aura_http_requests_total, aura_http_request_duration_seconds (proposed)
+    exit_condition: Metrics live on the VPS and wired into PRODUCTION_SLO alerts.
+    status: open
+    reverified_2026_09_25: >-
+      The load harness confirmed two more measurement holes: aura_turns_in_flight is only
+      updated on the non-streaming AIKernel.run path (every client uses /chat/stream), and no
+      database-pool or Celery queue-depth metric is exported. aura_llm_queue_depth is now
+      maintained by the admission controller (aura_core/llm/admission.py).
+
+  - gap_id: GAP-037
+    component: observability/histogram-buckets
+    severity: P2
+    current_state: >-
+      aura_turn_duration_seconds buckets stop at 60 s and aura_llm_ttft_seconds at 12 s
+      (_TURN_BUCKETS / _TTFT_BUCKETS in aura_core/observability/metrics.py). The measured p95 turn
+      latency (70.5 s) lands in +Inf, so histogram_quantile cannot report it.
+    target_state: Buckets cover the measured range until latency is brought under SLO.
+    owner: platform-ops
+    dependencies: []
+    test: metrics test asserting top bucket > current measured p95
+    metric: aura_turn_duration_seconds
+    exit_condition: Buckets extended; Grafana p95 matches load-test p95 within one bucket.
+    status: open
+
+  # ------------------------------------------------------------------ hygiene / docs
+
+  - gap_id: GAP-038
+    component: backend/legacy-dead-code
+    severity: P3
+    current_state: >-
+      Legacy Celery tasks ingest_document_task / ingest_pdf_task (aura_backend/tasks.py:11-57) and
+      their services/agent.py + services/drive.py path are unreachable from the v3 gateway but
+      remain registered on the ingestion worker.
+    target_state: Dead legacy ingestion removed (ADR-002 strangler completion for this seam).
+    owner: backend
+    dependencies: []
+    test: pytest + legacy unittest green after removal
+    metric: n/a
+    exit_condition: Removed via reviewed PR.
+    status: open
+
+  - gap_id: GAP-039
+    component: docs/accuracy
+    severity: P3
+    current_state: >-
+      CLAUDE.md says SYNCABLE_MODELS lives in aura_client core/database/database.dart; it actually
+      lives in aura_backend/infrastructure/db/models.py (imported by api/v2/sync.py:24). The audit
+      said the symbol "does not exist" -- also wrong. CLAUDE.md still calls aura_admin "lightly
+      used" (9 console areas exist). aura_core/rag/agentic.py:119 says "There is no OCR" (stale). docs/guides/maintenance-guide.md
+      restore examples use /opt/aura/deploy/backups paths; the VPS checkout is /opt/aura-stack.
+    target_state: Docs match code.
+    owner: coordinator
+    dependencies: []
+    test: none
+    metric: n/a
+    exit_condition: Corrections merged.
+    status: open
+
+  - gap_id: GAP-040
+    component: testing/worktree-path-sensitivity
+    severity: P3
+    current_state: >-
+      tests/architecture/test_no_external_inference.py:189-192 skips any path containing a
+      `.claude` segment, so when the repo is checked out under .claude/worktrees/ (as agent
+      worktrees are) TestClientDeclaresNoInferencePackage::test_a_pubspec_exists_to_scan fails
+      and the pubspec layer scans nothing. CI checkouts are unaffected.
+    target_state: Skip-set matched relative to the repo root, not on absolute path parts.
+    owner: backend
+    dependencies: []
+    test: the test itself, run from a worktree path
+    metric: n/a
+    exit_condition: Suite green from a .claude/worktrees checkout.
+    status: open
+
+  - gap_id: GAP-041
+    component: load-testing/evidence
+    severity: P0
+    current_state: >-
+      The only real-model load evidence is A4: max concurrency 8, n=20 sequential, one run, 4-core
+      sandbox (not the VPS, not a GPU). No 1/5/10/25/50/100-user matrix, no soak, no p99.
+    target_state: Load matrix 1->100 users on the production topology with soak and p99 (MASTER_PRODUCTION_ROADMAP Phase 3).
+    owner: platform-ops
+    dependencies: [GAP-011, GAP-036]
+    test: tests/load matrix harness (opt-in, -m load)
+    metric: TTFT p95, answer p95, error rate, throughput per concurrency level
+    exit_condition: Report in docs/reports/ covering the full matrix.
+    status: open
+    reverified_2026_09_25: >-
+      The harness now exists (c6e7675): aura_backend/scripts/loadtest (python -m
+      scripts.loadtest), matrix 1..100, scenarios A-F plus a non-LLM API mix, TTFT/E2E
+      p50/p95/p99, error classes, /metrics scrape, threshold PASS/FAIL and a saturation-knee
+      detector; runbook docs/guides/load-testing.md. docs/reports/phase-3-loadtest-harness-self-
+      validation.md is an in-process echo run and explicitly NOT a capacity result. The gap
+      stays open until the matrix runs against the GPU deployment.
+
+  - gap_id: GAP-042
+    component: supply-chain/model-licensing
+    severity: P1
+    current_state: >-
+      No model license review is recorded anywhere in the tree. The production chat model is
+      Qwen2.5-3B-Instruct (via the Ollama tag qwen2.5:3b-instruct-q4_K_M); from recall, the 3B
+      size is published under the Qwen Research License rather than the Apache-2.0 of most
+      Qwen2.5 sizes -- not verified in this pass. Voice licenses for the Piper voices are likewise
+      unrecorded.
+    target_state: Every production and candidate model has a reviewed, recorded license compatible with the deployment.
+    owner: coordinator
+    dependencies: []
+    test: MODEL_REGISTRY.md license field filled from the pinned revision's card for every production model
+    metric: production models without a reviewed license (target 0)
+    exit_condition: License review recorded per model in MODEL_REGISTRY.md; any incompatible model replaced.
+    status: open
+
+  - gap_id: GAP-043
+    component: process/github-actions
+    severity: P0
+    current_state: >-
+      GitHub Actions jobs on this repository die in about 3 seconds with no steps executed and no
+      runner assigned. Seen on main since 2026-09-22 and on PR #96, including after one re-run.
+      This is consistent with an account-level Actions or billing block, not a workflow defect.
+      While it lasts, no CI gate in .github/workflows runs (Backend CI, Client CI, Host Daemon CI),
+      Deploy VPS never fires (it needs a successful Backend CI via workflow_run), and no change
+      since 2026-09-22 has CI evidence -- local pytest runs are the only verification.
+    target_state: Actions jobs get a runner and execute their steps; Backend CI runs green on main and Deploy VPS fires.
+    owner: repo-owner
+    dependencies: []
+    test: re-run Backend CI on main; job log shows steps executing on a runner
+    metric: workflow runs failing in under 10 s with zero steps (target 0)
+    exit_condition: >-
+      Account Actions/billing status restored (GitHub Settings -> Billing / Actions), and a linked
+      Backend CI run on main shows every job executing its steps to completion.
+    status: open
+    evidence: >-
+      Reported by the coordinator on 2026-09-24 from the Actions UI (runs on main since 2026-09-22
+      and on PR #96, including one re-run, each ending after ~3 s with no steps or runner). Not
+      independently re-observed from this worktree.
+
+  - gap_id: GAP-044
+    component: client/release-toolchain
+    severity: P2
+    current_state: >-
+      release-apk.yml builds the shipped APK/AAB with subosito/flutter-action `channel: stable`
+      (lines 30-32, 76-80) -- a floating toolchain -- while client-ci.yml verifies with a pinned
+      flutter-version "3.44.6" (lines 36, 68, 102, 142). The binary users install is not built with
+      the toolchain CI verified.
+    target_state: Release builds use the same pinned Flutter version as Client CI.
+    owner: client
+    dependencies: [GAP-043]
+    test: a workflow lint asserting every flutter-action step pins the same flutter-version
+    metric: n/a
+    exit_condition: release-apk.yml pinned to the CI Flutter version; a release build run linked.
+    status: open
+
+  - gap_id: GAP-045
+    component: supply-chain/ci-actions
+    severity: P3
+    current_state: >-
+      Every third-party GitHub Action is referenced by a mutable major tag (actions/checkout@v4,
+      actions/setup-python@v5, docker/build-push-action@v5, subosito/flutter-action@v2,
+      actions/setup-node@v4, actions/upload-artifact@v4, ...), not a commit SHA. The deploy
+      workflow holds the VPS SSH key (deploy-backend.yml:74-84).
+    target_state: Actions pinned to full commit SHAs, with a scheduled bump.
+    owner: repo-admin
+    dependencies: []
+    test: workflow lint refusing `uses:` without a 40-hex SHA
+    metric: unpinned action references (target 0)
+    exit_condition: All workflows pinned; lint in CI.
+    status: open
+
+  # ------------------------------------------------------------------ added 2026-09-25 (stream merge)
+
+  - gap_id: GAP-046
+    component: deploy/backup-secret-scope
+    severity: P1
+    current_state: >-
+      The backup service mounts the whole deploy/secrets directory read-only at /run/backup-secrets
+      (docker-compose.prod.yml, since 681780d), in a container on the egress network. Since f11b543
+      that directory also holds data_encryption_keys, so the one container that ships data offsite can
+      read the key that decrypts it. The backup scripts never reference it (a fitness test in
+      test_dockerfile_and_observability.py asserts so), but the mount is the real boundary.
+    target_state: >-
+      The backup container sees only postgres/qdrant/redis credentials, rclone config and the age
+      public key -- never data_encryption_keys or other gateway secrets.
+    owner: platform-ops
+    dependencies: [GAP-028]
+    test: a compose fitness test asserting the backup service mounts no secret it does not use
+    metric: secrets readable by the backup container that it does not need (target 0)
+    exit_condition: >-
+      Backup-only secrets moved to their own directory or individual file mounts, with the fitness
+      test, and one backup cycle run on the VPS after the change.
+    status: open
+
+  - gap_id: GAP-047
+    component: data/dev-prod-key-sharing
+    severity: P2
+    current_state: >-
+      aura (prod) and aura-dev on the shared VPS both read deploy/secrets, so they share one
+      data_encryption_keys: dev can decrypt production memory/personal-OS ciphertext if it can reach
+      the rows, and a dev key rotation would affect prod.
+    target_state: Separate data keys per stack.
+    owner: platform-ops
+    dependencies: [GAP-016]
+    test: compose check that dev and prod resolve data_encryption_keys to different files
+    metric: n/a
+    exit_condition: Dev stack uses its own key file; documented in deployment-guide.md.
+    status: open
+
+  - gap_id: GAP-048
+    component: security/regression-suite
+    severity: P0
+    current_state: >-
+      The P1.5 security regression pass (merged 371bdc1) found and fixed eleven vulnerabilities in the
+      live tree besides the taint gap, each with a regression test that failed first: conversation
+      history overwritten via another user's session_id (memory/session.py); refresh-token double
+      spend under concurrent refresh (non-atomic GET+DEL in services/jwt_auth.py); mock attestation
+      accepted in production through the legacy ALLOW_MOCK_ATTESTATION flag; WebSocket reauth
+      accepting a different user's token (voice_live.py, host_agent.py); GitHub repo-allowlist bypass
+      through unescaped path/ref segments, including a PUT via commit_files (github_client.py); SSRF
+      gaps (100.64.0.0/10 incl. 100.100.100.200, multicast, IPv6 site-local; the nightly refresh
+      fetcher never checked DNS resolution); git_push reaching the default branch via refspecs
+      (HEAD:main, :main, --mirror); ingest_pdf_task following symlinks / reading other users' staged
+      files / deleting arbitrary files in the data volume; and the three document-ownership bugs also
+      fixed by P1.4 (GAP-004). 257 tests under tests/security/, including route-enumerating auth and
+      IDOR suites that fail on any new unprotected or uncovered route.
+    target_state: The fixes deployed, and the suites gating every PR.
+    owner: security
+    dependencies: [GAP-043, GAP-005]
+    test: aura_backend/tests/security/ (default pytest run)
+    metric: open security findings from the suite (target 0)
+    exit_condition: >-
+      Backend CI green on these suites on main, the fixes deployed, and the POST
+      /api/v3/insights/{id}/dismiss owner check (Postgres-only, code-inspected so far) exercised
+      against a real Postgres.
+    status: built_not_proven
