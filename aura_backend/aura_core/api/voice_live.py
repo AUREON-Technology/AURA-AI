@@ -222,10 +222,16 @@ def register_voice_live(
                     await session.reject()
                 elif ftype == "reauth":
                     try:
-                        principal = await _authenticate_frame(frame, authenticator)
+                        renewed = await _authenticate_frame(frame, authenticator)
                     except AuthenticationError:
                         await websocket.close(code=_CLOSE_UNAUTHORIZED)
                         return
+                    if renewed.user_id != principal.user_id:
+                        # A reauth renews *this* user's session; it is not a way to keep a socket
+                        # opened with someone else's (possibly stolen) token alive with your own.
+                        await websocket.close(code=_CLOSE_UNAUTHORIZED)
+                        return
+                    principal = renewed
         except WebSocketDisconnect:
             pass
         except Exception:

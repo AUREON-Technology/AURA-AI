@@ -100,3 +100,26 @@ def test_restore_drill_script_refuses_prod_postgres_env() -> None:
     assert "throwaway" in text.lower()
     assert "pg_restore" in text
     assert "PGHOST" in text
+
+
+def test_backups_are_encrypted_by_default_and_fail_closed() -> None:
+    """P1.3: encryption is the compose default, the image ships age, and the lib fails closed.
+
+    The behaviour itself is tested by deploy/scripts/tests/test_backup_crypto.sh (Backend CI's
+    backup-scripts job); this pins the wiring that test cannot see.
+    """
+    compose = (REPO / "deploy/docker-compose.prod.yml").read_text(encoding="utf-8")
+    assert "BACKUP_ENCRYPTION: ${BACKUP_ENCRYPTION:-age}" in compose
+    assert "age" in (REPO / "deploy/backup/Dockerfile").read_text(encoding="utf-8").split("apk add", 1)[1]
+    lib = (REPO / "deploy/scripts/backup-lib.sh").read_text(encoding="utf-8")
+    assert "bk_require_encryption_config" in lib
+    assert "refusing to ship an unencrypted backup set offsite" in lib
+    backup = (REPO / "deploy/scripts/backup.sh").read_text(encoding="utf-8")
+    assert "bk_require_encryption_config" in backup
+
+
+def test_backup_never_packs_the_data_encryption_key() -> None:
+    """A backup that carries its own decryption key protects nothing (P1.2 key custody)."""
+    for name in ("backup.sh", "backup-lib.sh"):
+        text = (REPO / "deploy/scripts" / name).read_text(encoding="utf-8")
+        assert "data_encryption_keys" not in text, f"{name} references the data-encryption key"

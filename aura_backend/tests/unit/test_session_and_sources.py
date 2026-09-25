@@ -172,11 +172,40 @@ class TestEpisodicMemory:
         assert state.messages == ()
         assert state.owner_id == UserId("mallory")
 
+    async def test_a_foreign_write_does_not_replace_the_owners_state(self, episodic) -> None:
+        """Reading was owner-checked; writing was not -- mallory's append on alice's session id
+        overwrote alice's history under the shared key."""
+        await episodic.append(
+            SessionId("s1"), UserId("alice"), user_message="my salary is 95000",
+            assistant_message="noted",
+        )
+        await episodic.append(
+            SessionId("s1"), UserId("mallory"), user_message="hi", assistant_message="hello",
+        )
+        state = await episodic.load(SessionId("s1"), UserId("alice"))
+        assert [m.content for m in state.messages] == ["my salary is 95000", "noted"]
+
+    async def test_legacy_unnamespaced_state_is_still_read_by_its_owner(self, episodic) -> None:
+        from aura_core.memory.session import SessionState
+
+        legacy = SessionState(session_id=SessionId("s1"), owner_id=UserId("alice"), turn_count=4)
+        await episodic._cache.set(episodic._key(SessionId("s1")), legacy.to_json().encode())
+
+        assert (await episodic.load(SessionId("s1"), UserId("alice"))).turn_count == 4
+        assert (await episodic.load(SessionId("s1"), UserId("mallory"))).turn_count == 0
+
+    async def test_clearing_is_owner_scoped(self, episodic) -> None:
+        await episodic.append(
+            SessionId("s1"), UserId("alice"), user_message="q", assistant_message="a"
+        )
+        await episodic.clear(SessionId("s1"), UserId("mallory"))
+        assert (await episodic.load(SessionId("s1"), UserId("alice"))).messages != ()
+
     async def test_clearing_removes_the_state(self, episodic) -> None:
         await episodic.append(
             SessionId("s1"), UserId("u1"), user_message="q", assistant_message="a"
         )
-        await episodic.clear(SessionId("s1"))
+        await episodic.clear(SessionId("s1"), UserId("u1"))
         assert (await episodic.load(SessionId("s1"), UserId("u1"))).messages == ()
 
     async def test_a_configured_summariser_is_used(self) -> None:

@@ -1,0 +1,190 @@
+# AURA AI -- OPT-IN GPU model pools (roadmap P2.1). An override for docker-compose.prod.yml;
+# nothing here takes effect unless this file is passed explicitly:
+#
+#   docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.gpu.yml \
+#     --env-file deploy/.env --profile gpu up -d
+#
+# STATUS: BUILT, NOT PROVEN. No part of this file has been run on GPU hardware or load-tested.
+# The router/admission code it feeds is unit-tested (tests/unit/test_llm_admission.py); the
+# serving tier is not. Before routing real traffic: run it on the GPU host, run
+# `pytest tests/load -m load -k vllm_hybrid_routing`, and load-test at the concurrency the pools
+# are sized for (docs/guides/gpu-hybrid-setup.md §6). Until that evidence exists, treat this as
+# a reviewed configuration, not a working deployment.
+#
+# What it defines:
+#   vllm         general pool (general-fast, general-quality, reasoning) -- extends the existing
+#                `vllm` service in docker-compose.prod.yml instead of duplicating it
+#   vllm-coder   coder pool (the Engineer persona's turns route here, priority 2)
+#   vllm-embed   embedding pool -- declared but NOT switched on for retrieval: moving the
+#                embedder changes the index identity and forces a rebuild (ADR-007)
+#
+# Isolation (SEC-12): no service here publishes a port. Each attaches to `data` (internal: true)
+# where the gateway reaches it, plus `egress` solely so vLLM can download weights from Hugging
+# Face on first start -- the same exception `ollama` already has. Once weights are cached in the
+# volume, set AURA_VLLM_HF_OFFLINE=1 so the server never reaches out again.
+#
+# Every model revision MUST be pinned. The `:?` interpolations below make `docker compose` refuse
+# to render this file while any revision variable is unset, so an unpinned model cannot be started
+# by accident. They live in this override, not in docker-compose.prod.yml, precisely because
+# compose interpolates a whole file regardless of profiles: in the base file they would break a
+# plain `up -d` on every CPU-only host.
+#
+# Admission alignment: each provider's MAX_CONCURRENCY is a *per-process* cap (the gateway runs
+# AURA_WORKERS uvicorn workers; each Celery worker builds its own router). Size it as
+#   --max-num-seqs / (AURA_WORKERS + number of Celery worker processes calling the pool)
+# so AURA queues (bounded, prioritised, with Retry-After) before vLLM's own scheduler does.
+
+x-vllm-common: &vllm_common
+  profiles: [gpu]
+  image: vllm/vllm-openai:v0.29.0@sha256:c2914767605584b6d8f45686b82de173ecc99e781897aa3d0a66dacd72c51ae1
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: {max-size: "20m", max-file: "5"}
+  volumes:
+    - vllm_models:/root/.cache/huggingface
+  networks: [data, egress]
+  healthcheck:
+    test: ["CMD", "python3", "-c",
+           "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/v1/models', timeout=5).status==200 else 1)"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 300s
+
+x-vllm-env: &vllm_env
+  HF_TOKEN: ${HF_TOKEN:-}
+  HF_HUB_OFFLINE: ${AURA_VLLM_HF_OFFLINE:-0}
+  # vLLM phones home with anonymous usage stats by default; a self-hosted deployment does not.
+  VLLM_NO_USAGE_STATS: "1"
+  DO_NOT_TRACK: "1"
+
+# Provider declarations the router reads (aura_core/config/settings.py ProviderConfig). Merged
+# into the gateway's and workers' environment below; compose merges `environment` maps by key.
+x-gpu-pool-env: &gpu_pool_env
+  # A separate variable, not AURA_LLM_PROVIDERS: deploy/.env.example sets that to `local`, which
+  # would silently keep the pools unused.
+  AURA_LLM_PROVIDERS: ${AURA_GPU_LLM_PROVIDERS:-general,coder,local,embed}
+  # general pool -> the `vllm` service
+  AURA_PROVIDER_GENERAL_KIND: openai_compatible
+  AURA_PROVIDER_GENERAL_BASE_URL: http://vllm:8000/v1
+  AURA_PROVIDER_GENERAL_MODEL: ${AURA_VLLM_MODEL:-Qwen/Qwen2.5-32B-Instruct-AWQ}
+  AURA_PROVIDER_GENERAL_MODEL_REVISION: ${AURA_VLLM_MODEL_REVISION:?set AURA_VLLM_MODEL_REVISION to the pinned Hugging Face commit SHA of AURA_VLLM_MODEL}
+  AURA_PROVIDER_GENERAL_POOLS: general-fast,general-quality,reasoning
+  AURA_PROVIDER_GENERAL_IS_LOCAL: "true"
+  AURA_PROVIDER_GENERAL_QUALITY_TIER: "3"
+  AURA_PROVIDER_GENERAL_SPEED_TIER: "3"
+  AURA_PROVIDER_GENERAL_SUPPORTS_REASONING: "true"
+  AURA_PROVIDER_GENERAL_GPU_COST: ${AURA_VLLM_GENERAL_GPU_COST:-2}
+  AURA_PROVIDER_GENERAL_CONTEXT_WINDOW: ${AURA_VLLM_MAX_MODEL_LEN:-16384}
+  AURA_PROVIDER_GENERAL_MAX_OUTPUT_TOKENS: "2048"
+  AURA_PROVIDER_GENERAL_TIMEOUT_S: ${AURA_VLLM_GENERAL_TIMEOUT_S:-60}
+  AURA_PROVIDER_GENERAL_MAX_CONCURRENCY: ${AURA_VLLM_GENERAL_MAX_INFLIGHT_PER_PROCESS:-6}
+  AURA_PROVIDER_GENERAL_QUEUE_TIMEOUT_S: ${AURA_VLLM_GENERAL_QUEUE_TIMEOUT_S:-20}
+  AURA_PROVIDER_GENERAL_MAX_QUEUE: ${AURA_VLLM_GENERAL_MAX_QUEUE:-16}
+  # coder pool -> `vllm-coder`
+  AURA_PROVIDER_CODER_KIND: openai_compatible
+  AURA_PROVIDER_CODER_BASE_URL: http://vllm-coder:8000/v1
+  AURA_PROVIDER_CODER_MODEL: ${AURA_VLLM_CODER_MODEL:-Qwen/Qwen2.5-Coder-14B-Instruct-AWQ}
+  AURA_PROVIDER_CODER_MODEL_REVISION: ${AURA_VLLM_CODER_REVISION:?set AURA_VLLM_CODER_REVISION to the pinned Hugging Face commit SHA of AURA_VLLM_CODER_MODEL}
+  AURA_PROVIDER_CODER_POOLS: coder
+  AURA_PROVIDER_CODER_IS_LOCAL: "true"
+  AURA_PROVIDER_CODER_QUALITY_TIER: "3"
+  AURA_PROVIDER_CODER_SPEED_TIER: "3"
+  AURA_PROVIDER_CODER_GPU_COST: ${AURA_VLLM_CODER_GPU_COST:-1}
+  AURA_PROVIDER_CODER_CONTEXT_WINDOW: ${AURA_VLLM_CODER_MAX_MODEL_LEN:-32768}
+  AURA_PROVIDER_CODER_MAX_OUTPUT_TOKENS: "4096"
+  AURA_PROVIDER_CODER_TIMEOUT_S: ${AURA_VLLM_CODER_TIMEOUT_S:-120}
+  AURA_PROVIDER_CODER_MAX_CONCURRENCY: ${AURA_VLLM_CODER_MAX_INFLIGHT_PER_PROCESS:-3}
+  AURA_PROVIDER_CODER_QUEUE_TIMEOUT_S: ${AURA_VLLM_CODER_QUEUE_TIMEOUT_S:-60}
+  AURA_PROVIDER_CODER_MAX_QUEUE: ${AURA_VLLM_CODER_MAX_QUEUE:-8}
+  # embedding pool -> `vllm-embed`. ENABLED=false keeps it out of the chat router (it would be
+  # excluded as not_generative anyway); the embedder finds it by name once an operator sets
+  # AURA_EMBEDDING_PROVIDER=embed plus AURA_EMBEDDING_MODEL/AURA_EMBEDDING_DIMENSION to match --
+  # which is an index rebuild (ADR-007), so it is a deliberate separate step, not a default.
+  AURA_PROVIDER_EMBED_KIND: openai_compatible
+  AURA_PROVIDER_EMBED_BASE_URL: http://vllm-embed:8000/v1
+  AURA_PROVIDER_EMBED_MODEL: ${AURA_VLLM_EMBED_MODEL:-BAAI/bge-m3}
+  AURA_PROVIDER_EMBED_MODEL_REVISION: ${AURA_VLLM_EMBED_REVISION:?set AURA_VLLM_EMBED_REVISION to the pinned Hugging Face commit SHA of AURA_VLLM_EMBED_MODEL}
+  AURA_PROVIDER_EMBED_POOLS: embedding
+  AURA_PROVIDER_EMBED_IS_LOCAL: "true"
+  AURA_PROVIDER_EMBED_ENABLED: "false"
+  # The CPU Ollama `local` provider (declared in docker-compose.prod.yml) stays as a generalist
+  # with no pools: the failover tier for every pool while the GPU services restart.
+
+services:
+  vllm:
+    <<: *vllm_common
+    environment:
+      <<: *vllm_env
+    command: >
+      --model ${AURA_VLLM_MODEL:-Qwen/Qwen2.5-32B-Instruct-AWQ}
+      --revision ${AURA_VLLM_MODEL_REVISION:?set AURA_VLLM_MODEL_REVISION to the pinned Hugging Face commit SHA of AURA_VLLM_MODEL}
+      --host 0.0.0.0 --port 8000
+      --max-model-len ${AURA_VLLM_MAX_MODEL_LEN:-16384}
+      --max-num-seqs ${AURA_VLLM_GENERAL_MAX_NUM_SEQS:-32}
+      --enable-prefix-caching
+      --gpu-memory-utilization ${AURA_VLLM_GPU_MEMORY_UTILIZATION:-0.80}
+    deploy:
+      resources:
+        limits: {cpus: "4.0", memory: 16G}
+        reservations:
+          # !override replaces the base file's `count: 1` entry; without it compose appends,
+          # reserving two GPUs for one server. Needs Docker Compose >= 2.24.
+          devices: !override
+            - {driver: nvidia, device_ids: ["${AURA_VLLM_GENERAL_GPU:-0}"], capabilities: [gpu]}
+
+  vllm-coder:
+    <<: *vllm_common
+    environment:
+      <<: *vllm_env
+    command: >
+      --model ${AURA_VLLM_CODER_MODEL:-Qwen/Qwen2.5-Coder-14B-Instruct-AWQ}
+      --revision ${AURA_VLLM_CODER_REVISION:?set AURA_VLLM_CODER_REVISION to the pinned Hugging Face commit SHA of AURA_VLLM_CODER_MODEL}
+      --host 0.0.0.0 --port 8000
+      --max-model-len ${AURA_VLLM_CODER_MAX_MODEL_LEN:-32768}
+      --max-num-seqs ${AURA_VLLM_CODER_MAX_NUM_SEQS:-16}
+      --enable-prefix-caching
+      --gpu-memory-utilization ${AURA_VLLM_CODER_GPU_MEMORY_UTILIZATION:-0.90}
+    deploy:
+      resources:
+        limits: {cpus: "4.0", memory: 16G}
+        reservations:
+          devices:
+            - {driver: nvidia, device_ids: ["${AURA_VLLM_CODER_GPU:-1}"], capabilities: [gpu]}
+
+  vllm-embed:
+    <<: *vllm_common
+    environment:
+      <<: *vllm_env
+    # Pooling runner: serves /v1/embeddings, not chat. Small enough to share the general pool's
+    # GPU at the default memory split (0.80 + 0.10).
+    command: >
+      --model ${AURA_VLLM_EMBED_MODEL:-BAAI/bge-m3}
+      --revision ${AURA_VLLM_EMBED_REVISION:?set AURA_VLLM_EMBED_REVISION to the pinned Hugging Face commit SHA of AURA_VLLM_EMBED_MODEL}
+      --runner pooling
+      --host 0.0.0.0 --port 8000
+      --max-num-seqs ${AURA_VLLM_EMBED_MAX_NUM_SEQS:-64}
+      --gpu-memory-utilization ${AURA_VLLM_EMBED_GPU_MEMORY_UTILIZATION:-0.10}
+    deploy:
+      resources:
+        limits: {cpus: "2.0", memory: 8G}
+        reservations:
+          devices:
+            - {driver: nvidia, device_ids: ["${AURA_VLLM_EMBED_GPU:-0}"], capabilities: [gpu]}
+
+  gateway:
+    environment:
+      <<: *gpu_pool_env
+  worker-realtime:
+    environment:
+      <<: *gpu_pool_env
+  worker-ingestion:
+    environment:
+      <<: *gpu_pool_env
+  worker-training:
+    environment:
+      <<: *gpu_pool_env
+  beat:
+    environment:
+      <<: *gpu_pool_env

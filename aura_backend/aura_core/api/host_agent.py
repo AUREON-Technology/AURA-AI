@@ -108,10 +108,14 @@ def register_host_agent(router: Any, container: Any, *, authenticator: Callable)
                     session.resolve(frame)
                 elif ftype == "reauth":
                     try:
-                        principal = await _authenticate_frame(frame, authenticator)
+                        renewed = await _authenticate_frame(frame, authenticator)
                     except AuthenticationError:
                         break
-                    if "engineer_agent" not in principal.capabilities:
+                    if renewed.user_id != principal.user_id:
+                        # The session is registered under the original user; a token for anyone
+                        # else must end it, not quietly extend it (same rule as voice_live.py).
+                        break
+                    if "engineer_agent" not in renewed.capabilities:
                         break
                 # Any other frame type is ignored -- forward compatible with a newer daemon that
                 # sends frames this version does not understand, rather than dropping the session.

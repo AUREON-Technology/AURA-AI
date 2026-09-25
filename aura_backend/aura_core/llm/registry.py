@@ -20,10 +20,16 @@ from typing import Sequence
 
 from ..config.settings import LLMSettings, ProviderConfig
 from ..domain.errors import ConfigurationError
-from ..domain.llm import ProviderCapabilities
+from ..domain.llm import Modality, ModelPool, ProviderCapabilities
 from ..ports.llm import LLMProvider
+from .admission import PoolLimits
 
-__all__ = ["build_provider", "build_providers", "capabilities_from_config"]
+__all__ = [
+    "admission_limits_from_settings",
+    "build_provider",
+    "build_providers",
+    "capabilities_from_config",
+]
 
 
 def capabilities_from_config(config: ProviderConfig) -> ProviderCapabilities:
@@ -45,7 +51,45 @@ def capabilities_from_config(config: ProviderConfig) -> ProviderCapabilities:
         cost_per_1k_input_usd=config.cost_per_1k_input_usd,
         cost_per_1k_output_usd=config.cost_per_1k_output_usd,
         max_concurrency=config.max_concurrency,
+        pools=tuple(ModelPool(p) for p in config.pools),
+        speed_tier=config.speed_tier,
+        memory_cost=config.memory_cost,
+        gpu_cost=config.gpu_cost,
+        modalities=tuple(Modality(m) for m in config.modalities),
+        supports_vision=Modality.IMAGE.value in config.modalities,
+        supports_reasoning=config.supports_reasoning,
+        languages=config.languages,
+        model_revision=config.model_revision,
+        capacity_group=config.capacity_group,
     )
+
+
+def admission_limits_from_settings(settings: LLMSettings) -> dict[str, PoolLimits]:
+    """Per-capacity-group admission limits (P2.4) from provider declarations.
+
+    A group's slot count is the smallest ``max_concurrency`` among its providers (they share one
+    serving process, so the most conservative declaration is the true one); its queue bound and
+    timeout come from the first provider that overrides them, else the LLM-wide defaults.
+    """
+    limits: dict[str, PoolLimits] = {}
+    for config in settings.enabled_providers:
+        group = config.capacity_group or config.name
+        current = limits.get(group)
+        cap = config.max_concurrency if current is None else min(
+            current.max_concurrent, config.max_concurrency
+        )
+        max_queue = (
+            config.max_queue if config.max_queue is not None
+            else current.max_queue if current is not None
+            else settings.admission_max_queue
+        )
+        timeout = (
+            config.queue_timeout_s if config.queue_timeout_s is not None
+            else current.queue_timeout_s if current is not None
+            else settings.admission_queue_timeout_s
+        )
+        limits[group] = PoolLimits(max_concurrent=cap, max_queue=max_queue, queue_timeout_s=timeout)
+    return limits
 
 
 def build_provider(config: ProviderConfig, *, model_allowlist: Sequence[str] = ()) -> LLMProvider:

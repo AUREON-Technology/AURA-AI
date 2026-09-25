@@ -10,7 +10,11 @@ root unless noted.
 | `vps-update.sh` | Pull `main`, migrate, rebuild prod stack, health-check |
 | `renew-tls-dual-san.sh` | On VPS: expand Let's Encrypt cert with prod + dev SANs (deploy/) |
 | `seed-dev.sh` | Seed Loop B data on **`aura-dev` only** (refuses prod project) |
-| `backup.sh` / `restore.sh` | Local backup cycle (invoked by backup service) |
+| `backup.sh` / `restore.sh` | Backup cycle (invoked by backup service): encrypted, manifested, GFS-retained sets + verified offsite copy; restore verifies and decrypts a set first |
+| `backup-lib.sh` | Shared set primitives (age encryption, SHA-256 manifests, retention, offsite verify); sourced, not run |
+| `backup-open.sh` | `--verify` a set without a key, or decrypt one (Qdrant/Redis recovery) |
+| `restore-drill.sh` | Throwaway-Postgres restore drill; records timing (RTO evidence) with `DRILL_RECORD` |
+| `tests/test_backup_crypto.sh` | Docker-free tests for `backup-lib.sh` (run in Backend CI) |
 | `ci-deploy.sh` | CI entrypoint for automated prod deploy |
 | `client_backend_url.sh` / `.ps1` | Print `BACKEND_URL` from `deploy/.env` |
 

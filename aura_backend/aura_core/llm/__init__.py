@@ -6,6 +6,7 @@ re-exported here. Concrete chat providers are reached through
 local-only deployment never loads the cloud vendor modules.
 """
 
+from .admission import AdmissionController, AdmissionTicket, PoolLimits
 from .cache import CacheHit, InMemoryCache, LLMCache
 from .circuit import CircuitBreaker, CircuitState, LatencyTracker, ProviderStats
 from .embeddings import (
@@ -14,13 +15,27 @@ from .embeddings import (
     SentenceTransformerProvider,
     cosine_similarity,
 )
-from .registry import build_provider, build_providers, capabilities_from_config
+from .registry import (
+    admission_limits_from_settings,
+    build_provider,
+    build_providers,
+    capabilities_from_config,
+)
 from .router import ProviderRouter, RoutingDecision, TurnBudget
+from .workload import current_workload, effective_workload, workload_for_turn, workload_scope
 
 __all__ = [
     "ProviderRouter",
     "RoutingDecision",
     "TurnBudget",
+    "AdmissionController",
+    "AdmissionTicket",
+    "PoolLimits",
+    "admission_limits_from_settings",
+    "current_workload",
+    "effective_workload",
+    "workload_for_turn",
+    "workload_scope",
     "LLMCache",
     "CacheHit",
     "InMemoryCache",

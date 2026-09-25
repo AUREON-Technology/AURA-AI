@@ -205,7 +205,7 @@ class ExecutionEngine:
                     break
                 continue
 
-            batch = ready[: self._max_parallel]
+            batch = self._taint_ordered(ready[: self._max_parallel], context)
             running = [step.started() for step in batch]
             current = current.with_steps(running)
 
@@ -354,6 +354,53 @@ class ExecutionEngine:
             steps_run=steps_run,
             blocked_reason=blocked_reason,
         )
+
+    def _tool_spec(self, step: PlanStep) -> Any:
+        if step.kind is not StepKind.TOOL or not step.tool:
+            return None
+        try:
+            return self._tools.spec(step.tool)
+        except Exception:
+            # Unknown tool: the registry refuses it at dispatch; it neither taints nor is gated.
+            return None
+
+    def _taint_ordered(
+        self, batch: Sequence[PlanStep], context: ToolContext
+    ) -> Sequence[PlanStep]:
+        """Keep a taint-gated step out of a batch that contains a tainting step.
+
+        The registry taints the shared context when an ``untrusted_content`` tool *returns*. A
+        side-effecting step dispatched concurrently in the same batch runs its policy check
+        before that, against a still-clean context, and auto-approves -- so whether a step in a
+        turn with untrusted content in scope needed confirmation depended on scheduling, not on
+        policy (the residual gap the architecture audit recorded). Deferring the gated step to
+        the next iteration makes its policy check observe the taint, which is the same answer a
+        sequential run of the plan gives.
+
+        Only the mix is split: a batch with no tainting step, or no step the taint rule can gate
+        (side-effecting and not ``workspace_local``), runs exactly as before. If every step in
+        the batch is gated and at least one is tainting (e.g. two MCP tools), the first tainting
+        step runs alone.
+        """
+        if context.tainted or len(batch) < 2:
+            return batch
+        specs = [self._tool_spec(step) for step in batch]
+        tainting = [
+            i for i, spec in enumerate(specs)
+            if spec is not None and "untrusted_content" in spec.tags
+        ]
+        if not tainting:
+            return batch
+        gated = {
+            i for i, spec in enumerate(specs)
+            if spec is not None and spec.side_effecting and not spec.workspace_local
+        }
+        if not gated:
+            return batch
+        ungated = [step for i, step in enumerate(batch) if i not in gated]
+        if ungated:
+            return ungated
+        return [batch[tainting[0]]]
 
     def _is_side_effecting(self, step: PlanStep) -> bool:
         if step.kind is not StepKind.TOOL or not step.tool:

@@ -23,6 +23,7 @@ from ..domain.errors import (
     AuthenticationError,
     AuthorizationError,
     DependencyUnavailableError,
+    OverloadedError,
     RateLimitedError,
     ValidationError,
 )
@@ -170,6 +171,14 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         except AuraError as exc:
             raise HTTPException(status_code=exc.http_status, detail=exc.to_dict()) from exc
 
+    # Optional `Idempotency-Key` support (roadmap P1.4; see api/idempotency.py). Set before any
+    # route is declared: APIRouter reads `route_class` at decoration time. A route opts in with
+    # `dependencies=idempotent`; without the header the route behaves exactly as before.
+    from .idempotency import build_idempotency
+
+    router.route_class, _idempotency_guard = build_idempotency(container, principal=principal)
+    idempotent = [_idempotency_guard]
+
     async def enforce_rate_limit(request: Request, caller: Principal, route_class: str) -> None:
         if rate_limiter is None or not settings.security.rate_limit_enabled:
             return
@@ -265,7 +274,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- chat --------------------------------------------------------------------------
 
-    @router.post("/chat")
+    @router.post("/chat", dependencies=idempotent)
     async def chat(
         request: Request,
         payload: ChatRequest,
@@ -281,15 +290,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             status = {"blocked": 400, "budget_exceeded": 429, "rate_limited": 429}.get(
                 result.telemetry.outcome.value, 503
             )
+            # Admission refusals (P2.4) carry a Retry-After: 503 for a saturated pool, 429 for
+            # a user over their concurrent-generation quota (outcome rate_limited above).
+            retry_after = result.retry_after_s
             return JSONResponse(
                 status_code=status,
                 content={
                     "error": result.telemetry.error_kind or "turn_failed",
                     "message": "The turn did not complete.",
                     "retryable": status in (429, 503),
-                    "details": {},
+                    "details": {"retry_after": retry_after} if retry_after else {},
                     "correlation_id": result.telemetry.correlation_id.value,
                 },
+                headers={"Retry-After": str(retry_after)} if retry_after else None,
             )
 
         return JSONResponse(
@@ -392,6 +405,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                     timeout_s=20.0,
                 )
             )
+        except OverloadedError as exc:
+            # No capacity (P2.4): tell the editor when to try again rather than a bare 503.
+            return JSONResponse(
+                status_code=exc.http_status,
+                content=exc.to_dict(),
+                headers={"Retry-After": str(exc.retry_after)},
+            )
         except Exception as exc:
             logger.warning("inline completion failed", extra={"error": type(exc).__name__})
             return JSONResponse(
@@ -419,7 +439,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- knowledge ---------------------------------------------------------------------
 
-    @router.post("/knowledge/documents")
+    @router.post("/knowledge/documents", dependencies=idempotent)
     async def ingest_document(
         request: Request, payload: IngestRequest, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -446,7 +466,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
-    @router.post("/knowledge/documents/upload")
+    @router.post("/knowledge/documents/upload", dependencies=idempotent)
     async def upload_document(
         request: Request,
         file: UploadFile = File(...),
@@ -528,7 +548,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
-    @router.delete("/knowledge/documents/{document_id}")
+    @router.delete("/knowledge/documents/{document_id}", dependencies=idempotent)
     async def delete_document(
         request: Request, document_id: str, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -541,7 +561,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             await container.cag.on_document_changed(doc_id, owner_id=caller.user_id)
         return JSONResponse(content={"deleted": True, "chunks_removed": removed})
 
-    @router.post("/knowledge/documents/{document_id}/cag-pin")
+    @router.post("/knowledge/documents/{document_id}/cag-pin", dependencies=idempotent)
     async def pin_cag_document(
         request: Request, document_id: str, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -563,7 +583,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
-    @router.delete("/knowledge/documents/{document_id}/cag-pin")
+    @router.delete("/knowledge/documents/{document_id}/cag-pin", dependencies=idempotent)
     async def unpin_cag_document(
         request: Request, document_id: str, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -729,7 +749,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
-    @router.post("/memory")
+    @router.post("/memory", dependencies=idempotent)
     async def write_memory(
         request: Request, payload: MemoryWriteRequest, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -745,7 +765,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         )
         return JSONResponse(content={"id": record.id.value, "content": record.content})
 
-    @router.delete("/memory/{memory_id}")
+    @router.delete("/memory/{memory_id}", dependencies=idempotent)
     async def delete_memory(
         request: Request, memory_id: str, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -761,7 +781,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- feedback ----------------------------------------------------------------------
 
-    @router.post("/feedback")
+    @router.post("/feedback", dependencies=idempotent)
     async def submit_feedback(
         request: Request, payload: FeedbackRequest, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -883,7 +903,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
-    @router.delete("/engineering/workspaces/{workspace_id}")
+    @router.delete("/engineering/workspaces/{workspace_id}", dependencies=idempotent)
     async def delete_agent_workspace(
         workspace_id: str, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -968,7 +988,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             }
         )
 
-    @router.post("/admin/index/rebuild")
+    @router.post("/admin/index/rebuild", dependencies=idempotent)
     async def rebuild_index(
         request: Request, caller: Principal = Depends(principal)
     ) -> JSONResponse:
@@ -1027,6 +1047,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         require_admin=require_admin,
         require_super_admin=require_super_admin,
         audit_admin=audit_admin,
+        idempotent=idempotent,
         Body=Body,
         Depends=Depends,
         HTTPException=HTTPException,
@@ -1074,9 +1095,14 @@ def build_app(container: Any, *, authenticator: Any, rate_limiter: Any = None) -
         Every error carries its own ``http_status`` and a stable ``kind`` slug, so clients
         branch on a machine-readable value rather than parsing prose.
         """
-        if exc.http_status >= 500:
+        if exc.http_status >= 500 and not isinstance(exc, OverloadedError):
             logger.error("request failed", extra={"error": exc.kind, "details": exc.details})
-        return JSONResponse(status_code=exc.http_status, content=exc.to_dict())
+        retry_after = getattr(exc, "retry_after", None)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content=exc.to_dict(),
+            headers={"Retry-After": str(retry_after)} if retry_after else None,
+        )
 
     @app.get("/health/live")
     async def liveness() -> JSONResponse:
