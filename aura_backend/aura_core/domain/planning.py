@@ -182,6 +182,11 @@ class Plan:
     revisions: tuple[PlanRevision, ...] = ()
     created_at: datetime = field(default_factory=_utcnow)
     max_steps: int = 24
+    #: Tokens the planner generation that produced *this revision* spent (prompt + completion),
+    #: as the provider reported them; ``0`` when unknown. Per revision, not cumulative --
+    #: :meth:`revised` resets it, so an agent loop summing it across revisions never double
+    #: counts (``AgenticExecutor``'s token budget, GAP-024).
+    generation_tokens: int = 0
 
     def __post_init__(self) -> None:
         ids = [s.id for s in self.steps]
@@ -301,6 +306,7 @@ class Plan:
         *,
         steps: Sequence[PlanStep],
         reason: str,
+        generation_tokens: int = 0,
     ) -> "Plan":
         """Produce a replanned version, recording what changed and why (ADR: replanning must be
         auditable; a plan that silently rewrites itself cannot be debugged)."""
@@ -312,7 +318,12 @@ class Plan:
             added_steps=tuple(sorted(after - before, key=lambda s: s.value)),
             removed_steps=tuple(sorted(before - after, key=lambda s: s.value)),
         )
-        return replace(self, steps=tuple(steps), revisions=self.revisions + (revision,))
+        return replace(
+            self,
+            steps=tuple(steps),
+            revisions=self.revisions + (revision,),
+            generation_tokens=generation_tokens,
+        )
 
     def mark_blocked_steps(self) -> "Plan":
         blocked = {

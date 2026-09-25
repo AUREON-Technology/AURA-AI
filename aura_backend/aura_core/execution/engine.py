@@ -115,7 +115,7 @@ class StepEvent:
 
 class ExecutionOutcome:
     __slots__ = ("plan", "results", "tool_reports", "succeeded", "duration_ms", "steps_run",
-                 "blocked_reason")
+                 "blocked_reason", "run_id")
 
     def __init__(
         self,
@@ -127,6 +127,7 @@ class ExecutionOutcome:
         duration_ms: float = 0.0,
         steps_run: int = 0,
         blocked_reason: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         self.plan = plan
         self.results = dict(results)
@@ -135,6 +136,9 @@ class ExecutionOutcome:
         self.duration_ms = duration_ms
         self.steps_run = steps_run
         self.blocked_reason = blocked_reason
+        #: The durable ``AgentRun`` this outcome belongs to, when the agent loop recorded one
+        #: (``execution/agentic_loop.py``); ``None`` otherwise.
+        self.run_id = run_id
 
     def summary_for_context(self) -> list[tuple[str, str]]:
         """Step results as ``(label, text)`` pairs for the context engine.
@@ -177,8 +181,16 @@ class ExecutionEngine:
         confirmed_call_ids: Sequence[str] = (),
         handlers: Mapping[StepKind, Callable[[PlanStep], Any]] | None = None,
         on_event: Callable[[StepEvent], Any] | None = None,
+        gate: Any = None,
     ) -> ExecutionOutcome:
-        """Run the plan to completion, blockage, or budget exhaustion."""
+        """Run the plan to completion, blockage, or budget exhaustion.
+
+        ``gate`` (optional; ``execution/agentic_loop.py``'s ``RunBudgetGate``) is asked
+        ``admit(step, spec)`` before each tool step is dispatched and returns ``None`` to let it
+        through or a reason string (``"tool_budget_exceeded"``, ``"risk_budget_exceeded"``) to
+        refuse it. It only ever *removes* a dispatch: an admitted step still goes through
+        ``ToolRegistry.execute`` and its policy exactly as it would without a gate.
+        """
         started = time.perf_counter()
         deadline = started + self._deadline_s
         results: dict[str, str] = {}
@@ -206,6 +218,32 @@ class ExecutionEngine:
                 continue
 
             batch = self._taint_ordered(ready[: self._max_parallel], context)
+            if gate is not None:
+                admitted: list[PlanStep] = []
+                for step in batch:
+                    reason = (
+                        gate.admit(step, self._tool_spec(step))
+                        if step.kind is StepKind.TOOL and step.tool else None
+                    )
+                    if reason is None:
+                        admitted.append(step)
+                        continue
+                    # Refused before dispatch: the registry never sees it, so nothing acted.
+                    # BLOCKED (not FAILED) with the budget as the reason, and a terminal
+                    # `blocked_reason` so the agent loop stops rather than replanning into the
+                    # same wall.
+                    blocked_reason = reason
+                    current = current.with_steps([step.blocked(reason)])
+                    await self._emit(
+                        on_event,
+                        StepEvent(
+                            step_id=step.id.value, kind=str(step.kind), status="blocked",
+                            description=step.description, detail=reason,
+                        ),
+                    )
+                batch = admitted
+                if not batch:
+                    break
             running = [step.started() for step in batch]
             current = current.with_steps(running)
 
@@ -486,6 +524,7 @@ class ExecutionEngine:
         confirmed_tools: Sequence[str] = (),
         confirmed_call_ids: Sequence[str] = (),
         handlers: Mapping[StepKind, Callable[[PlanStep], Any]] | None = None,
+        gate: Any = None,
     ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
         """Execute while yielding progress, then yield the final outcome.
 
@@ -509,6 +548,7 @@ class ExecutionEngine:
                     confirmed_call_ids=confirmed_call_ids,
                     handlers=handlers,
                     on_event=emit,
+                    gate=gate,
                 )
                 await queue.put(outcome)
             finally:
