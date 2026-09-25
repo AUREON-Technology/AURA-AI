@@ -121,6 +121,7 @@ aura_backend/aura_core/
 | [011](011-desktop-engineer-agent.md) | Desktop Engineer agent executes on the user's own machine via a host-agent bridge; `SandboxRunner` is the seam, containment is enforced by the daemon, never trusted from the server | A real relaxation of attestation for one platform (a pairing token, not mobile-grade attestation), in exchange for the Engineer persona acting on real local projects instead of only the server Docker workspace (ADR-013) |
 | [013](013-agent-workspaces.md) | Persistent per-(user, repo) engineer workspaces; stopped between turns; git runs host-side so the token never enters the container; opt-in (`AURA_SANDBOX_ENABLED` + `COMPOSE_PROFILES=sandbox`) | Peak RAM is `max_running x memory_limit` rather than one container per workspace, in exchange for pause/resume machinery and a reaper that must not fail |
 | [014](014-workspace-local-side-effects.md) | Confirmation gates the workspace boundary, not writes inside it (amends ADR-006 rules 3-4) | One prompt per task at `git_push` instead of dozens, in exchange for a pinned allowlist that must be reviewed whenever it grows |
+| [016](016-agent-platform.md) | Every persona runs one bounded plan/execute/replan loop with five data-driven budgets, recorded as a durable run, with memory isolated per (user, agent scope) | One code path and an auditable run ledger, in exchange for budgets that must be tuned per persona and a second table set to migrate |
 
 ---
 
