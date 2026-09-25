@@ -6,6 +6,7 @@ with proper checkpoint management and model registry integration.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import logging
@@ -30,6 +31,21 @@ from aura_core.adapters.ml import (
 __all__ = ["LocalLoraTrainer"]
 
 logger = get_logger("adapters.local_lora")
+
+
+def _module_imports_torch_at_top_level(source: str) -> bool:
+    """Architecture helper: refuse module-scope torch imports (fitness tests use this)."""
+    tree = ast.parse(source)
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "torch" or alias.name.startswith("torch."):
+                    return True
+        if isinstance(node, ast.ImportFrom) and node.module and (
+            node.module == "torch" or node.module.startswith("torch.")
+        ):
+            return True
+    return False
 
 
 class LocalLoraTrainer:

@@ -96,6 +96,13 @@ _beat_schedule = {
         "schedule": 1800.0,
         "options": {"queue": "realtime"},
     },
+    # Roadmap P1.4: bound the Idempotency-Key table. Expiry is enforced on every claim regardless;
+    # this only deletes the dead rows, so hourly is plenty against a 24h default TTL.
+    "purge-idempotency-keys": {
+        "task": "tasks.purge_idempotency_keys_task",
+        "schedule": 3600.0,
+        "options": {"queue": "realtime"},
+    },
     # Loop B: pick up fine-tune jobs left QUEUED when launch used run_inline=false.
     "drain-finetune-queue": {
         "task": "tasks.drain_finetune_queue_task",

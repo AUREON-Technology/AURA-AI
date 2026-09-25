@@ -12,6 +12,7 @@ import 'package:aura_client/desktop/shell/activity_bar.dart';
 import 'package:aura_client/desktop/shell/bottom_panel.dart';
 import 'package:aura_client/desktop/shell/status_bar.dart';
 import 'package:aura_client/desktop/shell/desktop_shortcuts.dart';
+import 'package:aura_client/desktop/shell/resize_handle.dart';
 import 'package:aura_client/desktop/agent/agent_panel.dart';
 import 'package:aura_client/desktop/control_center/control_center_panel.dart';
 import 'package:aura_client/desktop/explorer/explorer_panel.dart';
@@ -75,7 +76,6 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
   @override
   Widget build(BuildContext context) {
     final ideDensity = context.ideDensity;
-    final palette = AuraPalette.of(context);
     final layoutState = ref.watch(layoutNotifierProvider);
     final hasActiveTab = ref.watch(editorNotifierProvider).activeTab != null;
 
@@ -103,10 +103,10 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
                       },
                     ),
                   if (layoutState.showPrimarySidebar)
-                    VerticalDivider(
-                      thickness: 1,
-                      width: 1,
-                      color: palette.border,
+                    ResizeHandle(
+                      axis: ResizeHandleAxis.horizontal,
+                      onDelta: (dx) =>
+                          ref.read(layoutNotifierProvider.notifier).adjustPrimarySidebarWidth(dx),
                     ),
                   // Main workspace area
                   Expanded(
@@ -123,6 +123,14 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
                               : widget.child,
                         ),
                         if (layoutState.showBottomPanel)
+                          ResizeHandle(
+                            axis: ResizeHandleAxis.vertical,
+                            // The handle sits above the bottom panel, so dragging it up
+                            // (negative dy) should grow the panel -- hence the negation.
+                            onDelta: (dy) =>
+                                ref.read(layoutNotifierProvider.notifier).adjustBottomPanelHeight(-dy),
+                          ),
+                        if (layoutState.showBottomPanel)
                           SizedBox(
                             height: layoutState.bottomPanelHeight,
                             child: const BottomPanel(),
@@ -132,10 +140,12 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
                   ),
                   // Secondary sidebar
                   if (layoutState.showSecondarySidebar)
-                    VerticalDivider(
-                      thickness: 1,
-                      width: 1,
-                      color: palette.border,
+                    ResizeHandle(
+                      axis: ResizeHandleAxis.horizontal,
+                      // The handle sits to the left of the secondary sidebar, so dragging it
+                      // left (negative dx) should grow the panel -- hence the negation.
+                      onDelta: (dx) =>
+                          ref.read(layoutNotifierProvider.notifier).adjustSecondarySidebarWidth(-dx),
                     ),
                   if (layoutState.showSecondarySidebar)
                     SizedBox(

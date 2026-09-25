@@ -854,6 +854,19 @@ belongs here until CI has actually run it — that applies to `aura_hostd`'s own
 
 ### Phase K — Desktop IDE (Windows-first)
 
+**Phase 0 production audit (2026-09-25):** the "AURA Desktop IDE — Production & Professional UX
+Upgrade Plan" mandates a read-only audit before any redesign work. That audit is done — see
+[`reports/desktop-ide-phase0-audit-2026-09-25.md`](reports/desktop-ide-phase0-audit-2026-09-25.md).
+Headline corrections to this section: D4 (Terminal/PTY) is further along than the phase map below
+implies (a real Win32 ConPTY exists, Windows-only, unexercised by CI); D5 (Git/Diff) and large
+parts of D6–D9 (AI coding layer, debug, agent workspace, control center) already have real,
+non-mocked implementations that this document's phase map had not caught up to. Conversely, two
+D1 exit criteria are not actually met: layout does not persist across restart despite a migrated
+Drift table for it, and sidebars/bottom panel are not resizable despite the setters existing.
+**Fixed (2026-09-25)**, per the audit report's own update note: `LayoutNotifier` now persists to
+`desktopLayoutState` and `DesktopShell` has real drag-to-resize handles. Read the audit before
+treating any D-phase status below as current.
+
 **Status:** D0 architecture phase done (ADR-015). D1–D3 scaffolding exists and has been fixed to
 compile and wired end-to-end (router → `DesktopShell` → Explorer/editor/quick-open/session
 persistence), but **this is not yet proven** — this environment has no Flutter/Dart toolchain, so
@@ -962,10 +975,40 @@ Phase A, not by an estimate.
 | Live voice duplex | **Scaffolding** — WS session + engine + Flutter `/voice`; not device-proven; load round-trip open | Phase H |
 | Transcript NLP | **Scaffolding** — `aura_core/nlp/` normalize + shallow intent; quality on real ASR unproven | Phase I |
 | Persistent engineer workspaces | **Built, not proven** — Units 1–11 on `main` (`91b6d5c` / #70; panel + dev parity in #72); VPS still `AURA_SANDBOX_ENABLED=false`, no sandbox profile; 10 live checks open | Phase J (workspaces), ADR-013/014 |
-| Desktop Engineer (`aura_hostd`) | **In tree, partial** — Units 1–9 done with disclosed cuts (real PTY / live xterm / restart-on-crash / a bundled `aura_hostd` binary / interactive tiered consent remain open); Desktop OAuth client now registered (2026-09-10); still unproven end to end — no Dart/Flutter toolchain run anywhere but CI ([ADR-011](architecture/011-desktop-engineer-agent.md)) | Phase J (Desktop) |
+| Desktop Engineer (`aura_hostd`) | **In tree, partial** — Units 1–9 done with disclosed cuts (live xterm / restart-on-crash / a bundled `aura_hostd` binary / interactive tiered consent remain open); Desktop OAuth client now registered (2026-09-10); still unproven end to end — no Dart/Flutter toolchain run anywhere but CI ([ADR-011](architecture/011-desktop-engineer-agent.md)). **Correction (2026-09-25):** the "real PTY... remain open" half of this line is now stale — Phase K/D4 added a genuine Win32 ConPTY (`aura_hostd/lib/src/pty_session.dart`), post-dating this row; it is Windows-only (no POSIX PTY exists) and has never been exercised by any toolchain or CI here (`hostd-ci.yml` runs `ubuntu-latest` only). See the [Desktop IDE Phase 0 audit](reports/desktop-ide-phase0-audit-2026-09-25.md) §3. | Phase J (Desktop) |
 | Multi-model routing | **Proven** against two real, simultaneously-running local models (135M and 3B params) — `FASTEST`/`QUALITY_FIRST`/`BALANCED`/failover all route on real measured behaviour; `CHEAPEST` ties (both cost `$0`) | Phase G2, `tests/load/test_multi_model_routing.py` |
 | Restore verified | **Yes for all three stores** — Postgres, Qdrant and Redis each restored from the `backup` service's own output ([A2 report](reports/phase-a2-restore-drill.md)); offsite copy and `restore.sh` still unexercised | Phase A2 |
 | Production deployments | **1 and counting** — the real VPS, 17 services, verified live over HTTPS on 2026-08-23 | Phase A1 |
+
+## 6. Production program (2026-09-25)
+
+The 26-phase production plan (GPU inference fabric, 50→100-user capacity, RAG/Memory/Agents 2.0,
+multimodal, voice, MLOps, HA/DR, canary launch) lives in
+[`docs/production/MASTER_PRODUCTION_ROADMAP.md`](production/MASTER_PRODUCTION_ROADMAP.md). This
+document stays the evidence ledger for Phases A–K; the production program's own ledger is the
+machine-checked [`gap_register.yaml`](production/gap_register.yaml) (rendered as
+[`GAP_REGISTER.md`](production/GAP_REGISTER.md)), which re-verified the 2026-09-13 audit
+([`FULL_SYSTEM_ARCHITECTURE_AUDIT.md`](reports/FULL_SYSTEM_ARCHITECTURE_AUDIT.md)) against the tree
+and corrects it where it was stale (PostgresPool lock, personal-OS update/delete) or wrong in the
+other direction (ingestion idempotency — see below).
+
+What the first wave landed, and how far each item is proven. **None of it has run in CI**: every
+GitHub Actions job on the repo has died before reaching a runner since 2026-09-22 (GAP-043), so the
+evidence below is local suite runs (pytest 2610 passed / 49 skipped / 0 failed, legacy unittest 100
+OK) plus the real-infrastructure runs named per row.
+
+| Item | State | Evidence / what is still missing |
+| --- | --- | --- |
+| Baseline restored after the 2026-09-23 direct pushes broke `Container` construction (~200 errors) | **Merged** (#96, `11abb50`) | Branch protection on `main` still off (GAP-005) |
+| P1.2 server-side encryption at rest — memory content, personal-OS v3 fields | **Built, not proven** | Real Postgres 16 round-trip + psql ciphertext check; not deployed; ADR-004 "Encryption at rest" lists what stays plaintext. Not end-to-end. |
+| P1.3 backup encryption (age), manifests, GFS retention, offsite verification, drill timing | **Built, not proven** | 56-case shell test with real `age`, shellcheck clean; no encrypted cycle, upload or drill on the VPS. **Deploy precondition:** the age public key must be on the VPS first or backups stop (fail-closed, alerted). |
+| P1.4 `Idempotency-Key` on side-effecting v3/admin routes | **Built, not proven** | Real Postgres 16: 20-way concurrent claim, two gateway processes sharing one table; no client sends the header yet |
+| Ingestion idempotency — **was a cross-user leak** | **Fixed, not deployed** | Document ids were `hash(title)` (per-process salted, not owner-scoped): same-titled uploads by two users became versions of one document owned by the first. 11 regression tests; GAP-004 |
+| GAP-009 `SecretManager` "AES-256-CTR" never used its key | **Fixed** (`b16d168`) | AES-256-GCM; wrong-key/tamper/rotation tests fail on the old code |
+| P2 capability routing across model pools, admission control (priority queue, 503/429 + Retry-After), latency decomposition, opt-in vLLM GPU profile | **Built, not proven** | 48 tests with FrozenClock; no GPU host exists (GAP-012); bounds the Ollama queue, adds no throughput (GAP-011) |
+| P1.5 security regression suite — 257 tests; **11 live vulnerabilities fixed** plus the concurrent-taint gap | **Built, not proven** | Session overwrite via foreign `session_id`, refresh-token double spend, mock attestation in production, WebSocket reauth as another user, GitHub allowlist bypass via unescaped paths, SSRF gaps, `git_push` to the default branch via refspecs, `ingest_pdf_task` path escape; each with a test that failed first (GAP-014, GAP-048) |
+| P3 1→100-user load harness | **Built** | In-process echo self-validation only — explicitly not a capacity number; the 50/75/100-user gates need the GPU deployment (GAP-041) |
+| P14 evaluation gates PRs | **Built, not proven** | Pass on the tree, fail on a deliberate ranking regression; `eval-ci.yml` had been invalid YAML and never ran; blocks nothing until branch protection requires it |
 
 ---
 

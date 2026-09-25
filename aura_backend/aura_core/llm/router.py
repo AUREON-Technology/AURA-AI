@@ -6,10 +6,18 @@ binding constraint at every scaling stage (Scalability Report §6).
 Responsibilities, in order:
 
 1. **Filter** candidates by declared capability (tools, streaming, JSON mode, context window,
-   quality tier, locality) and by health -- an open circuit removes a provider from candidacy.
-2. **Order** them by the request's :class:`RoutingPolicy`.
-3. **Attempt** each in turn, up to ``max_fallbacks``, with per-attempt timeout.
-4. **Record** latency, tokens, cost, and failures so the next decision is better informed.
+   quality tier, locality, and -- from the request's :class:`WorkloadHint` -- pool, modality,
+   language, reasoning, minimum context) and by health -- an open circuit removes a provider.
+2. **Order** them by the request's :class:`RoutingPolicy`, within pool tiers: providers that
+   declare the requested pool first, generalists after them as fallback (P2.3).
+3. **Admit** through the capacity group's bounded priority queue (P2.4, ``llm/admission.py``).
+   Saturation raises :class:`OverloadedError` -- it does **not** fail over, because spilling to
+   the next candidate whenever the preferred one is busy would silently turn ``local_first`` into
+   "whichever is idle", sending turns to a provider the operator ranked last on purpose.
+4. **Attempt** each candidate in turn, up to ``max_fallbacks``, with per-attempt timeout.
+5. **Record** queue wait, time to first token, decode time, tokens and failures (P2.5) as a
+   :class:`GenerationTiming` value handed to the metric catalogue, so the next decision is
+   better informed and the latency is decomposed on the dashboard.
 
 Two rules that are not obvious and matter a great deal:
 
@@ -25,7 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, AsyncIterator, Callable, Mapping, Sequence
 
 from ..domain.errors import (
@@ -36,19 +44,27 @@ from ..domain.errors import (
 )
 from ..domain.events import ProviderFailedOver, ProviderHealthChanged
 from ..domain.llm import (
+    FALLBACK_POOLS,
     CompletionRequest,
     CompletionResponse,
+    GenerationTiming,
     RoutingPolicy,
     StreamChunk,
+    TokenUsage,
+    WorkloadHint,
 )
 from ..ports.llm import LLMProvider
+from .admission import AdmissionController, AdmissionTicket, PoolLimits
 from .circuit import CircuitBreaker, CircuitState, LatencyTracker, ProviderStats
+from .workload import effective_workload
 
 __all__ = ["ProviderRouter", "RoutingDecision", "TurnBudget"]
 
 # Prior used to rank a provider with no latency history. Deliberately mid-range: a new provider
-# should neither win by default (unknown == 0) nor be excluded (unknown == infinity).
+# should neither win by default (unknown == 0) nor be excluded (unknown == infinity). Scaled by the
+# declared speed tier (tier 2, the default, keeps exactly this value).
 _LATENCY_PRIOR_MS = 1500.0
+_SPEED_TIER_PRIOR = {1: 2.0, 2: 1.0, 3: 0.5}
 
 
 def _attempt_summary(attempts: Sequence[Mapping[str, Any]]) -> str:
@@ -70,6 +86,10 @@ class RoutingDecision:
     candidates: tuple[str, ...]
     policy: RoutingPolicy
     excluded: Mapping[str, str] = field(default_factory=dict)
+    #: The requested pool ("default" when none), and which candidates are pool members rather
+    #: than generalist fallbacks -- both surfaced so an operator can see a fallback happening.
+    pool: str = "default"
+    pool_members: tuple[str, ...] = ()
 
     @property
     def primary(self) -> str | None:
@@ -126,7 +146,16 @@ class ProviderRouter:
         clock: Callable[[], float] | None = None,
         metrics: Any = None,
         event_bus: Any = None,
+        admission: AdmissionController | None = None,
+        default_max_queue: int = -1,
+        default_queue_timeout_s: float = 0.0,
+        group_limits: Mapping[str, PoolLimits] | None = None,
+        user_max_concurrent: int = 0,
     ) -> None:
+        """``default_max_queue``/``default_queue_timeout_s``/``user_max_concurrent`` default to
+        the pre-P2.4 behaviour (unbounded wait, no per-user quota). Each capacity group's slot
+        count is the smallest ``max_concurrency`` among its providers unless ``group_limits``
+        names it explicitly."""
         if not providers:
             raise ValidationError("ProviderRouter requires at least one provider")
         self._providers: dict[str, LLMProvider] = {p.name: p for p in providers}
@@ -153,10 +182,29 @@ class ProviderRouter:
             )
             for name in self._providers
         }
-        self._slots: dict[str, asyncio.Semaphore] = {
-            name: asyncio.Semaphore(max(1, provider.capabilities.max_concurrency))
-            for name, provider in self._providers.items()
+        self._groups: dict[str, str] = {
+            name: (p.capabilities.capacity_group or name) for name, p in self._providers.items()
         }
+        if admission is None:
+            limits: dict[str, PoolLimits] = {}
+            for name, provider in self._providers.items():
+                group = self._groups[name]
+                cap = max(1, provider.capabilities.max_concurrency)
+                if group in limits:
+                    cap = min(cap, limits[group].max_concurrent)
+                limits[group] = PoolLimits(
+                    max_concurrent=cap,
+                    max_queue=default_max_queue,
+                    queue_timeout_s=default_queue_timeout_s,
+                )
+            limits.update(group_limits or {})
+            admission = AdmissionController(
+                limits,
+                user_max_concurrent=user_max_concurrent,
+                clock=self._clock,
+                metrics=metrics,
+            )
+        self._admission = admission
         self._publish_health()
 
     # -- observation -------------------------------------------------------------------
@@ -205,9 +253,29 @@ class ProviderRouter:
 
     # -- selection ---------------------------------------------------------------------
 
-    def _capability_filter(self, request: CompletionRequest, provider: LLMProvider) -> str | None:
-        """Return a rejection reason, or ``None`` if the provider qualifies."""
+    def _capability_filter(
+        self,
+        request: CompletionRequest,
+        provider: LLMProvider,
+        hint: WorkloadHint | None = None,
+    ) -> str | None:
+        """Return a rejection reason, or ``None`` if the provider qualifies.
+
+        Every hint-driven check passes a provider that declares nothing, so a configuration
+        written before model-level metadata existed filters exactly as it always did.
+        """
         caps = provider.capabilities
+        hint = hint or effective_workload(request)
+        if not caps.is_generative:
+            return "not_generative"
+        if hint.modalities and not set(hint.modalities) <= caps.effective_modalities:
+            return "modality_unsupported"
+        if hint.needs_reasoning and caps.pools and not caps.supports_reasoning:
+            return "no_reasoning_support"
+        if not caps.serves_language(hint.language):
+            return "language_unsupported"
+        if hint.min_context and caps.context_window < hint.min_context:
+            return "context_window_too_small"
         if request.require_local and not caps.is_local:
             return "not_local"
         if request.needs_tools and not caps.supports_tools:
@@ -223,23 +291,35 @@ class ProviderRouter:
         return None
 
     def _score(self, request: CompletionRequest, stats: ProviderStats, policy: RoutingPolicy) -> float:
-        """Lower is better. Each policy is a different objective over the same signals."""
+        """Lower is better. Each policy is a different objective over the same signals.
+
+        The P2.3 metadata enters only through terms that are zero (or unchanged) at their
+        defaults: ``speed_tier`` scales the latency *prior* (tier 2 = unchanged), and
+        ``gpu_cost``/``memory_cost`` add a resource term (0 = unchanged). Everything self-hosted
+        costs $0 per token, so without the resource term CHEAPEST could not tell a 7B from a 70B.
+        """
         provider = self._providers[stats.name]
         caps = provider.capabilities
-        latency = stats.latency.estimate_ms(_LATENCY_PRIOR_MS)
+        prior = _LATENCY_PRIOR_MS * _SPEED_TIER_PRIOR.get(caps.speed_tier, 1.0)
+        latency = stats.latency.estimate_ms(prior)
         prompt_tokens = request.conversation.approx_tokens()
         cost = caps.projected_cost_usd(prompt_tokens, request.sampling.max_output_tokens or 512)
+        resource = caps.resource_cost
         # Saturation matters as much as raw speed: a fast provider with a full queue is slow.
-        load = stats.inflight / max(1, caps.max_concurrency)
+        # Queued waiters count too -- they are load the provider has not started yet.
+        group = self._groups[stats.name]
+        capacity = max(1, self._admission.capacity(group))
+        load = (self._admission.inflight(group) + self._admission.queued(group)) / capacity
+        load = max(load, stats.inflight / max(1, caps.max_concurrency))
 
         if policy is RoutingPolicy.LOCAL_FIRST:
             return (0.0 if caps.is_local else 1000.0) + load * 10.0 + latency / 1000.0
         if policy is RoutingPolicy.CHEAPEST:
-            return cost * 1000.0 + load * 0.5
+            return cost * 1000.0 + resource * 10.0 + load * 0.5
         if policy is RoutingPolicy.FASTEST:
             return latency * (1.0 + load)
         if policy is RoutingPolicy.QUALITY_FIRST:
-            return (3 - caps.quality_tier) * 1000.0 + cost * 100.0 + load * 5.0
+            return (3 - caps.quality_tier) * 1000.0 + cost * 100.0 + resource + load * 5.0
         # BALANCED: normalise each signal to roughly [0, 1] and weight by what users notice.
         # Latency dominates perceived quality; cost is the operational constraint; tier is a
         # tiebreak rather than a driver.
@@ -248,6 +328,7 @@ class ProviderRouter:
             + 0.30 * min(cost / 0.05, 1.0)
             + 0.15 * load
             + 0.10 * ((3 - caps.quality_tier) / 2.0)
+            + 0.05 * min(resource / 10.0, 1.0)
         )
 
     def plan(self, request: CompletionRequest) -> RoutingDecision:
@@ -257,28 +338,102 @@ class ProviderRouter:
         and so routing can be tested without a provider call.
         """
         policy = request.policy or self._default_policy
+        hint = effective_workload(request)
+        wanted = hint.pool
         excluded: dict[str, str] = {}
-        eligible: list[ProviderStats] = []
+        members: list[ProviderStats] = []
+        fallbacks: list[ProviderStats] = []
 
         for name, provider in self._providers.items():
-            reason = self._capability_filter(request, provider)
+            reason = self._capability_filter(request, provider, hint)
             if reason:
                 excluded[name] = reason
                 continue
+            caps = provider.capabilities
+            # Pool tiering. With no pool requested, or a generalist provider (no pools
+            # declared), there is nothing to tier on -- the legacy behaviour.
+            if wanted is not None and caps.pools and wanted not in caps.pools:
+                if hint.strict_pool or not any(p in FALLBACK_POOLS for p in caps.pools):
+                    excluded[name] = "pool_mismatch"
+                    continue
             stats = self._stats[name]
             if stats.breaker.state is CircuitState.OPEN:
                 excluded[name] = "circuit_open"
                 continue
-            eligible.append(stats)
+            if wanted is not None and wanted in caps.pools:
+                members.append(stats)
+            elif wanted is not None and hint.strict_pool:
+                excluded[name] = "pool_mismatch"
+            else:
+                fallbacks.append(stats)
 
         # Stable secondary sort by name keeps ordering deterministic when scores tie, which
         # makes routing tests reproducible.
-        eligible.sort(key=lambda s: (self._score(request, s, policy), s.name))
+        def key(s: ProviderStats) -> tuple[float, str]:
+            return (self._score(request, s, policy), s.name)
+
+        members.sort(key=key)
+        fallbacks.sort(key=key)
         return RoutingDecision(
-            candidates=tuple(s.name for s in eligible), policy=policy, excluded=excluded
+            candidates=tuple(s.name for s in members + fallbacks),
+            policy=policy,
+            excluded=excluded,
+            pool=hint.pool_label,
+            pool_members=tuple(s.name for s in members),
         )
 
     # -- execution ---------------------------------------------------------------------
+
+    async def _admit(self, name: str, hint: WorkloadHint) -> AdmissionTicket:
+        """Take a slot in ``name``'s capacity group, waiting in priority order if necessary.
+
+        Raises :class:`OverloadedError` (or :class:`UserConcurrencyLimitError`) straight to the
+        caller -- deliberately outside the failover loop's ``except``: saturation is not a
+        provider failure, must not count against the circuit breaker, and must not reroute.
+        """
+        return await self._admission.acquire(
+            self._groups[name], priority=hint.priority, user_key=hint.user_key
+        )
+
+    def _observe_timing(self, timing: GenerationTiming) -> None:
+        if self._metrics is None:
+            return
+        observe = getattr(self._metrics, "observe_generation", None)
+        if observe is None:
+            return
+        try:
+            observe(timing)
+        except Exception:  # pragma: no cover - metrics must never fail a generation
+            pass
+
+    def _timing(
+        self,
+        name: str,
+        hint: WorkloadHint,
+        *,
+        outcome: str,
+        streamed: bool,
+        queue_wait_ms: float,
+        service_ms: float,
+        ttft_ms: float | None = None,
+        decode_ms: float | None = None,
+        usage: TokenUsage | None = None,
+        model: str | None = None,
+    ) -> GenerationTiming:
+        return GenerationTiming(
+            provider=name,
+            model=model or self._providers[name].capabilities.model_id,
+            pool=hint.pool_label,
+            priority=hint.priority,
+            outcome=outcome,
+            streamed=streamed,
+            queue_wait_ms=queue_wait_ms,
+            service_ms=service_ms,
+            ttft_ms=ttft_ms,
+            decode_ms=decode_ms,
+            prompt_tokens=usage.prompt_tokens if usage else 0,
+            completion_tokens=usage.completion_tokens if usage else 0,
+        )
 
     def _record_success(self, name: str, *, latency_ms: float, ttft_ms: float | None,
                         response: CompletionResponse | None) -> None:
@@ -330,6 +485,7 @@ class ProviderRouter:
 
         attempts: list[dict[str, Any]] = []
         limit = min(len(decision.candidates), self._max_fallbacks + 1)
+        hint = effective_workload(request)
 
         for index, name in enumerate(decision.candidates[:limit]):
             stats = self._stats[name]
@@ -338,15 +494,18 @@ class ProviderRouter:
                 continue
 
             provider = self._providers[name]
+            ticket = await self._admit(name, hint)
             started = self._clock()
             stats.inflight += 1
             if self._metrics is not None:
                 self._metrics.llm_inflight.labels(provider=name).set(stats.inflight)
+            outcome = "error"
+            response: CompletionResponse | None = None
             try:
-                async with self._slots[name]:
-                    response = await asyncio.wait_for(
-                        provider.complete(request), timeout=request.timeout_s
-                    )
+                response = await asyncio.wait_for(
+                    provider.complete(request), timeout=request.timeout_s
+                )
+                outcome = "success"
                 elapsed = (self._clock() - started) * 1000.0
                 self._record_success(name, latency_ms=elapsed, ttft_ms=None, response=response)
                 if budget is not None:
@@ -355,8 +514,9 @@ class ProviderRouter:
                     # Attribute the fallback to the provider that actually failed, not to the
                     # one that succeeded -- otherwise the metric points at the healthy node.
                     self._note_fallback(decision.candidates[index - 1], attempts)
-                return response
+                return replace(response, queue_wait_ms=ticket.queue_wait_ms)
             except asyncio.TimeoutError as exc:
+                outcome = "timeout"
                 self._record_failure(name, exc)
                 attempts.append({"provider": name, "error": "timeout", "timeout_s": request.timeout_s})
             except ProviderError as exc:
@@ -369,10 +529,23 @@ class ProviderRouter:
             except Exception as exc:  # adapter bug or unexpected transport failure
                 self._record_failure(name, exc)
                 attempts.append({"provider": name, "error": type(exc).__name__})
+            except asyncio.CancelledError:
+                outcome = "cancelled"
+                raise
             finally:
                 stats.inflight -= 1
+                self._admission.release(ticket)
                 if self._metrics is not None:
                     self._metrics.llm_inflight.labels(provider=name).set(stats.inflight)
+                self._observe_timing(
+                    self._timing(
+                        name, hint, outcome=outcome, streamed=False,
+                        queue_wait_ms=ticket.queue_wait_ms,
+                        service_ms=(self._clock() - started) * 1000.0,
+                        usage=response.usage if response is not None else None,
+                        model=response.model if response is not None else None,
+                    )
+                )
 
         raise AllProvidersFailedError(
             f"all {len(attempts)} provider attempt(s) failed"
@@ -416,6 +589,7 @@ class ProviderRouter:
 
         attempts: list[dict[str, Any]] = []
         limit = min(len(decision.candidates), self._max_fallbacks + 1)
+        hint = effective_workload(request)
 
         for index, name in enumerate(decision.candidates[:limit]):
             stats = self._stats[name]
@@ -424,9 +598,16 @@ class ProviderRouter:
                 continue
 
             provider = self._providers[name]
+            # The slot is held for the whole stream: decode is when the model server is busiest.
+            # Released in `finally`, which also runs when the consumer stops iterating early
+            # (client disconnect -> aclose()) -- that is what keeps a dropped stream from leaking.
+            ticket = await self._admit(name, hint)
             started = self._clock()
             first_chunk_at: float | None = None
+            last_chunk_at: float | None = None
             emitted = False
+            outcome = "error"
+            usage: TokenUsage | None = None
             stats.inflight += 1
             if self._metrics is not None:
                 self._metrics.llm_inflight.labels(provider=name).set(stats.inflight)
@@ -443,17 +624,18 @@ class ProviderRouter:
                 if index > 0:
                     self._note_fallback(decision.candidates[index - 1], attempts)
 
-                usage = None
                 if first is not None:
-                    first_chunk_at = self._clock()
+                    first_chunk_at = last_chunk_at = self._clock()
                     emitted = True
                     usage = first.usage
                     yield first
                     async for chunk in iterator:
+                        last_chunk_at = self._clock()
                         if chunk.usage is not None:
                             usage = chunk.usage
                         yield chunk
 
+                outcome = "success"
                 elapsed = (self._clock() - started) * 1000.0
                 ttft = (first_chunk_at - started) * 1000.0 if first_chunk_at else None
                 stats.breaker.record_success()
@@ -480,6 +662,14 @@ class ProviderRouter:
                     )
                     budget.consume(cost_usd=cost)
                 return
+            except asyncio.CancelledError:
+                outcome = "cancelled"
+                raise
+            except GeneratorExit:
+                # The consumer closed the stream early (client went away). Not a provider
+                # failure; the slot is released below.
+                outcome = "cancelled"
+                raise
             except Exception as exc:
                 # asyncio.CancelledError is a BaseException and deliberately not caught -- a
                 # cancelled turn must unwind, not fail over to another provider.
@@ -502,8 +692,23 @@ class ProviderRouter:
                     break
             finally:
                 stats.inflight -= 1
+                self._admission.release(ticket)
                 if self._metrics is not None:
                     self._metrics.llm_inflight.labels(provider=name).set(stats.inflight)
+                self._observe_timing(
+                    self._timing(
+                        name, hint, outcome=outcome, streamed=True,
+                        queue_wait_ms=ticket.queue_wait_ms,
+                        service_ms=(self._clock() - started) * 1000.0,
+                        ttft_ms=(first_chunk_at - started) * 1000.0 if first_chunk_at else None,
+                        decode_ms=(
+                            (last_chunk_at - first_chunk_at) * 1000.0
+                            if first_chunk_at is not None and last_chunk_at is not None
+                            else None
+                        ),
+                        usage=usage,
+                    )
+                )
 
         raise AllProvidersFailedError(
             f"all {len(attempts)} provider attempt(s) failed before streaming began"
@@ -521,7 +726,21 @@ class ProviderRouter:
         return self._providers.get(name)
 
     def stats(self) -> list[dict[str, Any]]:
-        return [s.snapshot() for s in self._stats.values()]
+        admission = self._admission.snapshot()
+        out: list[dict[str, Any]] = []
+        for name, s in self._stats.items():
+            snap = s.snapshot()
+            caps = self._providers[name].capabilities
+            snap["pools"] = [p.value for p in caps.pools]
+            snap["model_revision"] = caps.model_revision or None
+            snap["capacity_group"] = self._groups[name]
+            snap["admission"] = admission.get(self._groups[name])
+            out.append(snap)
+        return out
+
+    @property
+    def admission(self) -> AdmissionController:
+        return self._admission
 
     async def health(self) -> dict[str, Any]:
         """Probe every provider concurrently, updating the health gauge."""

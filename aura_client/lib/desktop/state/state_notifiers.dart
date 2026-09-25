@@ -566,73 +566,176 @@ class TerminalNotifier extends StateNotifier<TerminalState> {
   }
 }
 
-/// Layout state notifier.
+/// Layout state notifier. Persists per-workspace panel widths/heights,
+/// visibility, and the active primary-sidebar panel to `desktopLayoutState`
+/// (mirroring [EditorNotifier]/[TerminalNotifier]'s own WorkspaceOpened-driven
+/// load, and their own debounced-write pattern for the high-frequency case --
+/// here, drag-resize) so layout survives an app restart instead of always
+/// resetting to [LayoutState]'s defaults.
 class LayoutNotifier extends StateNotifier<LayoutState> {
-  LayoutNotifier(this._eventBus) : super(const LayoutState()) {
+  LayoutNotifier(this._db, this._eventBus) : super(const LayoutState()) {
     _subscribeToEvents();
   }
 
+  final AppDatabase _db;
   final IdeEventBus _eventBus;
   StreamSubscription? _eventSub;
+  Timer? _saveDebounce;
+
+  static const _minSidebarWidth = 180.0;
+  static const _maxSidebarWidth = 640.0;
+  static const _minBottomPanelHeight = 120.0;
+  static const _maxBottomPanelHeight = 640.0;
+
+  static double _clampWidth(double value) => value.clamp(_minSidebarWidth, _maxSidebarWidth).toDouble();
+  static double _clampHeight(double value) =>
+      value.clamp(_minBottomPanelHeight, _maxBottomPanelHeight).toDouble();
 
   void _subscribeToEvents() {
-    _eventSub = _eventBus.stream
-        .where((e) => e is LayoutChanged)
-        .cast<LayoutChanged>()
-        .listen((event) {
-          state = state.copyWith(
-            primarySidebarWidth: event.panelSizes['primary'],
-            secondarySidebarWidth: event.panelSizes['secondary'],
-            bottomPanelHeight: event.panelSizes['bottom'],
-          );
-        });
+    _eventSub = _eventBus.stream.listen((event) {
+      if (event is WorkspaceOpened) unawaited(_loadLayout(event.workspaceId));
+      if (event is LayoutChanged) {
+        state = state.copyWith(
+          primarySidebarWidth: event.panelSizes['primary'],
+          secondarySidebarWidth: event.panelSizes['secondary'],
+          bottomPanelHeight: event.panelSizes['bottom'],
+        );
+      }
+    });
     _eventSub?.onDone(() => _eventSub = null);
   }
 
+  /// Restores the layout persisted for [workspaceId] (see [_persist]), or falls back to
+  /// [LayoutState]'s defaults if this workspace has never had one saved.
+  Future<void> _loadLayout(String workspaceId) async {
+    final row = await (_db.select(_db.desktopLayoutState)
+          ..where((t) => t.workspaceId.equals(workspaceId)))
+        .getSingleOrNull();
+    if (row == null) {
+      state = LayoutState(workspaceId: workspaceId);
+      return;
+    }
+    try {
+      final geometry = jsonDecode(row.windowGeometryJson) as Map<String, dynamic>;
+      final visibility = jsonDecode(row.panelVisibilityJson) as Map<String, dynamic>;
+      const defaults = LayoutState();
+      state = LayoutState(
+        workspaceId: workspaceId,
+        primarySidebarWidth:
+            (geometry['primarySidebarWidth'] as num?)?.toDouble() ?? defaults.primarySidebarWidth,
+        secondarySidebarWidth:
+            (geometry['secondarySidebarWidth'] as num?)?.toDouble() ?? defaults.secondarySidebarWidth,
+        bottomPanelHeight: (geometry['bottomPanelHeight'] as num?)?.toDouble() ?? defaults.bottomPanelHeight,
+        showPrimarySidebar: visibility['showPrimarySidebar'] as bool? ?? defaults.showPrimarySidebar,
+        showSecondarySidebar: visibility['showSecondarySidebar'] as bool? ?? defaults.showSecondarySidebar,
+        showBottomPanel: visibility['showBottomPanel'] as bool? ?? defaults.showBottomPanel,
+        primarySidebarPanel: PrimarySidebarPanel.values
+                .firstWhereOrNull((p) => p.name == visibility['primarySidebarPanel']) ??
+            defaults.primarySidebarPanel,
+      );
+    } catch (_) {
+      state = LayoutState(workspaceId: workspaceId);
+    }
+  }
+
+  /// Persists the full current layout immediately -- used for toggles/panel
+  /// switches, which are infrequent enough not to need debouncing.
+  Future<void> _persist() async {
+    final workspaceId = state.workspaceId;
+    if (workspaceId == null) return;
+    final geometryJson = jsonEncode({
+      'primarySidebarWidth': state.primarySidebarWidth,
+      'secondarySidebarWidth': state.secondarySidebarWidth,
+      'bottomPanelHeight': state.bottomPanelHeight,
+    });
+    final visibilityJson = jsonEncode({
+      'showPrimarySidebar': state.showPrimarySidebar,
+      'showSecondarySidebar': state.showSecondarySidebar,
+      'showBottomPanel': state.showBottomPanel,
+      'primarySidebarPanel': state.primarySidebarPanel.name,
+    });
+    await _db.into(_db.desktopLayoutState).insertOnConflictUpdate(
+          DesktopLayoutStateCompanion.insert(
+            workspaceId: workspaceId,
+            windowGeometryJson: geometryJson,
+            panelVisibilityJson: visibilityJson,
+          ),
+        );
+  }
+
+  /// Debounced persist for drag-resize, which fires on every pointer-move frame -- writing to
+  /// Drift on every one of those would be needless disk I/O per pixel dragged.
+  void _debouncedPersist() {
+    _saveDebounce?.cancel();
+    _saveDebounce = Timer(const Duration(milliseconds: 400), () => unawaited(_persist()));
+  }
+
   void setPrimarySidebarWidth(double width) {
-    state = state.copyWith(primarySidebarWidth: width);
+    state = state.copyWith(primarySidebarWidth: _clampWidth(width));
+    _debouncedPersist();
   }
 
   void setSecondarySidebarWidth(double width) {
-    state = state.copyWith(secondarySidebarWidth: width);
+    state = state.copyWith(secondarySidebarWidth: _clampWidth(width));
+    _debouncedPersist();
   }
 
   void setBottomPanelHeight(double height) {
-    state = state.copyWith(bottomPanelHeight: height);
+    state = state.copyWith(bottomPanelHeight: _clampHeight(height));
+    _debouncedPersist();
   }
+
+  /// Adds [delta] to the *current notifier state's* width/height rather than one a caller
+  /// captured earlier -- a drag-resize handle fires many updates per gesture, and Flutter
+  /// batches widget rebuilds, so a widget-side `lastKnownWidth + delta` would lose deltas
+  /// whenever two update callbacks land before a rebuild. Reading `state` here instead of a
+  /// widget-captured snapshot makes every update authoritative regardless of rebuild timing.
+  void adjustPrimarySidebarWidth(double delta) => setPrimarySidebarWidth(state.primarySidebarWidth + delta);
+
+  void adjustSecondarySidebarWidth(double delta) =>
+      setSecondarySidebarWidth(state.secondarySidebarWidth + delta);
+
+  void adjustBottomPanelHeight(double delta) => setBottomPanelHeight(state.bottomPanelHeight + delta);
 
   void togglePrimarySidebar() {
     state = state.copyWith(showPrimarySidebar: !state.showPrimarySidebar);
+    unawaited(_persist());
   }
 
   /// Shows the Explorer panel in the primary sidebar -- opening it if it was collapsed, and
   /// switching [LayoutState.primarySidebarPanel] to it if Source Control was showing instead.
   void showExplorerPanel() {
     state = state.copyWith(showPrimarySidebar: true, primarySidebarPanel: PrimarySidebarPanel.explorer);
+    unawaited(_persist());
   }
 
   /// Shows the Source Control (Git) panel in the primary sidebar -- D5's activity-bar wiring.
   void showSourceControlPanel() {
     state = state.copyWith(showPrimarySidebar: true, primarySidebarPanel: PrimarySidebarPanel.sourceControl);
+    unawaited(_persist());
   }
 
   /// Shows the "Agent Review" panel in the primary sidebar -- D9's activity-bar wiring, closing
   /// the D6 stub on `ActivityBar`'s "AURA" item.
   void showControlCenterPanel() {
     state = state.copyWith(showPrimarySidebar: true, primarySidebarPanel: PrimarySidebarPanel.controlCenter);
+    unawaited(_persist());
   }
 
   void toggleSecondarySidebar() {
     state = state.copyWith(showSecondarySidebar: !state.showSecondarySidebar);
+    unawaited(_persist());
   }
 
   void toggleBottomPanel() {
     state = state.copyWith(showBottomPanel: !state.showBottomPanel);
+    unawaited(_persist());
   }
 
   @override
   void dispose() {
     _eventSub?.cancel();
+    _saveDebounce?.cancel();
     super.dispose();
   }
 }
@@ -875,8 +978,9 @@ final gitNotifierProvider = StateNotifierProvider<GitNotifier, GitState>((ref) {
 
 /// Provider for layout notifier.
 final layoutNotifierProvider = StateNotifierProvider<LayoutNotifier, LayoutState>((ref) {
+  final db = ref.watch(databaseProvider);
   final eventBus = ref.watch(ideEventBusProvider);
-  return LayoutNotifier(eventBus);
+  return LayoutNotifier(db, eventBus);
 });
 
 /// Provider for host notifier.

@@ -66,6 +66,11 @@ secrets:
   # See docker-compose.prod.yml's `secrets:` block for what these two are.
   secrets_encryption_key:
     file: ./secrets/secrets_encryption_key
+  # Encryption-at-rest key for memories/personal-OS records -- see docker-compose.prod.yml's
+  # `secrets:` block. Optional here (AURA_ENVIRONMENT=development runs in plaintext without it)
+  # but wired the same way so the dev stack exercises the encrypted path prod runs.
+  data_encryption_keys:
+    file: ./secrets/data_encryption_keys
   github_oauth_client_secret:
     file: ./secrets/github_oauth_client_secret
 
@@ -145,6 +150,15 @@ services:
       AURA_PROVIDER_LOCAL_IS_LOCAL: "true"
       AURA_PROVIDER_LOCAL_QUALITY_TIER: "1"
       AURA_PROVIDER_LOCAL_MAX_CONCURRENCY: ${AURA_PROVIDER_LOCAL_MAX_CONCURRENCY:-1}
+      # Admission control (roadmap P2.4, aura_core/llm/admission.py). With the local provider's
+      # cap of 1 (matching OLLAMA_NUM_PARALLEL=1), a request that finds Ollama busy now waits in
+      # AURA's bounded priority queue -- interactive/voice ahead of Engineer ahead of background
+      # work -- and is refused with 503 + Retry-After after the timeout, instead of piling up
+      # invisibly inside Ollama until the 180s provider timeout cancels it mid-generation.
+      # Per *process*: the effective cap on Ollama is this x AURA_WORKERS (+ Celery workers).
+      AURA_LLM_ADMISSION_MAX_QUEUE: ${AURA_LLM_ADMISSION_MAX_QUEUE:-4}
+      AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S: ${AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S:-90}
+      AURA_LLM_USER_MAX_CONCURRENT_GENERATIONS: ${AURA_LLM_USER_MAX_CONCURRENT_GENERATIONS:-2}
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
       AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
@@ -155,6 +169,8 @@ services:
       AURA_JWT_SECRET_FILE: /run/secrets/jwt_secret
       AURA_SECRETS_ENCRYPTION_KEY_FILE: /run/secrets/secrets_encryption_key
       AURA_GITHUB_OAUTH_CLIENT_SECRET_FILE: /run/secrets/github_oauth_client_secret
+      # Encryption at rest for memories/personal-OS records -- see the top-level `secrets:` block.
+      AURA_DATA_ENCRYPTION_KEYS_FILE: /run/secrets/data_encryption_keys
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       FIREBASE_SERVICE_ACCOUNT_PATH: /run/secrets/firebase_credentials
@@ -211,6 +227,7 @@ services:
         firebase_credentials,
         secrets_encryption_key,
         github_oauth_client_secret,
+        data_encryption_keys,
       ]
     volumes:
       - aura_workspace_dev:/var/lib/aura/workspace
@@ -317,6 +334,10 @@ services:
       AURA_PROVIDER_LOCAL_IS_LOCAL: "true"
       AURA_PROVIDER_LOCAL_QUALITY_TIER: "1"
       AURA_PROVIDER_LOCAL_MAX_CONCURRENCY: "1"
+      # Admission control -- see the matching block on the gateway. Background work waits longer
+      # (nobody is watching a spinner) but still cannot queue without bound.
+      AURA_LLM_ADMISSION_MAX_QUEUE: ${AURA_LLM_ADMISSION_MAX_QUEUE:-4}
+      AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S: ${AURA_LLM_WORKER_ADMISSION_QUEUE_TIMEOUT_S:-300}
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
       AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
@@ -325,13 +346,16 @@ services:
       AURA_DATABASE_URL_FILE: /run/secrets/postgres_password
       AURA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
       AURA_QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
+      # Workers read and write memories too (memory consolidation), so they need the same
+      # encryption-at-rest key as the gateway -- see the top-level `secrets:` block.
+      AURA_DATA_ENCRYPTION_KEYS_FILE: /run/secrets/data_encryption_keys
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       DATA_DIR: /var/lib/aura/workspace
       AURA_LEARNING_DATASET_DIR: /var/lib/aura/datasets
       LEARNING_FINETUNE_ALLOW_CPU: ${LEARNING_FINETUNE_ALLOW_CPU:-true}
       DEBUG_MODE: "false"
-    secrets: [postgres_password, redis_password, qdrant_api_key]
+    secrets: [postgres_password, redis_password, qdrant_api_key, data_encryption_keys]
     networks: [data]
     depends_on:
       postgres: {condition: service_healthy}
@@ -348,7 +372,7 @@ services:
     logging: *logging
     command: celery -A tasks worker -Q ingestion,learning -c 2 --loglevel=info --max-tasks-per-child=50
     environment: *worker_env
-    secrets: [postgres_password, redis_password, qdrant_api_key]
+    secrets: [postgres_password, redis_password, qdrant_api_key, data_encryption_keys]
     volumes:
       - aura_workspace_dev:/var/lib/aura/workspace
       - aura_datasets_dev:/var/lib/aura/datasets
@@ -374,7 +398,7 @@ services:
       AURA_FINETUNE_TRAINER: local
       LEARNING_FINETUNE_ALLOW_CPU: ${LEARNING_FINETUNE_ALLOW_CPU:-true}
       AURA_LEARNING_DATASET_DIR: /var/lib/aura/datasets
-    secrets: [postgres_password, redis_password, qdrant_api_key]
+    secrets: [postgres_password, redis_password, qdrant_api_key, data_encryption_keys]
     volumes:
       - aura_workspace_dev:/var/lib/aura/workspace
       - aura_datasets_dev:/var/lib/aura/datasets
@@ -394,7 +418,7 @@ services:
     logging: *logging
     command: celery -A celery_app beat --loglevel=info
     environment: *worker_env
-    secrets: [postgres_password, redis_password, qdrant_api_key]
+    secrets: [postgres_password, redis_password, qdrant_api_key, data_encryption_keys]
     networks: [data]
     depends_on:
       redis: {condition: service_healthy}

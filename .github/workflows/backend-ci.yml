@@ -128,6 +128,33 @@ jobs:
             exit 1
           fi
 
+  # P1.3: backup encryption / manifest / retention / offsite-verification logic
+  # (deploy/scripts/backup-lib.sh). Shell, so neither pytest suite sees it. No Docker, no network:
+  # the test round-trips real age encryption in temp dirs and stubs rclone onto a local directory.
+  # Proves the logic, not a real backup -- that needs a drill on the VPS with encryption on.
+  backup-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install age
+        run: sudo apt-get update -q && sudo apt-get install -y -q age
+
+      - name: shellcheck backup scripts
+        # shellcheck is preinstalled on GitHub's Ubuntu runners. -s sh: these run under busybox
+        # ash in the backup image, so bashisms are errors.
+        run: |
+          shellcheck -x -s sh \
+            deploy/scripts/backup-lib.sh deploy/scripts/backup.sh deploy/scripts/backup-open.sh \
+            deploy/scripts/restore.sh deploy/scripts/restore-drill.sh \
+            deploy/scripts/tests/test_backup_crypto.sh
+
+      - name: Backup crypto / integrity / retention tests
+        env:
+          REQUIRE_AGE: "1"
+        # dash (Ubuntu's sh), not bash, to keep the library POSIX.
+        run: sh deploy/scripts/tests/test_backup_crypto.sh
+
   docker-build:
     runs-on: ubuntu-latest
     needs: test
@@ -151,3 +178,13 @@ jobs:
           context: deploy/sandbox
           push: false
           tags: aura-sandbox:ci
+
+      # The backup sidecar's image. Built here so the pinned Alpine branch and the `age~1.3`
+      # constraint (P1.3) are proven to resolve before a deploy depends on them; the Dockerfile's
+      # own `age --version` fails the build if the binary is missing.
+      - name: Build backup image (no push — build-only gate)
+        uses: docker/build-push-action@v5
+        with:
+          context: deploy/backup
+          push: false
+          tags: aura-backup:ci

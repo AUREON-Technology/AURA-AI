@@ -16,6 +16,8 @@ from infrastructure.secret_hydration import hydrate_secrets_from_files
 _ENV_KEYS = (
     "AURA_SECRETS_ENCRYPTION_KEY",
     "AURA_SECRETS_ENCRYPTION_KEY_FILE",
+    "AURA_DATA_ENCRYPTION_KEYS",
+    "AURA_DATA_ENCRYPTION_KEYS_FILE",
     "AURA_GITHUB_OAUTH_CLIENT_SECRET",
     "AURA_GITHUB_OAUTH_CLIENT_SECRET_FILE",
     "AURA_GITHUB_OAUTH_CLIENT_SECRET_ENV",
@@ -49,6 +51,20 @@ def test_secrets_encryption_key_env_value_wins_over_file(monkeypatch, tmp_path) 
     hydrate_secrets_from_files()
 
     assert os.environ["AURA_SECRETS_ENCRYPTION_KEY"] == "from-env"
+
+
+def test_data_encryption_keys_hydrated_from_a_multi_key_file(monkeypatch, tmp_path) -> None:
+    """The data-at-rest key file may hold several keys, newest first, one per line (rotation).
+    Hydration keeps the inner newline; ``data_encryption_keys()`` splits on it."""
+    from aura_core.config.settings import data_encryption_keys
+
+    secret_file = tmp_path / "data_encryption_keys"
+    secret_file.write_text("new-key\nold-key\n")
+    monkeypatch.setenv("AURA_DATA_ENCRYPTION_KEYS_FILE", str(secret_file))
+
+    hydrate_secrets_from_files()
+
+    assert data_encryption_keys() == ["new-key", "old-key"]
 
 
 def test_github_oauth_client_secret_hydrated_from_default_target(monkeypatch, tmp_path) -> None:

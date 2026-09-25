@@ -94,7 +94,20 @@ class QdrantVectorStore:
                     details={"install": "pip install qdrant-client"},
                 ) from exc
             self._client = AsyncQdrantClient(
-                url=self._url, api_key=self._api_key, timeout=int(self._timeout)
+                url=self._url,
+                api_key=self._api_key,
+                timeout=int(self._timeout),
+                port=6333,
+                prefer_grpc=False,
+                # The client's default (True) spawns a background-thread HTTP call inside
+                # __init__ to compare client/server versions -- a network call at construction
+                # time, which is exactly what every other adapter in this file avoids (see the
+                # class docstring's "built on first use" comment above). It isn't what raised
+                # the DependencyUnavailableError this replaces (that trace is a synchronous
+                # httpx.ConnectError from the first real request, not this check), but it's a
+                # real violation of the lazy-construction rule regardless, worth removing on its
+                # own terms rather than leaving a second, unrelated eager network call in place.
+                check_compatibility=False,
             )
         return self._client
 

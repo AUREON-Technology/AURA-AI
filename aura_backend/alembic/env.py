@@ -36,12 +36,33 @@ def _database_url_from_secret_file() -> str | None:
     return f"postgresql+asyncpg://aura:{password}@{host}:5432/aura"
 
 
+def _with_asyncpg_driver(url: str) -> str:
+    """Force the ``+asyncpg`` driver onto a bare ``postgresql://``/``postgres://`` DSN.
+
+    ``config.settings.database_url`` is deliberately un-normalized (SEC-08: it's read straight
+    from ``DATABASE_URL``/``AURA_DATABASE_URL`` with no rewriting) because the app's own
+    connection pool (``PostgresPool``) calls ``asyncpg`` directly, which doesn't care about a
+    driver prefix. ``async_engine_from_config`` below goes through SQLAlchemy's dialect
+    resolution instead, which does: a managed-Postgres provider's connection string (Railway,
+    Heroku, RDS) is almost always the bare scheme, and without this, SQLAlchemy falls back to
+    its default async-capable driver lookup (``psycopg``) rather than the ``asyncpg`` this image
+    actually ships -- ``ModuleNotFoundError: No module named 'psycopg'`` at engine construction,
+    before any connection is attempted.
+    """
+    for prefix in ("postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+asyncpg://" + url[len(prefix) :]
+    return url
+
+
 # Single source of truth for the connection string: config.settings (populated from
 # DATABASE_URL), falling back to the Docker-secret-file DSN when DATABASE_URL itself was
 # never set, then to localhost as a last resort for a bare local run with neither.
 config.set_main_option(
     "sqlalchemy.url",
-    settings.database_url or _database_url_from_secret_file() or "postgresql+asyncpg://localhost/aura",
+    _with_asyncpg_driver(
+        settings.database_url or _database_url_from_secret_file() or "postgresql+asyncpg://localhost/aura"
+    ),
 )
 
 

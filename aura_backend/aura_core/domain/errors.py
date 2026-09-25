@@ -28,6 +28,7 @@ __all__ = [
     "ValidationError",
     "NotFoundError",
     "ConflictError",
+    "DataIntegrityError",
     "AuthenticationError",
     "AuthorizationError",
     "RateLimitedError",
@@ -36,6 +37,8 @@ __all__ = [
     "DependencyUnavailableError",
     "ProviderError",
     "AllProvidersFailedError",
+    "OverloadedError",
+    "UserConcurrencyLimitError",
     "EmbeddingError",
     "VectorStoreError",
     "MemoryStoreError",
@@ -121,6 +124,19 @@ class NotFoundError(AuraError):
 class ConflictError(AuraError):
     kind = "conflict"
     http_status = 409
+
+
+class DataIntegrityError(AuraError):
+    """Stored data failed an integrity check -- e.g. an encrypted-at-rest value whose
+    authentication tag does not verify (tampered, truncated, copied from another row, or sealed
+    under a key that is no longer configured; see ``adapters/field_crypto.py``).
+
+    Not retryable: the same bytes will fail the same way. Never recovered from by returning the
+    raw stored value, which would present ciphertext (or an attacker's substitution) as data.
+    """
+
+    kind = "data_integrity_error"
+    http_status = 500
 
 
 # --------------------------------------------------------------------------------------
@@ -239,6 +255,53 @@ class AllProvidersFailedError(AuraError):
         details.setdefault("attempts", attempts or [])
         super().__init__(message, details=details, **kwargs)
         self.attempts = attempts or []
+
+
+class OverloadedError(AuraError):
+    """A generation was refused at admission because its serving pool is saturated (P2.4).
+
+    Distinct from :class:`AllProvidersFailedError`: nothing is broken, there is simply no capacity
+    right now. The request was never sent to a model, so retrying after ``retry_after`` seconds is
+    safe and is exactly what the client should do. ``reason`` is one of ``queue_full``,
+    ``queue_timeout``, ``preempted`` (evicted from a full queue by a higher-priority request) or
+    ``user_quota``.
+
+    Maps to **503** with ``Retry-After``: the server is temporarily unable to serve, not the
+    caller misbehaving.
+    """
+
+    kind = "overloaded"
+    http_status = 503
+    retryable = True
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_after: int,
+        pool: str,
+        reason: str,
+        **kwargs: Any,
+    ) -> None:
+        details = dict(kwargs.pop("details", None) or {})
+        details.setdefault("retry_after", retry_after)
+        details.setdefault("pool", pool)
+        details.setdefault("reason", reason)
+        super().__init__(message, details=details, **kwargs)
+        self.retry_after = retry_after
+        self.pool = pool
+        self.reason = reason
+
+
+class UserConcurrencyLimitError(OverloadedError):
+    """One user already has their quota of generations running and queued.
+
+    **429**, not 503: capacity may well exist for other users -- this caller is the one who must
+    back off. Kept a subclass so code that handles "no capacity, retry later" handles both.
+    """
+
+    kind = "user_concurrency_limit"
+    http_status = 429
 
 
 class EmbeddingError(AuraError):
