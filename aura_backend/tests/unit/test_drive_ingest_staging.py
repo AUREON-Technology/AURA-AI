@@ -40,8 +40,10 @@ def test_delay_receives_a_workspace_path_not_the_token(tmp_path, monkeypatch) ->
 
 
 def test_ingest_task_reads_the_path_and_deletes_it(tmp_path, monkeypatch) -> None:
-    staged = tmp_path / "drive_ingest"
-    staged.mkdir()
+    # Staged files live in a per-user directory; the task accepts only its own user's
+    # (tests/security/test_celery_boundaries.py).
+    staged = tmp_path / "drive_ingest" / "user-1"
+    staged.mkdir(parents=True)
     pdf = staged / "doc.pdf"
     pdf.write_bytes(b"%PDF-bytes")
     monkeypatch.setattr(tasks.settings, "data_dir", str(tmp_path))
