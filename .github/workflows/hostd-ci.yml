@@ -37,3 +37,31 @@ jobs:
 
       - name: Test
         run: dart test
+
+  analyze-and-test-windows:
+    # aura_hostd is "Windows-first" (ADR-015/docs/architecture/015-desktop-ide.md) and has
+    # Windows-specific code (ConPTY via win32/ffi in pty_session.dart, containment.dart's
+    # symlink/junction resolution) that had zero Windows CI coverage before this job existed --
+    # nothing Windows-specific here had ever actually run anywhere but a contributor's own
+    # machine. continue-on-error until a green run is observed, matching client-ci.yml's own
+    # build-windows job precedent for the same "Windows-first but unproven" situation.
+    runs-on: windows-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: aura_hostd
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: "3.11.4"
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Analyze
+        run: dart analyze --fatal-infos
+
+      - name: Test
+        run: dart test

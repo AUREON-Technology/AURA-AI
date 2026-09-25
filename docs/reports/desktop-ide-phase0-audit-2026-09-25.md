@@ -72,6 +72,36 @@ gaps. Re-verified against the current tree, each read fully (not diffed):
   `aura_hostd/test/git_service_test.dart`'s new "network timeout" group and two new real two-repo
   fetch/pull/push success tests (the prior suite only covered the no-remote/no-upstream paths).
 
+**Update (2026-09-25, a fourth pass the same day):** re-examined §6's "Windows junctions are an
+unproven escape class" finding — the single biggest flagged security gap in the whole audit. It
+turns out to be **not a bug**, verified against the Dart SDK's own primary source rather than
+assumption: `resolveSymbolicLinksSync` on Windows is implemented by `File::GetCanonicalPath` in
+`dart-lang/sdk`'s `runtime/bin/file_win.cc`, which opens the path with
+`CreateFileW(..., FILE_FLAG_BACKUP_SEMANTICS, nullptr)` — **without** `FILE_FLAG_OPEN_REPARSE_POINT`
+— then calls `GetFinalPathNameByHandle` on the resulting handle. Per documented Win32 behavior,
+opening a handle without `FILE_FLAG_OPEN_REPARSE_POINT` makes Windows itself transparently follow
+*any* reparse point encountered while resolving the path — a directory junction
+(`IO_REPARSE_TAG_MOUNT_POINT`) exactly as much as a symlink (`IO_REPARSE_TAG_SYMLINK`) — before the
+handle is even returned; the code has no special-casing per reparse tag because the OS doesn't
+require any at this call site. So `containment.dart`'s existing `_resolveAsFarAsPossible` (which
+already calls `resolveSymbolicLinksSync` as its resolution step, per its own doc comment modeling
+`aura_backend`'s `resolve_within`) was already correct for junctions with no code change needed.
+
+What was genuinely missing, and is fixed now: proof. `aura_hostd` had **zero Windows CI coverage of
+any kind** — `hostd-ci.yml` ran only on `ubuntu-latest` — so nothing Windows-specific here (this
+resolution behavior, or `pty_session.dart`'s ConPTY code from §3) had ever actually executed
+anywhere but a contributor's own machine. Added a `windows-latest` job to `hostd-ci.yml`
+(`continue-on-error: true`, matching `client-ci.yml`'s own `build-windows` precedent for
+"Windows-first but unproven"), and a junction-escape test in `containment_test.dart`: creates a
+real NTFS junction via `mklink /J` (needs no elevation, unlike the existing symlink-escape test's
+`Link.createSync`, which is why that one is skipped on Windows CI and this one doesn't need to be)
+pointing outside a granted root, and asserts `requireContained` throws `ContainmentViolation`. Be
+precise about what this does and doesn't prove: the reasoning above is sound and primary-sourced,
+but the test has not actually executed on a real Windows runner yet — there was no Windows job to
+run it on before this change, and GAP-043 (every GitHub Actions job dying before reaching a runner)
+blocks it from running immediately regardless. "Built, not proven" applies here exactly as it does
+elsewhere in this repo's own roadmap until a green run is observed.
+
 Read-only static audit of `aura_client/lib/desktop/` and `aura_hostd/`, run against the claims in
 `docs/AURA_UPGRADE_ROADMAP.md` (Phase K) and ADR-011/013/014, as the mandatory Phase 0 step of the
 "AURA Desktop IDE — Production & Professional UX Upgrade Plan." No files were edited to produce

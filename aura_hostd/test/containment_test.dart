@@ -108,6 +108,41 @@ void main() {
       );
     });
 
+    test('rejects a directory junction inside the root that points outside it', () {
+      if (!Platform.isWindows) {
+        return; // junctions are an NTFS-specific reparse point; nothing to test elsewhere.
+      }
+      final outside = Directory(p.join(tempDir.path, 'secret_junction_target'))..createSync();
+      File(p.join(outside.path, 'passwords.txt')).writeAsStringSync('hunter2');
+
+      final roots = WorkspaceRoots(const []);
+      final root = roots.addRoot(workspaceDir.path);
+      final junctionPath = p.join(root.canonicalPath, 'escape_junction');
+
+      // Unlike the Windows *symlink* test above (which needs elevation or Developer Mode and so
+      // is skipped on ordinary CI runners), a directory junction needs no special privilege to
+      // create -- exactly why it's the escape class worth testing separately. `Link` in dart:io
+      // always creates a real NTFS *symbolic* link on Windows (`CreateSymbolicLink`); a junction
+      // is a different reparse tag (`IO_REPARSE_TAG_MOUNT_POINT` vs `IO_REPARSE_TAG_SYMLINK`) that
+      // dart:io has no API for, so this shells out to the same tool that would actually create
+      // one, whether from a real attacker or a legitimate pre-existing junction in a project.
+      final result = Process.runSync('cmd', ['/c', 'mklink', '/J', junctionPath, outside.path]);
+      expect(result.exitCode, 0, reason: 'mklink /J failed: ${result.stderr}');
+
+      // `resolveSymbolicLinksSync` on Windows is backed by CreateFileW *without*
+      // FILE_FLAG_OPEN_REPARSE_POINT + GetFinalPathNameByHandle (dart-lang/sdk's
+      // runtime/bin/file_win.cc, File::GetCanonicalPath) -- opening a handle that way makes
+      // Windows itself transparently follow any reparse point along the path, junction or
+      // symlink alike, before the handle is even returned. So this is expected to already pass
+      // without any change to containment.dart; the point of this test is proving that (Phase 0
+      // desktop audit's "Windows junctions are an untested escape class" finding) rather than
+      // fixing a bug in it.
+      expect(
+        () => roots.requireContained(root, p.join('escape_junction', 'passwords.txt')),
+        throwsA(isA<ContainmentViolation>()),
+      );
+    });
+
     test('does not require the target to already exist', () {
       final roots = WorkspaceRoots(const []);
       final root = roots.addRoot(workspaceDir.path);
