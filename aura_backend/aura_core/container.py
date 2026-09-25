@@ -542,10 +542,16 @@ class Container:
         return None
 
     def _build_finetune_trainer(self) -> Any:
-        """Default to ScriptedTrainer in the gateway; LocalLoraTrainer only when opted in.
+        """Pick the Loop B trainer from ``AURA_FINETUNE_TRAINER``.
 
-        Keeping torch out of the gateway image is a Phase A1 invariant. The training
-        worker compose profile swaps ``AURA_FINETUNE_TRAINER=local``.
+        ``scripted`` (default, and the only value the gateway services use): trains nothing and
+        says so — every job ends ``NOT_TRAINED`` with no model version registered.
+        ``local``: ``LocalLoraTrainer``, real PEFT LoRA on a transformers base model. It needs
+        ``requirements-train.txt`` (peft), which only the ``worker-training`` image installs;
+        anywhere else its jobs fail loudly with a ConfigurationError naming that file.
+
+        Anything else is a configuration error rather than a silent fall back to ``scripted``:
+        a typo here would otherwise read as "training is configured" while nothing trains.
         """
         import os
 
@@ -553,15 +559,19 @@ class Container:
         if kind == "local":
             from .adapters.local_lora_trainer import LocalLoraTrainer
 
-            # The ML service (torch/PEFT) is built by the trainer on first use, not here: the
+            # torch/transformers/peft are imported by the trainer on first use, not here: the
             # container is constructed during settings validation and in every test, and neither
-            # may pull torch in.
+            # may pull them in.
             return LocalLoraTrainer(
-                experiment_tracker=self.experiments,
-                model_registry=self.models,
                 allow_cpu=self.settings.learning.finetune_allow_cpu,
                 cpu_base_allowlist=self.settings.learning.finetune_cpu_base_allowlist,
                 work_dir=Path(os.environ.get("AURA_FINETUNE_WORK_DIR") or "/tmp/aura-finetune"),
+            )
+        if kind != "scripted":
+            from .domain.errors import ConfigurationError
+
+            raise ConfigurationError(
+                f"AURA_FINETUNE_TRAINER={kind!r} is not a trainer; use 'scripted' or 'local'"
             )
         from .learning.finetune import ScriptedTrainer
 
