@@ -113,3 +113,20 @@ def test_dependencies_reference_known_gaps(gaps: list[dict[str, Any]]) -> None:
         if dep not in known
     ]
     assert not dangling, "\n".join(dangling)
+
+
+def test_the_rendered_markdown_matches_the_yaml(gaps: list[dict[str, Any]]) -> None:
+    """GAP_REGISTER.md's Totals/All-gaps tables are generated; a YAML edit must re-render them."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "render_gap_register", REPO / "aura_backend" / "scripts" / "render_gap_register.py"
+    )
+    renderer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(renderer)
+
+    committed = renderer.MD_PATH.read_text(encoding="utf-8")
+    assert committed == renderer.render(committed, gaps), (
+        "docs/production/GAP_REGISTER.md is out of date with gap_register.yaml -- run "
+        "`python aura_backend/scripts/render_gap_register.py` from the repo root"
+    )

@@ -90,7 +90,7 @@ gaps:
 
   - gap_id: GAP-004
     component: backend/ingestion
-    severity: P3
+    severity: P0
     current_state: >-
       Audit (sec. 24, top-20 #12) flagged idempotency of legacy ingest_document_task as UNKNOWN.
       That task has zero callers; the live v3 ingestion path is idempotent on content hash.
@@ -102,7 +102,7 @@ gaps:
       tests/integration/test_learning_pipeline.py:65
     metric: n/a
     exit_condition: Live ingestion path skips unchanged content, with a test.
-    status: closed_stale
+    status: built_not_proven
     evidence: >-
       aura_backend/aura_core/knowledge/engine.py:168-183 (content-hash lookup, skipped_reason
       "unchanged_content"). aura_backend/tasks.py:11 ingest_document_task has no caller anywhere
@@ -110,6 +110,22 @@ gaps:
       only from services/agent.py, which the v3 gateway never imports. Legacy upserts use
       deterministic point ids (services/rag.py:237-252). Remaining concerns: concurrent duplicate
       uploads on real Postgres (GAP-015) and dead legacy tasks (GAP-038).
+    reverified_2026_09_25: >-
+      Re-verified by the P1.4 stream; the closed_stale verdict above was wrong. v3 ingestion was
+      NOT idempotent and leaked across users: KnowledgeEngine derived document ids from Python's
+      per-process-salted hash(title), not scoped to an owner, so (a) a retry on another worker
+      or after a restart got a new id and duplicated every chunk, and (b) two users uploading
+      the same title shared one id -- the second upload became a new version of the first user's
+      document, still owned by the first user, who could then read it. A caller-supplied
+      document_id owned by someone else also overwrote their document, delete_document removed
+      other owners' vectors, the in-memory get_by_hash returned superseded versions, and
+      concurrent duplicates all indexed. Fixed in 9b9f9e5: ids are sha256(owner, title), a
+      foreign document_id is refused 409, deletes are owner-scoped, per-hash/per-id locks in-
+      process, Idempotency-Key across workers. 11 regression tests
+      (tests/unit/test_ingestion_idempotency.py; 8 failed before the fix), and ingestion
+      scenarios re-run against a real Postgres 16 PostgresDocumentStore. Not proven: not
+      deployed, CI cannot run (GAP-043), and existing production documents keep their old
+      hash(title) ids.
 
   # ------------------------------------------------------------------ CI / process integrity
 
@@ -161,7 +177,21 @@ gaps:
     exit_condition: >-
       A PR that deliberately regresses recall is shown blocked by CI (linked run), and a scheduled
       real-model eval run is linked from docs/reports/.
-    status: open
+    status: built_not_proven
+    reverified_2026_09_25: >-
+      eval-ci.yml was also invalid YAML (unquoted sqlite+aiosqlite:///:memory: at line 45), so
+      GitHub recorded a failed run on every push and it had never executed. Fixed in 8e85696: a
+      `gate` job runs on pull_request and push to main with path filters over
+      kernel/rag/knowledge/planning/
+      reasoning/agents/tools/safety/llm/context/memory/prompts/evaluation, running
+      aura_backend/evaluation/gate.py (agent_tasks with echo, docs_corpus retrieval with the
+      hash embedder, docs_corpus answers with ContextGroundedProvider) against committed
+      baselines, and writing a table to the job summary. Shown locally: exit 0 on the current
+      tree; exit 1 with dense/ lexical ranking deliberately reversed (recall@5 0.650 -> 0.550);
+      exit 1 against a raised baseline. tests/architecture/test_workflows_parse.py now parses
+      every workflow. Not proven: blocks nothing until branch protection marks "Agent Evaluation
+      / Evaluation regression gate" required, and no CI run exists (GAP-043). Scripted providers
+      only -- real-model quality is GAP-021.
 
   - gap_id: GAP-007
     component: admin/testing
@@ -220,7 +250,14 @@ gaps:
     test: wrong-key decryption must raise; KAT vectors
     metric: n/a
     exit_condition: Module removed or fixed, with the wrong-key test failing on the current code.
-    status: open
+    status: built_not_proven
+    reverified_2026_09_25: >-
+      Fixed in b16d168: AES-256-GCM (cryptography AESGCM, imported lazily) with the secret id as
+      associated data; rotate_key rewritten (it also called time.time() without importing time,
+      replaced the key before decrypting, and appended the new entry twice).
+      tests/unit/test_secret_manager_crypto.py -- wrong-key, tamper, wrong-secret-id and
+      rotation cases fail against the previous code and pass now. The exit condition is met
+      locally; awaiting a CI run (GAP-043). Still no caller in the request path.
 
   - gap_id: GAP-010
     component: repo/hygiene
@@ -262,6 +299,14 @@ gaps:
       Load report in docs/reports/ showing TTFT p95 < 2.5 s and answer p95 < 15 s at 50
       concurrent users on the production topology.
     status: open
+    reverified_2026_09_25: >-
+      P2 (15a7dbd) adds admission control in front of every provider: per-provider concurrency
+      caps (now also on stream()), a bounded priority queue (interactive/voice 1, Engineer 2,
+      insight 3, indexing 4, training 5), queue timeout -> 503 + Retry-After, per-user quota ->
+      429. The compose files set Ollama cap 1 / queue 4 / 90 s, so excess requests wait in AURA
+      with a deadline instead of inside Ollama until the provider timeout. This bounds the
+      queue; it does not add throughput. The gap stays open until GAP-012 lands and GAP-041
+      measures it.
 
   - gap_id: GAP-012
     component: inference/gpu-host
@@ -278,6 +323,13 @@ gaps:
     metric: aura_provider_healthy{provider=...}, aura_gpu_utilisation_ratio, aura_gpu_memory_used_bytes
     exit_condition: GPU host serving a pinned model via the gateway, with a report in docs/reports/.
     status: open
+    reverified_2026_09_25: >-
+      deploy/docker-compose.gpu.yml (15a7dbd) defines general, coder and embed vLLM pools on
+      vllm/vllm-openai:v0.29.0 pinned by digest, with a required --revision per model (compose
+      refuses to render without them), --max-num-seqs, prefix caching, a GPU reservation each,
+      no published ports. Router pool metadata routes the Engineer persona to coder -> general
+      -> Ollama. Built, not proven: no GPU host exists and nothing has run on one;
+      docs/guides/gpu-hybrid-setup.md section 6 lists the evidence required.
 
   - gap_id: GAP-013
     component: client/reach
@@ -331,7 +383,17 @@ gaps:
     test: API test replaying a POST with the same key; concurrent-ingest test against testcontainers Postgres
     metric: duplicate side effects on retry (target 0)
     exit_condition: Middleware + tests green, verified against real Postgres.
-    status: open
+    status: built_not_proven
+    reverified_2026_09_25: >-
+      Built in 9b9f9e5: IdempotencyStore port, in-memory and Postgres adapters, Alembic 0006,
+      opt-in route dependency on 11 v3 and 6 admin side-effecting routes; replay with
+      Idempotent-Replayed: true, 409 in progress, 422 on a different body, 5xx releases the key,
+      in-progress lease with a per-claim token. Verified on a real Postgres 16: 31 contract
+      tests incl. a 20-way concurrent claim, alembic upgrade/downgrade, two gateway processes
+      sharing one table (12 concurrent same-key requests -> one execution). Not proven: no
+      client sends the header yet (knowledge_center.dart upload/ingest/delete/cag-pin,
+      memory_repository.dart, feedback_repository.dart, engineer_workspaces.dart destroy are the
+      callers that should), not deployed, no CI run.
 
   - gap_id: GAP-016
     component: data/encryption-at-rest
@@ -352,7 +414,19 @@ gaps:
     test: round-trip test for any column encryption; restore drill of an encrypted backup
     metric: n/a
     exit_condition: Decision recorded as an ADR; chosen controls implemented and a restore from an encrypted backup drilled.
-    status: open
+    status: built_not_proven
+    reverified_2026_09_25: >-
+      Column encryption built in f11b543: aura_memories.content and
+      aura_personal_os_records.fields sealed with Fernet (envelope aura-enc:v1:<key id>:...,
+      bound to table:id:owner), key rotation via AURA_DATA_ENCRYPTION_KEYS (Docker secret
+      data_encryption_keys, generated by bootstrap-secrets.sh), staging/production refuse to
+      start without it, legacy plaintext read and sealed on next write,
+      scripts/reencrypt_fields.py for bulk. Verified on a real Postgres 16 (6 opt-in tests +
+      psql showing ciphertext). Backups encrypted in 3d9a318 (age, public key only on host,
+      manifest, fail-closed). Decision recorded in ADR-004 "Encryption at rest" -- server-side,
+      NOT end-to-end. Still plaintext: documents/chunks, Qdrant embeddings and payload, memory
+      subject/metadata, feedback, graph, telemetry. Not proven: no restore of an encrypted
+      backup has been drilled (GAP-028).
 
   # ------------------------------------------------------------------ learning / ML
 
@@ -569,6 +643,17 @@ gaps:
     metric: aura_backup_last_success_timestamp_seconds, aura_backup_offsite_last_exit_code; measured RTO
     exit_condition: Drill report from offsite data with measured RPO/RTO in docs/reports/.
     status: open
+    reverified_2026_09_25: >-
+      3d9a318 adds age-encrypted backup sets with an encrypted plaintext-hash manifest and a
+      keyless-checkable CHECKSUMS.sha256, GFS retention that never prunes when the newest set
+      fails verification, rclone check --one-way after upload plus remote checksum comparison,
+      restore.sh and restore-drill.sh verifying before touching the database, drill timing (RTO)
+      written to DRILL_RECORD, AuraBackupMisconfigured/AuraBackupUnencrypted alerts, and a
+      backup-scripts CI job (shellcheck + 56-case shell test with real age). DEPLOY
+      PRECONDITION: encryption defaults on and refuses to run without BACKUP_AGE_RECIPIENT or
+      deploy/secrets/backup_age_recipients.txt, so the public key must be on the VPS before this
+      reaches main or nightly backups stop (by design, with an alert). Still unproven: no
+      encrypted cycle, offsite upload or drill has run on the VPS.
 
   - gap_id: GAP-029
     component: deploy/single-host
@@ -703,6 +788,11 @@ gaps:
     metric: aura_http_requests_total, aura_http_request_duration_seconds (proposed)
     exit_condition: Metrics live on the VPS and wired into PRODUCTION_SLO alerts.
     status: open
+    reverified_2026_09_25: >-
+      The load harness confirmed two more measurement holes: aura_turns_in_flight is only
+      updated on the non-streaming AIKernel.run path (every client uses /chat/stream), and no
+      database-pool or Celery queue-depth metric is exported. aura_llm_queue_depth is now
+      maintained by the admission controller (aura_core/llm/admission.py).
 
   - gap_id: GAP-037
     component: observability/histogram-buckets
@@ -782,6 +872,13 @@ gaps:
     metric: TTFT p95, answer p95, error rate, throughput per concurrency level
     exit_condition: Report in docs/reports/ covering the full matrix.
     status: open
+    reverified_2026_09_25: >-
+      The harness now exists (c6e7675): aura_backend/scripts/loadtest (python -m
+      scripts.loadtest), matrix 1..100, scenarios A-F plus a non-LLM API mix, TTFT/E2E
+      p50/p95/p99, error classes, /metrics scrape, threshold PASS/FAIL and a saturation-knee
+      detector; runbook docs/guides/load-testing.md. docs/reports/phase-3-loadtest-harness-self-
+      validation.md is an in-process echo run and explicitly NOT a capacity result. The gap
+      stays open until the matrix runs against the GPU deployment.
 
   - gap_id: GAP-042
     component: supply-chain/model-licensing
@@ -854,4 +951,42 @@ gaps:
     test: workflow lint refusing `uses:` without a 40-hex SHA
     metric: unpinned action references (target 0)
     exit_condition: All workflows pinned; lint in CI.
+    status: open
+
+  # ------------------------------------------------------------------ added 2026-09-25 (stream merge)
+
+  - gap_id: GAP-046
+    component: deploy/backup-secret-scope
+    severity: P1
+    current_state: >-
+      The backup service mounts the whole deploy/secrets directory read-only at /run/backup-secrets
+      (docker-compose.prod.yml, since 681780d), in a container on the egress network. Since f11b543
+      that directory also holds data_encryption_keys, so the one container that ships data offsite can
+      read the key that decrypts it. The backup scripts never reference it (a fitness test in
+      test_dockerfile_and_observability.py asserts so), but the mount is the real boundary.
+    target_state: >-
+      The backup container sees only postgres/qdrant/redis credentials, rclone config and the age
+      public key -- never data_encryption_keys or other gateway secrets.
+    owner: platform-ops
+    dependencies: [GAP-028]
+    test: a compose fitness test asserting the backup service mounts no secret it does not use
+    metric: secrets readable by the backup container that it does not need (target 0)
+    exit_condition: >-
+      Backup-only secrets moved to their own directory or individual file mounts, with the fitness
+      test, and one backup cycle run on the VPS after the change.
+    status: open
+
+  - gap_id: GAP-047
+    component: data/dev-prod-key-sharing
+    severity: P2
+    current_state: >-
+      aura (prod) and aura-dev on the shared VPS both read deploy/secrets, so they share one
+      data_encryption_keys: dev can decrypt production memory/personal-OS ciphertext if it can reach
+      the rows, and a dev key rotation would affect prod.
+    target_state: Separate data keys per stack.
+    owner: platform-ops
+    dependencies: [GAP-016]
+    test: compose check that dev and prod resolve data_encryption_keys to different files
+    metric: n/a
+    exit_condition: Dev stack uses its own key file; documented in deployment-guide.md.
     status: open

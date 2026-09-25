@@ -967,6 +967,35 @@ Phase A, not by an estimate.
 | Restore verified | **Yes for all three stores** — Postgres, Qdrant and Redis each restored from the `backup` service's own output ([A2 report](reports/phase-a2-restore-drill.md)); offsite copy and `restore.sh` still unexercised | Phase A2 |
 | Production deployments | **1 and counting** — the real VPS, 17 services, verified live over HTTPS on 2026-08-23 | Phase A1 |
 
+## 6. Production program (2026-09-25)
+
+The 26-phase production plan (GPU inference fabric, 50→100-user capacity, RAG/Memory/Agents 2.0,
+multimodal, voice, MLOps, HA/DR, canary launch) lives in
+[`docs/production/MASTER_PRODUCTION_ROADMAP.md`](production/MASTER_PRODUCTION_ROADMAP.md). This
+document stays the evidence ledger for Phases A–K; the production program's own ledger is the
+machine-checked [`gap_register.yaml`](production/gap_register.yaml) (rendered as
+[`GAP_REGISTER.md`](production/GAP_REGISTER.md)), which re-verified the 2026-09-13 audit
+([`FULL_SYSTEM_ARCHITECTURE_AUDIT.md`](reports/FULL_SYSTEM_ARCHITECTURE_AUDIT.md)) against the tree
+and corrects it where it was stale (PostgresPool lock, personal-OS update/delete) or wrong in the
+other direction (ingestion idempotency — see below).
+
+What the first wave landed, and how far each item is proven. **None of it has run in CI**: every
+GitHub Actions job on the repo has died before reaching a runner since 2026-09-22 (GAP-043), so the
+evidence below is local suite runs (pytest 2349 passed / 49 skipped / 0 failed, legacy unittest 100
+OK) plus the real-infrastructure runs named per row.
+
+| Item | State | Evidence / what is still missing |
+| --- | --- | --- |
+| Baseline restored after the 2026-09-23 direct pushes broke `Container` construction (~200 errors) | **Merged** (#96, `11abb50`) | Branch protection on `main` still off (GAP-005) |
+| P1.2 server-side encryption at rest — memory content, personal-OS v3 fields | **Built, not proven** | Real Postgres 16 round-trip + psql ciphertext check; not deployed; ADR-004 "Encryption at rest" lists what stays plaintext. Not end-to-end. |
+| P1.3 backup encryption (age), manifests, GFS retention, offsite verification, drill timing | **Built, not proven** | 56-case shell test with real `age`, shellcheck clean; no encrypted cycle, upload or drill on the VPS. **Deploy precondition:** the age public key must be on the VPS first or backups stop (fail-closed, alerted). |
+| P1.4 `Idempotency-Key` on side-effecting v3/admin routes | **Built, not proven** | Real Postgres 16: 20-way concurrent claim, two gateway processes sharing one table; no client sends the header yet |
+| Ingestion idempotency — **was a cross-user leak** | **Fixed, not deployed** | Document ids were `hash(title)` (per-process salted, not owner-scoped): same-titled uploads by two users became versions of one document owned by the first. 11 regression tests; GAP-004 |
+| GAP-009 `SecretManager` "AES-256-CTR" never used its key | **Fixed** (`b16d168`) | AES-256-GCM; wrong-key/tamper/rotation tests fail on the old code |
+| P2 capability routing across model pools, admission control (priority queue, 503/429 + Retry-After), latency decomposition, opt-in vLLM GPU profile | **Built, not proven** | 48 tests with FrozenClock; no GPU host exists (GAP-012); bounds the Ollama queue, adds no throughput (GAP-011) |
+| P3 1→100-user load harness | **Built** | In-process echo self-validation only — explicitly not a capacity number; the 50/75/100-user gates need the GPU deployment (GAP-041) |
+| P14 evaluation gates PRs | **Built, not proven** | Pass on the tree, fail on a deliberate ranking regression; `eval-ci.yml` had been invalid YAML and never ran; blocks nothing until branch protection requires it |
+
 ---
 
 Related: [Production Readiness Score](reports/AURA_AI_PRODUCTION_READINESS_SCORE.md) ·
