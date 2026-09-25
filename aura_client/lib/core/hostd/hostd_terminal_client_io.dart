@@ -12,7 +12,7 @@ import 'dart:typed_data';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import 'hostd_control_client_io.dart' show discoverHostdControlEndpoint;
+import 'hostd_control_client_io.dart' show HostdControlEndpoint, discoverHostdControlEndpoint;
 
 class HostdTerminalUnavailable implements Exception {
   HostdTerminalUnavailable(this.message);
@@ -22,10 +22,14 @@ class HostdTerminalUnavailable implements Exception {
 }
 
 class HostdTerminalClient {
-  HostdTerminalClient({WebSocketChannel Function(Uri uri, {Map<String, dynamic>? headers})? connect})
-      : _connect = connect;
+  HostdTerminalClient({
+    WebSocketChannel Function(Uri uri, {Map<String, dynamic>? headers})? connect,
+    Future<HostdControlEndpoint?> Function()? discoverEndpoint,
+  })  : _connect = connect,
+        _discoverEndpoint = discoverEndpoint ?? discoverHostdControlEndpoint;
 
   final WebSocketChannel Function(Uri uri, {Map<String, dynamic>? headers})? _connect;
+  final Future<HostdControlEndpoint?> Function() _discoverEndpoint;
 
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _sub;
@@ -33,6 +37,9 @@ class HostdTerminalClient {
   final _exitCode = StreamController<int>.broadcast();
   final _errors = StreamController<String>.broadcast();
   String? _sessionId;
+  // Set once a real 'exited' or 'error' frame has been processed, so the socket's `onDone`
+  // below never overwrites a genuine outcome with a synthetic exit code -- see its own comment.
+  bool _resolved = false;
 
   Stream<Uint8List> get output => _output.stream;
   Stream<int> get exitCode => _exitCode.stream;
@@ -46,7 +53,7 @@ class HostdTerminalClient {
   /// workspace), which arrives as a frame over an otherwise-successful
   /// connection.
   Future<void> connect({required String rootPath, required int cols, required int rows}) async {
-    final endpoint = await discoverHostdControlEndpoint();
+    final endpoint = await _discoverEndpoint();
     if (endpoint == null) {
       throw HostdTerminalUnavailable('aura_hostd is not running.');
     }
@@ -59,9 +66,11 @@ class HostdTerminalClient {
         : IOWebSocketChannel.connect(uri, headers: headers);
     _channel = channel;
     _sub = channel.stream.listen(_onMessage, onDone: () {
-      if (!_exitCode.isClosed) {
-        // A closed socket with no prior "exited" frame (daemon crashed, network
-        // drop) still needs to unblock any UI waiting on exitCode/output.
+      // The server sends an 'error' frame and closes the socket in the same breath for an
+      // untrusted/ungranted root (terminal_session_manager.dart), so onDone fires right after
+      // _onMessage already resolved the outcome -- only synthesize a fake exit code when the
+      // close was genuinely unexplained (daemon crash, network drop), never overwrite a real one.
+      if (!_resolved && !_exitCode.isClosed) {
         _exitCode.add(-1);
       }
     });
@@ -113,9 +122,11 @@ class HostdTerminalClient {
         if (b64 != null && !_output.isClosed) _output.add(base64Decode(b64));
       case 'exited':
         final code = (msg['exit_code'] as num?)?.toInt() ?? -1;
+        _resolved = true;
         if (!_exitCode.isClosed) _exitCode.add(code);
       case 'error':
         final message = msg['message'] as String? ?? 'unknown terminal error';
+        _resolved = true;
         if (!_errors.isClosed) _errors.add(message);
     }
   }
