@@ -49,12 +49,22 @@ INFRA = re.compile(r"^/(health|metrics|docs|redoc|openapi\.json)")
 
 
 def routes() -> list[tuple[str, str]]:
-    os.environ.setdefault("TESTING", "True")
     sys.path.insert(0, str(BACKEND))
     from fastapi import routing
     from fastapi.routing import APIWebSocketRoute
 
-    from aura_service import app
+    # The gateway module reads TESTING at import. Set it only for that import and restore it:
+    # tests/architecture/test_api_reachability.py calls this inside the pytest process, and a
+    # leaked TESTING=True disables production-only validators for every test that runs after it.
+    previous = os.environ.get("TESTING")
+    os.environ["TESTING"] = "True"
+    try:
+        from aura_service import app
+    finally:
+        if previous is None:
+            os.environ.pop("TESTING", None)
+        else:
+            os.environ["TESTING"] = previous
 
     found: set[tuple[str, str]] = set()
     for ctx in routing.iter_route_contexts(app.routes):

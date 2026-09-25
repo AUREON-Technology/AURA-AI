@@ -34,6 +34,9 @@ def env(monkeypatch):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv("ALLOW_MOCK_ATTESTATION", raising=False)
     monkeypatch.delenv("DEBUG_MODE", raising=False)
+    # config.Settings skips its production-only checks under TESTING=True; a value leaked by an
+    # earlier test would make the production-gate tests pass or fail by run order.
+    monkeypatch.delenv("TESTING", raising=False)
     return monkeypatch
 
 
@@ -202,9 +205,13 @@ class TestProductionGate:
                    for p in _problems(self._production(env, DEBUG_MODE="true")))
 
     def test_legacy_settings_class_refuses_debug_mode_in_production(self, env) -> None:
+        # Import before switching to production: config.py builds a module-level Settings() at
+        # import, which would raise *during the import* -- outside pytest.raises -- whenever this
+        # test is the first thing to import config (e.g. this file run on its own).
+        from config import Settings
+
         env.setenv("AURA_ENVIRONMENT", "production")
         env.setenv("DEBUG_MODE", "true")
-        from config import Settings
 
         with pytest.raises(ConfigurationError):
             Settings(_env_file=None)
