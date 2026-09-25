@@ -329,7 +329,11 @@ gaps:
       refuses to render without them), --max-num-seqs, prefix caching, a GPU reservation each,
       no published ports. Router pool metadata routes the Engineer persona to coder -> general
       -> Ollama. Built, not proven: no GPU host exists and nothing has run on one;
-      docs/guides/gpu-hybrid-setup.md section 6 lists the evidence required.
+      docs/guides/gpu-hybrid-setup.md section 6 lists the evidence required. PR #97 (merged to
+      main 2026-09-25, 56b54ea) documents a second path: a Railway control plane with the
+      existing deploy/spaces/inference-vllm Hugging Face GPU Space (AURA's own vLLM on rented
+      GPU, via openai_compatible) as the primary or sole provider (docs/deployment/). Either
+      path closes this gap only once one is running and GAP-041 measures it.
 
   - gap_id: GAP-013
     component: client/reach
@@ -763,6 +767,15 @@ gaps:
     metric: aura_insecure_mode (extend) / provider list at boot
     exit_condition: Validation + test, or ADR.
     status: open
+    reverified_2026_09_25: >-
+      PR #97 (docs/deployment/inference-plane.md) makes the rented HF Space a supported
+      *primary* provider for the Railway target, with no Ollama fallback -- a GPU-plane outage
+      becomes a full generation outage, which that doc states. It is still AURA's own vLLM
+      serving self-hosted weights over openai_compatible (test_no_external_inference stays
+      green), so the open question here is policy, not the self-hosting invariant: production
+      should state which topology it runs and refuse the other. P2's admission control
+      deliberately does not fail over on a full queue, so a busy local pool never silently
+      spills onto the rented Space.
 
   - gap_id: GAP-035
     component: llm/circuit-breaker
