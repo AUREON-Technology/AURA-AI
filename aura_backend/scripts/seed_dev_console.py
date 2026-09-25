@@ -3,8 +3,14 @@
 
 Wipes Loop B tables (feedback, approvals, jobs, models, experiments) while keeping
 knowledge sources and documents, inserts curated feedback, then runs the full pipeline:
-recommend â†’ FINETUNE approval â†’ LocalLora job (via Celery worker-training) â†’
-CANDIDATE â†’ SHADOW â†’ CANARY â†’ pending MODEL_PROMOTION approval.
+recommend -> FINETUNE approval -> real PEFT LoRA job on worker-training (Celery `training`
+queue) -> CANDIDATE -> SHADOW -> CANARY -> pending MODEL_PROMOTION approval.
+
+The job trains a LoRA adapter on ``AURA_SEED_FINETUNE_BASE_MODEL`` (a Hugging Face repo id,
+default ``HuggingFaceTB/SmolLM2-135M-Instruct``, on the CPU allowlist) -- not on the Ollama
+tag the gateway serves, which cannot be trained. The resulting adapter is registered but is not
+servable, so the canary changes nothing users see (docs/guides/mlops-guide.md). If the job
+ends ``failed`` or ``not_trained`` the seed stops there rather than promoting nothing.
 
 Refuses production/staging ``AURA_ENVIRONMENT``. Intended to run inside the dev gateway
 container via ``deploy/scripts/seed-dev.sh``.
@@ -166,6 +172,8 @@ async def _wait_for_job(container: object, job_id: str, *, timeout_s: float = 90
             return job
         if job.status is FineTuneJobStatus.FAILED:
             raise RuntimeError(f"fine-tune job {job_id} failed: {job.error}")
+        if job.status is FineTuneJobStatus.NOT_TRAINED:
+            raise RuntimeError(f"fine-tune job {job_id} did not train: {job.error}")
         if job.status is FineTuneJobStatus.CANCELLED:
             raise RuntimeError(f"fine-tune job {job_id} was cancelled")
         await asyncio.sleep(3.0)
@@ -181,7 +189,12 @@ async def _run_pipeline(container: object) -> dict[str, str]:
         approval.id, approved=True, by=_SEED_OPERATOR, note="dev seed"
     )
 
-    job = await container.finetune_jobs.enqueue(approval_id=approval.id)  # type: ignore[attr-defined]
+    base_model = (
+        os.environ.get("AURA_SEED_FINETUNE_BASE_MODEL") or "HuggingFaceTB/SmolLM2-135M-Instruct"
+    )
+    job = await container.finetune_jobs.enqueue(  # type: ignore[attr-defined]
+        approval_id=approval.id, base_model=base_model
+    )
 
     from tasks import finetune_job_task
 
