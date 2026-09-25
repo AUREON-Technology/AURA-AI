@@ -13,7 +13,7 @@ from dataclasses import replace
 from typing import Any
 
 from ..domain.knowledge import RetrievalResult
-from ..domain.memory import MemoryKind, MemoryQuery
+from ..domain.memory import SHARED_MEMORY_SCOPE, MemoryKind, MemoryQuery
 from .base import BaseStrategy, RetrievalOutcome, RetrievalRequest, StrategyTrace
 
 __all__ = ["SimpleRAG", "MemoryRAG", "GraphRAG"]
@@ -111,6 +111,9 @@ class MemoryRAG(BaseStrategy):
                         kinds=self._kinds,
                         session_id=request.session_id,
                         limit=self._limit,
+                        # A retrieval request carries no persona, so it cannot know whose
+                        # private scope it may read: shared only (GAP-024 memory scopes).
+                        scopes=(SHARED_MEMORY_SCOPE,),
                     )
                 )
                 memories = tuple(hits)
