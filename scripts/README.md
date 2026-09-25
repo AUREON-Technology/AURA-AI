@@ -17,7 +17,7 @@ root (`deploy_client.sh`, `deploy_client.ps1`, etc.).
 ## Dual-environment VPS
 
 Production (`aura` compose project) and development (`aura-dev`) run in parallel on the same
-host. Prod nginx routes `dev.<ip>.nip.io` to the dev gateway/console over the shared Docker
+host. Prod nginx routes `dev.aureon-ai.tech` to the dev gateway/console over the shared Docker
 network `aura_edge`; Ollama stays on prod to save RAM.
 
 | Script / file | Purpose |

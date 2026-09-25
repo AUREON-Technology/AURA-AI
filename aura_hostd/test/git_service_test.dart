@@ -265,4 +265,55 @@ void main() {
       expect(result['ok'], true);
     });
   });
+
+  group('branches/fetch/pull/push (human remote sync)', () {
+    test('an empty repo lists no branches and a null current branch', () async {
+      final result = await git.branches(repoDir.path);
+      expect(result['branches'], isEmpty);
+      expect(result['current'], isNull);
+    });
+
+    test('lists local branches with the checked-out one marked current', () async {
+      await commitFile('a.txt', 'hello');
+      await _git(repoDir.path, ['checkout', '-q', '-b', 'feature']);
+      final result = await git.branches(repoDir.path);
+      final branches = (result['branches'] as List).cast<Map<String, Object?>>();
+      expect(branches.map((b) => b['name']), containsAll(['main', 'feature']));
+      final current = branches.firstWhere((b) => b['current'] == true);
+      expect(current['name'], 'feature');
+      expect(result['current'], 'feature');
+      expect(current['upstream'], isNull);
+      expect(current['is_remote'], isFalse);
+    });
+
+    test('a non-git directory throws GitNotARepositoryError', () async {
+      final plainDir = Directory.systemTemp.createTempSync('aura_hostd_not_a_repo_sync_');
+      addTearDown(() => plainDir.deleteSync(recursive: true));
+      expect(() => git.branches(plainDir.path), throwsA(isA<GitNotARepositoryError>()));
+      expect(() => git.fetch(plainDir.path), throwsA(isA<GitNotARepositoryError>()));
+      expect(() => git.pull(plainDir.path), throwsA(isA<GitNotARepositoryError>()));
+      expect(() => git.push(plainDir.path), throwsA(isA<GitNotARepositoryError>()));
+    });
+
+    test('fetch with no remotes is a clean no-op', () async {
+      await commitFile('a.txt', 'hello');
+      final result = await git.fetch(repoDir.path);
+      expect(result['ok'], true);
+      expect(result['remotes'], isEmpty);
+    });
+
+    test('pull with no upstream returns a structured no_upstream failure', () async {
+      await commitFile('a.txt', 'hello');
+      final result = await git.pull(repoDir.path);
+      expect(result['ok'], false);
+      expect(result['reason'], 'no_upstream');
+    });
+
+    test('push with no remote returns a structured no_upstream failure', () async {
+      await commitFile('a.txt', 'hello');
+      final result = await git.push(repoDir.path);
+      expect(result['ok'], false);
+      expect(result['reason'], 'no_upstream');
+    });
+  });
 }

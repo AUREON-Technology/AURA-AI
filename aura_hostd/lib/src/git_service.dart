@@ -197,6 +197,133 @@ class GitService {
     return {'ok': true, 'branch': branch};
   }
 
+  /// Lists local branches plus remote-tracking ones, marking the checked-out
+  /// branch -- the human Git panel's branch switcher. Remote entries keep their
+  /// full `remotes/<remote>/<name>` form; the panel strips that prefix when the
+  /// human picks one, so plain `git checkout <short>` DWIM-creates the local
+  /// tracking branch. Uses [_run] rather than [_runOk] so a repo with no
+  /// commits yet (where `git branch` reports nothing) returns an empty list
+  /// instead of throwing -- mirroring [log]'s own empty-repo handling.
+  Future<Map<String, Object?>> branches(String cwd) async {
+    final result = await _run(cwd, ['branch', '-a', '-vv']);
+    if (result.exitCode != 0 && _looksLikeNotARepo(result.stderr)) {
+      throw GitNotARepositoryError('not a git repository');
+    }
+    if (result.exitCode != 0) {
+      throw GitCommandError('git branch failed: ${result.stderr}');
+    }
+    final branches = <Map<String, Object?>>[];
+    String? current;
+    for (final line in const LineSplitter().convert(result.stdout)) {
+      if (line.trim().isEmpty) continue;
+      final parsed = _parseBranchLine(line);
+      if (parsed == null) continue;
+      branches.add(parsed);
+      if (parsed['current'] == true && parsed['name'] is String) {
+        current = parsed['name'] as String;
+      }
+    }
+    return {'branches': branches, 'current': current};
+  }
+
+  /// Parses one `git branch -a -vv` line such as
+  /// `* main  a1b2c3d [origin/main: ahead 1] subject` or
+  /// `  remotes/origin/foo  e5f6g7h some subject`. Returns null for lines that
+  /// are not branch entries (e.g. a detached-HEAD `* (HEAD detached ...)` line,
+  /// which carries no switchable name).
+  Map<String, Object?>? _parseBranchLine(String line) {
+    final match = RegExp(r'^(\*)?\s*(\S+)\s+([0-9a-f]+)\s*(\[([^\]]+)\])?').firstMatch(line);
+    if (match == null) return null;
+    final name = match.group(2)!;
+    if (name.startsWith('(')) return null;
+    final tracking = match.group(5);
+    String? upstream;
+    if (tracking != null) {
+      final colon = tracking.indexOf(':');
+      upstream = colon >= 0 ? tracking.substring(0, colon) : tracking;
+      if (upstream == 'gone') upstream = null;
+    }
+    return {
+      'name': name,
+      'current': match.group(1) != null,
+      'sha': match.group(3)!,
+      'upstream': upstream,
+      'is_remote': name.startsWith('remotes/'),
+    };
+  }
+
+  /// Fetches from every configured remote with pruning -- read-only with
+  /// respect to the working tree (only remote-tracking branches move). A repo
+  /// with no remotes is a clean no-op rather than an error, so the panel's
+  /// Fetch button never fails on a purely local project.
+  Future<Map<String, Object?>> fetch(String cwd) async {
+    final remotesResult = await _run(cwd, ['remote']);
+    if (remotesResult.exitCode != 0) {
+      if (_looksLikeNotARepo(remotesResult.stderr)) throw GitNotARepositoryError('not a git repository');
+      throw GitCommandError('git remote failed: ${remotesResult.stderr}');
+    }
+    final remotes = const LineSplitter()
+        .convert(remotesResult.stdout)
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+    if (remotes.isEmpty) return {'ok': true, 'remotes': const <String>[]};
+    final result = await _run(cwd, ['fetch', '--prune', ...remotes]);
+    if (result.exitCode != 0) {
+      if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
+      throw GitCommandError('git fetch failed: ${result.stderr}');
+    }
+    return {'ok': true, 'remotes': remotes};
+  }
+
+  /// Fast-forward-only pull -- deliberately never creates a merge commit or
+  /// rebases, so the human is never surprised by history rewriting. Divergent,
+  /// unpushed-overwritable, and no-upstream states come back as structured
+  /// `{ok: false, reason: ...}` results the panel renders, not exceptions.
+  Future<Map<String, Object?>> pull(String cwd) async {
+    final result = await _run(cwd, ['pull', '--ff-only']);
+    if (result.exitCode != 0) {
+      if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
+      if (result.stderr.contains('would be overwritten by')) {
+        return {
+          'ok': false,
+          'reason': 'local_changes_would_be_overwritten',
+          'affected_files': _parseAffectedFiles(result.stderr),
+        };
+      }
+      if (result.stderr.contains('no tracking information') || result.stderr.contains('no upstream')) {
+        return {'ok': false, 'reason': 'no_upstream'};
+      }
+      if (result.stderr.contains('Not possible to fast-forward')) {
+        return {'ok': false, 'reason': 'diverged'};
+      }
+      throw GitCommandError('git pull failed: ${result.stderr}');
+    }
+    return {'ok': true};
+  }
+
+  /// Pushes the current branch to its upstream with no refspec arguments --
+  /// there is deliberately no way to pass a refspec through this method, so a
+  /// caller can never redirect the push at another branch (the same class of
+  /// guard the server-side `git_push` tool enforces on its own path). Like
+  /// [pull], remote-moved and no-upstream states are structured results.
+  Future<Map<String, Object?>> push(String cwd) async {
+    final result = await _run(cwd, ['push']);
+    if (result.exitCode != 0) {
+      if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
+      if (result.stderr.contains('has no upstream branch') ||
+          result.stderr.contains('no upstream') ||
+          result.stderr.contains('No configured push destination')) {
+        return {'ok': false, 'reason': 'no_upstream'};
+      }
+      if (result.stderr.contains('non-fast-forward') || result.stderr.contains('fetch first')) {
+        return {'ok': false, 'reason': 'diverged'};
+      }
+      throw GitCommandError('git push failed: ${result.stderr}');
+    }
+    return {'ok': true};
+  }
+
   /// D8 Part B: creates a `git worktree` for one isolated agent task, sharing [cwd]'s object
   /// store/history -- cheap, real git, and directly mergeable/discardable later (Part C). Lives
   /// under a fixed `.aura-workspaces/<taskId>` subdirectory *inside* the already-granted root, so
@@ -297,7 +424,9 @@ class GitService {
     final files = <String>[];
     var collecting = false;
     for (final line in const LineSplitter().convert(stderr)) {
-      if (line.contains('would be overwritten by checkout')) {
+      // Matches both checkout's "would be overwritten by checkout" and merge/pull's
+      // "would be overwritten by merge" -- the affected-file list format is identical.
+      if (line.contains('would be overwritten by')) {
         collecting = true;
         continue;
       }

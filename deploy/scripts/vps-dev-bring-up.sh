@@ -51,7 +51,7 @@ ensure_dev_domain() {
   fi
   if ! grep -qE '^AURA_DEV_DOMAIN=.+$' "$ENV_FILE"; then
     say "Adding AURA_DEV_DOMAIN to deploy/.env"
-    printf '\nAURA_DEV_DOMAIN=dev.169.58.188.43.nip.io\n' >> "$ENV_FILE"
+    printf '\nAURA_DEV_DOMAIN=dev.aureon-ai.tech\n' >> "$ENV_FILE"
   fi
 }
 
@@ -142,5 +142,5 @@ if [ "$SEED" = "1" ]; then
 fi
 
 say "Dev health check"
-curl -fsSk "https://dev.169.58.188.43.nip.io/health/ready" | head -c 500 || die "dev /health/ready failed"
+curl -fsSk "https://dev.aureon-ai.tech/health/ready" | head -c 500 || die "dev /health/ready failed"
 echo ""

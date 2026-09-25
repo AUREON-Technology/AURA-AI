@@ -112,8 +112,8 @@ invisible partly because nothing reported it.
 
 ## Dual-environment VPS
 
-Run **production and development in parallel** on one host: prod at `https://169.x.x.x.nip.io`,
-dev at `https://dev.169.x.x.x.nip.io`. Prod stays on the existing `aura` compose project;
+Run **production and development in parallel** on one host: prod at `https://aureon-ai.tech`,
+dev at `https://dev.aureon-ai.tech`. Prod stays on the existing `aura` compose project;
 dev uses a separate `aura-dev` project with its own Postgres, Qdrant, and Redis volumes.
 Prod nginx terminates TLS for both hostnames and proxies dev traffic to `aura-dev-gateway` /
 `aura-dev-console` over the shared Docker network `aura_edge`. Ollama remains on prod only.
@@ -121,7 +121,7 @@ Prod nginx terminates TLS for both hostnames and proxies dev traffic to `aura-de
 ### Apply on an existing VPS
 
 1. Deploy code (prod unchanged): `./deploy/scripts/vps-update.sh`
-2. Add `AURA_DEV_DOMAIN=dev.<your-ip>.nip.io` to `deploy/.env` and reload nginx
+2. Add `AURA_DEV_DOMAIN=dev.aureon-ai.tech` to `deploy/.env` and reload nginx
 3. Re-issue TLS with both SANs **on the VPS** (SSH in; do not run certbot from a Windows
    workstation). From `deploy/` on the host:
    ```bash
@@ -143,8 +143,8 @@ Prod nginx terminates TLS for both hostnames and proxies dev traffic to `aura-de
      --env-file deploy/.env.development run --rm dev-gateway alembic upgrade head
    ```
 7. Seed Loop B console data: `./deploy/scripts/seed-dev.sh`
-8. Add `https://dev.<your-ip>.nip.io` to Google Cloud Console **Authorized JavaScript origins**
-   for the console OAuth client
+8. Add `https://dev.aureon-ai.tech` to Google Cloud Console **Authorized JavaScript origins**
+   for the console OAuth client (and `https://aureon-ai.tech` if not already present)
 9. Verify:
    ```bash
    curl -s https://$AURA_DOMAIN/health/ready | jq .healthy

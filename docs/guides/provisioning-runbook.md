@@ -240,8 +240,8 @@ The Flutter client's backend URL is **compile-time** (`String.fromEnvironment` i
 APK cannot be redirected, it must be rebuilt.
 
 `flutter run` / IDE debug defaults to `http://localhost:8000`. Production builds **must** inject
-`https://$AURA_DOMAIN` — the same hostname TLS was issued for and nginx `server_name` uses. With no
-owned domain that is the VPS nip.io name (`169.58.188.43.nip.io`). Do not bake a bare IP into the APK.
+`https://$AURA_DOMAIN` — the same hostname TLS was issued for and nginx `server_name` uses.
+That is the production domain (`aureon-ai.tech`). Do not bake a bare IP into the APK.
 
 ```bash
 # from the repo root, after AURA_DOMAIN is set in deploy/.env

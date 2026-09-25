@@ -10,7 +10,7 @@
 class AppConfig {
   static const String backendUrl = String.fromEnvironment(
     'BACKEND_URL',
-    defaultValue: 'https://169.58.188.43.nip.io',
+    defaultValue: 'https://aureon-ai.tech',
   );
 
   /// A "Desktop app"-type Google OAuth client, distinct from the "Web application"-type client

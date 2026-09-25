@@ -3,11 +3,14 @@
 /// File tree with hostd integration and dart:io fallback.
 library;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
 import 'package:aura_client/desktop/explorer/explorer_tree_tile.dart';
 import 'package:aura_client/desktop/explorer/explorer_service.dart';
+import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 
 class ExplorerPanel extends ConsumerStatefulWidget {
@@ -131,6 +134,7 @@ class _ExplorerTreeState extends ConsumerState<_ExplorerTree> {
   DirectoryListing? _listing;
   bool _loading = true;
   String? _error;
+  bool _accessDenied = false;
   String? _loadedForRoot;
 
   @override
@@ -145,6 +149,11 @@ class _ExplorerTreeState extends ConsumerState<_ExplorerTree> {
     if (oldWidget.workspaceRoot != widget.workspaceRoot) {
       _loadedForRoot = null;
       _maybeLoad();
+    } else if (!listEquals(oldWidget.grantedRoots, widget.grantedRoots)) {
+      // Granted roots arrive asynchronously (host poll, or the Grant Access
+      // flow above): a newly granted root must re-fetch even though the
+      // workspace root itself did not change.
+      reload();
     }
   }
 
@@ -162,6 +171,7 @@ class _ExplorerTreeState extends ConsumerState<_ExplorerTree> {
     setState(() {
       _listing = listing;
       _error = listing.error;
+      _accessDenied = listing.isAccessDenied;
       _loading = false;
     });
   }
@@ -175,7 +185,14 @@ class _ExplorerTreeState extends ConsumerState<_ExplorerTree> {
     }
 
     if (_error != null) {
-      return _ErrorView(message: _error!, onRetry: reload, palette: palette);
+      return _ErrorView(
+        message: _error!,
+        onRetry: reload,
+        palette: palette,
+        isAccessDenied: _accessDenied,
+        workspaceRoot: widget.workspaceRoot,
+        onGranted: reload,
+      );
     }
 
     final entries = _listing?.entries ?? [];
@@ -225,19 +242,32 @@ class _NoWorkspaceSelected extends StatelessWidget {
   }
 }
 
-class _ErrorView extends StatelessWidget {
+class _ErrorView extends ConsumerWidget {
   const _ErrorView({
     required this.message,
     required this.onRetry,
     required this.palette,
+    this.isAccessDenied = false,
+    this.workspaceRoot,
+    this.onGranted,
   });
 
   final String message;
   final VoidCallback onRetry;
   final AuraPalette palette;
 
+  /// True when the failure is an access/containment refusal rather than a
+  /// transient I/O error -- the remediation is granting the root, not retrying.
+  final bool isAccessDenied;
+
+  /// Absolute workspace root to offer for granting. Null hides the button.
+  final String? workspaceRoot;
+
+  /// Called after a successful grant so the caller re-fetches.
+  final VoidCallback? onGranted;
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(AuraSpacing.lg),
@@ -247,24 +277,66 @@ class _ErrorView extends StatelessWidget {
             Icon(Icons.error_outline, size: 48, color: palette.danger),
             const SizedBox(height: AuraSpacing.md),
             Text(
-              'Failed to load directory',
+              isAccessDenied ? 'Workspace access required' : 'Failed to load directory',
               style: TextStyle(color: palette.textPrimary, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: AuraSpacing.xs),
             Text(
-              message,
+              isAccessDenied
+                  ? 'This folder is outside every root granted to the host daemon. '
+                    'Grant access to browse it here and let the AURA agent work in it.'
+                  : message,
               style: TextStyle(color: palette.textSecondary, fontSize: 12),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AuraSpacing.lg),
+            if (isAccessDenied && workspaceRoot != null)
+              AuraButton(
+                label: 'Grant Access',
+                icon: Icons.key,
+                onPressed: () => _grantAccess(context, ref),
+              ),
+            if (isAccessDenied && workspaceRoot != null) const SizedBox(height: AuraSpacing.sm),
             AuraButton(
               label: 'Retry',
               icon: Icons.refresh,
+              variant: AuraButtonVariant.secondary,
               onPressed: onRetry,
             ),
           ],
         ),
       ),
     );
+  }
+
+  /// Same grant flow as WorkspaceManagerPage._openFolder: confirm, grant via
+  /// the daemon control server, record the root locally, then reload.
+  Future<void> _grantAccess(BuildContext context, WidgetRef ref) async {
+    final root = workspaceRoot;
+    if (root == null) return;
+    final confirmed = await AuraDialog.show<bool>(
+      context: context,
+      title: 'Grant workspace to hostd?',
+      child: Text('This allows the AURA agent to read and write files in "$root".'),
+      confirmLabel: 'Grant',
+      cancelLabel: 'Not now',
+      onConfirm: () => Navigator.of(context).pop(true),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await ref.read(hostdControlClientProvider).grantRoot(root);
+      ref.read(workspaceNotifierProvider.notifier).updateHostdRoots([
+        ...ref.read(workspaceNotifierProvider).hostdRoots,
+        HostdRoot(path: root, trusted: false),
+      ]);
+      onGranted?.call();
+      if (context.mounted) {
+        AuraSnackbar.show(context, message: 'Workspace access granted', kind: AuraSnackbarKind.success);
+      }
+    } catch (e) {
+      if (context.mounted) {
+        AuraSnackbar.show(context, message: 'Could not grant root: $e', kind: AuraSnackbarKind.error);
+      }
+    }
   }
 }

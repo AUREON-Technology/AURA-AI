@@ -75,12 +75,25 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
 
   @override
   Widget build(BuildContext context) {
+    // Register the IDE density tokens for this subtree only (see
+    // aura_ide_density.dart): the global V2 theme deliberately leaves them
+    // out so mobile layouts are untouched. Built through a Map (not a list
+    // literal) so every type is exact -- no generic inference is involved:
+    // `Map.of` preserves the registry's own value type, and `copyWith` takes
+    // exactly `Iterable<ThemeExtension<dynamic>>`.
+    final appTheme = Theme.of(context);
+    final Map<Object, ThemeExtension<dynamic>> ideExtensions =
+        Map<Object, ThemeExtension<dynamic>>.of(appTheme.extensions);
+    ideExtensions[AuraIdeDensity] = AuraIdeDensity.defaultDensity;
+    final ideTheme = appTheme.copyWith(extensions: ideExtensions.values);
     final ideDensity = context.ideDensity;
     final layoutState = ref.watch(layoutNotifierProvider);
     final hasActiveTab = ref.watch(editorNotifierProvider).activeTab != null;
 
     return DesktopShortcuts(
-      child: Scaffold(
+      child: Theme(
+        data: ideTheme,
+        child: Scaffold(
         body: Column(
           children: [
             // Activity bar + primary sidebar + main workspace + secondary sidebar
@@ -161,6 +174,7 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
               child: const StatusBar(),
             ),
           ],
+        ),
         ),
       ),
     );

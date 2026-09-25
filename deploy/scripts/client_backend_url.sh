@@ -75,7 +75,7 @@ aura_require_release_backend_url() {
 
   if echo "$host" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
     echo "ERROR: Release BACKEND_URL must be a hostname, not a raw IP ($host)." >&2
-    echo "       Use the VPS nip.io name (https://<ip>.nip.io) when there is no domain." >&2
+    echo "       Set AURA_DOMAIN to a real DNS name (e.g. https://aureon-ai.tech) in deploy/.env." >&2
     return 1
   fi
 

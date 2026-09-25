@@ -3,8 +3,8 @@
 ///
 /// The compile-time default is localhost so `flutter run` never talks to
 /// production. Release builds must use `https://$AURA_DOMAIN`, matching the TLS
-/// certificate and nginx `server_name`. Without an owned domain that hostname
-/// is the VPS nip.io name (e.g. `169.58.188.43.nip.io`). A bare IP is rejected
+/// certificate and nginx `server_name`. That hostname is the production domain
+/// (`aureon-ai.tech`). A bare IP is rejected
 /// because Android/iOS cannot present a matching HTTPS certificate for it.
 class BackendUrlPolicy {
   BackendUrlPolicy._();
@@ -13,8 +13,8 @@ class BackendUrlPolicy {
 
   /// Known AURA gateway hosts users may switch between in release builds.
   static const Set<String> runtimeAllowlistedHosts = {
-    '169.58.188.43.nip.io',
-    'dev.169.58.188.43.nip.io',
+    'aureon-ai.tech',
+    'dev.aureon-ai.tech',
   };
 
   static final RegExp _ipv4Host = RegExp(r'^\d{1,3}(\.\d{1,3}){3}$');
@@ -34,7 +34,7 @@ class BackendUrlPolicy {
     }
     if (_ipv4Host.hasMatch(uri.host)) {
       return 'Release BACKEND_URL must be a hostname, not a raw IP. '
-          'Use the VPS nip.io name (https://<ip>.nip.io) when there is no domain.';
+          'Use https://aureon-ai.tech (prod) or https://dev.aureon-ai.tech (dev).';
     }
     return null;
   }

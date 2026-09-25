@@ -17,10 +17,15 @@ class DirectoryListing {
   const DirectoryListing({
     required this.entries,
     this.error,
+    this.isAccessDenied = false,
   });
 
   final List<FileSystemEntry> entries;
   final String? error;
+
+  /// True when [error] is an access/containment refusal rather than a
+  /// transient I/O failure -- the UI remediation is "Grant Access", not "Retry".
+  final bool isAccessDenied;
 }
 
 /// File system entry for the explorer.
@@ -71,6 +76,12 @@ class FileSystemEntry {
   }
 }
 
+/// Windows reports access-denied as Win32 ERROR_ACCESS_DENIED (5), POSIX as
+/// EACCES (13). Anything else (not-found, transient I/O failure) keeps the
+/// generic retry-only error path.
+bool _isAccessDenied(Object e) =>
+    e is FileSystemException && (e.osError?.errorCode == 5 || e.osError?.errorCode == 13);
+
 /// Service for exploring workspace files.
 class ExplorerService {
   ExplorerService(this._hostdClient, this._workspaceRoot);
@@ -113,9 +124,9 @@ class ExplorerService {
           .toList();
       return DirectoryListing(entries: entries);
     } on ClientContainmentViolation catch (e) {
-      return DirectoryListing(entries: [], error: e.message);
+      return DirectoryListing(entries: [], error: e.message, isAccessDenied: true);
     } catch (e) {
-      return DirectoryListing(entries: [], error: e.toString());
+      return DirectoryListing(entries: [], error: e.toString(), isAccessDenied: _isAccessDenied(e));
     }
   }
 

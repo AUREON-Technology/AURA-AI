@@ -29,8 +29,8 @@
 #   4. ln -s /etc/nginx/sites-available/aura /etc/nginx/sites-enabled/aura
 #   5. nginx -t && systemctl reload nginx
 #
-# Use the same hostname as AURA_DOMAIN. With no owned domain that is the VPS
-# nip.io name (169.58.188.43.nip.io), not a bare IP. Issue the cert for that
+# Use the same hostname as AURA_DOMAIN. That is the production domain
+# (aureon-ai.tech), not a bare IP. Issue the cert for that
 # name, then rebuild the client:
 #   ./deploy_client.sh
 #

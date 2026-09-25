@@ -94,7 +94,7 @@ jobs:
             say "Starting dev gateway + console only"
             chmod +x scripts/dev-console-up.sh
             ./scripts/dev-console-up.sh
-            curl -fsSk "https://dev.169.58.188.43.nip.io/console/login" | head -c 200 || echo "dev console check failed"
+            curl -fsSk "https://dev.aureon-ai.tech/console/login" | head -c 200 || echo "dev console check failed"
             echo ""
             exit 0
           fi
@@ -106,8 +106,8 @@ jobs:
           bash scripts/vps-dev-bring-up.sh
 
           say "Health checks"
-          curl -fsS "https://169.58.188.43.nip.io/health/ready" | head -c 500
+          curl -fsS "https://aureon-ai.tech/health/ready" | head -c 500
           echo ""
-          curl -fsSk "https://dev.169.58.188.43.nip.io/health/ready" | head -c 500 || echo "dev health check failed"
+          curl -fsSk "https://dev.aureon-ai.tech/health/ready" | head -c 500 || echo "dev health check failed"
           echo ""
           REMOTE

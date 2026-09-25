@@ -16,7 +16,7 @@ on:
       backend_url:
         description: "Backend URL to bake into the build"
         required: false
-        default: "https://169.58.188.43.nip.io"
+        default: "https://aureon-ai.tech"
 
 jobs:
   build-release-apk:

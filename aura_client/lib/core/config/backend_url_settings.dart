@@ -17,8 +17,8 @@ class BackendUrlSettings {
 
   static const String storageKey = 'aura_backend_environment';
 
-  static const String productionUrl = 'https://169.58.188.43.nip.io';
-  static const String developmentUrl = 'https://dev.169.58.188.43.nip.io';
+  static const String productionUrl = 'https://aureon-ai.tech';
+  static const String developmentUrl = 'https://dev.aureon-ai.tech';
 
   static const Map<BackendEnvironment, String> presetUrls = {
     BackendEnvironment.production: productionUrl,
