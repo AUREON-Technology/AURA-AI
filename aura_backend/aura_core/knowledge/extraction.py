@@ -51,11 +51,19 @@ _MONEY = re.compile(r"[$£€]\s?\d[\d,]*(?:\.\d{2})?(?:\s?(?:million|billion|k|
 _ORG_SUFFIXES = (
     "Inc", "Ltd", "LLC", "GmbH", "Corp", "Corporation", "Company", "Foundation", "Institute",
     "University", "College", "Bank", "Group", "Holdings", "Partners", "Association", "Agency",
-    "Ministry", "Department", "Committee",
+    "Ministry", "Department", "Committee", "Labs", "Technologies", "Systems", "Solutions",
 )
 _PLACE_HINTS = (
     "City", "Street", "Avenue", "Road", "District", "Province", "County", "Region", "Airport",
-    "Office", "Building",
+    "Office", "Building", "Datacenter", "Campus",
+)
+# Technical things named in operational prose ("Auth Service depends on Postgres Cluster"). Without
+# these, a two-word system name falls through to the "person" heuristic, and the graph schema then
+# (correctly) refuses "person depends_on person" -- dropping exactly the relations GraphRAG exists
+# to answer.
+_PRODUCT_HINTS = (
+    "Service", "Platform", "System", "API", "Cluster", "Server", "Database", "App", "Module",
+    "Engine", "Gateway", "Pipeline", "Queue", "Cache", "Library", "SDK", "Portal",
 )
 
 # Words that begin sentences and are therefore capitalised without being proper nouns. Without
@@ -93,6 +101,8 @@ def _classify(name: str) -> str:
         return "organisation"
     if any(word.rstrip(".,") in _PLACE_HINTS for word in words):
         return "place"
+    if any(word.rstrip(".,") in _PRODUCT_HINTS for word in words):
+        return "product"
     if len(words) == 2 and all(w[:1].isupper() for w in words):
         # Two capitalised words with no organisational or place marker is most often a personal
         # name. Marked as a heuristic in the relation confidence rather than asserted.
@@ -223,7 +233,10 @@ class LLMEntityExtractor:
             response = await self._router.complete(
                 CompletionRequest(
                     conversation=Conversation.of([Message.user(rendered.text)]),
-                    sampling=SamplingParams(temperature=0.0, max_output_tokens=1024),
+                    # 600 tokens: at the deployed CPU model's ~5-10 tokens/s a worst case
+                    # finishes in 60-120s, inside the 180s request timeout (CLAUDE.md). 1024 did
+                    # not, and a hard-cancelled call returns nothing parseable at all.
+                    sampling=SamplingParams(temperature=0.0, max_output_tokens=600),
                     policy=self._policy,
                 )
             )
@@ -234,8 +247,13 @@ class LLMEntityExtractor:
             )
             return GraphDelta(source=source)
 
+        # Everything below treats the model's output as untrusted DATA: only the fields named here
+        # are read, every value is coerced to a string or number, and model-supplied
+        # "attributes" are never copied -- free text from a model is exactly where an injected
+        # instruction would ride into the graph. KnowledgeGraphPipeline then validates the result
+        # against the schema and the source text before anything is stored.
         entities: dict[str, Entity] = {}
-        for raw in payload.get("entities", []) or []:
+        for raw in _dict_items(payload.get("entities")):
             name = str(raw.get("name", "")).strip()
             entity_type = str(raw.get("type", "concept")).strip() or "concept"
             if not name:
@@ -245,13 +263,16 @@ class LLMEntityExtractor:
                 key=key,
                 name=name,
                 type=entity_type,
-                attributes={**(raw.get("attributes") or {}), "extractor": self.name},
+                attributes={"extractor": self.name},
                 sources=(source,) if source else (),
             )
 
         relations = []
-        for raw in payload.get("relations", []) or []:
-            confidence = float(raw.get("confidence", 0.5) or 0.0)
+        for raw in _dict_items(payload.get("relations")):
+            try:
+                confidence = float(raw.get("confidence", 0.5) or 0.0)
+            except (TypeError, ValueError):
+                continue
             if confidence < self._min_confidence:
                 continue
             subject_name = str(raw.get("subject", "")).strip()
@@ -270,7 +291,7 @@ class LLMEntityExtractor:
                     subject_key=subject.key,
                     predicate=predicate.replace(" ", "_").lower(),
                     object_key=obj.key,
-                    confidence=min(confidence, 0.95),
+                    confidence=max(0.0, min(confidence, 0.95)),
                     sources=(source,) if source else (),
                     attributes={"extractor": self.name},
                 )
@@ -301,6 +322,13 @@ class CompositeExtractor:
             except Exception:
                 logger.warning("extractor failed", extra={"extractor": getattr(extractor, "name", "?")})
         return delta
+
+
+def _dict_items(value: Any) -> list[dict[str, Any]]:
+    """The dict elements of a model-provided list; anything else in it is ignored."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def _find_entity(entities: dict[str, Entity], name: str) -> Entity | None:
