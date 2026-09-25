@@ -1296,8 +1296,9 @@ class AIKernel:
     def _servable_model_tag(artefact_uri: str | None) -> str | None:
         """Use a registry artefact only when it is an inference tag, not a file URI.
 
-        ScriptedTrainer writes ``scripted://...`` placeholders. Sending those as
-        ``CompletionRequest.model`` makes Ollama 404 before the first token.
+        Older registry rows hold ``scripted://...`` placeholders, and ``LocalLoraTrainer``
+        registers a PEFT adapter *directory* (not merged, not an Ollama model). Sending either
+        as ``CompletionRequest.model`` makes Ollama 404 before the first token.
         """
         if not artefact_uri or not artefact_uri.strip():
             return None

@@ -447,13 +447,15 @@ def register_admin_ops(
             detail={"approval": payload.approval_id, "digest": job.dataset_digest},
         )
         if payload.run_inline:
-            # Gateway-inline for ScriptedTrainer / tests. Heavy LocalLoraTrainer
-            # should set run_inline=false; the learning Celery worker runs
-            # tasks.finetune_job_task against the queued job id (outside aura_core).
+            # Runs on the gateway's own trainer, which is always `scripted` in both compose
+            # files: the job ends NOT_TRAINED with the reason in `error` and registers no model.
+            # Real LoRA needs run_inline=false: the job stays QUEUED until worker-training
+            # (compose profile `training`, the `training` Celery queue) runs
+            # tasks.finetune_job_task / drain_finetune_queue_task against it.
             job = await container.finetune_jobs.run(job.id)
         else:
             logger.info(
-                "fine-tune job queued for learning worker",
+                "fine-tune job queued for the training worker",
                 extra={"job": job.id},
             )
         return JSONResponse(content={"job": job.as_dict()})

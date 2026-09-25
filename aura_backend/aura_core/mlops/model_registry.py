@@ -237,7 +237,7 @@ class ModelRegistry:
 
         if to is ModelStage.CANARY:
             # Soft eval gate: if prior metrics recorded a coverage drop beyond tolerance,
-            # refuse canary. Missing metrics do not block (ScriptedTrainer / import paths).
+            # refuse canary. Missing metrics do not block (import paths).
             drop = current.metrics.get("coverage_drop")
             max_drop = current.metrics.get("max_coverage_drop")
             if drop is not None and max_drop is not None and drop > max_drop:
