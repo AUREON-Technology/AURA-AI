@@ -568,8 +568,6 @@ class Container:
                 work_dir=Path(os.environ.get("AURA_FINETUNE_WORK_DIR") or "/tmp/aura-finetune"),
             )
         if kind != "scripted":
-            from .domain.errors import ConfigurationError
-
             raise ConfigurationError(
                 f"AURA_FINETUNE_TRAINER={kind!r} is not a trainer; use 'scripted' or 'local'"
             )
