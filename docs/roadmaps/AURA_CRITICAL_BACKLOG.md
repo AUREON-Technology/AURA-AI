@@ -119,7 +119,7 @@ Severity: **Critical** (blocks everything / live exposure) · **High** (blocks a
 
 ---
 **ID:** CB-13 · **Severity:** Medium · **Area:** Dead/unreviewed code (GAP-008, GAP-010, GAP-038)
-- **Actual state:** `engineering2`, `proactive`, `continuous_intelligence`, `security/{authenticator,policy,rate_limiter,secret_manager}` have zero importers; `aura_hostd/build/aura_hostd.exe` + logs tracked; root strays; legacy ingest tasks registered.
+- **Actual state:** `engineering2`, `proactive`, `continuous_intelligence`, `security/{authenticator,policy,rate_limiter,secret_manager}` have zero importers; root strays; legacy ingest tasks registered. (`aura_hostd/build/aura_hostd.exe` tracking, cited here previously, was fixed in `6be6670` — the binary is untracked and gitignored; not re-verified whether daemon logs are still tracked.)
 - **Required action:** delete/untrack via reviewed PR; guard test.
 - **Roadmap phase:** M1.
 

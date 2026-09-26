@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 /// `AuraTheme` class.
 ///
 /// `xOnSurface` colors are contrast-checked against [surface]/[background]
-/// for text use (WCAG AA, verified by `tool/check_contrast.dart`).
+/// for text use (WCAG AA, verified by `test/design_system_contrast_test.dart`).
 /// `xBrand` colors are decorative fills (buttons, icons, gradients) and are
 /// only held to the looser 3:1 UI-component contrast requirement.
 @immutable
@@ -65,7 +65,11 @@ class AuraPalette extends ThemeExtension<AuraPalette> {
     textPrimary: Color(0xFFF8FAFC),
     textSecondary: Color(0xFF94A3B8),
     textDisabled: Color(0xFF64748B),
-    brand: Color(0xFF6366F1),
+    // Deliberately off the Tailwind scale. indigo-500 (#6366F1) puts white at
+    // 4.47:1 — just under AA for the 15px button label — and indigo-600
+    // (#4F46E5) drops `brand` to 2.82:1 as a fill on dark `surface` and
+    // collides with light's `brandOnSurfaceText`. No step does both.
+    brand: Color(0xFF5F61EE),
     brandOnSurfaceText: Color(0xFF818CF8), // indigo-400: brighter for AA on dark surfaces
     onBrand: Colors.white,
     success: Color(0xFF10B981),
@@ -73,7 +77,7 @@ class AuraPalette extends ThemeExtension<AuraPalette> {
     danger: Color(0xFFF87171),
     info: Color(0xFF38BDF8),
     brandGradient: LinearGradient(
-      colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+      colors: [Color(0xFF5F61EE), Color(0xFF8B5CF6)],
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
     ),
@@ -92,15 +96,15 @@ class AuraPalette extends ThemeExtension<AuraPalette> {
     textPrimary: Color(0xFF0F172A),
     textSecondary: Color(0xFF334155), // slate-700: safe AA margin on white
     textDisabled: Color(0xFF94A3B8),
-    brand: Color(0xFF6366F1),
+    brand: Color(0xFF5F61EE), // see AuraPalette.dark for why this is off-scale
     brandOnSurfaceText: Color(0xFF4F46E5), // indigo-600: AA-safe as text/links on light
     onBrand: Colors.white,
     success: Color(0xFF047857),
     warning: Color(0xFFB45309),
     danger: Color(0xFFDC2626),
-    info: Color(0xFF0284C7),
+    info: Color(0xFF0369A1), // sky-700: sky-600 was 4.10:1 on white, below AA
     brandGradient: LinearGradient(
-      colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
+      colors: [Color(0xFF5F61EE), Color(0xFF8B5CF6)],
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
     ),
@@ -174,16 +178,22 @@ class AuraPalette extends ThemeExtension<AuraPalette> {
   }
 
   /// All (foreground, background, label) triples that must hold WCAG AA.
-  /// Read by `tool/check_contrast.dart` — add a new text color here whenever
-  /// one is added above, so a regression fails CI instead of shipping.
+  /// Read by `test/design_system_contrast_test.dart` — add a new text color
+  /// here whenever one is added above, so a regression fails CI instead of
+  /// shipping. A color left off this list is not checked at all, which is how
+  /// `onBrand/brand` and `info/surface` both shipped below AA.
   List<(Color, Color, String)> get aaTextPairs => [
         (textPrimary, background, 'textPrimary/background'),
         (textPrimary, surface, 'textPrimary/surface'),
         (textSecondary, background, 'textSecondary/background'),
         (textSecondary, surface, 'textSecondary/surface'),
         (brandOnSurfaceText, surface, 'brandOnSurfaceText/surface'),
+        // A fill, not a surface: the button label is the text and `brand` is
+        // its ground, so this pair is what gates the primary button.
+        (onBrand, brand, 'onBrand/brand'),
         (success, surface, 'success/surface'),
         (warning, surface, 'warning/surface'),
         (danger, surface, 'danger/surface'),
+        (info, surface, 'info/surface'),
       ];
 }
