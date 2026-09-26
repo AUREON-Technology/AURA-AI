@@ -32,6 +32,27 @@ def is_configured() -> bool:
     return bool(_database_url())
 
 
+def with_asyncpg_driver(url: str) -> str:
+    """Force the ``+asyncpg`` driver onto a bare ``postgresql://``/``postgres://`` DSN.
+
+    ``config.settings.database_url`` is deliberately un-normalized (SEC-08: it's read straight
+    from ``DATABASE_URL``/``AURA_DATABASE_URL`` with no rewriting) because ``PostgresPool`` calls
+    ``asyncpg`` directly, which doesn't care about a driver prefix. ``create_async_engine`` below
+    goes through SQLAlchemy's dialect resolution instead, which does: a managed-Postgres
+    provider's connection string (Railway, Heroku, RDS) is almost always the bare scheme, and
+    without this, SQLAlchemy falls back to its default sync-capable driver lookup (``psycopg2``)
+    rather than the ``asyncpg`` this image actually ships -- ``ModuleNotFoundError: No module
+    named 'psycopg2'`` at engine construction, before any connection is attempted. Confirmed live
+    in production: every ``/api/v3/sync`` call 500'd this way once ``DATABASE_URL`` was set to a
+    bare Railway Postgres string. ``alembic/env.py`` already carried this exact fix for its own
+    ``async_engine_from_config`` call; this module -- the live FastAPI runtime path -- had not.
+    """
+    for prefix in ("postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+asyncpg://" + url[len(prefix) :]
+    return url
+
+
 def get_engine():
     """Lazily creates the async engine on first use so the app can still
     boot (and every non-sync endpoint keep working) when Postgres isn't
@@ -45,7 +66,7 @@ def get_engine():
                 "DATABASE_URL is not configured. Set it in .env / the environment "
                 "to enable Postgres-backed sync (see docker-compose.yml's postgres service)."
             )
-        _engine = create_async_engine(url, pool_pre_ping=True, echo=False)
+        _engine = create_async_engine(with_asyncpg_driver(url), pool_pre_ping=True, echo=False)
         logger.info("Postgres async engine initialized.")
     return _engine
 
