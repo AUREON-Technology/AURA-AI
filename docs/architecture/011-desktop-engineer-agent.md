@@ -388,4 +388,30 @@ throughout this ADR, and GitHub-hosted macOS/Windows runners cost meaningfully m
 than the Linux runner `build-android`/`build-linux` already use, which is not a cost this unit's
 scope obviously earns; add them if and when macOS/Windows desktop support is actually claimed.
 
+**Deployment constraint: one gateway worker process, or the paired daemon is invisible to most
+requests.** `HostAgentRegistry` (`adapters/host_agent.py`) is an in-process dict, held per
+`Container` (`container.py`), with no Redis or cross-process fan-out. The daemon's WebSocket is a
+single long-lived connection terminated by exactly one uvicorn worker, so only that worker's
+registry knows the session exists. Any chat turn served by a different worker resolves no session
+and falls through to "no desktop app is connected and no server-side sandbox is configured" --
+intermittently, in proportion to the worker count, which reads from the outside like a daemon that
+keeps dropping rather than a routing gap. `aura_backend/Dockerfile` defaults to
+`--workers ${AURA_WORKERS:-4}`, so any deployment of that image (the Railway Control Plane
+included) needs `AURA_WORKERS=1` for the desktop Engineer agent to work reliably. Making this
+work under multiple workers means routing a tool call to whichever worker holds the socket
+(Redis pub/sub, or a dedicated single host-agent process) -- not built, and not implied by
+anything above.
+
+**Version skew between the app and the daemon is now visible instead of silent.** `/status`'s
+`backend_connected` field postdates the daemon binary a person may still have installed --
+`aura_hostd` ships no auto-update and is built by hand (`dart compile exe`, per Unit 9's disclosed
+cut), so a rebuilt `aura_client` routinely polls an older daemon. The client first read that
+field as `body['backend_connected'] as bool? ?? false`, which made a missing field
+indistinguishable from a reported `false`: a stale daemon that was genuinely connected (the
+backend's own `host agent connected` log confirmed the socket was open and registered) pinned
+every status surface to "reconnecting..." indefinitely, pointing at a network fault that did not
+exist. `HostdStatusSnapshot.backendConnected` is therefore `bool?`, with `null` meaning "the
+daemon did not say", rendered as "update aura_hostd" rather than as a reconnect, in all three
+surfaces (`status_bar.dart`, `host_panel.dart`, `host_daemon_page.dart`).
+
 See `docs/AURA_UPGRADE_ROADMAP.md` for the up-to-date status of what is and is not built.

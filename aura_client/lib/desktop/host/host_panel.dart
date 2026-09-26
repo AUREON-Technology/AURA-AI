@@ -82,6 +82,8 @@ class _HostPanelState extends ConsumerState<HostPanel> {
     // Paired (has a stored token) but not yet connected happens right after a drop -- a backend
     // redeploy, a network blip -- while the daemon's reconnect loop is in backoff. Every tool
     // call fails during that window, so this must not read the same as a genuinely live pairing.
+    // `null` is the third case: an aura_hostd too old to report `backend_connected` at all (see
+    // HostdStatusSnapshot.backendConnected), which must not be shown as an endless reconnect.
     final isConnected = status.backendConnected;
 
     return Column(
@@ -93,7 +95,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
               isRunning ? Icons.circle : Icons.circle_outlined,
               color: !isRunning
                   ? palette.textSecondary
-                  : (isPaired && !isConnected ? palette.warning : palette.success),
+                  : (isPaired && isConnected != true ? palette.warning : palette.success),
               size: 10,
             ),
             const SizedBox(width: AuraSpacing.xs),
@@ -102,7 +104,11 @@ class _HostPanelState extends ConsumerState<HostPanel> {
                   ? 'Not running'
                   : !isPaired
                       ? 'Running, not paired'
-                      : (isConnected ? 'Running, paired' : 'Running, reconnecting...'),
+                      : switch (isConnected) {
+                          true => 'Running, paired',
+                          false => 'Running, reconnecting...',
+                          null => 'Running, paired (update aura_hostd)',
+                        },
               style: TextStyle(fontSize: 12, color: palette.textPrimary),
             ),
           ],

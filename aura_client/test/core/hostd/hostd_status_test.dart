@@ -31,15 +31,25 @@ void main() {
     expect(snapshot.backendConnected, false);
   });
 
-  test('a response missing backend_connected entirely defaults to false, not true', () {
+  test('a response missing backend_connected is null -- unknown, neither connected nor not', () {
     final snapshot = parseHostdStatusBody({
       'authenticated': true,
       'backend_url': null,
       'roots': [],
     });
 
-    // An old daemon build predating this field must not be silently treated as connected --
-    // the honest default when the daemon hasn't told us either way is "not connected".
-    expect(snapshot.backendConnected, false);
+    // An old daemon build predating this field must not be silently treated as connected. It
+    // must not be treated as *disconnected* either, which is what defaulting to false did: a
+    // stale aura_hostd binary that was genuinely connected (the backend's own "host agent
+    // connected" log confirmed it) pinned the UI to "Running, reconnecting..." forever, with
+    // nothing on screen pointing at the real cause. null is the honest third answer, and every
+    // call site renders it as "update aura_hostd" rather than as a reconnect.
+    expect(snapshot.backendConnected, isNull);
+  });
+
+  test('backendConnected defaults to null when the snapshot is built without one', () {
+    // The unreachable-daemon path (_fetchStatus's HostdControlUnavailable branch) builds a
+    // snapshot from `reachable` alone; it must not claim to know the connection state either.
+    expect(HostdStatusSnapshot(reachable: false).backendConnected, isNull);
   });
 }

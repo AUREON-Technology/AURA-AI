@@ -29,7 +29,7 @@ class HostdStatusSnapshot {
   HostdStatusSnapshot({
     required this.reachable,
     this.authenticated = false,
-    this.backendConnected = false,
+    this.backendConnected,
     this.backendUrl,
     this.roots = const [],
     this.error,
@@ -44,7 +44,15 @@ class HostdStatusSnapshot {
   /// reconnect is in backoff (e.g. during a backend redeploy). Without this, "Host Connected"
   /// kept showing green while every tool call was actually failing with "no desktop app is
   /// connected" -- confirmed live against a real session.
-  final bool backendConnected;
+  ///
+  /// `null` means the daemon's `/status` did not report the field at all, which only an
+  /// `aura_hostd` older than the commit that added it does -- a version skew between a rebuilt
+  /// app and a stale daemon binary. That is *not* the same as `false`: defaulting it to `false`
+  /// pinned the UI to "reconnecting..." forever against a daemon that was in fact connected
+  /// (confirmed live -- the backend's own `host agent connected` log said so while the panel
+  /// claimed otherwise), with nothing on screen to suggest rebuilding the daemon. Every call
+  /// site renders this third state as "status unknown, update aura_hostd" instead.
+  final bool? backendConnected;
   final String? backendUrl;
   final List<HostdRoot> roots;
   final String? error;
@@ -84,7 +92,7 @@ HostdStatusSnapshot parseHostdStatusBody(Map<String, dynamic> body) {
   return HostdStatusSnapshot(
     reachable: true,
     authenticated: body['authenticated'] as bool? ?? false,
-    backendConnected: body['backend_connected'] as bool? ?? false,
+    backendConnected: body['backend_connected'] as bool?,
     backendUrl: body['backend_url'] as String?,
     roots: roots,
   );
