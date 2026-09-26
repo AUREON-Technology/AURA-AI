@@ -197,58 +197,53 @@ void main() {
       handler = TaskHandler(roots, approvals);
     });
 
-    // These three tests' command (`echo hello > written.txt`) contains `>`, which
-    // `command_policy.dart`'s `_shellMetacharacters` check now refuses outright in every
-    // untrusted workspace ("never queued for approval") -- a hard floor added after these tests
-    // were written, which they never got updated for. Not a Windows issue (the check has no
-    // platform branch; it would fail identically on Linux/macOS CI) and not something surfaced by
-    // the run_command Windows shell-resolution fix -- found in passing while removing this file's
-    // blanket `testOn: '!windows'`, out of scope to fix here.
-    const redirectPredatesHardDeny =
-        'command contains ">", which the hard metacharacter-deny check now refuses outright -- '
-        'stale test, unrelated to this change';
+    // `mkdir newdir` is not on `readOnlyAllowlistPatterns` and contains no shell metacharacters,
+    // so (unlike the `echo hello > written.txt` this group used to use) it reaches the
+    // `needsApproval` path instead of being refused outright by `command_policy.dart`'s
+    // `_shellMetacharacters` hard-deny check -- see that check's own doc comment for why `>`
+    // never even reaches the approval queue.
 
     test(
         'a non-allowlisted command in an untrusted workspace queues for approval instead of '
         'running immediately, then runs once approved', () async {
       final future = handler.run({
-        'command': ['sh', '-c', 'echo hello > written.txt'],
+        'command': ['sh', '-c', 'mkdir newdir'],
         'timeout_s': 5.0,
       });
       // `run()` executes synchronously up to the first real suspension point -- the queue
       // registration below has already happened by the time `run()` returns a Future.
       expect(approvals.list(), hasLength(1));
-      expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isFalse);
+      expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isFalse);
 
       approvals.respond(approvals.list().single.id, true);
       final result = await future;
       expect(result['exit_code'], 0);
-      expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isTrue);
-    }, skip: redirectPredatesHardDeny);
+      expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isTrue);
+    });
 
     test('rejecting a queued command throws and never runs it', () async {
       final future = handler.run({
-        'command': ['sh', '-c', 'echo hello > written.txt'],
+        'command': ['sh', '-c', 'mkdir newdir'],
         'timeout_s': 5.0,
       });
       approvals.respond(approvals.list().single.id, false);
       await expectLater(future, throwsA(isA<RpcError>()));
-      expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isFalse);
-    }, skip: redirectPredatesHardDeny);
+      expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isFalse);
+    });
 
     test(
         'an approved command is refused if its workspace root was revoked while the approval '
         'was pending (post-approval revalidation)', () async {
       final future = handler.run({
-        'command': ['sh', '-c', 'echo hello > written.txt'],
+        'command': ['sh', '-c', 'mkdir newdir'],
         'timeout_s': 5.0,
       });
       final pending = approvals.list().single;
       roots.removeRoot(workspaceDir.path);
       approvals.respond(pending.id, true);
       await expectLater(future, throwsA(isA<RpcError>()));
-      expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isFalse);
-    }, skip: redirectPredatesHardDeny);
+      expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isFalse);
+    });
 
     test('a trusted workspace never queues -- the command runs immediately', () async {
       roots.setTrusted(workspaceDir.path, true);

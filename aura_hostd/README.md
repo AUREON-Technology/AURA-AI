@@ -45,6 +45,23 @@ dart run bin/aura_hostd.dart run                               # connect and ser
 Config and granted roots persist under the platform's usual per-user config directory (see
 `lib/src/config.dart::resolveConfigDir`).
 
+## Rebuilding after a change
+
+There is no CI/CD that redeploys this daemon onto your own machine — every change under
+`aura_hostd/lib` or `aura_hostd/bin` requires a manual rebuild before it takes effect locally:
+
+```bash
+cd aura_hostd
+dart pub get
+dart compile exe bin/aura_hostd.dart -o build/aura_hostd.exe   # or the platform-appropriate output name
+```
+
+Then confirm the Desktop IDE's Full Settings → "aura_hostd executable" path points at that exact
+output file, and **restart** the daemon (Stop, then Start, from the Host panel or Full Settings) —
+an already-running process keeps executing the code it started with; it does not hot-reload.
+`build/` is gitignored, so a `git pull` never overwrites your local build with someone else's —
+you always need to rebuild yourself after pulling a change here.
+
 ## Testing
 
 ```bash

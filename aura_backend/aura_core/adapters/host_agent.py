@@ -235,8 +235,12 @@ class HostAgentSandboxRunner:
             {"task_id": handle.task_id, "command": list(command), "timeout_s": timeout_s},
             # A little slack over the tool's own timeout so a daemon-side timeout response
             # (which the daemon is expected to enforce itself) has time to arrive before this
-            # side gives up first and reports a less specific transport timeout instead.
-            timeout_s=timeout_s + 5.0,
+            # side gives up first and reports a less specific transport timeout instead. Also
+            # floored at 330s: an untrusted-workspace command can queue for D5 interactive
+            # approval on the daemon side (`approval_queue.dart`'s own 5-minute timeout), which
+            # can take as long as a human takes to respond -- not just network latency. Sized the
+            # same way `write_file`/`write_files` above are.
+            timeout_s=max(timeout_s + 5.0, 330.0),
         )
         payload = result or {}
         return SandboxResult(
@@ -308,8 +312,14 @@ class HostAgentSandboxRunner:
             {"task_id": handle.task_id, "command": list(command), "timeout_s": timeout_s},
             # Idle timeout between frames, not an overall deadline -- see call_streaming's
             # docstring. The daemon is expected to send at least one frame (even just the
-            # terminal result) well within this window once it has started the command.
-            timeout_s=timeout_s + 5.0,
+            # terminal result) well within this window once it has started the command -- except
+            # while queued for D5 interactive approval (`approval_queue.dart`), where the daemon
+            # sends zero frames for as long as the human takes to respond, up to its own 5-minute
+            # approval timeout. `run_command` (`tools/coding.py`) prefers this streaming path
+            # whenever the runner supports it, which `CompositeSandboxRunner` always does
+            # structurally, so this is the path D5 approval actually goes through in practice --
+            # floored the same way `run`'s non-streaming timeout above is.
+            timeout_s=max(timeout_s + 5.0, 330.0),
         ):
             if frame.get("type") == "stream":
                 yield SandboxOutputEvent(
@@ -324,6 +334,20 @@ class HostAgentSandboxRunner:
         # a reused task_id (unlikely, but not impossible across daemon restarts) can't be routed
         # to a stale owner.
         self._handle_owners.pop(handle.task_id, None)
+
+    async def workspace_path(self, handle: SandboxHandle) -> str:
+        # A host-agent task runs on the user's own desktop machine, not this server -- there is no
+        # server-side filesystem path for it to report. `git_push`/`clone_repository`
+        # (`tools/coding.py`) only ever call this against a durable `WorkspaceManager` handle,
+        # which `CompositeSandboxRunner._runner_for` always routes to the Docker fallback (see its
+        # docstring), so this runner should never actually be asked -- this exists so the class
+        # fails loudly with an actionable message instead of an `AttributeError` if that invariant
+        # is ever violated.
+        raise SandboxError(
+            "this task runs on the user's own desktop machine, not a server-side workspace -- "
+            "host-agent tasks have no workspace_path; host-side git operations need a durable "
+            "server-side workspace (open_workspace)"
+        )
 
 
 class CompositeSandboxRunner:
@@ -417,6 +441,9 @@ class CompositeSandboxRunner:
 
     async def read_file(self, handle: SandboxHandle, path: str) -> str:
         return await self._runner_for(handle).read_file(handle, path)
+
+    async def workspace_path(self, handle: SandboxHandle) -> str:
+        return await self._runner_for(handle).workspace_path(handle)
 
     async def write_files(self, handle: SandboxHandle, operations: Sequence[FileWriteOp]) -> None:
         await self._runner_for(handle).write_files(handle, operations)

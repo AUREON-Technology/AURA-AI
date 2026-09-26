@@ -18,6 +18,7 @@ import 'package:http/http.dart' as http;
 import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/hostd/hostd_error_messages.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/hostd/hostd_supervisor.dart';
 
@@ -61,7 +62,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
           statusAsync.when(
             data: (status) => _buildStatusCard(context, ref, palette, status, supervisor),
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, _) => Text('Error: $error', style: TextStyle(color: palette.danger, fontSize: 12)),
+            error: (error, _) => Text('Error: ${describeHostdError(error)}', style: TextStyle(color: palette.danger, fontSize: 12)),
           ),
         ],
         ),
@@ -193,7 +194,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
       ref.invalidate(hostdStatusProvider);
     } catch (error) {
       if (context.mounted) {
-        AuraSnackbar.show(context, message: 'Could not start aura_hostd: $error', kind: AuraSnackbarKind.error);
+        AuraSnackbar.show(context, message: 'Could not start aura_hostd: ${describeHostdError(error)}', kind: AuraSnackbarKind.error);
       }
     } finally {
       if (mounted) setState(() => _starting = false);
@@ -208,7 +209,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
         await ref.read(hostdControlClientProvider).shutdown();
       } catch (error) {
         if (context.mounted) {
-          AuraSnackbar.show(context, message: 'Could not stop aura_hostd: $error', kind: AuraSnackbarKind.error);
+          AuraSnackbar.show(context, message: 'Could not stop aura_hostd: ${describeHostdError(error)}', kind: AuraSnackbarKind.error);
         }
         return;
       }
@@ -304,7 +305,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
       }
     } catch (error) {
       if (context.mounted) {
-        AuraSnackbar.show(context, message: 'Could not start pairing: $error', kind: AuraSnackbarKind.error);
+        AuraSnackbar.show(context, message: 'Could not start pairing: ${describeHostdError(error)}', kind: AuraSnackbarKind.error);
       }
     } finally {
       if (mounted) setState(() => _pairing = false);
