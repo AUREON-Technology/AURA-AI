@@ -298,7 +298,7 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
                 status.reachable ? Icons.circle : Icons.circle_outlined,
                 color: !status.reachable
                     ? palette.textSecondary
-                    : (status.authenticated && !status.backendConnected
+                    : (status.authenticated && status.backendConnected != true
                         ? palette.warning
                         : palette.success),
                 size: 12,
@@ -312,8 +312,14 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
                         // Paired (stored token) but not connected happens right after a drop --
                         // a backend redeploy, a network blip -- while the daemon's reconnect
                         // loop is in backoff; every tool call fails during that window, so this
-                        // must read differently from a genuinely live pairing.
-                        : (status.backendConnected ? 'Running, paired' : 'Running, reconnecting...'),
+                        // must read differently from a genuinely live pairing. A null
+                        // `backendConnected` is neither: the daemon is too old to report the
+                        // field, so say that rather than accusing it of reconnecting forever.
+                        : switch (status.backendConnected) {
+                            true => 'Running, paired',
+                            false => 'Running, reconnecting...',
+                            null => 'Running, paired -- update aura_hostd to see connection status',
+                          },
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ],

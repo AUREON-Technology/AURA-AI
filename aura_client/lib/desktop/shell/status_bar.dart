@@ -26,7 +26,9 @@ class StatusBar extends ConsumerWidget {
     final status = statusAsync.value;
     final reachable = status?.reachable ?? false;
     final authenticated = status?.authenticated ?? false;
-    final backendConnected = status?.backendConnected ?? false;
+    // Nullable on purpose -- null means the daemon never reported `backend_connected`, i.e. an
+    // aura_hostd older than the field itself. See HostdStatusSnapshot.backendConnected.
+    final backendConnected = status?.backendConnected;
     final pendingApprovals = ref.watch(approvalNotifierProvider).pendingApprovals;
 
     return Container(
@@ -49,17 +51,21 @@ class StatusBar extends ConsumerWidget {
           _StatusItem(
             icon: !reachable
                 ? Icons.cloud_off
-                : (authenticated && !backendConnected ? Icons.cloud_sync : Icons.cloud_done),
+                : (authenticated && backendConnected != true ? Icons.cloud_sync : Icons.cloud_done),
             text: !reachable
                 ? 'Host Not Running'
                 : !authenticated
                     ? 'Host Not Paired'
-                    : (backendConnected ? 'Host Connected' : 'Reconnecting to server...'),
+                    : switch (backendConnected) {
+                        true => 'Host Connected',
+                        false => 'Reconnecting to server...',
+                        null => 'Host Status Unknown (update aura_hostd)',
+                      },
             color: !reachable
                 ? palette.danger
                 : !authenticated
                     ? palette.warning
-                    : (backendConnected ? palette.success : palette.warning),
+                    : (backendConnected == true ? palette.success : palette.warning),
             density: ideDensity,
           ),
           // D5: pending interactive-approval count -- tap to review/approve/reject.
