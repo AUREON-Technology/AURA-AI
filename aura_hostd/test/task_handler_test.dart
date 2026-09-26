@@ -133,6 +133,23 @@ void main() {
       expect(result['stderr'], contains('timeout'));
     });
 
+    test('a ProcessException from Process.start is wrapped with the resolved '
+        'executable, cwd, and whether each existed', () async {
+      roots.setTrusted(workspaceDir.path, true);
+      try {
+        await handler.run({
+          'command': ['this_binary_does_not_exist_xyz_12345', 'arg'],
+          'timeout_s': 5.0,
+        });
+        fail('expected an RpcError');
+      } on RpcError catch (error) {
+        expect(error.message, contains('this_binary_does_not_exist_xyz_12345'));
+        expect(error.message, contains(workspaceDir.path));
+        expect(error.message, contains('executable exists: false'));
+        expect(error.message, contains('cwd exists: true'));
+      }
+    });
+
     test('refuses to run with no granted workspace root', () async {
       final emptyHandler = TaskHandler(WorkspaceRoots(const []));
       expect(

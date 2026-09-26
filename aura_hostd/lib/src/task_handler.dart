@@ -268,11 +268,25 @@ class TaskHandler {
     );
 
     final effectiveArgv = _resolveShellArgv(_lineBuffered(commandArgv));
-    final process = await Process.start(
-      effectiveArgv.first,
-      effectiveArgv.sublist(1),
-      workingDirectory: cwd,
-    );
+    final Process process;
+    try {
+      process = await Process.start(
+        effectiveArgv.first,
+        effectiveArgv.sublist(1),
+        workingDirectory: cwd,
+      );
+    } on ProcessException catch (exc) {
+      // A bare ProcessException here gave no way to tell "the resolved shell path was wrong" from
+      // "the working directory was wrong" from anything else without reproducing it live outside
+      // the running daemon -- confirmed painful once already. Surfacing what was actually
+      // attempted, and whether each half of it existed at the moment of failure, turns the next
+      // occurrence into something diagnosable from the error text alone.
+      throw RpcError(
+        'failed to start ${effectiveArgv.first} in $cwd: $exc '
+        '(executable exists: ${File(effectiveArgv.first).existsSync()}, '
+        'cwd exists: ${Directory(cwd).existsSync()})',
+      );
+    }
 
     final stdoutBuf = StringBuffer();
     final stderrBuf = StringBuffer();
@@ -536,8 +550,15 @@ String? _findWindowsShell() {
             (line) => line.trim().isNotEmpty,
             orElse: () => '',
           );
-      if (first.isNotEmpty) {
-        return _windowsShellPathCache = first.trim();
+      final trimmed = first.trim();
+      // `where`'s exit code and stdout only prove *some* PATH entry matched the name -- not that
+      // the file is actually there right now (a stale PATH entry, a since-removed install, or a
+      // path Process.start can't launch directly all report success here). Trusting that
+      // unconditionally turned a real "no shell" case into a raw ProcessException instead of the
+      // friendly RpcError below telling the user to install Git for Windows -- verify it the same
+      // way the fallback candidates already are before caching it.
+      if (trimmed.isNotEmpty && File(trimmed).existsSync()) {
+        return _windowsShellPathCache = trimmed;
       }
     }
   } catch (_) {
