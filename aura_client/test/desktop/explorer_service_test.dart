@@ -11,6 +11,8 @@
 /// listing could never match hostd at all. Without also fixing that match, gating the fallback on
 /// `hostConnected` would have made every workspace show "Grant Access" as soon as hostd connects,
 /// even a genuinely already-granted one.
+library;
+
 import 'dart:io';
 
 import 'package:aura_client/core/hostd/hostd_control_client.dart';

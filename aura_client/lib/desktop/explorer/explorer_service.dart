@@ -213,7 +213,10 @@ class ExplorerService {
 
     try {
       final resolvedPath = requireContainedClient(_workspaceRoot, relativePath);
-      return File(resolvedPath).readAsString();
+      // Awaited on purpose: returning the Future unawaited hands it to the caller *outside* this
+      // try, so a read that fails (missing file, permission denied) escaped as an exception
+      // instead of taking the `return null` below, which is what every caller expects.
+      return await File(resolvedPath).readAsString();
     } on ClientContainmentViolation {
       return null;
     } catch (_) {
