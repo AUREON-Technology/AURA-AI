@@ -165,6 +165,11 @@ class _BackendConnection {
   final IsolatedTaskRegistry isolatedTasks;
   HostAgentClient? _client;
 
+  /// See `HostAgentClient.isConnected`'s own doc -- this is `false` both before pairing and
+  /// while a post-drop reconnect is in backoff, which is exactly the window `control_server.dart`
+  /// needs to distinguish from "has a stored token" for `/status` to stop lying to the UI.
+  bool get isConnected => _client?.isConnected ?? false;
+
   void startIfAuthenticated() {
     if (_client != null) return;
     final config = configStore.load();
@@ -210,6 +215,7 @@ Future<void> _runDaemon(ConfigStore configStore, WorkspaceStore workspaceStore) 
     debugSessions: DebugSessionManager(workspaceStore),
     approvalQueue: approvalQueue,
     isolatedTasks: isolatedTasks,
+    isBackendConnected: () => backend.isConnected,
   );
   await controlServer.start(resolveConfigDir());
 

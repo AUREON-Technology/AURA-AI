@@ -26,6 +26,7 @@ class StatusBar extends ConsumerWidget {
     final status = statusAsync.value;
     final reachable = status?.reachable ?? false;
     final authenticated = status?.authenticated ?? false;
+    final backendConnected = status?.backendConnected ?? false;
     final pendingApprovals = ref.watch(approvalNotifierProvider).pendingApprovals;
 
     return Container(
@@ -39,15 +40,26 @@ class StatusBar extends ConsumerWidget {
             text: 'main',
             density: ideDensity,
           ),
-          // Hostd connection status
+          // Hostd connection status. `authenticated` (has a stored pairing token) and
+          // `backendConnected` (the daemon's socket to the backend is actually open right now)
+          // can disagree for as long as a post-drop reconnect is in backoff -- e.g. right after a
+          // backend redeploy -- during which every tool call still fails with "no desktop app is
+          // connected" even though this used to show a flat "Host Connected". Surfacing that gap
+          // as "Reconnecting..." instead of silently claiming a live connection that isn't.
           _StatusItem(
-            icon: reachable ? Icons.cloud_done : Icons.cloud_off,
+            icon: !reachable
+                ? Icons.cloud_off
+                : (authenticated && !backendConnected ? Icons.cloud_sync : Icons.cloud_done),
             text: !reachable
                 ? 'Host Not Running'
-                : (authenticated ? 'Host Connected' : 'Host Not Paired'),
+                : !authenticated
+                    ? 'Host Not Paired'
+                    : (backendConnected ? 'Host Connected' : 'Reconnecting to server...'),
             color: !reachable
                 ? palette.danger
-                : (authenticated ? palette.success : palette.warning),
+                : !authenticated
+                    ? palette.warning
+                    : (backendConnected ? palette.success : palette.warning),
             density: ideDensity,
           ),
           // D5: pending interactive-approval count -- tap to review/approve/reject.

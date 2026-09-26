@@ -40,6 +40,18 @@ class HostAgentClient {
 
   WebSocket? _socket;
   bool _stopRequested = false;
+  bool _isConnected = false;
+
+  /// True while the outbound socket to the backend is open. This is the daemon's only signal
+  /// that `HostAgentRegistry` (backend) currently has a live session for it -- the wire protocol
+  /// has no explicit "auth accepted" ack frame, but the backend closes the socket immediately on
+  /// auth failure (`api/host_agent.py`), so an open socket reliably means registered, modulo the
+  /// brief window between `WebSocket.connect` returning and the server processing the auth frame.
+  /// Exposed so `control_server.dart`'s `/status` can report it distinctly from "have a stored
+  /// token" -- those disagree for as long as a reconnect is in backoff after a dropped
+  /// connection (e.g. a backend redeploy), during which every tool call still fails with "no
+  /// desktop app is connected" even though the daemon believes itself paired.
+  bool get isConnected => _isConnected;
 
   static void _defaultLogger(String message) => stdout.writeln('[aura_hostd] $message');
 
@@ -66,32 +78,38 @@ class HostAgentClient {
   void stop() {
     _stopRequested = true;
     _socket?.close();
+    _isConnected = false;
   }
 
   Future<void> _connectAndServe() async {
     logger('connecting to $wsUrl');
     final socket = await WebSocket.connect(wsUrl);
     _socket = socket;
+    _isConnected = true;
     socket.add(jsonEncode({'type': 'auth', 'token': authToken}));
 
-    await for (final message in socket) {
-      if (message is! String) continue;
-      Map<String, dynamic> frame;
-      try {
-        final decoded = jsonDecode(message);
-        if (decoded is! Map<String, dynamic>) continue;
-        frame = decoded;
-      } on FormatException {
-        continue;
+    try {
+      await for (final message in socket) {
+        if (message is! String) continue;
+        Map<String, dynamic> frame;
+        try {
+          final decoded = jsonDecode(message);
+          if (decoded is! Map<String, dynamic>) continue;
+          frame = decoded;
+        } on FormatException {
+          continue;
+        }
+        if (frame['type'] == 'call') {
+          // Deliberately not awaited: a slow `run_command` must not block the auth-frame /
+          // heartbeat plumbing for other in-flight calls, and each call's own result carries its
+          // own correlation id so out-of-order completion is fine on the wire.
+          unawaited(_handleCall(socket, frame));
+        }
+        // Any other frame type (there are none yet besides `call`) is ignored -- forward
+        // compatible with a newer server sending a frame this daemon version does not understand.
       }
-      if (frame['type'] == 'call') {
-        // Deliberately not awaited: a slow `run_command` must not block the auth-frame /
-        // heartbeat plumbing for other in-flight calls, and each call's own result carries its
-        // own correlation id so out-of-order completion is fine on the wire.
-        unawaited(_handleCall(socket, frame));
-      }
-      // Any other frame type (there are none yet besides `call`) is ignored -- forward
-      // compatible with a newer server sending a frame this daemon version does not understand.
+    } finally {
+      _isConnected = false;
     }
     logger('disconnected');
   }
