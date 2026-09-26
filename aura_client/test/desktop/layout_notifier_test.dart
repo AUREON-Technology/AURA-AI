@@ -4,6 +4,8 @@
 /// and its width/height setters had no clamping at all. These tests exercise
 /// the fix directly against a real in-memory Drift database, the same way
 /// `chat_outbox_test.dart`/`memory_repository_test.dart` do for their tables.
+library;
+
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/security/encryption_service.dart';
 import 'package:aura_client/desktop/events/ide_event.dart';

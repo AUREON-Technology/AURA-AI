@@ -787,12 +787,11 @@ class LayoutNotifier extends StateNotifier<LayoutState> {
 
 /// Host state notifier.
 class HostNotifier extends StateNotifier<HostState> {
-  HostNotifier(this._eventBus, this._hostdClient) : super(const HostState()) {
+  HostNotifier(this._eventBus) : super(const HostState()) {
     _subscribeToEvents();
   }
 
   final IdeEventBus _eventBus;
-  final HostdControlClient _hostdClient;
   StreamSubscription? _eventSub;
 
   void _subscribeToEvents() {
@@ -824,9 +823,11 @@ class HostNotifier extends StateNotifier<HostState> {
   /// the same source `HostPanel`/`HostDaemonPage` use) into this state, so
   /// callers of [hostNotifierProvider] see live status. This is the only
   /// path that populates [HostState] from `/status` — a prior one-shot
-  /// `refreshStatus()` method duplicated this via direct `_hostdClient`
+  /// `refreshStatus()` method duplicated this via direct `HostdControlClient`
   /// calls but had zero call sites anywhere in the app; removed rather than
-  /// left as dead code (2026-09-25 audit follow-up).
+  /// left as dead code (2026-09-25 audit follow-up). That removal left this
+  /// notifier's own `HostdControlClient` unused, so it is gone too -- this
+  /// class reaches the daemon only through the polled snapshot above.
   void updateFromSnapshot(HostdStatusSnapshot snapshot) {
     state = state.copyWith(
       isConnected: snapshot.authenticated,
@@ -1014,8 +1015,7 @@ final layoutNotifierProvider = StateNotifierProvider<LayoutNotifier, LayoutState
 /// Provider for host notifier.
 final hostNotifierProvider = StateNotifierProvider<HostNotifier, HostState>((ref) {
   final eventBus = ref.watch(ideEventBusProvider);
-  final hostdClient = ref.watch(hostdControlClientProvider);
-  final notifier = HostNotifier(eventBus, hostdClient);
+  final notifier = HostNotifier(eventBus);
   // Keep this notifier's isConnected/backendUrl/grantedRoots in sync with
   // the same polled status HostPanel/HostDaemonPage show, so every host
   // status display in the app agrees.
