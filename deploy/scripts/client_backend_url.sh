@@ -36,7 +36,15 @@ aura_resolve_client_backend_url() {
   fi
 
   if [[ -z "$url" && -n "$domain" ]]; then
-    url="https://${domain}"
+    # AURA_DOMAIN is documented as a bare hostname, but at least one real deploy/.env has it set
+    # to a full https:// URL already -- prepending https:// unconditionally then produced
+    # "https://https://...", which aura_require_release_backend_url's scheme check never caught
+    # (it only checks the result *starts with* https://). Only add the scheme when the value
+    # doesn't already have one, matching client_backend_url.ps1's identical fix.
+    case "$domain" in
+      https://*|http://*) url="$domain" ;;
+      *) url="https://${domain}" ;;
+    esac
   fi
 
   echo "$url"

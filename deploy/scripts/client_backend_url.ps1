@@ -34,7 +34,17 @@ function Get-AuraClientBackendUrl {
     }
 
     if (-not $url -and $domain) {
-        $url = "https://$domain"
+        # AURA_DOMAIN is documented as a bare hostname (deploy/.env's own header comment: "nginx
+        # server_name, AND the Flutter client BACKEND_URL host"), but at least one real deploy/.env
+        # has it set to a full https:// URL already -- prepending https:// unconditionally then
+        # produced "https://https://...", which Uri parsing still accepts (so
+        # Assert-AuraReleaseBackendUrl never caught it), and Flutter compiled it straight into
+        # BACKEND_URL. Only add the scheme when the value doesn't already have one.
+        if ($domain -match '^https?://') {
+            $url = $domain
+        } else {
+            $url = "https://$domain"
+        }
     }
 
     return $url
