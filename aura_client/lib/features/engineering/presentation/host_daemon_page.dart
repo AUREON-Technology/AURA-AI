@@ -296,14 +296,24 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
             children: [
               Icon(
                 status.reachable ? Icons.circle : Icons.circle_outlined,
-                color: status.reachable ? palette.success : palette.textSecondary,
+                color: !status.reachable
+                    ? palette.textSecondary
+                    : (status.authenticated && !status.backendConnected
+                        ? palette.warning
+                        : palette.success),
                 size: 12,
               ),
               const SizedBox(width: AuraSpacing.sm),
               Text(
-                status.reachable
-                    ? (status.authenticated ? 'Running, paired' : 'Running, not paired')
-                    : 'Not running',
+                !status.reachable
+                    ? 'Not running'
+                    : !status.authenticated
+                        ? 'Running, not paired'
+                        // Paired (stored token) but not connected happens right after a drop --
+                        // a backend redeploy, a network blip -- while the daemon's reconnect
+                        // loop is in backoff; every tool call fails during that window, so this
+                        // must read differently from a genuinely live pairing.
+                        : (status.backendConnected ? 'Running, paired' : 'Running, reconnecting...'),
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ],

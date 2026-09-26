@@ -79,6 +79,10 @@ class _HostPanelState extends ConsumerState<HostPanel> {
   ) {
     final isRunning = status.reachable;
     final isPaired = status.authenticated;
+    // Paired (has a stored token) but not yet connected happens right after a drop -- a backend
+    // redeploy, a network blip -- while the daemon's reconnect loop is in backoff. Every tool
+    // call fails during that window, so this must not read the same as a genuinely live pairing.
+    final isConnected = status.backendConnected;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -87,14 +91,18 @@ class _HostPanelState extends ConsumerState<HostPanel> {
           children: [
             Icon(
               isRunning ? Icons.circle : Icons.circle_outlined,
-              color: isRunning ? palette.success : palette.textSecondary,
+              color: !isRunning
+                  ? palette.textSecondary
+                  : (isPaired && !isConnected ? palette.warning : palette.success),
               size: 10,
             ),
             const SizedBox(width: AuraSpacing.xs),
             Text(
-              isRunning
-                  ? (isPaired ? 'Running, paired' : 'Running, not paired')
-                  : 'Not running',
+              !isRunning
+                  ? 'Not running'
+                  : !isPaired
+                      ? 'Running, not paired'
+                      : (isConnected ? 'Running, paired' : 'Running, reconnecting...'),
               style: TextStyle(fontSize: 12, color: palette.textPrimary),
             ),
           ],

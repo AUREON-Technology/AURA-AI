@@ -50,10 +50,12 @@ class ControlServer {
     required this.debugSessions,
     required this.approvalQueue,
     required this.isolatedTasks,
+    bool Function()? isBackendConnected,
     GitService? gitService,
     DiagnosticsService? diagnosticsService,
     ControlServerLogger? logger,
-  })  : gitService = gitService ?? GitService(),
+  })  : isBackendConnected = isBackendConnected ?? (() => false),
+        gitService = gitService ?? GitService(),
         diagnosticsService = diagnosticsService ?? DiagnosticsService(),
         _logger = logger ?? _defaultLogger;
 
@@ -89,6 +91,13 @@ class ControlServer {
   /// running (the daemon can be started with `run` before any token exists, precisely so this
   /// control server -- and thus a UI driving it -- is reachable to pair through).
   final void Function(String accessToken) onPaired;
+
+  /// Whether the daemon's outbound socket to the backend (`HostAgentClient`, `rpc_client.dart`)
+  /// is currently open -- distinct from `configStore`'s stored token, which only says this daemon
+  /// once completed pairing, not that it is live right now. Defaults to always-`false` when the
+  /// caller doesn't wire a real one (tests, or a daemon that never starts a backend connection at
+  /// all), which is the honest answer in both cases.
+  final bool Function() isBackendConnected;
 
   final ControlServerLogger _logger;
 
@@ -225,6 +234,7 @@ class ControlServer {
     final roots = workspaceStore.load();
     await _respond(request, 200, {
       'authenticated': config.authToken != null && config.authToken!.isNotEmpty,
+      'backend_connected': isBackendConnected(),
       'backend_url': config.backendUrl,
       'roots': roots.all.map((r) => r.toJson()).toList(),
     });
