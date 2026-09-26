@@ -192,6 +192,42 @@ void main() {
     expect((received.last['result'] as Map)['exit_code'], 0);
   }, testOn: '!windows');
 
+  group('pingInterval', () {
+    // A live session that goes connect -> disconnect -> reconnect with no application traffic in
+    // between (confirmed against a real deployment) is exactly the symptom of an idle WebSocket
+    // getting silently dropped -- the JSON message protocol only flows when a tool call is
+    // active, which can be minutes apart. `dart:io`'s WebSocket.pingInterval sends real
+    // protocol-level ping frames on its own schedule regardless, which every conformant WS server
+    // (including uvicorn's) answers with a pong transparently -- no backend change needed.
+    test('defaults to 20 seconds', () {
+      final handler = TaskHandler(WorkspaceRoots(const []));
+      final client = HostAgentClient(
+        wsUrl: server.wsUrl,
+        authToken: 't',
+        taskHandler: handler,
+        logger: (_) {},
+      );
+      expect(client.pingInterval, const Duration(seconds: 20));
+    });
+
+    test('a custom interval reaches the actual connected socket, not just this class', () async {
+      final handler = TaskHandler(WorkspaceRoots(const []));
+      final client = HostAgentClient(
+        wsUrl: server.wsUrl,
+        authToken: 't',
+        taskHandler: handler,
+        logger: (_) {},
+        pingInterval: const Duration(seconds: 7),
+      );
+      unawaited(client.run());
+      addTearDown(client.stop);
+
+      await server.clientSocket;
+      await Future<void>.delayed(Duration.zero);
+      expect(client.socketPingInterval, const Duration(seconds: 7));
+    });
+  });
+
   group('isConnected', () {
     // `control_server.dart`'s `/status` reports this distinctly from "have a stored token" --
     // the daemon believing itself paired while its actual socket to the backend is down (mid
