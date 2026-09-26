@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:aura_client/core/config/backend_url_policy.dart';
 import 'package:aura_client/core/security/device_validation_service.dart';
 import 'package:aura_client/core/security/hardware_attestation_client.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -48,10 +49,17 @@ void main() {
       expect(headers['X-Device-Attestation-Nonce'], 'server-nonce-1');
     });
 
-    test('debug builds send an explicit aura_dev_attestation marker', () async {
+    test('debug builds against a local gateway send an explicit aura_dev_attestation marker', () async {
+      // `backendUrl` is passed explicitly rather than left to AppConfig.backendUrl's
+      // compile-time default: the dev-token path is debug *and* a URL the release policy
+      // rejects (see DeviceValidationService.resolve's `useDebugMock`), and that default has
+      // pointed at a real deployment -- release-safe, so not the mock path -- since well before
+      // the current https://aureon-ai.tech value. Depending on it made this test assert the
+      // opposite branch from the one it names.
       final headers = await DeviceValidationService.getAttestationHeaders(
         debugMode: true,
         platform: 'android',
+        backendUrl: BackendUrlPolicy.localDevUrl,
         client: _FakeAttestationClient(token: 'must-not-be-used'),
       );
       expect(headers['X-Device-Attestation'], DeviceValidationService.devToken);
@@ -60,6 +68,7 @@ void main() {
       final resolved = await DeviceValidationService.resolve(
         debugMode: true,
         platform: 'android',
+        backendUrl: BackendUrlPolicy.localDevUrl,
       );
       expect(resolved.isHardwareAttestation, isFalse);
       expect(resolved.isDebugBypass, isTrue);

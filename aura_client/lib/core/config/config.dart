@@ -1,6 +1,10 @@
 /// Compile-time backend binding.
 ///
-/// Debug / IDE / `flutter run` default to the local gateway (`config/dev.json`).
+/// [backendUrl] defaults to the production deployment, not a local gateway: a build with no
+/// `--dart-define=BACKEND_URL` points at `https://aureon-ai.tech`. Run against a local gateway
+/// by injecting it (`--dart-define-from-file=config/dev.json`), not by relying on this default.
+/// `test/backend_url_policy_test.dart` pins what the default must satisfy -- release-safe under
+/// `BackendUrlPolicy` and accepted by its runtime allowlist -- rather than pinning one value.
 /// Physical Android must inject production `https://$AURA_DOMAIN` via
 /// `run_client_device.ps1` or `--dart-define-from-file=config/device.json`.
 /// Release APKs, IPAs, and web bundles must inject `BACKEND_URL` via
