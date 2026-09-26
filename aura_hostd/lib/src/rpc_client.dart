@@ -29,6 +29,7 @@ class HostAgentClient {
     this.logger = _defaultLogger,
     this.minBackoff = const Duration(seconds: 1),
     this.maxBackoff = const Duration(seconds: 30),
+    this.pingInterval = const Duration(seconds: 20),
   });
 
   final String wsUrl;
@@ -37,6 +38,16 @@ class HostAgentClient {
   final Logger logger;
   final Duration minBackoff;
   final Duration maxBackoff;
+  /// How often to send a protocol-level WebSocket ping while otherwise idle (`run_command` etc.
+  /// only flow when the model calls a tool -- a session sitting between turns sends nothing for
+  /// however long that takes). Set on `dart:io`'s `WebSocket` itself (`_socket.pingInterval`
+  /// below), so this rides the raw ping/pong control frames every WS implementation already
+  /// handles transparently -- it never touches the `{"type": ...}` JSON message frames `_onMessage`
+  /// parses, and needs no change on the backend (any conformant WS server, uvicorn included,
+  /// answers a ping with a pong automatically). Confirmed live: a paired session went
+  /// connected -> disconnected -> reconnected with no application activity in between, exactly
+  /// the symptom an idle connection with nothing keeping it alive produces.
+  final Duration pingInterval;
 
   WebSocket? _socket;
   bool _stopRequested = false;
@@ -52,6 +63,11 @@ class HostAgentClient {
   /// connection (e.g. a backend redeploy), during which every tool call still fails with "no
   /// desktop app is connected" even though the daemon believes itself paired.
   bool get isConnected => _isConnected;
+
+  /// The live socket's own ping interval, once connected -- exposed only so a test can confirm
+  /// [pingInterval] actually reached the socket, not merely that this class stored the
+  /// constructor argument. `null` before the first connection.
+  Duration? get socketPingInterval => _socket?.pingInterval;
 
   static void _defaultLogger(String message) => stdout.writeln('[aura_hostd] $message');
 
@@ -84,6 +100,7 @@ class HostAgentClient {
   Future<void> _connectAndServe() async {
     logger('connecting to $wsUrl');
     final socket = await WebSocket.connect(wsUrl);
+    socket.pingInterval = pingInterval;
     _socket = socket;
     _isConnected = true;
     socket.add(jsonEncode({'type': 'auth', 'token': authToken}));
