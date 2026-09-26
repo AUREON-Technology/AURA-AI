@@ -155,5 +155,41 @@ void main() {
 
       expect(content, 'a real file only dart:io would see');
     });
+
+    // The dart:io read's own failures. `readFile` is written to answer null for anything it
+    // cannot read -- the hostd branch above it already does, and every caller (explorer_panel's
+    // file open, the editor's load) treats null as "no content" and nothing catches an exception
+    // from here. That contract held only for failures raised *synchronously*: the read used to
+    // `return File(resolvedPath).readAsString()` without awaiting, which hands the Future to the
+    // caller outside the try, so its `catch (_) { return null; }` never saw an async failure and
+    // the exception surfaced in the UI instead. These two exercise the common async failures --
+    // a path that isn't there, and a path that is a directory rather than a file -- and fail
+    // with an uncaught FileSystemException against the un-awaited version.
+    test('a file that does not exist -> null, not a thrown FileSystemException', () async {
+      final fake = _FakeHostdClient();
+      final service = ExplorerService(fake, workspaceRoot);
+
+      final content = await service.readFile(
+        relativePath: 'no_such_file.txt',
+        grantedRoots: const [],
+        hostConnected: false,
+      );
+
+      expect(content, isNull);
+    });
+
+    test('a path that is a directory, not a file -> null, not a thrown FileSystemException', () async {
+      Directory('${workspaceDir.path}/a_directory').createSync();
+      final fake = _FakeHostdClient();
+      final service = ExplorerService(fake, workspaceRoot);
+
+      final content = await service.readFile(
+        relativePath: 'a_directory',
+        grantedRoots: const [],
+        hostConnected: false,
+      );
+
+      expect(content, isNull);
+    });
   });
 }
