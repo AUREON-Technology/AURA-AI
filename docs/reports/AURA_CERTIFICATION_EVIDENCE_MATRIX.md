@@ -1,7 +1,7 @@
 # AURA AI — Certification Evidence Matrix
 
-**Updated:** 2026-09-27 22:20 UTC
-**Live revision under test:** `0832665f4280` (Railway Control Plane)
+**Updated:** 2026-09-27 23:22 UTC
+**Live revision under test:** `b4ab9ad3b66c` (Railway Control Plane)
 **Repository revision:** `main` @ `0832665f`
 
 > ## OVERALL VERDICT: NOT PRODUCTION CERTIFIED
@@ -38,10 +38,10 @@ suite rather than by whoever writes the summary.
 | No exposed secrets | yes | PRODUCTION TESTED | EV-09 (Secrets: NOT FOUND) | PASS |
 | Production API usable | yes | PRODUCTION TESTED | EV-22 (80 /api/v3 routes, valid TLS, zero legacy paths) | PASS |
 | Core user journeys usable | yes | PRODUCTION TESTED | EV-22 (no journey reached step three) | UNKNOWN |
-| Inference works | yes | MEASURED | EV-24 (hfspace healthy in 1/8 samples; 226ms when up, 5.15s timeout when not) | FAIL |
+| Inference works | yes | PRODUCTION TESTED | EV-25 (hfspace healthy 7/7 consecutive, 196-231ms) | PASS |
 | No unrecoverable data failure | yes | CODE-PRESENT | — | UNKNOWN |
 | Deployment stability | yes | MEASURED | EV-17 (zero executed CI jobs since 2026-09-13) | FAIL |
-| Database schema integrity | yes | PRODUCTION TESTED | EV-23 (revision 0006, code expects 0008) | FAIL |
+| Database schema integrity | yes | PRODUCTION TESTED | EV-25 (schema healthy at revision 0008) | PASS |
 | Release identity traceable | no | PRODUCTION TESTED | EV-23 (/health/version = merge commit of #130) | PASS |
 | Liveness / readiness contract | no | PRODUCTION TESTED | EV-22 (503 on unhealthy dependency) | PASS |
 | Security response headers | no | PRODUCTION TESTED | EV-23 (all five present on Railway) | PASS |

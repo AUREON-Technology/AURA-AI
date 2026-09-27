@@ -965,6 +965,79 @@ here; the Space's own runtime page would confirm it.
 
 ---
 
+## EV-25 — Readiness is green: DEF-19 and DEF-20 both resolved
+
+**Date:** 2026-09-27 23:19-23:22 UTC. **Classification:** PRODUCTION TESTED · MEASURED.
+**Live revision:** `b4ab9ad3b66c` = merge commit of PR #134.
+
+The first `HTTP 200` from `/health/ready` in this entire engagement.
+
+```
+$ curl -w "\nHTTP=%{http_code}\n" https://aura-ai-production-03a4.up.railway.app/health/ready
+{"providers":{"hfspace":{"healthy":true,"detail":"ok","latency_ms":200.4}},
+ "index":"aura-knowledge__v1__hash-embed-v1__384","tools":37,"prompts":17,"agents":8,
+ "environment":"production","healthy":true,
+ "checks":{"schema":{"healthy":true,"revision":"0008"}},
+ "release":{"revision":"b4ab9ad3b66c","git_ref":"main","identified":true}}
+HTTP=200
+```
+
+### DEF-20 — RESOLVED
+
+`schema: healthy=true, revision=0008`, against a code expectation of `0008`. The two migrations
+that had been outstanding since before this audit began are applied.
+
+This also confirms the mechanism recorded in EV-23: the migration gate was inert because
+`aura_backend/railway.json` was not being read, and it began working once that was corrected. The
+prediction and the outcome match, which is worth noting because the alternative explanation (the
+`preDeployCommand` running and failing) would have left the schema at `0006`.
+
+### DEF-19 — RESOLVED, and sampled this time
+
+EV-24 recorded an overstatement: a single healthy sample was reported as recovery when the true
+rate was 1-in-8. The correction set a bar of five-plus consecutive samples before any claim.
+Meeting it:
+
+```
+23:19:51Z  True  200.4        (the first reading, from the full payload above)
+23:20:33Z  True  200.2  overall=True
+23:20:48Z  True  229.9  overall=True
+23:21:03Z  True  231.4  overall=True
+23:21:18Z  True  196.6  overall=True
+23:21:32Z  True  199.9  overall=True
+23:21:47Z  True  196.6  overall=True
+           --> 7/7 consecutive, 196.6-231.4 ms
+```
+
+Seven consecutive successes in a 196-231 ms band, where the failing state was a fixed ~5150 ms
+timeout. That is a different regime, not a lucky streak: under the 1-in-8 rate of EV-24, seven
+consecutive successes would be a roughly 1-in-2-million coincidence.
+
+Consistent with the cold-start hypothesis in EV-24 -- a warm Space answers in ~200 ms, which is
+exactly what the one anomalous sample at 21:49 showed.
+
+### What this unlocks, and what it does not
+
+**Unlocked:** inference-dependent certification is now viable. The E2E journey and adversarial
+safety suites skip when a turn cannot complete, so they were producing *untested* rather than
+results. With a completing turn they produce evidence -- given credentials.
+
+**Not unlocked:** the verdict. Four mandatory gates still have **no evidence at all**
+(authorization/isolation, adversarial safety, agent containment, backup/restore), and
+`test_certification_gate.py` refuses certification while that holds. Two gates moving from FAIL to
+PASS does not offset four with nothing.
+
+**Still open:** DEF-22 -- `/metrics` returns 200 unauthenticated, because `AURA_METRICS_TOKEN` is
+unset. Unchanged by this deploy.
+
+### Release identity, fifth consecutive deploy
+
+`a517cb68` → `0832665f` → `5c527fdd` → `d79c26bb` → `b4ab9ad3`, each matching its merge commit,
+all populated by the platform fallback with no build arg wired. The mechanism introduced for
+BLOCK-03 has now tracked five deploys unaided.
+
+---
+
 ## Evidence artifacts retained
 
 | File | Contents |
