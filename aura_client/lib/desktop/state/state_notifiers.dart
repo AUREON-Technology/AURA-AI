@@ -91,6 +91,11 @@ class EditorNotifier extends StateNotifier<EditorState> {
 
   StreamSubscription? _eventSub;
 
+  /// Debounces [saveSession] writes triggered by cursor/selection movement,
+  /// which fires on every caret move -- same reasoning as
+  /// [LayoutNotifier]'s `_debouncedPersist` for drag-resize.
+  Timer? _cursorSaveDebounce;
+
   /// In-memory buffer content per open tab, keyed by tab id. Not part of
   /// [EditorState] since it changes on every keystroke and would be far too
   /// expensive to run through Riverpod's equality/rebuild machinery.
@@ -135,6 +140,15 @@ class EditorNotifier extends StateNotifier<EditorState> {
                 title: json['title'] as String,
                 isPinned: json['isPinned'] as bool? ?? false,
                 lastAccessed: DateTime.now(),
+                cursorPosition: (json['cursorOffset'] as num?) != null
+                    ? EditorCursor(offset: (json['cursorOffset'] as num).toInt())
+                    : null,
+                selection: (json['selectionStart'] as num?) != null && (json['selectionEnd'] as num?) != null
+                    ? EditorSelection(
+                        start: (json['selectionStart'] as num).toInt(),
+                        end: (json['selectionEnd'] as num).toInt(),
+                      )
+                    : null,
               ))
           .toList();
       final activeTab = tabs.where((t) => t.path == row.activeTabPath).firstOrNull;
@@ -238,12 +252,19 @@ class EditorNotifier extends StateNotifier<EditorState> {
     state = state.copyWith(
       tabs: state.tabs.map((t) => t.id == tabId ? t.copyWith(cursorPosition: cursor) : t).toList(),
     );
+    _debouncedSaveSession();
   }
 
   Future<void> updateSelection(String tabId, EditorSelection selection) async {
     state = state.copyWith(
       tabs: state.tabs.map((t) => t.id == tabId ? t.copyWith(selection: selection) : t).toList(),
     );
+    _debouncedSaveSession();
+  }
+
+  void _debouncedSaveSession() {
+    _cursorSaveDebounce?.cancel();
+    _cursorSaveDebounce = Timer(const Duration(milliseconds: 400), () => unawaited(saveSession()));
   }
 
   Future<void> updateTab(String tabId, EditorTab Function(EditorTab) update) async {
@@ -253,9 +274,10 @@ class EditorNotifier extends StateNotifier<EditorState> {
   }
 
   /// Persists the open tab list and active tab for the current workspace, so
-  /// [_loadSession] can restore it after an app restart. Only tab identity
-  /// (id/path/title/pinned) is saved, not buffer content — reopening a tab
-  /// re-reads the file from disk.
+  /// [_loadSession] can restore it after an app restart. Tab identity
+  /// (id/path/title/pinned) and the last-known cursor/selection are saved,
+  /// not buffer content — reopening a tab re-reads the file from disk, then
+  /// the restored cursor/selection re-applies against that fresh content.
   Future<void> saveSession() async {
     final workspaceId = state.workspaceId;
     if (workspaceId == null) return;
@@ -265,6 +287,9 @@ class EditorNotifier extends StateNotifier<EditorState> {
               'path': t.path,
               'title': t.title,
               'isPinned': t.isPinned,
+              if (t.cursorPosition != null) 'cursorOffset': t.cursorPosition!.offset,
+              if (t.selection != null) 'selectionStart': t.selection!.start,
+              if (t.selection != null) 'selectionEnd': t.selection!.end,
             })
         .toList());
     await _db.into(_db.desktopEditorState).insertOnConflictUpdate(
@@ -279,6 +304,7 @@ class EditorNotifier extends StateNotifier<EditorState> {
   @override
   void dispose() {
     _eventSub?.cancel();
+    _cursorSaveDebounce?.cancel();
     super.dispose();
   }
 }
@@ -661,6 +687,11 @@ class LayoutNotifier extends StateNotifier<LayoutState> {
             panelVisibilityJson: visibilityJson,
           ),
         );
+    _eventBus.publish(LayoutChanged(workspaceId, {
+      'primary': state.primarySidebarWidth,
+      'secondary': state.secondarySidebarWidth,
+      'bottom': state.bottomPanelHeight,
+    }));
   }
 
   /// Debounced persist for drag-resize, which fires on every pointer-move frame -- writing to
@@ -699,6 +730,7 @@ class LayoutNotifier extends StateNotifier<LayoutState> {
 
   void togglePrimarySidebar() {
     state = state.copyWith(showPrimarySidebar: !state.showPrimarySidebar);
+    _publishVisibility('primary', state.showPrimarySidebar);
     unawaited(_persist());
   }
 
@@ -706,12 +738,14 @@ class LayoutNotifier extends StateNotifier<LayoutState> {
   /// switching [LayoutState.primarySidebarPanel] to it if Source Control was showing instead.
   void showExplorerPanel() {
     state = state.copyWith(showPrimarySidebar: true, primarySidebarPanel: PrimarySidebarPanel.explorer);
+    _publishVisibility('primary', true);
     unawaited(_persist());
   }
 
   /// Shows the Source Control (Git) panel in the primary sidebar -- D5's activity-bar wiring.
   void showSourceControlPanel() {
     state = state.copyWith(showPrimarySidebar: true, primarySidebarPanel: PrimarySidebarPanel.sourceControl);
+    _publishVisibility('primary', true);
     unawaited(_persist());
   }
 
@@ -719,17 +753,28 @@ class LayoutNotifier extends StateNotifier<LayoutState> {
   /// the D6 stub on `ActivityBar`'s "AURA" item.
   void showControlCenterPanel() {
     state = state.copyWith(showPrimarySidebar: true, primarySidebarPanel: PrimarySidebarPanel.controlCenter);
+    _publishVisibility('primary', true);
     unawaited(_persist());
   }
 
   void toggleSecondarySidebar() {
     state = state.copyWith(showSecondarySidebar: !state.showSecondarySidebar);
+    _publishVisibility('secondary', state.showSecondarySidebar);
     unawaited(_persist());
   }
 
   void toggleBottomPanel() {
     state = state.copyWith(showBottomPanel: !state.showBottomPanel);
+    _publishVisibility('bottom', state.showBottomPanel);
     unawaited(_persist());
+  }
+
+  /// No-ops silently when no workspace is open yet -- visibility toggles are reachable
+  /// before [_loadLayout] ever runs (e.g. the workspace picker's own shell chrome).
+  void _publishVisibility(String panelId, bool visible) {
+    final workspaceId = state.workspaceId;
+    if (workspaceId == null) return;
+    _eventBus.publish(PanelVisibilityChanged(workspaceId, panelId, visible));
   }
 
   @override
@@ -742,12 +787,11 @@ class LayoutNotifier extends StateNotifier<LayoutState> {
 
 /// Host state notifier.
 class HostNotifier extends StateNotifier<HostState> {
-  HostNotifier(this._eventBus, this._hostdClient) : super(const HostState()) {
+  HostNotifier(this._eventBus) : super(const HostState()) {
     _subscribeToEvents();
   }
 
   final IdeEventBus _eventBus;
-  final HostdControlClient _hostdClient;
   StreamSubscription? _eventSub;
 
   void _subscribeToEvents() {
@@ -775,30 +819,15 @@ class HostNotifier extends StateNotifier<HostState> {
     }
   }
 
-  Future<void> refreshStatus() async {
-    try {
-      // Reaching /status without an exception means aura_hostd is reachable
-      // (it answers /status unauthenticated); `authenticated` reflects whether
-      // pairing has completed.
-      final status = await _hostdClient.status();
-      state = state.copyWith(
-        isConnected: status['authenticated'] == true,
-        backendUrl: status['backend_url'] as String?,
-      );
-      if (state.isConnected) {
-        final roots = await _hostdClient.roots();
-        state = state.copyWith(grantedRoots: roots.map((r) => r['path'] as String).toList());
-      }
-    } catch (_) {
-      state = state.copyWith(isConnected: false, grantedRoots: []);
-    }
-  }
-
   /// Mirrors a polled [HostdStatusSnapshot] (from `hostdStatusProvider`,
   /// the same source `HostPanel`/`HostDaemonPage` use) into this state, so
-  /// callers of [hostNotifierProvider] see live status rather than whatever
-  /// [refreshStatus] last fetched — which, absent this, is never, since
-  /// nothing else here calls it.
+  /// callers of [hostNotifierProvider] see live status. This is the only
+  /// path that populates [HostState] from `/status` — a prior one-shot
+  /// `refreshStatus()` method duplicated this via direct `HostdControlClient`
+  /// calls but had zero call sites anywhere in the app; removed rather than
+  /// left as dead code (2026-09-25 audit follow-up). That removal left this
+  /// notifier's own `HostdControlClient` unused, so it is gone too -- this
+  /// class reaches the daemon only through the polled snapshot above.
   void updateFromSnapshot(HostdStatusSnapshot snapshot) {
     state = state.copyWith(
       isConnected: snapshot.authenticated,
@@ -986,8 +1015,7 @@ final layoutNotifierProvider = StateNotifierProvider<LayoutNotifier, LayoutState
 /// Provider for host notifier.
 final hostNotifierProvider = StateNotifierProvider<HostNotifier, HostState>((ref) {
   final eventBus = ref.watch(ideEventBusProvider);
-  final hostdClient = ref.watch(hostdControlClientProvider);
-  final notifier = HostNotifier(eventBus, hostdClient);
+  final notifier = HostNotifier(eventBus);
   // Keep this notifier's isConnected/backendUrl/grantedRoots in sync with
   // the same polled status HostPanel/HostDaemonPage show, so every host
   // status display in the app agrees.

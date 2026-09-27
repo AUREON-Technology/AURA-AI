@@ -1,4 +1,10 @@
 # AURA AI — Full Upgrade Roadmap
+
+> **Superseded as the forward plan (2026-09-25).** The canonical roadmap is now
+> [`docs/roadmaps/AURA_MASTER_UPGRADE_ROADMAP.md`](../roadmaps/AURA_MASTER_UPGRADE_ROADMAP.md); every phase in this file is mapped there by
+> [`AURA_ROADMAP_RECONCILIATION.md`](../roadmaps/AURA_ROADMAP_RECONCILIATION.md).
+> This file is kept as a historical evidence ledger; do not add new phases here.
+
 ## Desktop IDE Productionization + Two-Plane Deployment Architecture
 
 **Date:** 2026-09-25  

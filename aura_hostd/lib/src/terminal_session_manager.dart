@@ -1,5 +1,7 @@
-/// Owns every live [PtySession] created through the `/terminal` WebSocket
-/// route on [ControlServer]'s loopback HTTP server (see control_server.dart).
+/// Owns every live [PtySessionInterface] session (Windows [PtySession] or
+/// POSIX `PosixPtySession`, see `pty_session_interface.dart`) created through
+/// the `/terminal` WebSocket route on [ControlServer]'s loopback HTTP server
+/// (see control_server.dart).
 ///
 /// One connection = one session, created only once the client sends a
 /// `start` frame carrying the initial size -- the WebSocket itself is
@@ -13,6 +15,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'pty_session.dart';
+import 'pty_session_interface.dart';
+import 'posix_pty_session.dart';
 import 'workspace_store.dart';
 import 'containment.dart' show WorkspaceRoot;
 
@@ -29,7 +33,7 @@ class TerminalSessionManager {
 
   final WorkspaceStore _workspaceStore;
   final TerminalSessionLogger _logger;
-  final Map<String, PtySession> _sessions = {};
+  final Map<String, PtySessionInterface> _sessions = {};
 
   /// Handles one `/terminal` WebSocket connection end to end: trust-checks
   /// [rootPath] against granted roots (same bar `command_policy.dart` uses
@@ -59,7 +63,7 @@ class TerminalSessionManager {
       return;
     }
 
-    PtySession? session;
+    PtySessionInterface? session;
     StreamSubscription<Uint8List>? outputSub;
 
     Future<void> teardown() async {
@@ -85,12 +89,23 @@ class TerminalSessionManager {
             final cols = (msg['cols'] as num?)?.toInt() ?? 80;
             final rows = (msg['rows'] as num?)?.toInt() ?? 24;
             final sessionId = 'pty_${DateTime.now().microsecondsSinceEpoch}';
-            final s = PtySession(
-              sessionId: sessionId,
-              workingDirectory: root.canonicalPath,
-              initialCols: cols,
-              initialRows: rows,
-            );
+            // Windows gets the proven Win32 ConPTY backend; Linux/macOS get the POSIX backend
+            // (posix_pty_session.dart) -- UNTESTED as of 2026-09-25, see that file's own doc
+            // comment. Both implement PtySessionInterface, so nothing below this branch cares
+            // which one it got.
+            final PtySessionInterface s = Platform.isWindows
+                ? PtySession(
+                    sessionId: sessionId,
+                    workingDirectory: root.canonicalPath,
+                    initialCols: cols,
+                    initialRows: rows,
+                  )
+                : PosixPtySession(
+                    sessionId: sessionId,
+                    workingDirectory: root.canonicalPath,
+                    initialCols: cols,
+                    initialRows: rows,
+                  );
             try {
               await s.start();
             } catch (error) {

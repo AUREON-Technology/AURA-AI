@@ -105,10 +105,31 @@ class HostdControlClient {
     final decoded = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
     final decodedMap = decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw HostdControlError(
-        response.statusCode,
-        (decodedMap['error'] as String?) ?? 'HTTP ${response.statusCode}',
-      );
+      // The git write routes (commit/checkout/pull/push/merge) respond with a non-2xx status
+      // *and* a structured `{'ok': false, 'reason': ..., ...}` body for an expected business
+      // outcome (nothing staged, would overwrite local changes, diverged, conflict) -- distinct
+      // from a transport/auth/not-found failure, which never sets `ok`. Discarding that body and
+      // throwing a generic "HTTP 409" here (as this used to do unconditionally) silently broke
+      // every one of those callers' structured-failure handling, since they never got to inspect
+      // `result['reason']`/`result['conflicted_files']` -- found while wiring up `gitMerge`'s
+      // conflict path (2026-09-25 audit follow-up), but it affects every existing caller that
+      // already branches on `result['ok'] == false`.
+      if (decodedMap['ok'] == false) {
+        return decodedMap;
+      }
+      final message = (decodedMap['error'] as String?) ?? 'HTTP ${response.statusCode}';
+      // `control_server.dart`'s unmatched-route fallback is this exact literal string -- distinct
+      // from every other legitimate 404 in that file (a granted-root or path-not-found message).
+      // A stale daemon binary running server code that predates a route the client now calls
+      // reports it this way, which otherwise reaches the user as a bare, meaningless string.
+      if (response.statusCode == 404 && message == 'no such endpoint') {
+        throw HostdControlError(
+          response.statusCode,
+          'The local aura_hostd daemon does not recognize this request -- it may be out of '
+          'date. Rebuild and restart aura_hostd, then try again.',
+        );
+      }
+      throw HostdControlError(response.statusCode, message);
     }
     return decodedMap;
   }
@@ -180,6 +201,14 @@ class HostdControlClient {
 
   Future<Map<String, dynamic>> gitCheckout({required String root, required String branch, bool create = false}) =>
       _request('POST', '/git/checkout', body: {'root': root, 'branch': branch, 'create': create});
+
+  /// D5 Git panel: merges [branch] into the human's own checked-out working tree -- distinct from
+  /// [gitMergeTask] below, which only ever targets a task's isolated worktree.
+  Future<Map<String, dynamic>> gitMerge({required String root, required String branch}) =>
+      _request('POST', '/git/merge', body: {'root': root, 'branch': branch});
+
+  Future<Map<String, dynamic>> gitMergeAbort({required String root}) =>
+      _request('POST', '/git/merge-abort', body: {'root': root});
 
   /// Human-only remote-sync routes (`git_service.dart` branches/fetch/pull/push) --
   /// same boundary as the git routes above. `push` takes no refspec server-side:

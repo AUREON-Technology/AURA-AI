@@ -11,6 +11,7 @@ import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/hostd/hostd_control_client.dart';
+import 'package:aura_client/core/hostd/hostd_error_messages.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/hostd/hostd_supervisor.dart';
 
@@ -71,7 +72,7 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
       ref.invalidate(hostdStatusProvider);
     } catch (error) {
       if (mounted) {
-        AuraSnackbar.show(context, message: 'Could not start aura_hostd: $error', kind: AuraSnackbarKind.error);
+        AuraSnackbar.show(context, message: 'Could not start aura_hostd: ${describeHostdError(error)}', kind: AuraSnackbarKind.error);
       }
     } finally {
       if (mounted) setState(() => _starting = false);
@@ -86,7 +87,7 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
         await ref.read(hostdControlClientProvider).shutdown();
       } catch (error) {
         if (mounted) {
-          AuraSnackbar.show(context, message: 'Could not stop aura_hostd: $error', kind: AuraSnackbarKind.error);
+          AuraSnackbar.show(context, message: 'Could not stop aura_hostd: ${describeHostdError(error)}', kind: AuraSnackbarKind.error);
         }
         return;
       }
@@ -185,7 +186,7 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
       }
     } catch (error) {
       if (mounted) {
-        AuraSnackbar.show(context, message: 'Could not start pairing: $error', kind: AuraSnackbarKind.error);
+        AuraSnackbar.show(context, message: 'Could not start pairing: ${describeHostdError(error)}', kind: AuraSnackbarKind.error);
       }
     } finally {
       if (mounted) setState(() => _pairing = false);
@@ -240,7 +241,7 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
           statusAsync.when(
             data: (status) => _buildStatusCard(palette, status, supervisor),
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, _) => Text('Could not check status: $error', style: TextStyle(color: palette.danger)),
+            error: (error, _) => Text('Could not check status: ${describeHostdError(error)}', style: TextStyle(color: palette.danger)),
           ),
           const SizedBox(height: AuraSpacing.lg),
           statusAsync.maybeWhen(
@@ -295,14 +296,30 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
             children: [
               Icon(
                 status.reachable ? Icons.circle : Icons.circle_outlined,
-                color: status.reachable ? palette.success : palette.textSecondary,
+                color: !status.reachable
+                    ? palette.textSecondary
+                    : (status.authenticated && status.backendConnected != true
+                        ? palette.warning
+                        : palette.success),
                 size: 12,
               ),
               const SizedBox(width: AuraSpacing.sm),
               Text(
-                status.reachable
-                    ? (status.authenticated ? 'Running, paired' : 'Running, not paired')
-                    : 'Not running',
+                !status.reachable
+                    ? 'Not running'
+                    : !status.authenticated
+                        ? 'Running, not paired'
+                        // Paired (stored token) but not connected happens right after a drop --
+                        // a backend redeploy, a network blip -- while the daemon's reconnect
+                        // loop is in backoff; every tool call fails during that window, so this
+                        // must read differently from a genuinely live pairing. A null
+                        // `backendConnected` is neither: the daemon is too old to report the
+                        // field, so say that rather than accusing it of reconnecting forever.
+                        : switch (status.backendConnected) {
+                            true => 'Running, paired',
+                            false => 'Running, reconnecting...',
+                            null => 'Running, paired -- update aura_hostd to see connection status',
+                          },
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ],

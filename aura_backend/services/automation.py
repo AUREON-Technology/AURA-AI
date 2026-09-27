@@ -17,7 +17,7 @@ class AutomationService:
     method.
     """
     def analyze_email(self, subject: str, sender: str, body: str) -> dict:
-        """Analyzes email subject and body using Gemini to return structured JSON data."""
+        """Analyzes email subject and body on the local inference host, returning structured JSON."""
         prompt = f"""
         Analyze the following email and extract structured metadata and action items.
         Sender: {sender}

@@ -84,6 +84,10 @@ void main() {
       });
       expect(result['exit_code'], 0);
       expect((result['stdout'] as String).trim(), workspaceDir.path);
+    // Separate, pre-existing issue this fix surfaces rather than causes: Git for Windows' `sh.exe`
+    // runs in its own MSYS POSIX view, so `pwd` reports the MSYS-translated path (`/tmp/...`)
+    // rather than the Windows path the test hardcodes -- the shell itself runs fine (exit 0, real
+    // output). Fixing the assertion to account for MSYS path translation is out of scope here.
     }, testOn: '!windows');
 
     test('refuses a non-allowlisted command in an untrusted workspace without running it',
@@ -96,7 +100,7 @@ void main() {
         throwsA(isA<RpcError>()),
       );
       expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isFalse);
-    }, testOn: '!windows');
+    });
 
     test('allows an arbitrary command once the workspace is trusted', () async {
       roots.setTrusted(workspaceDir.path, true);
@@ -106,7 +110,7 @@ void main() {
       });
       expect(result['exit_code'], 0);
       expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isTrue);
-    }, testOn: '!windows');
+    });
 
     test('refuses rm -rf even in a trusted workspace', () async {
       roots.setTrusted(workspaceDir.path, true);
@@ -117,7 +121,7 @@ void main() {
         }),
         throwsA(isA<RpcError>()),
       );
-    }, testOn: '!windows');
+    });
 
     test('kills a command that exceeds its timeout', () async {
       roots.setTrusted(workspaceDir.path, true);
@@ -127,7 +131,24 @@ void main() {
       });
       expect(result['exit_code'], isNot(0));
       expect(result['stderr'], contains('timeout'));
-    }, testOn: '!windows');
+    });
+
+    test('a ProcessException from Process.start is wrapped with the resolved '
+        'executable, cwd, and whether each existed', () async {
+      roots.setTrusted(workspaceDir.path, true);
+      try {
+        await handler.run({
+          'command': ['this_binary_does_not_exist_xyz_12345', 'arg'],
+          'timeout_s': 5.0,
+        });
+        fail('expected an RpcError');
+      } on RpcError catch (error) {
+        expect(error.message, contains('this_binary_does_not_exist_xyz_12345'));
+        expect(error.message, contains(workspaceDir.path));
+        expect(error.message, contains('executable exists: false'));
+        expect(error.message, contains('cwd exists: true'));
+      }
+    });
 
     test('refuses to run with no granted workspace root', () async {
       final emptyHandler = TaskHandler(WorkspaceRoots(const []));
@@ -161,7 +182,7 @@ void main() {
       expect(stdoutFromChunks, contains('out1'));
       expect(stdoutFromChunks, contains('out2'));
       expect(stderrFromChunks, contains('err1'));
-    }, testOn: '!windows');
+    });
 
     test('run works identically with no onChunk callback at all', () async {
       roots.setTrusted(workspaceDir.path, true);
@@ -171,7 +192,7 @@ void main() {
       });
       expect(result['exit_code'], 0);
       expect(result['stdout'], contains('hi'));
-    }, testOn: '!windows');
+    });
 
     test('caps captured/forwarded output at the daemon-side limit', () async {
       roots.setTrusted(workspaceDir.path, true);
@@ -182,7 +203,7 @@ void main() {
       expect(result['exit_code'], 0);
       expect((result['stdout'] as String).length, lessThanOrEqualTo(500000));
       expect(result['stderr'], contains('truncated'));
-    }, testOn: '!windows');
+    });
   });
 
   group('needsApproval consent tier (D5)', () {
@@ -193,47 +214,53 @@ void main() {
       handler = TaskHandler(roots, approvals);
     });
 
+    // `mkdir newdir` is not on `readOnlyAllowlistPatterns` and contains no shell metacharacters,
+    // so (unlike the `echo hello > written.txt` this group used to use) it reaches the
+    // `needsApproval` path instead of being refused outright by `command_policy.dart`'s
+    // `_shellMetacharacters` hard-deny check -- see that check's own doc comment for why `>`
+    // never even reaches the approval queue.
+
     test(
         'a non-allowlisted command in an untrusted workspace queues for approval instead of '
         'running immediately, then runs once approved', () async {
       final future = handler.run({
-        'command': ['sh', '-c', 'echo hello > written.txt'],
+        'command': ['sh', '-c', 'mkdir newdir'],
         'timeout_s': 5.0,
       });
       // `run()` executes synchronously up to the first real suspension point -- the queue
       // registration below has already happened by the time `run()` returns a Future.
       expect(approvals.list(), hasLength(1));
-      expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isFalse);
+      expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isFalse);
 
       approvals.respond(approvals.list().single.id, true);
       final result = await future;
       expect(result['exit_code'], 0);
-      expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isTrue);
-    }, testOn: '!windows');
+      expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isTrue);
+    });
 
     test('rejecting a queued command throws and never runs it', () async {
       final future = handler.run({
-        'command': ['sh', '-c', 'echo hello > written.txt'],
+        'command': ['sh', '-c', 'mkdir newdir'],
         'timeout_s': 5.0,
       });
       approvals.respond(approvals.list().single.id, false);
       await expectLater(future, throwsA(isA<RpcError>()));
-      expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isFalse);
-    }, testOn: '!windows');
+      expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isFalse);
+    });
 
     test(
         'an approved command is refused if its workspace root was revoked while the approval '
         'was pending (post-approval revalidation)', () async {
       final future = handler.run({
-        'command': ['sh', '-c', 'echo hello > written.txt'],
+        'command': ['sh', '-c', 'mkdir newdir'],
         'timeout_s': 5.0,
       });
       final pending = approvals.list().single;
       roots.removeRoot(workspaceDir.path);
       approvals.respond(pending.id, true);
       await expectLater(future, throwsA(isA<RpcError>()));
-      expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isFalse);
-    }, testOn: '!windows');
+      expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isFalse);
+    });
 
     test('a trusted workspace never queues -- the command runs immediately', () async {
       roots.setTrusted(workspaceDir.path, true);
@@ -243,7 +270,7 @@ void main() {
       });
       expect(result['exit_code'], 0);
       expect(approvals.list(), isEmpty);
-    }, testOn: '!windows');
+    });
   });
 
   group('write-gating consent tier (D6)', () {

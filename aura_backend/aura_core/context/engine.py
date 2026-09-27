@@ -439,8 +439,26 @@ class ContextEngine:
         history_tokens = sum(self._tokenizer.count(m.content) + 4 for m in history)
         user_tokens = self._tokenizer.count(request.user_message) + 4
         remaining = budget.total - history_tokens - user_tokens - cag_reserved
+        # `pack()` drops -- never truncates -- a pinned item that does not fit ("a pinned item
+        # that cannot fit at all is a configuration error", domain/context.py). The flat
+        # `+ 64` floor below was sized for "some slack for the variable tail", not for what the
+        # already-pinned candidates (the system prompt, CAG fence rules, and the turn-nonce
+        # fence rules ADR-006's DATA-channel fencing depends on) actually cost. A long-running
+        # Engineer session (real conversation history + a persona system prompt padded with
+        # many tool descriptions) can drive `remaining` toward zero, collapsing the packing
+        # budget to that bare floor -- far smaller than the pinned candidates -- so the model
+        # silently generated with no system prompt, no persona, and no trust-channel fencing at
+        # all. Confirmed live: a real Engineer turn logged "context items dropped for budget"
+        # with used=0 -- every pinned candidate dropped, not just the variable tail. Reserving
+        # every already-pinned candidate's own cost as an additional floor guarantees the
+        # highest-priority items (processed first in `pack()`) always have room to fit.
+        pinned_reserved = sum(item.tokens for item in candidates if item.is_pinned)
         packing_budget = ContextBudget(
-            total=max(budget.reserved_for_output + 64, remaining + cag_reserved),
+            total=max(
+                budget.reserved_for_output + 64,
+                remaining + cag_reserved,
+                pinned_reserved + budget.reserved_for_output,
+            ),
             reserved_for_output=budget.reserved_for_output,
             section_caps=budget.section_caps,
         )

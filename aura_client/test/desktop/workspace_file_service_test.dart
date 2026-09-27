@@ -2,6 +2,8 @@
 /// 2026-09-25): rename, delete, and create, added to `WorkspaceFileService` since these are
 /// human-initiated writes that go straight through `dart:io` (containment-checked), the same way
 /// the existing `readFile`/`writeFile` already do -- no hostd grant involved.
+library;
+
 import 'dart:io';
 
 import 'package:aura_client/core/security/path_containment.dart';

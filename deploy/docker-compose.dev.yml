@@ -12,6 +12,15 @@
 
 name: aura-dev
 
+# Release identity (BLOCK-03), mirroring docker-compose.prod.yml so the dev stack can answer
+# /health/version too -- the two stacks share a host, and "which build is this?" has to be
+# answerable of whichever one is being looked at.
+x-release-args: &release_args
+  GIT_SHA: ${AURA_GIT_SHA:-}
+  GIT_REF: ${AURA_GIT_REF:-}
+  BUILD_TIME: ${AURA_BUILD_TIME:-}
+  DEPLOYMENT_ID: ${AURA_DEPLOYMENT_ID:-}
+
 x-logging: &logging
   driver: json-file
   options:
@@ -121,6 +130,7 @@ services:
     build:
       context: ../aura_backend
       dockerfile: Dockerfile
+      args: *release_args
     <<: *restart
     logging: *logging
     command: >
@@ -319,6 +329,7 @@ services:
     build:
       context: ../aura_backend
       dockerfile: Dockerfile
+      args: *release_args
     <<: *restart
     logging: *logging
     command: celery -A tasks worker -Q realtime -c 2 --loglevel=info --max-tasks-per-child=200
@@ -373,6 +384,7 @@ services:
     build:
       context: ../aura_backend
       dockerfile: Dockerfile
+      args: *release_args
     <<: *restart
     logging: *logging
     command: celery -A tasks worker -Q ingestion,learning -c 2 --loglevel=info --max-tasks-per-child=50
@@ -398,6 +410,7 @@ services:
       # The only image with requirements-train.txt (peft). Without it LocalLoraTrainer fails
       # every job with a ConfigurationError -- see docs/guides/mlops-guide.md.
       args:
+        <<: *release_args
         AURA_TRAINING_DEPS: "true"
     <<: *restart
     logging: *logging
@@ -423,6 +436,7 @@ services:
     build:
       context: ../aura_backend
       dockerfile: Dockerfile
+      args: *release_args
     <<: *restart
     logging: *logging
     command: celery -A celery_app beat --loglevel=info

@@ -82,8 +82,9 @@ class FunctionTool:
         except ToolExecutionError:
             raise
         except Exception as exc:
+            detail = str(exc) or type(exc).__name__
             raise ToolExecutionError(
-                f"{self._spec.name} failed: {type(exc).__name__}",
+                f"{self._spec.name} failed: {detail}",
                 tool=self._spec.name,
                 cause=exc,
             ) from exc

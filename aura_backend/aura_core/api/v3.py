@@ -1240,6 +1240,23 @@ def build_app(container: Any, *, authenticator: Any, rate_limiter: Any = None) -
     )
     app.include_router(build_router(container, authenticator=authenticator, rate_limiter=rate_limiter))
 
+    # The header floor and the metrics gate live here, not only in nginx: build_app is the whole
+    # edge on any target that runs the gateway as its own service (Railway, the CLI), and a live
+    # probe of the Railway Control Plane found no security headers at all and /metrics readable by
+    # anyone. See aura_core/api/security_headers.py for why CSP is not sent from here.
+    from .security_headers import MetricsAuthMiddleware, SecurityHeadersMiddleware
+
+    if container.settings.observability.metrics_token:
+        app.add_middleware(
+            MetricsAuthMiddleware,
+            path=container.settings.observability.metrics_path,
+            token=container.settings.observability.metrics_token,
+        )
+    if container.settings.security.security_headers_enabled:
+        app.add_middleware(
+            SecurityHeadersMiddleware, csp=container.settings.security.content_security_policy
+        )
+
     @app.exception_handler(AuraError)
     async def domain_error_handler(request: Request, exc: AuraError) -> JSONResponse:
         """Map domain errors to status codes.
@@ -1267,9 +1284,24 @@ def build_app(container: Any, *, authenticator: Any, rate_limiter: Any = None) -
     async def readiness() -> JSONResponse:
         """Dependencies are usable. This is what a load balancer should gate traffic on."""
         health = await container.health()
+        # Carried on the readiness payload too, so an operator reading a 503 can tell which
+        # build produced it without a second request.
+        health["release"] = container.settings.release.to_public_dict()
         return JSONResponse(
             status_code=200 if health["healthy"] else 503, content=health
         )
+
+    @app.get("/health/version")
+    async def version() -> JSONResponse:
+        """Which build is answering (BLOCK-03).
+
+        Unauthenticated and dependency-free on purpose: a deploy's smoke test has to be able to
+        assert "the SHA I just shipped is the SHA now serving" before any credential exists, and
+        it must keep answering while a dependency is down -- the moment you most need to know
+        what is running. Serves only what ReleaseSettings.to_public_dict() allows, which is
+        build provenance and no configuration.
+        """
+        return JSONResponse(content=container.settings.release.to_public_dict())
 
     @app.get(container.settings.observability.metrics_path)
     async def metrics() -> Response:

@@ -1,5 +1,10 @@
 # AURA Upgrade Roadmap
 
+> **Superseded as the forward plan (2026-09-25).** The canonical roadmap is now
+> [`docs/roadmaps/AURA_MASTER_UPGRADE_ROADMAP.md`](roadmaps/AURA_MASTER_UPGRADE_ROADMAP.md); every phase in this file is mapped there by
+> [`AURA_ROADMAP_RECONCILIATION.md`](roadmaps/AURA_ROADMAP_RECONCILIATION.md).
+> This file is kept as a historical evidence ledger; do not add new phases here.
+
 Baselined against `8286b1a` on 2026-08-22. Supersedes the phase table in
 [`Doc/V2_BLUEPRINT.md`](../Doc/V2_BLUEPRINT.md) §13 and the forward-looking half of
 [`docs/analysis/03-missing-components-report.md`](analysis/03-missing-components-report.md).
@@ -975,7 +980,7 @@ Phase A, not by an estimate.
 | Live voice duplex | **Scaffolding** — WS session + engine + Flutter `/voice`; not device-proven; load round-trip open | Phase H |
 | Transcript NLP | **Scaffolding** — `aura_core/nlp/` normalize + shallow intent; quality on real ASR unproven | Phase I |
 | Persistent engineer workspaces | **Built, not proven** — Units 1–11 on `main` (`91b6d5c` / #70; panel + dev parity in #72); VPS still `AURA_SANDBOX_ENABLED=false`, no sandbox profile; 10 live checks open | Phase J (workspaces), ADR-013/014 |
-| Desktop Engineer (`aura_hostd`) | **In tree, partial** — Units 1–9 done with disclosed cuts (live xterm / restart-on-crash / a bundled `aura_hostd` binary / interactive tiered consent remain open); Desktop OAuth client now registered (2026-09-10); still unproven end to end — no Dart/Flutter toolchain run anywhere but CI ([ADR-011](architecture/011-desktop-engineer-agent.md)). **Correction (2026-09-25):** the "real PTY... remain open" half of this line is now stale — Phase K/D4 added a genuine Win32 ConPTY (`aura_hostd/lib/src/pty_session.dart`), post-dating this row; it is Windows-only (no POSIX PTY exists) and has never been exercised by any toolchain or CI here (`hostd-ci.yml` runs `ubuntu-latest` only). See the [Desktop IDE Phase 0 audit](reports/desktop-ide-phase0-audit-2026-09-25.md) §3. | Phase J (Desktop) |
+| Desktop Engineer (`aura_hostd`) | **In tree, partial** — Units 1–9 done with disclosed cuts (live xterm / restart-on-crash / a bundled `aura_hostd` binary / interactive tiered consent remain open); Desktop OAuth client now registered (2026-09-10); still unproven end to end — no Dart/Flutter toolchain run anywhere but CI ([ADR-011](architecture/011-desktop-engineer-agent.md)). **Correction (2026-09-25):** the "real PTY... remain open" half of this line is now stale — Phase K/D4 added a genuine Win32 ConPTY (`aura_hostd/lib/src/pty_session.dart`), post-dating this row. **Further update (2026-09-25):** a POSIX backend (`posix_pty_session.dart`, `posix_openpt`-based) now exists for Linux/macOS too, behind a shared `PtySessionInterface`, with OS-aware shell selection (`$SHELL`, falling back to `/bin/zsh`/`/bin/bash`) — but it is explicitly **UNTESTED**, written with no Dart toolchain available to compile or run it; a real `ubuntu-latest`/macOS CI run (`posix_pty_session_test.dart` exists to prove it once CI reaches a runner again, GAP-043 permitting) is what would move this to `VERIFIED`, not this note. See the [Desktop IDE Phase 0 audit](reports/desktop-ide-phase0-audit-2026-09-25.md) §3. | Phase J (Desktop) |
 | Multi-model routing | **Proven** against two real, simultaneously-running local models (135M and 3B params) — `FASTEST`/`QUALITY_FIRST`/`BALANCED`/failover all route on real measured behaviour; `CHEAPEST` ties (both cost `$0`) | Phase G2, `tests/load/test_multi_model_routing.py` |
 | Restore verified | **Yes for all three stores** — Postgres, Qdrant and Redis each restored from the `backup` service's own output ([A2 report](reports/phase-a2-restore-drill.md)); offsite copy and `restore.sh` still unexercised | Phase A2 |
 | Production deployments | **1 and counting** — the real VPS, 17 services, verified live over HTTPS on 2026-08-23 | Phase A1 |

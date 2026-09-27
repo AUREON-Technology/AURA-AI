@@ -544,3 +544,86 @@ class TestCompositeSandboxRunner:
         )
         with pytest.raises(SandboxError, match="unknown sandbox task"):
             await composite.run(SandboxHandle(task_id="ghost"), ["sh", "-c", "x"], timeout_s=5)
+
+    @pytest.mark.anyio
+    async def test_workspace_path_delegates_to_the_fallback_for_a_durable_handle(self) -> None:
+        """Production bug: `git_push`/`clone_repository` (`tools/coding.py`) call
+        `sandbox_runner.workspace_path(...)` on this composite, which had no such method at all --
+        an unconditional `AttributeError` on every call, regardless of which underlying runner a
+        durable handle resolves to. `_runner_for` guarantees a `WorkspaceManager`-opened handle
+        (exactly what `git_push`/`clone_repository` use) always resolves to the fallback, so
+        delegating there must return the same path the fallback itself reports."""
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+
+        fallback = InMemorySandboxRunner()
+        composite = CompositeSandboxRunner(
+            host_runner=HostAgentSandboxRunner(HostAgentRegistry()), fallback=fallback
+        )
+        handle = await fallback.open_workspace("workspace-key-for-velvet")
+
+        assert await composite.workspace_path(handle) == await fallback.workspace_path(handle)
+
+
+class TestHostAgentSandboxRunnerWorkspacePath:
+    @pytest.mark.anyio
+    async def test_raises_a_clear_sandbox_error_instead_of_an_attribute_error(self) -> None:
+        """A host-agent task runs on the user's own machine, not this server, so it has no
+        server-side workspace path to report. `_runner_for`'s invariant means production code
+        should never actually reach this, but the method must exist and fail loudly rather than
+        let a stray call surface an opaque `AttributeError`."""
+        runner = HostAgentSandboxRunner(HostAgentRegistry())
+        with pytest.raises(SandboxError, match="workspace_path"):
+            await runner.workspace_path(SandboxHandle(task_id="t1"))
+
+
+class TestHostAgentApprovalTimeout:
+    """`run`/`run_streaming`'s RPC timeout must reserve enough time for a D5 interactive-approval
+    wait on the daemon side (`approval_queue.dart`'s 5-minute timeout), not just network slack --
+    `write_file`/`write_files` already got this fix; `run`/`run_streaming` had not."""
+
+    @pytest.mark.anyio
+    async def test_run_floors_its_call_timeout_at_330s(self) -> None:
+        captured: dict[str, float] = {}
+
+        class _RecordingSession:
+            async def call(self, method, params, *, timeout_s):
+                captured["timeout_s"] = timeout_s
+                return {"stdout": "", "stderr": "", "exit_code": 0}
+
+        runner = HostAgentSandboxRunner(HostAgentRegistry())
+
+        async def _fake_session_for(handle):
+            return _RecordingSession()
+
+        runner._session_for = _fake_session_for  # type: ignore[method-assign]
+
+        await runner.run(SandboxHandle(task_id="t1"), ["sh", "-c", "true"], timeout_s=60.0)
+        assert captured["timeout_s"] == 330.0
+
+        await runner.run(SandboxHandle(task_id="t1"), ["sh", "-c", "true"], timeout_s=400.0)
+        assert captured["timeout_s"] == 405.0
+
+    @pytest.mark.anyio
+    async def test_run_streaming_floors_its_call_timeout_at_330s(self) -> None:
+        captured: dict[str, float] = {}
+
+        class _RecordingSession:
+            async def call_streaming(self, method, params, *, timeout_s):
+                captured["timeout_s"] = timeout_s
+                if False:
+                    yield None  # pragma: no cover - makes this an async generator
+
+        runner = HostAgentSandboxRunner(HostAgentRegistry())
+
+        async def _fake_session_for(handle):
+            return _RecordingSession()
+
+        runner._session_for = _fake_session_for  # type: ignore[method-assign]
+
+        async for _ in runner.run_streaming(SandboxHandle(task_id="t1"), ["sh", "-c", "true"], timeout_s=60.0):
+            pass
+        assert captured["timeout_s"] == 330.0
+
+        async for _ in runner.run_streaming(SandboxHandle(task_id="t1"), ["sh", "-c", "true"], timeout_s=400.0):
+            pass
+        assert captured["timeout_s"] == 405.0

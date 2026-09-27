@@ -74,7 +74,22 @@ class DeviceValidationService {
       // something to correlate this attestation call against — a
       // purely client-generated nonce can never be checked server-side.
       nonce = await _serverNonce(backendUrl: backendUrl, httpClient: httpClient);
-      hardwareToken = await sdk.requestToken(nonce: nonce);
+      try {
+        hardwareToken = await sdk.requestToken(nonce: nonce);
+      } catch (error) {
+        // An attestation SDK that fails must degrade to `unsupportedMarker`, never propagate:
+        // every caller of `getAttestationHeaders` (KnowledgeCenter, VoiceClient, ...) attaches
+        // these headers to an ordinary API call, so a throw here fails the *request* -- the user
+        // sees "Ingestion failed" or "Could not reach AURA", with the real cause only in a log.
+        // "The SDK could not produce a token" is already a first-class outcome below (the
+        // `hasHardware` branch), and PlayIntegrityClient/AppAttestClient each already return null
+        // for the two failure modes they anticipated (MissingPluginException, PlatformException);
+        // this closes the gap for every mode they did not -- a Play Services build that throws
+        // something else, a channel that isn't there at all. The marker sent is identical to the
+        // no-token case, so the backend's decision about what to accept is unchanged.
+        debugPrint('Device attestation SDK failed for $platformName: $error');
+        hardwareToken = null;
+      }
     }
 
     final hasHardware = hardwareToken != null && hardwareToken.isNotEmpty;

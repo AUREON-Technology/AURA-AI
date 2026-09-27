@@ -13,12 +13,14 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:win32/win32.dart';
 
+import 'pty_session_interface.dart';
+
 /// One live ConPTY session: a pseudoconsole plus the child process attached
 /// to it. Output is read on a dedicated [Isolate] because `ReadFile` on the
 /// pipe handle blocks its calling thread for the life of the session --
 /// running that on the main isolate would freeze every other RPC this daemon
 /// serves for as long as a terminal tab is open.
-class PtySession {
+class PtySession implements PtySessionInterface {
   PtySession({
     required this.sessionId,
     required this.workingDirectory,
@@ -327,11 +329,4 @@ class PtySession {
     _receivePort?.close();
     if (!_outputController.isClosed) await _outputController.close();
   }
-}
-
-class PtyException implements Exception {
-  PtyException(this.message);
-  final String message;
-  @override
-  String toString() => 'PtyException: $message';
 }

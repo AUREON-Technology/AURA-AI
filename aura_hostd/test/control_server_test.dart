@@ -152,7 +152,40 @@ void main() {
     final (status, body) = await client.request('GET', '/status', withToken: false);
     expect(status, 200);
     expect(body['authenticated'], false);
+    // Distinct from `authenticated` (has a stored token): whether the daemon's actual socket to
+    // the backend is open right now. This server was built with no `isBackendConnected` wired in
+    // (the shared setUp above), which must report the honest answer -- not connected -- rather
+    // than silently defaulting to a value that would make a dead connection look live.
+    expect(body['backend_connected'], false);
     expect((body['roots'] as List).length, 1);
+  });
+
+  test('GET /status reports backend_connected from the wired callback, independent of the '
+      'stored token', () async {
+    final connectedServer = ControlServer(
+      workspaceStore: workspaceStore,
+      configStore: configStore,
+      onPaired: (_) {},
+      terminalSessions: TerminalSessionManager(workspaceStore),
+      debugSessions: DebugSessionManager(workspaceStore),
+      approvalQueue: approvalQueue,
+      isolatedTasks: IsolatedTaskRegistry(workspaceStore.load()),
+      isBackendConnected: () => true,
+      logger: (_) {},
+    );
+    await connectedServer.start(configDir);
+    addTearDown(connectedServer.stop);
+    final controlFile = jsonDecode(File('${configDir.path}/control.json').readAsStringSync())
+        as Map<String, dynamic>;
+    final connectedClient = _ControlClient(controlFile['port'] as int, controlFile['token'] as String);
+    addTearDown(connectedClient.close);
+
+    final (status, body) = await connectedClient.request('GET', '/status', withToken: false);
+    expect(status, 200);
+    // No token was ever stored for this daemon instance -- `isBackendConnected` is independent of
+    // `authenticated`, exactly the case a stale "Host Connected" UI needs distinguished.
+    expect(body['authenticated'], false);
+    expect(body['backend_connected'], true);
   });
 
   test('every other endpoint refuses a missing or wrong token', () async {

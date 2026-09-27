@@ -36,6 +36,18 @@ def get_redis_client() -> "redis.Redis | None":
     fallback), never by crashing. Connection is attempted once per process
     and cached; callers that need to react to Redis recovering mid-process
     should catch exceptions on use and treat them the same as None.
+
+    Prefers a full connection URL (``AURA_REDIS_URL``, matching
+    ``aura_core/config/settings.py::InfrastructureSettings.redis_url`` and the working
+    :class:`~aura_core.adapters.redis_cache.RedisCache` adapter's own ``redis.from_url`` call) --
+    this is what Railway's managed Redis add-on provides (host, port, and password all in one
+    string, e.g. ``redis://default:PASSWORD@redis.railway.internal:6379``), and is also accepted
+    on the VPS if ever set there. Falls back to the discrete ``REDIS_HOST``/``AURA_REDIS_PASSWORD``
+    construction docker-compose.prod.yml sets instead. Without this fallback-first-URL ordering,
+    a deploy target that only sets the URL form silently connects to ``localhost:6379`` (refused)
+    and every caller here -- device pairing, refresh tokens, nonce replay protection -- degrades to
+    an in-process store that isn't shared across workers (confirmed live on Railway: a pairing
+    approval landing on a different worker than the one polling for it always saw "expired").
     """
     global _client, _attempted
     if _attempted:
@@ -43,12 +55,18 @@ def get_redis_client() -> "redis.Redis | None":
 
     _attempted = True
     try:
-        host = os.getenv("REDIS_HOST", "localhost")
-        password = _redis_password()
-        candidate = redis.Redis(
-            host=host, port=6379, db=0, password=password,
-            decode_responses=True, socket_connect_timeout=2,
-        )
+        url = os.getenv("AURA_REDIS_URL") or os.getenv("REDIS_URL")
+        if url:
+            candidate = redis.Redis.from_url(
+                url, decode_responses=True, socket_connect_timeout=2,
+            )
+        else:
+            host = os.getenv("REDIS_HOST", "localhost")
+            password = _redis_password()
+            candidate = redis.Redis(
+                host=host, port=6379, db=0, password=password,
+                decode_responses=True, socket_connect_timeout=2,
+            )
         candidate.ping()
         _client = candidate
         logger.info("Connected to Redis.")

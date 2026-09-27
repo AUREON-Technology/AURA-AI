@@ -109,10 +109,20 @@ class ExplorerService {
   /// falling back to dart:io silently either way -- means opening a workspace hostd has no grant
   /// for never surfaces that at all, since the client process can usually still read the folder
   /// itself via the OS (Phase 0 desktop audit, 2026-09-25).
+  /// [allowLocalFallback] gates the `dart:io` fallback below. It defaults to `true` for the
+  /// desktop IDE Explorer, where the client process and the granted root are on the same machine
+  /// so reading the path directly is a legitimate (if less-authoritative) substitute when hostd is
+  /// unreachable. Callers whose client device is *not* necessarily co-located with the granted
+  /// root -- `HostFileBrowserPage`, reachable from any platform pairing with a remote hostd, not
+  /// just the desktop app -- must pass `false`: falling back to `dart:io` there would read the
+  /// *client device's* filesystem at a path that only means anything on the remote host, which is
+  /// wrong rather than merely degraded (2026-09-25 audit follow-up, collapsing the two pages'
+  /// previously-duplicated listing/reading logic onto this service).
   Future<DirectoryListing> listDirectory({
     required String relativePath,
     List<String> grantedRoots = const [],
     required bool hostConnected,
+    bool allowLocalFallback = true,
   }) async {
     // Check if path is under a granted root for hostd. `relativePath` is '' for the workspace
     // root's own listing (see `_workspaceGrantCheckPath`'s doc comment) -- '' never starts with
@@ -134,7 +144,11 @@ class ExplorerService {
         return DirectoryListing(entries: entries);
       } catch (e) {
         // A *known-granted* root call failing is a transient/other problem, not a permissions
-        // one -- fall back to dart:io same as always.
+        // one -- fall back to dart:io same as always, unless the caller has ruled that fallback
+        // out entirely (see allowLocalFallback's doc comment).
+        if (!allowLocalFallback) {
+          return DirectoryListing(entries: [], error: e.toString());
+        }
       }
     } else if (hostConnected) {
       return const DirectoryListing(
@@ -142,6 +156,10 @@ class ExplorerService {
         error: 'This folder is outside every root granted to the host daemon.',
         isAccessDenied: true,
       );
+    }
+
+    if (!allowLocalFallback) {
+      return const DirectoryListing(entries: [], error: 'The host daemon is unreachable.');
     }
 
     // Fallback to dart:io -- hostd is offline, or a granted-root hostd call above failed
@@ -171,6 +189,7 @@ class ExplorerService {
     required String relativePath,
     List<String> grantedRoots = const [],
     required bool hostConnected,
+    bool allowLocalFallback = true,
   }) async {
     final hostdRoot = grantedRoots.firstWhere(
       (root) => _workspaceGrantCheckPath(relativePath).startsWith(root) || root == '',
@@ -182,15 +201,22 @@ class ExplorerService {
         final result = await _hostdClient.readFile(root: hostdRoot, path: relativePath);
         return result['content'] as String?;
       } catch (_) {
-        // Fall back to dart:io
+        // Fall back to dart:io, unless the caller ruled that out (see listDirectory's doc
+        // comment on allowLocalFallback -- same reasoning applies here).
+        if (!allowLocalFallback) return null;
       }
     } else if (hostConnected) {
       return null;
     }
 
+    if (!allowLocalFallback) return null;
+
     try {
       final resolvedPath = requireContainedClient(_workspaceRoot, relativePath);
-      return File(resolvedPath).readAsString();
+      // Awaited on purpose: returning the Future unawaited hands it to the caller *outside* this
+      // try, so a read that fails (missing file, permission denied) escaped as an exception
+      // instead of taking the `return null` below, which is what every caller expects.
+      return await File(resolvedPath).readAsString();
     } on ClientContainmentViolation {
       return null;
     } catch (_) {

@@ -267,12 +267,26 @@ class TaskHandler {
       milliseconds: (requestedTimeout * 1000).clamp(1000, _maxCommandTimeout.inMilliseconds).round(),
     );
 
-    final effectiveArgv = _lineBuffered(commandArgv);
-    final process = await Process.start(
-      effectiveArgv.first,
-      effectiveArgv.sublist(1),
-      workingDirectory: cwd,
-    );
+    final effectiveArgv = _resolveShellArgv(_lineBuffered(commandArgv));
+    final Process process;
+    try {
+      process = await Process.start(
+        effectiveArgv.first,
+        effectiveArgv.sublist(1),
+        workingDirectory: cwd,
+      );
+    } on ProcessException catch (exc) {
+      // A bare ProcessException here gave no way to tell "the resolved shell path was wrong" from
+      // "the working directory was wrong" from anything else without reproducing it live outside
+      // the running daemon -- confirmed painful once already. Surfacing what was actually
+      // attempted, and whether each half of it existed at the moment of failure, turns the next
+      // occurrence into something diagnosable from the error text alone.
+      throw RpcError(
+        'failed to start ${effectiveArgv.first} in $cwd: $exc '
+        '(executable exists: ${File(effectiveArgv.first).existsSync()}, '
+        'cwd exists: ${Directory(cwd).existsSync()})',
+      );
+    }
 
     final stdoutBuf = StringBuffer();
     final stderrBuf = StringBuffer();
@@ -511,4 +525,79 @@ bool _stdbufAvailable() {
 List<String> _lineBuffered(List<String> argv) {
   if (!_stdbufAvailable()) return argv;
   return ['stdbuf', '-oL', '-eL', ...argv];
+}
+
+String? _windowsShellPathCache;
+
+/// The caller (`aura_backend/aura_core/tools/coding.py::run_command` and friends) always sends
+/// `["sh", "-c", "<command>"]` -- correct unconditionally for the Docker sandbox (always Linux),
+/// but on Windows there is no `sh` on `PATH` by default (confirmed: only `Git\cmd` is on `PATH`,
+/// not `Git\bin`/`Git\usr\bin`, where Git for Windows' bundled POSIX `sh.exe` actually lives), so
+/// `Process.start('sh', ...)` fails to spawn at all -- every `run_command` call against a Windows
+/// desktop fails identically regardless of workspace or command, which is exactly what surfaced as
+/// a bare `SandboxError` in the Desktop IDE with no further detail. The command's own contents
+/// (`cat`, `ls`, `grep`, ...) are POSIX tools too (`command_policy.dart`'s allowlist), so the fix is
+/// to find Git for Windows' real `sh.exe` and substitute it -- not to reinterpret the command
+/// through `cmd.exe`, which has none of those built-ins.
+String? _findWindowsShell() {
+  final cached = _windowsShellPathCache;
+  if (cached != null) return cached.isEmpty ? null : cached;
+
+  try {
+    final where = Process.runSync('where', ['sh']);
+    if (where.exitCode == 0) {
+      final first = (where.stdout as String).split(RegExp(r'\r?\n')).firstWhere(
+            (line) => line.trim().isNotEmpty,
+            orElse: () => '',
+          );
+      final trimmed = first.trim();
+      // `where`'s exit code and stdout only prove *some* PATH entry matched the name -- not that
+      // the file is actually there right now (a stale PATH entry, a since-removed install, or a
+      // path Process.start can't launch directly all report success here). Trusting that
+      // unconditionally turned a real "no shell" case into a raw ProcessException instead of the
+      // friendly RpcError below telling the user to install Git for Windows -- verify it the same
+      // way the fallback candidates already are before caching it.
+      if (trimmed.isNotEmpty && File(trimmed).existsSync()) {
+        return _windowsShellPathCache = trimmed;
+      }
+    }
+  } catch (_) {
+    // `where` itself missing or erroring -- fall through to the well-known install locations.
+  }
+
+  final candidates = [
+    Platform.environment['ProgramFiles'],
+    Platform.environment['ProgramFiles(x86)'],
+    Platform.environment['LOCALAPPDATA'] != null
+        ? '${Platform.environment['LOCALAPPDATA']}\\Programs'
+        : null,
+  ].whereType<String>().expand((base) => [
+        '$base\\Git\\bin\\sh.exe',
+        '$base\\Git\\usr\\bin\\sh.exe',
+      ]);
+
+  for (final candidate in candidates) {
+    if (File(candidate).existsSync()) {
+      return _windowsShellPathCache = candidate;
+    }
+  }
+
+  _windowsShellPathCache = ''; // cache the miss too -- don't re-probe the filesystem every call
+  return null;
+}
+
+/// Substitutes a real shell executable for the bare `sh`/`bash` name on Windows; a no-op
+/// everywhere else, where normal `PATH` resolution already finds the real thing.
+List<String> _resolveShellArgv(List<String> argv) {
+  if (!Platform.isWindows || argv.isEmpty) return argv;
+  if (argv.first != 'sh' && argv.first != 'bash') return argv;
+  final resolved = _findWindowsShell();
+  if (resolved == null) {
+    throw RpcError(
+      'no POSIX shell found on this Windows machine -- install Git for Windows '
+      '(https://git-scm.com/download/win) so run_command has something to execute '
+      'the POSIX commands (cat, ls, grep, ...) Engineer generates against',
+    );
+  }
+  return [resolved, ...argv.sublist(1)];
 }

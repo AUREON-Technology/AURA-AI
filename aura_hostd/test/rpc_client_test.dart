@@ -191,6 +191,118 @@ void main() {
     expect(streamedStdout, contains('two'));
     expect((received.last['result'] as Map)['exit_code'], 0);
   }, testOn: '!windows');
+
+  group('pingInterval', () {
+    // A live session that goes connect -> disconnect -> reconnect with no application traffic in
+    // between (confirmed against a real deployment) is exactly the symptom of an idle WebSocket
+    // getting silently dropped -- the JSON message protocol only flows when a tool call is
+    // active, which can be minutes apart. `dart:io`'s WebSocket.pingInterval sends real
+    // protocol-level ping frames on its own schedule regardless, which every conformant WS server
+    // (including uvicorn's) answers with a pong transparently -- no backend change needed.
+    test('defaults to 20 seconds', () {
+      final handler = TaskHandler(WorkspaceRoots(const []));
+      final client = HostAgentClient(
+        wsUrl: server.wsUrl,
+        authToken: 't',
+        taskHandler: handler,
+        logger: (_) {},
+      );
+      expect(client.pingInterval, const Duration(seconds: 20));
+    });
+
+    test('a custom interval reaches the actual connected socket, not just this class', () async {
+      final handler = TaskHandler(WorkspaceRoots(const []));
+      final client = HostAgentClient(
+        wsUrl: server.wsUrl,
+        authToken: 't',
+        taskHandler: handler,
+        logger: (_) {},
+        pingInterval: const Duration(seconds: 7),
+      );
+      unawaited(client.run());
+      addTearDown(client.stop);
+
+      await server.clientSocket;
+      await Future<void>.delayed(Duration.zero);
+      expect(client.socketPingInterval, const Duration(seconds: 7));
+    });
+  });
+
+  group('isConnected', () {
+    // `control_server.dart`'s `/status` reports this distinctly from "have a stored token" --
+    // the daemon believing itself paired while its actual socket to the backend is down (mid
+    // reconnect backoff after a drop) is exactly the bug this field exists to make visible.
+    test('is false before the first connection attempt completes', () async {
+      final handler = TaskHandler(WorkspaceRoots(const []));
+      final client = HostAgentClient(
+        wsUrl: server.wsUrl,
+        authToken: 't',
+        taskHandler: handler,
+        logger: (_) {},
+      );
+      expect(client.isConnected, isFalse);
+    });
+
+    test('becomes true once the socket connects', () async {
+      final handler = TaskHandler(WorkspaceRoots(const []));
+      final client = HostAgentClient(
+        wsUrl: server.wsUrl,
+        authToken: 't',
+        taskHandler: handler,
+        logger: (_) {},
+      );
+      unawaited(client.run());
+      addTearDown(client.stop);
+
+      await server.clientSocket;
+      // The socket future resolves on the server side the instant it accepts the upgrade,
+      // slightly before the client's own `_isConnected = true` assignment runs -- give the
+      // client's event loop turn a chance to catch up rather than asserting in the same tick.
+      await Future<void>.delayed(Duration.zero);
+      expect(client.isConnected, isTrue);
+    });
+
+    test('becomes false again once the server drops the connection', () async {
+      final handler = TaskHandler(WorkspaceRoots(const []));
+      final client = HostAgentClient(
+        wsUrl: server.wsUrl,
+        authToken: 't',
+        taskHandler: handler,
+        logger: (_) {},
+        // A short max backoff so this test doesn't wait out the real 30s cap for the reconnect
+        // attempt `run()` makes right after -- irrelevant to what this test asserts either way.
+        maxBackoff: const Duration(milliseconds: 50),
+      );
+      unawaited(client.run());
+      addTearDown(client.stop);
+
+      final socket = await server.clientSocket;
+      await Future<void>.delayed(Duration.zero);
+      expect(client.isConnected, isTrue);
+
+      await socket.close();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(client.isConnected, isFalse);
+    });
+
+    test('becomes false immediately when stop() is called', () async {
+      final handler = TaskHandler(WorkspaceRoots(const []));
+      final client = HostAgentClient(
+        wsUrl: server.wsUrl,
+        authToken: 't',
+        taskHandler: handler,
+        logger: (_) {},
+      );
+      unawaited(client.run());
+
+      await server.clientSocket;
+      await Future<void>.delayed(Duration.zero);
+      expect(client.isConnected, isTrue);
+
+      client.stop();
+      expect(client.isConnected, isFalse);
+    });
+  });
 }
 
 /// Minimal single-subscriber "pull one at a time" wrapper -- avoids pulling in

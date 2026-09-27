@@ -22,7 +22,7 @@ import os
 import re
 from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
-from typing import Any, Mapping, Sequence
+from typing import ClassVar, Any, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from ..domain.errors import ConfigurationError
@@ -746,6 +746,12 @@ class ObservabilitySettings:
     service_name: str = "aura-core"
     telemetry_persist: bool = True
     trace_content_sampling: float = 0.0  # fraction of turns that persist prompt/output text
+    #: Bearer token required to read ``metrics_path``. Empty leaves the path open, which is
+    #: correct only where something in front restricts it -- nginx answers `deny all; return 404`
+    #: for it on the VPS. On a target where the app is the edge (Railway), set this: a live probe
+    #: found /metrics world-readable there, publishing which safety bypasses are on and which
+    #: dependencies are down.
+    metrics_token: str = ""
 
     @classmethod
     def from_env(cls) -> "ObservabilitySettings":
@@ -759,6 +765,7 @@ class ObservabilitySettings:
             service_name=_env("SERVICE_NAME", "aura-core") or "aura-core",
             telemetry_persist=_bool("TELEMETRY_PERSIST", True),
             trace_content_sampling=_float("TRACE_CONTENT_SAMPLING", 0.0, minimum=0.0, maximum=1.0),
+            metrics_token=(_env("METRICS_TOKEN", "") or "").strip(),
         )
 
 
@@ -776,6 +783,16 @@ class SecuritySettings:
     #: not a side effect of upgrading, matching how AURA_SANDBOX_ENABLED/AURA_GITHUB_ENABLED
     #: default off for the same reason.
     engineer_agent_roles: tuple[str, ...] = ()
+    #: Send the response header floor from the application itself. On by default: the nginx
+    #: template is not in the path on every deploy target, and a Railway probe found the gateway
+    #: serving no HSTS, XCTO, XFO, Referrer-Policy or Permissions-Policy at all. nginx strips the
+    #: app's copies with proxy_hide_header so the VPS still sees exactly one of each.
+    security_headers_enabled: bool = True
+    #: Content-Security-Policy, if the app should send one. Empty by default and left to the
+    #: edge: this origin also fronts the operator console and Grafana, whose policies are far
+    #: looser than the API's `default-src 'none'`, so one blanket value would either break them
+    #: or be meaningless.
+    content_security_policy: str = ""
     rate_limit_enabled: bool = True
     rate_limit_per_user_per_minute: int = 60
     rate_limit_per_ip_per_minute: int = 120
@@ -797,6 +814,8 @@ class SecuritySettings:
             allow_mock_attestation=_bool_aliased("ALLOW_MOCK_ATTESTATION", False),
             admin_roles=_list("ADMIN_ROLES", ("Admin", "SuperAdmin")),
             engineer_agent_roles=_list("ENGINEER_AGENT_ROLES", ()),
+            security_headers_enabled=_bool("SECURITY_HEADERS_ENABLED", True),
+            content_security_policy=(_env("CONTENT_SECURITY_POLICY", "") or "").strip(),
             rate_limit_enabled=_bool("RATE_LIMIT_ENABLED", True),
             rate_limit_per_user_per_minute=_int("RATE_LIMIT_USER_PER_MIN", 60, minimum=1),
             rate_limit_per_ip_per_minute=_int("RATE_LIMIT_IP_PER_MIN", 120, minimum=1),
@@ -1243,6 +1262,122 @@ class VoiceSettings:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ReleaseSettings:
+    """Which build this process actually is (BLOCK-03).
+
+    Every field is injected at image build time and is immutable thereafter -- the point is to
+    make "what revision is live?" answerable from a request rather than inferred from artefacts
+    like a stale config key. A production audit dated the deployed build by noticing `/health`
+    still advertised a settings field that had been deleted weeks earlier; that guesswork is
+    what this replaces.
+
+    Empty strings, not `None`, when nothing was injected: a build that forgot to pass the args
+    must still boot (a local `docker build` or a `pip install` checkout has no SHA to give), and
+    `validate()` is what refuses the unknown build in production instead. `/health/version` then
+    reports `"revision": "unknown"` rather than a plausible-looking lie.
+
+    Nothing secret belongs here. This is served unauthenticated so a deploy's own smoke test can
+    assert the SHA it just shipped is the SHA now answering -- see deploy-backend.yml.
+    """
+
+    #: Full 40-character git commit SHA of the source the artefact was built from.
+    git_sha: str = ""
+    #: The ref that built it, e.g. "refs/heads/main". Informational.
+    git_ref: str = ""
+    #: RFC3339 build timestamp, as produced by the builder, not this process's clock.
+    build_time: str = ""
+    #: Opaque per-deployment id (CI run id). Distinguishes two deploys of one SHA.
+    deployment_id: str = ""
+    #: The HTTP surface this build serves. Bumped only by a breaking API change.
+    api_version: str = "v3"
+    #: Application version, kept in step with build_app's FastAPI `version`.
+    app_version: str = "3.0.0"
+    #: Contract version the Control Plane requires of an Inference Plane it talks to.
+    inference_contract: str = "openai-compatible/v1"
+
+    #: Commit-SHA variables set by a PaaS build, tried in order when no build arg was passed.
+    #: These are read from the bare environment, not through the AURA_ prefix, because the
+    #: platform sets them and does not know about ours. Railway's git integration is the case
+    #: that matters here: it builds the Dockerfile directly, never passes --build-arg, and
+    #: exporting RAILWAY_GIT_COMMIT_SHA is the only identity it offers.
+    PLATFORM_SHA_VARS: ClassVar[tuple[str, ...]] = (
+        "RAILWAY_GIT_COMMIT_SHA",
+        "RENDER_GIT_COMMIT",
+        "HEROKU_SLUG_COMMIT",
+        "FLY_MACHINE_VERSION",
+        "VERCEL_GIT_COMMIT_SHA",
+        "SOURCE_VERSION",
+        "GITHUB_SHA",
+    )
+    PLATFORM_REF_VARS: ClassVar[tuple[str, ...]] = (
+        "RAILWAY_GIT_BRANCH",
+        "RENDER_GIT_BRANCH",
+        "VERCEL_GIT_COMMIT_REF",
+        "GITHUB_REF",
+    )
+    PLATFORM_DEPLOY_VARS: ClassVar[tuple[str, ...]] = (
+        "RAILWAY_DEPLOYMENT_ID",
+        "RENDER_SERVICE_ID",
+        "HEROKU_RELEASE_VERSION",
+        "FLY_ALLOC_ID",
+        "GITHUB_RUN_ID",
+    )
+
+    @staticmethod
+    def _first_set(names: tuple[str, ...]) -> str:
+        import os
+
+        for name in names:
+            value = (os.environ.get(name) or "").strip()
+            if value:
+                return value
+        return ""
+
+    @classmethod
+    def from_env(cls) -> "ReleaseSettings":
+        return cls(
+            # An explicit build arg wins; a platform variable is the fallback, so a deploy path
+            # nobody wired still reports a real revision instead of "unknown".
+            git_sha=(_env("GIT_SHA", "") or "").strip() or cls._first_set(cls.PLATFORM_SHA_VARS),
+            git_ref=(_env("GIT_REF", "") or "").strip() or cls._first_set(cls.PLATFORM_REF_VARS),
+            build_time=(_env("BUILD_TIME", "") or "").strip(),
+            deployment_id=(
+                (_env("DEPLOYMENT_ID", "") or "").strip()
+                or cls._first_set(cls.PLATFORM_DEPLOY_VARS)
+            ),
+            api_version=_env("API_VERSION", "v3") or "v3",
+            app_version=_env("APP_VERSION", "3.0.0") or "3.0.0",
+            inference_contract=(
+                _env("INFERENCE_CONTRACT", "openai-compatible/v1") or "openai-compatible/v1"
+            ),
+        )
+
+    @property
+    def identified(self) -> bool:
+        """True when this build can name its own source commit."""
+        return bool(self.git_sha)
+
+    @property
+    def revision(self) -> str:
+        """Short, human-facing revision, or the honest admission that there isn't one."""
+        return self.git_sha[:12] if self.git_sha else "unknown"
+
+    def to_public_dict(self) -> dict[str, str | bool]:
+        """The payload `/health/version` serves. Deliberately contains no secret."""
+        return {
+            "app_version": self.app_version,
+            "api_version": self.api_version,
+            "revision": self.revision,
+            "git_sha": self.git_sha,
+            "git_ref": self.git_ref,
+            "build_time": self.build_time,
+            "deployment_id": self.deployment_id,
+            "inference_contract": self.inference_contract,
+            "identified": self.identified,
+        }
+
+
 # --------------------------------------------------------------------------------------
 # Root
 # --------------------------------------------------------------------------------------
@@ -1267,6 +1402,7 @@ class AuraSettings:
     mcp: McpSettings = field(default_factory=McpSettings)
     github: GitHubSettings = field(default_factory=GitHubSettings)
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
+    release: ReleaseSettings = field(default_factory=ReleaseSettings)
 
     @classmethod
     def from_env(cls) -> "AuraSettings":
@@ -1300,6 +1436,7 @@ class AuraSettings:
             mcp=McpSettings.from_env(),
             github=GitHubSettings.from_env(),
             sandbox=SandboxSettings.from_env(),
+            release=ReleaseSettings.from_env(),
         )
 
     # -- validation --------------------------------------------------------------------
@@ -1332,6 +1469,30 @@ class AuraSettings:
                 problems.append("security.rate_limit_enabled must be true in staging/production")
             if not self.security.audit_enabled:
                 problems.append("security.audit_enabled must be true in staging/production")
+            # BLOCK-03: a production process that cannot name its own source commit makes every
+            # later question harder -- "is the fix deployed?", "what is this incident running?",
+            # "did the rollback take?".
+            #
+            # This was briefly a boot failure, and that was wrong. It took down a working
+            # deployment: Railway builds this Dockerfile through its own git integration and
+            # never passes the build args, so AURA_GIT_SHA was empty, validate() raised, and the
+            # container crash-looped until Railway gave up and served 502 to every request.
+            #
+            # The severity does not justify it. Every other check in this block prevents a
+            # security or data-loss outcome that is *worse* than not serving -- mock auth,
+            # plaintext secrets, an in-memory system of record. An unidentified build is a
+            # diagnosability problem, and serving users from a build you cannot name beats
+            # serving nobody. A feature whose whole purpose is to make incidents easier to
+            # diagnose must never be able to cause one.
+            if not self.release.identified:
+                logger.warning(
+                    "release identity is not injected: this process cannot report which commit "
+                    "it was built from, so /health/version will read 'unknown' and a deploy "
+                    "cannot be verified. Pass --build-arg GIT_SHA=$(git rev-parse HEAD), or set "
+                    "AURA_GIT_SHA. On Railway/Render/Heroku/Fly the platform's own commit "
+                    "variable is picked up automatically -- see ReleaseSettings.from_env.",
+                    extra={"environment": str(self.environment)},
+                )
             # In-memory stores lose all data on restart -- never acceptable as a system of record.
             for label, backend in (
                 ("vector_backend", self.infrastructure.vector_backend),

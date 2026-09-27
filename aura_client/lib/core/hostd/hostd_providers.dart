@@ -29,6 +29,7 @@ class HostdStatusSnapshot {
   HostdStatusSnapshot({
     required this.reachable,
     this.authenticated = false,
+    this.backendConnected,
     this.backendUrl,
     this.roots = const [],
     this.error,
@@ -38,6 +39,20 @@ class HostdStatusSnapshot {
   /// this platform has no control file for this app to have found in the first place).
   final bool reachable;
   final bool authenticated;
+  /// Whether the daemon's actual socket to the backend is open right now -- distinct from
+  /// [authenticated] (has a stored pairing token), which stays true for as long as a post-drop
+  /// reconnect is in backoff (e.g. during a backend redeploy). Without this, "Host Connected"
+  /// kept showing green while every tool call was actually failing with "no desktop app is
+  /// connected" -- confirmed live against a real session.
+  ///
+  /// `null` means the daemon's `/status` did not report the field at all, which only an
+  /// `aura_hostd` older than the commit that added it does -- a version skew between a rebuilt
+  /// app and a stale daemon binary. That is *not* the same as `false`: defaulting it to `false`
+  /// pinned the UI to "reconnecting..." forever against a daemon that was in fact connected
+  /// (confirmed live -- the backend's own `host agent connected` log said so while the panel
+  /// claimed otherwise), with nothing on screen to suggest rebuilding the daemon. Every call
+  /// site renders this third state as "status unknown, update aura_hostd" instead.
+  final bool? backendConnected;
   final String? backendUrl;
   final List<HostdRoot> roots;
   final String? error;
@@ -66,18 +81,27 @@ final hostdStatusProvider = StreamProvider.autoDispose<HostdStatusSnapshot>((ref
   }
 });
 
+/// Parses `GET /status`'s JSON body into a snapshot -- pulled out of [_fetchStatus] so it's
+/// testable against a plain map, without needing a real or fake `HostdControlClient` (whose
+/// conditional web/io export type the analyzer resolves inconsistently between this file's own
+/// context and a VM-only test file's, even though both run the same io implementation).
+HostdStatusSnapshot parseHostdStatusBody(Map<String, dynamic> body) {
+  final roots = (body['roots'] as List? ?? const [])
+      .map((r) => HostdRoot.fromJson(r as Map<String, dynamic>))
+      .toList();
+  return HostdStatusSnapshot(
+    reachable: true,
+    authenticated: body['authenticated'] as bool? ?? false,
+    backendConnected: body['backend_connected'] as bool?,
+    backendUrl: body['backend_url'] as String?,
+    roots: roots,
+  );
+}
+
 Future<HostdStatusSnapshot> _fetchStatus(HostdControlClient client) async {
   try {
     final body = await client.status();
-    final roots = (body['roots'] as List? ?? const [])
-        .map((r) => HostdRoot.fromJson(r as Map<String, dynamic>))
-        .toList();
-    return HostdStatusSnapshot(
-      reachable: true,
-      authenticated: body['authenticated'] as bool? ?? false,
-      backendUrl: body['backend_url'] as String?,
-      roots: roots,
-    );
+    return parseHostdStatusBody(body);
   } on HostdControlUnavailable {
     return HostdStatusSnapshot(reachable: false);
   } on HostdControlError catch (error) {

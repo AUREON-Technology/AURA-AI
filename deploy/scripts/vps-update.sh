@@ -356,6 +356,19 @@ info "postgres in this stack: $([ "$HAS_DB" = 1 ] && echo yes || echo 'no (manag
 # -- 5. build ------------------------------------------------------------------------------
 # Built before anything is stopped, so a build failure costs no downtime at all.
 
+# Release identity (BLOCK-03). Exported rather than written to .env: the SHA is a property of
+# this deploy, not persistent host configuration, and compose interpolation reads the process
+# environment ahead of --env-file, so these reach the build args in docker-compose.prod.yml
+# without leaving a stale value behind for the next run to inherit.
+#
+# $AFTER is the commit the checkout was just fast-forwarded to, so the identity baked into the
+# image is the source that actually built it -- not whatever origin/main moved to meanwhile.
+export AURA_GIT_SHA="$AFTER"
+export AURA_GIT_REF="${AURA_GIT_REF:-refs/heads/main}"
+export AURA_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+export AURA_DEPLOYMENT_ID="${AURA_DEPLOYMENT_ID:-vps-$(date -u +%Y%m%d%H%M%S)}"
+info "release identity: ${AURA_GIT_SHA:0:12} built $AURA_BUILD_TIME (deploy $AURA_DEPLOYMENT_ID)"
+
 say "Building application images"
 # `compose build` only builds services with a `build:` key (gateway, workers, beat,
 # backup). Pulled images stay as they are. Building all of them here is what keeps
@@ -455,6 +468,72 @@ else
   info "readiness: not OK or not present at $READY_URL"
   curl -sS --max-time 10 "$READY_URL" 2>&1 | head -20 | sed 's/^/      /' || true
 fi
+
+# -- 8b. the running build is the build we just shipped (BLOCK-03) -------------------------
+# The check this deploy path did not have. Production ran a 2026-09-13 image for two weeks while
+# every later merge reported nothing wrong, because "the stack restarted" was the only thing ever
+# verified -- never "the restarted stack is the new code".
+#
+# Asked of the gateway container directly, not through nginx: the claim under test is "the new
+# image is running", and routing it through the edge would let an unrelated DNS or TLS fault
+# (BLOCK-01) fail a deploy that actually succeeded -- or, worse, let a stale-but-reachable edge
+# answer for it. The edge is checked separately below, which is the right place for that.
+#
+# `python`, not curl: the runner stage purges curl after fetching piper.
+say "Verifying the deployed revision"
+REVISION_PROBE='import urllib.request,sys
+try:
+    sys.stdout.write(urllib.request.urlopen("http://127.0.0.1:8000/health/version", timeout=10).read().decode())
+except Exception as exc:
+    sys.stderr.write(str(exc)); sys.exit(1)'
+
+LIVE_JSON=""
+for _rev_try in $(seq 1 15); do
+  LIVE_JSON="$("${DC[@]}" exec -T "$BACKEND_SERVICE" python -c "$REVISION_PROBE" 2>/dev/null || true)"
+  [ -n "$LIVE_JSON" ] && break
+  printf '    waiting for /health/version (%d/15)\r' "$_rev_try"
+  sleep 4
+done
+echo
+
+LIVE_SHA="$(printf '%s' "$LIVE_JSON" \
+  | sed -n 's/.*"git_sha"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+
+if [ -z "$LIVE_JSON" ]; then
+  printf '\n\033[1;31mFAILED: the gateway never answered /health/version\033[0m\n' >&2
+  cat >&2 <<VERFAIL
+
+    This endpoint ships in the same commit as this script, so no answer from the container means
+    it is still running an older image -- exactly the silent-stale-deploy condition this check
+    exists to catch. The stack restarted, but not onto $AFTER.
+
+    What is actually running:
+      ${DC[*]} images $BACKEND_SERVICE
+      ${DC[*]} logs --tail=60 $BACKEND_SERVICE
+
+    If the process is refusing to boot, check for an unidentified build: AuraSettings.validate()
+    rejects a production start with no AURA_GIT_SHA baked in, which means the build args did not
+    reach docker compose build.
+VERFAIL
+  exit 1
+fi
+
+if [ "$LIVE_SHA" != "$AFTER" ]; then
+  printf '\n\033[1;31mFAILED: deployed revision does not match\033[0m\n' >&2
+  cat >&2 <<VERMISMATCH
+
+    built and expected:  $AFTER
+    actually serving:    ${LIVE_SHA:-<none reported>}
+
+    The restart did not put $AFTER into service. Most often a build that succeeded against a
+    cached layer while the running container was never recreated.
+
+    Force it:
+      ${DC[*]} up -d --force-recreate --no-deps $BACKEND_SERVICE
+VERMISMATCH
+  exit 1
+fi
+info "revision:  OK  (serving ${LIVE_SHA:0:12}, matches the commit just built)"
 
 # Phase H: confirm the edge still upgrades /api/v3/voice/live. A 404 here most likely means
 # nginx negotiated HTTP/2 with this curl (ALPN offers h2 by default) -- HTTP/2 forbids the

@@ -89,6 +89,8 @@ jobs:
           VPS_USER: ${{ vars.VPS_USER }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
           DEV_OPS: ${{ github.event_name == 'workflow_dispatch' && inputs.dev_ops }}
+          # Baked into the image so /health/version can name the run that produced it (BLOCK-03).
+          DEPLOYMENT_ID: gha-${{ github.run_id }}
         run: |
           test -n "$VPS_HOST" && test -n "$VPS_USER" && test -n "$TARGET_SHA"
           ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
@@ -101,6 +103,8 @@ jobs:
                 AURA_PROJECT=aura \
                 AURA_BACKEND_SERVICE=gateway \
                 AURA_STASH_DIRTY=1 \
+                AURA_DEPLOYMENT_ID="$DEPLOYMENT_ID" \
+                AURA_GIT_REF=refs/heads/main \
                 bash -s <<'REMOTE'
           set -euo pipefail
           git -C /opt/aura-stack fetch origin main
@@ -111,3 +115,32 @@ jobs:
             bash /opt/aura-stack/deploy/scripts/vps-update.sh
           fi
           REMOTE
+
+  # A deploy that did not happen has to be visible.
+  #
+  # `workflow_run` fires on *completed*, whatever the conclusion, so when Backend CI failed this
+  # workflow simply concluded `skipped` -- a grey tick that satisfies branch protection, reads as
+  # success on the Actions home page, and pages nobody. Production served a 2026-09-13 image for
+  # two weeks while every subsequent merge looked fine, because "did not deploy" and "deployed"
+  # were rendered identically. This job makes the first one red and says what is wrong.
+  blocked:
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report the blocked deploy
+        env:
+          CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          CI_URL: ${{ github.event.workflow_run.html_url }}
+          CI_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          {
+            echo "### Deploy VPS did not run"
+            echo
+            echo "Backend CI concluded **\`$CI_CONCLUSION\`** for \`$CI_SHA\`."
+            echo "Nothing was deployed -- production is still serving whatever it served before."
+            echo
+            echo "[Backend CI run]($CI_URL)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::Deploy VPS did not run: Backend CI concluded '$CI_CONCLUSION' for $CI_SHA. Nothing was deployed; production still serves the previous revision. See $CI_URL"
+          exit 1

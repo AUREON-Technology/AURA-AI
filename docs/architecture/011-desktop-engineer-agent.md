@@ -1,6 +1,6 @@
 # ADR-011 — The desktop Engineer agent executes on the user's own machine, not a server sandbox
 
-**Status:** Partially implemented (backend bridge + daemon core + output streaming + desktop pairing auth for both the daemon and the app itself + a first workspace-management UI + Linux/Windows desktop build scripts and CI; interactive consent tiers, live terminal streaming to a client, and diff review outside of chat are not built — see "Implementation status") · **Date:** 2026-09-08
+**Status:** Partially implemented (backend bridge + daemon core + output streaming + desktop pairing auth for both the daemon and the app itself + a first workspace-management UI + Linux/Windows desktop build scripts and CI + D5 interactive tiered consent + Windows `run_command` shell resolution; live terminal streaming to a client and diff review outside of chat are not built — see "Implementation status") · **Date:** 2026-09-08
 
 ## Context
 
@@ -295,22 +295,29 @@ watch for and recover from a crash); and a bundled `aura_hostd` binary (there is
 configures the executable path themselves, the same disclosed-until-configured shape
 `google_desktop_client_id` already uses on the backend).
 
+**Interactive tiered consent (D5) — now built.** Three tiers, `lib/src/command_policy.dart`: a
+hard denylist that no tier can lift (`rm -rf`, fork bombs, `mkfs`, pipe-to-shell, ...); a
+read-only inspection allowlist (`ls`/`cat`/`grep`/`git status`/... — `find`/`env` deliberately
+excluded despite looking read-only, since both can mutate or execute arbitrary commands without
+needing any of the blocked shell metacharacters) that runs unattended in an untrusted workspace;
+and, for everything else in an untrusted workspace, a `needsApproval` tier that queues the call
+(`lib/src/approval_queue.dart`) for a human to approve or reject through the Desktop IDE, with a
+5-minute timeout if nobody answers — wired end-to-end via `status_bar.dart` + `state_notifiers.dart`
++ `hostd_providers.dart`. A workspace explicitly marked `trusted` (`aura_hostd trust <path>`)
+still bypasses the allowlist/queue entirely, same as before. Path containment itself remains
+unconditional and applies identically regardless of trust or tier.
+
+**Windows command execution — now built.** `tools/coding.py::run_command` still always sends
+`["sh", "-c", "<command>"]` over the RPC; on Windows, `lib/src/task_handler.dart` now resolves a
+real `sh.exe` (Git for Windows' `Git\bin\sh.exe`/`Git\usr\bin\sh.exe`, or whatever `where sh`
+reports) and substitutes it into the argv, rather than failing to spawn at all. **Known
+limitation:** output run through that resolved `sh.exe` reports paths in MSYS form
+(`/c/Users/...`), which will not string-match the native Windows paths (`C:\Users\...`) that
+`write_file`/`read_file`/`edit_file` use directly — an Engineer session correlating a path across
+both should not rely on exact string equality. No cheap translation exists in this codebase today.
+
 **What's still not built:**
 
-- **Interactive tiered consent.** There is no UI yet to prompt a human per call, so the daemon
-  cannot implement "auto for reads, diff-and-approve for writes" as designed. In its place, each
-  workspace root is either untrusted (only a small read-only inspection allowlist runs —
-  `lib/src/command_policy.dart` — with `find`/`env` deliberately excluded from that allowlist
-  despite looking read-only, since both can mutate or execute arbitrary commands without needing
-  any of the blocked shell metacharacters) or explicitly marked `trusted`
-  (`aura_hostd trust <path>`), which allows anything not on the hard denylist. This is a real,
-  disclosed scope cut, not a weakening of the containment guarantee: path containment itself is
-  unconditional and applies identically regardless of trust.
-- **Windows command execution.** The backend always sends `["sh", "-c", "<command>"]` over the RPC
-  (`tools/coding.py::run_command`'s existing behavior, unchanged by this ADR) and the daemon execs
-  that argv directly; a Windows machine without a POSIX-compatible shell on `PATH` (no WSL/Git
-  Bash) cannot run commands via this path yet. Filesystem operations and workspace grants are
-  unaffected — this only blocks `run_command`.
 - **Live terminal streaming and interactive diff review in the client.** `HostDaemonPage` (Unit
   8) covers daemon supervision, pairing, and root management, but the daemon-to-backend output
   streaming Unit 4 built still has no client that renders it incrementally, and reviewing what
@@ -380,5 +387,31 @@ same shape `google_desktop_client_id` already uses on the backend. macOS and Win
 throughout this ADR, and GitHub-hosted macOS/Windows runners cost meaningfully more per minute
 than the Linux runner `build-android`/`build-linux` already use, which is not a cost this unit's
 scope obviously earns; add them if and when macOS/Windows desktop support is actually claimed.
+
+**Deployment constraint: one gateway worker process, or the paired daemon is invisible to most
+requests.** `HostAgentRegistry` (`adapters/host_agent.py`) is an in-process dict, held per
+`Container` (`container.py`), with no Redis or cross-process fan-out. The daemon's WebSocket is a
+single long-lived connection terminated by exactly one uvicorn worker, so only that worker's
+registry knows the session exists. Any chat turn served by a different worker resolves no session
+and falls through to "no desktop app is connected and no server-side sandbox is configured" --
+intermittently, in proportion to the worker count, which reads from the outside like a daemon that
+keeps dropping rather than a routing gap. `aura_backend/Dockerfile` defaults to
+`--workers ${AURA_WORKERS:-4}`, so any deployment of that image (the Railway Control Plane
+included) needs `AURA_WORKERS=1` for the desktop Engineer agent to work reliably. Making this
+work under multiple workers means routing a tool call to whichever worker holds the socket
+(Redis pub/sub, or a dedicated single host-agent process) -- not built, and not implied by
+anything above.
+
+**Version skew between the app and the daemon is now visible instead of silent.** `/status`'s
+`backend_connected` field postdates the daemon binary a person may still have installed --
+`aura_hostd` ships no auto-update and is built by hand (`dart compile exe`, per Unit 9's disclosed
+cut), so a rebuilt `aura_client` routinely polls an older daemon. The client first read that
+field as `body['backend_connected'] as bool? ?? false`, which made a missing field
+indistinguishable from a reported `false`: a stale daemon that was genuinely connected (the
+backend's own `host agent connected` log confirmed the socket was open and registered) pinned
+every status surface to "reconnecting..." indefinitely, pointing at a network fault that did not
+exist. `HostdStatusSnapshot.backendConnected` is therefore `bool?`, with `null` meaning "the
+daemon did not say", rendered as "update aura_hostd" rather than as a reconnect, in all three
+surfaces (`status_bar.dart`, `host_panel.dart`, `host_daemon_page.dart`).
 
 See `docs/AURA_UPGRADE_ROADMAP.md` for the up-to-date status of what is and is not built.

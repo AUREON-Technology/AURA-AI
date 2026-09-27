@@ -32,6 +32,11 @@ pytest.importorskip("fastapi")
 PUBLIC = {
     ("GET", "/health/live"): "liveness probe -- must work during an auth outage",
     ("GET", "/health/ready"): "readiness probe",
+    # BLOCK-03. Public on purpose: a deploy's smoke test asserts "the SHA I just shipped is the
+    # SHA now serving" before any credential exists, and it has to keep answering while a
+    # dependency is down. ReleaseSettings.to_public_dict() is an allowlist of build provenance
+    # with no configuration in it -- see test_release_identity.py.
+    ("GET", "/health/version"): "release identity -- deploy verification, no credential yet",
     ("GET", "/metrics"): "Prometheus scrape; refused publicly at nginx (SEC-12)",
     ("GET", "/openapi.json"): "schema, no data",
     ("GET", "/docs"): "schema UI, no data",

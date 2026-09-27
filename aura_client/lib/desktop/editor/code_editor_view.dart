@@ -132,6 +132,23 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
       _loadError = loadError;
       _loading = false;
     });
+    // Restore the session-persisted cursor/selection (2026-09-25 audit follow-up: these were
+    // saved to desktopEditorState but never applied back on reopen). Clamped to the actual
+    // loaded text length, since the file may have changed on disk since the offset was saved.
+    // Best-effort: an out-of-range offset from a stale/corrupt save should never crash the
+    // editor from opening.
+    final restoredSelection = widget.tab.selection;
+    final restoredCursor = widget.tab.cursorPosition;
+    final maxOffset = initialText.length;
+    if (restoredSelection != null) {
+      final clamped = EditorSelection(
+        start: restoredSelection.start.clamp(0, maxOffset),
+        end: restoredSelection.end.clamp(0, maxOffset),
+      );
+      unawaited(_controller?.setSelection(clamped));
+    } else if (restoredCursor != null) {
+      unawaited(_controller?.setCursor(EditorCursor(offset: restoredCursor.offset.clamp(0, maxOffset))));
+    }
   }
 
   String _getLanguageId(String path) {

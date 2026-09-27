@@ -5,8 +5,16 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('BackendUrlPolicy', () {
-    test('compile-time default is the local gateway', () {
-      expect(AppConfig.backendUrl, BackendUrlPolicy.localDevUrl);
+    test('compile-time default is itself release-safe and runtime-allowlisted', () {
+      // This once asserted the default was BackendUrlPolicy.localDevUrl, from when an
+      // un-defined build meant `flutter run` against a local gateway. The default has pointed
+      // at a real deployment for a long time (a VPS host, then https://aureon-ai.tech), so that
+      // assertion only recorded history. What actually matters is what it protected: a build
+      // that ships with no --dart-define=BACKEND_URL must still satisfy the same policy the
+      // release gate applies to an injected one, and must be a preset the runtime allowlist
+      // accepts -- otherwise BackendUrlProvider silently discards it at runtime.
+      expect(BackendUrlPolicy.rejectionReason(AppConfig.backendUrl), isNull);
+      expect(BackendUrlPolicy.isRuntimeAllowed(AppConfig.backendUrl), isTrue);
     });
 
     test('accepts an https hostname', () {
