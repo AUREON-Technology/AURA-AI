@@ -21,7 +21,12 @@ from services.jwt_auth import (
     revoke_refresh_token,
     verify_access_token,
 )
-from services.rbac import CONSOLE_MIN_ROLE, is_console_operator, stamp_resolved_role
+from services.rbac import (
+    CONSOLE_MIN_ROLE,
+    console_operators_configured,
+    is_console_operator,
+    stamp_resolved_role,
+)
 from services.security import store_nonce, verify_identity_token, verify_token
 
 logger = logging.getLogger("aura.auth")
@@ -146,6 +151,19 @@ async def exchange_web_token(
     user_info = await verify_identity_token(request, authorization)
     stamp_resolved_role(user_info)
     if not is_console_operator(user_info["role"]):
+        # Two different failures wear the same 403, and telling them apart is the difference
+        # between a five-minute fix and an afternoon. "Your role is too low" is true in both
+        # cases but only actionable in the second.
+        if not console_operators_configured():
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "No console operator is configured on this deployment, so nobody can sign "
+                    "in to the console yet. Set SUPERADMIN_EMAILS (or ADMIN_EMAILS / "
+                    "DEVELOPER_EMAILS) to a comma-separated list of operator email addresses "
+                    "and restart. AURA_-prefixed spellings are accepted too."
+                ),
+            )
         raise HTTPException(
             status_code=403,
             detail=(

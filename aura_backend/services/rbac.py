@@ -15,12 +15,44 @@ ROLE_HIERARCHY = {
 CONSOLE_MIN_ROLE = "Developer"
 
 
+#: The env lists that can grant a console-capable role, highest first. Names are read *both*
+#: bare and `AURA_`-prefixed -- see `_email_list`.
+CONSOLE_ROLE_ENV_VARS = ("SUPERADMIN_EMAILS", "ADMIN_EMAILS", "DEVELOPER_EMAILS")
+
+ROLES_FILE = "roles.json"
+
+
 def _email_list(name: str) -> list[str]:
-    return [e.strip() for e in os.getenv(name, "").split(",") if e.strip()]
+    """Read a comma-separated email list, accepting the `AURA_`-prefixed name too.
+
+    Historically bare only, because this module predates `aura_core`'s `_env` helper and its
+    `AURA_` convention. That inconsistency is a trap rather than a preference: every other
+    setting in a deployment is `AURA_`-something, so an operator configuring
+    `AURA_SUPERADMIN_EMAILS` by analogy got no role, no error naming the cause, and a 403 that
+    blamed their resolved role. Both spellings are accepted so the guess cannot fail silently.
+
+    The bare name wins when both are set, so no existing deployment changes behaviour.
+    """
+    raw = os.getenv(name) or os.getenv(f"AURA_{name}") or ""
+    return [e.strip() for e in raw.split(",") if e.strip()]
+
+
+def console_operators_configured() -> bool:
+    """Whether *anyone* can reach the operator console on this deployment.
+
+    A fresh deployment has no console operator and nothing says so: the first person to sign in
+    is refused with a message about their role, which is true but sends them looking in the wrong
+    place. This is what lets that refusal name the real cause instead.
+    """
+    if any(_email_list(name) for name in CONSOLE_ROLE_ENV_VARS):
+        return True
+    # roles.json can also grant a console role, so its mere presence counts as "configured" --
+    # whether it names *this* caller is a different question, and the ordinary 403 covers it.
+    return os.path.exists(ROLES_FILE)
 
 
 def _roles_file_role(email: str, uid: str) -> str | None:
-    roles_file = "roles.json"
+    roles_file = ROLES_FILE
     if not os.path.exists(roles_file):
         return None
     try:
