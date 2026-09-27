@@ -1267,9 +1267,24 @@ def build_app(container: Any, *, authenticator: Any, rate_limiter: Any = None) -
     async def readiness() -> JSONResponse:
         """Dependencies are usable. This is what a load balancer should gate traffic on."""
         health = await container.health()
+        # Carried on the readiness payload too, so an operator reading a 503 can tell which
+        # build produced it without a second request.
+        health["release"] = container.settings.release.to_public_dict()
         return JSONResponse(
             status_code=200 if health["healthy"] else 503, content=health
         )
+
+    @app.get("/health/version")
+    async def version() -> JSONResponse:
+        """Which build is answering (BLOCK-03).
+
+        Unauthenticated and dependency-free on purpose: a deploy's smoke test has to be able to
+        assert "the SHA I just shipped is the SHA now serving" before any credential exists, and
+        it must keep answering while a dependency is down -- the moment you most need to know
+        what is running. Serves only what ReleaseSettings.to_public_dict() allows, which is
+        build provenance and no configuration.
+        """
+        return JSONResponse(content=container.settings.release.to_public_dict())
 
     @app.get(container.settings.observability.metrics_path)
     async def metrics() -> Response:

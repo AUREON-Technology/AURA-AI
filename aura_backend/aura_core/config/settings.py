@@ -1243,6 +1243,79 @@ class VoiceSettings:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ReleaseSettings:
+    """Which build this process actually is (BLOCK-03).
+
+    Every field is injected at image build time and is immutable thereafter -- the point is to
+    make "what revision is live?" answerable from a request rather than inferred from artefacts
+    like a stale config key. A production audit dated the deployed build by noticing `/health`
+    still advertised a settings field that had been deleted weeks earlier; that guesswork is
+    what this replaces.
+
+    Empty strings, not `None`, when nothing was injected: a build that forgot to pass the args
+    must still boot (a local `docker build` or a `pip install` checkout has no SHA to give), and
+    `validate()` is what refuses the unknown build in production instead. `/health/version` then
+    reports `"revision": "unknown"` rather than a plausible-looking lie.
+
+    Nothing secret belongs here. This is served unauthenticated so a deploy's own smoke test can
+    assert the SHA it just shipped is the SHA now answering -- see deploy-backend.yml.
+    """
+
+    #: Full 40-character git commit SHA of the source the artefact was built from.
+    git_sha: str = ""
+    #: The ref that built it, e.g. "refs/heads/main". Informational.
+    git_ref: str = ""
+    #: RFC3339 build timestamp, as produced by the builder, not this process's clock.
+    build_time: str = ""
+    #: Opaque per-deployment id (CI run id). Distinguishes two deploys of one SHA.
+    deployment_id: str = ""
+    #: The HTTP surface this build serves. Bumped only by a breaking API change.
+    api_version: str = "v3"
+    #: Application version, kept in step with build_app's FastAPI `version`.
+    app_version: str = "3.0.0"
+    #: Contract version the Control Plane requires of an Inference Plane it talks to.
+    inference_contract: str = "openai-compatible/v1"
+
+    @classmethod
+    def from_env(cls) -> "ReleaseSettings":
+        return cls(
+            git_sha=(_env("GIT_SHA", "") or "").strip(),
+            git_ref=(_env("GIT_REF", "") or "").strip(),
+            build_time=(_env("BUILD_TIME", "") or "").strip(),
+            deployment_id=(_env("DEPLOYMENT_ID", "") or "").strip(),
+            api_version=_env("API_VERSION", "v3") or "v3",
+            app_version=_env("APP_VERSION", "3.0.0") or "3.0.0",
+            inference_contract=(
+                _env("INFERENCE_CONTRACT", "openai-compatible/v1") or "openai-compatible/v1"
+            ),
+        )
+
+    @property
+    def identified(self) -> bool:
+        """True when this build can name its own source commit."""
+        return bool(self.git_sha)
+
+    @property
+    def revision(self) -> str:
+        """Short, human-facing revision, or the honest admission that there isn't one."""
+        return self.git_sha[:12] if self.git_sha else "unknown"
+
+    def to_public_dict(self) -> dict[str, str | bool]:
+        """The payload `/health/version` serves. Deliberately contains no secret."""
+        return {
+            "app_version": self.app_version,
+            "api_version": self.api_version,
+            "revision": self.revision,
+            "git_sha": self.git_sha,
+            "git_ref": self.git_ref,
+            "build_time": self.build_time,
+            "deployment_id": self.deployment_id,
+            "inference_contract": self.inference_contract,
+            "identified": self.identified,
+        }
+
+
 # --------------------------------------------------------------------------------------
 # Root
 # --------------------------------------------------------------------------------------
@@ -1267,6 +1340,7 @@ class AuraSettings:
     mcp: McpSettings = field(default_factory=McpSettings)
     github: GitHubSettings = field(default_factory=GitHubSettings)
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
+    release: ReleaseSettings = field(default_factory=ReleaseSettings)
 
     @classmethod
     def from_env(cls) -> "AuraSettings":
@@ -1300,6 +1374,7 @@ class AuraSettings:
             mcp=McpSettings.from_env(),
             github=GitHubSettings.from_env(),
             sandbox=SandboxSettings.from_env(),
+            release=ReleaseSettings.from_env(),
         )
 
     # -- validation --------------------------------------------------------------------
@@ -1332,6 +1407,17 @@ class AuraSettings:
                 problems.append("security.rate_limit_enabled must be true in staging/production")
             if not self.security.audit_enabled:
                 problems.append("security.audit_enabled must be true in staging/production")
+            # BLOCK-03: a production process that cannot name its own source commit makes every
+            # later question unanswerable -- "is the fix deployed?", "what is this incident
+            # running?", "did the rollback take?". A real audit had to date the live build by
+            # noticing it still advertised a config key deleted weeks earlier. Failing the boot
+            # is louder than shipping an anonymous one, and the injection is a build arg the
+            # Dockerfile defaults to empty, so only a deploy that skipped it trips this.
+            if not self.release.identified:
+                problems.append(
+                    "release.git_sha must be injected in staging/production -- build with "
+                    "--build-arg GIT_SHA=$(git rev-parse HEAD) (see Dockerfile, BLOCK-03)"
+                )
             # In-memory stores lose all data on restart -- never acceptable as a system of record.
             for label, backend in (
                 ("vector_backend", self.infrastructure.vector_backend),

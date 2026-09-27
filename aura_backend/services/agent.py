@@ -101,7 +101,11 @@ class AgentOrchestrator:
         user_id: str = None,
         google_access_token: str = None
     ) -> AsyncGenerator[str, None]:
-        """Streams response for selected agent. If Gemini is offline, falls back to Ollama; if Ollama is also offline, uses mocks."""
+        """Streams a response for the selected agent from the local inference host.
+
+        Falls back to canned content when `ollama_service` is unreachable, so the transport is
+        still exercised end to end while the model is down.
+        """
         # Define inline tools to capture google_access_token and user_id via closure
         def search_google_drive(query: str) -> dict:
             """Search for PDF files in the user's Google Drive by file name.

@@ -105,6 +105,24 @@ COPY . .
 RUN mkdir -p local_qdrant_storage \
     && chmod +x /app/docker-entrypoint.sh
 
+# Release identity (BLOCK-03). Deliberately the last layers before EXPOSE: these change on
+# every commit, so declaring them earlier would invalidate the pip install and the piper
+# download on each build. Baked into the image rather than passed as compose `environment:`
+# so all five services built from this Dockerfile report the same revision without five
+# copies of the same env block -- and so the identity cannot be edited on the running host,
+# which is the whole point of calling it immutable.
+#
+# Empty when nothing is passed; AuraSettings.validate() is what refuses an unidentified
+# build in production, so a local `docker build` with no args still works.
+ARG GIT_SHA=""
+ARG GIT_REF=""
+ARG BUILD_TIME=""
+ARG DEPLOYMENT_ID=""
+ENV AURA_GIT_SHA=${GIT_SHA} \
+    AURA_GIT_REF=${GIT_REF} \
+    AURA_BUILD_TIME=${BUILD_TIME} \
+    AURA_DEPLOYMENT_ID=${DEPLOYMENT_ID}
+
 EXPOSE 8000
 
 # Hydrate *_FILE secrets and mount /api/v3. Compose may override the command

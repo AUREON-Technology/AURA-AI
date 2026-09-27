@@ -7,7 +7,10 @@ name: Deploy Inference Plane (Hugging Face)
 # Required for the deploy job (repo Settings -> Secrets and variables -> Actions):
 #   secrets.HF_TOKEN     Hugging Face access token with write access to the target Space.
 #   vars.HF_SPACE_ID     "<namespace>/<space-name>", e.g. "your-org/aura-inference-vllm".
-# Until secrets.HF_TOKEN exists, the deploy job is skipped rather than failed.
+#
+# Set vars.INFERENCE_DEPLOY_REQUIRED=true once the Space exists. Until then a missing token
+# skips the deploy with a notice; after it, a missing token FAILS the run -- "skipped" reads as
+# success everywhere it is displayed, which is how a dead deploy path stays unnoticed.
 
 on:
   pull_request:
@@ -56,9 +59,49 @@ jobs:
           python -m pip install --quiet -r requirements-dev.txt -r requirements.lock 2>/dev/null || true
           python -m pytest tests/deployment/test_inference_contract.py -q
 
+  # Whether the Space is configured, decided in a step rather than in a job-level `if:`.
+  # `secrets` is not among the contexts GitHub exposes to `jobs.<id>.if` (only `github`,
+  # `needs`, `vars` and `inputs`), so referencing it there does not evaluate false -- it makes
+  # the file unevaluable and the entire run a startup failure with zero jobs, including
+  # `validate`, which has no secret reference of its own. That is why this file failed in 0
+  # seconds with nothing to read. A step can see `secrets`, so the check lives there.
+  preflight:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: Check deploy configuration
+        id: check
+        env:
+          # Tested for emptiness only -- never echoed, never written to an output.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+          DEPLOY_REQUIRED: ${{ vars.INFERENCE_DEPLOY_REQUIRED }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "$HF_TOKEN" ]    || missing+=("secrets.HF_TOKEN")
+          [ -n "$HF_SPACE_ID" ] || missing+=("vars.HF_SPACE_ID")
+
+          if [ ${#missing[@]} -eq 0 ]; then
+            echo "All required Hugging Face settings are present."
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          printf 'Not configured: %s\n' "${missing[*]}"
+          if [ "${DEPLOY_REQUIRED:-}" = "true" ]; then
+            echo "::error::Inference Plane deploy is marked required (vars.INFERENCE_DEPLOY_REQUIRED=true) but these are unset: ${missing[*]}. See docs/deployment/inference-plane.md."
+            exit 1
+          fi
+          echo "::notice::Hugging Face Space is not configured yet (${missing[*]} unset) -- deploy skipped. Set vars.INFERENCE_DEPLOY_REQUIRED=true once it is."
+          echo "configured=false" >> "$GITHUB_OUTPUT"
+
   deploy:
-    needs: validate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.HF_TOKEN != ''
+    needs: [validate, preflight]
+    if: needs.preflight.outputs.configured == 'true'
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 15
@@ -78,7 +121,6 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
         run: |
-          test -n "$HF_SPACE_ID" || { echo "vars.HF_SPACE_ID is not set" >&2; exit 1; }
           python -c "
           import os
           from huggingface_hub import HfApi
@@ -103,10 +145,11 @@ jobs:
           sys.exit(0 if info.stage == 'RUNNING' else 1)
           " || echo "::warning::Space did not report RUNNING immediately -- check the Space logs; cold builds can take several minutes."
 
-  skipped:
-    needs: validate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.HF_TOKEN == ''
+  # Kept as a distinct, visible row so an unconfigured deploy is legible in the checks list
+  # rather than simply absent. The notice itself is emitted by preflight.
+  not-configured:
+    needs: preflight
+    if: needs.preflight.outputs.configured == 'false'
     runs-on: ubuntu-latest
     steps:
-      - run: |
-          echo "::notice::secrets.HF_TOKEN is not configured -- Hugging Face Space deploy skipped. See docs/deployment/inference-plane.md."
+      - run: echo "Hugging Face Space deploy not configured -- see the preflight job's notice and docs/deployment/inference-plane.md."

@@ -11,9 +11,15 @@ name: Deploy Control Plane (Railway)
 #
 # Required (repo Settings -> Secrets and variables -> Actions, or the `production` environment):
 #   secrets.RAILWAY_TOKEN         Railway project token (Railway dashboard -> project ->
-#                                 Settings -> Tokens). Until this secret exists, the deploy job
-#                                 is skipped rather than failed -- Railway isn't provisioned yet.
+#                                 Settings -> Tokens).
 #   vars.RAILWAY_SERVICE_GATEWAY  Railway service ID/name for the `gateway` (web) service.
+#   vars.RAILWAY_HEALTH_URL       Public health URL, polled after the deploy.
+#
+# Set vars.CONTROL_PLANE_DEPLOY_REQUIRED=true once Railway is provisioned. Until then a missing
+# token skips the deploy with a notice; after it, a missing token FAILS the run. That switch
+# exists because "skipped" is indistinguishable from "succeeded" in a branch protection check
+# and on the Actions home page -- a production audit found Deploy VPS reporting `skipped` for
+# two weeks while nothing shipped, and nobody was paged, because nothing was red.
 #
 # The worker-realtime/worker-ingestion/beat services (docs/deployment/control-plane.md §2) are
 # deployed the same way Railway deploys any service from a repo push: once they're created in
@@ -36,10 +42,56 @@ permissions:
   contents: read
 
 jobs:
+  # Whether this deploy is configured, decided inside a step rather than in a job-level `if:`.
+  #
+  # GitHub does not expose the `secrets` context to `jobs.<id>.if` -- only `github`, `needs`,
+  # `vars` and `inputs`. A workflow that references it there is not "a condition that evaluates
+  # false", it is an unevaluable file: the whole run ends as a startup failure with zero jobs
+  # created, so nothing runs and no log explains why. This file did exactly that, and because a
+  # startup failure still shows up as a red run on a push, it read as a broken deploy rather
+  # than as invalid YAML. A step can read `secrets`, so the test happens here and travels to the
+  # other jobs as an output.
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: Check deploy configuration
+        id: check
+        env:
+          # Only ever tested for emptiness below; never echoed, never written to an output.
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE_GATEWAY: ${{ vars.RAILWAY_SERVICE_GATEWAY }}
+          RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL }}
+          DEPLOY_REQUIRED: ${{ vars.CONTROL_PLANE_DEPLOY_REQUIRED }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "$RAILWAY_TOKEN" ]           || missing+=("secrets.RAILWAY_TOKEN")
+          [ -n "$RAILWAY_SERVICE_GATEWAY" ] || missing+=("vars.RAILWAY_SERVICE_GATEWAY")
+          [ -n "$RAILWAY_HEALTH_URL" ]      || missing+=("vars.RAILWAY_HEALTH_URL")
+
+          if [ ${#missing[@]} -eq 0 ]; then
+            echo "All required Railway settings are present."
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Names only. Reporting which settings are absent leaks nothing; reporting a value would.
+          printf 'Not configured: %s\n' "${missing[*]}"
+          if [ "${DEPLOY_REQUIRED:-}" = "true" ]; then
+            echo "::error::Control Plane deploy is marked required (vars.CONTROL_PLANE_DEPLOY_REQUIRED=true) but these are unset: ${missing[*]}. See docs/deployment/control-plane.md."
+            exit 1
+          fi
+          echo "::notice::Railway is not provisioned yet (${missing[*]} unset) -- deploy skipped. Set vars.CONTROL_PLANE_DEPLOY_REQUIRED=true once it is, so a gap like this fails instead of skipping."
+          echo "configured=false" >> "$GITHUB_OUTPUT"
+
   deploy:
+    needs: preflight
     if: |
       (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') &&
-      secrets.RAILWAY_TOKEN != ''
+      needs.preflight.outputs.configured == 'true'
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 20
@@ -53,15 +105,13 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_SERVICE_GATEWAY: ${{ vars.RAILWAY_SERVICE_GATEWAY }}
-        run: |
-          test -n "$RAILWAY_SERVICE_GATEWAY" || { echo "vars.RAILWAY_SERVICE_GATEWAY is not set" >&2; exit 1; }
-          railway up --service "$RAILWAY_SERVICE_GATEWAY" --detach aura_backend
+        run: railway up --service "$RAILWAY_SERVICE_GATEWAY" --detach aura_backend
 
       - name: Wait for readiness
         env:
           RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL }}
         run: |
-          test -n "$RAILWAY_HEALTH_URL" || { echo "vars.RAILWAY_HEALTH_URL is not set; skipping health verification" >&2; exit 1; }
+          set -euo pipefail
           for i in $(seq 1 30); do
             if curl -fsS "$RAILWAY_HEALTH_URL" | grep -q '"status"'; then
               echo "Control Plane is ready."
@@ -73,11 +123,22 @@ jobs:
           echo "Control Plane did not become ready in time." >&2
           exit 1
 
-  skipped:
-    if: |
-      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') &&
-      secrets.RAILWAY_TOKEN == ''
-    runs-on: ubuntu-latest
-    steps:
-      - run: |
-          echo "::notice::secrets.RAILWAY_TOKEN is not configured -- Railway deploy skipped. See docs/deployment/control-plane.md."
+      # BLOCK-03: prove the revision now serving is the one this run deployed. Without it, a
+      # deploy that quietly kept the previous image still reports success -- the exact failure
+      # that left production on a two-week-old build.
+      - name: Verify the deployed revision
+        env:
+          RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL }}
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          version_url="${RAILWAY_HEALTH_URL%/health}/health/version"
+          live_sha="$(curl -fsS --max-time 15 "$version_url" \
+            | sed -n 's/.*"git_sha"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+          echo "expected: $EXPECTED_SHA"
+          echo "serving:  ${live_sha:-<none>}"
+          if [ "$live_sha" != "$EXPECTED_SHA" ]; then
+            echo "::error::Deployed revision mismatch -- $version_url reports '${live_sha:-<none>}', expected '$EXPECTED_SHA'. The deploy did not take."
+            exit 1
+          fi
+          echo "Revision verified."
