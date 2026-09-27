@@ -778,6 +778,141 @@ was the stale v1 image, exactly as EV-19 argued.
 
 ---
 
+## EV-23 — Outage, cause, fix, and the first verified release identity (BLOCK-03 CLOSED)
+
+**Date:** 2026-09-27 19:52 → 21:28 UTC. **Classification:** PRODUCTION TESTED · FAILURE TESTED.
+
+The most useful hour of this engagement, because a change of mine broke production and the
+recovery proved several things that had only ever been claimed.
+
+### The outage
+
+| Time (UTC) | State |
+|---|---|
+| 18:30 | Railway serving a healthy v3 gateway (EV-22) |
+| 18:35 | PR #128 merged — carried the **fail-closed** release-identity gate |
+| 18:51 | PR #129 merged |
+| 19:52 | **502 on every path** — `/health/live`, `/health/ready`, `/openapi.json`, repeatedly |
+| 21:26 | PR #130 merged (the fix) |
+| **21:27:36** | **200 `{"status":"alive"}`** — recovered ~90 s after the merge |
+
+### Cause — a verified chain, not an inference
+
+Initially recorded as a strong inference. The gap was closed by checking the one link never
+verified: whether `validate()` runs at boot at all. It does, at **import**:
+
+```
+aura_service.py:192   app = create_app()        <- module level
+create_app()       -> load_settings()
+load_settings()    -> settings.validate()        <- validate=True by default
+```
+
+So `uvicorn` could not import the app. Not a request-time error, not a failed probe — which is
+why *every* path returned 502 rather than some working.
+
+| # | Step | Verified by |
+|---|---|---|
+| 1 | `Dockerfile`: `ARG GIT_SHA=""` → `ENV AURA_GIT_SHA=` | reading the file |
+| 2 | Railway builds that Dockerfile and cannot pass our build args | `railway.json` `builder: DOCKERFILE` |
+| 3 | The service runs as production | `/health/ready` reported `"environment":"production"` pre-outage |
+| 4 | `create_app()` runs at import and calls `validate()` | `aura_service.py:192` |
+| 5 | `validate()` recorded `release.git_sha must be injected` for production | executed directly; it was the **first** problem |
+| 6 | a non-empty problem list raises `ConfigurationError` | reading the file |
+
+**The lesson, recorded because it is the transferable part:** every other production check in that
+block prevents an outcome *worse than not serving* — mock auth, plaintext secrets, an in-memory
+system of record. An unidentified build is a **diagnosability** problem. A feature whose entire
+purpose is making incidents easier to diagnose must never be able to cause one. The gate was
+downgraded to a warning, and a parametrised test now asserts no environment refuses to boot over
+release identity.
+
+### BLOCK-03 — CLOSED, and verified in production
+
+```
+$ curl https://aura-ai-production-03a4.up.railway.app/health/version
+{"app_version":"3.0.0","api_version":"v3",
+ "revision":"a517cb689458",
+ "git_sha":"a517cb689458488669a3f54f15c3d0840c74e72d",
+ "git_ref":"main","build_time":"",
+ "deployment_id":"798fce91-04b8-45c8-ad2b-852fb2beae57",
+ "inference_contract":"openai-compatible/v1","identified":true}
+
+$ git log -1 --format="%H %s" a517cb6894584886...
+a517cb689458488669a3f54f15c3d0840c74e72d Merge pull request #130 from ...
+```
+
+**The live `git_sha` is exactly the merge commit of PR #130.** For the first time, "which build is
+production running?" is answerable in one request and provably current. The original audit needed
+hours of indirect inference to *bound* it (a stale `gemini` key in `/health`).
+
+Note what populated it: `git_sha`, `git_ref: main` and a Railway UUID `deployment_id` all came
+from the **platform fallback** (`RAILWAY_GIT_COMMIT_SHA`, `RAILWAY_GIT_BRANCH`,
+`RAILWAY_DEPLOYMENT_ID`), with **no build arg wired**. `build_time` is empty because Railway
+exposes none — correct, and reported honestly rather than filled with the process clock. The
+original build-arg-only design could never have identified this target.
+
+### DEF-21 — FIXED, verified in production
+
+```
+$ curl -D - https://aura-ai-production-03a4.up.railway.app/health/live
+strict-transport-security: max-age=63072000; includeSubDomains
+x-content-type-options: nosniff
+x-frame-options: DENY
+referrer-policy: strict-origin-when-cross-origin
+permissions-policy: geolocation=(), microphone=(), camera=()
+```
+
+All five present where an hour earlier there were none, on a target with **no nginx in the path**.
+No CSP, as designed. The app-level floor works.
+
+### The readiness contract, earning its keep
+
+`/health/ready` returns **503** with the release block now carried on the payload, so an operator
+reading the 503 sees which build produced it without a second request. Both dependency faults are
+still visible and still true:
+
+```
+"providers":{"hfspace":{"healthy":false,"detail":"ReadTimeout","latency_ms":5157.7}}
+"checks":{"schema":{"healthy":false,"expected":"0008","revision":"0006"}}
+"healthy":false                                                      HTTP 503
+```
+
+### Still open
+
+| ID | Status |
+|---|---|
+| **DEF-19** (P0) | Inference still down — `hfspace` `ReadTimeout` 5.16 s. Unchanged. |
+| **DEF-20** (P0) | Schema still `0006` vs expected `0008`. **New evidence below.** |
+| **DEF-22** (P2) | `/metrics` still `200` unauthenticated. Working as designed — the gate is opt-in and needs `AURA_METRICS_TOKEN` set on this target. |
+
+### New finding: the migration gate is not in effect (DEF-20)
+
+A deploy just succeeded — a new revision is serving — while the schema stayed at `0006`. Yet
+`railway.json` declares:
+
+```json
+"preDeployCommand": "... alembic upgrade head ... || (echo '=== MIGRATION FAILED ==='; exit 1)"
+```
+
+Three-way deduction:
+
+- if it ran and succeeded → the schema would be `0008`. It is not.
+- if it ran and failed → `exit 1` should have failed the deploy → the new revision would not be
+  serving. It is.
+- therefore **it did not run**, or it migrated a different database than the app reads.
+
+**Most likely explanation, offered as a hypothesis:** `railway.json` lives at
+`aura_backend/railway.json`, and Railway reads it relative to the **service's configured root
+directory**. If that root is the repository root, the file is never found — no `preDeployCommand`,
+and no `healthcheckPath` either.
+
+That is checkable in one place (Railway → service → Settings → Root Directory) and it matters
+beyond DEF-20: **a schema-breaking change could deploy silently.** It also means the
+`healthcheckPath` change in PR #130 may have had no effect, and the recovery is attributable to
+the gate fix alone — so no credit is claimed for it here.
+
+---
+
 ## Evidence artifacts retained
 
 | File | Contents |
