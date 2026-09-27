@@ -215,12 +215,50 @@ and deploy a known revision deliberately.
 | control-plane-deploy | #71 | **failure** | 0 s |
 | inference-plane-deploy | #71 | **failure** | 0 s |
 
-Backend CI's four jobs individually: `pip-audit` failure (1 s), `test` failure (3 s),
-`backup-scripts` failure (2 s), `docker-build` skipped. **Jobs that fail in 1–3 seconds did not run
-their test bodies** — this is a workflow/runner-level failure (a setup step, action resolution, or
-an account-level condition), not a suite of failing assertions. Job logs return HTTP 404 and have
-expired, so the precise cause could not be read and is recorded here as **UNKNOWN**; the *shape* of
-the failure is nonetheless unambiguous from the timings.
+**There are two distinct causes here, and only one is now identified.**
+
+**Cause A — the two plane-deploy workflows: an invalid `secrets` reference (IDENTIFIED).**
+`control-plane-deploy.yml` and `inference-plane-deploy.yml` fail in **0 seconds with zero jobs
+created** — a startup failure, not a job failure. Both gate their jobs like this:
+
+```yaml
+jobs:
+  deploy:
+    if: |
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') &&
+      secrets.RAILWAY_TOKEN != ''
+```
+
+**GitHub does not expose the `secrets` context in a job-level `if:`.** Referencing it there makes the
+workflow file unevaluable, so GitHub fails the run before creating any job. Three independent
+observations corroborate this:
+
+- `list_workflow_jobs` returns `total_count: 0` for these runs — nothing was ever scheduled.
+- The API reports these runs by **file path** (`.github/workflows/control-plane-deploy.yml`) instead
+  of their `name:` (`Deploy Control Plane (Railway)`), which is what GitHub does when it cannot
+  evaluate the file to read that name. The YAML itself parses cleanly and *does* carry a `name`.
+- The runs are attributed to a `push` event although neither workflow declares a `push` trigger —
+  another signature of a run failed at startup.
+
+Both files do it in **both** of their jobs (`deploy` and `skipped`), 4 occurrences total, and **no
+other workflow in the repository references `secrets` in a job-level `if:`** — which is precisely why
+only these two fail at 0 seconds.
+
+Fix: move the secret test out of the job-level `if:`. The usual shape is to map it into an output in a
+small preflight job (`env: TOKEN: ${{ secrets.RAILWAY_TOKEN }}` in a step, emit
+`has_token=true/false`), then gate `deploy` on `needs.preflight.outputs.has_token == 'true'`. The
+intent the comment states — "until this secret exists, the deploy job is skipped rather than failed"
+— is sound and worth preserving; only the mechanism is invalid.
+
+**Cause B — Backend CI: still UNKNOWN.** This one is *not* a startup failure: its four jobs were
+created and then failed individually — `pip-audit` (1 s), `test` (3 s), `backup-scripts` (2 s),
+`docker-build` skipped. **Jobs that fail in 1–3 seconds did not run their test bodies**, so this is a
+setup step, action resolution, or an account-level condition rather than failing assertions. Job logs
+return HTTP 404 and have expired, so the precise cause could not be read and is recorded as
+**UNKNOWN**. Recovering it needs one re-run of a Backend CI job on `main` while the log is fresh.
+
+**Backend CI is the one that gates deployment**, so Cause B is the blocker for production; Cause A
+blocks only the second (Railway/HF) target. Both must be fixed.
 
 **`Deploy VPS` is gated on `Backend CI` succeeding on `main`**
 (`workflow_run` + `conclusion == 'success'`, `deploy-backend.yml`). Because Backend CI fails, the

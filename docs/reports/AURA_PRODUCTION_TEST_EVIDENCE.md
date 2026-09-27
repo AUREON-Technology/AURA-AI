@@ -262,10 +262,43 @@ Correct procedure: scan from an external host, or enumerate listeners on the VPS
 
 Backend CI jobs: `pip-audit` failure (1 s), `test` failure (3 s), `backup-scripts` failure (2 s),
 `docker-build` skipped. Sub-3-second failures mean **no test body executed**. Job logs return
-HTTP 404 (expired), so the precise cause is **UNKNOWN**; the shape is not.
+HTTP 404 (expired), so this workflow's precise cause is **UNKNOWN**; the shape is not.
 
 `Deploy VPS` triggers on `workflow_run` of `Backend CI` with
 `conclusion == 'success'` → permanently **skipped** while CI fails. → BLOCK-04.
+
+**Plane-deploy startup failure, cause identified.** The two 0-second failures are a different fault
+from Backend CI's. Re-checked on PR #128's head `62ce219`:
+
+```
+control-plane-deploy.yml   run #72  failure  0 s   list_workflow_jobs -> total_count: 0
+inference-plane-deploy.yml run #72  failure  0 s   list_workflow_jobs -> total_count: 0
+```
+
+Zero jobs created = startup failure. Cause, confirmed by inspection:
+
+```yaml
+# .github/workflows/control-plane-deploy.yml  (same in inference-plane-deploy.yml)
+jobs:
+  deploy:
+    if: |
+      (... ) && secrets.RAILWAY_TOKEN != ''      # <-- `secrets` is not available in a job-level if:
+```
+
+Scan across all workflows — 4 occurrences, and nothing else does it:
+
+```
+control-plane-deploy.yml    job 'deploy'   references secrets in job-level if:
+control-plane-deploy.yml    job 'skipped'  references secrets in job-level if:
+inference-plane-deploy.yml  job 'deploy'   references secrets in job-level if:
+inference-plane-deploy.yml  job 'skipped'  references secrets in job-level if:
+```
+
+Corroborating signals: the API reports both runs by **file path** rather than their `name:`
+(`Deploy Control Plane (Railway)`), which GitHub does when it cannot evaluate the file — yet the YAML
+parses cleanly and carries that `name`; and both runs are attributed to a `push` event although
+neither workflow declares a `push` trigger. Reproduces identically on `main` (`71dd01b`, runs #71)
+and on the prior branch (`600402a`, runs #70), so it is **pre-existing and not PR #128's**.
 
 ## EV-13 — Second deploy target is not deployed
 
@@ -294,6 +327,9 @@ $ TESTING=True python -m unittest discover -p "test_*.py"      # legacy tree
 Ran 100 tests in 9.835s
 OK (skipped=4)
 ```
+
+On PR #128's docs-only head, **Backend CI did not run at all** (its path filters exclude
+`docs/**`), so the suites below are this audit's own local execution, not a CI result.
 
 Both suites are gated in CI and both are required to pass. The single pytest failure is a
 documentation-freshness check (P3), fixed by regenerating the matrix. It is a genuine red on `main`

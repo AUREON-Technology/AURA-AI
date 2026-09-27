@@ -602,10 +602,29 @@ client would present this to a user as anything other than an opaque failure.
 Backend CI jobs: `pip-audit` **failure (1 s)**, `test` **failure (3 s)**, `backup-scripts`
 **failure (2 s)**, `docker-build` skipped.
 
-**Jobs failing in 1–3 seconds did not execute their test bodies.** This is a workflow- or
-runner-level failure — a setup step, action resolution, or an account-level condition — not failing
-assertions. Job logs return HTTP 404 (expired), so the precise cause is **UNKNOWN** and must be
-recovered by re-running one job. The *shape* is unambiguous.
+**Two distinct faults, one now identified.**
+
+**The two plane-deploy workflows fail at startup, and the cause is an invalid `secrets` reference.**
+They fail in **0 seconds with zero jobs created**, because both gate their jobs on
+`secrets.RAILWAY_TOKEN != ''` inside a **job-level `if:`** — where GitHub does not expose the
+`secrets` context. That makes the file unevaluable and the run fails before scheduling anything.
+Three signals agree: `list_workflow_jobs` returns `total_count: 0`; the API reports the runs by file
+path rather than their `name:` (which GitHub does when it cannot evaluate the file, though the YAML
+parses cleanly and carries a name); and the runs are attributed to a `push` event although neither
+workflow declares a `push` trigger. Four occurrences across the two files, and **no other workflow
+does this** — which is why only these two fail at 0 seconds. The stated intent ("until this secret
+exists, the deploy job is skipped rather than failed") is reasonable; only the mechanism is invalid.
+The conventional fix is a small preflight job that reads the secret in a step's `env` and emits a
+boolean output, with `deploy` gated on `needs.preflight.outputs.*`.
+
+**Backend CI's failure is a different fault and remains UNKNOWN.** Its four jobs *were* created and
+then failed individually in 1–3 seconds — **too fast to have executed their test bodies** — so this
+is a setup step, action resolution, or an account-level condition, not failing assertions. Job logs
+return HTTP 404 (expired); recovering the cause needs one re-run while the log is fresh.
+
+**This distinction matters for prioritisation:** Backend CI is what gates `Deploy VPS`, so Cause B
+is the blocker for production. The `secrets`-in-`if:` fault blocks only the second (Railway/HF)
+target — which, as §2 records, is not deployed at all.
 
 `Deploy VPS` fires on `workflow_run` of `Backend CI` with `conclusion == 'success'`. CI fails →
 deploy **skips**. Since `CLAUDE.md` states merging to `main` *is* the deploy action, **no merge to
@@ -667,6 +686,7 @@ rights (export, deletion, retention) are untested.
 | **BLOCK-04** | CI/CD | **P0** | **Yes** | Backend CI fails at startup; `Deploy VPS` silently skipped |
 | **BLOCK-05** | Qdrant + health contract | **P1** | **Yes** | Retrieval down; `degraded` served under HTTP 200 |
 | DEF-06 | CI (`pip-audit`) | **P1** | No | Dependency CVE gate not running |
+| DEF-06b | CI (plane deploys) | **P1** | No | `secrets` referenced in job-level `if:` → 0-job startup failure in both plane-deploy workflows (identified; see §31) |
 | DEF-07 | CORS | **P2** | No | `Allow-Origin: *` for any origin; allowlist not in effect |
 | DEF-08 | HTTP headers | **P2** | No | No HSTS/CSP/XCTO/Referrer-Policy/frame options |
 | DEF-09 | Health endpoints | **P2** | No | `/health/ready`, `/health/live`, `/healthz` all 404 |
