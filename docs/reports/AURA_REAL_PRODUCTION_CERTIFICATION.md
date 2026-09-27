@@ -39,6 +39,33 @@
 > the edge. CORS and the health contract, however, were correctly identified as stale-image
 > artifacts, and EV-22 confirms both behave properly in production.
 
+> ## Addendum 2 — 2026-09-27 21:28, after an outage I caused and fixed
+>
+> A change in PR #128 — a **fail-closed** release-identity gate — took the Railway deployment down
+> from 19:52 to 21:27. Railway builds the Dockerfile through its own git integration and never
+> passes `--build-arg GIT_SHA`, so `validate()` raised at import and `uvicorn` could not load the
+> app. PR #130 fixed it; the service recovered ~90 s after that merge. Full account in EV-23.
+>
+> **Two gates closed as a result, both PRODUCTION TESTED:**
+>
+> - **BLOCK-03 — CLOSED.** `/health/version` reports `git_sha a517cb689458...`, which **is** the
+>   merge commit of PR #130. "Which build is production running?" is now a one-request question
+>   with a provably current answer. Populated entirely by the platform fallback
+>   (`RAILWAY_GIT_COMMIT_SHA`) with no build arg wired — the original build-arg-only design could
+>   never have identified this target.
+> - **DEF-21 — FIXED.** All five security headers now present on a target with no nginx in the
+>   path, where an hour earlier there were none.
+>
+> **The verdict still does not change.** `/health/ready` correctly returns 503: inference is still
+> down (`hfspace` `ReadTimeout`) and the schema is still two migrations behind. A user still cannot
+> get an answer.
+>
+> **One finding worth more than the fix:** the release-identity gate should never have been
+> fail-closed. Every other production check in `validate()` prevents an outcome *worse* than not
+> serving. An unidentified build is a diagnosability problem, and a feature whose purpose is to
+> make incidents easier to diagnose must never be able to cause one. That reasoning error, not the
+> code, was the defect.
+
 ## Verdict
 
 # NOT PRODUCTION CERTIFIED
@@ -102,7 +129,7 @@ FAILURE TESTED · MEASURED · VERIFIED · CERTIFIED.
 | Backup / restore proven | **BLOCKED** | LOCALLY TESTED | Mandatory. Crypto/retention logic is CI-covered; **no real drill**, no RPO/RTO. Needs host/DB access neither target grants this audit. |
 | Deployment stability | **FAIL** | MEASURED | Fourteen days, zero successful GitHub-driven deploys (BLOCK-06). Railway deploys via its own git integration, which is why a v3 build is live there while the VPS is frozen — and why nobody noticed. |
 | No exposed secrets | **PASS** | PRODUCTION TESTED | Secrets: **NOT FOUND**. Carried forward from the audit; re-confirmed no config or secret exposure on the live surface. |
-| Release identity traceable | **PARTIAL** | LOCALLY TESTED · FAILURE TESTED | Mechanism built and tested; **unproven in production**. Confirmed still needed: the Railway build has no `/health/version`, and a route-set diff could not date it (EV-22). |
+| Release identity traceable | **PASS** | **PRODUCTION TESTED** | `/health/version` reports `a517cb689458`, which is the merge commit of PR #130 — provably current, via the platform fallback with no build arg (EV-23). BLOCK-03 closed. |
 
 ### Remediation gates
 
