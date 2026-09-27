@@ -125,33 +125,110 @@ def _mentions_git_sha(problems: list[str]) -> bool:
     return any("release.git_sha" in problem for problem in problems)
 
 
-class TestProductionRefusesAnAnonymousBuild:
-    def test_production_boot_fails_without_a_git_sha(self) -> None:
-        problems = _problems(AuraSettings(environment=Environment.PRODUCTION))
+class TestAnAnonymousBuildWarnsButStillServes:
+    """The regression this class exists to prevent.
 
-        assert _mentions_git_sha(problems)
+    This check was briefly fatal, and it caused an outage. Railway builds the Dockerfile through
+    its own git integration and never passes `--build-arg GIT_SHA`, so `AURA_GIT_SHA` was empty,
+    `validate()` raised, the container crash-looped, and a working production deployment served
+    502 to every request for an hour.
 
-    def test_staging_is_held_to_the_same_rule(self) -> None:
-        """Staging is where a bad deploy should be caught, so it cannot be the lenient one."""
-        problems = _problems(AuraSettings(environment=Environment.STAGING))
+    The severity never justified failing closed. Every other production check in `validate()`
+    prevents an outcome *worse* than not serving -- mock auth, an in-memory system of record.
+    An unidentified build is a diagnosability problem, and a feature whose entire purpose is to
+    make incidents easier to diagnose must never be able to cause one.
+    """
 
-        assert _mentions_git_sha(problems)
-
-    def test_an_identified_production_build_clears_this_check(self) -> None:
-        problems = _problems(
-            AuraSettings(
-                environment=Environment.PRODUCTION, release=ReleaseSettings(git_sha=_SHA)
-            )
-        )
-
-        assert not _mentions_git_sha(problems)
-
-    @pytest.mark.parametrize("environment", [Environment.LOCAL, Environment.DEVELOPMENT])
-    def test_non_production_needs_no_injected_identity(self, environment: Environment) -> None:
-        """A checkout run straight from `pytest`, or a `docker build` with no args, must boot."""
+    @pytest.mark.parametrize(
+        "environment",
+        [Environment.PRODUCTION, Environment.STAGING, Environment.LOCAL, Environment.DEVELOPMENT],
+    )
+    def test_no_environment_refuses_to_boot_over_release_identity(
+        self, environment: Environment
+    ) -> None:
         problems = _problems(AuraSettings(environment=environment))
 
-        assert not _mentions_git_sha(problems)
+        assert not _mentions_git_sha(problems), (
+            "release identity must never block a boot: an unidentified build is harder to debug, "
+            "a process that will not start serves nobody."
+        )
+
+    def test_it_warns_loudly_instead(self, caplog) -> None:
+        """Silence would be the other failure: the identity would just quietly read 'unknown'."""
+        with caplog.at_level("WARNING", logger="aura_core.config"):
+            _problems(AuraSettings(environment=Environment.PRODUCTION))
+
+        assert any(
+            "release identity is not injected" in record.message for record in caplog.records
+        ), "an anonymous production build must still say so"
+
+    def test_an_identified_build_does_not_warn(self, caplog) -> None:
+        with caplog.at_level("WARNING", logger="aura_core.config"):
+            _problems(
+                AuraSettings(
+                    environment=Environment.PRODUCTION, release=ReleaseSettings(git_sha=_SHA)
+                )
+            )
+
+        assert not any("release identity" in r.message for r in caplog.records)
+
+
+class TestPlatformMetadataFallback:
+    """A PaaS that builds the Dockerfile itself never passes our build args, but it does export
+    its own commit SHA. Reading it is what makes the identity populated by default rather than
+    dependent on someone remembering to wire a build arg."""
+
+    @pytest.mark.parametrize(
+        "variable",
+        ["RAILWAY_GIT_COMMIT_SHA", "RENDER_GIT_COMMIT", "HEROKU_SLUG_COMMIT", "GITHUB_SHA"],
+    )
+    def test_a_platform_commit_variable_is_picked_up(self, monkeypatch, variable: str) -> None:
+        for name in ReleaseSettings.PLATFORM_SHA_VARS:
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv("AURA_GIT_SHA", raising=False)
+        monkeypatch.setenv(variable, _SHA)
+
+        release = ReleaseSettings.from_env()
+
+        assert release.git_sha == _SHA
+        assert release.identified is True
+
+    def test_an_explicit_build_arg_wins_over_the_platform(self, monkeypatch) -> None:
+        """Ours is the deliberate one, and on the VPS it names the commit actually checked out."""
+        monkeypatch.setenv("AURA_GIT_SHA", _SHA)
+        monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", "f" * 40)
+
+        assert ReleaseSettings.from_env().git_sha == _SHA
+
+    def test_railway_deployment_id_is_picked_up(self, monkeypatch) -> None:
+        for name in ReleaseSettings.PLATFORM_DEPLOY_VARS:
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv("AURA_DEPLOYMENT_ID", raising=False)
+        monkeypatch.setenv("RAILWAY_DEPLOYMENT_ID", "dep_abc123")
+
+        assert ReleaseSettings.from_env().deployment_id == "dep_abc123"
+
+    def test_the_platform_lists_are_constants_not_dataclass_fields(self) -> None:
+        """ClassVar, or they would join the dataclass -- changing its equality, its repr, and
+        what `to_public_dict` is asked to serialise."""
+        import dataclasses
+
+        names = {f.name for f in dataclasses.fields(ReleaseSettings)}
+
+        assert not {"PLATFORM_SHA_VARS", "PLATFORM_REF_VARS", "PLATFORM_DEPLOY_VARS"} & names
+
+
+class TestRailwayDeployGate:
+    def test_the_healthcheck_is_liveness_not_readiness(self) -> None:
+        """Railway gates a deploy on this path. `/health/ready` returns 503 whenever any
+        dependency is unhealthy, so pointing the gate at it means no deploy can pass while the
+        inference provider is down -- and a good build cannot replace a bad one exactly when
+        that matters most."""
+        import json
+
+        config = json.loads((_BACKEND / "railway.json").read_text(encoding="utf-8"))
+
+        assert config["deploy"]["healthcheckPath"] == "/health/live"
 
 
 class TestVersionEndpoint:

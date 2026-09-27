@@ -22,7 +22,7 @@ import os
 import re
 from dataclasses import dataclass, field, fields, is_dataclass
 from enum import Enum
-from typing import Any, Mapping, Sequence
+from typing import ClassVar, Any, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from ..domain.errors import ConfigurationError
@@ -1296,13 +1296,56 @@ class ReleaseSettings:
     #: Contract version the Control Plane requires of an Inference Plane it talks to.
     inference_contract: str = "openai-compatible/v1"
 
+    #: Commit-SHA variables set by a PaaS build, tried in order when no build arg was passed.
+    #: These are read from the bare environment, not through the AURA_ prefix, because the
+    #: platform sets them and does not know about ours. Railway's git integration is the case
+    #: that matters here: it builds the Dockerfile directly, never passes --build-arg, and
+    #: exporting RAILWAY_GIT_COMMIT_SHA is the only identity it offers.
+    PLATFORM_SHA_VARS: ClassVar[tuple[str, ...]] = (
+        "RAILWAY_GIT_COMMIT_SHA",
+        "RENDER_GIT_COMMIT",
+        "HEROKU_SLUG_COMMIT",
+        "FLY_MACHINE_VERSION",
+        "VERCEL_GIT_COMMIT_SHA",
+        "SOURCE_VERSION",
+        "GITHUB_SHA",
+    )
+    PLATFORM_REF_VARS: ClassVar[tuple[str, ...]] = (
+        "RAILWAY_GIT_BRANCH",
+        "RENDER_GIT_BRANCH",
+        "VERCEL_GIT_COMMIT_REF",
+        "GITHUB_REF",
+    )
+    PLATFORM_DEPLOY_VARS: ClassVar[tuple[str, ...]] = (
+        "RAILWAY_DEPLOYMENT_ID",
+        "RENDER_SERVICE_ID",
+        "HEROKU_RELEASE_VERSION",
+        "FLY_ALLOC_ID",
+        "GITHUB_RUN_ID",
+    )
+
+    @staticmethod
+    def _first_set(names: tuple[str, ...]) -> str:
+        import os
+
+        for name in names:
+            value = (os.environ.get(name) or "").strip()
+            if value:
+                return value
+        return ""
+
     @classmethod
     def from_env(cls) -> "ReleaseSettings":
         return cls(
-            git_sha=(_env("GIT_SHA", "") or "").strip(),
-            git_ref=(_env("GIT_REF", "") or "").strip(),
+            # An explicit build arg wins; a platform variable is the fallback, so a deploy path
+            # nobody wired still reports a real revision instead of "unknown".
+            git_sha=(_env("GIT_SHA", "") or "").strip() or cls._first_set(cls.PLATFORM_SHA_VARS),
+            git_ref=(_env("GIT_REF", "") or "").strip() or cls._first_set(cls.PLATFORM_REF_VARS),
             build_time=(_env("BUILD_TIME", "") or "").strip(),
-            deployment_id=(_env("DEPLOYMENT_ID", "") or "").strip(),
+            deployment_id=(
+                (_env("DEPLOYMENT_ID", "") or "").strip()
+                or cls._first_set(cls.PLATFORM_DEPLOY_VARS)
+            ),
             api_version=_env("API_VERSION", "v3") or "v3",
             app_version=_env("APP_VERSION", "3.0.0") or "3.0.0",
             inference_contract=(
@@ -1427,15 +1470,28 @@ class AuraSettings:
             if not self.security.audit_enabled:
                 problems.append("security.audit_enabled must be true in staging/production")
             # BLOCK-03: a production process that cannot name its own source commit makes every
-            # later question unanswerable -- "is the fix deployed?", "what is this incident
-            # running?", "did the rollback take?". A real audit had to date the live build by
-            # noticing it still advertised a config key deleted weeks earlier. Failing the boot
-            # is louder than shipping an anonymous one, and the injection is a build arg the
-            # Dockerfile defaults to empty, so only a deploy that skipped it trips this.
+            # later question harder -- "is the fix deployed?", "what is this incident running?",
+            # "did the rollback take?".
+            #
+            # This was briefly a boot failure, and that was wrong. It took down a working
+            # deployment: Railway builds this Dockerfile through its own git integration and
+            # never passes the build args, so AURA_GIT_SHA was empty, validate() raised, and the
+            # container crash-looped until Railway gave up and served 502 to every request.
+            #
+            # The severity does not justify it. Every other check in this block prevents a
+            # security or data-loss outcome that is *worse* than not serving -- mock auth,
+            # plaintext secrets, an in-memory system of record. An unidentified build is a
+            # diagnosability problem, and serving users from a build you cannot name beats
+            # serving nobody. A feature whose whole purpose is to make incidents easier to
+            # diagnose must never be able to cause one.
             if not self.release.identified:
-                problems.append(
-                    "release.git_sha must be injected in staging/production -- build with "
-                    "--build-arg GIT_SHA=$(git rev-parse HEAD) (see Dockerfile, BLOCK-03)"
+                logger.warning(
+                    "release identity is not injected: this process cannot report which commit "
+                    "it was built from, so /health/version will read 'unknown' and a deploy "
+                    "cannot be verified. Pass --build-arg GIT_SHA=$(git rev-parse HEAD), or set "
+                    "AURA_GIT_SHA. On Railway/Render/Heroku/Fly the platform's own commit "
+                    "variable is picked up automatically -- see ReleaseSettings.from_env.",
+                    extra={"environment": str(self.environment)},
                 )
             # In-memory stores lose all data on restart -- never acceptable as a system of record.
             for label, backend in (
