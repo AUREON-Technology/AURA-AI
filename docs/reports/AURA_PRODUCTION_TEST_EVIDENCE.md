@@ -913,6 +913,58 @@ the gate fix alone — so no credit is claimed for it here.
 
 ---
 
+## EV-24 — Inference is intermittent, not down and not recovered (DEF-19, CORRECTION)
+
+**Date:** 2026-09-27 21:49 → 22:41 UTC. **Classification:** MEASURED.
+
+**This entry exists to correct an overstatement.** At 21:49 a single `/health/ready` sample showed
+`hfspace: healthy=True, "ok"`, and that was reported as "inference is UP, DEF-19 resolved". One
+sample is not a state. Sampled properly:
+
+```
+22:38:24Z  False ReadTimeout 5159.4
+22:38:46Z  False ReadTimeout 5149.7
+22:39:08Z  False ReadTimeout 5150.5
+22:39:30Z  False ReadTimeout 5159.7
+22:39:52Z  False ReadTimeout 5127.9
+22:40:13Z  False ReadTimeout 5144.2
+22:40:35Z  False ReadTimeout 5154.9
+22:40:52Z  True  ok           225.7
+                 --> healthy in 1/8 samples
+```
+
+**DEF-19 is INTERMITTENT, approximately 1-in-8. Not resolved.**
+
+The latency split is the diagnostic part, and it rules out the obvious explanation:
+
+| Outcome | Latency |
+|---|---|
+| healthy | **225.7 ms** |
+| unhealthy | **5127-5160 ms** -- a fixed ~5 s ceiling, seven times |
+
+When the provider answers, it answers in a quarter of a second. So this is **not a slow model**; it
+is an availability problem with a client timeout being hit exactly. A variable network fault would
+scatter those numbers.
+
+**Hypothesis, stated as one:** the Hugging Face Space is asleep and cold-starting. Free-tier Spaces
+sleep after inactivity and take tens of seconds to wake, and a probe arriving every ~20 s would
+occasionally catch one awake -- which is the shape of 1-in-8 with a fast success. Not confirmed from
+here; the Space's own runtime page would confirm it.
+
+**What follows from it:**
+
+- The right fix is keeping the Space warm (a paid tier, or a keep-alive), **not** lengthening the
+  readiness probe's timeout. A 5 s readiness probe is a reasonable contract; a dependency that
+  cannot meet it seven times out of eight is the thing that is wrong.
+- A user's turn succeeds or fails largely at random, which is worse for trust than a clean outage:
+  a consistent failure gets reported, an intermittent one gets blamed on the user.
+- Any certification run touching inference will be flaky against this target. The journey and
+  safety suites skip rather than pass when a turn does not complete, so a flaky provider produces
+  *untested*, never a false pass -- but a green run needs the Space warm first.
+- The single healthy sample at 21:49 is now explained rather than treated as recovery.
+
+---
+
 ## Evidence artifacts retained
 
 | File | Contents |
