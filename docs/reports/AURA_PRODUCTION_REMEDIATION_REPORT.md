@@ -95,6 +95,16 @@ emptiness; it is never echoed and never written to an output.
 The suite also refuses `env`, `steps`, `job` and `runner` in a job-level `if:` — the same trap
 under other names — and asserts the preflight cannot print the secret it handles.
 
+**And confirmed by GitHub itself (EV-21).** Pushing the fix triggered
+`inference-plane-deploy.yml` on this PR, and two independent signals flipped: `list_workflow_jobs`
+went from `total_count: 0` to **4** (`validate`, `preflight`, `not-configured`, `deploy`), and the
+run is once again reported under its own `name:` — "Deploy Inference Plane (Hugging Face)" — rather
+than by file path, reversing one of the three signals used to diagnose the fault. The three
+`skipped` jobs are the new gating behaving correctly on a `pull_request`. `validate` then failed in
+2 s with the §1 signature, which is the honest limit of this evidence: **the file is valid and its
+jobs schedule; whether they can execute is BLOCK-06.** `control-plane-deploy.yml` has no
+`pull_request` trigger, so its identical fix stays LOCALLY TESTED only.
+
 ### 2.2 BLOCK-04, second half — a deploy that does not happen is now visible (fixed)
 
 `workflow_run` fires on *completed*, whatever the conclusion. So when `Backend CI` failed,

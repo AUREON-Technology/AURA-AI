@@ -597,6 +597,56 @@ $ bash -n deploy/scripts/vps-update.sh
 
 ---
 
+## EV-21 — The workflow fix is confirmed in CI, not just locally (BLOCK-04 Cause A CLOSED)
+
+**Date:** 2026-09-27 18:24 UTC. **Classification:** PRODUCTION TESTED (of the CI system itself).
+
+The fix was pushed to `claude/aura-production-readiness-c3h5jv` @ `b1b0657`, which touches
+`deploy/spaces/inference-vllm/**`'s workflow and so triggers it on `pull_request`.
+
+**Before the fix** — `inference-plane-deploy.yml` #73 @ `a98cee1`:
+
+```
+list_workflow_jobs 36337846647 -> total_count: 0
+run "name": ".github/workflows/inference-plane-deploy.yml"     <- reported by PATH
+conclusion: failure, 0s
+```
+
+**After the fix** — #75 @ `b1b0657`:
+
+```
+list_workflow_jobs 36340513484 -> total_count: 4
+run "name": "Deploy Inference Plane (Hugging Face)"            <- reported by its own name:
+
+validate        failure  18:24:17 -> 18:24:19   (2s)   <- scheduled, then hit BLOCK-06
+preflight       skipped                                 <- correct: pull_request, not push to main
+not-configured  skipped                                 <- correct: preflight did not run
+deploy          skipped                                 <- correct: gated on preflight's output
+```
+
+**Reading.** Two independent signals both flip:
+
+1. **Jobs are created.** `total_count` went 0 → 4. The run no longer ends before scheduling, which
+   is the definition of the startup failure being gone.
+2. **GitHub can read the file's `name:` again.** It reported the run by file path while the file
+   was unevaluable; it now reports "Deploy Inference Plane (Hugging Face)". This was one of the
+   three signals used to diagnose the fault, and it has reversed.
+
+The three `skipped` jobs are the preflight gating working exactly as designed on a pull request.
+
+`validate` then failed in 2 s with the BLOCK-06 signature — which is the honest limit of what this
+evidence proves: **the file is valid and its jobs schedule; whether they can execute is BLOCK-06,
+and still cannot be shown from here.**
+
+`control-plane-deploy.yml` has no `pull_request` trigger (only `workflow_run` + `workflow_dispatch`),
+so it did not run on this head and its identical fix remains **LOCALLY TESTED** only.
+
+**`Backend CI` #282** did run on this head (`pull_request`, and the PR now touches
+`aura_backend/**`) and failed in the same way — further confirmation of EV-17 from a second event
+type.
+
+---
+
 ## Evidence artifacts retained
 
 | File | Contents |

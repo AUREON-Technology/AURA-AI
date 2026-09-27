@@ -78,7 +78,7 @@ FAILURE TESTED · MEASURED · VERIFIED · CERTIFIED.
 
 | Item | Result | Maturity |
 |---|---|---|
-| BLOCK-04 Cause A — `secrets` in job-level `if:` | **FIXED** | LOCALLY TESTED · FAILURE TESTED (negative control) |
+| BLOCK-04 Cause A — `secrets` in job-level `if:` | **FIXED — confirmed in CI** | LOCALLY TESTED · FAILURE TESTED (negative control) · **PRODUCTION TESTED** (EV-21: jobs 0 → 4, run reports its `name:` again) |
 | A blocked deploy fails visibly instead of concluding `skipped` | **FIXED** | LOCALLY TESTED |
 | BLOCK-03 — release identity: settings, endpoint, image, compose ×2, deploy script, revision assertion | **FIXED in code** | LOCALLY TESTED · FAILURE TESTED |
 | DEF-12 — stale API reachability matrix | **FIXED** | LOCALLY TESTED |
