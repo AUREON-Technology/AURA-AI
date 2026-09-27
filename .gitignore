@@ -94,3 +94,11 @@ htmlcov/
 
 # Neural TTS voices — baked into the gateway image, never committed
 *.onnx
+
+# ==========================================
+# Node (root-level tooling, e.g. MCP servers)
+# ==========================================
+node_modules/
+
+# Built host daemon binary — build it locally with `dart run bin/aura_hostd.dart` / a release build
+aura_hostd/aura_hostd.exe
