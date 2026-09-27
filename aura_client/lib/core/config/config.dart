@@ -48,6 +48,6 @@ class AppConfig {
   /// `signInWithGoogleLoopback`) until a build actually injects it.
   static const String googleDesktopClientSecret = String.fromEnvironment(
     'GOOGLE_DESKTOP_CLIENT_SECRET',
-    defaultValue: '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',
+    defaultValue: '',
   );
 }
