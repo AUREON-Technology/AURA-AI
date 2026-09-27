@@ -9,6 +9,36 @@
 
 ---
 
+> ## Addendum — 2026-09-27, revised after a second deployment target was disclosed
+>
+> The operator supplied `https://aura-ai-production-03a4.up.railway.app`. It serves a **working
+> AURA v3 gateway over valid TLS** (EV-22). This audit had not found it: nothing in the
+> repository, DNS, or the deployment docs names that hostname.
+>
+> **Every "BLOCKED — no reachable deployment" result below was true of `aureon-ai.tech` and false
+> of the product.** That is a material error in the earlier reports, and the corrected results are
+> in the revised gate table. Four gates moved to PASS on live evidence:
+> authentication enforcement (72/82 endpoints 401, public set matching the repo's own allowlist),
+> the liveness/readiness contract, no active insecure bypasses (all five `aura_insecure_mode`
+> gauges 0.0), and CORS refusing an untrusted origin. The v1 locked-route invariant holds:
+> **zero legacy paths**, where `aureon-ai.tech` served all 14.
+>
+> **The verdict does not change, and the reason is much narrower than before.** The platform is up;
+> the model is not. `hfspace` — the only configured provider — fails its probe with `ReadTimeout`,
+> and `aura_dependency_up{provider:hfspace}` is `0.0`. With no reachable LLM, no user can get an
+> answer, so the core journey still fails at its third step. The database is also two migrations
+> behind (`expected 0008, revision 0006`) despite `railway.json` declaring a gating
+> `alembic upgrade head`.
+>
+> Two defects found here were **fixed on this branch**, because both were architectural rather than
+> stale: Railway has no nginx, and the header policy and `/metrics` refusal lived only in the nginx
+> template. The app now carries both, and nginx strips the duplicates (DEF-21, DEF-22).
+>
+> One correction to the correction: EV-19 argued the "zero security headers" finding was a
+> stale-image artifact. **That was wrong for this target.** It is a genuine gap wherever the app is
+> the edge. CORS and the health contract, however, were correctly identified as stale-image
+> artifacts, and EV-22 confirms both behave properly in production.
+
 ## Verdict
 
 # NOT PRODUCTION CERTIFIED
@@ -60,19 +90,19 @@ FAILURE TESTED · MEASURED · VERIFIED · CERTIFIED.
 
 | Gate | Result | Highest maturity reached | Note |
 |---|---|---|---|
-| No critical security flaw | **BLOCKED** | LOCALLY TESTED | Repo-side suites pass; no production surface to assess. |
-| Authentication | **BLOCKED** | LOCALLY TESTED | Mandatory. No reachable deployment. |
+| No critical security flaw | **PARTIAL** | **PRODUCTION TESTED** | No bypass active, no secret exposure, CORS sound. Two real gaps found and fixed (DEF-21 headers, DEF-22 open `/metrics`). Authorization/isolation still unevidenced. |
+| Authentication | **PASS** | **PRODUCTION TESTED** | 72/82 endpoints 401 unauthenticated; every non-gated path matches the repo's own `PUBLIC`/`IDENTITY_EXCHANGE` sets (EV-22). |
 | Authorization / isolation (A↛B, admin, IDOR, escalation) | **BLOCKED** | LOCALLY TESTED | Mandatory. **No evidence.** |
 | Safe agent / tool execution, containment | **BLOCKED** | LOCALLY TESTED | Mandatory. **No evidence.** |
 | Adversarial AI safety (injection, exfiltration, policy bypass) | **BLOCKED** | LOCALLY TESTED | Mandatory. **No evidence.** |
-| Core user journeys usable | **FAIL** | PRODUCTION TESTED | No journey reaches its third step. |
-| Production API usable | **FAIL** | PRODUCTION TESTED | `aureon-ai.tech` answers with Django `400`. |
-| Inference works | **BLOCKED** | CODE-PRESENT | No GPU, no provisioned Space, no reachable gateway. |
+| Core user journeys usable | **FAIL** | PRODUCTION TESTED | Still fails at step three, now for one narrow reason: **inference is down** (DEF-19), so no answer can be produced. |
+| Production API usable | **PASS (Railway)** / **FAIL (`aureon-ai.tech`)** | PRODUCTION TESTED | Railway: 80 `/api/v3` routes, valid TLS, zero legacy paths. `aureon-ai.tech`: Django `400`. |
+| Inference works | **FAIL** | **PRODUCTION TESTED** | `hfspace` probe `ReadTimeout` 5.16 s; `aura_dependency_up` `0.0`. Measured, not assumed (DEF-19). |
 | No unrecoverable data failure | **UNKNOWN** | — | Cannot be assessed without host access. |
-| Backup / restore proven | **BLOCKED** | LOCALLY TESTED | Mandatory. Crypto/retention logic is CI-covered; **no real drill**, no RPO/RTO. |
-| Deployment stability | **FAIL** | MEASURED | Fourteen days, zero successful deploys. |
+| Backup / restore proven | **BLOCKED** | LOCALLY TESTED | Mandatory. Crypto/retention logic is CI-covered; **no real drill**, no RPO/RTO. Needs host/DB access neither target grants this audit. |
+| Deployment stability | **FAIL** | MEASURED | Fourteen days, zero successful GitHub-driven deploys (BLOCK-06). Railway deploys via its own git integration, which is why a v3 build is live there while the VPS is frozen — and why nobody noticed. |
 | No exposed secrets | **PASS** | PRODUCTION TESTED | Secrets: **NOT FOUND**. Carried forward from the audit; re-confirmed no config or secret exposure on the live surface. |
-| Release identity traceable | **PARTIAL** | LOCALLY TESTED · FAILURE TESTED | Mechanism built and tested (44 tests); **unproven in production** — nothing has deployed. |
+| Release identity traceable | **PARTIAL** | LOCALLY TESTED · FAILURE TESTED | Mechanism built and tested; **unproven in production**. Confirmed still needed: the Railway build has no `/health/version`, and a route-set diff could not date it (EV-22). |
 
 ### Remediation gates
 
@@ -116,7 +146,7 @@ resolved at the cause; **no check was weakened** to make a test pass.
 
 | Journey | Result |
 |---|---|
-| Install → launch → register/login | **FAIL** — the release client requires HTTPS by its own policy; TLS hostname verification against `aureon-ai.tech` fails. Never reaches login. |
+| Install → launch → register/login | **FAIL as shipped** — the client is compiled against `aureon-ai.tech`, whose TLS hostname verification fails. Against the Railway host it would reach login: TLS is valid and the auth endpoints answer. A rebuild with `BACKEND_URL` pointed there is the difference. |
 | First AI request, conversation | **FAIL** — blocked upstream. |
 | Memory / RAG / reasoning answer | **FAIL** — blocked upstream. |
 | Tool workflow with confirmation and audit | **FAIL** — blocked upstream. |
@@ -135,8 +165,17 @@ In order. Each is a prerequisite for the next.
    `Backend CI` run on `main` that produces a log.
 2. **Get `Backend CI` green** with genuinely executed jobs. Its content has never been shown
    faulty — it has not been *run* since 2026-09-13.
-3. **Fix BLOCK-01.** Point the canonical domain at the AURA host, issue a certificate whose SAN
-   covers it, remove the VELVET/Django routing. Verify with a *verifying* client, not `-k`.
+3. **Bring up the Inference Plane (DEF-19).** The highest-value single action, and independent of
+   everything else: the Control Plane is healthy and waiting for a provider. Check the Hugging Face
+   Space is running and that the Control Plane's `openai_compatible` base URL and key reach it.
+   `/health/ready` flips to 200 when it does.
+4. **Apply the migrations (DEF-20).** `alembic upgrade head` against the Railway database; the
+   schema is at `0006`, code expects `0008`. Then find out why `railway.json`'s gating
+   `preDeployCommand` did not stop the release.
+5. **Fix BLOCK-01**, or retire it. `aureon-ai.tech` points at an unrelated Django site. Either
+   point it at the AURA host with a matching certificate, or — given Railway already serves a
+   correct v3 gateway — make the Railway hostname canonical and rebuild the client against it.
+   Verify with a *verifying* client, not `-k`.
 4. **Deploy current `main`.** `Deploy VPS` now asserts the live revision equals the built SHA and
    fails otherwise, so a no-op deploy can no longer report success.
 5. **Confirm `/health/version`** reports the expected SHA. BLOCK-03 moves to PRODUCTION TESTED.
