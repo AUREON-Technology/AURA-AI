@@ -124,6 +124,31 @@ def _mount_platform_routers(app) -> None:
     app.include_router(github_integration_router)
 
 
+def _warn_if_no_console_operator(settings) -> None:
+    """Say at boot that nobody can reach the console, rather than at the first login attempt.
+
+    A fresh deployment grants no console role to anyone. Discovered the hard way: an operator's
+    own first sign-in was refused with a message about their resolved role, which sent them
+    looking at authentication rather than at three unset environment variables. A startup line
+    costs nothing and puts the answer where someone debugging a deploy is already looking.
+
+    A warning, not a validation failure: the API itself is perfectly usable without an operator
+    console, so refusing to boot over it would turn a missing convenience into an outage -- the
+    mistake made with release identity earlier in this repository's history.
+    """
+    from services.rbac import CONSOLE_ROLE_ENV_VARS, console_operators_configured
+
+    if console_operators_configured():
+        return
+    logger.warning(
+        "no console operator is configured: every operator-console login will be refused with "
+        "403 until one of %s names an email address (the AURA_-prefixed spellings are accepted "
+        "too). The v3 API is unaffected.",
+        ", ".join(CONSOLE_ROLE_ENV_VARS),
+        extra={"environment": str(settings.environment)},
+    )
+
+
 def _register_inference_budget_handler(app) -> None:
     from services.budget import InferenceBudgetExceededException
 
@@ -213,6 +238,7 @@ def create_app():
 
     app = build_app(container, authenticator=authenticator, rate_limiter=rate_limiter)
     _mount_platform_routers(app)
+    _warn_if_no_console_operator(settings)
     _register_inference_budget_handler(app)
     _apply_http_limits(app)
     _apply_cors(app)
