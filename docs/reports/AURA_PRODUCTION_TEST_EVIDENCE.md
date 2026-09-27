@@ -1038,6 +1038,67 @@ BLOCK-03 has now tracked five deploys unaided.
 
 ---
 
+## EV-26 — The DEF-19 recovery reproduces on a different revision (independent window)
+
+**When:** 2026-09-27 23:45–23:46 UTC
+**Target:** `https://aura-ai-production-03a4.up.railway.app`
+**Live revision:** `8366aa3367ca` — the merge commit of #136, a *different* deploy from the
+`b4ab9ad3b66c` that EV-25 measured.
+
+EV-24 is the reason this entry exists. There, a single healthy sample was reported as recovery when
+the true rate was 1-in-8, and the correction set the standing rule: five or more consecutive
+samples before any claim about inference. EV-25 met that rule inside one window. One window on one
+revision is still one observation of one process, so this is the same measurement repeated after a
+deploy replaced the container.
+
+```
+23:45:19Z  healthy=True  208.2 ms  ok
+23:45:29Z  healthy=True  213.2 ms  ok
+23:45:40Z  healthy=True  229.3 ms  ok
+23:45:51Z  healthy=True  218.2 ms  ok
+23:46:01Z  healthy=True  213.0 ms  ok
+23:46:12Z  healthy=True  228.6 ms  ok
+23:46:22Z  healthy=True  212.8 ms  ok
+                     --> 7/7 consecutive, 208.2–229.3 ms
+```
+
+Combined with EV-25: **14/14 consecutive healthy across two windows and two revisions**, every
+latency inside 196.6–229.3 ms. The failing state EV-24 recorded was a fixed ~5150 ms timeout, so
+this is not the same process performing better — it is a different regime, and it now survives a
+container replacement.
+
+### What this does and does not add
+
+**Adds:** durability. EV-25 could have been a warm Space in a lucky window; a fresh container
+answering identically rules out the reading that the previous result depended on that particular
+process's state.
+
+**Does not add:** anything about generation. `/health/ready`'s provider probe establishes that the
+inference endpoint is reachable and answering within its contract. It is not a completion, does not
+exercise `AIKernel`, and must not be cited as evidence that a user turn produces a useful answer —
+that needs the E2E journey suite, which needs credentials. The Maturity column stays honest about
+the difference.
+
+### Two unchanged findings, re-checked rather than assumed
+
+| Check | Result | Note |
+| --- | --- | --- |
+| `GET /metrics` unauthenticated | **`200`** | DEF-22 open. `AURA_METRICS_TOKEN` still unset on the Railway service; the gate is opt-in by design, so an unset token means no gate. |
+| `checks.schema.revision` | `0008`, healthy | DEF-20 stays resolved across the new deploy — the corrected Root Directory is not a one-time effect. |
+
+### Release identity, sixth consecutive deploy
+
+`a517cb68` → `0832665f` → `5c527fdd` → `d79c26bb` → `b4ab9ad3` → `8366aa33`, each matching its
+merge commit on `main`, all from the platform fallback with no build arg wired. The BLOCK-03
+mechanism has now tracked six deploys unaided, including one that changed only client-side Dart.
+
+**Verdict unchanged: NOT PRODUCTION CERTIFIED.** Nothing here touches the four mandatory gates that
+have no evidence. A stronger result on a gate that already passed cannot move a verdict that is
+refused for absence elsewhere, and recording it as though it could is the failure mode this ledger
+exists to prevent.
+
+---
+
 ## Evidence artifacts retained
 
 | File | Contents |
