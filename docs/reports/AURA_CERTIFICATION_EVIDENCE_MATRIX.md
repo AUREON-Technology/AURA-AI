@@ -38,7 +38,7 @@ suite rather than by whoever writes the summary.
 | No exposed secrets | yes | PRODUCTION TESTED | EV-09 (Secrets: NOT FOUND) | PASS |
 | Production API usable | yes | PRODUCTION TESTED | EV-22 (80 /api/v3 routes, valid TLS, zero legacy paths) | PASS |
 | Core user journeys usable | yes | PRODUCTION TESTED | EV-22 (no journey reached step three) | UNKNOWN |
-| Inference works | yes | PRODUCTION TESTED | EV-24 (hfspace healthy=True; no completed turn observed) | PARTIAL |
+| Inference works | yes | MEASURED | EV-24 (hfspace healthy in 1/8 samples; 226ms when up, 5.15s timeout when not) | FAIL |
 | No unrecoverable data failure | yes | CODE-PRESENT | — | UNKNOWN |
 | Deployment stability | yes | MEASURED | EV-17 (zero executed CI jobs since 2026-09-13) | FAIL |
 | Database schema integrity | yes | PRODUCTION TESTED | EV-23 (revision 0006, code expects 0008) | FAIL |
