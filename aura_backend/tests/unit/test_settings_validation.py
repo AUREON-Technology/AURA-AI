@@ -277,6 +277,10 @@ class TestProductionGate:
         # P1.2/P5.1: memory content and personal-OS fields are encrypted at rest; production
         # refuses to start without the key (see test_field_crypto.py for the missing-key case).
         env.setenv("AURA_DATA_ENCRYPTION_KEYS", "A" * 43 + "=")
+        # BLOCK-03: an anonymous build is not a correctly configured one. Injected by the
+        # Dockerfile's build args in every real deploy, so a deployment that reaches production
+        # without it has skipped a step -- see test_release_identity.py.
+        env.setenv("AURA_GIT_SHA", "0123456789abcdef0123456789abcdef01234567")
 
         AuraSettings.from_env().validate()
 

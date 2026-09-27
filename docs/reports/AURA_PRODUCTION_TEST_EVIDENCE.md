@@ -366,6 +366,237 @@ was already known internally; what this audit adds is that production is additio
 
 ---
 
+## EV-17 — GitHub Actions has executed nothing since 2026-09-13 (BLOCK-06)
+
+**Date:** 2026-09-27 ~17:55 UTC. **Classification:** MEASURED.
+
+The decisive evidence of this remediation. Recorded with a deliberate re-run and a control.
+
+Last successful run of *any* workflow in the repository (340 successes total, newest first):
+
+```
+list_workflow_runs?status=success  ->
+  Deploy VPS  #151  success  2026-09-13T14:40:45Z  head 78bdc83
+  Backend CI  #220  success  2026-09-13T14:34:08Z  head 78bdc83
+  Backend CI  #219  success  2026-09-13T14:23:52Z
+```
+
+`78bdc83` is dated `2026-09-13 17:34:05 +0300` in the local checkout — the newest commit that has
+ever reached production.
+
+`Backend CI` #281 on `main` @ `71dd01b`, then re-run deliberately (`rerun_failed_jobs`) to obtain
+a fresh log:
+
+```
+attempt 1  pip-audit       failure  06:05:46 -> 06:05:47   (1s)
+attempt 1  test            failure  06:05:46 -> 06:05:49   (3s)
+attempt 1  backup-scripts  failure  06:05:46 -> 06:05:48   (2s)
+attempt 1  docker-build    skipped                          (needs: test)
+
+attempt 2  backup-scripts  failure  17:55:10 -> 17:55:13   (3s)
+attempt 2  pip-audit       failure  17:55:10 -> 17:55:13   (3s)
+attempt 2  test            failure  17:55:11 -> 17:55:14   (3s)
+```
+
+Reproduced identically. Billing for the whole run:
+
+```
+get_workflow_run_usage 36299091078 ->
+  billable.UBUNTU.total_ms: 0
+  jobs: 8   every job_runs[].duration_ms: 0
+  run_duration_ms: 8000
+```
+
+Log retrieval, with freshly minted signed URLs:
+
+```
+get_job_logs 108674437732 (created 3 minutes earlier) -> HTTP 404
+get_job_logs run=36299091078 failed_only return_content ->
+  pip-audit       HTTP 404
+  test            HTTP 404
+  backup-scripts  HTTP 404
+```
+
+`get_check_run 108674437732` -> `output.title ""`, `output.summary ""`, `output.text ""`.
+
+**Control — is this specific to `Backend CI`?** No:
+
+```
+Client CI        #129  failure  3s   (2026-09-26)
+Agent Evaluation #85   failure  3s   (2026-09-27)
+Backend CI       #281  failure  4s   (2026-09-27)
+control-plane-deploy  #74  failure  0s, 0 jobs
+inference-plane-deploy #74  failure  0s, 0 jobs
+Deploy VPS       #183  skipped
+```
+
+Repository visibility: `curl https://github.com/anasibrahimgnedy-collab/AURA-AI` unauthenticated
+-> **HTTP 404**, i.e. private, so its Actions minutes are metered.
+
+**Reading.** Zero billable milliseconds plus no log blob means the jobs were rejected at
+assignment — before `actions/checkout`, before any step. It affects every workflow regardless of
+content, so no workflow's content causes it. Consistent with exhausted Actions minutes or a
+reached spending limit on a private repository, with a clean 2026-09-13 boundary.
+
+**Residual unknown, stated:** the billing page was not readable from this vantage, so *which*
+entitlement failed — exhausted minutes, a `$0` spending limit, or a payment-method failure — is
+**UNKNOWN**. It is not inferred.
+
+---
+
+## EV-18 — Production topology changed mid-audit, and regressed (BLOCK-01)
+
+**Date:** 2026-09-27 ~18:05 UTC. **Classification:** PRODUCTION TESTED.
+
+```
+$ getent hosts aureon-ai.tech
+2a02:4780:79:5dcd::1   aureon-ai.tech        # was IPv4 152.239.118.239 (EV-01); Hostinger range
+
+$ curl -o /dev/null -w "http=%{http_code} ssl_verify=%{ssl_verify_result}\n" https://aureon-ai.tech/
+http=000 ssl_verify=1                        # hostname verification still fails
+
+$ curl -k https://aureon-ai.tech/openapi.json
+<!doctype html><html lang="en"><head><title>Bad Request (400)</title></head>
+<body><h1>Bad Request (400)</h1><p></p></body></html>
+
+$ curl -k -o /dev/null -w "%{http_code}\n" https://aureon-ai.tech/health/version
+400
+```
+
+The `Bad Request (400)` body is Django's `ALLOWED_HOSTS` rejection page — the site behind the
+address does not recognise `aureon-ai.tech` as a permitted host.
+
+Both addresses that previously served AURA:
+
+```
+$ curl -k -H "Host: aureon-ai.tech" https://152.239.118.239/openapi.json
+curl: (35) Recv failure: Connection reset by peer      # previously served AURA v1 (EV-03)
+
+$ curl -k -H "Host: aureon-ai.tech" https://169.58.188.43/openapi.json
+curl: (35) Recv failure: Connection reset by peer      # documented VPS (vars.VPS_HOST)
+```
+
+**Reading.** The stale AURA v1 backend recorded in EV-03 is **no longer reachable at any address
+this audit knows of**. BLOCK-01 regressed: production moved from *stale* to *absent*. The 400 at
+`/health/version` is Django answering, not AURA — it is not evidence about the new endpoint.
+
+---
+
+## EV-19 — EV-05, EV-07 and EV-08 describe the stale image, not current `main` (CORRECTION)
+
+**Classification:** STATICALLY VERIFIED. Recorded because reading these as code defects would
+send a remediation after bugs that do not exist.
+
+`aura_core/api/v3.py` in `build_app`:
+
+```python
+@app.get("/health/live")
+async def liveness() -> JSONResponse:
+    """Process is running. Deliberately checks nothing else -- a liveness probe that fails
+    on a dependency outage causes the orchestrator to restart a healthy process, turning a
+    degradation into an outage."""
+    return JSONResponse(content={"status": "alive"})
+
+@app.get("/health/ready")
+async def readiness() -> JSONResponse:
+    health = await container.health()
+    return JSONResponse(status_code=200 if health["healthy"] else 503, content=health)
+```
+
+`aura_core/container.py` provides `register_readiness_check(name, check)` and aggregates it in
+`health()`; a falsey `healthy` from any probe makes the whole payload unhealthy. Already used by
+`_register_schema_readiness` to gate on the Alembic head.
+
+`aura_service.py::_apply_cors` drops `allow_credentials` when the origin list contains `*`, and
+warns. `deploy/nginx/templates/aura.conf.template` sets HSTS, `X-Content-Type-Options`,
+`X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` and CSP across its server blocks.
+
+**Reading.** EV-05's 404s on `/health/ready` and `/health/live`, EV-07's absent headers and
+EV-08's `ACAO: *` are all properties of the 2026-09-13 image (EV-17), not of current `main`. They
+stay open as *production* findings — unverifiable until a current build deploys — and are **not**
+recorded as passes.
+
+---
+
+## EV-20 — Suites after remediation
+
+**Date:** 2026-09-27 ~18:20 UTC. **Classification:** LOCALLY TESTED · FAILURE TESTED.
+
+```
+$ pytest tests
+2764 passed, 56 skipped, 47 deselected, 82 warnings in 56.12s
+
+$ TESTING=True python -m unittest discover -p "test_*.py"
+Ran 100 tests in 5.815s
+OK (skipped=4)
+```
+
+2820 collected = the 2776 baseline (EV-14) + 44 new tests. **Zero failures**; the baseline's one
+failure (DEF-12) is fixed.
+
+New suites:
+
+```
+$ pytest tests/unit/test_release_identity.py -q
+..................                                                       [100%]   # 18
+
+$ pytest tests/unit/test_workflow_job_contexts.py -q
+..........................                                               [100%]   # 26
+```
+
+**Negative control** — reintroduced `secrets.RAILWAY_TOKEN != ''` into
+`control-plane-deploy.yml`'s job-level `if:`:
+
+```
+FAILED test_no_job_level_if_references_secrets[control-plane-deploy.yml]
+FAILED test_job_level_if_uses_only_available_contexts[control-plane-deploy.yml]
+FAILED TestDeployPreflight::test_the_preflight_publishes_an_output_the_deploy_gates_on[control-plane-deploy.yml]
+```
+
+Restored -> 26 pass. The tests detect the defect they were written for.
+
+**Production gate, exercised directly:**
+
+```
+AuraSettings(environment=LOCAL).validate()       -> ['at least one LLM provider must be configured and enabled']
+AuraSettings(environment=PRODUCTION).validate()  -> ['release.git_sha must be injected in staging/production -- build with
+                                                      --build-arg GIT_SHA=$(git rev-parse HEAD) (see Dockerfile, BLOCK-03)',
+                                                     ... 5 pre-existing production requirements ...]
+```
+
+**Three intermediate failures**, recorded rather than quietly fixed — each a real consequence of a
+real change, caught by the suite:
+
+```
+FAILED tests/architecture/test_api_reachability.py::test_the_committed_matrix_is_current
+FAILED tests/security/test_route_auth.py::test_protected_route_rejects_every_bad_credential[GET-/health/version]
+FAILED tests/unit/test_settings_validation.py::TestProductionGate::test_a_correctly_configured_production_deployment_starts
+```
+
+Resolved at the cause: matrix regenerated; `/health/version` declared in `test_route_auth.py`'s
+`PUBLIC` allowlist with its justification; the production-gate test now sets `AURA_GIT_SHA`
+because release identity is now part of a correctly configured production deployment. **No check
+was weakened.**
+
+The second is the repository's own architecture working as designed: a new unauthenticated route
+cannot be added without a security test forcing the author to declare it.
+
+**Static checks:**
+
+```
+$ for f in .github/workflows/*.yml; do yaml.safe_load(f); done
+all 10 parse
+$ grep -rn "if:" .github/workflows/*.yml | grep "secrets\."
+(no matches)
+$ yaml.safe_load(docker-compose.prod.yml / docker-compose.dev.yml)
+gateway, worker-realtime, worker-ingestion, worker-training, beat -> all carry
+GIT_SHA/GIT_REF/BUILD_TIME/DEPLOYMENT_ID (worker-training also AURA_TRAINING_DEPS)
+$ bash -n deploy/scripts/vps-update.sh
+(clean)
+```
+
+---
+
 ## Evidence artifacts retained
 
 | File | Contents |

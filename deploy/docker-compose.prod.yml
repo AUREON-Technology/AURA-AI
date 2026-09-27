@@ -17,6 +17,17 @@
 
 name: aura
 
+# Release identity (BLOCK-03), passed to every image built from aura_backend/Dockerfile so a
+# running container can answer "which commit am I?" on /health/version. Exported into the
+# process environment by deploy/scripts/vps-update.sh before it builds -- compose interpolation
+# reads that ahead of --env-file, so the SHA never lingers in .env for the next run to inherit.
+# Empty locally, which AuraSettings.validate() rejects only for a production environment.
+x-release-args: &release_args
+  GIT_SHA: ${AURA_GIT_SHA:-}
+  GIT_REF: ${AURA_GIT_REF:-}
+  BUILD_TIME: ${AURA_BUILD_TIME:-}
+  DEPLOYMENT_ID: ${AURA_DEPLOYMENT_ID:-}
+
 x-logging: &logging
   driver: json-file
   options:
@@ -233,6 +244,7 @@ services:
     build:
       context: ../aura_backend
       dockerfile: Dockerfile
+      args: *release_args
     <<: *restart
     logging: *logging
     command: >
@@ -548,6 +560,7 @@ services:
     build:
       context: ../aura_backend
       dockerfile: Dockerfile
+      args: *release_args
     <<: *restart
     logging: *logging
     # Separate queues so a multi-minute ingestion backlog cannot delay a user-facing task.
@@ -630,6 +643,7 @@ services:
     build:
       context: ../aura_backend
       dockerfile: Dockerfile
+      args: *release_args
     <<: *restart
     logging: *logging
     command: celery -A tasks worker -Q ingestion,learning -c 2 --loglevel=info --max-tasks-per-child=50
@@ -662,6 +676,7 @@ services:
       # The only image with requirements-train.txt (peft). Without it LocalLoraTrainer fails
       # every job with a ConfigurationError -- see docs/guides/mlops-guide.md.
       args:
+        <<: *release_args
         AURA_TRAINING_DEPS: "true"
     <<: *restart
     logging: *logging
@@ -687,6 +702,7 @@ services:
     build:
       context: ../aura_backend
       dockerfile: Dockerfile
+      args: *release_args
     <<: *restart
     logging: *logging
     # Scheduler only. knowledge_refresh_task and memory_consolidate_task run on

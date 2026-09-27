@@ -4,6 +4,12 @@
 **Production target:** `aureon-ai.tech` → A `152.239.118.239` / AAAA `2a02:4780:79:5dcd::1`
 **Overall:** **NOT PRODUCTION CERTIFIED** — see `AURA_PRODUCTION_BLOCKERS.md`
 
+**Revised 2026-09-27 after remediation.** Three rows below were corrected: the health/readiness
+contract, CORS and security headers were recorded as code defects, and are not — current `main`
+already implements all three correctly (EV-19). What was observed belongs to the 2026-09-13 image
+still running in production. Two rows improved on the strength of executed tests: build provenance
+and the deploy pipeline. Everything else is unchanged, and the overall verdict is unchanged.
+
 ## How to read this table
 
 The columns are deliberately not interchangeable, because conflating them is how a system like this
@@ -35,8 +41,8 @@ Legend: `Y` yes · `N` no · `P` partial · `—` not applicable · `BLOCKED` pr
 | TLS / HTTPS | Y | Y | **Y** | — | **N** (foreign cert) | **NOT READY** |
 | v3 Gateway (`/api/v3/*`) | Y | Y | **Y** | — | **N** (absent; all 404) | **NOT READY** |
 | Legacy v1/v2 surface removal | Y | Y | **Y** | — | **N** (14 routes live) | **NOT READY** |
-| Health / readiness contract | Y | Y | **Y** | P | **N** (200 while degraded) | **NOT READY** |
-| Build provenance at runtime | N | — | Y | — | **N** (unidentifiable) | **NOT READY** |
+| Health / readiness contract | Y | Y | **Y** | P | **N** (200 while degraded — *stale image; code is correct, EV-19*) | **NOT READY** |
+| Build provenance at runtime | **Y** (new) | **Y** (18 tests) | N | **Y** (prod gate) | **P** (build now known: `78bdc83`) | **NOT READY** (unproven in prod) |
 | PostgreSQL connectivity | Y | Y | **Y** | N | **Y** (reachable) | READY W/ LIMITATION |
 | Redis connectivity | Y | Y | **Y** | N | **Y** (reachable) | READY W/ LIMITATION |
 | Qdrant connectivity | Y | Y | **Y** | — | **N** (client `None`) | **NOT READY** |
@@ -52,8 +58,8 @@ Legend: `Y` yes · `N` no · `P` partial · `—` not applicable · `BLOCKED` pr
 | Invalid refresh-token rejection | Y | Y | **Y** | Y | **Y** (401) | **READY** |
 | Token revocation semantics | Y | Y | **Y** | Y | **P** (200 on invalid) | READY W/ LIMITATION |
 | Secret / config file exposure | Y | Y | **Y** | Y | **Y** (none found) | **READY** |
-| Security response headers | Y | Y | **Y** | — | **N** (none present) | **NOT READY** |
-| CORS policy | Y | Y | **Y** | Y | **N** (`*`, any origin) | **NOT READY** |
+| Security response headers | Y | Y | **Y** | — | **N** (none observed — *stale image; nginx template sets HSTS/CSP/XCTO/XFO/Referrer/Permissions, EV-19*) | **NOT READY** |
+| CORS policy | Y | Y | **Y** | Y | **N** (`*` observed — *stale image; `_apply_cors` drops credentials on `*`, EV-19*) | **NOT READY** |
 | Rate limiting | Y | Y | **P** | P | **P** (none on `/health`) | **NOT TESTED** |
 | Authorization / RBAC / IDOR | Y | Y | **N** | N | N/T | **BLOCKED** |
 | Cross-user data isolation | Y | Y | **N** | N | N/T | **BLOCKED** |
@@ -97,7 +103,7 @@ Legend: `Y` yes · `N` no · `P` partial · `—` not applicable · `BLOCKED` pr
 | Capability | Implemented | Tested | Production Tested | Failure Tested | Verified | Ready |
 | --- | --- | --- | --- | --- | --- | --- |
 | CI gating (Backend CI) | Y | — | **Y** | — | **N** (fails at startup) | **NOT READY** |
-| Deploy pipeline (VPS) | Y | — | **Y** | — | **N** (skipped) | **NOT READY** |
+| Deploy pipeline (VPS) | Y | **Y** (26 tests) | **Y** | **Y** | **N** (BLOCK-06: no job executed since 2026-09-13) | **NOT READY** |
 | Second target (Railway + HF) | Y | — | **Y** | — | **N** (not deployed) | **NOT READY** |
 | Dev/staging environment | Y | — | **Y** | — | **N** (`dev.` NXDOMAIN) | **NOT READY** |
 | Compose isolation parity | Y | Y | **N** | — | **Y** (static: parity holds) | READY W/ LIMITATION |
@@ -114,6 +120,11 @@ Legend: `Y` yes · `N` no · `P` partial · `—` not applicable · `BLOCKED` pr
 
 ## Tally
 
+Unchanged in shape: the remediation moved code, not production. Two rows improved (build
+provenance, deploy pipeline) and three were corrected from "code defect" to "stale-image
+artifact", none of which changes a `Ready` verdict, because no capability can become READY
+without a reachable deployment.
+
 | Verdict | Count |
 | --- | --- |
 | **READY** | 4 |
@@ -127,12 +138,34 @@ Legend: `Y` yes · `N` no · `P` partial · `—` not applicable · `BLOCKED` pr
 correctly refusing unauthenticated access and not leaking configuration. Nothing that delivers
 user-facing value is verified in production.
 
+## Maturity reached by the remediation
+
+Per the brief's levels. Recorded separately from the table above, because "we fixed it and tested
+it" is a different claim from "a user can rely on it".
+
+| Item | CODE-PRESENT | LOCALLY TESTED | FAILURE TESTED | MEASURED | PRODUCTION TESTED | CERTIFIED |
+| --- | --- | --- | --- | --- | --- | --- |
+| Release identity (`/health/version`, image, compose, deploy assertion) | Y | Y | Y | — | **N** | N |
+| Workflow `secrets`-in-`if:` fix + preflight | Y | Y | **Y** (negative control) | — | **N** | N |
+| Blocked deploy fails visibly | Y | Y | — | — | **N** | N |
+| API reachability matrix current (DEF-12) | Y | Y | — | — | — | N |
+| Self-hosted-only inference invariant | Y | Y | — | — | **N** | N |
+| CI outage diagnosis (BLOCK-06) | — | — | — | **Y** | **Y** | N |
+| Production topology regression (BLOCK-01) | — | — | — | Y | **Y** | N |
+
+Nothing reaches CERTIFIED. Nothing in the first five rows reaches PRODUCTION TESTED, because
+there is no reachable AURA deployment to test against — which is itself the finding.
+
 The honest summary: this is a substantially built and well-tested codebase attached to a broken
-deployment. The repo's own `docs/production/gap_register.yaml` (31 open, 13 built-not-proven) and
-`AURA_AI_PRODUCTION_READINESS_SCORE.md` ("No dimension can score above 8, because this system has
-never served a real user") already said as much. This audit's contribution is the live evidence for
-*why* — and it is worse than "unproven": the deployed artifact is not the audited one, and the path
-to change that is itself broken.
+deployment, and the remediation established *why* the deployment is broken rather than removing
+the brokenness. The repo's own `docs/production/gap_register.yaml` (31 open, 13
+built-not-proven) and `AURA_AI_PRODUCTION_READINESS_SCORE.md` ("No dimension can score above 8,
+because this system has never served a real user") already said as much.
+
+The one genuinely new thing: the deployed artifact is not the audited one, the path to change
+that has not executed a job since 2026-09-13, and that path's silence was itself invisible
+because a non-deploy rendered identically to a deploy. The first is now dated, the second is
+measured, and the third is fixed.
 
 ---
 

@@ -9,11 +9,76 @@ This file lists **only unresolved blockers**. Non-blocking findings, known limit
 areas that could not be tested are in `AURA_REAL_PRODUCTION_TEST_REPORT.md`. Every item here was
 observed against the live deployment, not inferred from source.
 
-A note on scope, because it changes how this list should be read: the four P0 items below are not
-four independent defects. They are four symptoms of one condition — **the production host is
-serving a pre-v3 build of the application, and the deploy pipeline that would replace it has not
-run successfully on any recent commit.** Fixing BLOCK-04 (the pipeline) is the precondition for
-BLOCK-02 and BLOCK-03 resolving at all.
+**Revised 2026-09-27 after remediation.** See `AURA_PRODUCTION_REMEDIATION_REPORT.md` for what
+was fixed and `AURA_REAL_PRODUCTION_CERTIFICATION.md` for the standing verdict.
+
+A note on scope, because it changes how this list should be read: the P0 items below are not
+independent defects. They are symptoms of one condition, and the remediation identified what it
+actually is — **GitHub Actions has executed no job for this repository since 2026-09-13, so
+production has been frozen on `78bdc83` for fourteen days.** That is BLOCK-06, it is
+account-level rather than a defect in this repository, and it is the precondition for everything
+else here.
+
+### Status after remediation
+
+| Blocker | Status |
+|---|---|
+| **BLOCK-06** (new) — Actions executes nothing; account-level | **OPEN — fix first. Owner action only.** |
+| BLOCK-01 — wrong application on the canonical domain | **OPEN, regressed.** Now a Django `ALLOWED_HOSTS` rejection; the stale AURA backend is unreachable at any known address (EV-18). |
+| BLOCK-02 — no `/api/v3` in production | **OPEN.** Blocked by BLOCK-06 and BLOCK-01. |
+| BLOCK-03 — unidentified deployed artifact | **Mechanism FIXED and tested; unproven in production.** The build is now known to be `78bdc83`. |
+| BLOCK-04 — deploy pipeline | **Cause A FIXED** (`secrets` in job-level `if:`). **Cause B is BLOCK-06.** A blocked deploy now fails visibly instead of concluding `skipped`. |
+| BLOCK-05 — degraded Qdrant under a 200 | **Already correct in current code** (EV-19); the observed behaviour is the stale image. Unprovable until a current build deploys. |
+
+---
+
+## BLOCK-06 — P0 — GitHub Actions executes no job for this repository (account-level)
+
+**Component:** CI/CD entitlement — GitHub Actions, account `anasibrahimgnedy-collab`
+**Environment:** github.com, private repository `anasibrahimgnedy-collab/AURA-AI`
+**Classification:** MEASURED
+**Blocking:** **Yes — blocks every other item in this file.**
+
+**Reproduction**
+
+1. `list_workflow_runs?status=success` — newest success is `Deploy VPS` #151,
+   `2026-09-13T14:40:45Z`, head `78bdc83`.
+2. Re-run any failed `Backend CI` job on `main` (`rerun_failed_jobs`).
+3. `list_workflow_jobs` — 3 jobs created, each completes `failure` in 1–3 s.
+4. `get_workflow_run_usage` — `billable.UBUNTU.total_ms: 0`; all 8 job runs `duration_ms: 0`.
+5. `get_job_logs … return_content` — HTTP 404 for every job, including one created minutes earlier.
+
+**Expected:** jobs execute, consume billable minutes, and write logs.
+
+**Actual:** jobs are created and immediately concluded `failure` with zero billable time and no
+log output. `Client CI`, `Agent Evaluation`, `Backend CI` and both plane-deploys are all affected;
+nothing has succeeded in fourteen days.
+
+**Evidence:** EV-17.
+
+**Root cause:** jobs are rejected at assignment, before any step runs. Because it affects every
+workflow regardless of content, no workflow's content causes it. Consistent with exhausted Actions
+minutes or a reached spending limit on a private repository. *Which* entitlement failed is
+**UNKNOWN** — the billing page was not readable from the audit vantage, and this is deliberately
+not inferred.
+
+**Impact:** merging to `main` deploys nothing, silently. Production has served a 2026-09-13 image
+for fourteen days. Every downstream blocker follows from this, and no production gate can be
+evidenced while it holds.
+
+**Severity:** P0.
+
+**Recommended fix (owner action — cannot be done from the repository):**
+
+1. GitHub → Settings → Billing and licensing → Plans and usage. Check Actions minutes used against
+   the allowance, and whether a spending limit is set to `$0`.
+2. Raise the spending limit / attach a payment method, or move CI to self-hosted runners.
+3. Re-run `Backend CI` on `main`. A job that produces *any* log confirms the fix.
+
+**Regression test:** not expressible in this repository — the failure is in the execution
+substrate, not the code. The nearest available guard is the `blocked` job now added to
+`deploy-backend.yml`, which makes a non-deploying pipeline red rather than grey; it would not have
+prevented this, but it would have made it visible on day one instead of day fourteen.
 
 ---
 
