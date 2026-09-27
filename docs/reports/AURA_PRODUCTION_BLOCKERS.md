@@ -19,6 +19,49 @@ production has been frozen on `78bdc83` for fourteen days.** That is BLOCK-06, i
 account-level rather than a defect in this repository, and it is the precondition for everything
 else here.
 
+### Revised 2026-09-27 — a second deployment target exists
+
+The operator disclosed `https://aura-ai-production-03a4.up.railway.app`, which serves a **working
+AURA v3 gateway over valid TLS** (EV-22). This audit had not found it; nothing in the repository,
+DNS or the deployment docs names that hostname.
+
+That changes what these blockers mean. They are accurate about `aureon-ai.tech` — the host the
+shipped client is compiled against — and **wrong as statements about the product**, which does have
+a reachable v3 API. Corrected status:
+
+| Blocker | On `aureon-ai.tech` | On Railway |
+|---|---|---|
+| BLOCK-01 wrong application / bad certificate | **OPEN** — Django `ALLOWED_HOSTS` 400 | **N/A** — TLS validates (`ssl_verify_result=0`) |
+| BLOCK-02 no `/api/v3` | **OPEN** — v1 build, 14 legacy paths live | **RESOLVED** — 80 `/api/v3` routes, **zero** legacy paths |
+| BLOCK-05 degraded under a 200 | unverifiable (host absent) | **RESOLVED — PASS.** `/health/ready` returns **503** on a genuinely unhealthy dependency; `/health/live` 200 |
+| BLOCK-03 unidentified artifact | open | **OPEN** — no `/health/version`; a route-set diff could not date it (settings-dependent, so invalid) |
+| BLOCK-06 Actions executes nothing | open | **explains the split** — Railway deploys via its own git integration, so it kept shipping while the GitHub-driven VPS pipeline was dead |
+
+**The certification verdict does not change, but its reason narrows sharply: the platform is up and
+the model is not.** New P0s, both on the live Railway deployment:
+
+- **DEF-19 (P0)** — inference entirely down. `hfspace`, the only provider, fails its probe with
+  `ReadTimeout` after 5.16 s; `aura_dependency_up{dependency="provider:hfspace"} 0.0`. No LLM ⇒ no
+  chat, planning, agents or grounded answers. **This is now the single highest-value fix.**
+- **DEF-20 (P0)** — database schema two migrations behind (`expected 0008, revision 0006`), despite
+  `railway.json` declaring `preDeployCommand: alembic upgrade head` with `|| exit 1`.
+
+Two further defects found there were **architectural, not stale, and are fixed on this branch**:
+**DEF-21** (no security headers) and **DEF-22** (`/metrics` world-readable — which the repo's own
+nginx config refuses with `deny all; return 404;` in both server blocks). Railway has no nginx, so
+a policy that lived only in the nginx template protected only one of two targets. It now lives in
+the application. **DEF-23** records why a dashboard could not see DEF-19:
+`aura_provider_healthy` tracks the circuit breaker, which only opens on *routed* traffic, so it
+read `1.0` throughout a total outage.
+
+Gates that moved to **PASS on live evidence**: authentication enforcement, the liveness/readiness
+contract, no active insecure bypasses (all five `aura_insecure_mode` gauges `0.0`), CORS refusing an
+untrusted origin, and the v1 locked-route invariant. Still **without evidence**, and still blocking:
+authorization/isolation, adversarial safety enforcement, agent containment, backup/restore — all
+four need authenticated synthetic identities, and no credential or registration path is available.
+
+---
+
 ### Status after remediation
 
 | Blocker | Status |

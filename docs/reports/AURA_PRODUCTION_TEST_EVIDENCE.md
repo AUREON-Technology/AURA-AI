@@ -647,6 +647,137 @@ type.
 
 ---
 
+## EV-22 — A working v3 Control Plane exists on Railway (BLOCK-01 / BLOCK-02 resolved on that target)
+
+**Date:** 2026-09-27 18:30–18:40 UTC. **Target:** `https://aura-ai-production-03a4.up.railway.app`
+**Classification:** PRODUCTION TESTED. **Provenance:** URL supplied by the operator; this audit had
+not discovered it, because nothing in the repository, DNS, or the Railway docs names it.
+
+This is the single largest correction to the audit. A reachable, correctly-served AURA v3 gateway
+exists. Every "BLOCKED — no reachable deployment" result in the earlier reports was true of
+`aureon-ai.tech` and false of the product as a whole.
+
+### It is the real v3 gateway, over valid TLS
+
+```
+$ curl -o /dev/null -w "http=%{http_code} ssl_verify=%{ssl_verify_result} time=%{time_total}\n" $U/
+http=404 ssl_verify=0 time=0.497s          # 404 at / is correct: v3 mounts no root route
+
+$ curl $U/openapi.json | head -c 160
+{"openapi":"3.1.0","info":{"title":"AURA AI Gateway","description":"Enterprise AI platform
+gateway. See docs/architecture/00-overview.md","version":"3.0.0"}
+```
+
+`AURA AI Gateway` / `3.0.0` is `build_app` in `aura_core/api/v3.py`. **`ssl_verify_result=0`** — the
+certificate validates, unlike BLOCK-01's target.
+
+Route surface: **83 paths, 80 of them `/api/v3`**, plus exactly the three extras `build_app`
+mounts (`/health/live`, `/health/ready`, `/metrics`). **Zero legacy v1 paths** — the 14 that
+`tests/unit/test_v1_locked_routes.py` requires to 404 are absent, so that invariant **holds in
+production**. No `/health/version`, which correctly dates the build to before this branch's
+release-identity commit.
+
+### The health contract is correct in production (BLOCK-05 — PASS)
+
+```
+$ curl $U/health/live      -> 200  {"status":"alive"}
+$ curl $U/health/ready     -> 503
+{"providers":{"hfspace":{"healthy":false,"detail":"ReadTimeout","latency_ms":5162.9}},
+ "index":"aura-knowledge__v1__hash-embed-v1__384","tools":37,"prompts":17,"agents":8,
+ "voice":{"tts":"piper-en+piper-ar","stt":"faster-whisper-tiny.en","live":false},
+ "environment":"production","healthy":false,
+ "checks":{"schema":{"healthy":false,"expected":"0008","revision":"0006",
+                     "detail":"database schema is behind the code in this image"}}}
+```
+
+Liveness 200 while readiness 503 on a genuinely unhealthy dependency is **exactly** the semantics
+EV-19 predicted from the code, now observed. BLOCK-05 moves from "unprovable" to **PASS,
+PRODUCTION TESTED** — and it earns its keep immediately, by surfacing the two defects below that
+nothing else was reporting.
+
+### Authentication is enforced (PASS)
+
+All 82 GET/POST operations in the spec, probed unauthenticated with a deliberately invalid body so
+a 401 proves an auth-first gate and a 422 would reveal a missing one:
+
+```
+401: 72    403: 1    200: 4    422: 4    503: 1
+```
+
+Every non-gated path is one the repository's own `tests/security/test_route_auth.py` already
+declares public or identity-exchange:
+
+```
+200  GET  /health/live · GET /metrics · POST /api/v3/auth/nonce · POST /api/v3/auth/desktop/pair/start
+422  POST /api/v3/auth/refresh · /auth/revoke · /auth/desktop/pair/poll · GET /integrations/github/callback
+503  GET  /health/ready
+```
+
+No write was performed and no synthetic record was created, so nothing needed cleanup.
+
+### No insecure bypasses are active (PASS)
+
+From `/metrics`:
+
+```
+aura_insecure_mode{bypass="debug"}                 0.0
+aura_insecure_mode{bypass="mock_auth"}             0.0
+aura_insecure_mode{bypass="mock_attestation"}      0.0
+aura_insecure_mode{bypass="safety_disabled"}       0.0
+aura_insecure_mode{bypass="rate_limit_disabled"}   0.0
+```
+
+All five production gates `AuraSettings.validate()` enforces are confirmed **off in the running
+process** — not merely required by code.
+
+### CORS refuses an untrusted origin (PASS — confirms EV-19)
+
+```
+$ curl -X OPTIONS $U/api/v3/chat -H "Origin: https://evil.example.com" \
+       -H "Access-Control-Request-Method: POST" -D -
+HTTP/2 400
+access-control-allow-credentials: true
+access-control-allow-methods: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT
+access-control-max-age: 600
+```
+
+**No `access-control-allow-origin`** — the hostile origin is not granted. The CORS middleware is
+present (so `_apply_cors` ran) and `allow_credentials: true` proves the configured list does *not*
+contain `*`, since `_apply_cors` disables credentials in that case. The audit's `ACAO: *` finding
+was the stale v1 image, exactly as EV-19 argued.
+
+### Defects found — and these are real, on a live system
+
+| ID | Sev | Finding |
+|---|---|---|
+| **DEF-19** | **P0** | **Inference is entirely down.** The only provider, `hfspace`, fails its probe with `ReadTimeout` after 5.16 s; `aura_dependency_up{dependency="provider:hfspace"} 0.0`. No LLM is reachable, so chat, planning, agents and grounded answers cannot function. The Inference Plane is the missing half of the deployment. |
+| **DEF-20** | **P0** | **Database schema is two migrations behind**: `expected 0008, revision 0006`. `railway.json` declares `preDeployCommand: alembic upgrade head` with `|| exit 1`, so either the running service predates that config or the pre-deploy step did not gate the release. Code expects tables the database does not have. |
+| **DEF-21** | **P2** | **No security headers at all.** No HSTS, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` or `Permissions-Policy`. Not a stale-image artifact: Railway has **no nginx in the path**, and the policy lived only in the nginx template. Response headers were `content-type`, `date`, `server: railway-hikari`, `x-railway-*` and nothing else. **Fixed on this branch** — see `aura_core/api/security_headers.py`. |
+| **DEF-22** | **P2** | **`/metrics` is world-readable**, publishing `aura_insecure_mode`, `aura_dependency_up`, `aura_knowledge_generation`, plan-step and groundedness histograms — 80 series, 13 KB. The repository had already decided this must not be public: nginx answers `deny all; return 404;` for `/metrics` in **both** server blocks. Railway defeats that decision by having no edge. **Fixed on this branch** (opt-in `AURA_METRICS_TOKEN`). No PII or user labels present. |
+| **DEF-23** | **P2** | **A dashboard cannot see DEF-19.** `aura_provider_healthy{provider="hfspace"} 1.0` while `aura_dependency_up{dependency="provider:hfspace"} 0.0`. Not a bug: `provider_healthy` reflects the **circuit-breaker state**, which only opens on *routed* traffic (`router.py:215,252`), while `dependency_up` is an **active probe** (`router.py:762`). With no traffic flowing, the breaker stays closed and the gauge reads healthy. An alert built on the obvious metric name stays green through a total inference outage. |
+| **DEF-24** | **P3** | Active index is `aura-knowledge__v1__hash-embed-v1__384` — the **hash embedder**, not a semantic model, with `aura_knowledge_generation 0.0` (nothing indexed). Retrieval would be lexical noise. Consistent with an unconfigured embedding provider rather than a defect, but it means RAG quality cannot be meaningfully measured on this deployment. |
+
+### Not established, and not guessed
+
+- **Rate limiting:** 12 rapid unauthenticated requests to `/api/v3/chat` all returned 401 and 10 to
+  `/api/v3/auth/nonce` all returned 200 — no 429. `aura_insecure_mode{rate_limit_disabled} 0.0`
+  says it *is* enabled, and `_apply_http_limits` sets 100/min, so 10–12 requests would not trip
+  it. **Deliberately not probed to the threshold**: that is load generation against production,
+  which the brief forbids. Status: configured (metric-confirmed), threshold **not measured**.
+- **Deployed revision:** still unidentifiable. A route-set diff against repo HEAD was attempted and
+  **abandoned as invalid** — the local router omits sandbox/GitHub/engineering routes when those
+  features are unconfigured, so the diff measures settings, not revision. This is precisely
+  BLOCK-03, and precisely what `/health/version` fixes.
+- **`/api/v2/*` returns 404** (`auth/login`, `sync`, `insights` all probed). `create_app` does call
+  `_mount_platform_routers`, and the CORS middleware proves `create_app` ran — so the deployed
+  build predates those mounts. **No client impact**: no `/api/v2` call site exists in
+  `aura_client/lib/` or `aura_admin/app/`.
+- **Authorization/isolation, safety enforcement, agent containment, backup/restore** remain
+  **without evidence**. All four need authenticated synthetic identities, and no credential or
+  registration path is available to this audit. They stay blocking.
+
+---
+
 ## Evidence artifacts retained
 
 | File | Contents |

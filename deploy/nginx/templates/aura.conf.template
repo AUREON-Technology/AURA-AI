@@ -102,6 +102,16 @@ server {
     ssl_stapling_verify on;
     resolver 127.0.0.11 valid=30s;   # Docker's embedded DNS, for OCSP
 
+    # The gateway now sends this same header floor itself, so it is protected on deploy targets
+    # where nginx is not in the path (Railway). Strip the upstream's copies here so a response
+    # that traverses both carries exactly one of each: some browsers discard a duplicated
+    # X-Frame-Options outright, which would have made hardening the app weaken this edge.
+    proxy_hide_header X-Content-Type-Options;
+    proxy_hide_header X-Frame-Options;
+    proxy_hide_header Referrer-Policy;
+    proxy_hide_header Permissions-Policy;
+    proxy_hide_header Strict-Transport-Security;
+
     add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
@@ -315,6 +325,14 @@ server {
     ssl_stapling on;
     ssl_stapling_verify on;
     resolver 127.0.0.11 valid=30s;
+
+    # Same as the production server block: the gateway sends these itself now, so strip the
+    # upstream's copies and let this edge own the single authoritative set.
+    proxy_hide_header X-Content-Type-Options;
+    proxy_hide_header X-Frame-Options;
+    proxy_hide_header Referrer-Policy;
+    proxy_hide_header Permissions-Policy;
+    proxy_hide_header Strict-Transport-Security;
 
     add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
     add_header X-Content-Type-Options "nosniff" always;

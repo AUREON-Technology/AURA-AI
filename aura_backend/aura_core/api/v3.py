@@ -1240,6 +1240,23 @@ def build_app(container: Any, *, authenticator: Any, rate_limiter: Any = None) -
     )
     app.include_router(build_router(container, authenticator=authenticator, rate_limiter=rate_limiter))
 
+    # The header floor and the metrics gate live here, not only in nginx: build_app is the whole
+    # edge on any target that runs the gateway as its own service (Railway, the CLI), and a live
+    # probe of the Railway Control Plane found no security headers at all and /metrics readable by
+    # anyone. See aura_core/api/security_headers.py for why CSP is not sent from here.
+    from .security_headers import MetricsAuthMiddleware, SecurityHeadersMiddleware
+
+    if container.settings.observability.metrics_token:
+        app.add_middleware(
+            MetricsAuthMiddleware,
+            path=container.settings.observability.metrics_path,
+            token=container.settings.observability.metrics_token,
+        )
+    if container.settings.security.security_headers_enabled:
+        app.add_middleware(
+            SecurityHeadersMiddleware, csp=container.settings.security.content_security_policy
+        )
+
     @app.exception_handler(AuraError)
     async def domain_error_handler(request: Request, exc: AuraError) -> JSONResponse:
         """Map domain errors to status codes.

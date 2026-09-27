@@ -746,6 +746,12 @@ class ObservabilitySettings:
     service_name: str = "aura-core"
     telemetry_persist: bool = True
     trace_content_sampling: float = 0.0  # fraction of turns that persist prompt/output text
+    #: Bearer token required to read ``metrics_path``. Empty leaves the path open, which is
+    #: correct only where something in front restricts it -- nginx answers `deny all; return 404`
+    #: for it on the VPS. On a target where the app is the edge (Railway), set this: a live probe
+    #: found /metrics world-readable there, publishing which safety bypasses are on and which
+    #: dependencies are down.
+    metrics_token: str = ""
 
     @classmethod
     def from_env(cls) -> "ObservabilitySettings":
@@ -759,6 +765,7 @@ class ObservabilitySettings:
             service_name=_env("SERVICE_NAME", "aura-core") or "aura-core",
             telemetry_persist=_bool("TELEMETRY_PERSIST", True),
             trace_content_sampling=_float("TRACE_CONTENT_SAMPLING", 0.0, minimum=0.0, maximum=1.0),
+            metrics_token=(_env("METRICS_TOKEN", "") or "").strip(),
         )
 
 
@@ -776,6 +783,16 @@ class SecuritySettings:
     #: not a side effect of upgrading, matching how AURA_SANDBOX_ENABLED/AURA_GITHUB_ENABLED
     #: default off for the same reason.
     engineer_agent_roles: tuple[str, ...] = ()
+    #: Send the response header floor from the application itself. On by default: the nginx
+    #: template is not in the path on every deploy target, and a Railway probe found the gateway
+    #: serving no HSTS, XCTO, XFO, Referrer-Policy or Permissions-Policy at all. nginx strips the
+    #: app's copies with proxy_hide_header so the VPS still sees exactly one of each.
+    security_headers_enabled: bool = True
+    #: Content-Security-Policy, if the app should send one. Empty by default and left to the
+    #: edge: this origin also fronts the operator console and Grafana, whose policies are far
+    #: looser than the API's `default-src 'none'`, so one blanket value would either break them
+    #: or be meaningless.
+    content_security_policy: str = ""
     rate_limit_enabled: bool = True
     rate_limit_per_user_per_minute: int = 60
     rate_limit_per_ip_per_minute: int = 120
@@ -797,6 +814,8 @@ class SecuritySettings:
             allow_mock_attestation=_bool_aliased("ALLOW_MOCK_ATTESTATION", False),
             admin_roles=_list("ADMIN_ROLES", ("Admin", "SuperAdmin")),
             engineer_agent_roles=_list("ENGINEER_AGENT_ROLES", ()),
+            security_headers_enabled=_bool("SECURITY_HEADERS_ENABLED", True),
+            content_security_policy=(_env("CONTENT_SECURITY_POLICY", "") or "").strip(),
             rate_limit_enabled=_bool("RATE_LIMIT_ENABLED", True),
             rate_limit_per_user_per_minute=_int("RATE_LIMIT_USER_PER_MIN", 60, minimum=1),
             rate_limit_per_ip_per_minute=_int("RATE_LIMIT_IP_PER_MIN", 120, minimum=1),
