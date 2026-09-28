@@ -5,6 +5,8 @@ import 'package:intl/intl.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import '../finance_view_model.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 
 class FinanceTransactionHistory extends ConsumerWidget {
   final AsyncValue<List<FinanceRecord>> transactionsAsync;
@@ -67,7 +69,10 @@ class _HistoryBody extends ConsumerWidget {
         padding: EdgeInsets.symmetric(vertical: 24),
         child: Center(child: CircularProgressIndicator(color: AuraTheme.accentIndigo)),
       ),
-      error: (err, stack) => Text('Error: $err', style: const TextStyle(color: Colors.redAccent)),
+      error: (err, stack) => AuraFailureView(
+        failure: AuraFailure.from(err),
+        compact: true,
+      ),
       data: (txs) {
         if (txs.isEmpty) {
           return Padding(

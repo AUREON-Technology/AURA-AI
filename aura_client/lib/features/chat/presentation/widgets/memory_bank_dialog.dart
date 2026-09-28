@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 
 import '../../data/memory_repository.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 
 void showMemoryBankDialog(BuildContext context) {
   final factController = TextEditingController();
@@ -162,9 +164,8 @@ void showMemoryBankDialog(BuildContext context) {
                         loading: () =>
                             const Center(child: CircularProgressIndicator()),
                         error: (e, _) => Center(
-                          child: Text(
-                            'Error: $e',
-                            style: TextStyle(color: palette.danger),
+                          child: SingleChildScrollView(
+                            child: AuraFailureView(failure: AuraFailure.from(e)),
                           ),
                         ),
                       ),

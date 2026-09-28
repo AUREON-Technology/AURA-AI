@@ -6,6 +6,8 @@ import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/security/device_validation_service.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import 'auth_provider.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 
 class ProfilePage extends ConsumerStatefulWidget {
   const ProfilePage({super.key});
@@ -89,7 +91,11 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
           );
         },
         loading: () => const Center(child: CircularProgressIndicator(color: AuraTheme.accentIndigo)),
-        error: (err, _) => Center(child: Text('Error: $err', style: const TextStyle(color: Colors.redAccent))),
+        error: (err, _) => Center(
+          child: SingleChildScrollView(
+            child: AuraFailureView(failure: AuraFailure.from(err)),
+          ),
+        ),
       ),
     );
   }

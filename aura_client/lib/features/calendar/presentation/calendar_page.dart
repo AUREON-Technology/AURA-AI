@@ -7,6 +7,8 @@ import '../data/calendar_repository.dart';
 import 'calendar_view_model.dart';
 import 'widgets/calendar_month_grid.dart';
 import 'widgets/calendar_schedule_panel.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 
 class CalendarPage extends ConsumerWidget {
   const CalendarPage({super.key});
@@ -34,9 +36,8 @@ class CalendarPage extends ConsumerWidget {
                 child: CircularProgressIndicator(color: AuraTheme.accentIndigo),
               ),
               error: (err, stack) => Center(
-                child: Text(
-                  'Error: $err',
-                  style: const TextStyle(color: Colors.redAccent),
+                child: SingleChildScrollView(
+                  child: AuraFailureView(failure: AuraFailure.from(err)),
                 ),
               ),
               data: (events) {

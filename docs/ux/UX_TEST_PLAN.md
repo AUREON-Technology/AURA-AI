@@ -112,7 +112,9 @@ classified rather than thrown past.
 
 Then the two things most worth pinning: **Retry appears exactly where retrying helps** (never on
 a safety refusal or a permission error, and the caller passing `onRetry` cannot override that),
-and **the copy keeps its promises** — unreachable does not claim to know whose fault it is,
+the compact form fits a narrow fixed-height slot without overflowing it (the shape it exists for)
+while still announcing the full explanation a screen reader has no size limit for, and **the copy
+keeps its promises** — unreachable does not claim to know whose fault it is,
 inference-down says the Control Plane is up because that is the useful part, and a rate limit
 names its wait rather than inventing one.
 
@@ -152,5 +154,5 @@ Listed so the gaps are explicit:
 | State restoration end to end | **NOT COVERED.** `test/desktop/layout_notifier_test.dart` covers layout persistence at the notifier level; nothing covers restore-after-restart as a user-visible flow. |
 | `syncing` / `stale` | **NOT COVERED** — these two states do not exist yet, and need a real signal from the sync layer before any UI is designed for them. |
 | Internet vs Control Plane unavailable | **NOT DISTINGUISHABLE**, by design rather than by omission — see the note at the end of `TRANSFORMATION_STATUS.md`. |
-| Per-screen adoption of `AuraFailureView` | **PARTIAL** — the agent panel uses it; most other surfaces still render a raw `$err`. |
+| Per-screen adoption of `AuraFailureView` | **DONE for `AsyncValue.error`** — 13 surfaces. Covered by the classifier's own tests plus an overflow assertion on the compact form; there is no per-screen widget test, since each is the same two-line swap. |
 | Every runtime performance metric in the transformation brief | **UNKNOWN — needs instrumentation on a real device.** No number in this repository should be quoted for any of them until it is measured. |

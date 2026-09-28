@@ -4,6 +4,8 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 
 final telemetryLogsFutureProvider = FutureProvider.autoDispose<List<TelemetryLog>>((ref) async {
   final db = ref.watch(databaseProvider);
@@ -96,7 +98,11 @@ class AnalyticsPage extends ConsumerWidget {
           );
         },
         loading: () => const Center(child: CircularProgressIndicator(color: AuraTheme.accentIndigo)),
-        error: (err, _) => Center(child: Text("Failed to load analytics: $err", style: const TextStyle(color: Colors.redAccent))),
+        error: (err, _) => Center(
+          child: SingleChildScrollView(
+            child: AuraFailureView(failure: AuraFailure.from(err)),
+          ),
+        ),
       ),
     );
   }
