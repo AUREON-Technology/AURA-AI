@@ -10,7 +10,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/shell/activity_bar.dart';
 import 'package:aura_client/desktop/shell/bottom_panel.dart';
-import 'package:aura_client/core/design_system/components/aura_command_palette.dart';
 import 'package:aura_client/desktop/shell/desktop_breakpoint.dart';
 import 'package:aura_client/desktop/shell/desktop_commands.dart';
 import 'package:aura_client/desktop/shell/status_bar.dart';

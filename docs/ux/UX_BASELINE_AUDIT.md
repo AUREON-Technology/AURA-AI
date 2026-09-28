@@ -287,7 +287,12 @@ Risk                 Medium.
 Validation           Test per source: querying "branch" surfaces the Git action.
 ```
 
-**Resolved in this transformation:** **NOT IMPLEMENTED** — Phase 5.
+**Resolved in this transformation:** yes for the desktop. `Ctrl/Cmd+Shift+P` opens a palette over
+`AuraCommandPalette` (a shared component taking a plain command list) with file, view, git and
+AURA commands; unavailable commands are listed with their reason rather than hidden, and every
+command carries its shortcut. **Mobile's own palette is not yet migrated onto the shared
+component** — it has no tests, and rewriting it blind to remove a duplicate dialog is a bad
+trade. Tracked in `TRANSFORMATION_STATUS.md`.
 
 ---
 
@@ -376,8 +381,8 @@ Risk                 None.
 Validation           The suite is its own validation.
 ```
 
-**Resolved in this transformation:** **PARTIALLY IMPLEMENTED** — `test/ux/` now holds five suites
-(57 tests) covering F-01, F-02, F-06, F-08, F-09 and the Phase 1 tokens. Streaming, agent
+**Resolved in this transformation:** **PARTIALLY IMPLEMENTED** — `test/ux/` now holds seven suites
+(85 tests) covering F-01, F-02, F-06, F-07, F-08, F-09 and the Phase 1 tokens. Streaming, agent
 rendering, approval UX and state restoration remain uncovered.
 
 ---
@@ -452,7 +457,7 @@ Validation           The existing contrast gate, now that the pair is in it.
 | Severity | Findings |
 |---|---|
 | CRITICAL | F-01 (fabricated status bar) ✅, F-02 (dead + mislabeled nav controls) ✅ |
-| HIGH | F-03 (thin approval prompts) 🚫 blocked, F-04 (hardcoded colour/type) ◐, F-05 (no mono token) ◐, F-06 (no responsive shell) ✅, F-07 (no desktop command system) ✗ |
+| HIGH | F-03 (thin approval prompts) 🚫 blocked, F-04 (hardcoded colour/type) ◐, F-05 (no mono token) ◐, F-06 (no responsive shell) ✅, F-07 (no desktop command system) ✅ |
 | MEDIUM | F-08 (silent no-op editor commands) ✅, F-09 (no attention badges) ✅, F-10 (no UX tests) ◐, F-11 (token gaps) ✅, F-12 (light `info` below AA for text) ✅ |
 
 ✅ resolved · ◐ partially · ✗ not started · 🚫 blocked

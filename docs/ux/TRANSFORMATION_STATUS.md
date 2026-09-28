@@ -10,9 +10,9 @@ running app.
 for fetching the Flutter version `client-ci.yml` pins and running `analyze` + `test` locally —
 which is how every "awaiting CI" row below became a measured result instead of a hope.
 
-**Last local run** (Flutter 3.44.6 / Dart 3.12.2, the CI pin, against `e59d76f`):
-`flutter analyze` → **No issues found!**; `flutter test` → **323 passed, 0 failed, 3 skipped**,
-including the 57 in `test/ux/`.
+**Last local run** (Flutter 3.44.6 / Dart 3.12.2, the CI pin, against `f6ff64f`):
+`flutter analyze` → **No issues found!**; `flutter test` → **351 passed, 0 failed, 3 skipped**,
+including the 85 in `test/ux/`.
 
 **GitHub `Client CI` is not a gate right now.** It has not been assigned a runner in weeks: every
 run, on `main` as well as on PRs, fails in 2–4 seconds with no step starting and no log archive.
@@ -22,10 +22,10 @@ Local runs are the only real verification until that is fixed at the repository/
 |---|---|---|---|
 | 0 | UX baseline audit | **COMPLETE** | `UX_BASELINE_AUDIT.md` — 12 findings, each citing file and line |
 | 1 | Design tokens | **COMPLETE** (analyze clean, 299 tests pass locally) | `DESIGN_SYSTEM.md`, `test/ux/design_tokens_test.dart`, contrast gate extended |
-| 2 | Shared component system | **NOT STARTED** | 10 of ~25 target components exist; gap enumerated in audit §2 |
+| 2 | Shared component system | **PARTIALLY IMPLEMENTED** | `AuraCommandPalette` added; `AuraTextField` gained autofocus/focusNode/prefixIcon so search inputs need not drop to a raw TextField. 11 of ~27 target components exist — `COMPONENT_GUIDE.md` lists the rest in duplication order |
 | 3 | Desktop shell | **IMPLEMENTED** | F-01, F-02, F-06 and F-09 all closed with passing tests. Shell *rendering* at three surface sizes still uncovered — the layout rules are tested as a value, not as pixels |
 | 4 | Explorer + Editor | **PARTIALLY IMPLEMENTED** | F-08 closed (unimplemented editor commands now throw). Explorer search/filter, editor breadcrumbs, symbols and the selection→AURA actions NOT STARTED |
-| 5 | Command system, Terminal, Git, Diff | **NOT STARTED** | F-07 open |
+| 5 | Command system, Terminal, Git, Diff | **PARTIALLY IMPLEMENTED** | F-07 closed — Ctrl/Cmd+Shift+P over a shared palette component, 28 tests. Terminal, Git and Diff UX untouched; mobile's palette not yet migrated onto the shared component |
 | 6 | Problems + Tests + Debug | **PARTIALLY IMPLEMENTED** | F-09 closed — the problem count is now visible with the panel collapsed. Test Explorer and the unified diagnostics experience NOT STARTED |
 | 7 | AURA AI interaction | **NOT STARTED** | |
 | 8 | Agent Workspace | **NOT STARTED** | |
@@ -52,14 +52,14 @@ Local runs are the only real verification until that is fixed at the repository/
 
 In order, and each on its own commit:
 
-1. **F-07** — a desktop command system. Today the IDE has Quick Open (files only) and nine
-   keyboard shortcuts with no discoverable list, so every action that is not a visible button is
-   undiscoverable. The largest remaining usability gap.
-2. **Phase 2** — promote the highest-traffic one-off widgets (status badge, tree item, toolbar,
-   context menu) into the shared component set.
-3. **Phase 11** — the universal loading / error / empty / offline state set, on top of
-   `AuraEmptyState` and `AuraSkeleton`.
-4. **F-04 / F-05** — begin the per-screen colour, type and monospace migration, one screen per
-   commit with a contrast assertion each.
+1. **Phase 11** — the universal loading / error / empty / offline state set, on top of
+   `AuraEmptyState` and `AuraSkeleton`. The state vocabulary is what every later phase renders
+   through, so it comes before them.
+2. **Phase 2 proper** — promote the most-duplicated one-offs (tree item, status badge, toolbar,
+   context menu) into the shared set, in duplication order.
+3. **Migrate the mobile command palette** onto `AuraCommandPalette`, behind tests written first —
+   it currently has none, which is why this PR did not rewrite it.
+4. **F-04 / F-05** — the per-screen colour, type and monospace migration, one screen per commit
+   with a contrast assertion each.
 
 Phase 9 stays blocked until the approval payload carries reason, risk and reversibility.

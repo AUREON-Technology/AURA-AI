@@ -76,6 +76,24 @@ boundaries, which panels dock and which float at each, and the width clamping �
 420px floor, a panel's 180px floor, and the fact that two docked panels are clamped against each
 other rather than independently (each can "fit" alone while together squeezing the editor out).
 
+### `test/ux/command_palette_test.dart` — Phase 5 (F-07)
+
+The palette's matching and selection rules as plain functions — token matching, the deliberate
+*absence* of fuzzy matching, order preserved rather than ranked, selection skipping disabled
+entries and stopping at the ends — and then the keyboard path end to end: Enter runs the
+selection and closes, arrow keys drive the list rather than the caret in the search field (the
+thing most likely to regress silently), Escape closes without running anything, an unavailable
+command is listed with its reason and announced as unavailable, and a query matching nothing
+offers its own way out.
+
+### `test/ux/desktop_commands_test.dart` — Phase 5 (F-07)
+
+The desktop command set against real state: ids unique, workspace and file commands listed but
+unavailable with the right reason when there is no workspace or no open file, layout commands
+always available, a toggle titled for what it will do rather than what it is, platform-correct
+shortcut hints — and the invariant that **no command is ever disabled without a reason**, which
+is the audit's recurring finding expressed as a test.
+
 ### `test/ux/editor_commands_test.dart` — Phase 4 (F-08)
 
 Format / GoToDefinition / FindReferences / RenameSymbol / CodeAction throw `UnimplementedError`;
@@ -105,7 +123,7 @@ Listed so the gaps are explicit:
 | Focus visuals | **PARTIALLY.** The activity bar now sets a focus colour; nothing asserts it is visible at the required contrast. Needs a golden, which needs a device. |
 | Monospace fallback resolution | **UNKNOWN — needs a running app per platform.** The token is BUILT, not PROVEN: a headless Linux test host cannot show what Menlo or Consolas resolve to. |
 | Responsive shell *rendering* | **NOT COVERED.** The rules are covered as a value (`desktop_breakpoint_test.dart`); nothing asserts the rendered tree at three surface sizes, because a `DesktopShell` widget test has to stand up the Explorer, the editor, the agent panel and the daemon polling behind them — far more surface than the layout rule under test. |
-| Command system | **NOT COVERED** — does not exist on desktop yet (F-07). |
+| Mobile command palette | **NOT COVERED**, and not migrated onto the shared component. It had no tests before this work and still has none; writing them is the prerequisite for that migration. |
 | Escape dismissing a floating panel | **NOT COVERED.** The binding is registered only while a panel floats; asserting it needs the shell widget test above. |
 | Streaming / agent-activity rendering | **NOT COVERED.** Phases 7–8. |
 | Approval UX | **NOT COVERED**, and blocked: the approval payload does not carry reason, risk or reversibility, so there is nothing truthful to assert yet (F-03). |

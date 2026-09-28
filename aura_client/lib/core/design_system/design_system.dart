@@ -9,6 +9,7 @@ export 'typography.dart';
 export 'contrast.dart';
 export 'aura_ide_density.dart';
 export 'components/aura_card.dart';
+export 'components/aura_command_palette.dart';
 export 'components/aura_button.dart';
 export 'components/aura_skeleton.dart';
 export 'components/aura_empty_state.dart';
