@@ -103,6 +103,19 @@ accessibility half: each tone paints a distinguishable icon colour *and* announc
 as offline rather than as a generic failure, and the whole thing is a live region that does not
 also read its own children twice.
 
+### `test/ux/failure_states_test.dart` — Phase 11 (rule 35)
+
+Classification of the backend's `kind` slugs into distinct states — inference-down separated from
+unreachable, three different kinds of "wait", auth / permission / budget / safety each on their
+own — plus the status-code fallback for slugs this client does not know yet, and a non-API error
+classified rather than thrown past.
+
+Then the two things most worth pinning: **Retry appears exactly where retrying helps** (never on
+a safety refusal or a permission error, and the caller passing `onRetry` cannot override that),
+and **the copy keeps its promises** — unreachable does not claim to know whose fault it is,
+inference-down says the Control Plane is up because that is the useful part, and a rate limit
+names its wait rather than inventing one.
+
 ### `test/ux/editor_commands_test.dart` — Phase 4 (F-08)
 
 Format / GoToDefinition / FindReferences / RenameSymbol / CodeAction throw `UnimplementedError`;
@@ -137,5 +150,7 @@ Listed so the gaps are explicit:
 | Streaming / agent-activity rendering | **NOT COVERED.** Phases 7–8. |
 | Approval UX | **NOT COVERED**, and blocked: the approval payload does not carry reason, risk or reversibility, so there is nothing truthful to assert yet (F-03). |
 | State restoration end to end | **NOT COVERED.** `test/desktop/layout_notifier_test.dart` covers layout persistence at the notifier level; nothing covers restore-after-restart as a user-visible flow. |
-| The rest of the state vocabulary | **NOT COVERED** — `retrying`, `syncing`, `stale` and `permissionRequired` do not exist yet, and nor does the distinction between internet / Control Plane / inference / host being unavailable. |
+| `syncing` / `stale` | **NOT COVERED** — these two states do not exist yet, and need a real signal from the sync layer before any UI is designed for them. |
+| Internet vs Control Plane unavailable | **NOT DISTINGUISHABLE**, by design rather than by omission — see the note at the end of `TRANSFORMATION_STATUS.md`. |
+| Per-screen adoption of `AuraFailureView` | **PARTIAL** — the agent panel uses it; most other surfaces still render a raw `$err`. |
 | Every runtime performance metric in the transformation brief | **UNKNOWN — needs instrumentation on a real device.** No number in this repository should be quoted for any of them until it is measured. |
