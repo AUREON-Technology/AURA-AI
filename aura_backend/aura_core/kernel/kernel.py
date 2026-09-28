@@ -335,6 +335,7 @@ class AIKernel:
         # 6. Plan and execute --------------------------------------------------------
         tool_telemetry: list[ToolTelemetry] = []
         tool_results: list[tuple[str, str]] = []
+        execution_notes: list[str] = []
         needs_confirmation: list[str] = []
         pending_tool_calls: list[Mapping[str, Any]] = []
         plan_summary: list[Mapping[str, Any]] = []
@@ -359,6 +360,7 @@ class AIKernel:
                      "description": s.description}
                     for s in outcome.plan.steps
                 ]
+                execution_notes.extend(self._execution_notes(outcome))
                 for report in outcome.tool_reports:
                     tool_telemetry.append(
                         ToolTelemetry(
@@ -392,6 +394,7 @@ class AIKernel:
                 retrieval=retrieval,
                 cag_prefix=cag_prefix,
                 tool_results=tool_results,
+                scratchpad=execution_notes,
                 history_summary=history_summary,
                 context_window=self._context_window(),
                 max_output_tokens=request.max_output_tokens,
@@ -949,6 +952,53 @@ class AIKernel:
                 ))
             except Exception:
                 logger.warning("failed to record engineer run", extra={"tool": report.tool})
+
+    @staticmethod
+    def _execution_notes(outcome: Any) -> list[str]:
+        """State, on the SYSTEM channel, which planned steps produced nothing.
+
+        Found in production. A user with a folder open in AURA Desktop asked the Engineer to
+        summarise its README. The plan's read step named a tool that did not exist, the planner
+        demoted it to a kind nothing can execute, it was SKIPPED, the summarise step that
+        depended on it was BLOCKED, and `summary_for_context()` -- SUCCEEDED steps only --
+        returned nothing. Generation therefore ran with a context in which the read had simply
+        never been mentioned. The model wrote "the command has been executed, but since the
+        output is not shown here, I will assume the file exists", and produced a summary of a
+        generic README it had never seen, for a real file sitting open in the editor beside it.
+
+        The three upstream causes are fixed where they live (`planning/engine.py` no longer
+        demotes, `agentic_loop.py` now replans on a blocked step). This is the backstop for the
+        general shape of the failure: *an absence cannot be reasoned about*. A model given no
+        tool output cannot distinguish "the tool returned nothing" from "no tool ran", and the
+        second is the one where inventing an answer looks locally reasonable. Naming the missing
+        step converts the absence into a fact -- and the engineer persona already instructs the
+        model to "say so plainly when a tool you would need is not available".
+
+        SYSTEM channel, via `ContextRequest.scratchpad`, not `tool_results`: this is the
+        kernel's own account of what it just ran, not content a tool returned. Putting it on
+        DATA would fence it as attacker-influenced alongside real tool output, which both
+        weakens the note and misrepresents where it came from (ADR-006).
+        """
+        plan = getattr(outcome, "plan", None)
+        if plan is None:
+            return []
+        unexecuted = plan.unexecuted_steps()
+        failed = plan.failed_steps
+        if not unexecuted and not failed:
+            return []
+
+        lines = [
+            "Execution note (from the system, not from a tool). These planned steps produced "
+            "no output, so you have NOT seen their results:"
+        ]
+        for step in (*unexecuted, *failed):
+            lines.append(f"- {step.description} [{step.status}]")
+        lines.append(
+            "Do not state or imply that you read, ran, or saw anything these steps would have "
+            "produced, and do not substitute typical or expected content for it. Say plainly "
+            "what you could not do."
+        )
+        return ["\n".join(lines)]
 
     @staticmethod
     def _delegation_grant(

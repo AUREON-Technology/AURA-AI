@@ -86,7 +86,10 @@ def _replan_reason(outcome: ExecutionOutcome) -> str:
     ``"step_failed (unresolved_argument)"`` instead of the previous bare ``"step_failed"``.
     """
     reason = outcome.blocked_reason or "step_failed"
-    failing = outcome.plan.failed_steps or outcome.plan.blocked_steps()
+    # `unexecuted_steps()` rather than `blocked_steps()`: by the time an outcome exists the
+    # executor has already moved every blocked step out of PENDING, which is the only status
+    # `blocked_steps()` reports, so it is always empty here and the fallback never fired.
+    failing = outcome.plan.failed_steps or outcome.plan.unexecuted_steps()
     kinds = sorted({s.error_kind for s in failing if s.error_kind})
     if kinds:
         return f"{reason} ({', '.join(kinds)})"
@@ -202,9 +205,8 @@ class AgenticExecutor:
             return "time_budget_exhausted", BudgetKind.TIME
         if outcome.blocked_reason in _TERMINAL_BLOCKS:
             return outcome.blocked_reason, _BLOCK_BUDGET.get(outcome.blocked_reason)
-        if not outcome.plan.failed_steps and not outcome.plan.blocked_steps():
-            # Nothing a revised plan could repair -- e.g. the plan is complete but some steps
-            # were merely skipped, which is not a failure to react to.
+        if not outcome.plan.failed_steps and not self._repairable(outcome.plan):
+            # Nothing a revised plan could repair.
             return "nothing_to_repair", None
         if max_iterations <= 0:
             return "single_pass", None
@@ -213,6 +215,28 @@ class AgenticExecutor:
         if not self._planner.can_replan(outcome.plan, limit=max_iterations):
             return "iteration_budget_exhausted", BudgetKind.ITERATIONS
         return None, None
+
+    @staticmethod
+    def _repairable(plan: Plan) -> bool:
+        """Whether a step that never ran is worth another planning iteration.
+
+        A BLOCKED step is: it was ready to contribute and lost its input, so a revised plan that
+        repairs the dependency can still run it. That is the case this method was added for --
+        `blocked_steps()` was asked the same question and always answered no, because it reports
+        only steps still PENDING and the executor marks dependents BLOCKED before the outcome is
+        built. The loop therefore saw a plan with a skipped step and a blocked step as
+        "nothing_to_repair", returned without replanning, and let the turn answer having run
+        nothing.
+
+        A SKIPPED step is deliberately *not* repairable. Skipping means the engine has no
+        handler for that step kind, which replanning cannot change -- and since no handler
+        exists for any non-TOOL kind, treating skips as repairable would replan nearly every
+        plan that contains a RESPOND step. On a provider sustaining 5-10 tokens/sec that is a
+        second planning generation on almost every turn, to reach the same result. The honest
+        answer to a skipped step is to say it did not run (the kernel's execution note), not to
+        plan again.
+        """
+        return any(s.status is StepStatus.BLOCKED for s in plan.steps)
 
     async def _next_plan(
         self,
