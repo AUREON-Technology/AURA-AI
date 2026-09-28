@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
+import 'package:aura_client/desktop/shell/editor_position.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_diff_view.dart';
 
@@ -31,15 +32,36 @@ class StatusBar extends ConsumerWidget {
     final backendConnected = status?.backendConnected;
     final pendingApprovals = ref.watch(approvalNotifierProvider).pendingApprovals;
 
+    // Everything below used to be a literal: 'main', 'Ln 1, Col 1', 'LF'.
+    // The status bar is the one always-visible readout in the IDE, and a
+    // developer checks it right before a commit or a push -- a placeholder
+    // branch name there is worse than no branch name at all.
+    final branch = ref.watch(gitNotifierProvider.select((g) => g.branch));
+    final editorState = ref.watch(editorNotifierProvider);
+    final activeTab = editorState.activeTab;
+    // `contentFor` is read rather than watched: the buffer lives outside
+    // EditorState, so this rebuilds on cursor movement (which is what moves
+    // Ln/Col) rather than on every keystroke.
+    final content = activeTab == null
+        ? null
+        : ref.read(editorNotifierProvider.notifier).contentFor(activeTab.id);
+    final position = (content == null || activeTab?.cursorPosition == null)
+        ? null
+        : lineColumnFor(content, activeTab!.cursorPosition!.offset);
+    final lineEnding = content == null ? null : lineEndingLabelFor(content);
+
     return Container(
       height: ideDensity.statusBarHeight,
       color: palette.surfaceVariant,
       child: Row(
         children: [
-          // Git branch (placeholder)
+          // Git branch. `null` covers both "no repository loaded yet" and a real
+          // detached HEAD (see GitState.branch) -- neither is a branch name, so
+          // neither gets rendered as one.
           _StatusItem(
             icon: Icons.source_outlined,
-            text: 'main',
+            text: branch ?? 'No branch',
+            color: branch == null ? palette.textDisabled : null,
             density: ideDensity,
           ),
           // Hostd connection status. `authenticated` (has a stored pairing token) and
@@ -87,24 +109,31 @@ class StatusBar extends ConsumerWidget {
               density: ideDensity,
             ),
           const Spacer(),
-          // Cursor position (placeholder)
-          _StatusItem(
-            icon: Icons.text_fields_outlined,
-            text: 'Ln 1, Col 1',
-            density: ideDensity,
-          ),
-          // Encoding
-          _StatusItem(
-            icon: Icons.translate_outlined,
-            text: 'UTF-8',
-            density: ideDensity,
-          ),
-          // Line endings
-          _StatusItem(
-            icon: Icons.format_align_left_outlined,
-            text: 'LF',
-            density: ideDensity,
-          ),
+          // Cursor position, encoding and line endings describe the open
+          // buffer -- with no tab open there is no buffer to describe, so
+          // they are absent rather than showing a default.
+          if (position != null)
+            _StatusItem(
+              icon: Icons.text_fields_outlined,
+              text: 'Ln ${position.line}, Col ${position.column}',
+              density: ideDensity,
+            ),
+          // UTF-8 is a genuine constant, not another placeholder:
+          // WorkspaceFileService reads and writes through readAsString /
+          // writeAsString, whose default codec is UTF-8, so the IDE has no
+          // other encoding to be in. Shown only alongside an open buffer.
+          if (activeTab != null)
+            _StatusItem(
+              icon: Icons.translate_outlined,
+              text: 'UTF-8',
+              density: ideDensity,
+            ),
+          if (lineEnding != null)
+            _StatusItem(
+              icon: Icons.format_align_left_outlined,
+              text: lineEnding,
+              density: ideDensity,
+            ),
         ],
       ),
     );
@@ -155,7 +184,7 @@ void _showApprovalsDialog(BuildContext context, WidgetRef ref) {
                       ] else ...[
                         Text(
                           approval.arguments['command'] as String? ?? approval.tool,
-                          style: const TextStyle(fontFamily: 'Courier', fontSize: 13),
+                          style: AuraTypography.code(palette, fontSize: 13),
                         ),
                         if (root != null)
                           Padding(
@@ -218,10 +247,10 @@ class _StatusItem extends StatelessWidget {
           const SizedBox(width: 4),
           Text(
             text,
-            style: TextStyle(
-              fontSize: 11,
+            style: AuraTypography.terminal(
+              palette,
               color: color ?? palette.textSecondary,
-              fontFamily: 'Courier',
+              fontSize: 11,
             ),
           ),
         ],

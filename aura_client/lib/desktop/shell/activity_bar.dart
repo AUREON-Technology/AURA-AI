@@ -1,11 +1,14 @@
 /// Activity bar for Desktop IDE.
 ///
-/// Far-left vertical bar with icons for Explorer, Search, Source Control, etc.
+/// Far-left vertical bar: Explorer, Go to File, Source Control, AURA Agents,
+/// AURA Control Center, and the bottom Panel toggle.
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/desktop/events/ide_event.dart';
+import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 
@@ -17,6 +20,10 @@ class ActivityBar extends ConsumerWidget {
     final ideDensity = context.ideDensity;
     final palette = AuraPalette.of(context);
     final layoutState = ref.watch(layoutNotifierProvider);
+    // Quick Open searches the *workspace*, so with no workspace open there is
+    // nothing for it to search. DesktopShell's handler already returns early in
+    // that case -- disabling the control says so instead of swallowing the tap.
+    final hasWorkspace = ref.watch(workspaceNotifierProvider).activeWorkspace != null;
 
     return Container(
       width: ideDensity.activityBarWidth,
@@ -42,6 +49,7 @@ class ActivityBar extends ConsumerWidget {
             icon: Icons.folder_outlined,
             selectedIcon: Icons.folder,
             label: 'Explorer',
+            tooltip: 'Explorer (Ctrl+B)',
             isSelected: layoutState.showPrimarySidebar &&
                 layoutState.primarySidebarPanel == PrimarySidebarPanel.explorer,
             onTap: () {
@@ -54,18 +62,28 @@ class ActivityBar extends ConsumerWidget {
             },
             density: ideDensity,
           ),
+          // Was an enabled icon wired to `onTap: () {}`. A control that renders
+          // as actionable and does nothing teaches the user the app is
+          // unreliable, so this now drives the Quick Open flow that already
+          // exists on the event bus -- and is named for what it actually does
+          // (find a file by name), not for the workspace-wide content search
+          // that does not exist yet.
           _ActivityItem(
             icon: Icons.search_outlined,
             selectedIcon: Icons.search,
-            label: 'Search',
+            label: 'Go to File',
+            tooltip: 'Go to File (Ctrl+P)',
             isSelected: false,
-            onTap: () {}, // D2 stub
+            onTap: hasWorkspace
+                ? () => ref.read(ideEventBusProvider).publish(const ShowQuickOpenRequested())
+                : null,
             density: ideDensity,
           ),
           _ActivityItem(
             icon: Icons.source_outlined,
             selectedIcon: Icons.source,
             label: 'Source Control',
+            tooltip: 'Source Control',
             isSelected: layoutState.showPrimarySidebar &&
                 layoutState.primarySidebarPanel == PrimarySidebarPanel.sourceControl,
             onTap: () {
@@ -83,6 +101,7 @@ class ActivityBar extends ConsumerWidget {
             icon: Icons.smart_toy_outlined,
             selectedIcon: Icons.smart_toy,
             label: 'AURA Agents',
+            tooltip: 'AURA Agents (Ctrl+J)',
             isSelected: layoutState.showSecondarySidebar,
             onTap: () => ref.read(layoutNotifierProvider.notifier).toggleSecondarySidebar(),
             density: ideDensity,
@@ -91,6 +110,7 @@ class ActivityBar extends ConsumerWidget {
             icon: Icons.auto_awesome_outlined,
             selectedIcon: Icons.auto_awesome,
             label: 'AURA',
+            tooltip: 'AURA Control Center',
             isSelected: layoutState.showPrimarySidebar &&
                 layoutState.primarySidebarPanel == PrimarySidebarPanel.controlCenter,
             onTap: () {
@@ -105,12 +125,17 @@ class ActivityBar extends ConsumerWidget {
             density: ideDensity,
           ),
           const Spacer(),
-          // Settings at bottom
+          // This has always called `toggleBottomPanel()`. It was labelled
+          // "Settings" with a gear, which taught the wrong model of where
+          // settings live and left the panel itself undiscoverable. Labelled
+          // for its behaviour; a real Settings entry is tracked separately
+          // (UX_BASELINE_AUDIT.md F-02) rather than faked here.
           _ActivityItem(
-            icon: Icons.settings_outlined,
-            selectedIcon: Icons.settings,
-            label: 'Settings',
-            isSelected: false,
+            icon: Icons.terminal_outlined,
+            selectedIcon: Icons.terminal,
+            label: 'Panel',
+            tooltip: 'Terminal, Output & Problems (Ctrl+Shift+J)',
+            isSelected: layoutState.showBottomPanel,
             onTap: () => ref.read(layoutNotifierProvider.notifier).toggleBottomPanel(),
             density: ideDensity,
           ),
@@ -129,53 +154,81 @@ class _ActivityItem extends StatelessWidget {
     required this.isSelected,
     required this.onTap,
     required this.density,
+    this.tooltip,
   });
 
   final IconData icon;
   final IconData selectedIcon;
   final String label;
   final bool isSelected;
-  final VoidCallback onTap;
+
+  /// `null` renders the item disabled. The bar had an item wired to an empty
+  /// callback instead, which looks identical to an enabled one.
+  final VoidCallback? onTap;
   final AuraIdeDensity density;
+
+  /// The bar is icon-only, so without this the label exists for screen
+  /// readers but not for sighted users hovering an unfamiliar glyph.
+  final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
+    final isEnabled = onTap != null;
+    final iconColor = !isEnabled
+        ? palette.textDisabled
+        : isSelected
+            ? palette.brand
+            : palette.textSecondary;
+
     return Semantics(
       button: true,
       label: label,
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          width: density.activityBarWidth,
-          height: density.activityBarWidth,
-          margin: EdgeInsets.symmetric(
-            vertical: density.spacingScale * AuraSpacing.xs,
-            horizontal: density.spacingScale * AuraSpacing.xs,
-          ),
-          decoration: BoxDecoration(
-            color: isSelected ? palette.brand.withValues(alpha: 0.1) : Colors.transparent,
-            borderRadius: BorderRadius.circular(AuraRadius.sm),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                isSelected ? selectedIcon : icon,
-                size: 20,
-                color: isSelected ? palette.brand : palette.textSecondary,
-              ),
-              if (isSelected)
-                Container(
-                  margin: const EdgeInsets.only(top: 2),
-                  width: 6,
-                  height: 6,
-                  decoration: BoxDecoration(
-                    color: palette.brand,
-                    shape: BoxShape.circle,
-                  ),
+      // Selection is otherwise conveyed by a tint and a 6px dot -- i.e. by
+      // colour and a shape a screen reader never sees.
+      selected: isSelected,
+      enabled: isEnabled,
+      child: Tooltip(
+        message: tooltip ?? label,
+        waitDuration: AuraMotion.emphasized,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AuraRadius.sm),
+          // Keyboard focus needs to be visible, not just present: without a
+          // focus colour a Tab-only user cannot tell which item is targeted.
+          focusColor: palette.brand.withValues(alpha: 0.24),
+          hoverColor: palette.brand.withValues(alpha: 0.06),
+          child: Container(
+            width: density.activityBarWidth,
+            height: density.activityBarWidth,
+            margin: EdgeInsets.symmetric(
+              vertical: density.spacingScale * AuraSpacing.xs,
+              horizontal: density.spacingScale * AuraSpacing.xs,
+            ),
+            decoration: BoxDecoration(
+              color: isSelected ? palette.brand.withValues(alpha: 0.1) : Colors.transparent,
+              borderRadius: BorderRadius.circular(AuraRadius.sm),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  isSelected ? selectedIcon : icon,
+                  size: 20,
+                  color: iconColor,
                 ),
-            ],
+                if (isSelected)
+                  Container(
+                    margin: const EdgeInsets.only(top: 2),
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: palette.brand,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),

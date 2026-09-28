@@ -408,13 +408,43 @@ Validation           The existing contrast gate picks up the new pair automatica
 
 ---
 
+### F-12 — The light theme's `info` colour was below AA for text (found while closing F-11)
+
+```text
+Screen / Component   Design system — AuraPalette.light
+Current UX           n/a — not visible in shipped UI today.
+Current impl         aura_palette.dart: light `info` was sky-600 (#0284C7), measuring 4.10:1 on
+                     white. Its three siblings had all been darkened for the light theme
+                     (success #047857, warning #B45309, danger #DC2626); `info` had not.
+UX problem           `info` was never in `aaTextPairs`, so the contrast gate could not see it.
+                     Its single use today (`life_hub_page.dart:163`) is an icon tint, held to
+                     the looser 3:1 UI-component threshold — which it passes. Nothing shipped
+                     was failing. The defect is that the *next* author to use `info` as text
+                     would have shipped a violation with no gate to catch it.
+Severity             MEDIUM
+User impact          None today; latent.
+Consistency issue    One of four status colours not treated like the other three.
+Accessibility issue  The gate's coverage, not just the value.
+Performance issue    None.
+Recommended fix      sky-700 (#0369A1) — 5.93:1 on white — and add the pair to `aaTextPairs` so
+                     it stays checked.
+Affected files       lib/core/design_system/aura_palette.dart
+Dependencies         None.
+Risk                 Low — one icon tint becomes slightly darker.
+Validation           The existing contrast gate, now that the pair is in it.
+```
+
+**Resolved in this transformation:** yes — Phase 1.
+
+---
+
 ## 2. Findings by severity
 
 | Severity | Findings |
 |---|---|
 | CRITICAL | F-01 (fabricated status bar), F-02 (dead + mislabeled nav controls) |
 | HIGH | F-03 (thin approval prompts), F-04 (hardcoded colour/type), F-05 (no mono token), F-06 (no responsive shell), F-07 (no desktop command system) |
-| MEDIUM | F-08 (silent no-op editor commands), F-09 (no attention badges), F-10 (no UX tests), F-11 (token gaps) |
+| MEDIUM | F-08 (silent no-op editor commands), F-09 (no attention badges), F-10 (no UX tests), F-11 (token gaps), F-12 (light `info` below AA for text) |
 | LOW | — |
 | INFORMATIONAL | The 10 existing components cover roughly a third of rule 6's list; the remainder (toasts, banners, tabs, toolbars, context menus, status badges, tree items, approval cards, agent steps, diff summaries, activity items) exist only as per-screen one-offs. Enumerated in `COMPONENT_GUIDE.md` as Phase 2 scope. |
 
