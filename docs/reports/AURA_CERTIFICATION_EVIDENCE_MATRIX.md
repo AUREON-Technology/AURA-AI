@@ -93,11 +93,23 @@ Two are one command away. Two need the VPS, which is a different blocker.
    command:
    `cd aura_backend && AURA_CERT_BASE_URL=<prod> pytest tests/certification -m cert`.
 3. **`AURA_METRICS_TOKEN`** on the Railway service (DEF-22) — `/metrics` is still world-readable
-   (re-confirmed in EV-26), which the repository's own nginx config refuses in both server blocks.
-   The gate ships opt-in, so an unset token means no gate at all.
-4. **VPS shell** — the only route to the remaining two mandatory gates: `restore-drill.sh` for
+   (re-confirmed in EV-26 and again in EV-28), which the repository's own nginx config refuses in
+   both server blocks. The gate ships opt-in, so an unset token means no gate at all.
+4. **`AURA_PROVIDER_HFSPACE_HEALTH_TIMEOUT_S=30`** on the Railway service (DEF-27) — the knob now
+   exists and the VPS Compose target forwards it, but Railway takes its environment from the
+   dashboard, so on the *live* target the probe still gives up at 5s and still cannot tell
+   "asleep" from "broken". One variable; nothing in this repository can set it.
+5. **VPS shell** — the only route to the remaining two mandatory gates: `restore-drill.sh` for
    backup/restore, and `verify-engineer-workspaces.sh` for the containment escape invariants.
    Neither is reachable from the Railway target by construction.
+6. **Re-run the Engineer journey** in the paired desktop app (EV-27) — #137 is merged and
+   deployed, so the fix is live, but a merged fix is not evidence. Only a re-run of the same
+   request moves "Core user journeys usable" off FAIL. Needs the desktop client, so it cannot be
+   done from a container.
+7. **One authenticated turn against a *cold* deployment** (EV-28) — the single most important
+   untested behaviour in the system: whether a user's first turn after an idle period succeeds.
+   It goes through the 180s request timeout rather than the liveness probe, so none of the
+   probe evidence bears on it. Needs the synthetic tokens *and* an idle target.
 
 ### Closed, with the evidence that closed them
 
