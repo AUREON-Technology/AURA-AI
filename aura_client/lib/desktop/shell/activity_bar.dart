@@ -7,6 +7,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/desktop/diagnostics/diagnostics_notifier.dart';
 import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
@@ -24,6 +25,11 @@ class ActivityBar extends ConsumerWidget {
     // nothing for it to search. DesktopShell's handler already returns early in
     // that case -- disabling the control says so instead of swallowing the tap.
     final hasWorkspace = ref.watch(workspaceNotifierProvider).activeWorkspace != null;
+    // The bottom panel is collapsed by default (LayoutState.showBottomPanel),
+    // and the Problems count lives on that panel's own tab strip -- so until
+    // now a new diagnostic was invisible in exactly the state the IDE starts
+    // in. This is the only always-visible surface it has.
+    final problemCount = ref.watch(diagnosticsNotifierProvider.select((s) => s.totalCount));
 
     return Container(
       width: ideDensity.activityBarWidth,
@@ -135,6 +141,8 @@ class ActivityBar extends ConsumerWidget {
             selectedIcon: Icons.terminal,
             label: 'Panel',
             tooltip: 'Terminal, Output & Problems (Ctrl+Shift+J)',
+            badgeCount: problemCount,
+            badgeNoun: 'problem',
             isSelected: layoutState.showBottomPanel,
             onTap: () => ref.read(layoutNotifierProvider.notifier).toggleBottomPanel(),
             density: ideDensity,
@@ -155,6 +163,8 @@ class _ActivityItem extends StatelessWidget {
     required this.onTap,
     required this.density,
     this.tooltip,
+    this.badgeCount = 0,
+    this.badgeNoun,
   });
 
   final IconData icon;
@@ -171,6 +181,14 @@ class _ActivityItem extends StatelessWidget {
   /// readers but not for sighted users hovering an unfamiliar glyph.
   final String? tooltip;
 
+  /// Count of things needing attention behind this item. `0` renders nothing.
+  final int badgeCount;
+
+  /// Singular noun for [badgeCount] in the semantic label, e.g. `'problem'`
+  /// gives "Panel, 3 problems". A bare number read aloud says nothing about
+  /// what it counts, and a coloured dot says nothing at all.
+  final String? badgeNoun;
+
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
@@ -181,9 +199,14 @@ class _ActivityItem extends StatelessWidget {
             ? palette.brand
             : palette.textSecondary;
 
+    final badgeText = badgeCount > 99 ? '99+' : '$badgeCount';
+    final semanticLabel = badgeCount > 0 && badgeNoun != null
+        ? '$label, $badgeCount $badgeNoun${badgeCount == 1 ? '' : 's'}'
+        : label;
+
     return Semantics(
       button: true,
-      label: label,
+      label: semanticLabel,
       // Selection is otherwise conveyed by a tint and a 6px dot -- i.e. by
       // colour and a shape a screen reader never sees.
       selected: isSelected,
@@ -212,10 +235,41 @@ class _ActivityItem extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
-                  isSelected ? selectedIcon : icon,
-                  size: 20,
-                  color: iconColor,
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Icon(
+                      isSelected ? selectedIcon : icon,
+                      size: 20,
+                      color: iconColor,
+                    ),
+                    if (badgeCount > 0)
+                      Positioned(
+                        top: -4,
+                        right: -8,
+                        // The count itself is the signal, not the colour --
+                        // a badge that is only a coloured dot tells a
+                        // colour-blind user nothing it doesn't tell everyone.
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          constraints: const BoxConstraints(minWidth: 14),
+                          decoration: BoxDecoration(
+                            color: palette.danger,
+                            borderRadius: BorderRadius.circular(AuraRadius.pill),
+                          ),
+                          child: Text(
+                            badgeText,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 9,
+                              height: 1.2,
+                              fontWeight: FontWeight.w700,
+                              color: palette.onBrand,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
                 if (isSelected)
                   Container(

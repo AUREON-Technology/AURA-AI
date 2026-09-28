@@ -13,6 +13,8 @@ import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/security/encryption_service.dart';
+import 'package:aura_client/core/hostd/hostd_control_client.dart';
+import 'package:aura_client/desktop/diagnostics/diagnostics_notifier.dart';
 import 'package:aura_client/desktop/events/ide_event.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/shell/activity_bar.dart';
@@ -24,6 +26,29 @@ import 'package:flutter_test/flutter_test.dart';
 
 const _goToFileTooltip = 'Go to File (Ctrl+P)';
 const _panelTooltip = 'Terminal, Output & Problems (Ctrl+Shift+J)';
+
+/// A DiagnosticsNotifier whose state is set directly, so the badge can be
+/// exercised without standing up a linter and a daemon to produce real
+/// findings. Subclassing is what gives access to the protected `state` setter.
+class _SeededDiagnostics extends DiagnosticsNotifier {
+  _SeededDiagnostics(IdeEventBus bus, int problemCount)
+      : super(bus, HostdControlClient()) {
+    state = DiagnosticsState(
+      detected: true,
+      tool: 'dart_analyze',
+      byFile: {
+        'lib/main.dart': List.generate(
+          problemCount,
+          (i) => Diagnostic(
+            range: const EditorRange(startLine: 1, startColumn: 1, endLine: 1, endColumn: 2),
+            severity: DiagnosticSeverity.error,
+            message: 'problem $i',
+          ),
+        ),
+      },
+    );
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -48,7 +73,7 @@ void main() {
   /// `workspaceNotifierProvider` is overridden rather than left to its own
   /// factory because that factory also listens to `hostdStatusProvider`,
   /// which polls a real daemon. Nothing here needs the daemon.
-  Future<void> pumpBar(WidgetTester tester) async {
+  Future<void> pumpBar(WidgetTester tester, {int problemCount = 0}) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
@@ -56,6 +81,7 @@ void main() {
           ideEventBusProvider.overrideWithValue(bus),
           workspaceNotifierProvider.overrideWith((ref) => WorkspaceNotifier(db, bus)),
           layoutNotifierProvider.overrideWith((ref) => LayoutNotifier(db, bus)),
+          diagnosticsNotifierProvider.overrideWith((ref) => _SeededDiagnostics(bus, problemCount)),
         ],
         child: MaterialApp(
           theme: AuraThemeV2.dark,
@@ -163,5 +189,47 @@ void main() {
       find.ancestor(of: find.byTooltip(_goToFileTooltip), matching: find.byType(Semantics)).first,
     );
     expect(semantics.properties.enabled, isFalse);
+  });
+
+  testWidgets('a problem count is badged where it is always visible', (tester) async {
+    // The bottom panel, which carries the Problems tab, is collapsed by
+    // default -- so without this the first error of a session is invisible.
+    await pumpBar(tester, problemCount: 3);
+
+    expect(find.text('3'), findsOneWidget);
+
+    final semantics = tester.widget<Semantics>(
+      find.ancestor(of: find.byTooltip(_panelTooltip), matching: find.byType(Semantics)).first,
+    );
+    // Not a bare number and not a coloured dot: both are useless read aloud.
+    expect(semantics.properties.label, 'Panel, 3 problems');
+  });
+
+  testWidgets('one problem reads singular', (tester) async {
+    await pumpBar(tester, problemCount: 1);
+    final semantics = tester.widget<Semantics>(
+      find.ancestor(of: find.byTooltip(_panelTooltip), matching: find.byType(Semantics)).first,
+    );
+    expect(semantics.properties.label, 'Panel, 1 problem');
+  });
+
+  testWidgets('a clean workspace is not badged at all', (tester) async {
+    await pumpBar(tester);
+    final semantics = tester.widget<Semantics>(
+      find.ancestor(of: find.byTooltip(_panelTooltip), matching: find.byType(Semantics)).first,
+    );
+    expect(semantics.properties.label, 'Panel');
+    // Zero is absent, not rendered as a "0" badge.
+    expect(find.text('0'), findsNothing);
+  });
+
+  testWidgets('a large count is capped rather than widening the bar', (tester) async {
+    await pumpBar(tester, problemCount: 150);
+    expect(find.text('99+'), findsOneWidget);
+    final semantics = tester.widget<Semantics>(
+      find.ancestor(of: find.byTooltip(_panelTooltip), matching: find.byType(Semantics)).first,
+    );
+    // The exact count still reaches a screen reader; only the glyph is capped.
+    expect(semantics.properties.label, 'Panel, 150 problems');
   });
 }
