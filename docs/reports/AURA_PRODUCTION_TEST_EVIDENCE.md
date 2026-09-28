@@ -1285,6 +1285,47 @@ tokens.
 Raising a probe timeout makes the *report* honest. It does not make a cold start fast, and
 nothing here should be read as claiming the user-facing problem is solved.
 
+### Amendment, 12:03 UTC — the idle window is under an hour, not overnight
+
+EV-28 above was measured after ~9.5 hours idle, which invited the reading that this is an
+overnight-only problem. It is not.
+
+The Space was confirmed **warm at 11:11:17Z** (5/5 healthy, 193–219 ms). Fifty-two minutes later,
+with no traffic in between:
+
+```
+12:03:21Z  healthy=False  5165.0 ms  ReadTimeout
+12:03:27Z  healthy=False  5131.9 ms  ReadTimeout
+12:03:32Z  healthy=False  5139.3 ms  ReadTimeout
+```
+
+So the idle-to-sleep threshold is **at most ~52 minutes**. That is an upper bound, not a
+measurement: the Space could have gone to sleep at any point inside that window, and nothing here
+pins the actual threshold. Establishing it would need probes spaced through an idle period, which
+would itself keep the Space awake — the observation interferes with what it measures, so the bound
+is the honest form of the claim.
+
+The bound is enough to change the severity. "Cold after a night idle" describes a problem the
+first user of the day hits. "Cold after under an hour idle" describes one that a single user hits
+repeatedly in a normal working day — away for lunch, back to a cold start. The gate stays PARTIAL
+either way; what changes is how often the untested cold-start path is the path a real user takes.
+
+It also sharpens the untested question below. If the wake takes minutes and the sleep takes under
+an hour, then on a lightly-used deployment the cold-start turn is not an edge case, it is the
+common case.
+
+### Confirmed not yet set: `AURA_PROVIDER_HFSPACE_HEALTH_TIMEOUT_S`
+
+The failing probes above read ~5150 ms, which is the code default of 5 s, not the 30 s the fix
+makes available. A deploy landed between the two observations (live revision moved to
+`d1623c8eb66b`, the merge commit of #139), so a variable set before it would have been picked up.
+It was not, so on the live target the probe still cannot distinguish "asleep, warming" from
+"broken".
+
+This is worth recording precisely because the check is indirect: the variable itself is not
+readable from outside, but its effect is — a cold probe failing at ~5 s means unset, and one
+failing at ~30 s means set. The measurement above is the "unset" reading.
+
 ### Unchanged, re-checked rather than assumed
 
 | Check | Result |
