@@ -12,6 +12,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 import 'package:aura_client/features/chat/data/agent_config_repository.dart';
 import 'package:aura_client/features/chat/data/agents_repository.dart';
 import 'package:aura_client/features/chat/data/chat_repository.dart';
@@ -166,19 +168,14 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
                 );
               },
               loading: () => Center(child: CircularProgressIndicator(color: palette.brand)),
-              // Was a bare red line with no way out of it. The conversation
-              // itself is stored locally, so a failed read is worth retrying
-              // rather than being a dead end.
+              // Was a bare red line with no way out of it. Classified now, so
+              // a rate limit, an expired session and a dead model each say
+              // their own thing and offer Retry only where retrying helps.
               error: (err, _) => Center(
                 child: SingleChildScrollView(
-                  child: AuraEmptyState(
-                    icon: Icons.error_outline,
-                    tone: AuraStateTone.error,
-                    title: "Couldn't load this conversation",
-                    message: 'Your messages are stored on this device and are still there. '
-                        '$err',
-                    actionLabel: 'Retry',
-                    onAction: () => ref.invalidate(chatMessagesStreamProvider(conversationId)),
+                  child: AuraFailureView(
+                    failure: AuraFailure.from(err),
+                    onRetry: () => ref.invalidate(chatMessagesStreamProvider(conversationId)),
                   ),
                 ),
               ),
