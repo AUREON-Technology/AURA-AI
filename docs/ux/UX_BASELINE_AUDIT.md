@@ -4,10 +4,10 @@
 **Scope of this pass:** `aura_client/` — the V2 design system (`lib/core/design_system/`), the
 Desktop IDE shell (`lib/desktop/`), and the cross-cutting token/state conventions the rest of the
 app inherits from them.
-**Method:** static inspection of the checked-in source. No Flutter/Dart toolchain is available in
-this environment (`which flutter dart` returns nothing), so nothing here was observed running.
-Every finding below cites the file and line it was read from; nothing is inferred from a
-screenshot or from how a feature "probably" behaves.
+**Method:** static inspection of the checked-in source. Every finding below cites the file and
+line it was read from; nothing is inferred from a screenshot or from how a feature "probably"
+behaves. The findings themselves were read, not run — but the fixes made against them *were*
+executed: see `UX_TEST_PLAN.md` for how, and for what still cannot be settled without a device.
 
 > **Status discipline.** This document records what the code *is*, not what it should be. Where a
 > claim could only be settled by running the app (perceived latency, large-repo tree performance,

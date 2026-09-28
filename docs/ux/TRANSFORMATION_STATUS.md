@@ -6,15 +6,24 @@ are checked **and** architecture is preserved **and** the evidence is recorded. 
 not completion; CI passing is not completion either, where the acceptance criterion needs a
 running app.
 
-**Verification available here:** static inspection and CI only. No Flutter/Dart toolchain in this
-environment — see `UX_TEST_PLAN.md`.
+**Verification available here:** the real toolchain. `UX_TEST_PLAN.md` has the two-minute recipe
+for fetching the Flutter version `client-ci.yml` pins and running `analyze` + `test` locally —
+which is how every "awaiting CI" row below became a measured result instead of a hope.
+
+**Last local run** (Flutter 3.44.6 / Dart 3.12.2, the CI pin, against `bb23079`):
+`flutter analyze` → **No issues found!**; `flutter test` → **299 passed, 0 failed, 3 skipped**,
+including the 28 in `test/ux/`.
+
+**GitHub `Client CI` is not a gate right now.** It has not been assigned a runner in weeks: every
+run, on `main` as well as on PRs, fails in 2–4 seconds with no step starting and no log archive.
+Local runs are the only real verification until that is fixed at the repository/account level.
 
 | Phase | Scope | Status | Evidence |
 |---|---|---|---|
 | 0 | UX baseline audit | **COMPLETE** | `UX_BASELINE_AUDIT.md` — 12 findings, each citing file and line |
-| 1 | Design tokens | **IMPLEMENTED — awaiting CI** | `DESIGN_SYSTEM.md`, `test/ux/design_tokens_test.dart`, contrast gate extended |
+| 1 | Design tokens | **COMPLETE** (analyze clean, 299 tests pass locally) | `DESIGN_SYSTEM.md`, `test/ux/design_tokens_test.dart`, contrast gate extended |
 | 2 | Shared component system | **NOT STARTED** | 10 of ~25 target components exist; gap enumerated in audit §2 |
-| 3 | Desktop shell | **PARTIALLY IMPLEMENTED** | F-01 and F-02 fixed with tests. F-06 (responsive) and F-09 (attention badges) NOT STARTED |
+| 3 | Desktop shell | **PARTIALLY IMPLEMENTED** | F-01 and F-02 fixed, with passing tests. F-06 (responsive) and F-09 (attention badges) NOT STARTED |
 | 4 | Explorer + Editor | **NOT STARTED** | F-08 open |
 | 5 | Command system, Terminal, Git, Diff | **NOT STARTED** | F-07 open |
 | 6 | Problems + Tests + Debug | **NOT STARTED** | |

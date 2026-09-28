@@ -3,14 +3,30 @@
 Where UX behaviour is asserted, what each suite is for, and — equally important — what is *not*
 covered, so an absent test is never mistaken for a passing one.
 
-## Constraint that shapes all of this
+## How this is actually verified
 
-There is no Flutter/Dart toolchain in the environment these changes are written in. **Nothing in
-`aura_client/` has been executed locally.** Client CI (`flutter analyze --fatal-infos` +
-`flutter test` + the Android build) is the only verification, and a phase is not complete until it
-has passed there. Anything needing a *running app on a real device* — font fallback resolution,
-screen-reader output, large-repo tree performance, perceived latency — cannot be settled by CI
-either, and is called out below as such.
+The environment these changes are written in has no Flutter SDK preinstalled, but it can fetch
+one: downloading the archive for the exact version `client-ci.yml` pins and running the toolchain
+out of a scratch directory takes about two minutes, and gives the same `Dart 3.12.2` CI would use.
+
+```bash
+curl -sSL -o flutter.tar.xz \
+  https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.44.6-stable.tar.xz
+tar xf flutter.tar.xz && export PATH="$PWD/flutter/bin:$PATH"
+cd aura_client && flutter pub get \
+  && dart run build_runner build --delete-conflicting-outputs \
+  && flutter analyze && flutter test
+```
+
+**Do this rather than assuming a client change is unverifiable.** Several commits in this
+repository's history say a client change could not be checked locally; for `analyze` and `test`
+that is not true, and it matters, because GitHub's `Client CI` has not been assigned a runner in
+weeks — every run, on `main` as well as on PRs, fails in 2–4 seconds with no step ever starting.
+Treating CI as the gate while CI cannot run means nothing is gated at all.
+
+What the local run *cannot* settle stays unsettled: it is a headless Linux host with no device, so
+font fallback resolution per platform, screen-reader output, keyboard traversal as a human
+experiences it, and every runtime performance figure remain **UNKNOWN**.
 
 ## Layout
 
@@ -70,7 +86,7 @@ Listed so the gaps are explicit:
 | `StatusBar` as a rendered widget | **NOT COVERED.** Its substance — the line/column and line-ending arithmetic — is covered as pure functions. A widget test needs `gitNotifierProvider`, `approvalNotifierProvider` and `hostdStatusProvider` stood up, the last of which polls a real daemon; doing that properly is its own change. |
 | Keyboard traversal order across the shell | **NOT COVERED.** Phase 13. |
 | Focus visuals | **PARTIALLY.** The activity bar now sets a focus colour; nothing asserts it is visible at the required contrast. Needs a golden, which needs a device. |
-| Monospace fallback resolution | **UNKNOWN — needs a running app per platform.** The token is BUILT, not PROVEN. |
+| Monospace fallback resolution | **UNKNOWN — needs a running app per platform.** The token is BUILT, not PROVEN: a headless Linux test host cannot show what Menlo or Consolas resolve to. |
 | Responsive shell behaviour | **NOT COVERED** — the behaviour does not exist yet (F-06). |
 | Command system | **NOT COVERED** — does not exist on desktop yet (F-07). |
 | Streaming / agent-activity rendering | **NOT COVERED.** Phases 7–8. |
