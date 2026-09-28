@@ -233,6 +233,10 @@ class ProviderConfig:
     cost_per_1k_output_usd: float = 0.0
     max_concurrency: int = 8
     timeout_s: float = 60.0
+    #: How long the liveness probe waits, separate from `timeout_s`. Raise it for an
+    #: endpoint that scales to zero: a 5s probe can never observe a sleeping Hugging Face
+    #: Space or cold serverless GPU waking, because waking takes minutes.
+    health_timeout_s: float = 5.0
     weight: int = 1
     enabled: bool = True
     # Model-level metadata (roadmap P2.3) -- AURA_PROVIDER_<NAME>_{POOLS,SPEED_TIER,MEMORY_COST,
@@ -368,6 +372,7 @@ class ProviderConfig:
             cost_per_1k_output_usd=_float(f"{p}_COST_OUTPUT", 0.0, minimum=0.0),
             max_concurrency=_int(f"{p}_MAX_CONCURRENCY", 8, minimum=1),
             timeout_s=_float(f"{p}_TIMEOUT_S", 60.0, minimum=1.0),
+            health_timeout_s=_float(f"{p}_HEALTH_TIMEOUT_S", 5.0, minimum=0.5),
             weight=_int(f"{p}_WEIGHT", 1, minimum=1),
             enabled=_bool(f"{p}_ENABLED", True),
             pools=tuple(v.lower() for v in _list(f"{p}_POOLS")),

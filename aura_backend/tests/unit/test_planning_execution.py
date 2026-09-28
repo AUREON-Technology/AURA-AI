@@ -207,15 +207,38 @@ class TestPlanParsing:
         assert plan.steps[0].arguments == {"query": "expense cap"}
         assert plan.steps[2].kind is StepKind.RESPOND
 
-    async def test_a_step_naming_an_unknown_tool_is_demoted_not_dropped(self) -> None:
-        """A step that can never succeed should still let the plan make progress."""
+    async def test_a_step_naming_an_unknown_tool_keeps_its_kind_and_name(self) -> None:
+        """This used to demote the step to GENERATE, on the reasoning that a step which "can
+        never succeed" should still "let the plan make progress". It did the opposite, and the
+        cost was a fabricated answer in production -- see
+        `tests/unit/test_unexecuted_plan_steps.py` for the full chain and the screenshot it came
+        from. In short: no GENERATE handler exists anywhere, so the demoted step was SKIPPED,
+        its dependents BLOCKED, and `summary_for_context()` empty; the plan made no progress at
+        all, it merely stopped reporting that.
+
+        Keeping the step as a TOOL step lets `ToolRegistry.execute` refuse it *usefully* --
+        ok=False, "Tool 'x' is not available. Available tools: ...", audited and counted -- which
+        marks the step FAILED and so reaches the replan's context, where the model can correct
+        its own tool name.
+        """
         body = json.dumps({"steps": [
             {"kind": "tool", "tool": "delete_production_database", "description": "Do the thing"},
         ]})
         plan = await _engine(body).plan(Goal(description="g"), available_tools=TOOLS)
 
-        assert plan.steps[0].kind is StepKind.GENERATE
-        assert plan.steps[0].tool is None
+        assert plan.steps[0].kind is StepKind.TOOL
+        assert plan.steps[0].tool == "delete_production_database"
+
+    async def test_a_tool_step_naming_no_tool_is_dropped(self) -> None:
+        """The complement: with no name there is nothing to dispatch and nothing to refuse, and
+        `_run_step` would fall through to the handler lookup and skip it silently."""
+        body = json.dumps({"steps": [
+            {"kind": "tool", "description": "Do the thing"},
+            {"kind": "respond", "description": "Say something"},
+        ]})
+        plan = await _engine(body).plan(Goal(description="g"), available_tools=TOOLS)
+
+        assert [s.description for s in plan.steps] == ["Say something"]
 
     async def test_an_unknown_step_kind_falls_back_to_generate(self) -> None:
         body = json.dumps({"steps": [{"kind": "teleport", "description": "Do the thing"}]})

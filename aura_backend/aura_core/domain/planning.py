@@ -275,6 +275,14 @@ class Plan:
         return tuple(sorted(ready, key=lambda s: (-s.priority.value, self.steps.index(s))))
 
     def blocked_steps(self) -> tuple[PlanStep, ...]:
+        """Steps that are *about to become* blocked -- still PENDING, dependency already lost.
+
+        This is a transition query, not a state query: :meth:`mark_blocked_steps` calls it to
+        decide what to move PENDING -> BLOCKED, so a step it has already moved must drop out or
+        the transition would never terminate. Asking "what is blocked right now?" is a different
+        question with a different answer, and :meth:`unexecuted_steps` is the one to ask -- see
+        its docstring for the production incident that came of confusing the two.
+        """
         by_id = {s.id: s for s in self.steps}
         return tuple(
             s
@@ -284,6 +292,30 @@ class Plan:
                 by_id[d].status in {StepStatus.FAILED, StepStatus.SKIPPED, StepStatus.BLOCKED}
                 for d in s.depends_on
             )
+        )
+
+    def unexecuted_steps(self) -> tuple[PlanStep, ...]:
+        """Steps that reached a terminal state without ever running: SKIPPED or BLOCKED.
+
+        These are invisible to every other accessor here, and that invisibility caused a live
+        failure. A plan's steps were SKIPPED (no handler for the kind) and BLOCKED (depending on
+        the skipped one); :attr:`failed_steps` was empty because nothing *failed*, and
+        :meth:`blocked_steps` was empty because the executor had already moved the dependent out
+        of PENDING. The agentic loop read both as empty, concluded there was "nothing to repair",
+        declined to replan -- and the turn generated an answer having run no tool at all, with
+        :meth:`ExecutionOutcome.summary_for_context` empty because it only reports SUCCEEDED
+        steps. The model filled the silence by inventing the file contents it had been asked to
+        summarise.
+
+        So this exists to make "planned, never ran" a thing a caller can see and say out loud.
+        The distinction it draws is between a step that produced a wrong answer (FAILED, already
+        visible) and one that produced no answer at all -- the second is the one that invites
+        fabrication, precisely because nothing in the turn records that it is missing.
+        """
+        return tuple(
+            s
+            for s in self.steps
+            if s.status in {StepStatus.SKIPPED, StepStatus.BLOCKED}
         )
 
     def progress(self) -> tuple[int, int]:

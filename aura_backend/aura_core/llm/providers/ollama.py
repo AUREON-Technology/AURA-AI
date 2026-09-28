@@ -61,6 +61,7 @@ class OllamaProvider(BaseProvider):
         model: str = "llama3.1:8b",
         capabilities: ProviderCapabilities | None = None,
         timeout_s: float = 120.0,
+        health_timeout_s: float = 5.0,
         model_allowlist: Sequence[str] = (),
     ) -> None:
         caps = capabilities or ProviderCapabilities(
@@ -76,7 +77,10 @@ class OllamaProvider(BaseProvider):
             cost_per_1k_output_usd=0.0,
             max_concurrency=2,  # a single local GPU/CPU saturates fast; queue rather than thrash
         )
-        super().__init__(name=name, capabilities=caps, timeout_s=timeout_s)
+        super().__init__(
+            name=name, capabilities=caps, timeout_s=timeout_s,
+            health_timeout_s=health_timeout_s,
+        )
         self._url = base_url.rstrip("/")
         self._model = model
         # Empty means "no pulls permitted". Fail closed: an unset allowlist must not mean
@@ -214,7 +218,7 @@ class OllamaProvider(BaseProvider):
         started = time.perf_counter()
         try:
             client = await self._get_client()
-            response = await client.get("/api/tags", timeout=5.0)
+            response = await client.get("/api/tags", timeout=self._health_timeout_s)
             elapsed = (time.perf_counter() - started) * 1000.0
             if response.status_code >= 400:
                 return HealthStatus(False, f"HTTP {response.status_code}", elapsed)

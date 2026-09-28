@@ -266,11 +266,33 @@ class PlanningEngine:
             kind = StepKind(kind_value)
 
             tool = raw.get("tool") or None
+            if kind is StepKind.TOOL and tool is None:
+                # "kind": "tool" with no tool named carries no dispatchable intent, and there is
+                # nothing for the registry to refuse informatively. Drop it.
+                logger.debug("plan step declared kind=tool without naming one")
+                continue
             if kind is StepKind.TOOL and tool not in available_tools:
-                # A step naming a tool that does not exist can never succeed. Demoting it to a
-                # generate step lets the plan still make progress.
+                # Keep it a TOOL step, unknown name and all, and let the registry refuse it at
+                # dispatch.
+                #
+                # This used to demote the step to GENERATE, with the reasoning that a step which
+                # "can never succeed" should at least "let the plan still make progress". Both
+                # halves were wrong, and the combination produced a fabricated answer in
+                # production. No GENERATE handler exists -- no caller anywhere passes `handlers`
+                # to ExecutionEngine.execute -- so the demoted step is SKIPPED, every step
+                # depending on it is BLOCKED, and `summary_for_context()` (SUCCEEDED steps only)
+                # comes back empty. The plan made no progress whatsoever; it merely stopped
+                # saying so. The turn then generated with no tool output and no record that
+                # anything was missing, and the model invented the file contents it was meant to
+                # be summarising.
+                #
+                # Dispatch, by contrast, refuses an unknown tool *usefully*: ToolRegistry.execute
+                # returns ok=False with "Tool 'x' is not available. Available tools: ..." and an
+                # error_kind, which is audited, counted, and -- because the step is now FAILED
+                # rather than skipped -- reaches `_replan_reason` and the replan's context block.
+                # A model that guessed `read_file` gets told `run_command` exists and can fix its
+                # own plan on the next iteration. That is what "make progress" has to mean.
                 logger.debug("plan step referenced an unknown tool", extra={"tool": tool})
-                kind, tool = StepKind.GENERATE, None
             if kind is not StepKind.TOOL:
                 tool = None
 

@@ -1,13 +1,20 @@
 # AURA AI — Certification Evidence Matrix
 
-**Updated:** 2026-09-27 22:20 UTC
-**Live revision under test:** `0832665f4280` (Railway Control Plane)
-**Repository revision:** `main` @ `0832665f`
+**Updated:** 2026-09-28 10:55 UTC
+**Live revision under test:** `e8ed25a86006` (Railway Control Plane)
+**Repository revision:** `main` @ `8ae96ef`
 
 > ## OVERALL VERDICT: NOT PRODUCTION CERTIFIED
 >
-> Four mandatory gates have no evidence. Per the closure rule, certification is refused while any
-> mandatory gate lacks evidence — no combination of the gates that *do* pass changes that.
+> Four mandatory gates have no evidence, one fails on observed behaviour (EV-27), and one that
+> was recorded as passing has been corrected down to PARTIAL (EV-28 — the earlier samples measured
+> a warm endpoint). Per the closure rule, certification is refused while any mandatory gate lacks
+> evidence; a gate that fails on evidence is a separate refusal again. No combination of the gates
+> that *do* pass changes either.
+>
+> The correction is the point of keeping this file. Two gates have now moved *down* on new
+> evidence — an audit where every revision improves the score is measuring the auditor, not the
+> system.
 
 This file is the single canonical answer to "what is proven, and by what?". It is
 **machine-checked**: `aura_backend/tests/architecture/test_certification_gate.py` parses the table
@@ -37,19 +44,19 @@ suite rather than by whoever writes the summary.
 | No critical security flaw | yes | PRODUCTION TESTED | EV-22, EV-23 (no bypass active; headers fixed; CORS sound) | PARTIAL |
 | No exposed secrets | yes | PRODUCTION TESTED | EV-09 (Secrets: NOT FOUND) | PASS |
 | Production API usable | yes | PRODUCTION TESTED | EV-22 (80 /api/v3 routes, valid TLS, zero legacy paths) | PASS |
-| Core user journeys usable | yes | PRODUCTION TESTED | EV-22 (no journey reached step three) | UNKNOWN |
-| Inference works | yes | MEASURED | EV-24 (hfspace healthy in 1/8 samples; 226ms when up, 5.15s timeout when not) | FAIL |
+| Core user journeys usable | yes | PRODUCTION TESTED | EV-27 (Engineer summarised a file it never read) | FAIL |
+| Inference works | yes | MEASURED | EV-28 (works warm; 0/20 while asleep, wakes in ~5.5min; cold-start turn untested) | PARTIAL |
 | No unrecoverable data failure | yes | CODE-PRESENT | — | UNKNOWN |
 | Deployment stability | yes | MEASURED | EV-17 (zero executed CI jobs since 2026-09-13) | FAIL |
-| Database schema integrity | yes | PRODUCTION TESTED | EV-23 (revision 0006, code expects 0008) | FAIL |
-| Release identity traceable | no | PRODUCTION TESTED | EV-23 (/health/version = merge commit of #130) | PASS |
+| Database schema integrity | yes | PRODUCTION TESTED | EV-25, EV-26 (schema healthy at revision 0008, across two deploys) | PASS |
+| Release identity traceable | no | PRODUCTION TESTED | EV-23, EV-26 (six consecutive deploys, each = its merge commit) | PASS |
 | Liveness / readiness contract | no | PRODUCTION TESTED | EV-22 (503 on unhealthy dependency) | PASS |
 | Security response headers | no | PRODUCTION TESTED | EV-23 (all five present on Railway) | PASS |
 | CORS least-privilege | no | PRODUCTION TESTED | EV-22 (hostile origin not granted) | PASS |
 | v1 locked routes absent | no | PRODUCTION TESTED | EV-22 (zero legacy paths) | PASS |
 | No insecure-mode bypass active | no | PRODUCTION TESTED | EV-22 (all five aura_insecure_mode gauges 0.0) | PASS |
 | Self-hosted-only inference invariant | no | LOCALLY TESTED | test_no_external_inference.py (repo-wide fitness test) | PASS |
-| Metrics endpoint not public | no | PRODUCTION TESTED | EV-23 (200 unauthenticated; gate opt-in, token unset) | FAIL |
+| Metrics endpoint not public | no | PRODUCTION TESTED | EV-23, EV-26 (still 200 unauthenticated; gate opt-in, token unset) | FAIL |
 | Network exposure (non-web ports) | no | CODE-PRESENT | — | NOT APPLICABLE |
 | Rollback validated | no | CODE-PRESENT | — | BLOCKED |
 | Desktop / hostd / Flutter clients | no | CODE-PRESENT | — | BLOCKED |
@@ -75,17 +82,41 @@ Two are one command away. Two need the VPS, which is a different blocker.
 
 ## Owner-side actions, in dependency order
 
-1. **GitHub Actions billing** — nothing merged has been CI-validated since 2026-09-13. Everything
-   in `main` today rests on local runs alone.
-2. **Railway → service → Settings → Root Directory** — `aura_backend/railway.json` is almost
-   certainly never read, which is why `preDeployCommand` has not migrated the database and
-   `healthcheckPath` has been inert. Today a schema-breaking change can deploy silently.
-3. **Apply the migrations** — `alembic upgrade head`; the schema is at `0006` and the code expects
-   `0008`.
-4. **`AURA_METRICS_TOKEN`** on the Railway service — `/metrics` is world-readable, which the
-   repository's own nginx config refuses in both server blocks.
-5. **Two synthetic tokens** (`aura-cert-user-a`, `aura-cert-user-b`, role `User`) — turns two
-   mandatory gates from instruments into evidence.
+### Still outstanding
+
+1. **GitHub Actions billing** (BLOCK-06) — nothing merged has been CI-validated since 2026-09-13.
+   Everything in `main` today rests on local runs alone. This is the largest remaining risk in the
+   repository, and it is the one item on this list that no amount of agent work can substitute for:
+   a suite that passes locally is not a suite that gates a merge.
+2. **Two synthetic tokens** (`aura-cert-user-a`, `aura-cert-user-b`, role `User`) — the highest-value
+   item, because it turns **three** mandatory gates from instruments into evidence in one operator
+   command:
+   `cd aura_backend && AURA_CERT_BASE_URL=<prod> pytest tests/certification -m cert`.
+3. **`AURA_METRICS_TOKEN`** on the Railway service (DEF-22) — `/metrics` is still world-readable
+   (re-confirmed in EV-26 and again in EV-28), which the repository's own nginx config refuses in
+   both server blocks. The gate ships opt-in, so an unset token means no gate at all.
+4. **`AURA_PROVIDER_HFSPACE_HEALTH_TIMEOUT_S=30`** on the Railway service (DEF-27) — the knob now
+   exists and the VPS Compose target forwards it, but Railway takes its environment from the
+   dashboard, so on the *live* target the probe still gives up at 5s and still cannot tell
+   "asleep" from "broken". One variable; nothing in this repository can set it.
+5. **VPS shell** — the only route to the remaining two mandatory gates: `restore-drill.sh` for
+   backup/restore, and `verify-engineer-workspaces.sh` for the containment escape invariants.
+   Neither is reachable from the Railway target by construction.
+6. **Re-run the Engineer journey** in the paired desktop app (EV-27) — #137 is merged and
+   deployed, so the fix is live, but a merged fix is not evidence. Only a re-run of the same
+   request moves "Core user journeys usable" off FAIL. Needs the desktop client, so it cannot be
+   done from a container.
+7. **One authenticated turn against a *cold* deployment** (EV-28) — the single most important
+   untested behaviour in the system: whether a user's first turn after an idle period succeeds.
+   It goes through the 180s request timeout rather than the liveness probe, so none of the
+   probe evidence bears on it. Needs the synthetic tokens *and* an idle target.
+
+### Closed, with the evidence that closed them
+
+| Action | Evidence | Note |
+| --- | --- | --- |
+| **Railway Root Directory → `aura_backend`** | EV-25 | The diagnosis predicted that `railway.json` was unread, so `preDeployCommand` had never run. Correcting the Root Directory advanced the schema on the next deploy, which the competing explanation (the command running and *failing*) would not have produced. |
+| **Apply the migrations** | EV-25, EV-26 | Schema healthy at `0008` against a code expectation of `0008`, and still `0008` after a further deploy — so the fix is structural, not a one-off manual run. |
 
 ## Standing rules this file encodes
 

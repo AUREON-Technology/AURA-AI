@@ -313,6 +313,12 @@ services:
       AURA_PROVIDER_HFSPACE_QUALITY_TIER: ${AURA_PROVIDER_HFSPACE_QUALITY_TIER:-2}
       AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW: ${AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW:-8192}
       AURA_PROVIDER_HFSPACE_TIMEOUT_S: ${AURA_PROVIDER_HFSPACE_TIMEOUT_S:-45}
+      # A Space scales to zero, so the liveness probe needs a longer deadline than the
+      # 5s default: measured cold, 20 consecutive probes failed at a flat ~5150ms over
+      # five and a half minutes before the Space finished waking (EV-28). At 5s the probe
+      # cannot observe the recovery at all and /health/ready reports the same
+      # `healthy: false` for "asleep, warming" as for "broken".
+      AURA_PROVIDER_HFSPACE_HEALTH_TIMEOUT_S: ${AURA_PROVIDER_HFSPACE_HEALTH_TIMEOUT_S:-30}
       AURA_PROVIDER_HFSPACE_MAX_CONCURRENCY: ${AURA_PROVIDER_HFSPACE_MAX_CONCURRENCY:-8}
       AURA_PROVIDER_HFSPACE_IS_LOCAL: ${AURA_PROVIDER_HFSPACE_IS_LOCAL:-false}
       AURA_PROVIDER_HFSPACE_API_KEY_ENV: ${AURA_PROVIDER_HFSPACE_API_KEY_ENV:-}
@@ -607,6 +613,12 @@ services:
       AURA_PROVIDER_HFSPACE_QUALITY_TIER: ${AURA_PROVIDER_HFSPACE_QUALITY_TIER:-2}
       AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW: ${AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW:-8192}
       AURA_PROVIDER_HFSPACE_TIMEOUT_S: ${AURA_PROVIDER_HFSPACE_TIMEOUT_S:-45}
+      # A Space scales to zero, so the liveness probe needs a longer deadline than the
+      # 5s default: measured cold, 20 consecutive probes failed at a flat ~5150ms over
+      # five and a half minutes before the Space finished waking (EV-28). At 5s the probe
+      # cannot observe the recovery at all and /health/ready reports the same
+      # `healthy: false` for "asleep, warming" as for "broken".
+      AURA_PROVIDER_HFSPACE_HEALTH_TIMEOUT_S: ${AURA_PROVIDER_HFSPACE_HEALTH_TIMEOUT_S:-30}
       AURA_PROVIDER_HFSPACE_MAX_CONCURRENCY: ${AURA_PROVIDER_HFSPACE_MAX_CONCURRENCY:-8}
       AURA_PROVIDER_HFSPACE_IS_LOCAL: ${AURA_PROVIDER_HFSPACE_IS_LOCAL:-false}
       AURA_PROVIDER_HFSPACE_API_KEY_ENV: ${AURA_PROVIDER_HFSPACE_API_KEY_ENV:-}
