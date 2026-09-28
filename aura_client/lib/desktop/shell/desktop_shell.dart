@@ -10,7 +10,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/desktop/shell/activity_bar.dart';
 import 'package:aura_client/desktop/shell/bottom_panel.dart';
+import 'package:aura_client/core/design_system/components/aura_command_palette.dart';
 import 'package:aura_client/desktop/shell/desktop_breakpoint.dart';
+import 'package:aura_client/desktop/shell/desktop_commands.dart';
 import 'package:aura_client/desktop/shell/status_bar.dart';
 import 'package:aura_client/desktop/shell/desktop_shortcuts.dart';
 import 'package:aura_client/desktop/shell/resize_handle.dart';
@@ -46,6 +48,7 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
     super.initState();
     _eventSub = ref.read(ideEventBusProvider).stream.listen((event) {
       if (event is ShowQuickOpenRequested) _showQuickOpen();
+      if (event is ShowCommandPaletteRequested) _showCommandPalette();
     });
   }
 
@@ -71,6 +74,15 @@ class _DesktopShellState extends ConsumerState<DesktopShell> {
               );
         },
       ),
+    );
+  }
+
+  void _showCommandPalette() {
+    showAuraCommandPalette(
+      context,
+      // Built at open time, not held: whether a command can run right now is
+      // a snapshot of this moment, and the palette does not outlive it.
+      commands: buildDesktopCommands(ref, platform: Theme.of(context).platform),
     );
   }
 

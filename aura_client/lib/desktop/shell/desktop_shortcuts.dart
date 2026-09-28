@@ -6,10 +6,10 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:aura_client/desktop/shell/desktop_actions.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 import 'package:aura_client/desktop/events/ide_event_bus.dart';
 import 'package:aura_client/desktop/events/ide_event.dart';
-import 'package:aura_client/desktop/workspace/workspace_file_service.dart';
 
 /// Widget that wraps the desktop shell with keyboard shortcuts.
 class DesktopShortcuts extends ConsumerWidget {
@@ -40,6 +40,14 @@ class DesktopShortcuts extends ConsumerWidget {
       // Quick open
       const SingleActivator(LogicalKeyboardKey.keyP, control: true): const _QuickOpenIntent(),
       const SingleActivator(LogicalKeyboardKey.keyP, meta: true): const _QuickOpenIntent(),
+      // Command palette. Ctrl/Cmd+Shift+P rather than Ctrl/Cmd+K, which the
+      // mobile shell already uses for its own palette -- the two are separate
+      // surfaces today (see desktop_commands.dart) and giving them the same
+      // binding would imply otherwise.
+      const SingleActivator(LogicalKeyboardKey.keyP, control: true, shift: true):
+          const _CommandPaletteIntent(),
+      const SingleActivator(LogicalKeyboardKey.keyP, meta: true, shift: true):
+          const _CommandPaletteIntent(),
       // Focus terminal
       const SingleActivator(LogicalKeyboardKey.backquote, control: true): const _FocusTerminalIntent(),
       const SingleActivator(LogicalKeyboardKey.backquote, meta: true): const _FocusTerminalIntent(),
@@ -63,9 +71,13 @@ class DesktopShortcuts extends ConsumerWidget {
 
     return Actions(
       actions: {
-        _SaveIntent: CallbackAction<_SaveIntent>(onInvoke: (_) => _handleSave(ref)),
+        _SaveIntent: CallbackAction<_SaveIntent>(onInvoke: (_) => saveActiveFile(ref)),
         _CloseTabIntent: CallbackAction<_CloseTabIntent>(onInvoke: (_) => _handleCloseTab(ref)),
         _QuickOpenIntent: CallbackAction<_QuickOpenIntent>(onInvoke: (_) => _handleQuickOpen(ref)),
+        _CommandPaletteIntent: CallbackAction<_CommandPaletteIntent>(
+          onInvoke: (_) =>
+              ref.read(ideEventBusProvider).publish(const ShowCommandPaletteRequested()),
+        ),
         _FocusTerminalIntent: CallbackAction<_FocusTerminalIntent>(onInvoke: (_) => _handleFocusTerminal(ref)),
         _ToggleSidebarIntent: CallbackAction<_ToggleSidebarIntent>(onInvoke: (_) => _handleToggleSidebar(ref)),
         _ToggleSecondarySidebarIntent: CallbackAction<_ToggleSecondarySidebarIntent>(onInvoke: (_) => _handleToggleSecondarySidebar(ref)),
@@ -78,22 +90,6 @@ class DesktopShortcuts extends ConsumerWidget {
       },
       child: Shortcuts(shortcuts: shortcuts, child: Focus(autofocus: true, child: child)),
     );
-  }
-
-  void _handleSave(WidgetRef ref) {
-    final activeTab = ref.read(editorNotifierProvider).activeTab;
-    if (activeTab == null || !activeTab.isDirty) return;
-
-    final workspace = ref.read(workspaceNotifierProvider).activeWorkspace;
-    if (workspace == null) return;
-
-    final content = ref.read(editorNotifierProvider.notifier).contentFor(activeTab.id);
-    if (content == null) return;
-
-    WorkspaceFileService(workspace.rootPath).writeFile(activeTab.path, content).then((_) {
-      ref.read(editorNotifierProvider.notifier).markDirty(activeTab.id, false);
-      ref.read(ideEventBusProvider).publish(FileSaved(activeTab.path, workspace.id));
-    });
   }
 
   void _handleCloseTab(WidgetRef ref) {
@@ -135,6 +131,7 @@ class DesktopShortcuts extends ConsumerWidget {
 class _SaveIntent extends Intent { const _SaveIntent(); }
 class _CloseTabIntent extends Intent { const _CloseTabIntent(); }
 class _QuickOpenIntent extends Intent { const _QuickOpenIntent(); }
+class _CommandPaletteIntent extends Intent { const _CommandPaletteIntent(); }
 class _FocusTerminalIntent extends Intent { const _FocusTerminalIntent(); }
 class _ToggleSidebarIntent extends Intent { const _ToggleSidebarIntent(); }
 class _ToggleSecondarySidebarIntent extends Intent { const _ToggleSecondarySidebarIntent(); }

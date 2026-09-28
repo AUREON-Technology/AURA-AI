@@ -13,6 +13,15 @@ class AuraTextField extends StatelessWidget {
   final ValueChanged<String>? onSubmitted;
   final ValueChanged<String>? onChanged;
 
+  /// Takes focus when first built. Needed by anything that opens *as* a search
+  /// — a command palette the user reached by keyboard should not then require
+  /// a click before it accepts typing.
+  final bool autofocus;
+  final FocusNode? focusNode;
+
+  /// Leading glyph inside the field, e.g. a magnifier on a search input.
+  final IconData? prefixIcon;
+
   const AuraTextField({
     super.key,
     this.controller,
@@ -24,6 +33,9 @@ class AuraTextField extends StatelessWidget {
     this.textInputAction,
     this.onSubmitted,
     this.onChanged,
+    this.autofocus = false,
+    this.focusNode,
+    this.prefixIcon,
   });
 
   @override
@@ -31,6 +43,8 @@ class AuraTextField extends StatelessWidget {
     final palette = AuraPalette.of(context);
     return TextField(
       controller: controller,
+      focusNode: focusNode,
+      autofocus: autofocus,
       enabled: enabled,
       maxLines: maxLines,
       textInputAction: textInputAction,
@@ -40,6 +54,9 @@ class AuraTextField extends StatelessWidget {
       decoration: InputDecoration(
         labelText: label,
         hintText: hintText,
+        prefixIcon: prefixIcon == null
+            ? null
+            : Icon(prefixIcon, size: 18, color: palette.textSecondary),
         errorText: errorText,
         filled: true,
         fillColor: palette.surfaceVariant,

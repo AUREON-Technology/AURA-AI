@@ -212,6 +212,13 @@ class ShowQuickOpenRequested extends IdeEvent {
   const ShowQuickOpenRequested();
 }
 
+/// F-07: open the command palette. Published by the Ctrl/Cmd+Shift+P binding
+/// and consumed by DesktopShell, which is the widget that has a BuildContext
+/// to show a dialog from -- the same shape ShowQuickOpenRequested already uses.
+class ShowCommandPaletteRequested extends IdeEvent {
+  const ShowCommandPaletteRequested();
+}
+
 class FocusTerminalRequested extends IdeEvent {
   const FocusTerminalRequested();
 }
