@@ -13,9 +13,20 @@ import 'package:aura_client/desktop/workspace/workspace_file_service.dart';
 
 /// Widget that wraps the desktop shell with keyboard shortcuts.
 class DesktopShortcuts extends ConsumerWidget {
-  const DesktopShortcuts({super.key, required this.child});
+  const DesktopShortcuts({super.key, required this.child, this.onDismissOverlay});
 
   final Widget child;
+
+  /// Dismisses whatever panel is currently floating over the editor, or
+  /// `null` when nothing is. Escape is bound only while this is non-null, so
+  /// the key keeps its ordinary meaning (and reaches whatever else wants it)
+  /// the rest of the time.
+  ///
+  /// This lives here rather than in the shell's own subtree because shortcut
+  /// resolution walks *up* from the focused node, and the [Focus] below
+  /// autofocuses the entire shell — a Shortcuts widget inside it would never
+  /// be reached.
+  final VoidCallback? onDismissOverlay;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -46,6 +57,8 @@ class DesktopShortcuts extends ConsumerWidget {
       // "trigger suggestion" binding most editors already use.
       const SingleActivator(LogicalKeyboardKey.space, control: true): const _RequestInlineCompletionIntent(),
       const SingleActivator(LogicalKeyboardKey.space, meta: true): const _RequestInlineCompletionIntent(),
+      if (onDismissOverlay != null)
+        const SingleActivator(LogicalKeyboardKey.escape): const _DismissOverlayIntent(),
     };
 
     return Actions(
@@ -58,6 +71,10 @@ class DesktopShortcuts extends ConsumerWidget {
         _ToggleSecondarySidebarIntent: CallbackAction<_ToggleSecondarySidebarIntent>(onInvoke: (_) => _handleToggleSecondarySidebar(ref)),
         _ToggleBottomPanelIntent: CallbackAction<_ToggleBottomPanelIntent>(onInvoke: (_) => _handleToggleBottomPanel(ref)),
         _RequestInlineCompletionIntent: CallbackAction<_RequestInlineCompletionIntent>(onInvoke: (_) => _handleRequestInlineCompletion(ref)),
+        if (onDismissOverlay != null)
+          _DismissOverlayIntent: CallbackAction<_DismissOverlayIntent>(
+            onInvoke: (_) => onDismissOverlay!(),
+          ),
       },
       child: Shortcuts(shortcuts: shortcuts, child: Focus(autofocus: true, child: child)),
     );
@@ -123,3 +140,4 @@ class _ToggleSidebarIntent extends Intent { const _ToggleSidebarIntent(); }
 class _ToggleSecondarySidebarIntent extends Intent { const _ToggleSecondarySidebarIntent(); }
 class _ToggleBottomPanelIntent extends Intent { const _ToggleBottomPanelIntent(); }
 class _RequestInlineCompletionIntent extends Intent { const _RequestInlineCompletionIntent(); }
+class _DismissOverlayIntent extends Intent { const _DismissOverlayIntent(); }
