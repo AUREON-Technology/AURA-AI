@@ -965,6 +965,242 @@ here; the Space's own runtime page would confirm it.
 
 ---
 
+## EV-25 — Readiness is green: DEF-19 and DEF-20 both resolved
+
+**Date:** 2026-09-27 23:19-23:22 UTC. **Classification:** PRODUCTION TESTED · MEASURED.
+**Live revision:** `b4ab9ad3b66c` = merge commit of PR #134.
+
+The first `HTTP 200` from `/health/ready` in this entire engagement.
+
+```
+$ curl -w "\nHTTP=%{http_code}\n" https://aura-ai-production-03a4.up.railway.app/health/ready
+{"providers":{"hfspace":{"healthy":true,"detail":"ok","latency_ms":200.4}},
+ "index":"aura-knowledge__v1__hash-embed-v1__384","tools":37,"prompts":17,"agents":8,
+ "environment":"production","healthy":true,
+ "checks":{"schema":{"healthy":true,"revision":"0008"}},
+ "release":{"revision":"b4ab9ad3b66c","git_ref":"main","identified":true}}
+HTTP=200
+```
+
+### DEF-20 — RESOLVED
+
+`schema: healthy=true, revision=0008`, against a code expectation of `0008`. The two migrations
+that had been outstanding since before this audit began are applied.
+
+This also confirms the mechanism recorded in EV-23: the migration gate was inert because
+`aura_backend/railway.json` was not being read, and it began working once that was corrected. The
+prediction and the outcome match, which is worth noting because the alternative explanation (the
+`preDeployCommand` running and failing) would have left the schema at `0006`.
+
+### DEF-19 — RESOLVED, and sampled this time
+
+EV-24 recorded an overstatement: a single healthy sample was reported as recovery when the true
+rate was 1-in-8. The correction set a bar of five-plus consecutive samples before any claim.
+Meeting it:
+
+```
+23:19:51Z  True  200.4        (the first reading, from the full payload above)
+23:20:33Z  True  200.2  overall=True
+23:20:48Z  True  229.9  overall=True
+23:21:03Z  True  231.4  overall=True
+23:21:18Z  True  196.6  overall=True
+23:21:32Z  True  199.9  overall=True
+23:21:47Z  True  196.6  overall=True
+           --> 7/7 consecutive, 196.6-231.4 ms
+```
+
+Seven consecutive successes in a 196-231 ms band, where the failing state was a fixed ~5150 ms
+timeout. That is a different regime, not a lucky streak: under the 1-in-8 rate of EV-24, seven
+consecutive successes would be a roughly 1-in-2-million coincidence.
+
+Consistent with the cold-start hypothesis in EV-24 -- a warm Space answers in ~200 ms, which is
+exactly what the one anomalous sample at 21:49 showed.
+
+### What this unlocks, and what it does not
+
+**Unlocked:** inference-dependent certification is now viable. The E2E journey and adversarial
+safety suites skip when a turn cannot complete, so they were producing *untested* rather than
+results. With a completing turn they produce evidence -- given credentials.
+
+**Not unlocked:** the verdict. Four mandatory gates still have **no evidence at all**
+(authorization/isolation, adversarial safety, agent containment, backup/restore), and
+`test_certification_gate.py` refuses certification while that holds. Two gates moving from FAIL to
+PASS does not offset four with nothing.
+
+**Still open:** DEF-22 -- `/metrics` returns 200 unauthenticated, because `AURA_METRICS_TOKEN` is
+unset. Unchanged by this deploy.
+
+### Release identity, fifth consecutive deploy
+
+`a517cb68` → `0832665f` → `5c527fdd` → `d79c26bb` → `b4ab9ad3`, each matching its merge commit,
+all populated by the platform fallback with no build arg wired. The mechanism introduced for
+BLOCK-03 has now tracked five deploys unaided.
+
+---
+
+## EV-26 — The DEF-19 recovery reproduces on a different revision (independent window)
+
+**When:** 2026-09-27 23:45–23:46 UTC
+**Target:** `https://aura-ai-production-03a4.up.railway.app`
+**Live revision:** `8366aa3367ca` — the merge commit of #136, a *different* deploy from the
+`b4ab9ad3b66c` that EV-25 measured.
+
+EV-24 is the reason this entry exists. There, a single healthy sample was reported as recovery when
+the true rate was 1-in-8, and the correction set the standing rule: five or more consecutive
+samples before any claim about inference. EV-25 met that rule inside one window. One window on one
+revision is still one observation of one process, so this is the same measurement repeated after a
+deploy replaced the container.
+
+```
+23:45:19Z  healthy=True  208.2 ms  ok
+23:45:29Z  healthy=True  213.2 ms  ok
+23:45:40Z  healthy=True  229.3 ms  ok
+23:45:51Z  healthy=True  218.2 ms  ok
+23:46:01Z  healthy=True  213.0 ms  ok
+23:46:12Z  healthy=True  228.6 ms  ok
+23:46:22Z  healthy=True  212.8 ms  ok
+                     --> 7/7 consecutive, 208.2–229.3 ms
+```
+
+Combined with EV-25: **14/14 consecutive healthy across two windows and two revisions**, every
+latency inside 196.6–229.3 ms. The failing state EV-24 recorded was a fixed ~5150 ms timeout, so
+this is not the same process performing better — it is a different regime, and it now survives a
+container replacement.
+
+### What this does and does not add
+
+**Adds:** durability. EV-25 could have been a warm Space in a lucky window; a fresh container
+answering identically rules out the reading that the previous result depended on that particular
+process's state.
+
+**Does not add:** anything about generation. `/health/ready`'s provider probe establishes that the
+inference endpoint is reachable and answering within its contract. It is not a completion, does not
+exercise `AIKernel`, and must not be cited as evidence that a user turn produces a useful answer —
+that needs the E2E journey suite, which needs credentials. The Maturity column stays honest about
+the difference.
+
+### Two unchanged findings, re-checked rather than assumed
+
+| Check | Result | Note |
+| --- | --- | --- |
+| `GET /metrics` unauthenticated | **`200`** | DEF-22 open. `AURA_METRICS_TOKEN` still unset on the Railway service; the gate is opt-in by design, so an unset token means no gate. |
+| `checks.schema.revision` | `0008`, healthy | DEF-20 stays resolved across the new deploy — the corrected Root Directory is not a one-time effect. |
+
+### Release identity, sixth consecutive deploy
+
+`a517cb68` → `0832665f` → `5c527fdd` → `d79c26bb` → `b4ab9ad3` → `8366aa33`, each matching its
+merge commit on `main`, all from the platform fallback with no build arg wired. The BLOCK-03
+mechanism has now tracked six deploys unaided, including one that changed only client-side Dart.
+
+**Verdict unchanged: NOT PRODUCTION CERTIFIED.** Nothing here touches the four mandatory gates that
+have no evidence. A stronger result on a gate that already passed cannot move a verdict that is
+refused for absence elsewhere, and recording it as though it could is the failure mode this ledger
+exists to prevent.
+
+---
+
+## EV-27 — The Engineer journey completed and fabricated (DEF-26, mandatory gate downgrade)
+
+**When:** 2026-09-28, from two screenshots of the live desktop client
+**Target:** AURA Desktop paired to `https://aura-ai-production-03a4.up.railway.app` (status bar:
+`Host Connected`, `main`)
+**Workspace:** `E:\VELVET` — a real folder open in the editor
+
+This is the first observation in this engagement of a **core user journey running to completion**,
+and it is the reason the "Core user journeys usable" gate moves from UNKNOWN to **FAIL** rather
+than to PASS.
+
+### What happened
+
+The user asked the Engineer persona to summarise the `README.md` in the open folder. The file was
+visible in the editor pane throughout: a Django/Flutter e-commerce platform, with sections on
+gateway-independent payments, a tech-stack table, and a pointer to `docs/PAYMENTS.md`.
+
+The answer described a different document entirely — "project description, installation
+instructions, usage examples, contributing guidelines, license information" — the contents of a
+generic README. The model stated its own method in the middle of the answer:
+
+> The command has been executed, but since the output is not shown here, I will assume the file
+> exists and proceed with summarizing based on typical content found in a README.md file.
+
+Two further details from the same screenshots matter:
+
+- the plan panel showed **"Read the contents of README.md" with a completion tick**; and
+- the model twice emitted `run_command("cat README.md")` as **prose**, which executes nothing
+  (ADR-006: a model's own tool-call frames are informational; planning executes tools).
+
+The turn did carry an `Ungrounded — no sources attached` badge. It is the only honest signal in
+the exchange, and it did not prevent the answer.
+
+### Why it happened
+
+Four mechanisms, each individually defensible, reproduced locally before anything was changed:
+
+```
+s1 kind=generate status=skipped  result='No handler is configured for generate steps.'
+s2 kind=respond  status=blocked  result=None
+failed_steps        : ()
+blocked_steps       : ()
+summary_for_context : []
+```
+
+1. The plan's read step named a tool that is not registered. `_parse_steps` **demoted** it to
+   `GENERATE`, on the stated reasoning that a step which "can never succeed" should still "let the
+   plan make progress".
+2. **No `GENERATE` handler exists** — no caller anywhere passes `handlers` to
+   `ExecutionEngine.execute`, so every non-TOOL step kind is unhandled in every deployment. The
+   step was SKIPPED and the step depending on it BLOCKED.
+3. The agentic loop asked whether anything was worth replanning. `failed_steps` was empty (nothing
+   *failed*) and `blocked_steps()` was empty too — it reports only steps still PENDING, and the
+   executor had already moved the dependent to BLOCKED. Verdict: `nothing_to_repair`, no retry.
+4. `summary_for_context()` reports SUCCEEDED steps only, so the turn generated with a context in
+   which the read was never mentioned at all — not as failed, not as missing.
+
+Link 1's comment is the exact inverse of what the code did: the demotion did not let the plan make
+progress, it guaranteed the plan could make none, while removing every signal that would have said
+so.
+
+### The finding under it
+
+Links 1–3 are ordinary bugs. Link 4 is the one worth recording as a property of the architecture:
+**an absence cannot be reasoned about.** A model handed no tool output cannot distinguish "the
+tool returned nothing" from "no tool ran" — and only in the second case does inventing an answer
+look locally reasonable. Every guard in the turn was working: the trust channels held, the
+ungrounded badge fired, no tool was executed without a grant. None of them is a guard against
+*nothing having happened*.
+
+### One route not ruled out
+
+`read_file` does exist — a server-side sandboxed reader (`tools/builtin.py`), registered only when
+a workspace is configured, confined to a server directory it describes as "the user's workspace
+directory". It cannot see a Windows path on the user's machine. So either it was unregistered (and
+links 1–3 ran), or it was registered, dispatched, failed to find the file, and **FAILED** — and
+`summary_for_context()` excludes failed steps too, so generation was equally uninformed. Which one
+occurred cannot be determined without that deployment's registered tool set, and is not asserted
+here. The fix covers both.
+
+### Fix and status
+
+PR #137 addresses each link: the planner keeps an unknown tool name so dispatch refuses it
+usefully; `Plan.unexecuted_steps()` makes "planned, never ran" visible; the agentic loop replans on
+a BLOCKED step; and the kernel states which steps produced nothing, on the SYSTEM channel, with an
+explicit instruction not to substitute typical content. 16 new tests, 11 of which fail against the
+previous code.
+
+**The gate does not move to PASS on a merged fix.** It requires the same journey re-run against the
+deployed revision, which needs (a) #137 merged and deployed and (b) the paired desktop client. Until
+then:
+
+| Gate | Was | Now |
+| --- | --- | --- |
+| Core user journeys usable | UNKNOWN (no journey reached step three) | **FAIL** (a journey completed and fabricated) |
+
+A downgrade on a mandatory gate does not change the overall verdict, which was already refused. It
+does change what the refusal is *about*: until now the four unevidenced gates were the whole case.
+This is the first mandatory gate failing on observed behaviour rather than on missing evidence.
+
+---
+
 ## Evidence artifacts retained
 
 | File | Contents |
