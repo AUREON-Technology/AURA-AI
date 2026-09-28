@@ -110,6 +110,7 @@ def build_provider(config: ProviderConfig, *, model_allowlist: Sequence[str] = (
             api_key=config.api_key,
             capabilities=capabilities,
             timeout_s=config.timeout_s,
+            health_timeout_s=config.health_timeout_s,
         )
 
     if config.kind == "ollama":
@@ -121,6 +122,7 @@ def build_provider(config: ProviderConfig, *, model_allowlist: Sequence[str] = (
             model=config.model,
             capabilities=capabilities,
             timeout_s=config.timeout_s,
+            health_timeout_s=config.health_timeout_s,
             model_allowlist=model_allowlist,
         )
 

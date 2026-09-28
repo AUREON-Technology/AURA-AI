@@ -109,10 +109,33 @@ class BaseProvider:
     capabilities, client lifecycle, error translation, cost accounting -- is inherited.
     """
 
-    def __init__(self, *, name: str, capabilities: ProviderCapabilities, timeout_s: float = 60.0) -> None:
+    def __init__(
+        self,
+        *,
+        name: str,
+        capabilities: ProviderCapabilities,
+        timeout_s: float = 60.0,
+        health_timeout_s: float = 5.0,
+    ) -> None:
         self._name = name
         self._capabilities = capabilities
         self._timeout_s = timeout_s
+        #: How long a health probe waits. Separate from `timeout_s` because the two answer
+        #: different questions: `timeout_s` bounds a generation the caller is waiting on, while
+        #: this bounds a liveness check that must return quickly enough to be polled.
+        #:
+        #: 5s is right for an endpoint that is always up. It is wrong for one that scales to
+        #: zero -- a sleeping Hugging Face Space or a cold serverless GPU takes minutes to wake,
+        #: so a 5s probe reports `ReadTimeout` every single time and can never observe the
+        #: recovery, no matter how long the provider has been coming back. Measured in
+        #: production: 20 consecutive probes failed at a flat ~5150ms over five and a half
+        #: minutes, then 11 consecutive successes at 209-225ms once the endpoint had woken.
+        #: Nothing about the provider changed at that boundary except that it had finished
+        #: starting.
+        #:
+        #: Left at 5.0 so no existing deployment changes behaviour; raise it
+        #: (`AURA_PROVIDER_<NAME>_HEALTH_TIMEOUT_S`) for a provider that sleeps.
+        self._health_timeout_s = health_timeout_s
         self._client: Any = None
 
     @property

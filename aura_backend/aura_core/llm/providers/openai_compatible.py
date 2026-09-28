@@ -55,6 +55,7 @@ class OpenAICompatibleProvider(BaseProvider):
         api_key: str = "",
         capabilities: ProviderCapabilities | None = None,
         timeout_s: float = 60.0,
+        health_timeout_s: float = 5.0,
         extra_headers: Mapping[str, str] | None = None,
     ) -> None:
         caps = capabilities or ProviderCapabilities(
@@ -65,7 +66,10 @@ class OpenAICompatibleProvider(BaseProvider):
             supports_tools=True,
             supports_json_mode=True,
         )
-        super().__init__(name=name, capabilities=caps, timeout_s=timeout_s)
+        super().__init__(
+            name=name, capabilities=caps, timeout_s=timeout_s,
+            health_timeout_s=health_timeout_s,
+        )
         self._url = base_url.rstrip("/")
         self._model = model
         self._api_key = api_key
@@ -295,11 +299,16 @@ class OpenAICompatibleProvider(BaseProvider):
     # -- health ------------------------------------------------------------------------
 
     async def health(self) -> HealthStatus:
-        """Probe ``/models``. Cheap, universally implemented, and consumes no generation quota."""
+        """Probe ``/models``. Cheap, universally implemented, and consumes no generation quota.
+
+        The timeout is ``health_timeout_s`` rather than a literal, because a provider that
+        scales to zero needs a longer one than a provider that is always up -- see the field's
+        own comment in ``base.py`` for the production measurement behind that.
+        """
         started = time.perf_counter()
         try:
             client = await self._get_client()
-            response = await client.get("/models", timeout=5.0)
+            response = await client.get("/models", timeout=self._health_timeout_s)
             elapsed = (time.perf_counter() - started) * 1000.0
             if response.status_code >= 400:
                 return HealthStatus(False, f"HTTP {response.status_code}", elapsed)
