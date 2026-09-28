@@ -29,4 +29,53 @@ class AuraTypography {
       ),
     );
   }
+
+  /// Primary monospace family. `'monospace'` is the generic alias Android
+  /// resolves; the desktop platforms do not have it, which is what
+  /// [monoFallback] is for.
+  ///
+  /// Call sites used to write `fontFamily: 'Courier'` directly — 44 of them
+  /// across 20 files. Courier ships with neither Android nor most Linux
+  /// desktops, and when a requested family is missing Flutter falls back to
+  /// the *default* family, which is proportional: terminal output and unified
+  /// diffs silently lose their column alignment on exactly the platforms
+  /// where a misread diff costs the most.
+  static const String monoFamily = 'monospace';
+
+  /// Tried in order when [monoFamily] does not resolve: macOS/iOS, Windows,
+  /// most Linux distributions, then the two Courier spellings as a last
+  /// resort before the proportional default.
+  static const List<String> monoFallback = <String>[
+    'Menlo',
+    'Consolas',
+    'DejaVu Sans Mono',
+    'Courier New',
+    'Courier',
+  ];
+
+  /// Inline code, file paths, commands, diff bodies — anything where the
+  /// character grid carries meaning. Reads at the body-small size so a code
+  /// span sits inside a paragraph without changing its line height.
+  static TextStyle code(AuraPalette palette, {Color? color, double? fontSize}) {
+    return TextStyle(
+      fontFamily: monoFamily,
+      fontFamilyFallback: monoFallback,
+      fontSize: fontSize ?? 12,
+      height: 1.45,
+      color: color ?? palette.textPrimary,
+    );
+  }
+
+  /// Terminal and log output. Tighter leading than [code] because a terminal
+  /// is read as a block of lines rather than as a span inside prose, and the
+  /// extra height wastes a scarce panel.
+  static TextStyle terminal(AuraPalette palette, {Color? color, double? fontSize}) {
+    return TextStyle(
+      fontFamily: monoFamily,
+      fontFamilyFallback: monoFallback,
+      fontSize: fontSize ?? 12,
+      height: 1.3,
+      color: color ?? palette.textPrimary,
+    );
+  }
 }

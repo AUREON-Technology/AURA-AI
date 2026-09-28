@@ -31,6 +31,14 @@ class AuraPalette extends ThemeExtension<AuraPalette> {
   final Color danger;
   final Color info;
 
+  /// Queued / awaiting-a-decision, as distinct from [warning]. An approval
+  /// waiting on the user and a plan step that has not started yet are not
+  /// warnings — nothing is wrong — but they are not neutral either, and
+  /// before this token existed every such surface reached for amber and
+  /// said "something needs attention" when it meant "this has not happened
+  /// yet".
+  final Color pending;
+
   final LinearGradient brandGradient;
   final LinearGradient glassGradient;
 
@@ -49,6 +57,7 @@ class AuraPalette extends ThemeExtension<AuraPalette> {
     required this.warning,
     required this.danger,
     required this.info,
+    required this.pending,
     required this.brandGradient,
     required this.glassGradient,
   });
@@ -72,6 +81,7 @@ class AuraPalette extends ThemeExtension<AuraPalette> {
     warning: Color(0xFFF59E0B),
     danger: Color(0xFFF87171),
     info: Color(0xFF38BDF8),
+    pending: Color(0xFFC4B5FD), // violet-300: 9.59:1 on surface, clear of the indigo brand
     brandGradient: LinearGradient(
       colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
       begin: Alignment.topLeft,
@@ -98,7 +108,11 @@ class AuraPalette extends ThemeExtension<AuraPalette> {
     success: Color(0xFF047857),
     warning: Color(0xFFB45309),
     danger: Color(0xFFDC2626),
-    info: Color(0xFF0284C7),
+    // sky-700, not sky-600 (0xFF0284C7): the lighter value measures 4.10:1 on white,
+    // below AA for text, and was the only one of the four status colours never
+    // darkened for the light theme the way success/warning/danger already were.
+    info: Color(0xFF0369A1),
+    pending: Color(0xFF6D28D9), // violet-700: 7.10:1 on white
     brandGradient: LinearGradient(
       colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
       begin: Alignment.topLeft,
@@ -127,6 +141,7 @@ class AuraPalette extends ThemeExtension<AuraPalette> {
     Color? warning,
     Color? danger,
     Color? info,
+    Color? pending,
     LinearGradient? brandGradient,
     LinearGradient? glassGradient,
   }) {
@@ -145,6 +160,7 @@ class AuraPalette extends ThemeExtension<AuraPalette> {
       warning: warning ?? this.warning,
       danger: danger ?? this.danger,
       info: info ?? this.info,
+      pending: pending ?? this.pending,
       brandGradient: brandGradient ?? this.brandGradient,
       glassGradient: glassGradient ?? this.glassGradient,
     );
@@ -168,6 +184,7 @@ class AuraPalette extends ThemeExtension<AuraPalette> {
       warning: Color.lerp(warning, other.warning, t)!,
       danger: Color.lerp(danger, other.danger, t)!,
       info: Color.lerp(info, other.info, t)!,
+      pending: Color.lerp(pending, other.pending, t)!,
       brandGradient: LinearGradient.lerp(brandGradient, other.brandGradient, t)!,
       glassGradient: LinearGradient.lerp(glassGradient, other.glassGradient, t)!,
     );
@@ -185,5 +202,7 @@ class AuraPalette extends ThemeExtension<AuraPalette> {
         (success, surface, 'success/surface'),
         (warning, surface, 'warning/surface'),
         (danger, surface, 'danger/surface'),
+        (info, surface, 'info/surface'),
+        (pending, surface, 'pending/surface'),
       ];
 }
