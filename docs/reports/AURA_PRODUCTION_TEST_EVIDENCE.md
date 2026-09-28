@@ -1201,6 +1201,108 @@ This is the first mandatory gate failing on observed behaviour rather than on mi
 
 ---
 
+## EV-28 — Inference sleeps, and the probe cannot see it wake (DEF-27, CORRECTION to EV-25/EV-26)
+
+**When:** 2026-09-28 10:44–10:52 UTC, after ~9.5 hours with no traffic from this session
+**Target:** `https://aura-ai-production-03a4.up.railway.app`
+**Live revision:** `e8ed25a86006` — the merge commit of #137
+
+### The measurement
+
+```
+10:44:17Z  healthy=False  5143.8 ms  ReadTimeout
+10:44:31Z  healthy=False  5173.2 ms  ReadTimeout
+   ...       20 consecutive failures, every one at a flat ~5150 ms
+10:49:48Z  healthy=False  5156.8 ms  ReadTimeout
+10:50:03Z  healthy=True    220.3 ms  ok
+10:50:14Z  healthy=True    215.2 ms  ok
+   ...       11 consecutive successes, 209–225 ms
+10:51:49Z  healthy=True    212.6 ms  ok
+```
+
+Nothing changed at that boundary except that the endpoint — a Hugging Face Space that scales to
+zero — finished waking up, under the load of the probes themselves. The flatness of the failures
+is the tell: ~5150 ms *every single time* is not a server answering slowly, it is a client giving
+up at a fixed deadline.
+
+### What this corrects
+
+EV-25 and EV-26 recorded 14/14 consecutive healthy samples across two windows and two revisions,
+and I moved the "Inference works" gate to **PASS** on that basis. Both measurements were real.
+Both were of a **warm** Space, because I had been sampling it continuously for the preceding
+hour.
+
+The cold-start hypothesis, raised in EV-24 and never tested, now explains all four observations
+without contradiction:
+
+| Evidence | Result | State of the Space |
+| --- | --- | --- |
+| EV-24 | 1/8 healthy, 5.15 s when failing | waking, or sleeping between samples |
+| EV-25 | 7/7, 196–231 ms | warm |
+| EV-26 | 7/7, 208–229 ms | warm (deploy replaced the container, not the Space) |
+| **EV-28** | **0/20 then 11/11** | **asleep, then woken by the probing** |
+
+EV-26 was written to rule out "a warm Space in a lucky window" by re-measuring after a deploy.
+It did not, and could not: the deploy replaced the *gateway* container, while the Space's
+warmth lives on Hugging Face's side. The control I thought I had was not a control.
+
+**Gate correction: Inference works moves PASS → PARTIAL.** Working when warm is not working.
+A user opening the app after an idle period is exactly the case none of the passing evidence
+covers.
+
+### The defect under it (DEF-27)
+
+`openai_compatible.health()` and `ollama.health()` both hardcoded `timeout=5.0`. For an endpoint
+that is always up, that is correct — a liveness check has to return fast enough to be polled.
+For one that scales to zero it is a design error with a sharp consequence: **the probe cannot
+observe the recovery at all.** It times out identically whether the provider is thirty seconds
+from ready or permanently dead, so `/health/ready` reports the same `healthy: false` for both.
+An operator cannot tell "asleep, warming" from "broken", and an orchestrator acting on that
+signal pulls a service that was about to be fine.
+
+Fixed by making the probe timeout configurable per provider
+(`AURA_PROVIDER_<NAME>_HEALTH_TIMEOUT_S`), defaulting to 5.0 so no existing deployment changes
+behaviour, with 7 tests pinning the path from the env var to the request — including that
+`build_provider` actually threads it, since a setting that reads as configured and is silently
+inert is worse than none.
+
+### What remains untested, and it is the important one
+
+**Whether a real user's first turn after an idle period succeeds.** A turn goes through
+`timeout_s` — 180 s on this deployment — not the 5 s probe, so the numbers above say nothing
+about it. Three outcomes are possible and I have evidence for none:
+
+1. the turn waits, the Space wakes, the answer arrives slowly but correctly;
+2. the turn exhausts 180 s mid-wake and surfaces `AllProvidersFailedError`;
+3. the turn fails, but the attempt warms the Space, so a retry works.
+
+The wake took roughly 5.5 minutes under continuous probing here, which is longer than the 180 s
+budget — that makes (2) or (3) more likely than (1), but a probe every ~15 s is not the same
+traffic shape as one long-lived request, so this is a reason to test rather than a conclusion.
+Testing it needs one authenticated turn against a cold deployment, which needs the synthetic
+tokens.
+
+Raising a probe timeout makes the *report* honest. It does not make a cold start fast, and
+nothing here should be read as claiming the user-facing problem is solved.
+
+### Unchanged, re-checked rather than assumed
+
+| Check | Result |
+| --- | --- |
+| `GET /metrics` unauthenticated | **`200`** — DEF-22 open, `AURA_METRICS_TOKEN` still unset |
+| `checks.schema.revision` | `0008`, healthy — DEF-20 stays resolved |
+| Release identity | `e8ed25a8` = merge commit of #137, seventh consecutive deploy tracked |
+| Tools / agents registered | 37 / 8 |
+
+### #137 is deployed
+
+The fabrication fix (EV-27) is live on `e8ed25a8`. That unblocks the re-run of the Engineer
+journey, which is the only thing that can move "Core user journeys usable" off FAIL. It needs
+the paired desktop client, so it is an owner action; the gate stays FAIL until that re-run
+produces evidence.
+
+---
+
 ## Evidence artifacts retained
 
 | File | Contents |

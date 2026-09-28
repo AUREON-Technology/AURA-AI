@@ -1,15 +1,20 @@
 # AURA AI — Certification Evidence Matrix
 
-**Updated:** 2026-09-28 00:20 UTC
-**Live revision under test:** `8366aa3367ca` (Railway Control Plane)
-**Repository revision:** `main` @ `8366aa33`
+**Updated:** 2026-09-28 10:55 UTC
+**Live revision under test:** `e8ed25a86006` (Railway Control Plane)
+**Repository revision:** `main` @ `8ae96ef`
 
 > ## OVERALL VERDICT: NOT PRODUCTION CERTIFIED
 >
-> Four mandatory gates have no evidence, and one now fails on observed behaviour (EV-27). Per the
-> closure rule, certification is refused while any mandatory gate lacks evidence — and a gate that
-> fails on evidence is a separate refusal again. No combination of the gates that *do* pass changes
-> either.
+> Four mandatory gates have no evidence, one fails on observed behaviour (EV-27), and one that
+> was recorded as passing has been corrected down to PARTIAL (EV-28 — the earlier samples measured
+> a warm endpoint). Per the closure rule, certification is refused while any mandatory gate lacks
+> evidence; a gate that fails on evidence is a separate refusal again. No combination of the gates
+> that *do* pass changes either.
+>
+> The correction is the point of keeping this file. Two gates have now moved *down* on new
+> evidence — an audit where every revision improves the score is measuring the auditor, not the
+> system.
 
 This file is the single canonical answer to "what is proven, and by what?". It is
 **machine-checked**: `aura_backend/tests/architecture/test_certification_gate.py` parses the table
@@ -40,7 +45,7 @@ suite rather than by whoever writes the summary.
 | No exposed secrets | yes | PRODUCTION TESTED | EV-09 (Secrets: NOT FOUND) | PASS |
 | Production API usable | yes | PRODUCTION TESTED | EV-22 (80 /api/v3 routes, valid TLS, zero legacy paths) | PASS |
 | Core user journeys usable | yes | PRODUCTION TESTED | EV-27 (Engineer summarised a file it never read) | FAIL |
-| Inference works | yes | PRODUCTION TESTED | EV-25, EV-26 (hfspace healthy 14/14 across two revisions, 196-229ms) | PASS |
+| Inference works | yes | MEASURED | EV-28 (works warm; 0/20 while asleep, wakes in ~5.5min; cold-start turn untested) | PARTIAL |
 | No unrecoverable data failure | yes | CODE-PRESENT | — | UNKNOWN |
 | Deployment stability | yes | MEASURED | EV-17 (zero executed CI jobs since 2026-09-13) | FAIL |
 | Database schema integrity | yes | PRODUCTION TESTED | EV-25, EV-26 (schema healthy at revision 0008, across two deploys) | PASS |
