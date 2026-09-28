@@ -34,7 +34,7 @@ class _ExplorerPanelState extends ConsumerState<ExplorerPanel> {
     final hostState = ref.watch(hostNotifierProvider);
 
     if (workspace == null) {
-      return _NoWorkspaceSelected(palette: palette, ideDensity: ideDensity);
+      return const _NoWorkspaceSelected();
     }
 
     return Column(
@@ -224,29 +224,20 @@ class _ExplorerTreeState extends ConsumerState<_ExplorerTree> {
 }
 
 class _NoWorkspaceSelected extends StatelessWidget {
-  const _NoWorkspaceSelected({required this.palette, required this.ideDensity});
-
-  final AuraPalette palette;
-  final AuraIdeDensity ideDensity;
+  const _NoWorkspaceSelected();
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.folder_outlined, size: 64, color: palette.textDisabled),
-          const SizedBox(height: AuraSpacing.md),
-          Text(
-            'No workspace open',
-            style: TextStyle(color: palette.textSecondary),
-          ),
-          const SizedBox(height: AuraSpacing.xs),
-          Text(
-            'Open a folder from the welcome page',
-            style: TextStyle(color: palette.textDisabled, fontSize: 12),
-          ),
-        ],
+    // The welcome page this points at is already showing in the editor area
+    // beside this panel whenever no file is open, so naming it is the whole
+    // instruction — a button here would be a second door to the same room.
+    return const Center(
+      child: SingleChildScrollView(
+        child: AuraEmptyState(
+          icon: Icons.folder_outlined,
+          title: 'No workspace open',
+          message: 'Open a folder from the welcome page to browse its files here.',
+        ),
       ),
     );
   }

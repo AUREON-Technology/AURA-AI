@@ -93,10 +93,27 @@ flutter test test/some_test.dart         # single file
 flutter build apk --release --dart-define=BACKEND_URL=<url>
 ```
 
-There is often no Flutter/Dart toolchain available in the environment a change is written in.
-Write Dart carefully against the existing code's conventions and let Client CI (`flutter
-analyze` + `flutter test` + the Android build) be the actual verification — don't claim a client
-change is confirmed working unless you watched it pass CI.
+**Client CI is not currently a gate — verify locally instead.** `Client CI` has not been
+assigned a runner in weeks: every run, on `main` as well as on PRs, fails in 2–4 seconds with no
+step starting and no log archive (confirmed across runs 127–133, both `push` and `pull_request`).
+Until that is fixed at the repository/account level, a green tick there is unavailable and a red
+X there says nothing about the diff.
+
+No Flutter SDK is preinstalled in the environment a change is usually written in, but one can be
+fetched in about two minutes, and `analyze` + `test` then run exactly as CI would:
+
+```bash
+curl -sSL -o flutter.tar.xz \
+  https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.44.6-stable.tar.xz
+tar xf flutter.tar.xz && export PATH="$PWD/flutter/bin:$PATH"   # Dart 3.12.2, the CI pin
+cd aura_client && flutter pub get \
+  && dart run build_runner build --delete-conflicting-outputs \
+  && flutter analyze && flutter test
+```
+
+Do that before claiming a client change works — and quote the actual counts. What it still cannot
+settle, because the host is headless and has no device: font fallback per platform, screen-reader
+output, and any runtime performance figure.
 
 ### Host daemon (`cd aura_hostd` first)
 
