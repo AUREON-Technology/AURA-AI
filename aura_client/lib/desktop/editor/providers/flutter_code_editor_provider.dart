@@ -197,21 +197,23 @@ class _FlutterCodeEditorController implements EditorController {
         break;
       case RedoCommand():
         break;
+      // These five are declared by EditorController and not implemented by this
+      // provider. They used to `break`, i.e. accept the command and do nothing.
+      // Nothing dispatches them today, so that was invisible -- but the moment
+      // one is wired to a context-menu item or a keybinding, a silent `break`
+      // ships a menu entry that quietly fails, which is exactly the fake
+      // functionality this codebase's UX rules forbid. Throwing makes that
+      // wiring fail in a test instead of in front of a user.
       case FormatCommand():
-        // TODO: Implement formatting
-        break;
       case GoToDefinitionCommand():
-        // TODO: Implement go to definition
-        break;
       case FindReferencesCommand():
-        // TODO: Implement find references
-        break;
       case RenameSymbolCommand():
-        // TODO: Implement rename
-        break;
       case CodeActionCommand():
-        // TODO: Implement code actions
-        break;
+        throw UnimplementedError(
+          '${command.runtimeType} is not implemented by FlutterCodeEditorProvider. '
+          'Implement it here before exposing it in the UI -- do not catch this to '
+          'make the control appear to work.',
+        );
       case RevealPositionCommand(line: final line, column: final column):
         _revealPosition(line, column);
         break;
