@@ -10,9 +10,9 @@ running app.
 for fetching the Flutter version `client-ci.yml` pins and running `analyze` + `test` locally —
 which is how every "awaiting CI" row below became a measured result instead of a hope.
 
-**Last local run** (Flutter 3.44.6 / Dart 3.12.2, the CI pin, against `f6ff64f`):
-`flutter analyze` → **No issues found!**; `flutter test` → **351 passed, 0 failed, 3 skipped**,
-including the 85 in `test/ux/`.
+**Last local run** (Flutter 3.44.6 / Dart 3.12.2, the CI pin):
+`flutter analyze` → **No issues found!**; `flutter test` → **359 passed, 0 failed, 3 skipped**,
+including the 93 in `test/ux/`.
 
 **GitHub `Client CI` is not a gate right now.** It has not been assigned a runner in weeks: every
 run, on `main` as well as on PRs, fails in 2–4 seconds with no step starting and no log archive.
@@ -31,7 +31,7 @@ Local runs are the only real verification until that is fixed at the repository/
 | 8 | Agent Workspace | **NOT STARTED** | |
 | 9 | Approval + Security UX | **BLOCKED** | F-03: the approval payload carries `command`, `root`, `paths`, `diff_preview` and nothing else. Reason, risk and reversibility are not transmitted, and inventing them client-side would be fabrication. Protocol change across backend + hostd + client is the prerequisite |
 | 10 | Host Management | **NOT STARTED** | |
-| 11 | Universal loading/error/empty/offline states | **NOT STARTED** | `AuraEmptyState` and `AuraSkeleton` exist as raw material |
+| 11 | Universal loading/error/empty/offline states | **PARTIALLY IMPLEMENTED** | `AuraStateTone` (neutral/error/warning/offline), a second recovery action, and live-region semantics that announce the *kind* of state rather than leaving it in the icon's colour. Adopted in the agent panel and Explorer. The remaining states in the vocabulary — retrying, syncing, stale, permission-required — and the per-screen adoption are NOT STARTED |
 | 12 | Mobile UX | **NOT STARTED** | Not audited yet — see audit §3 |
 | 13 | Accessibility | **PARTIALLY IMPLEMENTED** | Contrast gate extended; activity bar semantics, focus and non-colour badge counts added; Escape dismisses a floating panel. Keyboard traversal order, focus visuals and real screen-reader output all still unverified |
 | 14 | Themes + Personalization | **PARTIALLY PRE-EXISTING** | Light/dark via `AuraPalette`; desktop layout persistence already real |
@@ -52,11 +52,12 @@ Local runs are the only real verification until that is fixed at the repository/
 
 In order, and each on its own commit:
 
-1. **Phase 11** — the universal loading / error / empty / offline state set, on top of
-   `AuraEmptyState` and `AuraSkeleton`. The state vocabulary is what every later phase renders
-   through, so it comes before them.
+1. **Finish Phase 11's vocabulary** — `retrying`, `syncing`, `stale` and `permissionRequired`,
+   then adopt the set screen by screen. The brief's rule 35 matters most here: *internet
+   unavailable*, *Control Plane unavailable*, *inference unavailable* and *host unavailable* are
+   four different problems with four different responses, and today they all render the same.
 2. **Phase 2 proper** — promote the most-duplicated one-offs (tree item, status badge, toolbar,
-   context menu) into the shared set, in duplication order.
+   context menu) into the shared set, in duplication order. See `COMPONENT_GUIDE.md`.
 3. **Migrate the mobile command palette** onto `AuraCommandPalette`, behind tests written first —
    it currently has none, which is why this PR did not rewrite it.
 4. **F-04 / F-05** — the per-screen colour, type and monospace migration, one screen per commit

@@ -18,7 +18,7 @@ screen's folder gets copied into the next screen rather than reused.
 | `AuraCard` | A grouped surface | |
 | `AuraCommandPalette` | Searchable command list | Takes a plain `List<AuraCommandItem>`; knows nothing about the desktop or about routing. See below. |
 | `AuraDialog` | Modal with title + actions | `AuraDialog.show()` is the entry point. |
-| `AuraEmptyState` | Empty *and* error states | Icon, title, message, optional action. The `actionLabel` is what turns an error into something recoverable — use it. |
+| `AuraEmptyState` | Empty, error and offline states | Icon, title, message, up to two actions, and an `AuraStateTone`. The tone is announced as well as painted, so an error is distinguishable from an empty list without seeing colour. An error state with no `actionLabel` is a dead end — give it one. |
 | `AuraListTile` | Row in a list | |
 | `AuraSectionHeader` | Heading above a group | |
 | `AuraSelectTile` | Row that picks one of several | |

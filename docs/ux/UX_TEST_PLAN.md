@@ -94,6 +94,15 @@ always available, a toggle titled for what it will do rather than what it is, pl
 shortcut hints — and the invariant that **no command is ever disabled without a reason**, which
 is the audit's recurring finding expressed as a test.
 
+### `test/ux/state_views_test.dart` — Phase 11
+
+That an empty state answers what / why / what now, that an error state can offer two ways out,
+that a declared secondary action with no callback is not rendered as a dead button — and the
+accessibility half: each tone paints a distinguishable icon colour *and* announces itself
+("Error. It broke. Here is why."), neutral adds no prefix because nothing is wrong, offline reads
+as offline rather than as a generic failure, and the whole thing is a live region that does not
+also read its own children twice.
+
 ### `test/ux/editor_commands_test.dart` — Phase 4 (F-08)
 
 Format / GoToDefinition / FindReferences / RenameSymbol / CodeAction throw `UnimplementedError`;
@@ -128,4 +137,5 @@ Listed so the gaps are explicit:
 | Streaming / agent-activity rendering | **NOT COVERED.** Phases 7–8. |
 | Approval UX | **NOT COVERED**, and blocked: the approval payload does not carry reason, risk or reversibility, so there is nothing truthful to assert yet (F-03). |
 | State restoration end to end | **NOT COVERED.** `test/desktop/layout_notifier_test.dart` covers layout persistence at the notifier level; nothing covers restore-after-restart as a user-visible flow. |
+| The rest of the state vocabulary | **NOT COVERED** — `retrying`, `syncing`, `stale` and `permissionRequired` do not exist yet, and nor does the distinction between internet / Control Plane / inference / host being unavailable. |
 | Every runtime performance metric in the transformation brief | **UNKNOWN — needs instrumentation on a real device.** No number in this repository should be quoted for any of them until it is measured. |

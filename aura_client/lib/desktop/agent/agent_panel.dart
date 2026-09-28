@@ -132,13 +132,16 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
             child: messagesAsync.when(
               data: (messages) {
                 if (messages.isEmpty) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(AuraSpacing.lg),
-                      child: Text(
-                        'Ask Engineer about this workspace.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: palette.textDisabled, fontSize: 12),
+                  // Was a one-line grey Text, which reads as a screen that
+                  // failed to load rather than one waiting for you to start.
+                  return const Center(
+                    child: SingleChildScrollView(
+                      child: AuraEmptyState(
+                        icon: Icons.auto_awesome_outlined,
+                        title: 'No messages yet',
+                        message: 'Ask Engineer about this workspace — it can read your files, '
+                            'run commands and propose changes for you to review before anything '
+                            'is applied.',
                       ),
                     ),
                   );
@@ -163,9 +166,21 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
                 );
               },
               loading: () => Center(child: CircularProgressIndicator(color: palette.brand)),
-              error: (err, _) => Padding(
-                padding: const EdgeInsets.all(AuraSpacing.md),
-                child: Text('Failed to load messages: $err', style: TextStyle(color: palette.danger, fontSize: 12)),
+              // Was a bare red line with no way out of it. The conversation
+              // itself is stored locally, so a failed read is worth retrying
+              // rather than being a dead end.
+              error: (err, _) => Center(
+                child: SingleChildScrollView(
+                  child: AuraEmptyState(
+                    icon: Icons.error_outline,
+                    tone: AuraStateTone.error,
+                    title: "Couldn't load this conversation",
+                    message: 'Your messages are stored on this device and are still there. '
+                        '$err',
+                    actionLabel: 'Retry',
+                    onAction: () => ref.invalidate(chatMessagesStreamProvider(conversationId)),
+                  ),
+                ),
               ),
             ),
           ),
