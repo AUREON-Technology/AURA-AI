@@ -252,9 +252,11 @@ Risk                 Medium — touches the layout every desktop test renders th
 Validation           Widget tests at three surface sizes asserting which panels are mounted.
 ```
 
-**Resolved in this transformation:** **NOT IMPLEMENTED** — scheduled for a dedicated Phase 3
-commit; it is the largest single change in the shell and does not belong in the same diff as the
-honesty fixes above.
+**Resolved in this transformation:** yes, as its own commit. Three width classes
+(`wide` ≥1280 / `standard` ≥900 / `compact`), a scrim and an Escape binding for a floating panel,
+and the width arithmetic extracted to `ShellRegions` so the rules are assertable without building
+the panels. The *rules* are covered by 12 tests; the *rendering* at three surface sizes is not —
+see `UX_TEST_PLAN.md`.
 
 ---
 
@@ -315,7 +317,9 @@ Risk                 Low.
 Validation           Unit test asserting each unimplemented command throws.
 ```
 
-**Resolved in this transformation:** **NOT IMPLEMENTED** — Phase 4.
+**Resolved in this transformation:** yes. The five throw `UnimplementedError`; `Save`/`Undo`/
+`Redo`, which no-op for real reasons, are pinned separately so a later tidy-up does not sweep them
+in.
 
 ---
 
@@ -342,7 +346,11 @@ Risk                 Low.
 Validation           Widget test per badge.
 ```
 
-**Resolved in this transformation:** **NOT IMPLEMENTED** — Phase 6.
+**Resolved in this transformation:** yes, for diagnostics — the count is badged on the activity
+bar with the count and its noun in the semantic label, capped at `99+` visually while the exact
+figure still reaches a screen reader. Approvals deliberately not badged: they already have an
+always-visible status-bar item, so a second indicator would only be a second thing to keep in
+sync.
 
 ---
 
@@ -368,8 +376,9 @@ Risk                 None.
 Validation           The suite is its own validation.
 ```
 
-**Resolved in this transformation:** **PARTIALLY IMPLEMENTED** — `test/ux/` created with the
-shell suite covering F-01 and F-02.
+**Resolved in this transformation:** **PARTIALLY IMPLEMENTED** — `test/ux/` now holds five suites
+(57 tests) covering F-01, F-02, F-06, F-08, F-09 and the Phase 1 tokens. Streaming, agent
+rendering, approval UX and state restoration remain uncovered.
 
 ---
 
@@ -442,9 +451,11 @@ Validation           The existing contrast gate, now that the pair is in it.
 
 | Severity | Findings |
 |---|---|
-| CRITICAL | F-01 (fabricated status bar), F-02 (dead + mislabeled nav controls) |
-| HIGH | F-03 (thin approval prompts), F-04 (hardcoded colour/type), F-05 (no mono token), F-06 (no responsive shell), F-07 (no desktop command system) |
-| MEDIUM | F-08 (silent no-op editor commands), F-09 (no attention badges), F-10 (no UX tests), F-11 (token gaps), F-12 (light `info` below AA for text) |
+| CRITICAL | F-01 (fabricated status bar) ✅, F-02 (dead + mislabeled nav controls) ✅ |
+| HIGH | F-03 (thin approval prompts) 🚫 blocked, F-04 (hardcoded colour/type) ◐, F-05 (no mono token) ◐, F-06 (no responsive shell) ✅, F-07 (no desktop command system) ✗ |
+| MEDIUM | F-08 (silent no-op editor commands) ✅, F-09 (no attention badges) ✅, F-10 (no UX tests) ◐, F-11 (token gaps) ✅, F-12 (light `info` below AA for text) ✅ |
+
+✅ resolved · ◐ partially · ✗ not started · 🚫 blocked
 | LOW | — |
 | INFORMATIONAL | The 10 existing components cover roughly a third of rule 6's list; the remainder (toasts, banners, tabs, toolbars, context menus, status badges, tree items, approval cards, agent steps, diff summaries, activity items) exist only as per-screen one-offs. Enumerated in `COMPONENT_GUIDE.md` as Phase 2 scope. |
 

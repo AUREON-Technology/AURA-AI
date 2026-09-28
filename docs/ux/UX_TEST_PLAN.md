@@ -69,13 +69,30 @@ buffers, a CRLF terminator counting as one column rather than two, an offset tha
 being clamped rather than throwing inside `build()`, and line-ending detection returning `Mixed`
 rather than picking a winner — and `null`, not a guess, for a buffer with no terminator at all.
 
-### `test/ux/activity_bar_test.dart` — Phase 3 (F-02)
+### `test/ux/desktop_breakpoint_test.dart` — Phase 3 (F-06)
+
+The responsive rules as a value rather than as pixels: the three width classes and their
+boundaries, which panels dock and which float at each, and the width clamping — the editor's
+420px floor, a panel's 180px floor, and the fact that two docked panels are clamped against each
+other rather than independently (each can "fit" alone while together squeezing the editor out).
+
+### `test/ux/editor_commands_test.dart` — Phase 4 (F-08)
+
+Format / GoToDefinition / FindReferences / RenameSymbol / CodeAction throw `UnimplementedError`;
+Save / Undo / Redo, which no-op for real reasons, still return normally. The second group exists
+so a later tidy-up cannot quietly sweep them in with the first.
+
+### `test/ux/activity_bar_test.dart` — Phase 3 (F-02, F-09)
 
 Behaviour and accessibility of the primary navigation: a tooltip on every item (the bar is
 icon-only); Go to File publishing `ShowQuickOpenRequested` with a workspace open, and rendering
 *and announcing* as disabled without one; the bottom item named for the panel it toggles and
 tracking its state; selection and enablement exposed to semantics rather than living only in a
-brand tint and a 6px dot.
+brand tint and a 6px dot. Plus the attention badge: the problem count rendered where it is
+visible with the bottom panel collapsed, the semantic label carrying the count *and* its noun
+("Panel, 3 problems" — a bare number read aloud says nothing about what it counts), singular vs
+plural, no badge at all for a clean workspace, and a large count capped to `99+` visually while
+the exact figure still reaches a screen reader.
 
 ## Not covered
 
@@ -87,8 +104,9 @@ Listed so the gaps are explicit:
 | Keyboard traversal order across the shell | **NOT COVERED.** Phase 13. |
 | Focus visuals | **PARTIALLY.** The activity bar now sets a focus colour; nothing asserts it is visible at the required contrast. Needs a golden, which needs a device. |
 | Monospace fallback resolution | **UNKNOWN — needs a running app per platform.** The token is BUILT, not PROVEN: a headless Linux test host cannot show what Menlo or Consolas resolve to. |
-| Responsive shell behaviour | **NOT COVERED** — the behaviour does not exist yet (F-06). |
+| Responsive shell *rendering* | **NOT COVERED.** The rules are covered as a value (`desktop_breakpoint_test.dart`); nothing asserts the rendered tree at three surface sizes, because a `DesktopShell` widget test has to stand up the Explorer, the editor, the agent panel and the daemon polling behind them — far more surface than the layout rule under test. |
 | Command system | **NOT COVERED** — does not exist on desktop yet (F-07). |
+| Escape dismissing a floating panel | **NOT COVERED.** The binding is registered only while a panel floats; asserting it needs the shell widget test above. |
 | Streaming / agent-activity rendering | **NOT COVERED.** Phases 7–8. |
 | Approval UX | **NOT COVERED**, and blocked: the approval payload does not carry reason, risk or reversibility, so there is nothing truthful to assert yet (F-03). |
 | State restoration end to end | **NOT COVERED.** `test/desktop/layout_notifier_test.dart` covers layout persistence at the notifier level; nothing covers restore-after-restart as a user-visible flow. |
