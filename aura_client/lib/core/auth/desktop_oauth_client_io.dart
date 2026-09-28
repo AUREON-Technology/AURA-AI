@@ -13,20 +13,23 @@
 /// 4. Wait for exactly one request to land on the local server -- that's Google's redirect
 ///    carrying `?code=&state=`. Answer it with a small HTML page so the browser tab shows
 ///    something instead of hanging, then stop listening.
-/// 5. Exchange the authorization code for tokens directly with Google's token endpoint, using
-///    the PKCE `code_verifier` alongside the client secret. RFC 8252 and Google's own docs say a
-///    "Desktop app" client is public and PKCE alone should suffice -- but the client actually
-///    registered for this app rejects a secret-less exchange with `invalid_request:
-///    client_secret is missing` (confirmed live, not a hypothetical), so the secret is sent too.
+/// 5. Exchange the authorization code for tokens directly with Google's token endpoint, proving
+///    possession of the `code` with the PKCE `code_verifier` and nothing else. RFC 8252 §8.5 --
+///    and Google's own installed-app guidance -- treat a native app as a *public* client: PKCE
+///    is the proof, and `client_secret` is left out of the request entirely.
 ///
-/// Needs a real "Desktop app"-type OAuth client registered in Google Cloud Console
-/// (`core/config/config.dart::googleDesktopClientId`, hardcoded there, unlike
-/// `googleDesktopClientSecret` -- deliberately NOT hardcoded, since a compiled binary and "not
-/// meant to be confidential" are still two different things from "safe to check into git
-/// history"; it's injected only via `--dart-define=GOOGLE_DESKTOP_CLIENT_SECRET=...`, which
-/// `scripts/deploy_client_desktop.sh`/`.ps1` resolve from an untracked `deploy/.env`) -- see
+/// Needs a real **"Desktop app"**-type OAuth client registered in Google Cloud Console
+/// (`core/config/config.dart::googleDesktopClientId`) -- see
 /// `aura_backend/config.py::google_desktop_client_id`'s doc comment for why it can't be the same
-/// client id as the existing mobile/web login path.
+/// client id as the existing mobile/web login path. That type is not cosmetic: a "Web
+/// application"-type client is *confidential*, so its token endpoint refuses the exchange above
+/// with `invalid_request: client_secret is missing` however correct the PKCE is. That error was
+/// once read as a quirk of desktop login and worked around by compiling a `GOCSPX-...` secret
+/// into the client; it actually means "this client is registered as the wrong type", and
+/// [_exchangeCodeForIdToken] now says so when Google returns it.
+///
+/// A build whose configured client genuinely is a confidential one can still supply a secret via
+/// `--dart-define=GOOGLE_DESKTOP_CLIENT_SECRET=...`, but nothing needs it by default.
 library;
 
 import 'dart:async';
@@ -63,12 +66,17 @@ const _tokenEndpoint = 'https://oauth2.googleapis.com/token';
 /// [DesktopOAuthCancelledException] if the user cancels, the browser can't be opened, Google
 /// reports an error, or nothing arrives within [timeout].
 ///
+/// [clientSecret] is optional and empty by default -- a "Desktop app" client is public and
+/// authenticates with PKCE alone, so an empty one is the normal case and is omitted from the
+/// token exchange rather than refused. Pass one only for a confidential client; see
+/// `core/config/config.dart::googleDesktopClientSecret`.
+///
 /// [launch] and [tokenEndpoint] exist only so `desktop_oauth_client_io_test.dart` can exercise
 /// this against a local fake server instead of a real browser and Google's real token endpoint
 /// -- production callers never pass them.
 Future<DesktopOAuthResult> signInWithGoogleLoopback({
   required String clientId,
-  required String clientSecret,
+  String clientSecret = '',
   Duration timeout = const Duration(minutes: 5),
   @visibleForTesting Future<bool> Function(Uri uri)? launch,
   @visibleForTesting Uri? tokenEndpoint,
@@ -77,13 +85,6 @@ Future<DesktopOAuthResult> signInWithGoogleLoopback({
     throw DesktopOAuthCancelledException(
       'No GOOGLE_DESKTOP_CLIENT_ID configured for this build -- desktop sign-in is not set up '
       'yet. See aura_backend/config.py::google_desktop_client_id.',
-    );
-  }
-  if (clientSecret.isEmpty) {
-    throw DesktopOAuthCancelledException(
-      'No GOOGLE_DESKTOP_CLIENT_SECRET configured for this build -- Google\'s token endpoint '
-      'rejects this client\'s exchange without one. See core/config/config.dart::'
-      'googleDesktopClientSecret.',
     );
   }
   final doLaunch = launch ?? _defaultLaunch;
@@ -176,16 +177,33 @@ Future<String> _exchangeCodeForIdToken({
     request.headers.contentType = ContentType('application', 'x-www-form-urlencoded');
     request.write(Uri(queryParameters: {
       'client_id': clientId,
-      'client_secret': clientSecret,
       'code': code,
       'code_verifier': verifier,
       'grant_type': 'authorization_code',
       'redirect_uri': redirectUri,
+      // Omitted entirely -- not sent empty -- for a public "Desktop app" client, whose only
+      // proof is the `code_verifier` above. Google rejects `client_secret=` (present but blank)
+      // the same way it rejects a wrong one, so "absent" and "empty" are not interchangeable
+      // here. Only a build that injected one for a confidential client sends it.
+      if (clientSecret.isNotEmpty) 'client_secret': clientSecret,
     }).query);
 
     final response = await request.close();
     final raw = await response.transform(utf8.decoder).join();
     if (response.statusCode != 200) {
+      // Google answers a secret-less exchange against a *confidential* client this way. It reads
+      // like "you forgot a credential", but for this flow it means the configured client id is
+      // registered as the wrong type -- a public "Desktop app" client never asks for a secret.
+      // Saying so here is what keeps the next person from re-fixing it by shipping a secret.
+      if (clientSecret.isEmpty && raw.contains('client_secret is missing')) {
+        throw DesktopOAuthCancelledException(
+          'Google rejected the PKCE-only token exchange because client id $clientId is not '
+          'registered as a "Desktop app" OAuth client -- only a confidential ("Web '
+          'application") client demands a client_secret. Register a Desktop app client in '
+          'Google Cloud Console and set GOOGLE_DESKTOP_CLIENT_ID (and the backend\'s matching '
+          'google_desktop_client_id) to it. Raw response: $raw',
+        );
+      }
       throw DesktopOAuthCancelledException(
         'Google token exchange failed: HTTP ${response.statusCode}: $raw',
       );

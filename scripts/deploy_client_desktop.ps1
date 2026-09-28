@@ -6,11 +6,15 @@
 # docs/architecture/011-desktop-engineer-agent.md) -- is not bundled: a person still configures
 # its executable path themselves, so this script does not attempt to build or embed it.
 #
-# Also resolves GOOGLE_DESKTOP_CLIENT_SECRET from deploy/.env (or the environment) and injects
-# it via --dart-define, the one piece of desktop login (ADR-011 Unit 7) that must NEVER be
-# hardcoded in source -- deploy/.env itself is untracked (same as AURA_DOMAIN/BACKEND_URL), so
-# this is the only place it should ever live on disk. Missing it is not a hard build failure:
-# the build still succeeds, desktop login just refuses with a clear error until it's set.
+# Desktop login (ADR-011 Unit 7) needs no credential injected here: it is a loopback OAuth flow
+# against a public "Desktop app" client and authenticates with PKCE alone (RFC 8252 section 8.5),
+# so the only build-time input is BACKEND_URL. This script used to resolve a
+# GOOGLE_DESKTOP_CLIENT_SECRET from deploy/.env and pass it as --dart-define; that existed only
+# because the registered OAuth client was of the confidential "Web application" type and its
+# token endpoint refused a secret-less exchange. Fixing the client registration removed the need,
+# so nothing reads the key any more -- see aura_client/lib/core/config/config.dart's
+# googleDesktopClientSecret, which survives as a --dart-define-only escape hatch for a
+# deployment that deliberately points at a confidential client.
 #
 # Linux/macOS desktop are built by deploy_client_desktop.sh instead -- Flutter does not
 # cross-compile the Windows desktop build from a non-Windows host.
@@ -36,20 +40,10 @@ function Invoke-Flutter {
 $BACKEND_URL = Get-AuraClientBackendUrl -EnvFile $EnvFile
 Assert-AuraReleaseBackendUrl -Url $BACKEND_URL
 
-$GoogleDesktopClientSecret = $env:GOOGLE_DESKTOP_CLIENT_SECRET
-if (-not $GoogleDesktopClientSecret) {
-  $GoogleDesktopClientSecret = Read-AuraEnvKey -Key "GOOGLE_DESKTOP_CLIENT_SECRET" -EnvFile $EnvFile
-}
-
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "Building AURA AI Client for Desktop (Windows)" -ForegroundColor Cyan
 Write-Host "   Target Backend: $BACKEND_URL" -ForegroundColor Cyan
-if (-not $GoogleDesktopClientSecret) {
-  Write-Host "   WARNING: GOOGLE_DESKTOP_CLIENT_SECRET is not set (deploy/.env or environment) --" -ForegroundColor Yellow
-  Write-Host "            this build's desktop login will refuse with a clear error until it is." -ForegroundColor Yellow
-} else {
-  Write-Host "   Desktop OAuth client secret: configured" -ForegroundColor Cyan
-}
+Write-Host "   Desktop login: PKCE only, no client secret required" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "Before shipping, confirm TLS matches this hostname:" -ForegroundColor Yellow
 Write-Host "   bash deploy/scripts/verify-client-hostname.sh" -ForegroundColor Yellow
@@ -67,9 +61,6 @@ Write-Host "Enabling Windows desktop support (no-op if already enabled)..." -For
 Invoke-Flutter -FlutterArgs @("config", "--enable-windows-desktop")
 
 $DartDefines = @("--dart-define=BACKEND_URL=$BACKEND_URL")
-if ($GoogleDesktopClientSecret) {
-  $DartDefines += "--dart-define=GOOGLE_DESKTOP_CLIENT_SECRET=$GoogleDesktopClientSecret"
-}
 
 Write-Host "Building production Windows desktop bundle..." -ForegroundColor Yellow
 Invoke-Flutter -FlutterArgs (@("build", "windows", "--release") + $DartDefines)

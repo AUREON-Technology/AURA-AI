@@ -75,7 +75,6 @@ void main() {
 
     final result = await signInWithGoogleLoopback(
       clientId: 'test-client-id',
-      clientSecret: 'test-client-secret',
       tokenEndpoint: tokenServer.uri,
       launch: _fakeLaunch({'code': 'auth-code-123'}),
     );
@@ -87,10 +86,29 @@ void main() {
     expect(tokenServer.lastRequestBody?['code_verifier'], isNotEmpty);
   });
 
-  // Google's token endpoint rejects this app's registered client without a client_secret even
-  // though PKCE is present (confirmed live -- see signInWithGoogleLoopback's doc comment), so
-  // the exchange must always include one.
-  test('sends the client secret in the token exchange body', () async {
+  // The whole point of a public "Desktop app" client (RFC 8252 §8.5): the code_verifier is the
+  // only proof and no client_secret is sent. Asserting *absent* rather than empty matters --
+  // Google rejects a present-but-blank client_secret the same way it rejects a wrong one, so a
+  // regression that sent '' would still look like "omitting the secret" while failing live.
+  test('omits client_secret entirely when none is configured', () async {
+    final tokenServer = await _FakeTokenServer.start(
+      response: {'id_token': 'fake-id-token'},
+    );
+    addTearDown(tokenServer.close);
+
+    await signInWithGoogleLoopback(
+      clientId: 'test-client-id',
+      tokenEndpoint: tokenServer.uri,
+      launch: _fakeLaunch({'code': 'auth-code-123'}),
+    );
+
+    expect(tokenServer.lastRequestBody, isNot(contains('client_secret')));
+    expect(tokenServer.lastRequestBody?['code_verifier'], isNotEmpty);
+  });
+
+  // The escape hatch: a build pointed at a confidential ("Web application") client can still
+  // inject a secret, and it has to reach the exchange when it does.
+  test('sends client_secret only when one is explicitly configured', () async {
     final tokenServer = await _FakeTokenServer.start(
       response: {'id_token': 'fake-id-token'},
     );
@@ -106,33 +124,49 @@ void main() {
     expect(tokenServer.lastRequestBody?['client_secret'], 'test-client-secret');
   });
 
+  // Regression guard for the incident this flow was rebuilt around: the fix for "client_secret
+  // is missing" is registering a Desktop-app client, NOT shipping a secret. If the error ever
+  // says only "HTTP 400", the next person re-adds a secret; so it has to name the real cause.
+  test('diagnoses a wrong-typed OAuth client when Google demands a secret', () async {
+    final tokenServer = await _FakeTokenServer.start(
+      response: {'error': 'invalid_request', 'error_description': 'client_secret is missing.'},
+      statusCode: 400,
+    );
+    addTearDown(tokenServer.close);
+
+    await expectLater(
+      signInWithGoogleLoopback(
+        clientId: 'wrongly-typed-client-id',
+        tokenEndpoint: tokenServer.uri,
+        launch: _fakeLaunch({'code': 'auth-code-123'}),
+      ),
+      throwsA(
+        isA<DesktopOAuthCancelledException>().having(
+          (e) => e.message,
+          'message',
+          allOf(contains('Desktop app'), contains('wrongly-typed-client-id')),
+        ),
+      ),
+    );
+  });
+
   test('throws immediately when no client id is configured', () async {
     await expectLater(
       signInWithGoogleLoopback(
         clientId: '',
-        clientSecret: 'test-client-secret',
         launch: (_) async => true,
       ),
       throwsA(isA<DesktopOAuthCancelledException>()),
     );
   });
 
-  test('throws immediately when no client secret is configured', () async {
-    await expectLater(
-      signInWithGoogleLoopback(
-        clientId: 'test-client-id',
-        clientSecret: '',
-        launch: (_) async => true,
-      ),
-      throwsA(isA<DesktopOAuthCancelledException>()),
-    );
-  });
+  // Deliberately no "refuses without a client secret" case any more: an empty secret is the
+  // normal configuration for a public Desktop-app client, covered by the omission test above.
 
   test('throws when the browser cannot be opened', () async {
     await expectLater(
       signInWithGoogleLoopback(
         clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
         launch: (_) async => false,
       ),
       throwsA(isA<DesktopOAuthCancelledException>()),
@@ -143,7 +177,6 @@ void main() {
     await expectLater(
       signInWithGoogleLoopback(
         clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
         launch: _fakeLaunch({'error': 'access_denied'}),
       ),
       throwsA(isA<DesktopOAuthCancelledException>()),
@@ -154,7 +187,6 @@ void main() {
     await expectLater(
       signInWithGoogleLoopback(
         clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
         launch: (authUri) {
           final redirectUri = Uri.parse(authUri.queryParameters['redirect_uri']!);
           final callback = redirectUri.replace(
@@ -183,7 +215,6 @@ void main() {
     await expectLater(
       signInWithGoogleLoopback(
         clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
         tokenEndpoint: tokenServer.uri,
         launch: _fakeLaunch({'code': 'auth-code-123'}),
       ),
@@ -201,7 +232,6 @@ void main() {
     await expectLater(
       signInWithGoogleLoopback(
         clientId: 'test-client-id',
-        clientSecret: 'test-client-secret',
         tokenEndpoint: tokenServer.uri,
         launch: _fakeLaunch({'code': 'auth-code-123'}),
       ),

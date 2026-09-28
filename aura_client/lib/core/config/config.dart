@@ -17,37 +17,45 @@ class AppConfig {
     defaultValue: 'https://aureon-ai.tech',
   );
 
-  /// A "Desktop app"-type Google OAuth client, distinct from the "Web application"-type client
-  /// hardcoded in `auth_provider.dart` (as `serverClientId`) and matching
-  /// `aura_backend/config.py`'s `google_client_id`. Google restricts the loopback-IP redirect
-  /// URI Linux/Windows login
-  /// needs (`core/auth/desktop_oauth_client.dart`, ADR-011 Unit 7) to that client type, so the
-  /// existing web client can't be reused for it. Registered 2026-09-10 (Google Cloud project
-  /// aura-ai-anas-gnedy) and hardcoded here the same way `serverClientId` is -- an OAuth client
-  /// id is not a secret, it's a public identifier; the matching backend audience is
-  /// `aura_backend/config.py::google_desktop_client_id`, hardcoded there the same way. Still
-  /// overridable via `--dart-define=GOOGLE_DESKTOP_CLIENT_ID=...` at build time, matching how
-  /// [backendUrl] is supplied, for a build that needs a different registered client.
+  /// The Google OAuth client the desktop (Linux/Windows/macOS) loopback login uses, distinct
+  /// from the "Web application"-type client hardcoded in `auth_provider.dart` (as
+  /// `serverClientId`) and matching `aura_backend/config.py`'s `google_client_id`. Google
+  /// restricts the loopback-IP redirect URI that flow needs
+  /// (`core/auth/desktop_oauth_client.dart`, ADR-011 Unit 7) to native client types, so the web
+  /// client can't be reused for it.
+  ///
+  /// An OAuth client id is not a secret -- it's a public identifier compiled into the app -- so
+  /// it's hardcoded here the same way `serverClientId` is. It must stay equal to
+  /// `aura_backend/config.py::google_desktop_client_id`, which
+  /// `services/security.py::verify_identity_token` checks the ID token's `aud` against; a drift
+  /// between the two rejects every desktop login. Overridable via
+  /// `--dart-define=GOOGLE_DESKTOP_CLIENT_ID=...` for a build with its own registered client.
+  ///
+  /// **This id must name a client of Google's "Desktop app" type**, which is *public*: it
+  /// authenticates with PKCE alone and needs no [googleDesktopClientSecret]. A "Web
+  /// application"-type client is *confidential*, and its token endpoint answers a secret-less
+  /// exchange with `invalid_request: client_secret is missing` -- the symptom once mistaken for
+  /// something inherent to desktop login and worked around by shipping a secret instead.
   static const String googleDesktopClientId = String.fromEnvironment(
     'GOOGLE_DESKTOP_CLIENT_ID',
     defaultValue: '87789110323-pprobmjkf4f16rem4kacr2nqgi9ql1i0.apps.googleusercontent.com',
   );
 
-  /// [googleDesktopClientId]'s matching secret. RFC 8252 and Google's own guidance say a
-  /// "Desktop app" client is public and PKCE alone should be enough at the token endpoint, but
-  /// the client actually registered for this app rejects a secret-less exchange with
-  /// `invalid_request: client_secret is missing` (confirmed live -- see
-  /// `desktop_oauth_client_io.dart::signInWithGoogleLoopback`'s doc comment). Unlike
-  /// [googleDesktopClientId], this is NOT hardcoded here even though Google's own installed-app
-  /// docs say it "cannot be treated as a secret" once shipped -- it still isn't committed to
-  /// source control on principle (and this repo's own secret-scanning tooling would flag it).
-  /// Injected only via `--dart-define=GOOGLE_DESKTOP_CLIENT_SECRET=...`
-  /// (`scripts/deploy_client_desktop.sh`/`.ps1`, which resolve it from a `GOOGLE_DESKTOP_
-  /// CLIENT_SECRET` entry in `deploy/.env` -- itself untracked, same as `AURA_DOMAIN`/
-  /// `BACKEND_URL`). Empty by default: desktop login is refused with a clear error (see
-  /// `signInWithGoogleLoopback`) until a build actually injects it.
+  /// Normally empty, and normally should stay that way: the desktop flow authenticates with PKCE
+  /// alone. RFC 8252 §8.5 is explicit that a native app is a *public* client -- there is no
+  /// secret a shipped binary could actually keep -- and `signInWithGoogleLoopback` omits
+  /// `client_secret` from the token exchange entirely when this is empty.
+  ///
+  /// It survives only as an escape hatch for a build whose [googleDesktopClientId] points at a
+  /// *confidential* client (Google's "Web application" type), whose token endpoint does demand a
+  /// secret. Inject it with `--dart-define=GOOGLE_DESKTOP_CLIENT_SECRET=...` in that case only.
+  ///
+  /// Never hardcode a value as this default. A real `GOCSPX-...` secret was committed here once
+  /// and compiled into every desktop binary, and had to be rotated at Google;
+  /// `aura_backend/tests/architecture/test_no_committed_client_secrets.py` is what now fails the
+  /// build rather than trusting anyone to remember.
   static const String googleDesktopClientSecret = String.fromEnvironment(
     'GOOGLE_DESKTOP_CLIENT_SECRET',
-    defaultValue: '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',
+    defaultValue: '',
   );
 }

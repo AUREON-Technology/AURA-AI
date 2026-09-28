@@ -7,13 +7,15 @@
 # engineer-agent.md) -- is not bundled: a person still configures its executable path
 # themselves, so this script does not attempt to build or embed it.
 #
-# Also resolves GOOGLE_DESKTOP_CLIENT_SECRET from deploy/.env (or the environment) and injects
-# it via --dart-define, the one piece of desktop login (ADR-011 Unit 7) that must NEVER be
-# hardcoded in source -- unlike the client id, deploy/.env itself is untracked (same as
-# AURA_DOMAIN/BACKEND_URL), so this is the only place it should ever live on disk. Missing it
-# is not a hard build failure (matching how an unconfigured GOOGLE_DESKTOP_CLIENT_ID was always
-# handled): the build still succeeds, desktop login just refuses with a clear error until it's
-# set, per signInWithGoogleLoopback's own runtime check.
+# Desktop login (ADR-011 Unit 7) needs no credential injected here: it is a loopback OAuth flow
+# against a public "Desktop app" client and authenticates with PKCE alone (RFC 8252 section 8.5),
+# so the only build-time input is BACKEND_URL. This script used to resolve a
+# GOOGLE_DESKTOP_CLIENT_SECRET from deploy/.env and pass it as --dart-define; that existed only
+# because the registered OAuth client was of the confidential "Web application" type and its
+# token endpoint refused a secret-less exchange. Fixing the client registration removed the need,
+# so nothing reads the key any more -- see aura_client/lib/core/config/config.dart's
+# googleDesktopClientSecret, which survives as a --dart-define-only escape hatch for a
+# deployment that deliberately points at a confidential client.
 #
 # Builds Linux always; builds macOS only when run on Darwin (parallels deploy_client.sh's own
 # iOS-on-Darwin-only gate). Windows desktop is built by deploy_client_desktop.ps1 instead --
@@ -32,20 +34,10 @@ source "$REPO_ROOT/deploy/scripts/client_backend_url.sh"
 BACKEND_URL="$(aura_resolve_client_backend_url "$ENV_FILE")"
 aura_require_release_backend_url "$BACKEND_URL"
 
-GOOGLE_DESKTOP_CLIENT_SECRET="${GOOGLE_DESKTOP_CLIENT_SECRET:-}"
-if [ -z "$GOOGLE_DESKTOP_CLIENT_SECRET" ]; then
-  GOOGLE_DESKTOP_CLIENT_SECRET="$(aura_read_env_key GOOGLE_DESKTOP_CLIENT_SECRET "$ENV_FILE")"
-fi
-
 echo "=========================================================="
 echo "Building AURA AI Client for Desktop"
 echo "   Target Backend: $BACKEND_URL"
-if [ -z "$GOOGLE_DESKTOP_CLIENT_SECRET" ]; then
-  echo "   WARNING: GOOGLE_DESKTOP_CLIENT_SECRET is not set (deploy/.env or environment) --"
-  echo "            this build's desktop login will refuse with a clear error until it is."
-else
-  echo "   Desktop OAuth client secret: configured"
-fi
+echo "   Desktop login: PKCE only, no client secret required"
 echo "=========================================================="
 echo "Before shipping, confirm TLS matches this hostname:"
 echo "   $REPO_ROOT/deploy/scripts/verify-client-hostname.sh"
@@ -60,9 +52,6 @@ echo "Resolving dependencies..."
 flutter pub get
 
 DART_DEFINES=(--dart-define=BACKEND_URL="$BACKEND_URL")
-if [ -n "$GOOGLE_DESKTOP_CLIENT_SECRET" ]; then
-  DART_DEFINES+=(--dart-define=GOOGLE_DESKTOP_CLIENT_SECRET="$GOOGLE_DESKTOP_CLIENT_SECRET")
-fi
 
 echo "Enabling Linux desktop support (no-op if already enabled)..."
 flutter config --enable-linux-desktop
