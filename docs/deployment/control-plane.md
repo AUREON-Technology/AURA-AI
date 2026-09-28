@@ -82,12 +82,50 @@ AURA_PROVIDER_HFSPACE_API_KEY=<same value as the Space's VLLM_API_KEY secret>
 AURA_PROVIDER_HFSPACE_IS_LOCAL=false
 AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW=<must match VLLM_MAX_MODEL_LEN on the Space>
 AURA_PROVIDER_HFSPACE_TIMEOUT_S=45
+AURA_PROVIDER_HFSPACE_HEALTH_TIMEOUT_S=30   # not 5 — a Space sleeps; see below
 AURA_PROVIDER_HFSPACE_MAX_CONCURRENCY=8
 AURA_LLM_TIMEOUT_S=60
 
 AURA_DOMAIN=<railway-issued or custom domain>
 ALLOWED_ORIGINS=https://<AURA_DOMAIN>
 ```
+
+### Why `AURA_PROVIDER_HFSPACE_HEALTH_TIMEOUT_S` is not left at its default
+
+A Hugging Face Space scales to zero. The liveness probe's default deadline is 5 seconds, which is
+right for an endpoint that is always up and wrong for one that has to start first — measured on
+this deployment after ~9.5 hours idle (EV-28 in `docs/reports/AURA_PRODUCTION_TEST_EVIDENCE.md`):
+
+```
+10:44:17Z  healthy=False  5143.8 ms  ReadTimeout     20 consecutive failures,
+   ...                                               every one at a flat ~5150 ms
+10:49:48Z  healthy=False  5156.8 ms  ReadTimeout
+10:50:03Z  healthy=True    220.3 ms  ok              then 11 consecutive successes
+10:51:49Z  healthy=True    212.6 ms  ok
+```
+
+Nothing changed at that boundary except that the Space finished waking. At 5 seconds the probe
+**cannot observe the recovery at all**: it fails identically whether the Space is seconds from
+ready or permanently dead, so `/health/ready` reports the same `healthy: false` for "asleep,
+warming" as for "broken". An operator cannot tell them apart, and an orchestrator acting on that
+signal pulls a service that was about to be fine.
+
+Two things worth knowing before choosing a value:
+
+* **A longer probe means `/health/ready` can block for that long** when the Space is cold, since
+  the endpoint waits on the probe. That is the cost, and it is why 30 rather than 300.
+* **It does not affect deploys.** `aura_backend/railway.json` sets `healthcheckPath` to
+  `/health/live`, which has no dependency checks — deliberately, because readiness 503s on any
+  unhealthy dependency and a deploy could otherwise never pass while inference was down.
+
+What this does *not* fix: whether a user's first turn after an idle period succeeds. A turn goes
+through `AURA_PROVIDER_HFSPACE_TIMEOUT_S` / `AURA_LLM_TIMEOUT_S`, not this probe. Raising the
+probe timeout makes the health signal honest; it does not make a cold start fast.
+
+On the VPS target `deploy/docker-compose.prod.yml` forwards this variable with a default of 30
+(Compose only forwards variables a service names, so it had to be added there explicitly —
+`aura_backend/tests/unit/test_hfspace_health_timeout_plumbing.py` pins that). Railway takes its
+environment from the dashboard instead, so on this target it has to be set by hand.
 
 Full list of every variable the gateway reads: `deploy/docker-compose.prod.yml`'s `gateway.environment`
 block (lines ~234–394) is the canonical reference — copy names, not VPS-specific values
