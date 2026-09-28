@@ -1099,6 +1099,108 @@ exists to prevent.
 
 ---
 
+## EV-27 — The Engineer journey completed and fabricated (DEF-26, mandatory gate downgrade)
+
+**When:** 2026-09-28, from two screenshots of the live desktop client
+**Target:** AURA Desktop paired to `https://aura-ai-production-03a4.up.railway.app` (status bar:
+`Host Connected`, `main`)
+**Workspace:** `E:\VELVET` — a real folder open in the editor
+
+This is the first observation in this engagement of a **core user journey running to completion**,
+and it is the reason the "Core user journeys usable" gate moves from UNKNOWN to **FAIL** rather
+than to PASS.
+
+### What happened
+
+The user asked the Engineer persona to summarise the `README.md` in the open folder. The file was
+visible in the editor pane throughout: a Django/Flutter e-commerce platform, with sections on
+gateway-independent payments, a tech-stack table, and a pointer to `docs/PAYMENTS.md`.
+
+The answer described a different document entirely — "project description, installation
+instructions, usage examples, contributing guidelines, license information" — the contents of a
+generic README. The model stated its own method in the middle of the answer:
+
+> The command has been executed, but since the output is not shown here, I will assume the file
+> exists and proceed with summarizing based on typical content found in a README.md file.
+
+Two further details from the same screenshots matter:
+
+- the plan panel showed **"Read the contents of README.md" with a completion tick**; and
+- the model twice emitted `run_command("cat README.md")` as **prose**, which executes nothing
+  (ADR-006: a model's own tool-call frames are informational; planning executes tools).
+
+The turn did carry an `Ungrounded — no sources attached` badge. It is the only honest signal in
+the exchange, and it did not prevent the answer.
+
+### Why it happened
+
+Four mechanisms, each individually defensible, reproduced locally before anything was changed:
+
+```
+s1 kind=generate status=skipped  result='No handler is configured for generate steps.'
+s2 kind=respond  status=blocked  result=None
+failed_steps        : ()
+blocked_steps       : ()
+summary_for_context : []
+```
+
+1. The plan's read step named a tool that is not registered. `_parse_steps` **demoted** it to
+   `GENERATE`, on the stated reasoning that a step which "can never succeed" should still "let the
+   plan make progress".
+2. **No `GENERATE` handler exists** — no caller anywhere passes `handlers` to
+   `ExecutionEngine.execute`, so every non-TOOL step kind is unhandled in every deployment. The
+   step was SKIPPED and the step depending on it BLOCKED.
+3. The agentic loop asked whether anything was worth replanning. `failed_steps` was empty (nothing
+   *failed*) and `blocked_steps()` was empty too — it reports only steps still PENDING, and the
+   executor had already moved the dependent to BLOCKED. Verdict: `nothing_to_repair`, no retry.
+4. `summary_for_context()` reports SUCCEEDED steps only, so the turn generated with a context in
+   which the read was never mentioned at all — not as failed, not as missing.
+
+Link 1's comment is the exact inverse of what the code did: the demotion did not let the plan make
+progress, it guaranteed the plan could make none, while removing every signal that would have said
+so.
+
+### The finding under it
+
+Links 1–3 are ordinary bugs. Link 4 is the one worth recording as a property of the architecture:
+**an absence cannot be reasoned about.** A model handed no tool output cannot distinguish "the
+tool returned nothing" from "no tool ran" — and only in the second case does inventing an answer
+look locally reasonable. Every guard in the turn was working: the trust channels held, the
+ungrounded badge fired, no tool was executed without a grant. None of them is a guard against
+*nothing having happened*.
+
+### One route not ruled out
+
+`read_file` does exist — a server-side sandboxed reader (`tools/builtin.py`), registered only when
+a workspace is configured, confined to a server directory it describes as "the user's workspace
+directory". It cannot see a Windows path on the user's machine. So either it was unregistered (and
+links 1–3 ran), or it was registered, dispatched, failed to find the file, and **FAILED** — and
+`summary_for_context()` excludes failed steps too, so generation was equally uninformed. Which one
+occurred cannot be determined without that deployment's registered tool set, and is not asserted
+here. The fix covers both.
+
+### Fix and status
+
+PR #137 addresses each link: the planner keeps an unknown tool name so dispatch refuses it
+usefully; `Plan.unexecuted_steps()` makes "planned, never ran" visible; the agentic loop replans on
+a BLOCKED step; and the kernel states which steps produced nothing, on the SYSTEM channel, with an
+explicit instruction not to substitute typical content. 16 new tests, 11 of which fail against the
+previous code.
+
+**The gate does not move to PASS on a merged fix.** It requires the same journey re-run against the
+deployed revision, which needs (a) #137 merged and deployed and (b) the paired desktop client. Until
+then:
+
+| Gate | Was | Now |
+| --- | --- | --- |
+| Core user journeys usable | UNKNOWN (no journey reached step three) | **FAIL** (a journey completed and fabricated) |
+
+A downgrade on a mandatory gate does not change the overall verdict, which was already refused. It
+does change what the refusal is *about*: until now the four unevidenced gates were the whole case.
+This is the first mandatory gate failing on observed behaviour rather than on missing evidence.
+
+---
+
 ## Evidence artifacts retained
 
 | File | Contents |

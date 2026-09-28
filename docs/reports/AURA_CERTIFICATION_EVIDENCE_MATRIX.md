@@ -1,13 +1,15 @@
 # AURA AI — Certification Evidence Matrix
 
-**Updated:** 2026-09-27 23:47 UTC
+**Updated:** 2026-09-28 00:20 UTC
 **Live revision under test:** `8366aa3367ca` (Railway Control Plane)
 **Repository revision:** `main` @ `8366aa33`
 
 > ## OVERALL VERDICT: NOT PRODUCTION CERTIFIED
 >
-> Four mandatory gates have no evidence. Per the closure rule, certification is refused while any
-> mandatory gate lacks evidence — no combination of the gates that *do* pass changes that.
+> Four mandatory gates have no evidence, and one now fails on observed behaviour (EV-27). Per the
+> closure rule, certification is refused while any mandatory gate lacks evidence — and a gate that
+> fails on evidence is a separate refusal again. No combination of the gates that *do* pass changes
+> either.
 
 This file is the single canonical answer to "what is proven, and by what?". It is
 **machine-checked**: `aura_backend/tests/architecture/test_certification_gate.py` parses the table
@@ -37,7 +39,7 @@ suite rather than by whoever writes the summary.
 | No critical security flaw | yes | PRODUCTION TESTED | EV-22, EV-23 (no bypass active; headers fixed; CORS sound) | PARTIAL |
 | No exposed secrets | yes | PRODUCTION TESTED | EV-09 (Secrets: NOT FOUND) | PASS |
 | Production API usable | yes | PRODUCTION TESTED | EV-22 (80 /api/v3 routes, valid TLS, zero legacy paths) | PASS |
-| Core user journeys usable | yes | PRODUCTION TESTED | EV-22 (no journey reached step three) | UNKNOWN |
+| Core user journeys usable | yes | PRODUCTION TESTED | EV-27 (Engineer summarised a file it never read) | FAIL |
 | Inference works | yes | PRODUCTION TESTED | EV-25, EV-26 (hfspace healthy 14/14 across two revisions, 196-229ms) | PASS |
 | No unrecoverable data failure | yes | CODE-PRESENT | — | UNKNOWN |
 | Deployment stability | yes | MEASURED | EV-17 (zero executed CI jobs since 2026-09-13) | FAIL |
