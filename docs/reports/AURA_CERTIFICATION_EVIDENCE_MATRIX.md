@@ -45,7 +45,7 @@ suite rather than by whoever writes the summary.
 | No exposed secrets | yes | PRODUCTION TESTED | EV-09 (Secrets: NOT FOUND) | PASS |
 | Production API usable | yes | PRODUCTION TESTED | EV-22 (80 /api/v3 routes, valid TLS, zero legacy paths) | PASS |
 | Core user journeys usable | yes | PRODUCTION TESTED | EV-27 (Engineer summarised a file it never read) | FAIL |
-| Inference works | yes | MEASURED | EV-28 (works warm; 0/20 while asleep, wakes in ~5.5min; cold-start turn untested) | PARTIAL |
+| Inference works | yes | PRODUCTION TESTED | EV-30 (HTTP 503 on 41/41 samples over 10.5min, no recovery) | FAIL |
 | No unrecoverable data failure | yes | CODE-PRESENT | — | UNKNOWN |
 | Deployment stability | yes | MEASURED | EV-17 (zero executed CI jobs since 2026-09-13) | FAIL |
 | Database schema integrity | yes | PRODUCTION TESTED | EV-25, EV-26 (schema healthy at revision 0008, across two deploys) | PASS |
