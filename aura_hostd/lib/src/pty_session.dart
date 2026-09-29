@@ -29,7 +29,9 @@ class PtySession implements PtySessionInterface {
     this.initialRows = 24,
   });
 
+  @override
   final String sessionId;
+  @override
   final String workingDirectory;
   final String shellExecutable;
   final int initialCols;
@@ -38,11 +40,14 @@ class PtySession implements PtySessionInterface {
   final StreamController<Uint8List> _outputController = StreamController<Uint8List>.broadcast();
   final Completer<int> _exitCodeCompleter = Completer<int>();
 
+  @override
   Stream<Uint8List> get output => _outputController.stream;
+  @override
   Future<int> get exitCode => _exitCodeCompleter.future;
 
   /// Whether the attached process is still running, checked via
   /// `GetExitCodeProcess` without blocking.
+  @override
   bool get isChildAlive {
     if (_hProcess == 0) return false;
     final code = calloc<Uint32>();
@@ -55,6 +60,7 @@ class PtySession implements PtySessionInterface {
   }
 
   /// The attached process's OS pid, once [start] has completed. 0 before then.
+  @override
   int get pid => _pid;
 
   int _hPC = 0;
@@ -75,6 +81,7 @@ class PtySession implements PtySessionInterface {
   /// (microsoft/terminal/samples/ConPTY/MiniTerm): two pipes, then
   /// `CreatePseudoConsole`, then a `STARTUPINFOEX` carrying the pseudoconsole
   /// handle via `UpdateProcThreadAttribute`, then `CreateProcessW`.
+  @override
   Future<void> start() async {
     final pipeInRead = calloc<IntPtr>();
     final pipeInWrite = calloc<IntPtr>();
@@ -277,6 +284,7 @@ class PtySession implements PtySessionInterface {
   /// Returns the actual bytes written on success, or a negative Win32 error
   /// code (as `-GetLastError()`) on failure -- diagnostic shape kept through
   /// Stage 2 while the ConPTY sequence itself is still being proven.
+  @override
   int write(Uint8List bytes) {
     if (_disposed || _pipeInWrite == 0) return 0;
     final buffer = calloc<Uint8>(bytes.length);
@@ -292,6 +300,7 @@ class PtySession implements PtySessionInterface {
     }
   }
 
+  @override
   void resize(int cols, int rows) {
     if (_disposed || _hPC == 0) return;
     final sizePtr = calloc<COORD>();
@@ -304,6 +313,7 @@ class PtySession implements PtySessionInterface {
     }
   }
 
+  @override
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;

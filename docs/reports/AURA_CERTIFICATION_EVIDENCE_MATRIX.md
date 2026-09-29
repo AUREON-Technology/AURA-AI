@@ -59,7 +59,7 @@ suite rather than by whoever writes the summary.
 | Metrics endpoint not public | no | PRODUCTION TESTED | EV-23, EV-26 (still 200 unauthenticated; gate opt-in, token unset) | FAIL |
 | Network exposure (non-web ports) | no | CODE-PRESENT | — | NOT APPLICABLE |
 | Rollback validated | no | CODE-PRESENT | — | BLOCKED |
-| Desktop / hostd / Flutter clients | no | CODE-PRESENT | — | BLOCKED |
+| Desktop / hostd / Flutter clients | no | LOCALLY TESTED | EV-29 (client 377 pass, analyze clean; hostd 194 pass / 2 fail + hang) | PARTIAL |
 | RAG retrieval quality | no | CODE-PRESENT | EV-22 (hash-embed-v1 active, nothing indexed) | BLOCKED |
 | Observability under real traffic | no | CODE-PRESENT | — | BLOCKED |
 | Performance percentiles / TTFT | no | CODE-PRESENT | — | BLOCKED |
