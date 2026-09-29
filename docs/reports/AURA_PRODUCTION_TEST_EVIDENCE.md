@@ -1391,7 +1391,8 @@ gate has not run since 2026-09-13 either. This is the first concrete instance of
 a real regression rather than merely withholding confirmation.
 
 ```
-dart test  ->  194 passed, 2 failed
+dart test  ->  194 passed, 2 failed      (at the time of this entry)
+           ->  195 passed, 1 failed      (after the Failure 2 fix below)
            ->  then hangs: 876 × "waiting for isolate PosixPtySession._readLoop to check in"
                 until killed at the 900s timeout
 ```
@@ -1402,12 +1403,42 @@ log shows `debug session (pid 756) process exited (code 1)`. Confirmed directly:
 `python3 -c "import debugpy"` → `ModuleNotFoundError: No module named 'debugpy'`. The test needs a
 Python package this container does not have.
 
-**Failure 2 — not root-caused, and recorded as such.** `task_handler_test.dart`'s "a
-ProcessException from Process.start is wrapped with the resolved executable, cwd, and whether each
-existed" reaches its own `fail('expected an RpcError')`, meaning `handler.run` returned normally
-for a command naming `this_binary_does_not_exist_xyz_12345`. That could be an environment
-difference in how a missing executable surfaces, or a genuine gap in the wrapping. I did not
-determine which, and am not going to characterise it either way without doing so.
+**Failure 2 — root-caused (2026-09-29 04:30 UTC), and it is a wrong test rather than a broken
+product.** `task_handler_test.dart`'s "a ProcessException from Process.start is wrapped with the
+resolved executable, cwd, and whether each existed" reaches its own `fail('expected an RpcError')`,
+meaning `handler.run` returned normally for `this_binary_does_not_exist_xyz_12345`.
+
+The cause is `_lineBuffered` in `task_handler.dart`: where `stdbuf` exists it prefixes the argv
+with `stdbuf -oL -eL`, so `Process.start` launches **stdbuf**, which is present. Nothing throws.
+stdbuf then execs the missing binary itself, fails, and exits 127. Verified directly on this host:
+
+```
+$ which stdbuf                                         /usr/bin/stdbuf   (coreutils 9.4)
+$ stdbuf -oL -eL this_binary_does_not_exist_xyz_12345 arg
+stdbuf: failed to run command 'this_binary_does_not_exist_xyz_12345': No such file or directory
+exit=127
+```
+
+So the assertion is unreachable on **any host with coreutils** — which is every ordinary Linux
+desktop, the Docker sandbox (always Linux, per the code's own comment), and `hostd-ci.yml`'s own
+`analyze-and-test` job. On Windows `_stdbufAvailable()` returns false by construction, so the
+original path runs unchanged. That is why the same test passes on `analyze-and-test-windows` and
+fails on Ubuntu, and why nobody noticed: neither job has been assigned a runner since 2026-09-13.
+
+Two things this deliberately does **not** conclude:
+
+* **The diagnostic is not dead**, so the fix does not weaken it. A bad working directory still
+  raises `ProcessException` from behind stdbuf, because Dart applies `workingDirectory` itself
+  rather than delegating it — confirmed with a direct probe. The Windows shell-resolution case it
+  was written for is likewise untouched.
+* **The user is not left guessing.** stdbuf's own stderr names the missing binary. The lost detail
+  is the `executable exists: false, cwd exists: true` suffix, in the one case where the message
+  already says which executable was missing.
+
+Fixed by asserting the user-facing contract — *a missing executable names itself* — in whichever
+shape the platform actually produces, rather than one shape it cannot. `dart test
+test/task_handler_test.dart` → **40 passed**; the full suite moves **194 passed / 2 failed →
+195 passed / 1 failed**, the remaining failure being the proven-environmental debugpy one.
 
 **The hang is its own finding.** The suite reports its summary and then never exits, polling a PTY
 isolate 876 times before the timeout kills it — roughly fourteen minutes of a run whose tests
