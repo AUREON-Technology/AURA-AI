@@ -1344,6 +1344,79 @@ produces evidence.
 
 ---
 
+## EV-30 — Inference is down, and it is not the sleep this time (DEF-28, gate PARTIAL → FAIL)
+
+**When:** 2026-09-29 03:00–03:11 UTC
+**Target:** `https://aura-ai-production-03a4.up.railway.app`
+**Live revision:** `2e2ad77f46bc`
+
+```
+03:00:36Z  healthy=False   225.8 ms  HTTP 503
+03:00:37Z  healthy=False    70.0 ms  HTTP 503
+   ...      41 consecutive failures over 10 minutes 29 seconds
+03:11:05Z  healthy=False   222.2 ms  HTTP 503
+```
+
+### Why this is a new finding rather than EV-28 again
+
+EV-28 established that the Space scales to zero and that the probe cannot observe it waking. This
+is a **different failure mode**, on two independent axes:
+
+| | EV-28 (asleep) | EV-30 (now) |
+| --- | --- | --- |
+| `detail` | `ReadTimeout` | `HTTP 503` |
+| latency | a flat ~5150 ms — the client giving up | 200–250 ms — the server *answering* |
+| under sustained probing | recovered after ~5.5 min, then 11/11 healthy | 41 failures over 10.5 min, no recovery |
+
+A sleeping Space does not answer; this one answers, quickly and consistently, with 503. And the
+probing window here was deliberately taken to **nearly double** the 5.5 minutes that previously
+sufficed to wake it, precisely so that "it just needs longer" could be ruled out rather than
+assumed. It was not woken.
+
+Six of the 41 samples took 0.9–1.7 s rather than ~220 ms, which is the only hint of anything
+happening behind the 503 at all. Everything else is flat.
+
+### What this does and does not establish
+
+**Does:** the inference endpoint is not serving. Not slow, not cold — returning 503 to every
+request for over ten minutes of continuous traffic.
+
+**Does not:** why. A Hugging Face Space serves 503 for several distinct states — sleeping,
+building, and *runtime error* among them — and they are indistinguishable from the gateway's
+side, which sees only a status code. Telling them apart needs the Space's own page or logs on
+huggingface.co, which is not reachable from here. **I am not going to guess between "still
+starting" and "crashed"**, and the distinction matters: one resolves itself and one does not.
+
+### Gate: Inference works, PARTIAL → FAIL
+
+EV-28 had this at PARTIAL on the reasoning that it works warm and the cold path was untested.
+That is no longer the right reading. It is not working at all, and has not been for at least the
+ten minutes measured. A gate that describes a capability the product does not currently have is
+not PARTIAL.
+
+### A method this invalidates, which matters for future check-ins
+
+EV-28's follow-up established an indirect test for whether
+`AURA_PROVIDER_HFSPACE_HEALTH_TIMEOUT_S` had been set on Railway: probe while cold and read the
+failing latency — **~5150 ms means unset, ~30000 ms means set**. That test depended on the probe
+reaching its own deadline.
+
+A fast 503 never reaches any deadline. While the endpoint answers this way the test says nothing,
+and a reading of "not ~30000 ms" must **not** be recorded as "the variable is unset". It is
+recorded here so that a later check-in does not draw that inference from these numbers. The
+variable's state is currently unknown by this method, and the last *valid* reading of it (16:38
+on 2026-09-28, ~5145 ms) predates whatever changed here.
+
+### Unchanged, re-checked rather than assumed
+
+| Check | Result |
+| --- | --- |
+| `GET /metrics` unauthenticated | **`200`** — DEF-22 still open |
+| Live revision | `2e2ad77f46bc`, matching `main` — release identity still tracking |
+| Cert tokens in environment | none |
+
+---
+
 ## Evidence artifacts retained
 
 | File | Contents |
