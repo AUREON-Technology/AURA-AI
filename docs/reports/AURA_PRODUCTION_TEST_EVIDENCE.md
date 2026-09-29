@@ -1392,7 +1392,7 @@ a real regression rather than merely withholding confirmation.
 
 ```
 dart test  ->  194 passed, 2 failed
-           ->  then hangs: 39 × "waiting for isolate PosixPtySession._readLoop to check in"
+           ->  then hangs: 876 × "waiting for isolate PosixPtySession._readLoop to check in"
                 until killed at the 900s timeout
 ```
 
@@ -1410,7 +1410,8 @@ difference in how a missing executable surfaces, or a genuine gap in the wrappin
 determine which, and am not going to characterise it either way without doing so.
 
 **The hang is its own finding.** The suite reports its summary and then never exits, polling a PTY
-isolate 39 times before the timeout kills it. CLAUDE.md documents `dart test` as the hostd command
+isolate 876 times before the timeout kills it — roughly fourteen minutes of a run whose tests
+finished in thirteen seconds. CLAUDE.md documents `dart test` as the hostd command
 and `hostd-ci.yml` as its gate; if this reproduces on a runner, that job times out rather than
 failing cleanly. Nobody can currently know, because the job does not run.
 
