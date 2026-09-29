@@ -1344,6 +1344,188 @@ produces evidence.
 
 ---
 
+## EV-29 — The Flutter client and host daemon, actually executed (first time in this engagement)
+
+**When:** 2026-09-28 20:30 – 2026-09-29 UTC
+**Revision under test:** `0f0ae15` (main, the merge of #142)
+**Toolchain:** Flutter 3.44.6 / Dart 3.12.2 — the exact version `client-ci.yml` pins, fetched into
+the container in about two minutes
+
+Every previous entry in this ledger treated the client as unverifiable, on the strength of
+CLAUDE.md's standing advice to "write Dart carefully and let Client CI be the actual
+verification". Client CI has executed nothing since 2026-09-13 (BLOCK-06), so that advice
+resolved to *no verification at all*, and the "Desktop / hostd / Flutter clients" gate sat at
+CODE-PRESENT with no evidence. A concurrent session corrected the advice in CLAUDE.md; this is
+the first time the suites have actually been run against the merged head.
+
+### `aura_client` — clean
+
+```
+flutter analyze   ->  No issues found! (ran in 24.0s)
+flutter test      ->  377 passed, 3 skipped, 0 failed   ("All tests passed!")
+```
+
+Worth stating precisely, because a number already exists in the history and it is a different
+number. The commit that introduced the local-verification recipe quoted `299 passed, 0 failed,
+3 skipped` measured against `bb23079`. That figure is accurate for the commit it names. **Main
+then moved six commits past it** — `f6ff64f`, `9541771`, `dfee45c`, `55ac69d`, `b6668f0`,
+`0f0ae15` — including the two that added `aura_failure.dart` (288 lines), `aura_failure_view.dart`
+(88) and 315 lines of new tests. So the head that is merged and shipping had never been run. It
+passes: 377 is the 299 plus the 78 that arrived afterwards.
+
+This is the distinction the ledger exists to keep. A measurement is evidence for the revision it
+was taken on, and for no other.
+
+### `aura_hostd` — one defect found and fixed, two failures, and a hang
+
+```
+dart analyze --fatal-infos  ->  10 issues found      (before)
+                            ->  No issues found!     (after this change)
+```
+
+All ten were `annotate_overrides` on `lib/src/pty_session.dart` — members of a class declared
+`implements PtySessionInterface` that were missing `@override`. Mechanical, no behaviour change.
+But **`hostd-ci.yml` runs `dart analyze --fatal-infos`**, where info-level lints fail the build,
+so `main` would have been red on its own gate. It went unnoticed for the obvious reason: that
+gate has not run since 2026-09-13 either. This is the first concrete instance of BLOCK-06 hiding
+a real regression rather than merely withholding confirmation.
+
+```
+dart test  ->  194 passed, 2 failed      (at the time of this entry)
+           ->  195 passed, 1 failed      (after the Failure 2 fix below)
+           ->  then hangs: 876 × "waiting for isolate PosixPtySession._readLoop to check in"
+                until killed at the 900s timeout
+```
+
+**Failure 1 — environment, not code.** `control_server_test.dart`'s "start spawns a real debugpy
+process and tunnels DAP bytes both ways" expects `started` and gets `process_exited`; the daemon
+log shows `debug session (pid 756) process exited (code 1)`. Confirmed directly:
+`python3 -c "import debugpy"` → `ModuleNotFoundError: No module named 'debugpy'`. The test needs a
+Python package this container does not have.
+
+**Failure 2 — root-caused (2026-09-29 04:30 UTC), and it is a wrong test rather than a broken
+product.** `task_handler_test.dart`'s "a ProcessException from Process.start is wrapped with the
+resolved executable, cwd, and whether each existed" reaches its own `fail('expected an RpcError')`,
+meaning `handler.run` returned normally for `this_binary_does_not_exist_xyz_12345`.
+
+The cause is `_lineBuffered` in `task_handler.dart`: where `stdbuf` exists it prefixes the argv
+with `stdbuf -oL -eL`, so `Process.start` launches **stdbuf**, which is present. Nothing throws.
+stdbuf then execs the missing binary itself, fails, and exits 127. Verified directly on this host:
+
+```
+$ which stdbuf                                         /usr/bin/stdbuf   (coreutils 9.4)
+$ stdbuf -oL -eL this_binary_does_not_exist_xyz_12345 arg
+stdbuf: failed to run command 'this_binary_does_not_exist_xyz_12345': No such file or directory
+exit=127
+```
+
+So the assertion is unreachable on **any host with coreutils** — which is every ordinary Linux
+desktop, the Docker sandbox (always Linux, per the code's own comment), and `hostd-ci.yml`'s own
+`analyze-and-test` job. On Windows `_stdbufAvailable()` returns false by construction, so the
+original path runs unchanged. That is why the same test passes on `analyze-and-test-windows` and
+fails on Ubuntu, and why nobody noticed: neither job has been assigned a runner since 2026-09-13.
+
+Two things this deliberately does **not** conclude:
+
+* **The diagnostic is not dead**, so the fix does not weaken it. A bad working directory still
+  raises `ProcessException` from behind stdbuf, because Dart applies `workingDirectory` itself
+  rather than delegating it — confirmed with a direct probe. The Windows shell-resolution case it
+  was written for is likewise untouched.
+* **The user is not left guessing.** stdbuf's own stderr names the missing binary. The lost detail
+  is the `executable exists: false, cwd exists: true` suffix, in the one case where the message
+  already says which executable was missing.
+
+Fixed by asserting the user-facing contract — *a missing executable names itself* — in whichever
+shape the platform actually produces, rather than one shape it cannot. `dart test
+test/task_handler_test.dart` → **40 passed**; the full suite moves **194 passed / 2 failed →
+195 passed / 1 failed**, the remaining failure being the proven-environmental debugpy one.
+
+**The hang is its own finding.** The suite reports its summary and then never exits, polling a PTY
+isolate 876 times before the timeout kills it — roughly fourteen minutes of a run whose tests
+finished in thirteen seconds.
+
+*Investigated 2026-09-29 05:40–06:00 UTC. Localized precisely; not fixed. What is established:*
+
+* It is entirely `test/posix_pty_session_test.dart`. That file alone passes its 2 tests in under
+  a second and then hangs until killed.
+* It is not a leaking test. Both tests call `await session.dispose()` in a `finally`.
+* Run **separately**, each test exits cleanly (`rc=0`). Run **together**, the file hangs. So a
+  single session tears down fine and two in one process do not — which points at shared
+  process-wide state rather than at either test.
+
+*Two fixes were tried against the mechanism and neither resolved the combined case, so both were
+reverted rather than shipped:*
+
+1. **Reordering `dispose()`** to SIGKILL the child and await its exit before closing the master
+   fd, on the theory that `Isolate.kill` cannot preempt a thread parked in a blocking FFI
+   `libc.read()` and only the child's death ends that read. This did fix the previously-hanging
+   test in isolation — real progress — but not the pair.
+2. **Waiting for the read loop's own sentinel** before closing the fd, since a session whose
+   shell exits by itself never enters the kill branch at all. The wait timed out, so the reader
+   genuinely never reported in.
+
+*The fd-reuse hypothesis, now demonstrated (2026-09-29 07:24 UTC).* Isolates share the process's
+fd table. A probe that starts session A, disposes it, then starts session B, reading
+`/proc/self/fd` at each step:
+
+```
+A opened fds:                  [10, 17, 18, 19]
+after dispose(A), still open:  [17, 18]
+B opened fds:                  [10, 12, 14, 19]
+REUSED from A:                 [10, 19]
+```
+
+**B was handed back exactly the descriptor numbers A had used.** So when A's reader isolate is
+still parked in `libc.read()` on master fd 10 or 19 — which is precisely the state the earlier
+sentinel-wait proved it stays in — that read is now attached to *B's* pty. It will never observe
+A's EIO, because A's pty is gone; it waits on B's instead. That accounts exactly for "each test
+alone is clean, the two together hang", and it explains why waiting for A's sentinel timed out.
+
+This is no longer a hypothesis. What remains unresolved is the fix: the reader has to be made to
+*leave* a blocking `read()` before its descriptor can be recycled, which means either a
+non-blocking master fd with a polled stop flag, or some other way to wake the loop. That is a
+redesign of the read loop rather than a reordering of `dispose()`, and it is a design call for
+whoever owns this code.
+
+*A second, independent defect the same probe exposed:* **`dispose()` leaks two descriptors per
+session.** Fds 17 and 18 were still open after A was disposed. They are almost certainly the
+`Process.start` stdout/stderr pipes that `start()` drains with `unawaited(...)` and never closes —
+the ones its own comment describes as existing but going unused, because the perl helper redirects
+onto the pty before the shell writes anything. In a test run that is invisible. In `aura_hostd`,
+a daemon, it is two descriptors per terminal session opened and closed, against the process's
+fd limit, for as long as the daemon runs. Recorded rather than fixed here for the same reason as
+the hang: it sits in the same teardown path, and that path has already defeated two plausible
+changes.
+
+*Why this was not fixed here:* it is a concurrency and descriptor-lifetime defect in a
+long-running daemon's teardown path, and two plausible mechanisms have already proved wrong.
+Shipping a third with a confident comment attached would be the precise failure this ledger
+exists to catch. It needs someone able to finish the diagnosis rather than a guess.
+
+*Why it matters beyond tests:* `aura_hostd` is a daemon. If the same leak occurs in production,
+each terminal session closed while its shell is alive costs one isolate and one OS thread blocked
+forever. And on a runner it would not *fail* — it would exhaust the job's timeout budget and die,
+which reads as infrastructure trouble rather than a test problem, so it could sit behind BLOCK-06
+indefinitely. CLAUDE.md documents `dart test` as the hostd command
+and `hostd-ci.yml` as its gate; if this reproduces on a runner, that job times out rather than
+failing cleanly. Nobody can currently know, because the job does not run.
+
+### What this does and does not establish
+
+**Does:** the client's own suite and analyzer pass on the exact revision that is merged — 377
+tests, executed, quoted. The hostd analyzer is clean after this change.
+
+**Does not:** anything about the client against a live backend. These are unit and widget tests on
+a headless host with no device. Font fallback per platform, screen-reader output and every runtime
+performance figure remain untestable here, exactly as CLAUDE.md now states. And hostd is not
+green: two failures and a non-terminating run.
+
+**Gate: Desktop / hostd / Flutter clients — BLOCKED → PARTIAL, maturity LOCALLY TESTED.** Not
+PASS: half of it passes cleanly and half does not, and "locally tested" is not "works on a user's
+machine" for a component whose entire purpose is acting on a user's real files.
+
+---
+
 ## Evidence artifacts retained
 
 | File | Contents |

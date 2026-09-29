@@ -133,17 +133,42 @@ void main() {
       expect(result['stderr'], contains('timeout'));
     });
 
-    test('a ProcessException from Process.start is wrapped with the resolved '
-        'executable, cwd, and whether each existed', () async {
+    test('a missing executable names itself, however the platform reports it', () async {
+      // This asserted an RpcError unconditionally, and failed on every Linux host -- including
+      // hostd-ci.yml's own `analyze-and-test` job, which nobody saw because that job has not
+      // been assigned a runner since 2026-09-13.
+      //
+      // The cause is `_lineBuffered`: where `stdbuf` exists it prefixes the argv with
+      // `stdbuf -oL -eL`, so `Process.start` launches *stdbuf*, which is present. Nothing
+      // throws. stdbuf execs the missing binary itself, fails, and exits 127 with
+      // `stdbuf: failed to run command 'x': No such file or directory` -- which names the
+      // binary perfectly well, so the caller is not left guessing. Verified directly:
+      // `/usr/bin/stdbuf` (coreutils 9.4) exits 127 on a missing target.
+      //
+      // The wrapping diagnostic in task_handler.dart is NOT dead and is not being weakened
+      // here: a bad working directory still raises ProcessException even behind stdbuf,
+      // because Dart applies `workingDirectory` itself rather than delegating it. And on
+      // Windows `_stdbufAvailable()` is false by construction, so the original path runs
+      // unchanged -- which is why this test passes on `analyze-and-test-windows` and fails
+      // on Ubuntu.
+      //
+      // So the contract worth pinning is the user-facing one -- a missing executable tells
+      // you which executable -- asserted in whichever shape the platform actually produces,
+      // rather than one shape the platform cannot produce.
       roots.setTrusted(workspaceDir.path, true);
+      const missing = 'this_binary_does_not_exist_xyz_12345';
+
       try {
-        await handler.run({
-          'command': ['this_binary_does_not_exist_xyz_12345', 'arg'],
+        final result = await handler.run({
+          'command': [missing, 'arg'],
           'timeout_s': 5.0,
         });
-        fail('expected an RpcError');
+        // stdbuf present: the spawn succeeded, the exec inside it did not.
+        expect(result['exit_code'], isNot(0));
+        expect('${result['stderr']}', contains(missing));
       } on RpcError catch (error) {
-        expect(error.message, contains('this_binary_does_not_exist_xyz_12345'));
+        // No stdbuf (Windows, or a host without coreutils): the original wrapping path.
+        expect(error.message, contains(missing));
         expect(error.message, contains(workspaceDir.path));
         expect(error.message, contains('executable exists: false'));
         expect(error.message, contains('cwd exists: true'));
