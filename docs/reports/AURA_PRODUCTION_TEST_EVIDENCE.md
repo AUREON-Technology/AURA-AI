@@ -1442,7 +1442,44 @@ test/task_handler_test.dart` → **40 passed**; the full suite moves **194 passe
 
 **The hang is its own finding.** The suite reports its summary and then never exits, polling a PTY
 isolate 876 times before the timeout kills it — roughly fourteen minutes of a run whose tests
-finished in thirteen seconds. CLAUDE.md documents `dart test` as the hostd command
+finished in thirteen seconds.
+
+*Investigated 2026-09-29 05:40–06:00 UTC. Localized precisely; not fixed. What is established:*
+
+* It is entirely `test/posix_pty_session_test.dart`. That file alone passes its 2 tests in under
+  a second and then hangs until killed.
+* It is not a leaking test. Both tests call `await session.dispose()` in a `finally`.
+* Run **separately**, each test exits cleanly (`rc=0`). Run **together**, the file hangs. So a
+  single session tears down fine and two in one process do not — which points at shared
+  process-wide state rather than at either test.
+
+*Two fixes were tried against the mechanism and neither resolved the combined case, so both were
+reverted rather than shipped:*
+
+1. **Reordering `dispose()`** to SIGKILL the child and await its exit before closing the master
+   fd, on the theory that `Isolate.kill` cannot preempt a thread parked in a blocking FFI
+   `libc.read()` and only the child's death ends that read. This did fix the previously-hanging
+   test in isolation — real progress — but not the pair.
+2. **Waiting for the read loop's own sentinel** before closing the fd, since a session whose
+   shell exits by itself never enters the kill branch at all. The wait timed out, so the reader
+   genuinely never reported in.
+
+*The surviving hypothesis, untested and recorded as such:* **file-descriptor reuse.** Isolates
+share the process's fd table. If session A's reader is still blocked on master fd *N* when the
+parent closes *N*, and session B's `posix_openpt` is then handed *N* again, A's blocked read is
+now attached to B's pty — it will never see A's EIO, and A's isolate never exits. That fits
+"each alone is clean, the pair hangs" exactly. It is a hypothesis; it has not been demonstrated.
+
+*Why this was not fixed here:* it is a concurrency and descriptor-lifetime defect in a
+long-running daemon's teardown path, and two plausible mechanisms have already proved wrong.
+Shipping a third with a confident comment attached would be the precise failure this ledger
+exists to catch. It needs someone able to finish the diagnosis rather than a guess.
+
+*Why it matters beyond tests:* `aura_hostd` is a daemon. If the same leak occurs in production,
+each terminal session closed while its shell is alive costs one isolate and one OS thread blocked
+forever. And on a runner it would not *fail* — it would exhaust the job's timeout budget and die,
+which reads as infrastructure trouble rather than a test problem, so it could sit behind BLOCK-06
+indefinitely. CLAUDE.md documents `dart test` as the hostd command
 and `hostd-ci.yml` as its gate; if this reproduces on a runner, that job times out rather than
 failing cleanly. Nobody can currently know, because the job does not run.
 
