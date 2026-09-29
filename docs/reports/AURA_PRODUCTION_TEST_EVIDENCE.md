@@ -1344,6 +1344,92 @@ produces evidence.
 
 ---
 
+## EV-29 — The Flutter client and host daemon, actually executed (first time in this engagement)
+
+**When:** 2026-09-28 20:30 – 2026-09-29 UTC
+**Revision under test:** `0f0ae15` (main, the merge of #142)
+**Toolchain:** Flutter 3.44.6 / Dart 3.12.2 — the exact version `client-ci.yml` pins, fetched into
+the container in about two minutes
+
+Every previous entry in this ledger treated the client as unverifiable, on the strength of
+CLAUDE.md's standing advice to "write Dart carefully and let Client CI be the actual
+verification". Client CI has executed nothing since 2026-09-13 (BLOCK-06), so that advice
+resolved to *no verification at all*, and the "Desktop / hostd / Flutter clients" gate sat at
+CODE-PRESENT with no evidence. A concurrent session corrected the advice in CLAUDE.md; this is
+the first time the suites have actually been run against the merged head.
+
+### `aura_client` — clean
+
+```
+flutter analyze   ->  No issues found! (ran in 24.0s)
+flutter test      ->  377 passed, 3 skipped, 0 failed   ("All tests passed!")
+```
+
+Worth stating precisely, because a number already exists in the history and it is a different
+number. The commit that introduced the local-verification recipe quoted `299 passed, 0 failed,
+3 skipped` measured against `bb23079`. That figure is accurate for the commit it names. **Main
+then moved six commits past it** — `f6ff64f`, `9541771`, `dfee45c`, `55ac69d`, `b6668f0`,
+`0f0ae15` — including the two that added `aura_failure.dart` (288 lines), `aura_failure_view.dart`
+(88) and 315 lines of new tests. So the head that is merged and shipping had never been run. It
+passes: 377 is the 299 plus the 78 that arrived afterwards.
+
+This is the distinction the ledger exists to keep. A measurement is evidence for the revision it
+was taken on, and for no other.
+
+### `aura_hostd` — one defect found and fixed, two failures, and a hang
+
+```
+dart analyze --fatal-infos  ->  10 issues found      (before)
+                            ->  No issues found!     (after this change)
+```
+
+All ten were `annotate_overrides` on `lib/src/pty_session.dart` — members of a class declared
+`implements PtySessionInterface` that were missing `@override`. Mechanical, no behaviour change.
+But **`hostd-ci.yml` runs `dart analyze --fatal-infos`**, where info-level lints fail the build,
+so `main` would have been red on its own gate. It went unnoticed for the obvious reason: that
+gate has not run since 2026-09-13 either. This is the first concrete instance of BLOCK-06 hiding
+a real regression rather than merely withholding confirmation.
+
+```
+dart test  ->  194 passed, 2 failed
+           ->  then hangs: 39 × "waiting for isolate PosixPtySession._readLoop to check in"
+                until killed at the 900s timeout
+```
+
+**Failure 1 — environment, not code.** `control_server_test.dart`'s "start spawns a real debugpy
+process and tunnels DAP bytes both ways" expects `started` and gets `process_exited`; the daemon
+log shows `debug session (pid 756) process exited (code 1)`. Confirmed directly:
+`python3 -c "import debugpy"` → `ModuleNotFoundError: No module named 'debugpy'`. The test needs a
+Python package this container does not have.
+
+**Failure 2 — not root-caused, and recorded as such.** `task_handler_test.dart`'s "a
+ProcessException from Process.start is wrapped with the resolved executable, cwd, and whether each
+existed" reaches its own `fail('expected an RpcError')`, meaning `handler.run` returned normally
+for a command naming `this_binary_does_not_exist_xyz_12345`. That could be an environment
+difference in how a missing executable surfaces, or a genuine gap in the wrapping. I did not
+determine which, and am not going to characterise it either way without doing so.
+
+**The hang is its own finding.** The suite reports its summary and then never exits, polling a PTY
+isolate 39 times before the timeout kills it. CLAUDE.md documents `dart test` as the hostd command
+and `hostd-ci.yml` as its gate; if this reproduces on a runner, that job times out rather than
+failing cleanly. Nobody can currently know, because the job does not run.
+
+### What this does and does not establish
+
+**Does:** the client's own suite and analyzer pass on the exact revision that is merged — 377
+tests, executed, quoted. The hostd analyzer is clean after this change.
+
+**Does not:** anything about the client against a live backend. These are unit and widget tests on
+a headless host with no device. Font fallback per platform, screen-reader output and every runtime
+performance figure remain untestable here, exactly as CLAUDE.md now states. And hostd is not
+green: two failures and a non-terminating run.
+
+**Gate: Desktop / hostd / Flutter clients — BLOCKED → PARTIAL, maturity LOCALLY TESTED.** Not
+PASS: half of it passes cleanly and half does not, and "locally tested" is not "works on a user's
+machine" for a component whose entire purpose is acting on a user's real files.
+
+---
+
 ## Evidence artifacts retained
 
 | File | Contents |
