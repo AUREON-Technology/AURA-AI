@@ -1464,11 +1464,38 @@ reverted rather than shipped:*
    shell exits by itself never enters the kill branch at all. The wait timed out, so the reader
    genuinely never reported in.
 
-*The surviving hypothesis, untested and recorded as such:* **file-descriptor reuse.** Isolates
-share the process's fd table. If session A's reader is still blocked on master fd *N* when the
-parent closes *N*, and session B's `posix_openpt` is then handed *N* again, A's blocked read is
-now attached to B's pty — it will never see A's EIO, and A's isolate never exits. That fits
-"each alone is clean, the pair hangs" exactly. It is a hypothesis; it has not been demonstrated.
+*The fd-reuse hypothesis, now demonstrated (2026-09-29 07:24 UTC).* Isolates share the process's
+fd table. A probe that starts session A, disposes it, then starts session B, reading
+`/proc/self/fd` at each step:
+
+```
+A opened fds:                  [10, 17, 18, 19]
+after dispose(A), still open:  [17, 18]
+B opened fds:                  [10, 12, 14, 19]
+REUSED from A:                 [10, 19]
+```
+
+**B was handed back exactly the descriptor numbers A had used.** So when A's reader isolate is
+still parked in `libc.read()` on master fd 10 or 19 — which is precisely the state the earlier
+sentinel-wait proved it stays in — that read is now attached to *B's* pty. It will never observe
+A's EIO, because A's pty is gone; it waits on B's instead. That accounts exactly for "each test
+alone is clean, the two together hang", and it explains why waiting for A's sentinel timed out.
+
+This is no longer a hypothesis. What remains unresolved is the fix: the reader has to be made to
+*leave* a blocking `read()` before its descriptor can be recycled, which means either a
+non-blocking master fd with a polled stop flag, or some other way to wake the loop. That is a
+redesign of the read loop rather than a reordering of `dispose()`, and it is a design call for
+whoever owns this code.
+
+*A second, independent defect the same probe exposed:* **`dispose()` leaks two descriptors per
+session.** Fds 17 and 18 were still open after A was disposed. They are almost certainly the
+`Process.start` stdout/stderr pipes that `start()` drains with `unawaited(...)` and never closes —
+the ones its own comment describes as existing but going unused, because the perl helper redirects
+onto the pty before the shell writes anything. In a test run that is invisible. In `aura_hostd`,
+a daemon, it is two descriptors per terminal session opened and closed, against the process's
+fd limit, for as long as the daemon runs. Recorded rather than fixed here for the same reason as
+the hang: it sits in the same teardown path, and that path has already defeated two plausible
+changes.
 
 *Why this was not fixed here:* it is a concurrency and descriptor-lifetime defect in a
 long-running daemon's teardown path, and two plausible mechanisms have already proved wrong.
