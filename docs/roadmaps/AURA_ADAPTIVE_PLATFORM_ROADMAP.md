@@ -353,6 +353,29 @@ starts at **DOCUMENTED** as of the baseline.
 - **Exit criteria:** goldens green in CI; live run against real Postgres for both pilots recorded.
 - **Rollback:** additive.
 - **Evidence required:** `docs/reports/ap3-discovery.md`.
+- **As built (2026-10-01):** IMPLEMENTED. Goldens pass with no database, and a live capture of both
+  pilots equals the recorded catalog on PostgreSQL 16. Differences from the plan:
+  - **Two halves per connector.** Each connector separates a live **capture** from a **pure
+    mapping**. Goldens replay the recorded catalog snapshots (`golden/catalog.json`) and specs
+    through the mapping; `scripts/pilot_discovery_goldens.py` records and renders them.
+  - **Profiles are computed in SQL.** Counts, distinct counts and pattern matches are calculated
+    by the database, so row values never reach the process.
+  - **Values are opt-in.** Distinct values of low-cardinality text columns come back only with
+    `sample_values`, per run. Schema-declared values (enum labels, CHECK lists) are always
+    captured.
+  - **External `$ref`s** in an OpenAPI spec are recorded as an issue and never fetched.
+  - **Spec fetches follow the SSRF policy.** Hosts are resolved first, redirects are refused,
+    and internal addresses are refused unless `allow_private_network` is set. Even then,
+    loopback, link-local and carrier-grade NAT stay refused.
+  - **Discovery runs only on active connectors**, through
+    `POST /api/v3/admin/connectors/{id}/discover`.
+  - **Not persisted yet.** Reports are returned and audited by digest; storage arrives with the
+    Project Twin in AP4.
+  - **No compose `pilot` profile.** The pilots load into any Postgres through the golden script
+    and the load tests. A standing pilot service is deferred to AP9, where the Console runs
+    against it.
+  - **OpenAPI with a credential** reports `write_capable=None`, so activation is refused until
+    token-scope checks exist. Public and delegated specs work today.
 
 ### AP4 — Normalization, Project Twin and Diff *(Core model)*
 
@@ -626,7 +649,7 @@ M0 (CI evidence) gates every A-phase beyond BUILT.   M4 (GPU) gates label qualit
 | AP0 | Charter, ADRs, gaps | Critical | — | Low | Low | DOCUMENTED | docs/ | Merged + schema test |
 | AP1 | AUSM + Blueprint model | Critical | AP0 | Medium | Low | IMPLEMENTED (tests pass locally; CI pending M0) | domain/ | Schema + digest tests |
 | AP2 | Connectors + vault | Critical | AP1, (SEC-01..03) | Medium | High (secrets) | IMPLEMENTED (real-Postgres tests pass locally; CI + dev stack pending) | ports/, adaptation/, api/ | Fixture connector approved |
-| AP3 | Discovery PG + OpenAPI | Critical | AP2 | Medium | Medium | DOCUMENTED | adapters/connectors/, fixtures | Pilot goldens + live run |
+| AP3 | Discovery PG + OpenAPI | Critical | AP2 | Medium | Medium | IMPLEMENTED (goldens + live Postgres pass locally; CI pending) | adapters/connectors/, fixtures | Pilot goldens + live run |
 | AP4 | Twin + diff | Critical | AP3, (M4) | High | Medium | DOCUMENTED | adaptation/normalize, twin | Deterministic twins + diffs |
 | AP5 | Capabilities + planner | High | AP4 | Medium | Medium | DOCUMENTED | adaptation/capabilities | Same primitives, both pilots |
 | AP6 | Factories + compiler | Critical | AP5 | High | High (SQL safety) | DOCUMENTED | adaptation/factories, domain/tools | Valid blueprints + fitness |

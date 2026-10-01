@@ -1160,7 +1160,14 @@ gaps:
     test: golden discovered-artifact sets for both pilots (default pytest, no Docker)
     metric: discovery duration; elements discovered; truncations
     exit_condition: AP3 exit criteria met; docs/reports/ap3-discovery.md.
-    status: open
+    status: built_not_proven
+    reverified_2026_10_01: >-
+      AP3 implemented: Postgres catalog capture + pure mapping (structure, grants, SQL-computed
+      profiles, values opt-in), OpenAPI 3.x fetch under the SSRF policy + pure mapping, HR and
+      e-commerce pilots with recorded goldens, discovery service and Super Admin route. Default
+      suite 3055 passed; live capture equals the recorded catalog for both pilots on Postgres 16.
+      Not proven until CI is green on main.
+    evidence: docs/reports/ap3-discovery.md
 
   - gap_id: GAP-052
     component: adaptation/project-twin
