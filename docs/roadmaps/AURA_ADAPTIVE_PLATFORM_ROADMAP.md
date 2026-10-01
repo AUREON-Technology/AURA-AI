@@ -309,6 +309,21 @@ starts at **DOCUMENTED** as of the baseline.
   stack; secrets and redaction tests green in CI.
 - **Rollback:** feature flag `AURA_ADAPTATION_ENABLED=false` removes routes and wiring.
 - **Evidence required:** `docs/reports/ap2-connector-framework.md`.
+- **As built (2026-10-01):** IMPLEMENTED and tested against a real Postgres 16 locally. Where the
+  build differs from the plan above:
+  - The vault uses the third-party-credentials key (`AURA_SECRETS_ENCRYPTION_KEY`, now a
+    rotatable list), not the data key. Losing it costs "re-enter connector passwords", not user
+    memories.
+  - With the flag off the routes stay mounted and answer 503, so the route-auth suite keeps
+    covering them.
+  - The IDOR suite does not apply: connectors are install-wide Super Admin resources with no
+    per-user owner.
+  - The only metric so far is `aura_connector_health{connector,kind}`. Call latency and error
+    counters arrive with reads in AP6.
+  - Schema comes only from migration `0009`; the adapter issues no runtime DDL.
+  - Registration is deliberately not idempotency-keyed, because that store hashes the body,
+    which carries the credential.
+  - Postgres only has health and privilege inspection; discovery is AP3.
 
 ### AP3 — Deterministic Discovery: Postgres and OpenAPI *(Discovery)*
 
@@ -610,7 +625,7 @@ M0 (CI evidence) gates every A-phase beyond BUILT.   M4 (GPU) gates label qualit
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | AP0 | Charter, ADRs, gaps | Critical | — | Low | Low | DOCUMENTED | docs/ | Merged + schema test |
 | AP1 | AUSM + Blueprint model | Critical | AP0 | Medium | Low | IMPLEMENTED (tests pass locally; CI pending M0) | domain/ | Schema + digest tests |
-| AP2 | Connectors + vault | Critical | AP1, (SEC-01..03) | Medium | High (secrets) | DOCUMENTED | ports/, adaptation/, api/ | Fixture connector approved |
+| AP2 | Connectors + vault | Critical | AP1, (SEC-01..03) | Medium | High (secrets) | IMPLEMENTED (real-Postgres tests pass locally; CI + dev stack pending) | ports/, adaptation/, api/ | Fixture connector approved |
 | AP3 | Discovery PG + OpenAPI | Critical | AP2 | Medium | Medium | DOCUMENTED | adapters/connectors/, fixtures | Pilot goldens + live run |
 | AP4 | Twin + diff | Critical | AP3, (M4) | High | Medium | DOCUMENTED | adaptation/normalize, twin | Deterministic twins + diffs |
 | AP5 | Capabilities + planner | High | AP4 | Medium | Medium | DOCUMENTED | adaptation/capabilities | Same primitives, both pilots |

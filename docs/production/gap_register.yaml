@@ -1139,7 +1139,14 @@ gaps:
     test: tests/architecture/test_connector_secrets.py; log-redaction test; route-auth/IDOR suites
     metric: aura_connector_health{kind}
     exit_condition: AP2 exit criteria met; docs/reports/ap2-connector-framework.md.
-    status: open
+    status: built_not_proven
+    reverified_2026_10_01: >-
+      AP2 implemented: connector ports, ConnectorRegistry (approval bound to the descriptor
+      digest; activation refuses unhealthy or write-capable credentials), encrypted vault with no
+      plaintext path, PostgreSQL health/privilege inspection, migration 0009, Super Admin routes
+      behind AURA_ADAPTATION_ENABLED. Default suite 3012 passed, 12 real-Postgres tests pass
+      locally. Not proven until CI is green on main and the dev-stack run is recorded.
+    evidence: docs/reports/ap2-connector-framework.md
 
   - gap_id: GAP-051
     component: adaptation/discovery

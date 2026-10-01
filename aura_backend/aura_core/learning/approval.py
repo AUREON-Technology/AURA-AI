@@ -42,6 +42,8 @@ class ApprovalKind(str, enum.Enum):
     MODEL_PROMOTION = "model_promotion"
     INDEX_PROMOTION = "index_promotion"
     SOURCE_REGISTRATION = "source_registration"
+    #: A Super Admin's decision to let AURA reach a connected system (ADR-021, Track AP2).
+    CONNECTOR_REGISTRATION = "connector_registration"
 
     def __str__(self) -> str:
         return self.value

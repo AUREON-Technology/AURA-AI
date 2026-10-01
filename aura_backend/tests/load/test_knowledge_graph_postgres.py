@@ -372,7 +372,8 @@ class TestAlembic:
 
         conn = await asyncpg.connect(fresh_database)
         try:
-            assert await conn.fetchval("SELECT version_num FROM alembic_version") == "0008"
+            head = _alembic(_sqlalchemy_url(fresh_database), "heads").stdout.split()[0]
+            assert await conn.fetchval("SELECT version_num FROM alembic_version") == head
             columns = {r["column_name"] for r in await conn.fetch(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = 'aura_graph_relations'")}

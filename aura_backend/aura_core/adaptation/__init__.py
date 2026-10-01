@@ -1,0 +1,9 @@
+"""The Adaptive Intelligence Layer (Track AP, ADR-018).
+
+Turns a connected system into a Super-Admin-approved Project Blueprint the unchanged core
+executes. This package only ever produces *data* -- descriptors, twins, blueprints, specs -- and
+never imports kernel internals, edits tool policy or loads code. It is an engine package: it may
+use domain types and ports, never adapters (``tests/architecture/test_dependency_rules.py``).
+
+Built so far: the connector registry (AP2). See ``docs/roadmaps/AURA_ADAPTIVE_PLATFORM_ROADMAP.md``.
+"""

@@ -56,6 +56,9 @@ __all__ = [
     "SandboxSettings",
     "DATA_ENCRYPTION_KEYS_ENV",
     "data_encryption_keys",
+    "SECRETS_ENCRYPTION_KEYS_ENV",
+    "secrets_encryption_keys",
+    "AdaptationSettings",
     "load_settings",
 ]
 
@@ -73,6 +76,18 @@ DATA_ENCRYPTION_KEYS_ENV = "AURA_DATA_ENCRYPTION_KEYS"
 def data_encryption_keys() -> list[str]:
     """The configured data keys, newest first. Empty when none is configured."""
     raw = os.environ.get(DATA_ENCRYPTION_KEYS_ENV, "") or ""
+    return [part for part in re.split(r"[\s,]+", raw.strip()) if part]
+
+
+#: Keys for third-party credentials at rest -- the GitHub OAuth tokens (``secrets_crypto.py``)
+#: and connector credentials (``adapters/credential_vault.py``). One key for the former; the
+#: vault also accepts a comma/whitespace-separated list, newest first, to rotate.
+SECRETS_ENCRYPTION_KEYS_ENV = "AURA_SECRETS_ENCRYPTION_KEY"
+
+
+def secrets_encryption_keys() -> list[str]:
+    """The configured third-party-credential keys, newest first. Empty when none is set."""
+    raw = os.environ.get(SECRETS_ENCRYPTION_KEYS_ENV, "") or ""
     return [part for part in re.split(r"[\s,]+", raw.strip()) if part]
 
 
@@ -995,6 +1010,23 @@ def _parse_mcp_servers(raw: str) -> tuple[McpServerConfig, ...]:
 
 
 @dataclass(frozen=True, slots=True)
+class AdaptationSettings:
+    """Track AP: the Adaptive Intelligence Layer (``docs/roadmaps/AURA_ADAPTIVE_PLATFORM_ROADMAP.md``).
+
+    Off by default. With it off the container builds no connector registry and every
+    ``/api/v3/admin/connectors`` route answers 503 -- the routes stay mounted so the route-auth
+    suite keeps covering them. Turning it on also needs ``AURA_SECRETS_ENCRYPTION_KEY`` before any
+    credentialed connector can be registered: the vault never falls back to plaintext.
+    """
+
+    enabled: bool = False
+
+    @classmethod
+    def from_env(cls) -> "AdaptationSettings":
+        return cls(enabled=_bool("ADAPTATION_ENABLED", False))
+
+
+@dataclass(frozen=True, slots=True)
 class McpSettings:
     """Model Context Protocol client configuration.
 
@@ -1405,6 +1437,7 @@ class AuraSettings:
     learning: LearningSettings = field(default_factory=LearningSettings)
     voice: VoiceSettings = field(default_factory=VoiceSettings)
     mcp: McpSettings = field(default_factory=McpSettings)
+    adaptation: AdaptationSettings = field(default_factory=AdaptationSettings)
     github: GitHubSettings = field(default_factory=GitHubSettings)
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
     release: ReleaseSettings = field(default_factory=ReleaseSettings)
@@ -1439,6 +1472,7 @@ class AuraSettings:
             learning=LearningSettings.from_env(),
             voice=VoiceSettings.from_env(),
             mcp=McpSettings.from_env(),
+            adaptation=AdaptationSettings.from_env(),
             github=GitHubSettings.from_env(),
             sandbox=SandboxSettings.from_env(),
             release=ReleaseSettings.from_env(),

@@ -1208,6 +1208,21 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         Request=Request,
     )
 
+    from .admin_adaptation import register_adaptation_ops
+
+    register_adaptation_ops(
+        router,
+        container,
+        principal=principal,
+        require_super_admin=require_super_admin,
+        idempotent=idempotent,
+        Depends=Depends,
+        HTTPException=HTTPException,
+        JSONResponse=JSONResponse,
+        Query=Query,
+        Request=Request,
+    )
+
     from .voice_live import register_voice_live
 
     register_voice_live(
