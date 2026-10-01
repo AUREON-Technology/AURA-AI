@@ -477,6 +477,13 @@ class Container:
 
         # Track AP (ADR-018/021). None unless AURA_ADAPTATION_ENABLED; the admin routes answer 503.
         self.connectors = self._build_adaptation(use_postgres=use_postgres)
+        self.discovery = None
+        if self.connectors is not None:
+            from .adaptation.discovery import DiscoveryService
+
+            self.discovery = DiscoveryService(
+                registry=self.connectors, clock=self.clock, audit=self.audit, metrics=self.metrics
+            )
 
         self.kernel = AIKernel(
             KernelDependencies(
@@ -653,6 +660,7 @@ class Container:
         if not self.settings.adaptation.enabled:
             return None
         from .adaptation.connectors import ConnectorRegistry
+        from .adapters.connectors.openapi import OpenApiConnectorFactory
         from .adapters.connectors.postgres import PostgresConnectorFactory
         from .adapters.credential_vault import (
             SECRETS_KEYS_ENV,
@@ -681,7 +689,10 @@ class Container:
             store=store,
             vault=vault,
             approvals=self.approvals,
-            factories={ConnectorKind.POSTGRES: PostgresConnectorFactory(forbidden_targets=(url,))},
+            factories={
+                ConnectorKind.POSTGRES: PostgresConnectorFactory(forbidden_targets=(url,)),
+                ConnectorKind.OPENAPI: OpenApiConnectorFactory(),
+            },
             clock=self.clock,
             audit=self.audit,
             metrics=self.metrics,

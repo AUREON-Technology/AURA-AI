@@ -33,6 +33,18 @@ data-access tools; if a model wrote SQL, one injected comment could become an ex
 - **Trusting the target admin's schema text.** The target admin is not AURA's admin; the two trust
   domains differ.
 
+## Implementation notes (AP3, 2026-10-01)
+
+- **Wrapped text.** Discovery (`aura_core/domain/discovery.py`) carries every name and description
+  as `UntrustedText`. Structural attribute strings follow the same character rules. The pilot
+  fixtures contain a hostile column comment and a hostile OpenAPI summary, and tests check that
+  both stay wrapped.
+- **No row values by default.** Profiles are aggregates computed in SQL. Values appear only where
+  the schema declares them (enum labels, CHECK definitions) or with a per-run Super Admin opt-in.
+- **Outbound fetches are constrained.** OpenAPI specs are fetched under the `fetch_url` SSRF
+  rules, with an explicit, reviewable opt-in for private networks. External `$ref`s are never
+  followed, so a spec cannot make AURA request arbitrary URLs.
+
 ## Consequences
 
 - Some analytical questions need a new primitive (AP5) rather than an ad-hoc query; that is the

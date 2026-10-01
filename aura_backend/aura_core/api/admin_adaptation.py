@@ -29,7 +29,9 @@ from ..domain.connectors import (
     Credential,
     IdentityMode,
 )
+from ..domain.discovery import DiscoveryBudget
 from ..domain.errors import ValidationError
+from ..domain.serialization import to_data
 
 __all__ = ["register_adaptation_ops"]
 
@@ -57,6 +59,13 @@ def register_adaptation_ops(
 
     class ActivateRequest(BaseModel):
         approval_id: str = Field(min_length=1, max_length=128)
+
+    class DiscoverRequest(BaseModel):
+        max_objects: int = Field(default=5000, ge=1, le=100_000)
+        sample_rows: int = Field(default=1000, ge=0, le=100_000)
+        max_profiled_columns: int = Field(default=64, ge=0, le=512)
+        max_seconds: float = Field(default=120.0, ge=1.0, le=3600.0)
+        sample_values: bool = False
 
     def registry() -> Any:
         connectors = getattr(container, "connectors", None)
@@ -122,6 +131,26 @@ def register_adaptation_ops(
         require_super_admin(caller)
         record = await registry().activate(connector_id, approval_id=payload.approval_id, by=actor(caller))
         return JSONResponse(content={"connector": _record_payload(record)})
+
+    @router.post("/admin/connectors/{connector_id}/discover")
+    async def discover_connector(
+        connector_id: str, caller=Depends(principal), payload: DiscoverRequest | None = None
+    ) -> JSONResponse:
+        """Describe an *active* connector's system (AP3). Returns the full report; everything
+        human-readable in it is the target system's own text and must be rendered as text."""
+        require_super_admin(caller)
+        service = getattr(container, "discovery", None)
+        if service is None:
+            registry()  # raises the same 503 as every other route here
+        budget = DiscoveryBudget(**(payload or DiscoverRequest()).model_dump())
+        report = await service.discover(connector_id, budget=budget, by=actor(caller))
+        return JSONResponse(content={
+            "summary": {
+                "source_id": report.source_id, "digest": report.digest, "counts": report.counts(),
+                "truncated": report.truncated, "issues": [to_data(i) for i in report.issues],
+            },
+            "report": to_data(report),
+        })
 
     @router.post("/admin/connectors/{connector_id}/disable")
     async def disable_connector(connector_id: str, caller=Depends(principal)) -> JSONResponse:

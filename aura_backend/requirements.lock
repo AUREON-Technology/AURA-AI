@@ -343,6 +343,7 @@ python-multipart==0.0.32
     #   mcp
 pyyaml==6.0.3
     # via
+    #   -r requirements.txt
     #   ctranslate2
     #   huggingface-hub
     #   transformers

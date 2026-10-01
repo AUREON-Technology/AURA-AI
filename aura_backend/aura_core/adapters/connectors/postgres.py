@@ -1,8 +1,9 @@
-"""PostgreSQL connector: reachability and privilege inspection (AP2).
+"""PostgreSQL connector: reachability, privilege inspection (AP2) and discovery (AP3).
 
-Discovery (AP3) and templated reads (AP6) build on this module; for now it answers the two
-questions activation asks: *can AURA reach the database with this credential*, and *could that
-credential change anything*.
+Templated reads (AP6) build on this module. ``health()`` answers the two questions activation
+asks -- *can AURA reach the database with this credential*, and *could that credential change
+anything* -- and ``discover()`` captures the catalog (``postgres_catalog.py``). The optional
+``schemas`` option (comma-separated) narrows discovery to named schemas.
 
 Read-only is enforced twice, independently:
 
@@ -30,7 +31,10 @@ from typing import Any, Sequence
 from urllib.parse import urlsplit
 
 from ...domain.connectors import ConnectorDescriptor, ConnectorHealth, Credential, HealthStatus
+from ...domain.discovery import DiscoveryBudget, DiscoveryReport
+from ...domain.errors import DependencyUnavailableError
 from ...observability.logging import get_logger
+from .postgres_catalog import artifacts_from_catalog, capture_catalog
 
 __all__ = ["PostgresConnectorFactory", "PostgresConnector", "PRIVILEGE_INSPECTION_SQL"]
 
@@ -115,33 +119,33 @@ class PostgresConnector:
         self._credential = credential
         self._forbidden = forbidden
 
-    async def health(self) -> ConnectorHealth:
-        started = time.monotonic()
-
-        def result(status: HealthStatus, reason: str, **extra: Any) -> ConnectorHealth:
-            return ConnectorHealth(
-                status, reason, latency_ms=round((time.monotonic() - started) * 1000.0, 1), **extra
-            )
-
+    def _preflight(self) -> str | None:
+        """A reason code if the descriptor cannot be used at all, before any driver call."""
         target = _target(self.descriptor.endpoint)
         if target is None or urlsplit(self.descriptor.endpoint).scheme not in _SCHEMES:
-            return result(HealthStatus.UNHEALTHY, "invalid_endpoint")
+            return "invalid_endpoint"
         if target in self._forbidden:
-            return result(HealthStatus.UNHEALTHY, "own_database")
+            return "own_database"
         sslmode = str(self.descriptor.options.get("sslmode", "prefer"))
         user = self.descriptor.options.get("user")
         if sslmode not in _SSL_MODES or not isinstance(user, str) or not user:
-            return result(HealthStatus.UNHEALTHY, "invalid_options")
+            return "invalid_options"
+        return None
 
+    async def _connect(self) -> tuple[Any, str | None]:
+        """(connection, None) or (None, reason code). Never raises for the target's failures."""
+        reason = self._preflight()
+        if reason is not None:
+            return None, reason
         import asyncpg  # lazy: vendor driver stays out of import time (ADR-001)
 
         timeout = self.descriptor.timeout_s
         try:
             conn = await asyncpg.connect(
                 dsn=self.descriptor.endpoint,
-                user=user,
+                user=self.descriptor.options["user"],
                 password=self._credential.reveal() if self._credential else None,
-                ssl=sslmode,
+                ssl=str(self.descriptor.options.get("sslmode", "prefer")),
                 timeout=timeout,
                 command_timeout=timeout,
                 server_settings={
@@ -150,14 +154,29 @@ class PostgresConnector:
                 },
             )
         except (asyncpg.InvalidPasswordError, asyncpg.InvalidAuthorizationSpecificationError):
-            return result(HealthStatus.UNHEALTHY, "auth_failed")
+            return None, "auth_failed"
         except asyncpg.InvalidCatalogNameError:
-            return result(HealthStatus.UNHEALTHY, "unknown_database")
+            return None, "unknown_database"
         except (OSError, asyncio.TimeoutError, asyncpg.CannotConnectNowError):
-            return result(HealthStatus.UNHEALTHY, "unreachable")
+            return None, "unreachable"
         except asyncpg.PostgresError as exc:
             logger.info("postgres connector refused", extra={"connector": self.descriptor.id, "sqlstate": exc.sqlstate})
-            return result(HealthStatus.UNHEALTHY, "connect_failed")
+            return None, "connect_failed"
+        return conn, None
+
+    async def health(self) -> ConnectorHealth:
+        started = time.monotonic()
+
+        def result(status: HealthStatus, reason: str, **extra: Any) -> ConnectorHealth:
+            return ConnectorHealth(
+                status, reason, latency_ms=round((time.monotonic() - started) * 1000.0, 1), **extra
+            )
+
+        conn, reason = await self._connect()
+        if conn is None:
+            return result(HealthStatus.UNHEALTHY, reason or "connect_failed")
+        import asyncpg
+
         try:
             async with conn.transaction(readonly=True):
                 row = await conn.fetchrow(PRIVILEGE_INSPECTION_SQL)
@@ -165,11 +184,37 @@ class PostgresConnector:
             logger.info("postgres privilege inspection failed", extra={"connector": self.descriptor.id, "sqlstate": exc.sqlstate})
             return result(HealthStatus.UNHEALTHY, "inspection_failed")
         finally:
-            await conn.close(timeout=timeout)
+            await conn.close(timeout=self.descriptor.timeout_s)
         if row is None:  # current_user has no pg_roles row: cannot vouch for it
             return result(HealthStatus.UNHEALTHY, "inspection_failed")
         findings = tuple(name for name in _FINDINGS if row[name])
         return result(HealthStatus.HEALTHY, "ok", write_capable=bool(findings), findings=findings)
+
+    async def discover(self, budget: DiscoveryBudget) -> DiscoveryReport:
+        """Capture the catalog and a bounded profile, then map it (``postgres_catalog``)."""
+        conn, reason = await self._connect()
+        if conn is None:
+            raise DependencyUnavailableError(
+                "the connected database could not be reached for discovery",
+                dependency="connector", details={"connector": self.descriptor.id, "reason": reason},
+            )
+        import asyncpg
+
+        schemas = self.descriptor.options.get("schemas")
+        try:
+            snapshot = await capture_catalog(
+                conn, budget=budget, timeout_s=self.descriptor.timeout_s,
+                schemas=[s.strip() for s in schemas.split(",") if s.strip()] if isinstance(schemas, str) else None,
+            )
+        except asyncpg.PostgresError as exc:
+            logger.info("postgres discovery failed", extra={"connector": self.descriptor.id, "sqlstate": exc.sqlstate})
+            raise DependencyUnavailableError(
+                "catalog discovery failed", dependency="connector",
+                details={"connector": self.descriptor.id, "sqlstate": exc.sqlstate},
+            ) from None
+        finally:
+            await conn.close(timeout=self.descriptor.timeout_s)
+        return artifacts_from_catalog(self.descriptor.id, snapshot, budget)
 
     async def aclose(self) -> None:
         """Nothing held between calls yet; each health check opens and closes its own session."""
