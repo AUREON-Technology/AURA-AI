@@ -84,7 +84,7 @@ hygiene and doc accuracy.
 | Severity | open | in_progress | built_not_proven | proven | closed_stale |
 | --- | --- | --- | --- | --- | --- |
 | P0 | 5 | 0 | 2 | 0 | 0 |
-| P1 | 12 | 0 | 5 | 0 | 1 |
+| P1 | 11 | 0 | 6 | 0 | 1 |
 | P2 | 21 | 1 | 6 | 0 | 1 |
 | P3 | 6 | 0 | 1 | 0 | 1 |
 
@@ -114,7 +114,7 @@ Sorted by status (`closed_stale` last), then severity. The full text, citations 
 | GAP-036 | P1 | `open` | observability/http-metrics | platform-ops | (2026-09-25) The load harness confirmed two more measurement holes: aura_turns_in_flight is only updated on the non-streaming AIKernel.run path (every client u… | Metrics live on the VPS and wired into PRODUCTION_SLO alerts. | — |
 | GAP-042 | P1 | `open` | supply-chain/model-licensing | coordinator | No model license review is recorded anywhere in the tree. The production chat model is Qwen2.5-3B-Instruct (via the Ollama tag qwen2.5:3b-instruct-q4_K_M); fro… | License review recorded per model in MODEL_REGISTRY.md; any incompatible model replaced. | — |
 | GAP-046 | P1 | `open` | deploy/backup-secret-scope | platform-ops | The backup service mounts the whole deploy/secrets directory read-only at /run/backup-secrets (docker-compose.prod.yml, since 681780d), in a container on the e… | Backup-only secrets moved to their own directory or individual file mounts, with the fitness test, and one backup cycle run on the VPS after the change. | GAP-028 |
-| GAP-050 | P1 | `open` | adaptation/connectors | platform-core | No connector framework, credential vault or connector approval flow. External integrations are limited to GitHub, MCP and the HTTPS source fetcher. | AP2 exit criteria met; docs/reports/ap2-connector-framework.md. | GAP-049, GAP-048 |
+| GAP-050 | P1 | `built_not_proven` | adaptation/connectors | platform-core | (2026-10-01) AP2 implemented: connector ports, ConnectorRegistry (approval bound to the descriptor digest; activation refuses unhealthy or write-capable creden… | AP2 exit criteria met; docs/reports/ap2-connector-framework.md. | GAP-049, GAP-048 |
 | GAP-054 | P1 | `open` | adaptation/compiler | platform-core | No factory or compiler produces tools, agents, workflows, UI manifests or eval suites from a system model, and no safe generated-query mechanism exists. | AP6 exit criteria met; docs/reports/ap6-blueprint-compiler.md. | GAP-053, GAP-055 |
 | GAP-056 | P1 | `open` | adaptation/runtime | platform-core | The agent registry is immutable and process-wide, and there is no versioned, approvable activation of generated agents and tools. | AP7 exit criteria met; docs/reports/ap7-blueprint-runtime.md. | GAP-054, GAP-048 |
 | GAP-059 | P1 | `open` | adaptation/knowledge-and-identity | platform-core | No file, document or Git discovery; CompositeFetcher (aura_core/learning/sources.py:237) is never instantiated; no delegated identity passthrough; Qdrant treat… | AP10 exit criteria met after CB-11 is fixed; docs/reports/ap10-connectors-knowledge.md. | GAP-058 |

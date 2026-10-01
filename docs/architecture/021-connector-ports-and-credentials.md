@@ -37,6 +37,31 @@ than anything AURA stores today.
   can enforce its own.
 - **Read/write connector from day one.** Writes depend on SEC-01, which is still open.
 
+## Implementation notes (AP2, 2026-10-01)
+
+- **Key.** The vault seals with `AURA_SECRETS_ENCRYPTION_KEY`, the third-party-credentials key
+  (`secrets_crypto.py`). It is now accepted as a newest-first list for rotation. It does not use
+  the data key.
+- **Primitive.** The primitive is `FieldCipher`. Each ciphertext is bound to
+  `connector_credential:<secret_ref>`, so moving a ciphertext to another reference fails
+  authentication.
+- **No plaintext.** With no key, `put` and `get` refuse. A plaintext value found at rest is
+  refused, not used. Migration 0009 also enforces this with a CHECK on the `aura-enc:v1:`
+  envelope.
+- **Activation** (`ConnectorRegistry.activate`) requires all of:
+  - an approved, unexpired `CONNECTOR_REGISTRATION` approval for this connector, bound to the
+    descriptor's current digest, which covers `secret_ref`;
+  - a healthy check;
+  - `write_capable is False`.
+
+  For PostgreSQL, "could write" means any of: superuser, `CREATEROLE`, `CREATEDB`, replication,
+  `BYPASSRLS`, any table `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE` (inherited grants included), schema
+  `CREATE`, or database `CREATE`. The connector also refuses AURA's own database.
+- **HTTP.** The register route moves `secret` into a redacting `Credential` before anything
+  validates the body, because FastAPI's 422 responses echo input. It is not idempotency-keyed,
+  because that store keeps a body hash, which would be an offline brute-force target for a weak
+  password.
+
 ## Consequences
 
 - Live reads put load on the target system, so per-connector concurrency limits and timeouts are
