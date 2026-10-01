@@ -1100,3 +1100,218 @@ gaps:
       /api/v3/insights/{id}/dismiss owner check (Postgres-only, code-inspected so far) exercised
       against a real Postgres.
     status: built_not_proven
+
+  # --- Track AP: AURA Adaptive AI Platform (docs/roadmaps/AURA_ADAPTIVE_PLATFORM_ROADMAP.md) ---
+  # Added 2026-10-01 at 3c7d8ed. Each entry is one AP-phase capability that does not exist yet.
+
+  - gap_id: GAP-049
+    component: adaptation/domain-model
+    severity: P2
+    current_state: >-
+      No representation of an external system exists. The closest structure is the closed-world
+      GraphSchema (aura_core/domain/graph.py:196), one fixed schema per install for extracted facts.
+    target_state: >-
+      AUSM (14 element kinds, stable ids, mandatory provenance) and a versioned Blueprint with a
+      canonical digest, stdlib-only (ADR-020, ADR-024).
+    owner: platform-core
+    dependencies: [GAP-043]
+    test: round-trip, digest-stability and schema-drift tests (AP1)
+    metric: n/a
+    exit_condition: AP1 exit criteria met with CI evidence in docs/reports/ap1-domain-model.md.
+    status: open
+
+  - gap_id: GAP-050
+    component: adaptation/connectors
+    severity: P1
+    current_state: >-
+      No connector framework, credential vault or connector approval flow. External integrations
+      are limited to GitHub, MCP and the HTTPS source fetcher.
+    target_state: >-
+      Async read-only connector ports, a credential vault (secret_ref only) and Super Admin
+      connector approval, with per-connector identity modes (ADR-021).
+    owner: platform-core
+    dependencies: [GAP-049, GAP-048]
+    test: tests/architecture/test_connector_secrets.py; log-redaction test; route-auth/IDOR suites
+    metric: aura_connector_health{kind}
+    exit_condition: AP2 exit criteria met; docs/reports/ap2-connector-framework.md.
+    status: open
+
+  - gap_id: GAP-051
+    component: adaptation/discovery
+    severity: P2
+    current_state: No database introspection or OpenAPI parsing anywhere in the tree.
+    target_state: >-
+      Deterministic Postgres and OpenAPI 3.x discovery with sampled profiling, plus HR and
+      e-commerce reference pilot fixtures.
+    owner: platform-core
+    dependencies: [GAP-050]
+    test: golden discovered-artifact sets for both pilots (default pytest, no Docker)
+    metric: discovery duration; elements discovered; truncations
+    exit_condition: AP3 exit criteria met; docs/reports/ap3-discovery.md.
+    status: open
+
+  - gap_id: GAP-052
+    component: adaptation/project-twin
+    severity: P2
+    current_state: No versioned model of a connected system and no diff between versions.
+    target_state: >-
+      Deterministic normalization to AUSM, an append-only Project Twin with TwinDiff, process-mining
+      v0 and an optional batch labeling pass with a mandatory CPU degraded mode (ADR-026).
+    owner: platform-core
+    dependencies: [GAP-051]
+    test: same-input-same-digest; diff goldens; test_degraded_without_labeler
+    metric: labeling coverage; labeler latency per element
+    exit_condition: AP4 exit criteria met; docs/reports/ap4-project-twin.md.
+    status: open
+
+  - gap_id: GAP-053
+    component: adaptation/capabilities
+    severity: P2
+    current_state: >-
+      Capabilities are personas hardcoded in Python (build_default_agent_registry,
+      aura_core/agents/registry.py:132); nothing selects capabilities from evidence.
+    target_state: >-
+      Domain-agnostic capability primitives as data and an evidence-linked planner (ADR-023).
+    owner: platform-core
+    dependencies: [GAP-052]
+    test: test_capabilities_are_domain_agnostic; 100% evidenced selections on both pilots
+    metric: capabilities selected per pilot; evidence per selection
+    exit_condition: AP5 exit criteria met; docs/reports/ap5-capability-planning.md.
+    status: open
+
+  - gap_id: GAP-054
+    component: adaptation/compiler
+    severity: P1
+    current_state: >-
+      No factory or compiler produces tools, agents, workflows, UI manifests or eval suites from a
+      system model, and no safe generated-query mechanism exists.
+    target_state: >-
+      Declarative factories and a blueprint compiler; reads only via QueryTemplates over
+      twin-allowlisted identifiers; free-form SQL forbidden (ADR-022).
+    owner: platform-core
+    dependencies: [GAP-053, GAP-055]
+    test: tests/architecture/test_no_freeform_sql.py; parameter fuzz tests; factories emit no code
+    metric: tools/agents/views/eval cases per blueprint
+    exit_condition: AP6 exit criteria met; docs/reports/ap6-blueprint-compiler.md.
+    status: open
+
+  - gap_id: GAP-055
+    component: tools/output-schema
+    severity: P2
+    current_state: >-
+      ToolSpec (aura_core/domain/tools.py:112) has no output schema; tools return str, so results
+      cannot be bound to UI views or compared to goldens structurally.
+    target_state: >-
+      Optional ToolSpec.output_schema with post-execution validation and row-aware truncation;
+      MCP outputSchema mapped (ADR-025).
+    owner: platform-core
+    dependencies: []
+    test: registry validation tests; existing tool suite unchanged
+    metric: generated-tool schema-violation count
+    exit_condition: Field and validation merged with tests green in CI (part of AP6).
+    status: open
+
+  - gap_id: GAP-056
+    component: adaptation/runtime
+    severity: P1
+    current_state: >-
+      The agent registry is immutable and process-wide, and there is no versioned, approvable
+      activation of generated agents and tools.
+    target_state: >-
+      ActiveBlueprint holder (atomic snapshot swap via KernelDependencies.agents), namespaced
+      generated tools, digest-bound approval, alias deploy and rollback (ADR-024).
+    owner: platform-core
+    dependencies: [GAP-054, GAP-048]
+    test: concurrent-turn swap; digest-mismatch refusal; rollback; test_core_immutable_from_adaptation
+    metric: aura_blueprint_active_version; generated-tool error rate
+    exit_condition: AP7 exit criteria met; docs/reports/ap7-blueprint-runtime.md.
+    status: open
+
+  - gap_id: GAP-057
+    component: adaptation/evaluation-gate
+    severity: P2
+    current_state: Evaluation suites are hand-written; nothing generates or gates per-blueprint suites.
+    target_state: >-
+      Generated suites (tool correctness, agent scenarios, permission-denied, out-of-scope,
+      injection) gate deployment; simulation against a pilot replica.
+    owner: evaluation
+    dependencies: [GAP-056, GAP-021]
+    test: gate blocks a seeded-bad blueprint and passes a good one
+    metric: per-blueprint pass rate by suite
+    exit_condition: AP8 exit criteria met; docs/reports/ap8-generated-eval-gate.md.
+    status: open
+
+  - gap_id: GAP-058
+    component: admin/project-factory
+    severity: P2
+    current_state: The console has 9 fixed ops areas and no project, connector, twin or blueprint views.
+    target_state: Console /console/adaptation runs connect → discover → plan → evaluate → approve → deploy → rollback.
+    owner: admin-console
+    dependencies: [GAP-056, GAP-057, GAP-007]
+    test: Playwright specs with mock-gateway fixtures, PR-triggered
+    metric: time from connect to approved blueprint per pilot
+    exit_condition: AP9 exit criteria met; docs/reports/ap9-console-mvp.md.
+    status: open
+
+  - gap_id: GAP-059
+    component: adaptation/knowledge-and-identity
+    severity: P1
+    current_state: >-
+      No file, document or Git discovery; CompositeFetcher (aura_core/learning/sources.py:237) is
+      never instantiated; no delegated identity passthrough; Qdrant treats missing owner_id as
+      global (CB-11).
+    target_state: >-
+      Files/documents/Git (and MySQL/SQL Server) connectors, project knowledge ingested with an
+      explicit owner sentinel, and both identity modes enforced per connector.
+    owner: platform-core
+    dependencies: [GAP-058]
+    test: pilot retrieval eval; cross-identity isolation probe; Git discovery goldens
+    metric: recall@k on pilot documents; delegated refusal rate
+    exit_condition: AP10 exit criteria met after CB-11 is fixed; docs/reports/ap10-connectors-knowledge.md.
+    status: open
+
+  - gap_id: GAP-060
+    component: adaptation/drift
+    severity: P2
+    current_state: No re-discovery, drift detection or impact analysis; one TriggerSpec exists; no workflow runtime.
+    target_state: >-
+      Scheduled re-discovery, impact via evidence links, stale generated tools refused until
+      re-approval, and a read-only workflow runtime v0.
+    owner: platform-core
+    dependencies: [GAP-059]
+    test: column-drop impact fixture; stale-refusal test
+    metric: drift detection latency; stale tool count
+    exit_condition: AP11 exit criteria met; docs/reports/ap11-continuous-adaptation.md.
+    status: open
+
+  - gap_id: GAP-061
+    component: adaptation/surfaces-and-writes
+    severity: P2
+    current_state: >-
+      No embeddable widget or public AI API; Flutter routes are hardcoded; no write path to
+      external systems.
+    target_state: >-
+      Widget + scoped public API (AP12a), server-driven Flutter from the UI manifest (AP12b) and
+      WriteConnector behind argument-bound confirmation (AP12c).
+    owner: platform-core
+    dependencies: [GAP-060, GAP-013]
+    test: key-scope/rate-limit tests; flutter analyze + test; write eval suite
+    metric: per-surface error rate; confirmed-write rate
+    exit_condition: AP12a/b/c reports in docs/reports/; AP12c only after SEC-01 is closed.
+    status: open
+
+  - gap_id: GAP-062
+    component: adaptation/project-zero
+    severity: P2
+    current_state: >-
+      Personal AURA's personas and domains are hardcoded (agents/registry.py, tools/records.py,
+      Life Hub panes) and run outside any blueprint.
+    target_state: >-
+      Personal AURA runs as Project 0 on the universal engine with parity and shadow evidence;
+      zero-knowledge legacy tables stay out of discovery (ADR-028).
+    owner: platform-core
+    dependencies: [GAP-056]
+    test: blueprint-vs-default registry parity test; shadow eval comparison
+    metric: shadow eval delta (target 0 regressions)
+    exit_condition: AP13.1–AP13.5 exit criteria met; docs/reports/ap13-project-zero.md.
+    status: open

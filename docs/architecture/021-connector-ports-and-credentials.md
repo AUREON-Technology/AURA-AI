@@ -1,0 +1,44 @@
+# ADR-021 — Connector ports, identity modes and the credential vault
+
+**Status:** Proposed · **Date:** 2026-10-01 · **Track:** [AP](../roadmaps/AURA_ADAPTIVE_PLATFORM_ROADMAP.md)
+
+## Context
+
+AURA has no connector framework, OpenAPI parsing or database introspection; the only external
+integrations are GitHub, MCP and an HTTPS fetcher. Track AP needs to discover and read SQL
+databases, OpenAPI services, files and Git repositories — holding credentials far more sensitive
+than anything AURA stores today.
+
+## Decision
+
+1. **Ports** (`aura_core/ports/connectors.py`, async per the ports fitness test): `Connector`
+   (descriptor, health), `DiscoveryConnector` (`discover()` → raw artefacts), `ReadConnector`
+   (`read(QueryTemplate, params, identity)`). **There is no write method in v1.** Writes arrive
+   later as a separate `WriteConnector` port behind argument-bound confirmation (SEC-01), so a v1
+   connector cannot write by construction.
+2. **Data access is federated:** structured data is read live through connectors, never bulk
+   copied. Only documents and text are indexed into project knowledge.
+3. **Identity mode per connector:**
+   - `DELEGATED` — the end user's OIDC/OAuth token is forwarded per call; the target system
+     enforces its own permissions; AURA RBAC is an additional filter. Tokens are never persisted.
+   - `SERVICE_ACCOUNT` — a vaulted credential; discovered roles are mapped to AURA policies, and
+     AURA is the enforcing authority. The health check refuses database roles holding write or DDL
+     grants.
+4. **Credential vault:** a `CredentialVault` port; connectors and every Track AP record hold only a
+   `secret_ref`. Credentials are encrypted at rest with a per-stack key, and never appear in
+   blueprints, twins, prompts, logs or telemetry (fitness and redaction tests).
+5. Registering a connector requires a Super Admin approval (`ApprovalKind.CONNECTOR_REGISTRATION`).
+
+## Alternatives rejected
+
+- **Replicate target data into AURA stores.** Duplicates customer data and adds a consistency
+  problem; reconsider only with evidence that live reads cannot meet latency SLOs.
+- **Service account everywhere.** Makes AURA the sole permission authority even where the target
+  can enforce its own.
+- **Read/write connector from day one.** Writes depend on SEC-01, which is still open.
+
+## Consequences
+
+- Live reads put load on the target system, so per-connector concurrency limits and timeouts are
+  part of the descriptor.
+- An expired delegated token fails closed and is never silently retried with the service account.

@@ -53,7 +53,10 @@ reconciled from every earlier plan in `docs/roadmaps/AURA_ROADMAP_RECONCILIATION
 `docs/roadmaps/AURA_CRITICAL_BACKLOG.md`. `docs/AURA_UPGRADE_ROADMAP.md` (phases A–K) is kept as the
 historical evidence ledger for work done before 2026-09-25, and `docs/production/gap_register.yaml`
 stays the machine-checked gap status. Check these before assuming a capability does or doesn't
-exist. The standing rule applies to any work you do here: **don't mark something done without the
+exist. `docs/roadmaps/AURA_ADAPTIVE_PLATFORM_ROADMAP.md` is the canonical plan for the one parallel
+track, **Track AP** (AP0–AP13: attaching AURA to existing software systems via connectors, a
+Universal Semantic Model, a versioned Project Blueprint and Super-Admin-approved deployment;
+ADR-018…028, GAP-049…062). It is gated by M0–M15, not a replacement for them. The standing rule applies to any work you do here: **don't mark something done without the
 evidence its exit criteria name** — "built" and "tested" are not "proven."
 
 ## Commands
@@ -180,7 +183,7 @@ permanent platform adapters mounted outside `aura_core` (ADR-002), not legacy co
 removal.
 
 Full ADR list and the ten essential decisions are in `docs/architecture/00-overview.md` and
-`docs/architecture/001-*.md`–`016-*.md` (there is no 012); read the relevant one before touching
+`docs/architecture/001-*.md`–`028-*.md` (there is no 012 or 017; 018–028 are Track AP drafts, Proposed); read the relevant one before touching
 retrieval, memory, routing, safety, indexing, desktop hostd (011), or engineer workspaces
 (013/014) — each encodes a reason something is shaped the way it is, not just what it does.
 

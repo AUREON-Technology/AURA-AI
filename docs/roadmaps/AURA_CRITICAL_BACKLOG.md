@@ -156,6 +156,24 @@ Severity: **Critical** (blocks everything / live exposure) · **High** (blocks a
 | CB-30 | Medium | Client | Release APK on floating Flutter (GAP-044); 16 uncalled routes; admin CI not on PRs (GAP-007) | Pin; wire/declare; PR-trigger admin | M14 |
 | CB-31 | Low | Docs | CLAUDE.md ADR range/SYNCABLE_MODELS/admin; `rag/agentic.py:119` "no OCR"; duplicate Phase J; gap register dates (GAP-039) | Doc corrections | M0 |
 
+## Track AP — Adaptive AI Platform (AP0–AP13, parallel track)
+
+Plan: [AURA_ADAPTIVE_PLATFORM_ROADMAP.md](AURA_ADAPTIVE_PLATFORM_ROADMAP.md). None of these may be
+reported beyond BUILT until M0 restores CI evidence.
+
+| ID | Sev | Area | Actual state | Required action | Phase |
+| --- | --- | --- | --- | --- | --- |
+| CB-32 | Medium | Governance | No plan, ADRs or gaps for attaching AURA to external systems | Merge track doc, ADR-018…028, GAP-049…062 | AP0 |
+| CB-33 | Medium | Domain model | No representation of an external system (GAP-049) | AUSM + Blueprint + digest | AP1 |
+| CB-34 | High | Connectors / secrets | No connector framework or credential vault (GAP-050) | Read-only ports, `secret_ref` vault, connector approval; after SEC-01..03 | AP2 |
+| CB-35 | Medium | Discovery | No DB introspection or OpenAPI parsing; no pilot systems (GAP-051, GAP-052) | Deterministic discovery, Project Twin + diff, HR/e-commerce pilots | AP3–AP4 |
+| CB-36 | High | Generated access | No safe generated-query mechanism; `ToolSpec` has no output schema (GAP-054, GAP-055) | `QueryTemplate` builder + `test_no_freeform_sql`; `output_schema` | AP6 |
+| CB-37 | High | Runtime seam | Agent registry immutable/process-wide; no versioned activation (GAP-056) | `ActiveBlueprint` swap, digest-bound approval, rollback | AP7 |
+| CB-38 | Medium | Evaluation | No generated, per-blueprint eval gate (GAP-057) | Generated suites incl. injection; gate deploy | AP8 |
+| CB-39 | Medium | Console | No Project Factory UI (GAP-058) | `/console/adaptation` + Playwright | AP9 |
+| CB-40 | High | Isolation | Project knowledge isolation unprovable while CB-11 is open (GAP-059) | Fix CB-11 first; isolation probe | AP10 |
+| CB-41 | Medium | Personal OS | Personal AURA hardcoded outside any blueprint (GAP-062) | Project 0 parity → shadow → retire coupling | AP13 |
+
 ## Not in this backlog (deliberately)
 
 Repository split, Kubernetes/microservices, video understanding, macOS desktop certification,
