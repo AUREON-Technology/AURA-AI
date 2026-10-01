@@ -377,6 +377,14 @@ class Metrics:
             ("bypass",),
             multiprocess_mode="livemax",
         )
+        self.connector_health = self._gauge(
+            "connector_health",
+            "Last health check of each Track AP connector: 1 healthy, 0.5 degraded, 0 unhealthy. "
+            "One install serves one project with a handful of connectors (ADR-019), so the "
+            "connector label is bounded.",
+            ("connector", "kind"),
+            multiprocess_mode="livemax",
+        )
         self.agent_workspaces = self._gauge(
             "agent_workspaces",
             "Durable engineer-agent workspaces by status. Only `hot` costs memory (a warm "
@@ -599,6 +607,10 @@ class Metrics:
         """
         for status in ("hot", "warm"):
             self.agent_workspaces.labels(status=status).set(counts.get(status, 0))
+
+    def set_connector_health(self, connector: str, kind: str, status: str) -> None:
+        value = {"healthy": 1.0, "degraded": 0.5}.get(status, 0.0)
+        self.connector_health.labels(connector=connector, kind=kind).set(value)
 
     def render(self) -> bytes:
         """Prometheus exposition text for the ``/metrics`` endpoint."""

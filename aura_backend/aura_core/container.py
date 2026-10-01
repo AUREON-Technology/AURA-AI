@@ -475,6 +475,9 @@ class Container:
             allow_cpu=settings.learning.finetune_allow_cpu,
         )
 
+        # Track AP (ADR-018/021). None unless AURA_ADAPTATION_ENABLED; the admin routes answer 503.
+        self.connectors = self._build_adaptation(use_postgres=use_postgres)
+
         self.kernel = AIKernel(
             KernelDependencies(
                 router=self.router,
@@ -637,6 +640,52 @@ class Container:
                 f"unknown vector backend {backend!r}", details={"supported": ["memory", "qdrant"]}
             )
         return InMemoryVectorStore()
+
+    def _build_adaptation(self, *, use_postgres: bool) -> Any:
+        """The connector registry, its vault and its stores -- or ``None`` when Track AP is off.
+
+        The vault uses the third-party-credentials key (``AURA_SECRETS_ENCRYPTION_KEY``), not the
+        data key: losing it costs "re-enter every connector password", not every user's memories,
+        so the two rotate independently (``adapters/field_crypto.py``). With no key configured the
+        registry still builds -- connectors that need no credential work, and a credentialed
+        registration is refused by the vault rather than stored in the clear.
+        """
+        if not self.settings.adaptation.enabled:
+            return None
+        from .adaptation.connectors import ConnectorRegistry
+        from .adapters.connectors.postgres import PostgresConnectorFactory
+        from .adapters.credential_vault import (
+            SECRETS_KEYS_ENV,
+            EncryptedCredentialVault,
+            InMemoryCiphertextStore,
+        )
+        from .adapters.field_crypto import FieldCipher
+        from .config.settings import secrets_encryption_keys
+        from .domain.connectors import ConnectorKind
+
+        url = self.settings.infrastructure.database_url
+        if use_postgres:
+            from .adapters.postgres_adaptation import PostgresCiphertextStore, PostgresConnectorStore
+
+            store: Any = PostgresConnectorStore(url, pool=self._postgres_pool())
+            ciphertexts: Any = PostgresCiphertextStore(url, pool=self._postgres_pool())
+        else:
+            from .adapters.memory_adaptation import InMemoryConnectorStore
+
+            store = InMemoryConnectorStore()
+            ciphertexts = InMemoryCiphertextStore()
+        vault = EncryptedCredentialVault(
+            cipher=FieldCipher(secrets_encryption_keys(), setting=SECRETS_KEYS_ENV), store=ciphertexts
+        )
+        return ConnectorRegistry(
+            store=store,
+            vault=vault,
+            approvals=self.approvals,
+            factories={ConnectorKind.POSTGRES: PostgresConnectorFactory(forbidden_targets=(url,))},
+            clock=self.clock,
+            audit=self.audit,
+            metrics=self.metrics,
+        )
 
     def _postgres_pool(self) -> Any:
         """One connection pool shared by every Postgres-backed store.

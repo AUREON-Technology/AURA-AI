@@ -93,31 +93,34 @@ class FieldCipher:
     :class:`ConfigurationError` rather than returning ciphertext.
     """
 
-    def __init__(self, keys: Sequence[str] = ()) -> None:
+    def __init__(self, keys: Sequence[str] = (), *, setting: str = _KEY_ENV) -> None:
+        #: The environment variable the keys came from, named in every error so an operator
+        #: fixes the right one (the connector vault uses this class with a different key).
+        self._setting = setting
         self._fernets: list[tuple[str, Any]] = []
         seen: set[str] = set()
         for position, key in enumerate(keys):
             kid = key_id(key)
             if kid in seen:
                 raise ConfigurationError(
-                    f"{_KEY_ENV} lists the same key twice (position {position})",
-                    details={"setting": _KEY_ENV},
+                    f"{setting} lists the same key twice (position {position})",
+                    details={"setting": setting},
                 )
             seen.add(kid)
-            self._fernets.append((kid, self._build_fernet(key, position)))
+            self._fernets.append((kid, self._build_fernet(key, position, setting)))
 
     @staticmethod
-    def _build_fernet(key: str, position: int) -> Any:
+    def _build_fernet(key: str, position: int, setting: str = _KEY_ENV) -> Any:
         from cryptography.fernet import Fernet
 
         try:
             return Fernet(key.encode("ascii"))
         except Exception as exc:
             raise ConfigurationError(
-                f"{_KEY_ENV} entry {position} is not a valid Fernet key (generate one with: "
+                f"{setting} entry {position} is not a valid Fernet key (generate one with: "
                 "python -c \"from cryptography.fernet import Fernet; "
                 'print(Fernet.generate_key().decode())")',
-                details={"setting": _KEY_ENV, "position": position},
+                details={"setting": setting, "position": position},
             ) from exc
 
     @classmethod
@@ -174,9 +177,9 @@ class FieldCipher:
             return stored  # legacy plaintext row, written before a key was configured
         if not self._fernets:
             raise ConfigurationError(
-                f"an encrypted value was read but {_KEY_ENV} is not set -- this database was "
+                f"an encrypted value was read but {self._setting} is not set -- this database was "
                 "written by a deployment that had a data key; configure the same key(s)",
-                details={"setting": _KEY_ENV},
+                details={"setting": self._setting},
             )
         from cryptography.fernet import InvalidToken
 
