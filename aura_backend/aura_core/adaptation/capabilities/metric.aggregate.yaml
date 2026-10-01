@@ -1,0 +1,20 @@
+# Totals and averages of a numeric measure, optionally grouped. Measures are inferred from
+# column types (confidence 0.5), so the relevance is set to carry an inferred measure over the
+# planner's selection threshold.
+id: metric.aggregate
+version: 1
+summary: Aggregate a numeric measure of an entity (sum, average, count), optionally grouped.
+target: metric
+requires:
+  - name: entity
+    relation: ref
+    ref: entity
+    kind: entity
+    filter: {exclude: {readable: [false]}}
+risk: personal
+cost: 2
+relevance: 0.85
+produces:
+  tool: query.aggregate
+  views: [metric_card]
+  evals: [golden_aggregate]

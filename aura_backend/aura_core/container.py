@@ -479,6 +479,7 @@ class Container:
         self.connectors = self._build_adaptation(use_postgres=use_postgres)
         self.discovery = None
         self.twins = None
+        self.capability_planner = None
         if self.connectors is not None:
             from .adaptation.discovery import DiscoveryService
 
@@ -486,6 +487,13 @@ class Container:
                 registry=self.connectors, clock=self.clock, audit=self.audit, metrics=self.metrics
             )
         self.twins = self._build_twins(use_postgres=use_postgres)
+        self.capability_planner = None
+        if self.twins is not None:
+            from .adaptation.planner import CapabilityRegistry, PlanningService
+
+            self.capability_planner = PlanningService(
+                registry=CapabilityRegistry.from_directory(), twins=self.twins, metrics=self.metrics
+            )
 
         self.kernel = AIKernel(
             KernelDependencies(

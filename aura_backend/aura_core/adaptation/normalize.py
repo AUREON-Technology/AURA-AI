@@ -470,7 +470,6 @@ class _SourceMapper:
         ))
 
     def _security(self, artifact: RawArtifact) -> None:
-        attrs = artifact.attributes
         self._add(AusmElement(
             self.src, artifact.locator, ElementKind.CONSTRAINT, _label(artifact.name.raw()), (self._prov(artifact),),
             description=artifact.description, parent=self._id(SOURCE_LOCATOR),
