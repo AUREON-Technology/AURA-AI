@@ -1111,14 +1111,19 @@ gaps:
       No representation of an external system exists. The closest structure is the closed-world
       GraphSchema (aura_core/domain/graph.py:196), one fixed schema per install for extracted facts.
     target_state: >-
-      AUSM (14 element kinds, stable ids, mandatory provenance) and a versioned Blueprint with a
+      AUSM (13 element kinds plus mandatory provenance, stable ids) and a versioned Blueprint with a
       canonical digest, stdlib-only (ADR-020, ADR-024).
     owner: platform-core
     dependencies: [GAP-043]
     test: round-trip, digest-stability and schema-drift tests (AP1)
     metric: n/a
     exit_condition: AP1 exit criteria met with CI evidence in docs/reports/ap1-domain-model.md.
-    status: open
+    status: built_not_proven
+    reverified_2026_10_01: >-
+      AP1 implemented: aura_core/domain/{ausm,blueprint,untrusted,serialization,connectors}.py,
+      docs/schemas/{blueprint,project_twin}.v1.json, 66 new tests; full default suite 2920 passed
+      and legacy unittest OK, run locally. Not proven until Backend CI is green on main (M0).
+    evidence: docs/reports/ap1-domain-model.md
 
   - gap_id: GAP-050
     component: adaptation/connectors

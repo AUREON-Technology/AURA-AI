@@ -22,7 +22,8 @@ as a model or index promotion (ADR-007, ADR-008).
    fed by the generated evaluation suite; `rollback(version)` repoints.
 5. **Runtime swap without kernel changes:** an `ActiveBlueprint` holder implements the
    `AgentRegistry` read interface over an immutable snapshot passed as `KernelDependencies.agents`.
-   Generated tools are registered under `bp.<version>.*` before the swap and removed after a grace
+   Generated tools are registered as `bp<version>_<name>` (`generated_tool_name()`; tool names are
+   lower-case snake_case and providers cap them at 64 characters) before the swap and removed after a grace
    period. In-flight turns keep what they resolved.
 6. Generated `AgentSpec`s must have an explicit `allowed_tools`; the default risk ceiling is PUBLIC,
    and anything above PERSONAL is listed separately in the approval request.
