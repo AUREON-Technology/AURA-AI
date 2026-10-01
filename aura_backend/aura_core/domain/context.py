@@ -25,7 +25,21 @@ __all__ = [
     "ContextBudget",
     "ContextBundle",
     "user_facing_citations",
+    "fence_untrusted",
 ]
+
+
+def fence_untrusted(content: str, *, nonce: str, source: str) -> str:
+    """Wrap untrusted text in the nonce-delimited DATA fence (ADR-006).
+
+    The single definition of the fence format: :meth:`ContextBundle.render` uses it for every
+    non-SYSTEM item, and :class:`~aura_core.domain.untrusted.UntrustedText` uses it for text
+    discovered in a connected system (ADR-022). Any fence-like sequence in ``content`` is
+    neutralised first. A visible replacement, not zero-width padding: EncodingGuard strips
+    zero-width characters, so that escape would be undone by our own sanitiser.
+    """
+    safe = content.replace("<<<", "(fence)").replace(">>>", "(/fence)")
+    return f'<<<AURA-DATA:{nonce} source="{source}">>>\n{safe}\n<<<END-AURA-DATA:{nonce}>>>'
 
 
 class ContextSection(str, enum.Enum):
@@ -259,15 +273,10 @@ class ContextBundle:
                 if item.channel is TrustChannel.SYSTEM:
                     parts.append(item.content)
                 else:
-                    source = item.provenance or "unattributed"
-                    # Neutralise any fence-like sequence in untrusted content. A visible
-                    # replacement, not zero-width padding: EncodingGuard strips zero-width
-                    # characters, so that escape would be undone by our own sanitiser.
-                    safe = item.content.replace("<<<", "(fence)").replace(">>>", "(/fence)")
                     parts.append(
-                        f'<<<AURA-DATA:{nonce} source="{source}">>>\n'
-                        f"{safe}\n"
-                        f"<<<END-AURA-DATA:{nonce}>>>"
+                        fence_untrusted(
+                            item.content, nonce=nonce, source=item.provenance or "unattributed"
+                        )
                     )
             parts.append("")
         return "\n".join(parts).strip()
