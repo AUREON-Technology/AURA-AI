@@ -85,7 +85,7 @@ hygiene and doc accuracy.
 | --- | --- | --- | --- | --- | --- |
 | P0 | 5 | 0 | 2 | 0 | 0 |
 | P1 | 12 | 0 | 5 | 0 | 1 |
-| P2 | 22 | 1 | 5 | 0 | 1 |
+| P2 | 21 | 1 | 6 | 0 | 1 |
 | P3 | 6 | 0 | 1 | 0 | 1 |
 
 ## All gaps
@@ -136,7 +136,7 @@ Sorted by status (`closed_stale` last), then severity. The full text, citations 
 | GAP-037 | P2 | `open` | observability/histogram-buckets | platform-ops | aura_turn_duration_seconds buckets stop at 60 s and aura_llm_ttft_seconds at 12 s (_TURN_BUCKETS / _TTFT_BUCKETS in aura_core/observability/metrics.py). The me… | Buckets extended; Grafana p95 matches load-test p95 within one bucket. | — |
 | GAP-044 | P2 | `open` | client/release-toolchain | client | release-apk.yml builds the shipped APK/AAB with subosito/flutter-action `channel: stable` (lines 30-32, 76-80) -- a floating toolchain -- while client-ci.yml v… | release-apk.yml pinned to the CI Flutter version; a release build run linked. | GAP-043 |
 | GAP-047 | P2 | `open` | data/dev-prod-key-sharing | platform-ops | aura (prod) and aura-dev on the shared VPS both read deploy/secrets, so they share one data_encryption_keys: dev can decrypt production memory/personal-OS ciph… | Dev stack uses its own key file; documented in deployment-guide.md. | GAP-016 |
-| GAP-049 | P2 | `open` | adaptation/domain-model | platform-core | No representation of an external system exists. The closest structure is the closed-world GraphSchema (aura_core/domain/graph.py:196), one fixed schema per ins… | AP1 exit criteria met with CI evidence in docs/reports/ap1-domain-model.md. | GAP-043 |
+| GAP-049 | P2 | `built_not_proven` | adaptation/domain-model | platform-core | (2026-10-01) AP1 implemented: aura_core/domain/{ausm,blueprint,untrusted,serialization,connectors}.py, docs/schemas/{blueprint,project_twin}.v1.json, 66 new te… | AP1 exit criteria met with CI evidence in docs/reports/ap1-domain-model.md. | GAP-043 |
 | GAP-051 | P2 | `open` | adaptation/discovery | platform-core | No database introspection or OpenAPI parsing anywhere in the tree. | AP3 exit criteria met; docs/reports/ap3-discovery.md. | GAP-050 |
 | GAP-052 | P2 | `open` | adaptation/project-twin | platform-core | No versioned model of a connected system and no diff between versions. | AP4 exit criteria met; docs/reports/ap4-project-twin.md. | GAP-051 |
 | GAP-053 | P2 | `open` | adaptation/capabilities | platform-core | Capabilities are personas hardcoded in Python (build_default_agent_registry, aura_core/agents/registry.py:132); nothing selects capabilities from evidence. | AP5 exit criteria met; docs/reports/ap5-capability-planning.md. | GAP-052 |

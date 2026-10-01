@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/schemas/project_twin.v1.json",
+  "title": "AURA Project Twin (AUSM snapshot, v1)",
+  "$ref": "#/$defs/ProjectTwin",
+  "$defs": {
+    "AusmElement": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "type": "string"
+        },
+        "locator": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "entity",
+            "attribute",
+            "relation",
+            "event",
+            "action",
+            "workflow",
+            "role",
+            "permission",
+            "document",
+            "metric",
+            "state",
+            "constraint",
+            "source"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "provenance": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Provenance"
+          }
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 2000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "refs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "source_id",
+        "locator",
+        "kind",
+        "label",
+        "provenance"
+      ],
+      "description": "One normalised element of a connected system."
+    },
+    "ProjectTwin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AusmElement"
+          }
+        }
+      },
+      "required": [
+        "project_id",
+        "version",
+        "elements"
+      ],
+      "description": "One versioned snapshot of a connected system in AUSM (ADR-020)."
+    },
+    "Provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "type": "string"
+        },
+        "locator": {
+          "type": "string"
+        },
+        "extractor": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "evidence_hash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_id",
+        "locator",
+        "extractor",
+        "confidence",
+        "evidence_hash"
+      ],
+      "description": "One extractor's assertion of one element: where, by what, and how confidently."
+    }
+  }
+}

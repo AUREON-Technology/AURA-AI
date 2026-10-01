@@ -121,7 +121,7 @@ Domains: tasks · calendar · finance · health (PersonalOsRecord + client-encry
    ┌────────────┴─────────────────────────┐                             labeler model (batch, AP4)
    │ INTELLIGENCE CORE (unchanged)         │
    │ AIKernel · Planning · Execution       │◄── ActiveBlueprint holder (agents snapshot, atomic swap)
-   │ ToolRegistry/ToolPolicy · Safety      │◄── bp.<ver>.* generated tools (namespaced)
+   │ ToolRegistry/ToolPolicy · Safety      │◄── bp<ver>_* generated tools (namespaced)
    │ Knowledge/RAG · Memory · Eval harness │◄── project knowledge sources (CompositeFetcher)
    └────────────┬─────────────────────────┘
                 │ data only (blueprint, specs, templates, manifests)
@@ -168,8 +168,9 @@ class ReadConnector(Connector, Protocol):
 
 ### AUSM — the Universal Semantic Model (ADR-020)
 
-Fourteen element kinds: **Entity, Attribute, Relation, Event, Action, Workflow, Role, Permission,
-Document, Metric, State, Constraint, Source, Provenance.** Every element has a stable id
+Fourteen concepts: thirteen element kinds — **Entity, Attribute, Relation, Event, Action, Workflow,
+Role, Permission, Document, Metric, State, Constraint, Source** — plus the **Provenance** record every
+element must carry (provenance is attached to elements, not an element itself). Every element has a stable id
 (`source_id + locator`), a `Provenance` (`source_id, locator, extractor, confidence,
 evidence_hash`) and — for any human-readable text it carries — an `UntrustedText` wrapper. The
 same concept discovered in different shapes (`employee` table, `/employees` path, `employees.csv`)
@@ -186,8 +187,8 @@ blueprint:
   data_model: {entities: [...], relations: [...], events: [...], documents: [...]}  # AUSM refs
   security:   {roles: [...], permission_map: [...], sensitivity_classes: [...], identity_modes: {...}}
   capabilities: [{id: entity.search, target: Employee, evidence: [ausm:pg:public.employee]}, ...]
-  tools:      [{name: bp.7.employee_search, template: qt:..., output_schema: {...}, sensitivity: PERSONAL, side_effecting: false}]
-  agents:     [{id: hr_assistant, allowed_tools: [bp.7.employee_search, ...], risk_ceiling: PERSONAL, memory_scope: hr}]
+  tools:      [{name: employee_search, template: qt:..., output_schema: {...}, sensitivity: PERSONAL, registered_as: bp7_employee_search}]   # no side_effecting field: read-only by construction
+  agents:     [{id: hr_assistant, tools: [employee_search, ...], risk_ceiling: PERSONAL, memory_scope: hr}]
   workflows:  [{id: leave_status, kind: read_status, states: [...], triggers: [...]}]
   knowledge:  {sources: [...], retrieval_strategy: hybrid}
   ui:         {manifest: {navigation: [...], views: [...]}}
@@ -262,15 +263,15 @@ starts at **DOCUMENTED** as of the baseline.
 - **Inputs:** GAP-049; ADR-020, ADR-024.
 - **Dependencies:** AP0.
 - **Implementation areas:**
-  1. `aura_core/domain/ausm.py` — 14 kinds, stable ids, `Provenance` (confidence semantics copied
+  1. `aura_core/domain/ausm.py` — 13 element kinds + Provenance, stable ids, `Provenance` (confidence semantics copied
      from `FactProvenance`, `domain/graph.py`), `UntrustedText`.
   2. `aura_core/domain/blueprint.py` — sections as in §4; `BlueprintVersion` state enum
      (`proposed → evaluated → approved → active → superseded | rejected`); `blueprint_digest()`.
-  3. `docs/schemas/blueprint.v1.json` exported from the dataclasses.
+  3. `docs/schemas/blueprint.v1.json` and `project_twin.v1.json` exported from the dataclasses.
 - **Security:** `UntrustedText` has no implicit `__str__` into prompt text; rendering requires the
   DATA-channel fence helper.
 - **Testing:** round-trip; digest stable under key reordering; property tests on id stability;
-  `test_blueprint_schema_matches_domain` (exported schema ↔ dataclasses drift check); existing
+  `tests/architecture/test_adaptation_schemas.py` (exported schema ↔ dataclasses drift check); existing
   stdlib-only domain fitness applies automatically.
 - **Failure tests:** malformed blueprint JSON rejected with typed `AuraError`s.
 - **Metrics:** n/a.
@@ -412,7 +413,8 @@ starts at **DOCUMENTED** as of the baseline.
      `QueryTemplate` is an AST from an internal builder: identifiers only from the twin allowlist
      (driver-quoted), values only as bound parameters, SELECT only, mandatory LIMIT, optional
      row-filter column from the security map. OpenAPI tools: `operationId` + parameter mapping,
-     GET only in v1. Names namespaced `bp.<version>.<name>`; tagged `untrusted_content`.
+     GET only in v1. Registered as `bp<version>_<name>` (tool names are `[a-z0-9_]`, ≤64 chars for
+     providers; `generated_tool_name()`); tagged `untrusted_content`.
   3. **Agent factory:** `AgentSpec` data; `allowed_tools` always explicit; `risk_ceiling` and budgets
      from `policies`; prompt template rendered from a fixed core template with blueprint fields in
      DATA fences.
@@ -448,7 +450,7 @@ starts at **DOCUMENTED** as of the baseline.
      an immutable snapshot (core personas merged with blueprint agents), swapped atomically;
      `container.py` passes it as `KernelDependencies.agents` (`kernel.py:173`). In-flight turns keep
      the spec they resolved.
-  2. `BlueprintToolMaterializer`: registers `bp.<new>.*` before the swap, unregisters `bp.<old>.*`
+  2. `BlueprintToolMaterializer`: registers `bp<new>_*` before the swap, unregisters `bp<old>_*`
      after a grace period; `GeneratedReadTool` executes a `QueryTemplate` via `ReadConnector`.
      Every call still passes `ToolRegistry.execute` → `ToolPolicy` → timeout → taint → audit.
   3. `adaptation/deployment.py` `BlueprintDeployment`, modelled on `IndexManager`: one active-version
@@ -607,7 +609,7 @@ M0 (CI evidence) gates every A-phase beyond BUILT.   M4 (GPU) gates label qualit
 | ID | Name | Priority | Depends on | Complexity | Risk | Current status | Primary components | Exit (short) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | AP0 | Charter, ADRs, gaps | Critical | — | Low | Low | DOCUMENTED | docs/ | Merged + schema test |
-| AP1 | AUSM + Blueprint model | Critical | AP0 | Medium | Low | DOCUMENTED | domain/ | Schema + digest tests |
+| AP1 | AUSM + Blueprint model | Critical | AP0 | Medium | Low | IMPLEMENTED (tests pass locally; CI pending M0) | domain/ | Schema + digest tests |
 | AP2 | Connectors + vault | Critical | AP1, (SEC-01..03) | Medium | High (secrets) | DOCUMENTED | ports/, adaptation/, api/ | Fixture connector approved |
 | AP3 | Discovery PG + OpenAPI | Critical | AP2 | Medium | Medium | DOCUMENTED | adapters/connectors/, fixtures | Pilot goldens + live run |
 | AP4 | Twin + diff | Critical | AP3, (M4) | High | Medium | DOCUMENTED | adaptation/normalize, twin | Deterministic twins + diffs |

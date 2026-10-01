@@ -1,0 +1,610 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aura.local/schemas/blueprint.v1.json",
+  "title": "AURA Project Blueprint (aura.blueprint/v1)",
+  "$ref": "#/$defs/Blueprint",
+  "$defs": {
+    "Blueprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "$ref": "#/$defs/BlueprintProject"
+        },
+        "integrations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConnectorRef"
+          }
+        },
+        "schema": {
+          "type": "string"
+        },
+        "data_model": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "security": {
+          "$ref": "#/$defs/SecuritySection"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CapabilitySelection"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BlueprintTool"
+          }
+        },
+        "native_tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BlueprintAgent"
+          }
+        },
+        "workflows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BlueprintWorkflow"
+          }
+        },
+        "knowledge": {
+          "$ref": "#/$defs/KnowledgeSection"
+        },
+        "ui": {
+          "$ref": "#/$defs/UiManifest"
+        },
+        "policies": {
+          "$ref": "#/$defs/PolicySection"
+        },
+        "evaluation": {
+          "$ref": "#/$defs/EvaluationSection"
+        }
+      },
+      "required": [
+        "project",
+        "integrations"
+      ],
+      "description": "One compiled blueprint. See the module docstring for what is and is not checked here."
+    },
+    "BlueprintAgent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "memory_scope": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "risk_ceiling": {
+          "type": "string",
+          "enum": [
+            "public",
+            "personal",
+            "confidential",
+            "system"
+          ]
+        },
+        "max_plan_iterations": {
+          "type": "integer"
+        },
+        "tool_budget": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "tools",
+        "memory_scope"
+      ],
+      "description": "A composed agent: an explicit tool grant, a risk ceiling and the capabilities it serves."
+    },
+    "BlueprintProject": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer"
+        },
+        "twin_version": {
+          "type": "integer"
+        },
+        "twin_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "version",
+        "twin_version",
+        "twin_digest"
+      ],
+      "description": "Which project this is, which blueprint version, and which twin it was compiled from."
+    },
+    "BlueprintTool": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "capability": {
+          "type": "string"
+        },
+        "connector": {
+          "type": "string"
+        },
+        "template": {
+          "type": "string"
+        },
+        "output_schema": {
+          "type": "object",
+          "additionalProperties": {}
+        },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ParameterSpec"
+          }
+        },
+        "sensitivity": {
+          "type": "string",
+          "enum": [
+            "public",
+            "personal",
+            "confidential",
+            "system"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "capability",
+        "connector",
+        "template",
+        "output_schema"
+      ],
+      "description": "A generated **read-only** tool (ADR-021, ADR-022)."
+    },
+    "BlueprintWorkflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "read_status"
+          ]
+        },
+        "entity": {
+          "type": "string"
+        },
+        "state_attribute": {
+          "type": "string"
+        },
+        "states": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "transitions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Transition"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "entity",
+        "state_attribute",
+        "states",
+        "evidence"
+      ]
+    },
+    "CapabilitySelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "target",
+        "evidence"
+      ],
+      "description": "One capability primitive applied to one AUSM element, with the evidence for it (ADR-023)."
+    },
+    "ConnectorRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "postgres",
+            "mysql",
+            "sql_server",
+            "openapi",
+            "files",
+            "git",
+            "native"
+          ]
+        },
+        "identity_mode": {
+          "type": "string",
+          "enum": [
+            "delegated",
+            "service_account"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "identity_mode"
+      ],
+      "description": "A connector the blueprint reads through, and whose permissions apply (ADR-021)."
+    },
+    "EvaluationSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "suites": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "gate": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        }
+      },
+      "description": "Generated suites (AP6) and the minimum pass rate each must reach to deploy (AP8)."
+    },
+    "KnowledgeSection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/KnowledgeSource"
+          }
+        },
+        "retrieval_strategy": {
+          "type": "string"
+        }
+      }
+    },
+    "KnowledgeSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "connector": {
+          "type": "string"
+        },
+        "element": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "connector",
+        "element"
+      ],
+      "description": "A DOCUMENT element (or document collection) to index into project knowledge."
+    },
+    "NavItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "view": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "view"
+      ]
+    },
+    "ParameterSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "enum": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "default": {},
+        "minimum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "maximum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "description"
+      ],
+      "description": "One tool parameter."
+    },
+    "PermissionGrant": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "type": "string"
+        },
+        "capability": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "capability"
+      ],
+      "description": "A source-system role (AUSM ROLE id) allowed to use one selected capability."
+    },
+    "PolicySection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default_risk_ceiling": {
+          "type": "string",
+          "enum": [
+            "public",
+            "personal",
+            "confidential",
+            "system"
+          ]
+        },
+        "max_plan_iterations": {
+          "type": "integer"
+        }
+      }
+    },
+    "SecuritySection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "permission_map": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PermissionGrant"
+          }
+        }
+      }
+    },
+    "Transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "from_state": {
+          "type": "string"
+        },
+        "to_state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_state",
+        "to_state"
+      ]
+    },
+    "UiManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "navigation": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NavItem"
+          }
+        },
+        "views": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UiView"
+          }
+        }
+      }
+    },
+    "UiView": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "entity_list",
+            "entity_detail",
+            "metric_card",
+            "timeline",
+            "search",
+            "chat",
+            "approval_queue"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "tool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "title"
+      ]
+    }
+  }
+}

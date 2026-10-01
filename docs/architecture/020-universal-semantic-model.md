@@ -13,9 +13,11 @@ of an external system.
 
 ## Decision
 
-1. **AUSM** has fourteen element kinds: Entity, Attribute, Relation, Event, Action, Workflow, Role,
-   Permission, Document, Metric, State, Constraint, Source, Provenance — stdlib dataclasses in
-   `aura_core/domain/ausm.py`.
+1. **AUSM** has fourteen concepts: thirteen element kinds — Entity, Attribute, Relation, Event,
+   Action, Workflow, Role, Permission, Document, Metric, State, Constraint, Source — plus the
+   Provenance record every element carries (attached to elements, not an element itself). Stdlib
+   dataclasses in `aura_core/domain/ausm.py`; per-kind shape rules (which kinds need a parent,
+   which named refs) are enforced there and resolved against the twin by `ProjectTwin`.
 2. Every element has a **stable id** (`source_id + locator`) and a mandatory **Provenance**
    (`source_id, locator, extractor, confidence, evidence_hash`), with confidence semantics copied
    from `FactProvenance`.
