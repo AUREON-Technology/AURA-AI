@@ -420,6 +420,19 @@ class Metrics:
             (),
             buckets=(0.1, 0.5, 1, 2.5, 5, 10, 20, 40),
         )
+        self.capability_plan_selected = self._gauge(
+            "capability_plan_selected",
+            "Selections per capability primitive in the last capability plan (bounded by the "
+            "registry: a dozen primitives, ADR-023).",
+            ("capability",),
+            multiprocess_mode="livemax",
+        )
+        self.capability_plan_evidence = self._histogram(
+            "capability_plan_evidence",
+            "AUSM elements cited as evidence per capability selection.",
+            (),
+            buckets=(1, 2, 3, 4, 6, 8, 12, 16, 24),
+        )
         self.agent_workspaces = self._gauge(
             "agent_workspaces",
             "Durable engineer-agent workspaces by status. Only `hot` costs memory (a warm "
@@ -659,6 +672,13 @@ class Metrics:
 
     def observe_labeler_latency(self, seconds_per_element: float) -> None:
         self.twin_labeler_seconds_per_element.observe(seconds_per_element)
+
+    def observe_capability_plan(self, plan) -> None:
+        counts = plan.summary()["by_capability"]
+        for capability in {s.capability for s in plan.selected} | set(counts):
+            self.capability_plan_selected.labels(capability=capability).set(counts.get(capability, 0))
+        for selection in plan.selected:
+            self.capability_plan_evidence.observe(len(selection.evidence))
 
     def set_connector_health(self, connector: str, kind: str, status: str) -> None:
         value = {"healthy": 1.0, "degraded": 0.5}.get(status, 0.0)

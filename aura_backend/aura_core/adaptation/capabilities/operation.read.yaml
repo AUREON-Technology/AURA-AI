@@ -1,0 +1,20 @@
+# Call a read-only operation the system's API documents.
+id: operation.read
+version: 1
+summary: Call a documented read-only API operation on behalf of the user.
+target: action
+target_filter:
+  where: {mode: [read]}
+  exclude: {deprecated: [true]}
+requires:
+  - name: entity
+    relation: ref
+    ref: entity
+    kind: entity
+risk: personal
+cost: 1
+relevance: 0.7
+produces:
+  tool: api.get
+  views: [entity_list]
+  evals: [golden_api_read]

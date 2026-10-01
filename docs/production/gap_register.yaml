@@ -1196,7 +1196,7 @@ gaps:
     test: test_capabilities_are_domain_agnostic; 100% evidenced selections on both pilots
     metric: capabilities selected per pilot; evidence per selection
     exit_condition: AP5 exit criteria met; docs/reports/ap5-capability-planning.md.
-    status: open
+    status: built_not_proven
 
   - gap_id: GAP-054
     component: adaptation/compiler

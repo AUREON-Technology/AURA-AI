@@ -1,11 +1,12 @@
-"""Golden Project Twins and twin diffs for the Track AP reference pilots (AP4).
+"""Golden Project Twins, twin diffs and capability plans for the Track AP reference pilots (AP4/AP5).
 
 Run from the repo root (no database, no model):
 
     python aura_backend/scripts/pilot_twin_goldens.py
 
 For each pilot it builds the twin from the committed discovery goldens (Postgres + OpenAPI) and
-writes ``golden/twin.json``. For the ``hr`` pilot it also applies three schema changes to the
+writes ``golden/twin.json`` and its capability plan, ``golden/plan.json`` (AP5: both pilots are
+planned from the same capability registry). For the ``hr`` pilot it also applies three schema changes to the
 recorded catalog -- the same kind of change a real system goes through -- and writes the diff
 of each against the base twin:
 
@@ -14,8 +15,8 @@ of each against the base twin:
 * ``diff_rename.json``: a renamed column (``employees.full_name`` -> ``display_name``) and a
   renamed table (``attendance`` -> ``time_entries``).
 
-``tests/unit/test_adaptation_twin.py`` fails when a committed golden differs from what this
-renders. The twins are built without a labeling model: the goldens *are* the degraded mode.
+``tests/unit/test_adaptation_twin.py`` and ``tests/unit/test_adaptation_planner.py`` fail when a
+committed golden differs from what this renders. The twins are built without a labeling model: the goldens *are* the degraded mode.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ sys.path.insert(0, str(ROOT / "aura_backend"))
 
 from aura_core.adapters.connectors.openapi import artifacts_from_openapi, parse_spec  # noqa: E402
 from aura_core.adapters.connectors.postgres_catalog import artifacts_from_catalog  # noqa: E402
+from aura_core.adaptation.planner import CapabilityRegistry, plan_capabilities  # noqa: E402
 from aura_core.adaptation.twin import build_twin, diff_twins  # noqa: E402
 from aura_core.domain.ausm import ProjectTwin  # noqa: E402
 from aura_core.domain.discovery import DiscoveryBudget, DiscoveryReport  # noqa: E402
@@ -136,6 +138,11 @@ def render_twin(pilot: str) -> str:
     return _dump(to_data(twin_for(pilot)))
 
 
+def render_plan(pilot: str) -> str:
+    plan = plan_capabilities(twin_for(pilot), CapabilityRegistry.from_directory())
+    return _dump({"summary": plan.summary(), "digest": plan.digest, **to_data(plan)})
+
+
 def render_diff(change: str, pilot: str = "hr") -> str:
     base = twin_for(pilot)
     changed = twin_for(pilot, version=2, cat=CHANGES[change](catalog(pilot)))
@@ -146,9 +153,10 @@ def render_diff(change: str, pilot: str = "hr") -> str:
 def main() -> int:
     for pilot in PILOTS:
         (PILOTS_DIR / pilot / "golden" / "twin.json").write_text(render_twin(pilot), encoding="utf-8")
+        (PILOTS_DIR / pilot / "golden" / "plan.json").write_text(render_plan(pilot), encoding="utf-8")
     for change in CHANGES:
         (PILOTS_DIR / "hr" / "golden" / f"diff_{change}.json").write_text(render_diff(change), encoding="utf-8")
-    print("wrote twin goldens for", ", ".join(PILOTS), "and diffs:", ", ".join(CHANGES))
+    print("wrote twin and plan goldens for", ", ".join(PILOTS), "and diffs:", ", ".join(CHANGES))
     return 0
 
 

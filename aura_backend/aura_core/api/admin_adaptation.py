@@ -203,6 +203,18 @@ def register_adaptation_ops(
             "version": to_data(meta), "digest": twin.digest, "elements": to_data(elements),
         })
 
+    @router.get("/admin/twin/versions/{version}/plan")
+    async def plan_twin_version(version: int, caller=Depends(principal)) -> JSONResponse:
+        """The capability plan for one twin version (AP5): what AURA could do on this system,
+        with the evidence for each selection, the reasons for each rejection and the composed
+        agent proposals. Recomputed on request; nothing in it executes."""
+        require_super_admin(caller)
+        planner = getattr(container, "capability_planner", None)
+        if planner is None:
+            registry()  # the same 503 as every other route here
+        plan = await planner.plan(version)
+        return JSONResponse(content={"summary": plan.summary(), "digest": plan.digest, "plan": to_data(plan)})
+
     @router.get("/admin/twin/diff")
     async def diff_twin_versions(
         caller=Depends(principal),

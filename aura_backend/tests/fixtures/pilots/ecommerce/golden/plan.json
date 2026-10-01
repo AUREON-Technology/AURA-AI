@@ -1,0 +1,1399 @@
+{
+  "agents": [
+    {
+      "capabilities": [
+        "entity.list_filtered@ecommerce-api:schema:\"NewReturn\"",
+        "entity.list_filtered@ecommerce-api:schema:\"Order\"",
+        "entity.list_filtered@ecommerce-api:schema:\"Return\"",
+        "entity.list_filtered@ecommerce-db:table:shop.customers",
+        "entity.list_filtered@ecommerce-db:table:shop.order_items",
+        "entity.list_filtered@ecommerce-db:table:shop.orders",
+        "entity.list_filtered@ecommerce-db:table:shop.payments",
+        "entity.list_filtered@ecommerce-db:table:shop.products",
+        "entity.list_filtered@ecommerce-db:table:shop.returns",
+        "entity.list_filtered@ecommerce-db:table:shop.shipments",
+        "entity.lookup@ecommerce-api:schema:\"Order\"",
+        "entity.lookup@ecommerce-api:schema:\"Return\"",
+        "entity.lookup@ecommerce-db:table:shop.\"SupplierContacts\"",
+        "entity.lookup@ecommerce-db:table:shop.customers",
+        "entity.lookup@ecommerce-db:table:shop.orders",
+        "entity.lookup@ecommerce-db:table:shop.payments",
+        "entity.lookup@ecommerce-db:table:shop.products",
+        "entity.lookup@ecommerce-db:table:shop.returns",
+        "entity.lookup@ecommerce-db:table:shop.shipments",
+        "entity.search@ecommerce-api:schema:\"NewReturn\"",
+        "entity.search@ecommerce-api:schema:\"Order\"",
+        "entity.search@ecommerce-api:schema:\"OrderItem\"",
+        "entity.search@ecommerce-api:schema:\"Product\"",
+        "entity.search@ecommerce-api:schema:\"Return\"",
+        "entity.search@ecommerce-db:table:shop.\"SupplierContacts\"",
+        "entity.search@ecommerce-db:table:shop.customers",
+        "entity.search@ecommerce-db:table:shop.orders",
+        "entity.search@ecommerce-db:table:shop.payments",
+        "entity.search@ecommerce-db:table:shop.products",
+        "entity.search@ecommerce-db:table:shop.returns",
+        "entity.search@ecommerce-db:table:shop.shipments",
+        "metric.aggregate@ecommerce-api:metric:\"Order\".total",
+        "metric.aggregate@ecommerce-api:metric:\"OrderItem\".\"unitPrice\"",
+        "metric.aggregate@ecommerce-api:metric:\"OrderItem\".qty",
+        "metric.aggregate@ecommerce-api:metric:\"Product\".price",
+        "metric.aggregate@ecommerce-api:metric:\"Product\".stock",
+        "metric.aggregate@ecommerce-db:metric:shop.order_items.qty",
+        "metric.aggregate@ecommerce-db:metric:shop.order_items.unit_price",
+        "metric.aggregate@ecommerce-db:metric:shop.orders.total",
+        "metric.aggregate@ecommerce-db:metric:shop.payments.amount",
+        "metric.aggregate@ecommerce-db:metric:shop.products.price",
+        "metric.aggregate@ecommerce-db:metric:shop.products.stock",
+        "notification.draft@ecommerce-db:table:shop.customers",
+        "operation.read@ecommerce-api:op:GET /customers/{customerId}/orders",
+        "operation.read@ecommerce-api:op:GET /orders/{orderId}",
+        "operation.read@ecommerce-api:op:GET /products",
+        "operation.read@ecommerce-api:op:GET /products/{sku}",
+        "relation.traverse@ecommerce-api:rel:\"Order\".items",
+        "relation.traverse@ecommerce-db:fk:shop.order_items.order_items_order_id_fkey",
+        "relation.traverse@ecommerce-db:fk:shop.order_items.order_items_sku_fkey",
+        "relation.traverse@ecommerce-db:fk:shop.orders.orders_customer_id_fkey",
+        "relation.traverse@ecommerce-db:fk:shop.payments.payments_order_id_fkey",
+        "relation.traverse@ecommerce-db:fk:shop.returns.returns_item_fk",
+        "relation.traverse@ecommerce-db:fk:shop.shipments.shipments_order_id_fkey",
+        "state.timeline@ecommerce-api:schema:\"Order\"",
+        "state.timeline@ecommerce-db:table:shop.customers",
+        "state.timeline@ecommerce-db:table:shop.orders",
+        "state.timeline@ecommerce-db:table:shop.payments",
+        "state.timeline@ecommerce-db:table:shop.returns",
+        "state.timeline@ecommerce-db:table:shop.shipments",
+        "workflow.status@ecommerce-api:prop:\"Order\".status",
+        "workflow.status@ecommerce-db:column:shop.orders.status"
+      ],
+      "entities": [
+        "ecommerce-api:schema:\"NewReturn\"",
+        "ecommerce-api:schema:\"Order\"",
+        "ecommerce-api:schema:\"OrderItem\"",
+        "ecommerce-api:schema:\"Product\"",
+        "ecommerce-api:schema:\"Return\"",
+        "ecommerce-db:table:shop.\"SupplierContacts\"",
+        "ecommerce-db:table:shop.customers",
+        "ecommerce-db:table:shop.order_items",
+        "ecommerce-db:table:shop.orders",
+        "ecommerce-db:table:shop.payments",
+        "ecommerce-db:table:shop.products",
+        "ecommerce-db:table:shop.returns",
+        "ecommerce-db:table:shop.shipments"
+      ],
+      "evidence": [
+        "ecommerce-api:source",
+        "ecommerce-db:source"
+      ],
+      "id": "agent.project",
+      "label": "Project assistant",
+      "risk_ceiling": "confidential",
+      "role": null
+    },
+    {
+      "capabilities": [
+        "entity.list_filtered@ecommerce-api:schema:\"Order\"",
+        "entity.list_filtered@ecommerce-api:schema:\"Return\"",
+        "entity.list_filtered@ecommerce-db:table:shop.orders",
+        "entity.list_filtered@ecommerce-db:table:shop.returns",
+        "entity.list_filtered@ecommerce-db:table:shop.shipments",
+        "entity.lookup@ecommerce-api:schema:\"Order\"",
+        "entity.lookup@ecommerce-api:schema:\"Return\"",
+        "entity.lookup@ecommerce-db:table:shop.orders",
+        "entity.lookup@ecommerce-db:table:shop.returns",
+        "entity.lookup@ecommerce-db:table:shop.shipments",
+        "entity.search@ecommerce-api:schema:\"Order\"",
+        "entity.search@ecommerce-api:schema:\"Return\"",
+        "entity.search@ecommerce-db:table:shop.orders",
+        "entity.search@ecommerce-db:table:shop.returns",
+        "entity.search@ecommerce-db:table:shop.shipments",
+        "metric.aggregate@ecommerce-api:metric:\"Order\".total",
+        "metric.aggregate@ecommerce-db:metric:shop.orders.total",
+        "operation.read@ecommerce-api:op:GET /customers/{customerId}/orders",
+        "operation.read@ecommerce-api:op:GET /orders/{orderId}",
+        "relation.traverse@ecommerce-api:rel:\"Order\".items",
+        "relation.traverse@ecommerce-db:fk:shop.orders.orders_customer_id_fkey",
+        "relation.traverse@ecommerce-db:fk:shop.returns.returns_item_fk",
+        "relation.traverse@ecommerce-db:fk:shop.shipments.shipments_order_id_fkey",
+        "state.timeline@ecommerce-api:schema:\"Order\"",
+        "state.timeline@ecommerce-db:table:shop.orders",
+        "state.timeline@ecommerce-db:table:shop.returns",
+        "state.timeline@ecommerce-db:table:shop.shipments",
+        "workflow.status@ecommerce-api:prop:\"Order\".status",
+        "workflow.status@ecommerce-db:column:shop.orders.status"
+      ],
+      "entities": [
+        "ecommerce-api:schema:\"Order\"",
+        "ecommerce-api:schema:\"Return\"",
+        "ecommerce-db:table:shop.orders",
+        "ecommerce-db:table:shop.returns",
+        "ecommerce-db:table:shop.shipments"
+      ],
+      "evidence": [
+        "ecommerce-api:same_as:ecommerce-db:table:shop.orders",
+        "ecommerce-api:same_as:ecommerce-db:table:shop.returns",
+        "ecommerce-db:grant:shop_ops@shop.orders",
+        "ecommerce-db:grant:shop_ops@shop.returns",
+        "ecommerce-db:grant:shop_ops@shop.shipments"
+      ],
+      "id": "agent.role.shop_ops",
+      "label": "Shop ops assistant",
+      "risk_ceiling": "personal",
+      "role": "ecommerce-db:role:shop_ops"
+    },
+    {
+      "capabilities": [
+        "entity.list_filtered@ecommerce-api:schema:\"Order\"",
+        "entity.list_filtered@ecommerce-db:table:shop.customers",
+        "entity.list_filtered@ecommerce-db:table:shop.order_items",
+        "entity.list_filtered@ecommerce-db:table:shop.orders",
+        "entity.list_filtered@ecommerce-db:table:shop.shipments",
+        "entity.lookup@ecommerce-api:schema:\"Order\"",
+        "entity.lookup@ecommerce-db:table:shop.customers",
+        "entity.lookup@ecommerce-db:table:shop.orders",
+        "entity.lookup@ecommerce-db:table:shop.shipments",
+        "entity.search@ecommerce-api:schema:\"Order\"",
+        "entity.search@ecommerce-api:schema:\"OrderItem\"",
+        "entity.search@ecommerce-db:table:shop.customers",
+        "entity.search@ecommerce-db:table:shop.orders",
+        "entity.search@ecommerce-db:table:shop.shipments",
+        "metric.aggregate@ecommerce-api:metric:\"Order\".total",
+        "metric.aggregate@ecommerce-api:metric:\"OrderItem\".\"unitPrice\"",
+        "metric.aggregate@ecommerce-api:metric:\"OrderItem\".qty",
+        "metric.aggregate@ecommerce-db:metric:shop.order_items.qty",
+        "metric.aggregate@ecommerce-db:metric:shop.order_items.unit_price",
+        "metric.aggregate@ecommerce-db:metric:shop.orders.total",
+        "notification.draft@ecommerce-db:table:shop.customers",
+        "operation.read@ecommerce-api:op:GET /customers/{customerId}/orders",
+        "operation.read@ecommerce-api:op:GET /orders/{orderId}",
+        "relation.traverse@ecommerce-api:rel:\"Order\".items",
+        "relation.traverse@ecommerce-db:fk:shop.order_items.order_items_order_id_fkey",
+        "relation.traverse@ecommerce-db:fk:shop.order_items.order_items_sku_fkey",
+        "relation.traverse@ecommerce-db:fk:shop.orders.orders_customer_id_fkey",
+        "relation.traverse@ecommerce-db:fk:shop.shipments.shipments_order_id_fkey",
+        "state.timeline@ecommerce-api:schema:\"Order\"",
+        "state.timeline@ecommerce-db:table:shop.customers",
+        "state.timeline@ecommerce-db:table:shop.orders",
+        "state.timeline@ecommerce-db:table:shop.shipments",
+        "workflow.status@ecommerce-api:prop:\"Order\".status",
+        "workflow.status@ecommerce-db:column:shop.orders.status"
+      ],
+      "entities": [
+        "ecommerce-api:schema:\"Order\"",
+        "ecommerce-api:schema:\"OrderItem\"",
+        "ecommerce-db:table:shop.customers",
+        "ecommerce-db:table:shop.order_items",
+        "ecommerce-db:table:shop.orders",
+        "ecommerce-db:table:shop.shipments"
+      ],
+      "evidence": [
+        "ecommerce-api:same_as:ecommerce-db:table:shop.order_items",
+        "ecommerce-api:same_as:ecommerce-db:table:shop.orders",
+        "ecommerce-db:grant:shop_support@shop.customers",
+        "ecommerce-db:grant:shop_support@shop.order_items",
+        "ecommerce-db:grant:shop_support@shop.orders",
+        "ecommerce-db:grant:shop_support@shop.shipments"
+      ],
+      "id": "agent.role.shop_support",
+      "label": "Shop support assistant",
+      "risk_ceiling": "confidential",
+      "role": "ecommerce-db:role:shop_support"
+    }
+  ],
+  "digest": "sha256:41d692af6280f936be2e04d6edb38ca1ff0609d52295cddb6e08e956686c53be",
+  "project_id": "p0",
+  "reason": null,
+  "registry_digest": "sha256:77d92ccc08814cb1c4b50c0f3aae684cc643de2f78d58ca19abd293b752bc5d1",
+  "rejected": [
+    {
+      "capability": "document.qa",
+      "reasons": [
+        "no_candidates"
+      ],
+      "target": ""
+    },
+    {
+      "capability": "entity.list_filtered",
+      "reasons": [
+        "unmet:filterable"
+      ],
+      "target": "ecommerce-api:schema:\"OrderItem\""
+    },
+    {
+      "capability": "entity.list_filtered",
+      "reasons": [
+        "unmet:filterable"
+      ],
+      "target": "ecommerce-api:schema:\"Product\""
+    },
+    {
+      "capability": "entity.list_filtered",
+      "reasons": [
+        "unmet:filterable"
+      ],
+      "target": "ecommerce-db:table:shop.\"SupplierContacts\""
+    },
+    {
+      "capability": "entity.lookup",
+      "reasons": [
+        "unmet:identifier"
+      ],
+      "target": "ecommerce-api:schema:\"NewReturn\""
+    },
+    {
+      "capability": "entity.lookup",
+      "reasons": [
+        "unmet:identifier"
+      ],
+      "target": "ecommerce-api:schema:\"OrderItem\""
+    },
+    {
+      "capability": "entity.lookup",
+      "reasons": [
+        "unmet:identifier"
+      ],
+      "target": "ecommerce-api:schema:\"Product\""
+    },
+    {
+      "capability": "entity.lookup",
+      "reasons": [
+        "unmet:identifier"
+      ],
+      "target": "ecommerce-db:table:shop.order_items"
+    },
+    {
+      "capability": "entity.search",
+      "reasons": [
+        "unmet:searchable"
+      ],
+      "target": "ecommerce-db:table:shop.order_items"
+    },
+    {
+      "capability": "notification.draft",
+      "reasons": [
+        "unmet:contact",
+        "unmet:events"
+      ],
+      "target": "ecommerce-api:schema:\"NewReturn\""
+    },
+    {
+      "capability": "notification.draft",
+      "reasons": [
+        "unmet:contact"
+      ],
+      "target": "ecommerce-api:schema:\"Order\""
+    },
+    {
+      "capability": "notification.draft",
+      "reasons": [
+        "unmet:contact",
+        "unmet:events"
+      ],
+      "target": "ecommerce-api:schema:\"OrderItem\""
+    },
+    {
+      "capability": "notification.draft",
+      "reasons": [
+        "unmet:contact",
+        "unmet:events"
+      ],
+      "target": "ecommerce-api:schema:\"Product\""
+    },
+    {
+      "capability": "notification.draft",
+      "reasons": [
+        "unmet:contact",
+        "unmet:events"
+      ],
+      "target": "ecommerce-api:schema:\"Return\""
+    },
+    {
+      "capability": "notification.draft",
+      "reasons": [
+        "unmet:events"
+      ],
+      "target": "ecommerce-db:table:shop.\"SupplierContacts\""
+    },
+    {
+      "capability": "notification.draft",
+      "reasons": [
+        "unmet:contact",
+        "unmet:events"
+      ],
+      "target": "ecommerce-db:table:shop.order_items"
+    },
+    {
+      "capability": "notification.draft",
+      "reasons": [
+        "unmet:contact"
+      ],
+      "target": "ecommerce-db:table:shop.orders"
+    },
+    {
+      "capability": "notification.draft",
+      "reasons": [
+        "unmet:contact"
+      ],
+      "target": "ecommerce-db:table:shop.payments"
+    },
+    {
+      "capability": "notification.draft",
+      "reasons": [
+        "unmet:contact",
+        "unmet:events"
+      ],
+      "target": "ecommerce-db:table:shop.products"
+    },
+    {
+      "capability": "notification.draft",
+      "reasons": [
+        "unmet:contact"
+      ],
+      "target": "ecommerce-db:table:shop.returns"
+    },
+    {
+      "capability": "notification.draft",
+      "reasons": [
+        "unmet:contact"
+      ],
+      "target": "ecommerce-db:table:shop.shipments"
+    },
+    {
+      "capability": "operation.write",
+      "reasons": [
+        "unavailable:writes_deferred"
+      ],
+      "target": "ecommerce-api:op:DELETE /orders/{orderId}"
+    },
+    {
+      "capability": "operation.write",
+      "reasons": [
+        "unavailable:writes_deferred"
+      ],
+      "target": "ecommerce-api:op:POST /returns"
+    },
+    {
+      "capability": "state.timeline",
+      "reasons": [
+        "unmet:events"
+      ],
+      "target": "ecommerce-api:schema:\"NewReturn\""
+    },
+    {
+      "capability": "state.timeline",
+      "reasons": [
+        "unmet:events"
+      ],
+      "target": "ecommerce-api:schema:\"OrderItem\""
+    },
+    {
+      "capability": "state.timeline",
+      "reasons": [
+        "unmet:events"
+      ],
+      "target": "ecommerce-api:schema:\"Product\""
+    },
+    {
+      "capability": "state.timeline",
+      "reasons": [
+        "unmet:events"
+      ],
+      "target": "ecommerce-api:schema:\"Return\""
+    },
+    {
+      "capability": "state.timeline",
+      "reasons": [
+        "unmet:events"
+      ],
+      "target": "ecommerce-db:table:shop.\"SupplierContacts\""
+    },
+    {
+      "capability": "state.timeline",
+      "reasons": [
+        "unmet:events"
+      ],
+      "target": "ecommerce-db:table:shop.order_items"
+    },
+    {
+      "capability": "state.timeline",
+      "reasons": [
+        "unmet:events"
+      ],
+      "target": "ecommerce-db:table:shop.products"
+    }
+  ],
+  "selected": [
+    {
+      "capability": "entity.list_filtered",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-api:schema:\"NewReturn\"",
+        "ecommerce-api:prop:\"NewReturn\".\"orderId\""
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.65,
+      "target": "ecommerce-api:schema:\"NewReturn\""
+    },
+    {
+      "capability": "entity.list_filtered",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-api:schema:\"Order\"",
+        "ecommerce-api:prop:\"Order\".\"customerId\"",
+        "ecommerce-api:prop:\"Order\".\"placedAt\"",
+        "ecommerce-api:prop:\"Order\".items",
+        "ecommerce-api:prop:\"Order\".status"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.65,
+      "target": "ecommerce-api:schema:\"Order\""
+    },
+    {
+      "capability": "entity.list_filtered",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-api:schema:\"Return\"",
+        "ecommerce-api:prop:\"Return\".\"orderId\""
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops"
+      ],
+      "score": 0.65,
+      "target": "ecommerce-api:schema:\"Return\""
+    },
+    {
+      "capability": "entity.list_filtered",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.customers",
+        "ecommerce-db:column:shop.customers.country",
+        "ecommerce-db:column:shop.customers.created_at"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.65,
+      "target": "ecommerce-db:table:shop.customers"
+    },
+    {
+      "capability": "entity.list_filtered",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.order_items",
+        "ecommerce-db:column:shop.order_items.order_id",
+        "ecommerce-db:column:shop.order_items.sku"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.65,
+      "target": "ecommerce-db:table:shop.order_items"
+    },
+    {
+      "capability": "entity.list_filtered",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.orders",
+        "ecommerce-db:column:shop.orders.customer_id",
+        "ecommerce-db:column:shop.orders.placed_at",
+        "ecommerce-db:column:shop.orders.status"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.65,
+      "target": "ecommerce-db:table:shop.orders"
+    },
+    {
+      "capability": "entity.list_filtered",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.payments",
+        "ecommerce-db:column:shop.payments.method",
+        "ecommerce-db:column:shop.payments.order_id",
+        "ecommerce-db:column:shop.payments.paid_at"
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.65,
+      "target": "ecommerce-db:table:shop.payments"
+    },
+    {
+      "capability": "entity.list_filtered",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.products",
+        "ecommerce-db:column:shop.products.category"
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.65,
+      "target": "ecommerce-db:table:shop.products"
+    },
+    {
+      "capability": "entity.list_filtered",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.returns",
+        "ecommerce-db:column:shop.returns.created_at",
+        "ecommerce-db:column:shop.returns.order_id",
+        "ecommerce-db:column:shop.returns.sku"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops"
+      ],
+      "score": 0.65,
+      "target": "ecommerce-db:table:shop.returns"
+    },
+    {
+      "capability": "entity.list_filtered",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.shipments",
+        "ecommerce-db:column:shop.shipments.carrier",
+        "ecommerce-db:column:shop.shipments.delivered_at",
+        "ecommerce-db:column:shop.shipments.order_id",
+        "ecommerce-db:column:shop.shipments.shipped_at"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.65,
+      "target": "ecommerce-db:table:shop.shipments"
+    },
+    {
+      "capability": "entity.lookup",
+      "confidence": 1.0,
+      "cost": 1,
+      "evidence": [
+        "ecommerce-api:schema:\"Order\"",
+        "ecommerce-api:prop:\"Order\".id"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.85,
+      "target": "ecommerce-api:schema:\"Order\""
+    },
+    {
+      "capability": "entity.lookup",
+      "confidence": 1.0,
+      "cost": 1,
+      "evidence": [
+        "ecommerce-api:schema:\"Return\"",
+        "ecommerce-api:prop:\"Return\".id"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops"
+      ],
+      "score": 0.85,
+      "target": "ecommerce-api:schema:\"Return\""
+    },
+    {
+      "capability": "entity.lookup",
+      "confidence": 1.0,
+      "cost": 1,
+      "evidence": [
+        "ecommerce-db:table:shop.\"SupplierContacts\"",
+        "ecommerce-db:column:shop.\"SupplierContacts\".\"SupplierName\""
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.85,
+      "target": "ecommerce-db:table:shop.\"SupplierContacts\""
+    },
+    {
+      "capability": "entity.lookup",
+      "confidence": 1.0,
+      "cost": 1,
+      "evidence": [
+        "ecommerce-db:table:shop.customers",
+        "ecommerce-db:column:shop.customers.id"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.85,
+      "target": "ecommerce-db:table:shop.customers"
+    },
+    {
+      "capability": "entity.lookup",
+      "confidence": 1.0,
+      "cost": 1,
+      "evidence": [
+        "ecommerce-db:table:shop.orders",
+        "ecommerce-db:column:shop.orders.id"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.85,
+      "target": "ecommerce-db:table:shop.orders"
+    },
+    {
+      "capability": "entity.lookup",
+      "confidence": 1.0,
+      "cost": 1,
+      "evidence": [
+        "ecommerce-db:table:shop.payments",
+        "ecommerce-db:column:shop.payments.id"
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.85,
+      "target": "ecommerce-db:table:shop.payments"
+    },
+    {
+      "capability": "entity.lookup",
+      "confidence": 1.0,
+      "cost": 1,
+      "evidence": [
+        "ecommerce-db:table:shop.products",
+        "ecommerce-db:column:shop.products.sku"
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.85,
+      "target": "ecommerce-db:table:shop.products"
+    },
+    {
+      "capability": "entity.lookup",
+      "confidence": 1.0,
+      "cost": 1,
+      "evidence": [
+        "ecommerce-db:table:shop.returns",
+        "ecommerce-db:column:shop.returns.id"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops"
+      ],
+      "score": 0.85,
+      "target": "ecommerce-db:table:shop.returns"
+    },
+    {
+      "capability": "entity.lookup",
+      "confidence": 1.0,
+      "cost": 1,
+      "evidence": [
+        "ecommerce-db:table:shop.shipments",
+        "ecommerce-db:column:shop.shipments.id"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.85,
+      "target": "ecommerce-db:table:shop.shipments"
+    },
+    {
+      "capability": "entity.search",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-api:schema:\"NewReturn\"",
+        "ecommerce-api:prop:\"NewReturn\".reason",
+        "ecommerce-api:prop:\"NewReturn\".sku"
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.7,
+      "target": "ecommerce-api:schema:\"NewReturn\""
+    },
+    {
+      "capability": "entity.search",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-api:schema:\"Order\"",
+        "ecommerce-api:prop:\"Order\".status"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.7,
+      "target": "ecommerce-api:schema:\"Order\""
+    },
+    {
+      "capability": "entity.search",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-api:schema:\"OrderItem\"",
+        "ecommerce-api:prop:\"OrderItem\".sku"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.7,
+      "target": "ecommerce-api:schema:\"OrderItem\""
+    },
+    {
+      "capability": "entity.search",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-api:schema:\"Product\"",
+        "ecommerce-api:prop:\"Product\".category",
+        "ecommerce-api:prop:\"Product\".sku",
+        "ecommerce-api:prop:\"Product\".title"
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.7,
+      "target": "ecommerce-api:schema:\"Product\""
+    },
+    {
+      "capability": "entity.search",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-api:schema:\"Return\"",
+        "ecommerce-api:prop:\"Return\".reason",
+        "ecommerce-api:prop:\"Return\".sku"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops"
+      ],
+      "score": 0.7,
+      "target": "ecommerce-api:schema:\"Return\""
+    },
+    {
+      "capability": "entity.search",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.\"SupplierContacts\"",
+        "ecommerce-db:column:shop.\"SupplierContacts\".\"ContactEmail\""
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.7,
+      "target": "ecommerce-db:table:shop.\"SupplierContacts\""
+    },
+    {
+      "capability": "entity.search",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.customers",
+        "ecommerce-db:column:shop.customers.country",
+        "ecommerce-db:column:shop.customers.email",
+        "ecommerce-db:column:shop.customers.full_name"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.7,
+      "target": "ecommerce-db:table:shop.customers"
+    },
+    {
+      "capability": "entity.search",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.orders",
+        "ecommerce-db:column:shop.orders.status"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.7,
+      "target": "ecommerce-db:table:shop.orders"
+    },
+    {
+      "capability": "entity.search",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.payments",
+        "ecommerce-db:column:shop.payments.method"
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.7,
+      "target": "ecommerce-db:table:shop.payments"
+    },
+    {
+      "capability": "entity.search",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.products",
+        "ecommerce-db:column:shop.products.category",
+        "ecommerce-db:column:shop.products.title"
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.7,
+      "target": "ecommerce-db:table:shop.products"
+    },
+    {
+      "capability": "entity.search",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.returns",
+        "ecommerce-db:column:shop.returns.reason"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops"
+      ],
+      "score": 0.7,
+      "target": "ecommerce-db:table:shop.returns"
+    },
+    {
+      "capability": "entity.search",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.shipments",
+        "ecommerce-db:column:shop.shipments.carrier"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.7,
+      "target": "ecommerce-db:table:shop.shipments"
+    },
+    {
+      "capability": "metric.aggregate",
+      "confidence": 0.5,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-api:metric:\"Order\".total",
+        "ecommerce-api:schema:\"Order\""
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.325,
+      "target": "ecommerce-api:metric:\"Order\".total"
+    },
+    {
+      "capability": "metric.aggregate",
+      "confidence": 0.5,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-api:metric:\"OrderItem\".\"unitPrice\"",
+        "ecommerce-api:schema:\"OrderItem\""
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.325,
+      "target": "ecommerce-api:metric:\"OrderItem\".\"unitPrice\""
+    },
+    {
+      "capability": "metric.aggregate",
+      "confidence": 0.5,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-api:metric:\"OrderItem\".qty",
+        "ecommerce-api:schema:\"OrderItem\""
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.325,
+      "target": "ecommerce-api:metric:\"OrderItem\".qty"
+    },
+    {
+      "capability": "metric.aggregate",
+      "confidence": 0.5,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-api:metric:\"Product\".price",
+        "ecommerce-api:schema:\"Product\""
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.325,
+      "target": "ecommerce-api:metric:\"Product\".price"
+    },
+    {
+      "capability": "metric.aggregate",
+      "confidence": 0.5,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-api:metric:\"Product\".stock",
+        "ecommerce-api:schema:\"Product\""
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.325,
+      "target": "ecommerce-api:metric:\"Product\".stock"
+    },
+    {
+      "capability": "metric.aggregate",
+      "confidence": 0.5,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:metric:shop.order_items.qty",
+        "ecommerce-db:table:shop.order_items"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.325,
+      "target": "ecommerce-db:metric:shop.order_items.qty"
+    },
+    {
+      "capability": "metric.aggregate",
+      "confidence": 0.5,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:metric:shop.order_items.unit_price",
+        "ecommerce-db:table:shop.order_items"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.325,
+      "target": "ecommerce-db:metric:shop.order_items.unit_price"
+    },
+    {
+      "capability": "metric.aggregate",
+      "confidence": 0.5,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:metric:shop.orders.total",
+        "ecommerce-db:table:shop.orders"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.325,
+      "target": "ecommerce-db:metric:shop.orders.total"
+    },
+    {
+      "capability": "metric.aggregate",
+      "confidence": 0.5,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:metric:shop.payments.amount",
+        "ecommerce-db:table:shop.payments"
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.325,
+      "target": "ecommerce-db:metric:shop.payments.amount"
+    },
+    {
+      "capability": "metric.aggregate",
+      "confidence": 0.5,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:metric:shop.products.price",
+        "ecommerce-db:table:shop.products"
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.325,
+      "target": "ecommerce-db:metric:shop.products.price"
+    },
+    {
+      "capability": "metric.aggregate",
+      "confidence": 0.5,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:metric:shop.products.stock",
+        "ecommerce-db:table:shop.products"
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.325,
+      "target": "ecommerce-db:metric:shop.products.stock"
+    },
+    {
+      "capability": "notification.draft",
+      "confidence": 0.8,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.customers",
+        "ecommerce-db:column:shop.customers.email",
+        "ecommerce-db:event:shop.customers.created_at"
+      ],
+      "risk": "confidential",
+      "roles": [
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.33,
+      "target": "ecommerce-db:table:shop.customers"
+    },
+    {
+      "capability": "operation.read",
+      "confidence": 1.0,
+      "cost": 1,
+      "evidence": [
+        "ecommerce-api:op:GET /customers/{customerId}/orders",
+        "ecommerce-api:schema:\"Order\""
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.65,
+      "target": "ecommerce-api:op:GET /customers/{customerId}/orders"
+    },
+    {
+      "capability": "operation.read",
+      "confidence": 1.0,
+      "cost": 1,
+      "evidence": [
+        "ecommerce-api:op:GET /orders/{orderId}",
+        "ecommerce-api:schema:\"Order\""
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.65,
+      "target": "ecommerce-api:op:GET /orders/{orderId}"
+    },
+    {
+      "capability": "operation.read",
+      "confidence": 1.0,
+      "cost": 1,
+      "evidence": [
+        "ecommerce-api:op:GET /products",
+        "ecommerce-api:schema:\"Product\""
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.65,
+      "target": "ecommerce-api:op:GET /products"
+    },
+    {
+      "capability": "operation.read",
+      "confidence": 1.0,
+      "cost": 1,
+      "evidence": [
+        "ecommerce-api:op:GET /products/{sku}",
+        "ecommerce-api:schema:\"Product\""
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.65,
+      "target": "ecommerce-api:op:GET /products/{sku}"
+    },
+    {
+      "capability": "relation.traverse",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-api:rel:\"Order\".items",
+        "ecommerce-api:schema:\"Order\"",
+        "ecommerce-api:schema:\"OrderItem\""
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.5,
+      "target": "ecommerce-api:rel:\"Order\".items"
+    },
+    {
+      "capability": "relation.traverse",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:fk:shop.order_items.order_items_order_id_fkey",
+        "ecommerce-db:table:shop.order_items",
+        "ecommerce-db:table:shop.orders"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.5,
+      "target": "ecommerce-db:fk:shop.order_items.order_items_order_id_fkey"
+    },
+    {
+      "capability": "relation.traverse",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:fk:shop.order_items.order_items_sku_fkey",
+        "ecommerce-db:table:shop.order_items",
+        "ecommerce-db:table:shop.products"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.5,
+      "target": "ecommerce-db:fk:shop.order_items.order_items_sku_fkey"
+    },
+    {
+      "capability": "relation.traverse",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:fk:shop.orders.orders_customer_id_fkey",
+        "ecommerce-db:table:shop.orders",
+        "ecommerce-db:table:shop.customers"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.5,
+      "target": "ecommerce-db:fk:shop.orders.orders_customer_id_fkey"
+    },
+    {
+      "capability": "relation.traverse",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:fk:shop.payments.payments_order_id_fkey",
+        "ecommerce-db:table:shop.payments",
+        "ecommerce-db:table:shop.orders"
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.5,
+      "target": "ecommerce-db:fk:shop.payments.payments_order_id_fkey"
+    },
+    {
+      "capability": "relation.traverse",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:fk:shop.returns.returns_item_fk",
+        "ecommerce-db:table:shop.returns",
+        "ecommerce-db:table:shop.order_items"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops"
+      ],
+      "score": 0.5,
+      "target": "ecommerce-db:fk:shop.returns.returns_item_fk"
+    },
+    {
+      "capability": "relation.traverse",
+      "confidence": 1.0,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:fk:shop.shipments.shipments_order_id_fkey",
+        "ecommerce-db:table:shop.shipments",
+        "ecommerce-db:table:shop.orders"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.5,
+      "target": "ecommerce-db:fk:shop.shipments.shipments_order_id_fkey"
+    },
+    {
+      "capability": "state.timeline",
+      "confidence": 0.8,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-api:schema:\"Order\"",
+        "ecommerce-api:event:\"Order\".\"placedAt\""
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.38,
+      "target": "ecommerce-api:schema:\"Order\""
+    },
+    {
+      "capability": "state.timeline",
+      "confidence": 0.8,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.customers",
+        "ecommerce-db:event:shop.customers.created_at"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.38,
+      "target": "ecommerce-db:table:shop.customers"
+    },
+    {
+      "capability": "state.timeline",
+      "confidence": 0.8,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.orders",
+        "ecommerce-db:event:shop.orders.placed_at"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.38,
+      "target": "ecommerce-db:table:shop.orders"
+    },
+    {
+      "capability": "state.timeline",
+      "confidence": 0.8,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.payments",
+        "ecommerce-db:event:shop.payments.paid_at"
+      ],
+      "risk": "personal",
+      "roles": [],
+      "score": 0.38,
+      "target": "ecommerce-db:table:shop.payments"
+    },
+    {
+      "capability": "state.timeline",
+      "confidence": 0.8,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.returns",
+        "ecommerce-db:event:shop.returns.created_at"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops"
+      ],
+      "score": 0.38,
+      "target": "ecommerce-db:table:shop.returns"
+    },
+    {
+      "capability": "state.timeline",
+      "confidence": 0.8,
+      "cost": 2,
+      "evidence": [
+        "ecommerce-db:table:shop.shipments",
+        "ecommerce-db:event:shop.shipments.delivered_at",
+        "ecommerce-db:event:shop.shipments.shipped_at"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.38,
+      "target": "ecommerce-db:table:shop.shipments"
+    },
+    {
+      "capability": "workflow.status",
+      "confidence": 0.6,
+      "cost": 1,
+      "evidence": [
+        "ecommerce-api:prop:\"Order\".status",
+        "ecommerce-api:state:\"Order\".status=cancelled",
+        "ecommerce-api:state:\"Order\".status=delivered",
+        "ecommerce-api:state:\"Order\".status=paid",
+        "ecommerce-api:state:\"Order\".status=placed",
+        "ecommerce-api:state:\"Order\".status=returned",
+        "ecommerce-api:state:\"Order\".status=shipped",
+        "ecommerce-api:workflow:\"Order\".status"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.37,
+      "target": "ecommerce-api:prop:\"Order\".status"
+    },
+    {
+      "capability": "workflow.status",
+      "confidence": 0.6,
+      "cost": 1,
+      "evidence": [
+        "ecommerce-db:column:shop.orders.status",
+        "ecommerce-db:state:shop.orders.status=cancelled",
+        "ecommerce-db:state:shop.orders.status=delivered",
+        "ecommerce-db:state:shop.orders.status=paid",
+        "ecommerce-db:state:shop.orders.status=placed",
+        "ecommerce-db:state:shop.orders.status=returned",
+        "ecommerce-db:state:shop.orders.status=shipped",
+        "ecommerce-db:workflow:shop.orders.status"
+      ],
+      "risk": "personal",
+      "roles": [
+        "ecommerce-db:role:shop_ops",
+        "ecommerce-db:role:shop_support"
+      ],
+      "score": 0.37,
+      "target": "ecommerce-db:column:shop.orders.status"
+    }
+  ],
+  "summary": {
+    "agents": 3,
+    "by_capability": {
+      "entity.list_filtered": 10,
+      "entity.lookup": 9,
+      "entity.search": 12,
+      "metric.aggregate": 11,
+      "notification.draft": 1,
+      "operation.read": 4,
+      "relation.traverse": 7,
+      "state.timeline": 6,
+      "workflow.status": 2
+    },
+    "evidence_mean": 2.68,
+    "evidence_min": 2,
+    "rejected": 30,
+    "selected": 62
+  },
+  "twin_digest": "sha256:e2c1221d170f00321687774b2f5a736e777d29cfe5dc5c9e799564c8cc330dd8",
+  "twin_version": 1
+}
