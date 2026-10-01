@@ -35,3 +35,20 @@ system itself, which ones apply.
 - The planner can only propose what primitives exist; adding a primitive is a human-written,
   reviewed change.
 - Evidence links make drift impact computable (AP11).
+
+## Implementation notes (AP5, 2026-10-01)
+
+- **Eleven primitives ship** in `aura_core/adaptation/capabilities/`, one file each, named
+  after the id and decoded by the strict codec. `operation.write` is declared unavailable
+  (`writes_deferred`, ADR-021) so the plan explains every write action it does not offer.
+- **Requirements** are `child`, `referenced_by` or `ref` relations to the target, with
+  property filters. Evidence below a primitive's `min_confidence` does not count, so an inferred
+  candidate or a `same_as` proposal cannot carry a capability on its own.
+- **Score** = relevance × the weakest evidence confidence, minus 0.05 per cost step and per risk
+  level; the selection threshold is 0.3. `risk` is the selection's sensitivity floor.
+- **Agents** are `agent.project` plus one per source ROLE with read grants, extended through
+  `same_as` proposals. The risk ceiling is the riskiest capability included.
+- **Plans are recomputed on request**, not stored: the twin digest and the registry digest
+  determine the plan.
+- `tests/architecture/test_capabilities_domain_agnostic.py` checks the capability files and
+  `planner.py` against a domain-noun denylist.

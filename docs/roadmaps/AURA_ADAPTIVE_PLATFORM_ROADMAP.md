@@ -460,6 +460,23 @@ starts at **DOCUMENTED** as of the baseline.
 - **Exit criteria:** both pilots planned from the **same** primitive set; cross-domain report.
 - **Rollback:** additive.
 - **Evidence required:** `docs/reports/ap5-capability-planning.md`.
+- **As built (2026-10-01):** IMPLEMENTED. Both pilots are planned from the same eleven primitives
+  (same registry digest). Every selection is evidenced, and a cross-domain table is in the report.
+  Differences from the plan:
+  - **Primitives** are one YAML file each, decoded by the strict codec, so an unknown key is
+    refused. Two were added to the list above, `operation.read` and `operation.write`.
+    `operation.write` is declared *unavailable* (`writes_deferred`), so every write action
+    appears in the plan with that reason instead of silently vanishing.
+  - **Requirements** are three relations to the target (`child`, `referenced_by`, `ref`) with
+    property filters. Evidence below a primitive's `min_confidence` does not count.
+  - **Agents** are composed from selections:
+    - one `agent.project` agent;
+    - one `agent.role.<role>` agent per source ROLE with read grants, extended through
+      `same_as` proposals.
+  - **Plans are recomputed, not stored**, through
+    `GET /api/v3/admin/twin/versions/{v}/plan`: the same twin and registry digests always give
+    the same plan.
+  - **Metrics:** selections per primitive and evidence per selection.
 
 ### AP6 — Factories, Blueprint Compiler and Tool Output Schema *(Generation)*
 
@@ -677,7 +694,7 @@ M0 (CI evidence) gates every A-phase beyond BUILT.   M4 (GPU) gates label qualit
 | AP2 | Connectors + vault | Critical | AP1, (SEC-01..03) | Medium | High (secrets) | IMPLEMENTED (real-Postgres tests pass locally; CI + dev stack pending) | ports/, adaptation/, api/ | Fixture connector approved |
 | AP3 | Discovery PG + OpenAPI | Critical | AP2 | Medium | Medium | IMPLEMENTED (goldens + live Postgres pass locally; CI pending) | adapters/connectors/, fixtures | Pilot goldens + live run |
 | AP4 | Twin + diff | Critical | AP3, (M4) | High | Medium | IMPLEMENTED (goldens + live Postgres pass locally; CI pending) | adaptation/normalize, twin | Deterministic twins + diffs |
-| AP5 | Capabilities + planner | High | AP4 | Medium | Medium | DOCUMENTED | adaptation/capabilities | Same primitives, both pilots |
+| AP5 | Capabilities + planner | High | AP4 | Medium | Medium | IMPLEMENTED (pilot plans pass locally; CI pending) | adaptation/capabilities | Same primitives, both pilots |
 | AP6 | Factories + compiler | Critical | AP5 | High | High (SQL safety) | DOCUMENTED | adaptation/factories, domain/tools | Valid blueprints + fitness |
 | AP7 | Blueprint runtime | Critical | AP6, (SEC-01..03) | High | High (kernel seam) | DOCUMENTED | adaptation/runtime, container | Deploy + rollback |
 | AP8 | Generated eval gate | High | AP6, AP7, (M7) | Medium | Medium | DOCUMENTED | evaluation/ | Bad blueprint blocked |
