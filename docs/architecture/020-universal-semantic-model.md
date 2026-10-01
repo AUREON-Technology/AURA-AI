@@ -38,3 +38,20 @@ of an external system.
 
 - Downstream components are written once against AUSM, independent of source technology.
 - Rename detection is heuristic; a wrong rename is a proposal the admin rejects, not silent data loss.
+
+## Implementation notes (AP4, 2026-10-01)
+
+- **Normalisation is one pure function** (`aura_core/adaptation/normalize.py`): the same
+  discovery reports always give the same elements, whatever the order of reports or artifacts.
+  The twin digest excludes the version, so a re-snapshot of an unchanged system mints no version.
+- **Inferences are elements, below certainty.** Events, metrics and name-based references
+  (`normalize`), `same_as` merge proposals (`entity_matcher`) and workflow/transition candidates
+  (`process_mining`) all carry confidence < 1 and cite the evidence they rest on.
+- **Labels are identifiers, humanised, unless a model proposes better.** The model's provenance
+  is a second entry (`llm:<model>`, 0.6); structure is copied through untouched. With no model,
+  the twin is complete.
+- **Rename detection** pairs entities by attribute-name overlap, attributes by profile similarity
+  under the same (or a renamed) parent, and everything else when its locator follows a found
+  rename. Candidates never remove the removed/added entries from the diff.
+- **Storage** is migration `0010`: one JSONB row per element per version. A version whose
+  elements no longer hash to its recorded digest is refused on read.

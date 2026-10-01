@@ -478,12 +478,14 @@ class Container:
         # Track AP (ADR-018/021). None unless AURA_ADAPTATION_ENABLED; the admin routes answer 503.
         self.connectors = self._build_adaptation(use_postgres=use_postgres)
         self.discovery = None
+        self.twins = None
         if self.connectors is not None:
             from .adaptation.discovery import DiscoveryService
 
             self.discovery = DiscoveryService(
                 registry=self.connectors, clock=self.clock, audit=self.audit, metrics=self.metrics
             )
+        self.twins = self._build_twins(use_postgres=use_postgres)
 
         self.kernel = AIKernel(
             KernelDependencies(
@@ -647,6 +649,44 @@ class Container:
                 f"unknown vector backend {backend!r}", details={"supported": ["memory", "qdrant"]}
             )
         return InMemoryVectorStore()
+
+    def _build_twins(self, *, use_postgres: bool) -> Any:
+        """The Project Twin service (AP4), or ``None`` when Track AP is off.
+
+        The labeling model is opt-in (``AURA_ADAPTATION_LABELER_ENABLED``) and goes through the
+        same self-hosted router as every other completion; without it, twins carry humanised
+        identifiers -- the complete degraded mode ADR-026 requires.
+        """
+        if self.connectors is None:
+            return None
+        from .adaptation.labeling import LabelingPass, RouterLabelingModel
+        from .adaptation.twin import TwinService
+
+        adaptation = self.settings.adaptation
+        if use_postgres:
+            from .adapters.postgres_adaptation import PostgresTwinStore
+
+            store: Any = PostgresTwinStore(self.settings.infrastructure.database_url, pool=self._postgres_pool())
+        else:
+            from .adapters.memory_adaptation import InMemoryTwinStore
+
+            store = InMemoryTwinStore()
+        model = None
+        if adaptation.labeler_enabled:
+            model = RouterLabelingModel(self.router, timeout_s=max(1.0, adaptation.labeler_timeout_s - 10.0))
+        return TwinService(
+            project_id="p0",
+            registry=self.connectors,
+            discovery=self.discovery,
+            store=store,
+            labeling=LabelingPass(
+                model, batch_size=adaptation.labeler_batch_size, timeout_s=adaptation.labeler_timeout_s,
+                metrics=self.metrics,
+            ),
+            clock=self.clock,
+            audit=self.audit,
+            metrics=self.metrics,
+        )
 
     def _build_adaptation(self, *, use_postgres: bool) -> Any:
         """The connector registry, its vault and its stores -- or ``None`` when Track AP is off.

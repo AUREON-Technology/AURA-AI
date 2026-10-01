@@ -40,6 +40,7 @@ TRIAGE = (
     ("/api/v3/agents/runs", "to wire: agent-run history (wave 2) has no client or admin view yet"),
     ("/api/v3/knowledge/graph", "to wire: knowledge-graph read API (wave 2) has no view yet"),
     ("/api/v3/admin/connectors", "to wire: Console Project Factory is Track AP phase AP9"),
+    ("/api/v3/admin/twin", "to wire: Console twin browser and diff are Track AP phase AP9"),
     ("/api/v3/admin/", "to wire: admin console page missing for this route"),
     ("/api/v3/learning/", "to wire or remove: learning surface with no caller (GAP-013)"),
     ("/api/v3/tools", "to wire: tool catalogue is not shown anywhere"),

@@ -1181,7 +1181,7 @@ gaps:
     test: same-input-same-digest; diff goldens; test_degraded_without_labeler
     metric: labeling coverage; labeler latency per element
     exit_condition: AP4 exit criteria met; docs/reports/ap4-project-twin.md.
-    status: open
+    status: built_not_proven
 
   - gap_id: GAP-053
     component: adaptation/capabilities

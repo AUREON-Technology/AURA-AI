@@ -439,6 +439,9 @@ services:
       # Track AP connectors (ADR-021), off by default. Credentials are vaulted under the
       # secrets_encryption_key mounted above; without it a credentialed connector is refused.
       AURA_ADAPTATION_ENABLED: ${AURA_ADAPTATION_ENABLED:-false}
+      # Project Twin labeling (AP4, ADR-026): off = humanised identifiers, the complete
+      # degraded mode. On, it batches names through the self-hosted router, never a turn.
+      AURA_ADAPTATION_LABELER_ENABLED: ${AURA_ADAPTATION_LABELER_ENABLED:-false}
     secrets:
       [
         postgres_password,

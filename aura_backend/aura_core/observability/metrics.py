@@ -402,6 +402,24 @@ class Metrics:
             ("connector",),
             multiprocess_mode="livemax",
         )
+        self.twin_labeling_coverage = self._gauge(
+            "twin_labeling_coverage",
+            "Share of label-eligible Project Twin elements carrying a model label after the last "
+            "snapshot (0 in degraded mode: no labeler, or it failed -- ADR-026).",
+            (),
+            multiprocess_mode="livemax",
+        )
+        self.twin_labeling_elements = self._counter(
+            "twin_labeling_elements_total",
+            "Label-eligible twin elements by how they were labeled (model, reused, degraded).",
+            ("outcome",),
+        )
+        self.twin_labeler_seconds_per_element = self._histogram(
+            "twin_labeler_seconds_per_element",
+            "Labeling model latency per element of a batch.",
+            (),
+            buckets=(0.1, 0.5, 1, 2.5, 5, 10, 20, 40),
+        )
         self.agent_workspaces = self._gauge(
             "agent_workspaces",
             "Durable engineer-agent workspaces by status. Only `hot` costs memory (a warm "
@@ -631,6 +649,16 @@ class Metrics:
 
     def set_discovery_artifacts(self, connector: str, count: int) -> None:
         self.discovery_artifacts.labels(connector=connector).set(count)
+
+    def observe_labeling(self, summary) -> None:
+        self.twin_labeling_coverage.set(summary.coverage)
+        for outcome in ("model", "reused", "degraded"):
+            count = getattr(summary, outcome)
+            if count:
+                self.twin_labeling_elements.labels(outcome=outcome).inc(count)
+
+    def observe_labeler_latency(self, seconds_per_element: float) -> None:
+        self.twin_labeler_seconds_per_element.observe(seconds_per_element)
 
     def set_connector_health(self, connector: str, kind: str, status: str) -> None:
         value = {"healthy": 1.0, "degraded": 0.5}.get(status, 0.0)

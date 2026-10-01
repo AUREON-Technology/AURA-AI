@@ -1,0 +1,4811 @@
+{
+  "elements": [
+    {
+      "description": null,
+      "kind": "event",
+      "label": "Placed",
+      "locator": "event:\"Order\".\"placedAt\"",
+      "parent": null,
+      "properties": {
+        "attribute": "placedAt",
+        "granularity": "timestamp",
+        "nullable": false
+      },
+      "provenance": [
+        {
+          "confidence": 0.8,
+          "evidence_hash": "sha256:59eaec34c81e7a204a8a5ba6e419c4d56d055acb44e42763afd6f060a7f9fc3f",
+          "extractor": "normalize",
+          "locator": "prop:\"Order\".\"placedAt\"",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Order\""
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "metric",
+      "label": "Total total",
+      "locator": "metric:\"Order\".total",
+      "parent": null,
+      "properties": {
+        "aggregation": "sum",
+        "measure": "total"
+      },
+      "provenance": [
+        {
+          "confidence": 0.5,
+          "evidence_hash": "sha256:6afb105f8621c7788d239d6f457b2385a2e4e5221d7ac921a7d04f6a871d7555",
+          "extractor": "normalize",
+          "locator": "prop:\"Order\".total",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Order\""
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "metric",
+      "label": "Total unit price",
+      "locator": "metric:\"OrderItem\".\"unitPrice\"",
+      "parent": null,
+      "properties": {
+        "aggregation": "sum",
+        "measure": "unitPrice"
+      },
+      "provenance": [
+        {
+          "confidence": 0.5,
+          "evidence_hash": "sha256:bed33c164e5c6047113dc7c849635ae177d022d9b559eb6b8cb7acc53d342680",
+          "extractor": "normalize",
+          "locator": "prop:\"OrderItem\".\"unitPrice\"",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"OrderItem\""
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "metric",
+      "label": "Total qty",
+      "locator": "metric:\"OrderItem\".qty",
+      "parent": null,
+      "properties": {
+        "aggregation": "sum",
+        "measure": "qty"
+      },
+      "provenance": [
+        {
+          "confidence": 0.5,
+          "evidence_hash": "sha256:6e5ee08a6a50a63dbe05288bd301b5c37a3155c393b06d840048dcb3baf307ca",
+          "extractor": "normalize",
+          "locator": "prop:\"OrderItem\".qty",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"OrderItem\""
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "metric",
+      "label": "Total price",
+      "locator": "metric:\"Product\".price",
+      "parent": null,
+      "properties": {
+        "aggregation": "sum",
+        "measure": "price"
+      },
+      "provenance": [
+        {
+          "confidence": 0.5,
+          "evidence_hash": "sha256:bed9a390b13bf72b5c7e0cfe41b2ffcd9c389707d41be0d4d90b0f636b4f3abd",
+          "extractor": "normalize",
+          "locator": "prop:\"Product\".price",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Product\""
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "metric",
+      "label": "Total stock",
+      "locator": "metric:\"Product\".stock",
+      "parent": null,
+      "properties": {
+        "aggregation": "sum",
+        "measure": "stock"
+      },
+      "provenance": [
+        {
+          "confidence": 0.5,
+          "evidence_hash": "sha256:2940a6089de04aa44036a8122e724954e8c6c087f8fe85ff1844100da0b9d186",
+          "extractor": "normalize",
+          "locator": "prop:\"Product\".stock",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Product\""
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "action",
+      "label": "Cancel order",
+      "locator": "op:DELETE /orders/{orderId}",
+      "parent": null,
+      "properties": {
+        "deferred": true,
+        "deprecated": true,
+        "http_method": "DELETE",
+        "identifier": "cancelOrder",
+        "mode": "write",
+        "operation_id": "cancelOrder",
+        "path": "/orders/{orderId}",
+        "required_parameters": "path:orderId",
+        "returns_list": false,
+        "security": "apiKey"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:2866492645b3ff1697fec13a76894efca4dbb9a5d62403c7c8e96adab13bee4e",
+          "extractor": "openapi",
+          "locator": "op:DELETE /orders/{orderId}",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Order\""
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": "Orders placed by one customer.",
+      "kind": "action",
+      "label": "List customer orders",
+      "locator": "op:GET /customers/{customerId}/orders",
+      "parent": null,
+      "properties": {
+        "deferred": false,
+        "deprecated": false,
+        "http_method": "GET",
+        "identifier": "listCustomerOrders",
+        "mode": "read",
+        "operation_id": "listCustomerOrders",
+        "path": "/customers/{customerId}/orders",
+        "required_parameters": "path:customerId",
+        "returns_list": true,
+        "security": "apiKey"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:6942e71321b28cbdd981e55d3e9c88bcaa49e3dacf78d0df01232772c7ff7048",
+          "extractor": "openapi",
+          "locator": "op:GET /customers/{customerId}/orders",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Order\""
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "action",
+      "label": "Get order",
+      "locator": "op:GET /orders/{orderId}",
+      "parent": null,
+      "properties": {
+        "deferred": false,
+        "deprecated": false,
+        "http_method": "GET",
+        "identifier": "getOrder",
+        "mode": "read",
+        "operation_id": "getOrder",
+        "path": "/orders/{orderId}",
+        "required_parameters": "path:orderId",
+        "returns_list": false,
+        "security": "apiKey"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:c20ab0a21187f68f11737ada66dcce01a68a71be494ef8cc9ca68663277e2b62",
+          "extractor": "openapi",
+          "locator": "op:GET /orders/{orderId}",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Order\""
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": "List products in a category.",
+      "kind": "action",
+      "label": "List products",
+      "locator": "op:GET /products",
+      "parent": null,
+      "properties": {
+        "deferred": false,
+        "deprecated": false,
+        "http_method": "GET",
+        "identifier": "listProducts",
+        "mode": "read",
+        "operation_id": "listProducts",
+        "path": "/products",
+        "required_parameters": "",
+        "returns_list": true,
+        "security": "apiKey"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:9e06287979606a99c7581b671206ce8e958d6655a44ddec8cf7eaddd77e459e6",
+          "extractor": "openapi",
+          "locator": "op:GET /products",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Product\""
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "action",
+      "label": "Get product",
+      "locator": "op:GET /products/{sku}",
+      "parent": null,
+      "properties": {
+        "deferred": false,
+        "deprecated": false,
+        "http_method": "GET",
+        "identifier": "getProduct",
+        "mode": "read",
+        "operation_id": "getProduct",
+        "path": "/products/{sku}",
+        "required_parameters": "path:sku",
+        "returns_list": false,
+        "security": "apiKey"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:8c1f9d020541f0873e939a90b34b8b7cb0c9d02891129caf091d78cdc06b7768",
+          "extractor": "openapi",
+          "locator": "op:GET /products/{sku}",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Product\""
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "action",
+      "label": "Create return",
+      "locator": "op:POST /returns",
+      "parent": null,
+      "properties": {
+        "deferred": true,
+        "deprecated": false,
+        "http_method": "POST",
+        "identifier": "createReturn",
+        "mode": "write",
+        "operation_id": "createReturn",
+        "path": "/returns",
+        "required_parameters": "",
+        "returns_list": false,
+        "security": "apiKey"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:c6d2a39dfe16a5dc300b0e7e11187eb63f3a1b6d31e9d05fadef721de2f61fda",
+          "extractor": "openapi",
+          "locator": "op:POST /returns",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Return\""
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Order id",
+      "locator": "prop:\"NewReturn\".\"orderId\"",
+      "parent": "ecommerce-api:schema:\"NewReturn\"",
+      "properties": {
+        "data_type": "integer",
+        "identifier": "orderId",
+        "nullable": false,
+        "read_only": false,
+        "required": true,
+        "semantic_type": "reference"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:4cf17c5a58a2201929532cb4b3b47a17828f6c388670df6433c9c8b3eaee149e",
+          "extractor": "openapi",
+          "locator": "prop:\"NewReturn\".\"orderId\"",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Reason",
+      "locator": "prop:\"NewReturn\".reason",
+      "parent": "ecommerce-api:schema:\"NewReturn\"",
+      "properties": {
+        "data_type": "string",
+        "identifier": "reason",
+        "nullable": false,
+        "read_only": false,
+        "required": true,
+        "semantic_type": "text"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:e6f8938541bd68253ddca3a9ef641cef124357e12f6bdacea4f1fa89cb64d3b3",
+          "extractor": "openapi",
+          "locator": "prop:\"NewReturn\".reason",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Sku",
+      "locator": "prop:\"NewReturn\".sku",
+      "parent": "ecommerce-api:schema:\"NewReturn\"",
+      "properties": {
+        "data_type": "string",
+        "identifier": "sku",
+        "nullable": false,
+        "read_only": false,
+        "required": true,
+        "semantic_type": "text"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:6f4b190ea0d1dfeb0084b4f0a70b4854f1a573963d2600f5c3def428787c4acf",
+          "extractor": "openapi",
+          "locator": "prop:\"NewReturn\".sku",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Customer id",
+      "locator": "prop:\"Order\".\"customerId\"",
+      "parent": "ecommerce-api:schema:\"Order\"",
+      "properties": {
+        "data_type": "integer",
+        "identifier": "customerId",
+        "nullable": false,
+        "read_only": false,
+        "required": true,
+        "semantic_type": "reference"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:2326a58ff19d2ed4118cd36cd260e4a4c95b20967e0277383a194ff364c14af8",
+          "extractor": "openapi",
+          "locator": "prop:\"Order\".\"customerId\"",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Placed at",
+      "locator": "prop:\"Order\".\"placedAt\"",
+      "parent": "ecommerce-api:schema:\"Order\"",
+      "properties": {
+        "data_type": "string",
+        "format": "date-time",
+        "identifier": "placedAt",
+        "nullable": false,
+        "read_only": false,
+        "required": false,
+        "semantic_type": "timestamp"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:59eaec34c81e7a204a8a5ba6e419c4d56d055acb44e42763afd6f060a7f9fc3f",
+          "extractor": "openapi",
+          "locator": "prop:\"Order\".\"placedAt\"",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Id",
+      "locator": "prop:\"Order\".id",
+      "parent": "ecommerce-api:schema:\"Order\"",
+      "properties": {
+        "data_type": "integer",
+        "identifier": "id",
+        "nullable": false,
+        "read_only": false,
+        "required": true,
+        "semantic_type": "identifier"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:16bda85e18a753004d112a57b7d869d4e7e44ca88c4113b129d6716ce2dd5430",
+          "extractor": "openapi",
+          "locator": "prop:\"Order\".id",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Items",
+      "locator": "prop:\"Order\".items",
+      "parent": "ecommerce-api:schema:\"Order\"",
+      "properties": {
+        "data_type": "array",
+        "identifier": "items",
+        "nullable": false,
+        "read_only": false,
+        "required": false,
+        "semantic_type": "reference"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:b7a4b664a8e344a442c022308eb9d42630f9b0952f93b1e3ed4a4b5f00ed0c22",
+          "extractor": "openapi",
+          "locator": "prop:\"Order\".items",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Status",
+      "locator": "prop:\"Order\".status",
+      "parent": "ecommerce-api:schema:\"Order\"",
+      "properties": {
+        "data_type": "string",
+        "identifier": "status",
+        "nullable": false,
+        "read_only": false,
+        "required": true,
+        "semantic_type": "status",
+        "value_set": "enum"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:eb67dbcfef16eaa80b8ccb0077357dd7d9e1bfe43b546078634d23c4893878b1",
+          "extractor": "openapi",
+          "locator": "prop:\"Order\".status",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Total",
+      "locator": "prop:\"Order\".total",
+      "parent": "ecommerce-api:schema:\"Order\"",
+      "properties": {
+        "data_type": "number",
+        "identifier": "total",
+        "nullable": false,
+        "read_only": false,
+        "required": false,
+        "semantic_type": "measure"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:6afb105f8621c7788d239d6f457b2385a2e4e5221d7ac921a7d04f6a871d7555",
+          "extractor": "openapi",
+          "locator": "prop:\"Order\".total",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Unit price",
+      "locator": "prop:\"OrderItem\".\"unitPrice\"",
+      "parent": "ecommerce-api:schema:\"OrderItem\"",
+      "properties": {
+        "data_type": "number",
+        "identifier": "unitPrice",
+        "nullable": false,
+        "read_only": false,
+        "required": false,
+        "semantic_type": "measure"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:bed33c164e5c6047113dc7c849635ae177d022d9b559eb6b8cb7acc53d342680",
+          "extractor": "openapi",
+          "locator": "prop:\"OrderItem\".\"unitPrice\"",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Qty",
+      "locator": "prop:\"OrderItem\".qty",
+      "parent": "ecommerce-api:schema:\"OrderItem\"",
+      "properties": {
+        "data_type": "integer",
+        "identifier": "qty",
+        "nullable": false,
+        "read_only": false,
+        "required": false,
+        "semantic_type": "measure"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:6e5ee08a6a50a63dbe05288bd301b5c37a3155c393b06d840048dcb3baf307ca",
+          "extractor": "openapi",
+          "locator": "prop:\"OrderItem\".qty",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Sku",
+      "locator": "prop:\"OrderItem\".sku",
+      "parent": "ecommerce-api:schema:\"OrderItem\"",
+      "properties": {
+        "data_type": "string",
+        "identifier": "sku",
+        "nullable": false,
+        "read_only": false,
+        "required": false,
+        "semantic_type": "text"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:a143e3a7e17d29595159daa3bf679afb9beaa0eb0935d6c6912537069123d7d7",
+          "extractor": "openapi",
+          "locator": "prop:\"OrderItem\".sku",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Category",
+      "locator": "prop:\"Product\".category",
+      "parent": "ecommerce-api:schema:\"Product\"",
+      "properties": {
+        "data_type": "string",
+        "identifier": "category",
+        "nullable": false,
+        "read_only": false,
+        "required": false,
+        "semantic_type": "text"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:7dc5bd84028c9b1aee9c0d5e7d915eb6cb3df740910d6499cb0c855d17fac4a5",
+          "extractor": "openapi",
+          "locator": "prop:\"Product\".category",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Price",
+      "locator": "prop:\"Product\".price",
+      "parent": "ecommerce-api:schema:\"Product\"",
+      "properties": {
+        "data_type": "number",
+        "identifier": "price",
+        "nullable": false,
+        "read_only": false,
+        "required": true,
+        "semantic_type": "measure"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:bed9a390b13bf72b5c7e0cfe41b2ffcd9c389707d41be0d4d90b0f636b4f3abd",
+          "extractor": "openapi",
+          "locator": "prop:\"Product\".price",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Sku",
+      "locator": "prop:\"Product\".sku",
+      "parent": "ecommerce-api:schema:\"Product\"",
+      "properties": {
+        "data_type": "string",
+        "identifier": "sku",
+        "nullable": false,
+        "read_only": false,
+        "required": true,
+        "semantic_type": "text"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:09d494365375ad4b3e1f7980f409354a6b4eb0080f679e9acc4ab55522580028",
+          "extractor": "openapi",
+          "locator": "prop:\"Product\".sku",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Stock",
+      "locator": "prop:\"Product\".stock",
+      "parent": "ecommerce-api:schema:\"Product\"",
+      "properties": {
+        "data_type": "integer",
+        "identifier": "stock",
+        "nullable": false,
+        "read_only": false,
+        "required": false,
+        "semantic_type": "measure"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:2940a6089de04aa44036a8122e724954e8c6c087f8fe85ff1844100da0b9d186",
+          "extractor": "openapi",
+          "locator": "prop:\"Product\".stock",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Title",
+      "locator": "prop:\"Product\".title",
+      "parent": "ecommerce-api:schema:\"Product\"",
+      "properties": {
+        "data_type": "string",
+        "identifier": "title",
+        "nullable": false,
+        "read_only": false,
+        "required": true,
+        "semantic_type": "text"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:ddc11b0ef497b4762f405cdbd6c391167e319c11b9502a94c0dbb6c3ef557cba",
+          "extractor": "openapi",
+          "locator": "prop:\"Product\".title",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Order id",
+      "locator": "prop:\"Return\".\"orderId\"",
+      "parent": "ecommerce-api:schema:\"Return\"",
+      "properties": {
+        "data_type": "integer",
+        "identifier": "orderId",
+        "nullable": false,
+        "read_only": false,
+        "required": false,
+        "semantic_type": "reference"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:5761f6946ad37340e985df6620ceefe5b7b2806257337c5d184fda76c81332be",
+          "extractor": "openapi",
+          "locator": "prop:\"Return\".\"orderId\"",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Id",
+      "locator": "prop:\"Return\".id",
+      "parent": "ecommerce-api:schema:\"Return\"",
+      "properties": {
+        "data_type": "integer",
+        "identifier": "id",
+        "nullable": false,
+        "read_only": false,
+        "required": false,
+        "semantic_type": "identifier"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:5b27f2aaff5bb30e8caf4aa7d32dc8c8338cb90806f48a8bbdcb0d8081ceec8f",
+          "extractor": "openapi",
+          "locator": "prop:\"Return\".id",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Reason",
+      "locator": "prop:\"Return\".reason",
+      "parent": "ecommerce-api:schema:\"Return\"",
+      "properties": {
+        "data_type": "string",
+        "identifier": "reason",
+        "nullable": false,
+        "read_only": false,
+        "required": false,
+        "semantic_type": "text"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:3982e9efecfc342ce02b16d31395ef13fdfc940f0e187d83ff19770aca863137",
+          "extractor": "openapi",
+          "locator": "prop:\"Return\".reason",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Sku",
+      "locator": "prop:\"Return\".sku",
+      "parent": "ecommerce-api:schema:\"Return\"",
+      "properties": {
+        "data_type": "string",
+        "identifier": "sku",
+        "nullable": false,
+        "read_only": false,
+        "required": false,
+        "semantic_type": "text"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:9ca38dab1a938d06c306d6a521a10bb24dc96438f529405eb9587f79facf8548",
+          "extractor": "openapi",
+          "locator": "prop:\"Return\".sku",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "relation",
+      "label": "Order id → Order",
+      "locator": "rel:\"NewReturn\".\"orderId\"",
+      "parent": null,
+      "properties": {
+        "cardinality": "many_to_one",
+        "columns": "\"orderId\"",
+        "relation_type": "reference_by_name",
+        "self_referencing": false
+      },
+      "provenance": [
+        {
+          "confidence": 0.6,
+          "evidence_hash": "sha256:4cf17c5a58a2201929532cb4b3b47a17828f6c388670df6433c9c8b3eaee149e",
+          "extractor": "normalize",
+          "locator": "prop:\"NewReturn\".\"orderId\"",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "from": "ecommerce-api:schema:\"NewReturn\"",
+        "to": "ecommerce-api:schema:\"Order\"",
+        "via": "ecommerce-api:prop:\"NewReturn\".\"orderId\""
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "relation",
+      "label": "Items → Order item",
+      "locator": "rel:\"Order\".items",
+      "parent": null,
+      "properties": {
+        "cardinality": "one_to_many",
+        "columns": "items",
+        "relation_type": "embedded",
+        "self_referencing": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:b7a4b664a8e344a442c022308eb9d42630f9b0952f93b1e3ed4a4b5f00ed0c22",
+          "extractor": "openapi",
+          "locator": "prop:\"Order\".items",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "from": "ecommerce-api:schema:\"Order\"",
+        "to": "ecommerce-api:schema:\"OrderItem\"",
+        "via": "ecommerce-api:prop:\"Order\".items"
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "relation",
+      "label": "Order id → Order",
+      "locator": "rel:\"Return\".\"orderId\"",
+      "parent": null,
+      "properties": {
+        "cardinality": "many_to_one",
+        "columns": "\"orderId\"",
+        "relation_type": "reference_by_name",
+        "self_referencing": false
+      },
+      "provenance": [
+        {
+          "confidence": 0.6,
+          "evidence_hash": "sha256:5761f6946ad37340e985df6620ceefe5b7b2806257337c5d184fda76c81332be",
+          "extractor": "normalize",
+          "locator": "prop:\"Return\".\"orderId\"",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "from": "ecommerce-api:schema:\"Return\"",
+        "to": "ecommerce-api:schema:\"Order\"",
+        "via": "ecommerce-api:prop:\"Return\".\"orderId\""
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "relation",
+      "label": "Order item ≈ Order items",
+      "locator": "same_as:ecommerce-db:table:shop.order_items",
+      "parent": null,
+      "properties": {
+        "name_score": 1.0,
+        "relation_type": "same_as",
+        "score": 0.8125,
+        "shape_score": 0.625,
+        "shared_attributes": 3,
+        "status": "proposed"
+      },
+      "provenance": [
+        {
+          "confidence": 0.8125,
+          "evidence_hash": "sha256:9cb55e1f62c54081f9ba5b7340cbd63d743e6526dd11b73917e0b7d90b1d7b6f",
+          "extractor": "entity_matcher",
+          "locator": "schema:\"OrderItem\"",
+          "source_id": "ecommerce-api"
+        },
+        {
+          "confidence": 0.8125,
+          "evidence_hash": "sha256:dc8881603af443aa8244ae206433951a0dcbc3c1b6221fd90d0a3e88eae23aa3",
+          "extractor": "entity_matcher",
+          "locator": "table:shop.order_items",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "from": "ecommerce-api:schema:\"OrderItem\"",
+        "to": "ecommerce-db:table:shop.order_items"
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "relation",
+      "label": "Order ≈ Orders",
+      "locator": "same_as:ecommerce-db:table:shop.orders",
+      "parent": null,
+      "properties": {
+        "name_score": 1.0,
+        "relation_type": "same_as",
+        "score": 0.9167,
+        "shape_score": 0.8333,
+        "shared_attributes": 5,
+        "status": "proposed"
+      },
+      "provenance": [
+        {
+          "confidence": 0.9167,
+          "evidence_hash": "sha256:74f60957dbda2907818f393918e7b873b36a45af5e8db32bb80078abf0d64783",
+          "extractor": "entity_matcher",
+          "locator": "schema:\"Order\"",
+          "source_id": "ecommerce-api"
+        },
+        {
+          "confidence": 0.9167,
+          "evidence_hash": "sha256:aaabd4abc76d67055ef1c171a24ba026b60ae241520de08bcec666ab3643bf12",
+          "extractor": "entity_matcher",
+          "locator": "table:shop.orders",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "from": "ecommerce-api:schema:\"Order\"",
+        "to": "ecommerce-db:table:shop.orders"
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "relation",
+      "label": "Product ≈ Products",
+      "locator": "same_as:ecommerce-db:table:shop.products",
+      "parent": null,
+      "properties": {
+        "name_score": 1.0,
+        "relation_type": "same_as",
+        "score": 0.95,
+        "shape_score": 0.9,
+        "shared_attributes": 5,
+        "status": "proposed"
+      },
+      "provenance": [
+        {
+          "confidence": 0.95,
+          "evidence_hash": "sha256:28c0f6e0ae6dbd414884eabb7b1bd5fa482554e2d202164fe19590d56d73d808",
+          "extractor": "entity_matcher",
+          "locator": "schema:\"Product\"",
+          "source_id": "ecommerce-api"
+        },
+        {
+          "confidence": 0.95,
+          "evidence_hash": "sha256:905315c2da185b0d58ef6e5f9d281a91f3314af6559169cd2cfd174463426fae",
+          "extractor": "entity_matcher",
+          "locator": "table:shop.products",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "from": "ecommerce-api:schema:\"Product\"",
+        "to": "ecommerce-db:table:shop.products"
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "relation",
+      "label": "Return ≈ Returns",
+      "locator": "same_as:ecommerce-db:table:shop.returns",
+      "parent": null,
+      "properties": {
+        "name_score": 1.0,
+        "relation_type": "same_as",
+        "score": 0.85,
+        "shape_score": 0.7,
+        "shared_attributes": 4,
+        "status": "proposed"
+      },
+      "provenance": [
+        {
+          "confidence": 0.85,
+          "evidence_hash": "sha256:d719b6ac0403b343e8a54f0e6503e267de2a15f60c11b3172421f2eed7a5a969",
+          "extractor": "entity_matcher",
+          "locator": "schema:\"Return\"",
+          "source_id": "ecommerce-api"
+        },
+        {
+          "confidence": 0.85,
+          "evidence_hash": "sha256:9663b39e8162ee5a6f228c068a80d145d64354f1678e7f2e68dc9d9707530b00",
+          "extractor": "entity_matcher",
+          "locator": "table:shop.returns",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "from": "ecommerce-api:schema:\"Return\"",
+        "to": "ecommerce-db:table:shop.returns"
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "entity",
+      "label": "New return",
+      "locator": "schema:\"NewReturn\"",
+      "parent": null,
+      "properties": {
+        "identifier": "NewReturn",
+        "required_count": 3,
+        "source_type": "schema"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:df11eda154689c159daf82615cd546c66fd80cb06674ea4458d0bf3f81cd8068",
+          "extractor": "openapi",
+          "locator": "schema:\"NewReturn\"",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "entity",
+      "label": "Order",
+      "locator": "schema:\"Order\"",
+      "parent": null,
+      "properties": {
+        "identifier": "Order",
+        "required_count": 3,
+        "source_type": "schema"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:74f60957dbda2907818f393918e7b873b36a45af5e8db32bb80078abf0d64783",
+          "extractor": "openapi",
+          "locator": "schema:\"Order\"",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "entity",
+      "label": "Order item",
+      "locator": "schema:\"OrderItem\"",
+      "parent": null,
+      "properties": {
+        "identifier": "OrderItem",
+        "required_count": 0,
+        "source_type": "schema"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:9cb55e1f62c54081f9ba5b7340cbd63d743e6526dd11b73917e0b7d90b1d7b6f",
+          "extractor": "openapi",
+          "locator": "schema:\"OrderItem\"",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "entity",
+      "label": "Product",
+      "locator": "schema:\"Product\"",
+      "parent": null,
+      "properties": {
+        "identifier": "Product",
+        "required_count": 3,
+        "source_type": "schema"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:28c0f6e0ae6dbd414884eabb7b1bd5fa482554e2d202164fe19590d56d73d808",
+          "extractor": "openapi",
+          "locator": "schema:\"Product\"",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "entity",
+      "label": "Return",
+      "locator": "schema:\"Return\"",
+      "parent": null,
+      "properties": {
+        "identifier": "Return",
+        "required_count": 0,
+        "source_type": "schema"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:d719b6ac0403b343e8a54f0e6503e267de2a15f60c11b3172421f2eed7a5a969",
+          "extractor": "openapi",
+          "locator": "schema:\"Return\"",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Api key",
+      "locator": "security:\"apiKey\"",
+      "parent": "ecommerce-api:source",
+      "properties": {
+        "constraint_type": "auth_scheme",
+        "identifier": "apiKey",
+        "location": "header",
+        "scheme": null,
+        "scheme_type": "apiKey"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:f4cb14327b26eb2b4c724971909056dddfa2aa3dd23916215d925a0f1bea7e3a",
+          "extractor": "openapi",
+          "locator": "security:\"apiKey\"",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": "Catalogue, orders and returns for the reference shop.",
+      "kind": "source",
+      "label": "Reference Shop API",
+      "locator": "source",
+      "parent": null,
+      "properties": {
+        "api_version": "2.0.1",
+        "artifacts": 34,
+        "extractor": "openapi",
+        "openapi": "3.1.0",
+        "truncated": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:21e16459891c9c2c64be146bf6f30bf5b0c381176ec2bef81fbcd5c4d1793901",
+          "extractor": "openapi",
+          "locator": "source",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "state",
+      "label": "Cancelled",
+      "locator": "state:\"Order\".status=cancelled",
+      "parent": "ecommerce-api:prop:\"Order\".status",
+      "properties": {
+        "ordinal": 4,
+        "value": "cancelled",
+        "value_set": "enum"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:eb67dbcfef16eaa80b8ccb0077357dd7d9e1bfe43b546078634d23c4893878b1",
+          "extractor": "openapi",
+          "locator": "prop:\"Order\".status",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "state",
+      "label": "Delivered",
+      "locator": "state:\"Order\".status=delivered",
+      "parent": "ecommerce-api:prop:\"Order\".status",
+      "properties": {
+        "ordinal": 3,
+        "value": "delivered",
+        "value_set": "enum"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:eb67dbcfef16eaa80b8ccb0077357dd7d9e1bfe43b546078634d23c4893878b1",
+          "extractor": "openapi",
+          "locator": "prop:\"Order\".status",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "state",
+      "label": "Paid",
+      "locator": "state:\"Order\".status=paid",
+      "parent": "ecommerce-api:prop:\"Order\".status",
+      "properties": {
+        "ordinal": 1,
+        "value": "paid",
+        "value_set": "enum"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:eb67dbcfef16eaa80b8ccb0077357dd7d9e1bfe43b546078634d23c4893878b1",
+          "extractor": "openapi",
+          "locator": "prop:\"Order\".status",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "state",
+      "label": "Placed",
+      "locator": "state:\"Order\".status=placed",
+      "parent": "ecommerce-api:prop:\"Order\".status",
+      "properties": {
+        "ordinal": 0,
+        "value": "placed",
+        "value_set": "enum"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:eb67dbcfef16eaa80b8ccb0077357dd7d9e1bfe43b546078634d23c4893878b1",
+          "extractor": "openapi",
+          "locator": "prop:\"Order\".status",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "state",
+      "label": "Returned",
+      "locator": "state:\"Order\".status=returned",
+      "parent": "ecommerce-api:prop:\"Order\".status",
+      "properties": {
+        "ordinal": 5,
+        "value": "returned",
+        "value_set": "enum"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:eb67dbcfef16eaa80b8ccb0077357dd7d9e1bfe43b546078634d23c4893878b1",
+          "extractor": "openapi",
+          "locator": "prop:\"Order\".status",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "state",
+      "label": "Shipped",
+      "locator": "state:\"Order\".status=shipped",
+      "parent": "ecommerce-api:prop:\"Order\".status",
+      "properties": {
+        "ordinal": 2,
+        "value": "shipped",
+        "value_set": "enum"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:eb67dbcfef16eaa80b8ccb0077357dd7d9e1bfe43b546078634d23c4893878b1",
+          "extractor": "openapi",
+          "locator": "prop:\"Order\".status",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Paid → Shipped",
+      "locator": "transition:\"Order\".status:paid>shipped",
+      "parent": null,
+      "properties": {
+        "evidence": "declared_order",
+        "from_state": "paid",
+        "role": "transition",
+        "terminal_target": false,
+        "to_state": "shipped"
+      },
+      "provenance": [
+        {
+          "confidence": 0.25,
+          "evidence_hash": "sha256:eb67dbcfef16eaa80b8ccb0077357dd7d9e1bfe43b546078634d23c4893878b1",
+          "extractor": "process_mining",
+          "locator": "prop:\"Order\".status",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Order\"",
+        "state_attribute": "ecommerce-api:prop:\"Order\".status"
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Placed → Cancelled",
+      "locator": "transition:\"Order\".status:placed>cancelled",
+      "parent": null,
+      "properties": {
+        "evidence": "from_initial,action",
+        "from_state": "placed",
+        "role": "transition",
+        "terminal_target": true,
+        "to_state": "cancelled"
+      },
+      "provenance": [
+        {
+          "confidence": 0.45,
+          "evidence_hash": "sha256:eb67dbcfef16eaa80b8ccb0077357dd7d9e1bfe43b546078634d23c4893878b1",
+          "extractor": "process_mining",
+          "locator": "prop:\"Order\".status",
+          "source_id": "ecommerce-api"
+        },
+        {
+          "confidence": 0.45,
+          "evidence_hash": "sha256:b7da2e5434c20c73be8311da75c44e19b2b8b66fa60f134da2fef3c57e10d95a",
+          "extractor": "process_mining",
+          "locator": "op:DELETE /orders/{orderId}",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Order\"",
+        "state_attribute": "ecommerce-api:prop:\"Order\".status"
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Placed → Delivered",
+      "locator": "transition:\"Order\".status:placed>delivered",
+      "parent": null,
+      "properties": {
+        "evidence": "from_initial",
+        "from_state": "placed",
+        "role": "transition",
+        "terminal_target": true,
+        "to_state": "delivered"
+      },
+      "provenance": [
+        {
+          "confidence": 0.15,
+          "evidence_hash": "sha256:eb67dbcfef16eaa80b8ccb0077357dd7d9e1bfe43b546078634d23c4893878b1",
+          "extractor": "process_mining",
+          "locator": "prop:\"Order\".status",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Order\"",
+        "state_attribute": "ecommerce-api:prop:\"Order\".status"
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Placed → Paid",
+      "locator": "transition:\"Order\".status:placed>paid",
+      "parent": null,
+      "properties": {
+        "evidence": "declared_order",
+        "from_state": "placed",
+        "role": "transition",
+        "terminal_target": false,
+        "to_state": "paid"
+      },
+      "provenance": [
+        {
+          "confidence": 0.25,
+          "evidence_hash": "sha256:eb67dbcfef16eaa80b8ccb0077357dd7d9e1bfe43b546078634d23c4893878b1",
+          "extractor": "process_mining",
+          "locator": "prop:\"Order\".status",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Order\"",
+        "state_attribute": "ecommerce-api:prop:\"Order\".status"
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Placed → Returned",
+      "locator": "transition:\"Order\".status:placed>returned",
+      "parent": null,
+      "properties": {
+        "evidence": "from_initial",
+        "from_state": "placed",
+        "role": "transition",
+        "terminal_target": true,
+        "to_state": "returned"
+      },
+      "provenance": [
+        {
+          "confidence": 0.15,
+          "evidence_hash": "sha256:eb67dbcfef16eaa80b8ccb0077357dd7d9e1bfe43b546078634d23c4893878b1",
+          "extractor": "process_mining",
+          "locator": "prop:\"Order\".status",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Order\"",
+        "state_attribute": "ecommerce-api:prop:\"Order\".status"
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Placed → Shipped",
+      "locator": "transition:\"Order\".status:placed>shipped",
+      "parent": null,
+      "properties": {
+        "evidence": "from_initial",
+        "from_state": "placed",
+        "role": "transition",
+        "terminal_target": false,
+        "to_state": "shipped"
+      },
+      "provenance": [
+        {
+          "confidence": 0.15,
+          "evidence_hash": "sha256:eb67dbcfef16eaa80b8ccb0077357dd7d9e1bfe43b546078634d23c4893878b1",
+          "extractor": "process_mining",
+          "locator": "prop:\"Order\".status",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Order\"",
+        "state_attribute": "ecommerce-api:prop:\"Order\".status"
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Shipped → Delivered",
+      "locator": "transition:\"Order\".status:shipped>delivered",
+      "parent": null,
+      "properties": {
+        "evidence": "declared_order",
+        "from_state": "shipped",
+        "role": "transition",
+        "terminal_target": true,
+        "to_state": "delivered"
+      },
+      "provenance": [
+        {
+          "confidence": 0.25,
+          "evidence_hash": "sha256:eb67dbcfef16eaa80b8ccb0077357dd7d9e1bfe43b546078634d23c4893878b1",
+          "extractor": "process_mining",
+          "locator": "prop:\"Order\".status",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Order\"",
+        "state_attribute": "ecommerce-api:prop:\"Order\".status"
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Order status lifecycle",
+      "locator": "workflow:\"Order\".status",
+      "parent": null,
+      "properties": {
+        "initial": "placed",
+        "role": "process",
+        "state_count": 6,
+        "states": "placed,paid,shipped,delivered,cancelled,returned",
+        "terminal": "delivered,cancelled,returned",
+        "transition_count": 7
+      },
+      "provenance": [
+        {
+          "confidence": 0.6,
+          "evidence_hash": "sha256:eb67dbcfef16eaa80b8ccb0077357dd7d9e1bfe43b546078634d23c4893878b1",
+          "extractor": "process_mining",
+          "locator": "prop:\"Order\".status",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-api:schema:\"Order\"",
+        "state_attribute": "ecommerce-api:prop:\"Order\".status"
+      },
+      "source_id": "ecommerce-api"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Order items qty check",
+      "locator": "check:shop.order_items.order_items_qty_check",
+      "parent": "ecommerce-db:column:shop.order_items.qty",
+      "properties": {
+        "columns": "qty",
+        "constraint_type": "check",
+        "expression": "CHECK ((qty > 0))",
+        "identifier": "order_items_qty_check"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:7842f79a886b1b8b21765f0b2f2be0e19795819d5473495836d1856054317963",
+          "extractor": "pg_catalog",
+          "locator": "check:shop.order_items.order_items_qty_check",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Orders total check",
+      "locator": "check:shop.orders.orders_total_check",
+      "parent": "ecommerce-db:column:shop.orders.total",
+      "properties": {
+        "columns": "total",
+        "constraint_type": "check",
+        "expression": "CHECK ((total >= (0)::numeric))",
+        "identifier": "orders_total_check"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:e100a13f9d1d2180c89ddb696ddc41be8afc36b25ca6dd07133f3d16aecb7d58",
+          "extractor": "pg_catalog",
+          "locator": "check:shop.orders.orders_total_check",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Payments method check",
+      "locator": "check:shop.payments.payments_method_check",
+      "parent": "ecommerce-db:column:shop.payments.method",
+      "properties": {
+        "columns": "method",
+        "constraint_type": "check",
+        "expression": "CHECK ((method = ANY (ARRAY['card'::text, 'paypal'::text, 'bank_transfer'::text])))",
+        "identifier": "payments_method_check"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:9ff8f00a95443473036c72d5a474b3b2a7bba9a78e93e3ea91639f6d8742e80d",
+          "extractor": "pg_catalog",
+          "locator": "check:shop.payments.payments_method_check",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Products price check",
+      "locator": "check:shop.products.products_price_check",
+      "parent": "ecommerce-db:column:shop.products.price",
+      "properties": {
+        "columns": "price",
+        "constraint_type": "check",
+        "expression": "CHECK ((price > (0)::numeric))",
+        "identifier": "products_price_check"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:bc1386d9bfe1b1ed05768b911b7f96afde09f1b5edb8d656a7a371ef5e7c51c2",
+          "extractor": "pg_catalog",
+          "locator": "check:shop.products.products_price_check",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Products sku check",
+      "locator": "check:shop.products.products_sku_check",
+      "parent": "ecommerce-db:column:shop.products.sku",
+      "properties": {
+        "columns": "sku",
+        "constraint_type": "check",
+        "expression": "CHECK ((sku ~ '^[A-Z]{3}-[0-9]{4}$'::text))",
+        "identifier": "products_sku_check"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:38eeed490e2a932ffc173aad110d24d24d9cd3448e88f81ffcd5661dbfaecfa9",
+          "extractor": "pg_catalog",
+          "locator": "check:shop.products.products_sku_check",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Products stock check",
+      "locator": "check:shop.products.products_stock_check",
+      "parent": "ecommerce-db:column:shop.products.stock",
+      "properties": {
+        "columns": "stock",
+        "constraint_type": "check",
+        "expression": "CHECK ((stock >= 0))",
+        "identifier": "products_stock_check"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:86a655aa52d4069052f7a9bcc81c2028fdc16f779ac9e27d14483cf4f4baf6bd",
+          "extractor": "pg_catalog",
+          "locator": "check:shop.products.products_stock_check",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Contact email",
+      "locator": "column:shop.\"SupplierContacts\".\"ContactEmail\"",
+      "parent": "ecommerce-db:table:shop.\"SupplierContacts\"",
+      "properties": {
+        "data_type": "text",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "ContactEmail",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "pattern": "email",
+        "position": 2,
+        "sampled_rows": 2,
+        "semantic_type": "email",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:159b09104d3eed4d7cfbb8641d977fb0e6c4cd46c5509fcbe19c2a33f7b65ed0",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.\"SupplierContacts\".\"ContactEmail\"",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:bfc2e1ba54f26a5f270bfd1a6aa2a8f8e4a6c16782aeea8541c18f9cc62b6c73",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.\"SupplierContacts\".\"ContactEmail\"",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Supplier name",
+      "locator": "column:shop.\"SupplierContacts\".\"SupplierName\"",
+      "parent": "ecommerce-db:table:shop.\"SupplierContacts\"",
+      "properties": {
+        "data_type": "text",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "SupplierName",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 1,
+        "primary_key": true,
+        "sampled_rows": 2,
+        "semantic_type": "identifier",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:61ee047e6d9d0984f509e4aad27d7231bb2cb5321941826cfb4811f39e574ed6",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.\"SupplierContacts\".\"SupplierName\"",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:8b7be0d5d899c5947ae3f517e2c372e1a7fc9a2a3a6741de722aaf3b66ddddf8",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.\"SupplierContacts\".\"SupplierName\"",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Country",
+      "locator": "column:shop.customers.country",
+      "parent": "ecommerce-db:table:shop.customers",
+      "properties": {
+        "data_type": "text",
+        "distinct_ratio": 0.2,
+        "has_default": false,
+        "identifier": "country",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "pattern": "categorical",
+        "position": 4,
+        "sampled_rows": 25,
+        "semantic_type": "category",
+        "unique_in_sample": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:2f835cb956ef054107e9afa8985e2d0b037b575081ea2b3260c04cd62a0d1a9b",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.customers.country",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:f93d10eb4c3c67df1301fed6dd8ae7050dbe0d849b8b4c059925eec9777b8965",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.customers.country",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Created at",
+      "locator": "column:shop.customers.created_at",
+      "parent": "ecommerce-db:table:shop.customers",
+      "properties": {
+        "data_type": "timestamp with time zone",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "created_at",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 5,
+        "sampled_rows": 25,
+        "semantic_type": "timestamp",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:c35962e39378be136e7ca44943965112a867005a1d64ff6da75b330b25bdeddc",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.customers.created_at",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:4bb0287d94c38220d099b0cb3ab766d3ecba4a244269ef5e496dc3cc1360f707",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.customers.created_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Email",
+      "locator": "column:shop.customers.email",
+      "parent": "ecommerce-db:table:shop.customers",
+      "properties": {
+        "data_type": "text",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "email",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "pattern": "email",
+        "position": 2,
+        "sampled_rows": 25,
+        "semantic_type": "email",
+        "unique": true,
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:af65c4a7ce4cdf08aac06389f1a590711b8f7332a465be4fe80ccacb5a7a855b",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.customers.email",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:5b8bed747b8fd42f57061748cf9dc8c298f636c5285c36db0f1b4e37c42dab9e",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.customers.email",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Full name",
+      "locator": "column:shop.customers.full_name",
+      "parent": "ecommerce-db:table:shop.customers",
+      "properties": {
+        "data_type": "text",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "full_name",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 3,
+        "sampled_rows": 25,
+        "semantic_type": "text",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:a75741339a871bc0e43b00e2465a562166c62b93c9d50c6a5cb6638cb63b3803",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.customers.full_name",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:b0f5921a3319cc19cc07a79fa2dde9e4c84e215dfa745e77198d467f55b4f7ea",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.customers.full_name",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Id",
+      "locator": "column:shop.customers.id",
+      "parent": "ecommerce-db:table:shop.customers",
+      "properties": {
+        "data_type": "integer",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "id",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 1,
+        "primary_key": true,
+        "sampled_rows": 25,
+        "semantic_type": "identifier",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:17b25d3d9ef4ed12c401fe6dd6a863625286d696938711ac75ce52ccd8da6862",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.customers.id",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:07080229f38850439f6e1ebab9f308571661829e5e36eaf4f1fd03d32f5f8163",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.customers.id",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Order id",
+      "locator": "column:shop.order_items.order_id",
+      "parent": "ecommerce-db:table:shop.order_items",
+      "properties": {
+        "data_type": "integer",
+        "distinct_ratio": 0.5932,
+        "foreign_key": true,
+        "has_default": false,
+        "identifier": "order_id",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 1,
+        "primary_key": true,
+        "sampled_rows": 59,
+        "semantic_type": "reference",
+        "unique_in_sample": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:75ab4c43e8a8442882fdba7a2ef440882a697ff343e47469416674d70993facc",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.order_items.order_id",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:2335d77acfaf9823d6285f04584c2be0da8bf5521fb92314f254e374792d0c2b",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.order_items.order_id",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Qty",
+      "locator": "column:shop.order_items.qty",
+      "parent": "ecommerce-db:table:shop.order_items",
+      "properties": {
+        "data_type": "integer",
+        "distinct_ratio": 0.0508,
+        "has_default": false,
+        "identifier": "qty",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 3,
+        "sampled_rows": 59,
+        "semantic_type": "measure",
+        "unique_in_sample": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:9cdcfd8c195a4f5de998e829e35c406a080b7e1b74c36bf4b9f1f47eed31b388",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.order_items.qty",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:f84b75735afd9e5a4169b94ead68493869d05ac63e9007d9ab96a447f667ccbd",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.order_items.qty",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Sku",
+      "locator": "column:shop.order_items.sku",
+      "parent": "ecommerce-db:table:shop.order_items",
+      "properties": {
+        "data_type": "text",
+        "distinct_ratio": 0.3051,
+        "foreign_key": true,
+        "has_default": false,
+        "identifier": "sku",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "pattern": "categorical",
+        "position": 2,
+        "primary_key": true,
+        "sampled_rows": 59,
+        "semantic_type": "reference",
+        "unique_in_sample": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:cce8a3ca7295625733f6cf00ed6c9949916c6b99ecdd0813572a984ba58332bb",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.order_items.sku",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:b3978e35878e2131c4ea3f9c6df023be747b32631c5d8d82cc78f44d7e924740",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.order_items.sku",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Unit price",
+      "locator": "column:shop.order_items.unit_price",
+      "parent": "ecommerce-db:table:shop.order_items",
+      "properties": {
+        "data_type": "numeric(10,2)",
+        "distinct_ratio": 0.3051,
+        "has_default": false,
+        "identifier": "unit_price",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 4,
+        "sampled_rows": 59,
+        "semantic_type": "measure",
+        "unique_in_sample": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:a5448003bbe50e816161522436ea7790097653b7aa7d2d454c4f8a206c5a8cb7",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.order_items.unit_price",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:9332433ccb04d95f1cc6be847b1c962a0ab8b34014b4cc5c5d886d7646701d44",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.order_items.unit_price",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Customer id",
+      "locator": "column:shop.orders.customer_id",
+      "parent": "ecommerce-db:table:shop.orders",
+      "properties": {
+        "data_type": "integer",
+        "distinct_ratio": 0.7143,
+        "foreign_key": true,
+        "has_default": false,
+        "identifier": "customer_id",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 2,
+        "sampled_rows": 35,
+        "semantic_type": "reference",
+        "unique_in_sample": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:89274b18810153c5cf18da99f6f9aef4652530d0959ca60a000f1d3933a973c8",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.orders.customer_id",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:28b883ca4945189363eccfd1135289e22b9a432f2a778fc97df3ac67eadb1979",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.orders.customer_id",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Id",
+      "locator": "column:shop.orders.id",
+      "parent": "ecommerce-db:table:shop.orders",
+      "properties": {
+        "data_type": "integer",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "id",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 1,
+        "primary_key": true,
+        "sampled_rows": 35,
+        "semantic_type": "identifier",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:51b0b1eebc7cfbb4abde2db9e375f2d8e2f90e908b8867bc1428dcf9ec9d93c2",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.orders.id",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:f7ac6057e71b3e8dee4dd3ef685c42cba966b0ab2ca4d4728a17b774ddae17a3",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.orders.id",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Placed at",
+      "locator": "column:shop.orders.placed_at",
+      "parent": "ecommerce-db:table:shop.orders",
+      "properties": {
+        "data_type": "timestamp with time zone",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "placed_at",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 4,
+        "sampled_rows": 35,
+        "semantic_type": "timestamp",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:446fcfa4a79ffbad3c5c96a07efdb1717bbb5bd5737b77266278fd70592ac367",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.orders.placed_at",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:948eea8c99c42fc2e950b3049096f351237d59b4f49d98163a551eea2ea52156",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.orders.placed_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Status",
+      "locator": "column:shop.orders.status",
+      "parent": "ecommerce-db:table:shop.orders",
+      "properties": {
+        "data_type": "shop.order_status",
+        "distinct_ratio": 0.1714,
+        "has_default": true,
+        "identifier": "status",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 3,
+        "sampled_rows": 35,
+        "semantic_type": "status",
+        "unique_in_sample": false,
+        "value_set": "enum"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:744f5d86ca1a7fe34e201157144e5d584c03238c5de645e815ac263fddd651cf",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.orders.status",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:8be2bd69864ee24b79ddb10450866547a9d39650aa8b4a6dd169555cb767a455",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.orders.status",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:33a0d7eb684a129ca413313ee0fb5c68acf25d063eb85e0689c4edf3d4e19886",
+          "extractor": "pg_catalog",
+          "locator": "enum:shop.order_status",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Total",
+      "locator": "column:shop.orders.total",
+      "parent": "ecommerce-db:table:shop.orders",
+      "properties": {
+        "data_type": "numeric(12,2)",
+        "distinct_ratio": 0.5143,
+        "has_default": false,
+        "identifier": "total",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 5,
+        "sampled_rows": 35,
+        "semantic_type": "measure",
+        "unique_in_sample": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:426d503b1adbda5fcf88401e1d5d04989c398e371ecabb219ac8dcaa3755a327",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.orders.total",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:e9fb089ec97d152cd6c3835aba8dd98ca8e8cde9afa0c8da2a913de0af779ceb",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.orders.total",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Amount",
+      "locator": "column:shop.payments.amount",
+      "parent": "ecommerce-db:table:shop.payments",
+      "properties": {
+        "data_type": "numeric(12,2)",
+        "distinct_ratio": 0.72,
+        "has_default": false,
+        "identifier": "amount",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 4,
+        "sampled_rows": 25,
+        "semantic_type": "measure",
+        "unique_in_sample": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:c34f3dfed13443f154e51a8119b7c8bf8cd896db90377bb0e067c6ebff97da41",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.payments.amount",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:d44daeb895bd153bee05b46beaec94ffef52234b794fd7a8721336045df29a59",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.payments.amount",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Id",
+      "locator": "column:shop.payments.id",
+      "parent": "ecommerce-db:table:shop.payments",
+      "properties": {
+        "data_type": "integer",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "id",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 1,
+        "primary_key": true,
+        "sampled_rows": 25,
+        "semantic_type": "identifier",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:602df5e2243f0c03d9b9a1f64f14b31a487409a9dedaf69400ca2e750c7c0f3f",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.payments.id",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:dedc3f9523ff4132bd9320f2b35b83f678db612e2d330ba6d76bd806a2be61f8",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.payments.id",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Method",
+      "locator": "column:shop.payments.method",
+      "parent": "ecommerce-db:table:shop.payments",
+      "properties": {
+        "data_type": "text",
+        "distinct_ratio": 0.12,
+        "has_default": false,
+        "identifier": "method",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "pattern": "categorical",
+        "position": 3,
+        "sampled_rows": 25,
+        "semantic_type": "category",
+        "unique_in_sample": false,
+        "value_set": "check"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:be28ee002e3ac66696997a7df856cbb9873f51dcc11cfedf123717667337c26a",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.payments.method",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:5b34cc411a13e23a365af5a686b03f7011e790be118f39e8a0dda295e2edb45e",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.payments.method",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Order id",
+      "locator": "column:shop.payments.order_id",
+      "parent": "ecommerce-db:table:shop.payments",
+      "properties": {
+        "data_type": "integer",
+        "distinct_ratio": 1.0,
+        "foreign_key": true,
+        "has_default": false,
+        "identifier": "order_id",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 2,
+        "sampled_rows": 25,
+        "semantic_type": "reference",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:735c9424d5a3bc3ba0d9b5a59692b6d4cb8f9a773a98f8bf466282f7b743dd51",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.payments.order_id",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:b127872128b1b5655014a0e7679d2cbbf5b0f8fdaf37990e4a9cd8ca7fb59bcf",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.payments.order_id",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Paid at",
+      "locator": "column:shop.payments.paid_at",
+      "parent": "ecommerce-db:table:shop.payments",
+      "properties": {
+        "data_type": "timestamp with time zone",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "paid_at",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 5,
+        "sampled_rows": 25,
+        "semantic_type": "timestamp",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:dc5308a75e17329693e35f65cd1e426886a7fa544c56ae953264a91f2f83b96b",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.payments.paid_at",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:ca2fc0b553e83e42dea23775a29a84d8dd5edf61608219be7e422d9ef2616f6c",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.payments.paid_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Category",
+      "locator": "column:shop.products.category",
+      "parent": "ecommerce-db:table:shop.products",
+      "properties": {
+        "data_type": "text",
+        "distinct_ratio": 0.1667,
+        "has_default": false,
+        "identifier": "category",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "pattern": "categorical",
+        "position": 3,
+        "sampled_rows": 18,
+        "semantic_type": "category",
+        "unique_in_sample": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:857011c2f9fc67eed492df2119b9c9bbdceacc6aa548579965d08ea9152711db",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.products.category",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:cd12ae3939318a5355370e83c1459f4659ea1102edbbafcbb8ad383e4012fa85",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.products.category",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Price",
+      "locator": "column:shop.products.price",
+      "parent": "ecommerce-db:table:shop.products",
+      "properties": {
+        "data_type": "numeric(10,2)",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "price",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 4,
+        "sampled_rows": 18,
+        "semantic_type": "measure",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:cecf70d361cac58e286bb30976369dfa26fffb7de38f0a3600b5f7b5663795e0",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.products.price",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:2aaa8a0e2e0e997128abe70be0cba8f7d05695b6a9e58c418897e9a783f03321",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.products.price",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Sku",
+      "locator": "column:shop.products.sku",
+      "parent": "ecommerce-db:table:shop.products",
+      "properties": {
+        "data_type": "text",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "sku",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 1,
+        "primary_key": true,
+        "sampled_rows": 18,
+        "semantic_type": "identifier",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:0b2f95bbe84568e844fce0b29643b244e283fcfde983a3c125523d22b8cc7117",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.products.sku",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:f3c02c3feb438c324ce0b2795c7ec47730d5b40fa7976ab01b3495b045d48151",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.products.sku",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Stock",
+      "locator": "column:shop.products.stock",
+      "parent": "ecommerce-db:table:shop.products",
+      "properties": {
+        "data_type": "integer",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "stock",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 5,
+        "sampled_rows": 18,
+        "semantic_type": "measure",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:3a7e068bfe566fa0938af71cf4dfa052f99c9c1460a3c7e1f2d12c175d173c97",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.products.stock",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:8395eca829e0114ad4df760037b0d68030aa8d1e5edff3b18d5c343050c25584",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.products.stock",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Title",
+      "locator": "column:shop.products.title",
+      "parent": "ecommerce-db:table:shop.products",
+      "properties": {
+        "data_type": "text",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "title",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 2,
+        "sampled_rows": 18,
+        "semantic_type": "text",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:efcbc03ba74dbd52ef88e190d3ba257ccd24212736504ab845c6716403f5870e",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.products.title",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:202acf431345d5e8271ea1612b6ea1ef27fb01397f9faacb3ae8675135d17b8c",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.products.title",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Created at",
+      "locator": "column:shop.returns.created_at",
+      "parent": "ecommerce-db:table:shop.returns",
+      "properties": {
+        "data_type": "timestamp with time zone",
+        "distinct_ratio": 0.625,
+        "has_default": false,
+        "identifier": "created_at",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 5,
+        "sampled_rows": 8,
+        "semantic_type": "timestamp",
+        "unique_in_sample": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:5744a2c114c4c55011cc5f962c2b9801a9034bb30d896d413c6c00e9a4bcc52b",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.returns.created_at",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:12dc62a42fa8cc37234bef7272d94dc3418ea5435d4430db26e1765edba89a69",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.returns.created_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Id",
+      "locator": "column:shop.returns.id",
+      "parent": "ecommerce-db:table:shop.returns",
+      "properties": {
+        "data_type": "integer",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "id",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 1,
+        "primary_key": true,
+        "sampled_rows": 8,
+        "semantic_type": "identifier",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:00832ae71c8f54eb1d568737485bb7da21409352a2c2d7389f9f8a1bcf72c8b1",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.returns.id",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:ec6459ccf9057d268921918b03f6df25da2cd33c6e05506e1d2f7c36e8262798",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.returns.id",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Order id",
+      "locator": "column:shop.returns.order_id",
+      "parent": "ecommerce-db:table:shop.returns",
+      "properties": {
+        "data_type": "integer",
+        "distinct_ratio": 0.625,
+        "foreign_key": true,
+        "has_default": false,
+        "identifier": "order_id",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 2,
+        "sampled_rows": 8,
+        "semantic_type": "reference",
+        "unique_in_sample": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:e2e79afcc8dc615b0507d12d518bdc9f0e9c857da8b5ed3174dfd43d4b6d39a0",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.returns.order_id",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:2a388beb9b32f4593479b483bcab83117bebfb40e2c175ea75f2ce0cf9909d59",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.returns.order_id",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Reason",
+      "locator": "column:shop.returns.reason",
+      "parent": "ecommerce-db:table:shop.returns",
+      "properties": {
+        "data_type": "text",
+        "distinct_ratio": 0.125,
+        "has_default": false,
+        "identifier": "reason",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 4,
+        "sampled_rows": 8,
+        "semantic_type": "text",
+        "unique_in_sample": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:e27ade666130e5ecf9289aaf541e5e858bf2f51bd7bb31a69d6d4538a37e40e3",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.returns.reason",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:0a52d4f7cc826951d296512c398cf228a7a9410f45241e381e267c89f70ed7cd",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.returns.reason",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Sku",
+      "locator": "column:shop.returns.sku",
+      "parent": "ecommerce-db:table:shop.returns",
+      "properties": {
+        "data_type": "text",
+        "distinct_ratio": 1.0,
+        "foreign_key": true,
+        "has_default": false,
+        "identifier": "sku",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 3,
+        "sampled_rows": 8,
+        "semantic_type": "reference",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:f4206ca0c863d1421283e43ac8c6d4b8969ed3259500a1b191a54b21702bd751",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.returns.sku",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:121b59af9f1930fc2bcb14124a471d657423b001dbc93b512aff6422bedca186",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.returns.sku",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Carrier",
+      "locator": "column:shop.shipments.carrier",
+      "parent": "ecommerce-db:table:shop.shipments",
+      "properties": {
+        "data_type": "text",
+        "distinct_ratio": 0.1,
+        "has_default": false,
+        "identifier": "carrier",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "pattern": "categorical",
+        "position": 3,
+        "sampled_rows": 20,
+        "semantic_type": "category",
+        "unique_in_sample": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:5c3a30e413d0d1913c3958c57899028e1141acd502da56ed72edc99ffe05d500",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.shipments.carrier",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:f6c96804bf430db6b474ed3ce2d966ac9cdd338adca128cb64d403fea0239bc5",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.shipments.carrier",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Delivered at",
+      "locator": "column:shop.shipments.delivered_at",
+      "parent": "ecommerce-db:table:shop.shipments",
+      "properties": {
+        "data_type": "timestamp with time zone",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "delivered_at",
+        "null_ratio": 0.25,
+        "nullable": true,
+        "position": 6,
+        "sampled_rows": 20,
+        "semantic_type": "timestamp",
+        "unique_in_sample": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:adecb49879e5320b3a12523ab4e5013478ab9b4665bf9d6bfdc86e8f7585f6c5",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.shipments.delivered_at",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:e05f4b53aaaab439f91cdb0f1f713e46ce3d6c33ba16bca46befa4d57d9c6c1f",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.shipments.delivered_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Id",
+      "locator": "column:shop.shipments.id",
+      "parent": "ecommerce-db:table:shop.shipments",
+      "properties": {
+        "data_type": "integer",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "id",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 1,
+        "primary_key": true,
+        "sampled_rows": 20,
+        "semantic_type": "identifier",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:e14feafdae78a0bd297fa770e5ef3e13c1f80d6c4d9c74caa00ece6af2ddea4c",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.shipments.id",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:f27444be5c87d3f7e413825b7c8c095742f901db2af8743394106b06b23c55a9",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.shipments.id",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Order id",
+      "locator": "column:shop.shipments.order_id",
+      "parent": "ecommerce-db:table:shop.shipments",
+      "properties": {
+        "data_type": "integer",
+        "distinct_ratio": 1.0,
+        "foreign_key": true,
+        "has_default": false,
+        "identifier": "order_id",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 2,
+        "sampled_rows": 20,
+        "semantic_type": "reference",
+        "unique": true,
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:4b5950a9cc44a6968d418a6db3fc1a4aa3554b8a82bd4202352d2dc4fac49e1f",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.shipments.order_id",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:3fbbab1509288ffb0f68ace6bc920ab5dce82d4650b841ef59c7053ff2474efc",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.shipments.order_id",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Shipped at",
+      "locator": "column:shop.shipments.shipped_at",
+      "parent": "ecommerce-db:table:shop.shipments",
+      "properties": {
+        "data_type": "timestamp with time zone",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "shipped_at",
+        "null_ratio": 0.0,
+        "nullable": false,
+        "position": 5,
+        "sampled_rows": 20,
+        "semantic_type": "timestamp",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:a95dd5bdf6989c1b0cf91ab072c056e5758aaa2a40a9200cb238338a8c7b7de8",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.shipments.shipped_at",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:85e88cd040dea4806fc7145268305631ab7f194b796a15dc254ae89b4bd0a93d",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.shipments.shipped_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "attribute",
+      "label": "Tracking url",
+      "locator": "column:shop.shipments.tracking_url",
+      "parent": "ecommerce-db:table:shop.shipments",
+      "properties": {
+        "data_type": "text",
+        "distinct_ratio": 1.0,
+        "has_default": false,
+        "identifier": "tracking_url",
+        "null_ratio": 0.0,
+        "nullable": true,
+        "pattern": "url",
+        "position": 4,
+        "sampled_rows": 20,
+        "semantic_type": "url",
+        "unique_in_sample": true
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:81acb06203a7be69a8d55a78a11ce3c651089708c5e1d484f661a11d49e64e60",
+          "extractor": "pg_catalog",
+          "locator": "column:shop.shipments.tracking_url",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:a3e5a11d23e0cd2e1be916daee1ec38b2d004a3c18ca6ec1708e0d3bdfdfc57b",
+          "extractor": "pg_profile",
+          "locator": "profile:shop.shipments.tracking_url",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "event",
+      "label": "Created",
+      "locator": "event:shop.customers.created_at",
+      "parent": null,
+      "properties": {
+        "attribute": "created_at",
+        "granularity": "timestamp",
+        "nullable": false
+      },
+      "provenance": [
+        {
+          "confidence": 0.8,
+          "evidence_hash": "sha256:c35962e39378be136e7ca44943965112a867005a1d64ff6da75b330b25bdeddc",
+          "extractor": "normalize",
+          "locator": "column:shop.customers.created_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.customers"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "event",
+      "label": "Placed",
+      "locator": "event:shop.orders.placed_at",
+      "parent": null,
+      "properties": {
+        "attribute": "placed_at",
+        "granularity": "timestamp",
+        "nullable": false
+      },
+      "provenance": [
+        {
+          "confidence": 0.8,
+          "evidence_hash": "sha256:446fcfa4a79ffbad3c5c96a07efdb1717bbb5bd5737b77266278fd70592ac367",
+          "extractor": "normalize",
+          "locator": "column:shop.orders.placed_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.orders"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "event",
+      "label": "Paid",
+      "locator": "event:shop.payments.paid_at",
+      "parent": null,
+      "properties": {
+        "attribute": "paid_at",
+        "granularity": "timestamp",
+        "nullable": false
+      },
+      "provenance": [
+        {
+          "confidence": 0.8,
+          "evidence_hash": "sha256:dc5308a75e17329693e35f65cd1e426886a7fa544c56ae953264a91f2f83b96b",
+          "extractor": "normalize",
+          "locator": "column:shop.payments.paid_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.payments"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "event",
+      "label": "Created",
+      "locator": "event:shop.returns.created_at",
+      "parent": null,
+      "properties": {
+        "attribute": "created_at",
+        "granularity": "timestamp",
+        "nullable": false
+      },
+      "provenance": [
+        {
+          "confidence": 0.8,
+          "evidence_hash": "sha256:5744a2c114c4c55011cc5f962c2b9801a9034bb30d896d413c6c00e9a4bcc52b",
+          "extractor": "normalize",
+          "locator": "column:shop.returns.created_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.returns"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "event",
+      "label": "Delivered",
+      "locator": "event:shop.shipments.delivered_at",
+      "parent": null,
+      "properties": {
+        "attribute": "delivered_at",
+        "granularity": "timestamp",
+        "nullable": true
+      },
+      "provenance": [
+        {
+          "confidence": 0.8,
+          "evidence_hash": "sha256:adecb49879e5320b3a12523ab4e5013478ab9b4665bf9d6bfdc86e8f7585f6c5",
+          "extractor": "normalize",
+          "locator": "column:shop.shipments.delivered_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.shipments"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "event",
+      "label": "Shipped",
+      "locator": "event:shop.shipments.shipped_at",
+      "parent": null,
+      "properties": {
+        "attribute": "shipped_at",
+        "granularity": "timestamp",
+        "nullable": false
+      },
+      "provenance": [
+        {
+          "confidence": 0.8,
+          "evidence_hash": "sha256:a95dd5bdf6989c1b0cf91ab072c056e5758aaa2a40a9200cb238338a8c7b7de8",
+          "extractor": "normalize",
+          "locator": "column:shop.shipments.shipped_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.shipments"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "relation",
+      "label": "Order id → Orders",
+      "locator": "fk:shop.order_items.order_items_order_id_fkey",
+      "parent": null,
+      "properties": {
+        "cardinality": "many_to_one",
+        "columns": "order_id",
+        "identifier": "order_items_order_id_fkey",
+        "ref_columns": "id",
+        "relation_type": "foreign_key",
+        "self_referencing": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:6eba699d42af28d5fc5089173381dbd60210aa3327e5305532d09c0bfd55120d",
+          "extractor": "pg_catalog",
+          "locator": "fk:shop.order_items.order_items_order_id_fkey",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "from": "ecommerce-db:table:shop.order_items",
+        "to": "ecommerce-db:table:shop.orders",
+        "via": "ecommerce-db:column:shop.order_items.order_id"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "relation",
+      "label": "Sku → Products",
+      "locator": "fk:shop.order_items.order_items_sku_fkey",
+      "parent": null,
+      "properties": {
+        "cardinality": "many_to_one",
+        "columns": "sku",
+        "identifier": "order_items_sku_fkey",
+        "ref_columns": "sku",
+        "relation_type": "foreign_key",
+        "self_referencing": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:cf88bc34e92e4fc68509111e7df0d0ac37ddacb9959c7f73934dfcb75902a366",
+          "extractor": "pg_catalog",
+          "locator": "fk:shop.order_items.order_items_sku_fkey",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "from": "ecommerce-db:table:shop.order_items",
+        "to": "ecommerce-db:table:shop.products",
+        "via": "ecommerce-db:column:shop.order_items.sku"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "relation",
+      "label": "Customer id → Customers",
+      "locator": "fk:shop.orders.orders_customer_id_fkey",
+      "parent": null,
+      "properties": {
+        "cardinality": "many_to_one",
+        "columns": "customer_id",
+        "identifier": "orders_customer_id_fkey",
+        "ref_columns": "id",
+        "relation_type": "foreign_key",
+        "self_referencing": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:9d4414d579a3c35efb5070bbd1ae375b73b8e3463fba0ee7dc301d25b873aa7b",
+          "extractor": "pg_catalog",
+          "locator": "fk:shop.orders.orders_customer_id_fkey",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "from": "ecommerce-db:table:shop.orders",
+        "to": "ecommerce-db:table:shop.customers",
+        "via": "ecommerce-db:column:shop.orders.customer_id"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "relation",
+      "label": "Order id → Orders",
+      "locator": "fk:shop.payments.payments_order_id_fkey",
+      "parent": null,
+      "properties": {
+        "cardinality": "many_to_one",
+        "columns": "order_id",
+        "identifier": "payments_order_id_fkey",
+        "ref_columns": "id",
+        "relation_type": "foreign_key",
+        "self_referencing": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:5a53d1f85661c145fc53f6d6fc4366a5702060386688ec637856c209a59b7621",
+          "extractor": "pg_catalog",
+          "locator": "fk:shop.payments.payments_order_id_fkey",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "from": "ecommerce-db:table:shop.payments",
+        "to": "ecommerce-db:table:shop.orders",
+        "via": "ecommerce-db:column:shop.payments.order_id"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "relation",
+      "label": "Returns item fk",
+      "locator": "fk:shop.returns.returns_item_fk",
+      "parent": null,
+      "properties": {
+        "cardinality": "many_to_one",
+        "columns": "order_id,sku",
+        "identifier": "returns_item_fk",
+        "ref_columns": "order_id,sku",
+        "relation_type": "foreign_key",
+        "self_referencing": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:77e76ae0fcabcc396a552f2a8cecc65c340c020745fde5c4413d55ce942acd50",
+          "extractor": "pg_catalog",
+          "locator": "fk:shop.returns.returns_item_fk",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "from": "ecommerce-db:table:shop.returns",
+        "to": "ecommerce-db:table:shop.order_items"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "relation",
+      "label": "Order id → Orders",
+      "locator": "fk:shop.shipments.shipments_order_id_fkey",
+      "parent": null,
+      "properties": {
+        "cardinality": "one_to_one",
+        "columns": "order_id",
+        "identifier": "shipments_order_id_fkey",
+        "ref_columns": "id",
+        "relation_type": "foreign_key",
+        "self_referencing": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:dc117d7b63509a5f696d45b36e0286bd92c20c6b583c6c50bcef3fa65a3d57f6",
+          "extractor": "pg_catalog",
+          "locator": "fk:shop.shipments.shipments_order_id_fkey",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "from": "ecommerce-db:table:shop.shipments",
+        "to": "ecommerce-db:table:shop.orders",
+        "via": "ecommerce-db:column:shop.shipments.order_id"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "permission",
+      "label": "Shop ops on Orders",
+      "locator": "grant:shop_ops@shop.orders",
+      "parent": null,
+      "properties": {
+        "access": "read_write",
+        "privileges": "SELECT,UPDATE"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:bf54510dd608c46a4de0d3406074f54311491ca613f6ebbd428e8b7814afc6d2",
+          "extractor": "pg_catalog",
+          "locator": "grant:shop_ops@shop.orders",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "role": "ecommerce-db:role:shop_ops",
+        "target": "ecommerce-db:table:shop.orders"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "permission",
+      "label": "Shop ops on Returns",
+      "locator": "grant:shop_ops@shop.returns",
+      "parent": null,
+      "properties": {
+        "access": "read_write",
+        "privileges": "INSERT,SELECT"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:3205474bf5c64bc8d3cd10a3f7c63b4530e1bc76ddcae7d6776f273b1c338173",
+          "extractor": "pg_catalog",
+          "locator": "grant:shop_ops@shop.returns",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "role": "ecommerce-db:role:shop_ops",
+        "target": "ecommerce-db:table:shop.returns"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "permission",
+      "label": "Shop ops on Shipments",
+      "locator": "grant:shop_ops@shop.shipments",
+      "parent": null,
+      "properties": {
+        "access": "read_write",
+        "privileges": "INSERT,SELECT"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:cd1fcced74a6ac5d58c3371d82b0067af2059cc1b41e02f63651fd3f5fcff267",
+          "extractor": "pg_catalog",
+          "locator": "grant:shop_ops@shop.shipments",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "role": "ecommerce-db:role:shop_ops",
+        "target": "ecommerce-db:table:shop.shipments"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "permission",
+      "label": "Shop support on Customers",
+      "locator": "grant:shop_support@shop.customers",
+      "parent": null,
+      "properties": {
+        "access": "read",
+        "privileges": "SELECT"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:78d6227f8436505009149149791f7c3c1ac855d7e7455861ad1ede1fade98695",
+          "extractor": "pg_catalog",
+          "locator": "grant:shop_support@shop.customers",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "role": "ecommerce-db:role:shop_support",
+        "target": "ecommerce-db:table:shop.customers"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "permission",
+      "label": "Shop support on Order items",
+      "locator": "grant:shop_support@shop.order_items",
+      "parent": null,
+      "properties": {
+        "access": "read",
+        "privileges": "SELECT"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:d292a95da422fa001ab393baa06d0e7611ab39cf259fe40cb7474acfe789da45",
+          "extractor": "pg_catalog",
+          "locator": "grant:shop_support@shop.order_items",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "role": "ecommerce-db:role:shop_support",
+        "target": "ecommerce-db:table:shop.order_items"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "permission",
+      "label": "Shop support on Orders",
+      "locator": "grant:shop_support@shop.orders",
+      "parent": null,
+      "properties": {
+        "access": "read",
+        "privileges": "SELECT"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:c20a265336770047c9a9d4d69c4a66cd81281cba910d7196b30bd9561915c311",
+          "extractor": "pg_catalog",
+          "locator": "grant:shop_support@shop.orders",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "role": "ecommerce-db:role:shop_support",
+        "target": "ecommerce-db:table:shop.orders"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "permission",
+      "label": "Shop support on Shipments",
+      "locator": "grant:shop_support@shop.shipments",
+      "parent": null,
+      "properties": {
+        "access": "read",
+        "privileges": "SELECT"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:6df62e2516fe0de7e24a176dd2b38ef3367696c2482ced1b073eeb67cfb98086",
+          "extractor": "pg_catalog",
+          "locator": "grant:shop_support@shop.shipments",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "role": "ecommerce-db:role:shop_support",
+        "target": "ecommerce-db:table:shop.shipments"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "metric",
+      "label": "Total qty",
+      "locator": "metric:shop.order_items.qty",
+      "parent": null,
+      "properties": {
+        "aggregation": "sum",
+        "measure": "qty"
+      },
+      "provenance": [
+        {
+          "confidence": 0.5,
+          "evidence_hash": "sha256:9cdcfd8c195a4f5de998e829e35c406a080b7e1b74c36bf4b9f1f47eed31b388",
+          "extractor": "normalize",
+          "locator": "column:shop.order_items.qty",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.order_items"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "metric",
+      "label": "Total unit price",
+      "locator": "metric:shop.order_items.unit_price",
+      "parent": null,
+      "properties": {
+        "aggregation": "sum",
+        "measure": "unit_price"
+      },
+      "provenance": [
+        {
+          "confidence": 0.5,
+          "evidence_hash": "sha256:a5448003bbe50e816161522436ea7790097653b7aa7d2d454c4f8a206c5a8cb7",
+          "extractor": "normalize",
+          "locator": "column:shop.order_items.unit_price",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.order_items"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "metric",
+      "label": "Total total",
+      "locator": "metric:shop.orders.total",
+      "parent": null,
+      "properties": {
+        "aggregation": "sum",
+        "measure": "total"
+      },
+      "provenance": [
+        {
+          "confidence": 0.5,
+          "evidence_hash": "sha256:426d503b1adbda5fcf88401e1d5d04989c398e371ecabb219ac8dcaa3755a327",
+          "extractor": "normalize",
+          "locator": "column:shop.orders.total",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.orders"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "metric",
+      "label": "Total amount",
+      "locator": "metric:shop.payments.amount",
+      "parent": null,
+      "properties": {
+        "aggregation": "sum",
+        "measure": "amount"
+      },
+      "provenance": [
+        {
+          "confidence": 0.5,
+          "evidence_hash": "sha256:c34f3dfed13443f154e51a8119b7c8bf8cd896db90377bb0e067c6ebff97da41",
+          "extractor": "normalize",
+          "locator": "column:shop.payments.amount",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.payments"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "metric",
+      "label": "Total price",
+      "locator": "metric:shop.products.price",
+      "parent": null,
+      "properties": {
+        "aggregation": "sum",
+        "measure": "price"
+      },
+      "provenance": [
+        {
+          "confidence": 0.5,
+          "evidence_hash": "sha256:cecf70d361cac58e286bb30976369dfa26fffb7de38f0a3600b5f7b5663795e0",
+          "extractor": "normalize",
+          "locator": "column:shop.products.price",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.products"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "metric",
+      "label": "Total stock",
+      "locator": "metric:shop.products.stock",
+      "parent": null,
+      "properties": {
+        "aggregation": "sum",
+        "measure": "stock"
+      },
+      "provenance": [
+        {
+          "confidence": 0.5,
+          "evidence_hash": "sha256:3a7e068bfe566fa0938af71cf4dfa052f99c9c1460a3c7e1f2d12c175d173c97",
+          "extractor": "normalize",
+          "locator": "column:shop.products.stock",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.products"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Supplier contacts pkey",
+      "locator": "pk:shop.\"SupplierContacts\".\"SupplierContacts_pkey\"",
+      "parent": "ecommerce-db:table:shop.\"SupplierContacts\"",
+      "properties": {
+        "columns": "\"SupplierName\"",
+        "constraint_type": "primary_key",
+        "identifier": "SupplierContacts_pkey"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:8146b9847b5c15daa821096d838bb4c4028b53a568f9ad892d3a91e19f83a135",
+          "extractor": "pg_catalog",
+          "locator": "pk:shop.\"SupplierContacts\".\"SupplierContacts_pkey\"",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Customers pkey",
+      "locator": "pk:shop.customers.customers_pkey",
+      "parent": "ecommerce-db:table:shop.customers",
+      "properties": {
+        "columns": "id",
+        "constraint_type": "primary_key",
+        "identifier": "customers_pkey"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:4a883e81b9f5558c674f0103a23cf3a68604b9ebf98b8942b28aa7621aba8eca",
+          "extractor": "pg_catalog",
+          "locator": "pk:shop.customers.customers_pkey",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Order items pkey",
+      "locator": "pk:shop.order_items.order_items_pkey",
+      "parent": "ecommerce-db:table:shop.order_items",
+      "properties": {
+        "columns": "order_id,sku",
+        "constraint_type": "primary_key",
+        "identifier": "order_items_pkey"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:e1fb3d7168a962290545b86d908fef2a988b71fddb98ac9c51c42a64053d4964",
+          "extractor": "pg_catalog",
+          "locator": "pk:shop.order_items.order_items_pkey",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Orders pkey",
+      "locator": "pk:shop.orders.orders_pkey",
+      "parent": "ecommerce-db:table:shop.orders",
+      "properties": {
+        "columns": "id",
+        "constraint_type": "primary_key",
+        "identifier": "orders_pkey"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:128794e402281e1991f3f7cf94caa2e04f19f6dce064ab96c4641925a8017d81",
+          "extractor": "pg_catalog",
+          "locator": "pk:shop.orders.orders_pkey",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Payments pkey",
+      "locator": "pk:shop.payments.payments_pkey",
+      "parent": "ecommerce-db:table:shop.payments",
+      "properties": {
+        "columns": "id",
+        "constraint_type": "primary_key",
+        "identifier": "payments_pkey"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:c154075d3eae7500a074c9e7e2d678dc97181b77b2770ee817c2d80e0fbaa6d3",
+          "extractor": "pg_catalog",
+          "locator": "pk:shop.payments.payments_pkey",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Products pkey",
+      "locator": "pk:shop.products.products_pkey",
+      "parent": "ecommerce-db:table:shop.products",
+      "properties": {
+        "columns": "sku",
+        "constraint_type": "primary_key",
+        "identifier": "products_pkey"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:b3672098a764794a82d55710acb68a04e266c9e2e8475e47b105d7af5a2fda91",
+          "extractor": "pg_catalog",
+          "locator": "pk:shop.products.products_pkey",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Returns pkey",
+      "locator": "pk:shop.returns.returns_pkey",
+      "parent": "ecommerce-db:table:shop.returns",
+      "properties": {
+        "columns": "id",
+        "constraint_type": "primary_key",
+        "identifier": "returns_pkey"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:a83bdc674c11b1dc0e76b708bfca588776782aea429e90145c90b5f0f21db4e4",
+          "extractor": "pg_catalog",
+          "locator": "pk:shop.returns.returns_pkey",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Shipments pkey",
+      "locator": "pk:shop.shipments.shipments_pkey",
+      "parent": "ecommerce-db:table:shop.shipments",
+      "properties": {
+        "columns": "id",
+        "constraint_type": "primary_key",
+        "identifier": "shipments_pkey"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:4db9d1c9995b6dba8755f6c4be13b7184631daa4e14ef50fd95b87401e86ca96",
+          "extractor": "pg_catalog",
+          "locator": "pk:shop.shipments.shipments_pkey",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "role",
+      "label": "Shop ops",
+      "locator": "role:shop_ops",
+      "parent": null,
+      "properties": {
+        "identifier": "shop_ops"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:64df0cb669f2f0f859953e254479df7273e9095bd6d66744c98797f9b5e15c67",
+          "extractor": "pg_catalog",
+          "locator": "role:shop_ops",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "role",
+      "label": "Shop support",
+      "locator": "role:shop_support",
+      "parent": null,
+      "properties": {
+        "identifier": "shop_support"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:1f4f04e7c2b66bcb78f43dd5b4e5aae50b6063d833ee06a315841cec3ef1e21c",
+          "extractor": "pg_catalog",
+          "locator": "role:shop_support",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "source",
+      "label": "Ecommerce db",
+      "locator": "source",
+      "parent": null,
+      "properties": {
+        "artifacts": 114,
+        "extractor": "postgres",
+        "truncated": false
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:004c58a4f797a5541d8f4994a36349c7e489a068ff162c6ec3d4f0a8876f29b2",
+          "extractor": "postgres",
+          "locator": "source",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "state",
+      "label": "Cancelled",
+      "locator": "state:shop.orders.status=cancelled",
+      "parent": "ecommerce-db:column:shop.orders.status",
+      "properties": {
+        "ordinal": 4,
+        "value": "cancelled",
+        "value_set": "enum"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:33a0d7eb684a129ca413313ee0fb5c68acf25d063eb85e0689c4edf3d4e19886",
+          "extractor": "pg_catalog",
+          "locator": "enum:shop.order_status",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "state",
+      "label": "Delivered",
+      "locator": "state:shop.orders.status=delivered",
+      "parent": "ecommerce-db:column:shop.orders.status",
+      "properties": {
+        "ordinal": 3,
+        "value": "delivered",
+        "value_set": "enum"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:33a0d7eb684a129ca413313ee0fb5c68acf25d063eb85e0689c4edf3d4e19886",
+          "extractor": "pg_catalog",
+          "locator": "enum:shop.order_status",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "state",
+      "label": "Paid",
+      "locator": "state:shop.orders.status=paid",
+      "parent": "ecommerce-db:column:shop.orders.status",
+      "properties": {
+        "ordinal": 1,
+        "value": "paid",
+        "value_set": "enum"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:33a0d7eb684a129ca413313ee0fb5c68acf25d063eb85e0689c4edf3d4e19886",
+          "extractor": "pg_catalog",
+          "locator": "enum:shop.order_status",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "state",
+      "label": "Placed",
+      "locator": "state:shop.orders.status=placed",
+      "parent": "ecommerce-db:column:shop.orders.status",
+      "properties": {
+        "ordinal": 0,
+        "value": "placed",
+        "value_set": "enum"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:33a0d7eb684a129ca413313ee0fb5c68acf25d063eb85e0689c4edf3d4e19886",
+          "extractor": "pg_catalog",
+          "locator": "enum:shop.order_status",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "state",
+      "label": "Returned",
+      "locator": "state:shop.orders.status=returned",
+      "parent": "ecommerce-db:column:shop.orders.status",
+      "properties": {
+        "ordinal": 5,
+        "value": "returned",
+        "value_set": "enum"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:33a0d7eb684a129ca413313ee0fb5c68acf25d063eb85e0689c4edf3d4e19886",
+          "extractor": "pg_catalog",
+          "locator": "enum:shop.order_status",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "state",
+      "label": "Shipped",
+      "locator": "state:shop.orders.status=shipped",
+      "parent": "ecommerce-db:column:shop.orders.status",
+      "properties": {
+        "ordinal": 2,
+        "value": "shipped",
+        "value_set": "enum"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:33a0d7eb684a129ca413313ee0fb5c68acf25d063eb85e0689c4edf3d4e19886",
+          "extractor": "pg_catalog",
+          "locator": "enum:shop.order_status",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "state",
+      "label": "Bank transfer",
+      "locator": "state:shop.payments.method=bank_transfer",
+      "parent": "ecommerce-db:column:shop.payments.method",
+      "properties": {
+        "ordinal": 2,
+        "value": "bank_transfer",
+        "value_set": "check"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:9ff8f00a95443473036c72d5a474b3b2a7bba9a78e93e3ea91639f6d8742e80d",
+          "extractor": "pg_catalog",
+          "locator": "check:shop.payments.payments_method_check",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "state",
+      "label": "Card",
+      "locator": "state:shop.payments.method=card",
+      "parent": "ecommerce-db:column:shop.payments.method",
+      "properties": {
+        "ordinal": 0,
+        "value": "card",
+        "value_set": "check"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:9ff8f00a95443473036c72d5a474b3b2a7bba9a78e93e3ea91639f6d8742e80d",
+          "extractor": "pg_catalog",
+          "locator": "check:shop.payments.payments_method_check",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "state",
+      "label": "Paypal",
+      "locator": "state:shop.payments.method=paypal",
+      "parent": "ecommerce-db:column:shop.payments.method",
+      "properties": {
+        "ordinal": 1,
+        "value": "paypal",
+        "value_set": "check"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:9ff8f00a95443473036c72d5a474b3b2a7bba9a78e93e3ea91639f6d8742e80d",
+          "extractor": "pg_catalog",
+          "locator": "check:shop.payments.payments_method_check",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": "Imported from a spreadsheet; keeps its original casing.",
+      "kind": "entity",
+      "label": "Supplier contacts",
+      "locator": "table:shop.\"SupplierContacts\"",
+      "parent": null,
+      "properties": {
+        "identifier": "SupplierContacts",
+        "readable": true,
+        "schema": "shop",
+        "source_type": "table"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:2963d3eb178a83b316374469dee690f9b762324305ca3a593a9859f54e92a68c",
+          "extractor": "pg_catalog",
+          "locator": "table:shop.\"SupplierContacts\"",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": "People who have placed at least one order.",
+      "kind": "entity",
+      "label": "Customers",
+      "locator": "table:shop.customers",
+      "parent": null,
+      "properties": {
+        "identifier": "customers",
+        "readable": true,
+        "schema": "shop",
+        "source_type": "table"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:0c9444baed8b03a0208cc3c7f18ff48cc029de69a2a42fffe3da0773ce1109cf",
+          "extractor": "pg_catalog",
+          "locator": "table:shop.customers",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "entity",
+      "label": "Order items",
+      "locator": "table:shop.order_items",
+      "parent": null,
+      "properties": {
+        "identifier": "order_items",
+        "readable": true,
+        "schema": "shop",
+        "source_type": "table"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:dc8881603af443aa8244ae206433951a0dcbc3c1b6221fd90d0a3e88eae23aa3",
+          "extractor": "pg_catalog",
+          "locator": "table:shop.order_items",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": "Customer orders and their fulfilment state.",
+      "kind": "entity",
+      "label": "Orders",
+      "locator": "table:shop.orders",
+      "parent": null,
+      "properties": {
+        "identifier": "orders",
+        "readable": true,
+        "schema": "shop",
+        "source_type": "table"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:aaabd4abc76d67055ef1c171a24ba026b60ae241520de08bcec666ab3643bf12",
+          "extractor": "pg_catalog",
+          "locator": "table:shop.orders",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "entity",
+      "label": "Payments",
+      "locator": "table:shop.payments",
+      "parent": null,
+      "properties": {
+        "identifier": "payments",
+        "readable": true,
+        "schema": "shop",
+        "source_type": "table"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:b1946dc35b2c114b322a0402913b2df13e9a32d5d365fe714e2c3f38398b4950",
+          "extractor": "pg_catalog",
+          "locator": "table:shop.payments",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "entity",
+      "label": "Products",
+      "locator": "table:shop.products",
+      "parent": null,
+      "properties": {
+        "identifier": "products",
+        "readable": true,
+        "schema": "shop",
+        "source_type": "table"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:905315c2da185b0d58ef6e5f9d281a91f3314af6559169cd2cfd174463426fae",
+          "extractor": "pg_catalog",
+          "locator": "table:shop.products",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "entity",
+      "label": "Returns",
+      "locator": "table:shop.returns",
+      "parent": null,
+      "properties": {
+        "identifier": "returns",
+        "readable": true,
+        "schema": "shop",
+        "source_type": "table"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:9663b39e8162ee5a6f228c068a80d145d64354f1678e7f2e68dc9d9707530b00",
+          "extractor": "pg_catalog",
+          "locator": "table:shop.returns",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "entity",
+      "label": "Shipments",
+      "locator": "table:shop.shipments",
+      "parent": null,
+      "properties": {
+        "identifier": "shipments",
+        "readable": true,
+        "schema": "shop",
+        "source_type": "table"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:7a5576b946afcbc911057f654263b783cebe96730eca2a79ccdbd4dfbe3026a1",
+          "extractor": "pg_catalog",
+          "locator": "table:shop.shipments",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Paid → Shipped",
+      "locator": "transition:shop.orders.status:paid>shipped",
+      "parent": null,
+      "properties": {
+        "evidence": "declared_order,timestamp",
+        "from_state": "paid",
+        "role": "transition",
+        "terminal_target": false,
+        "to_state": "shipped"
+      },
+      "provenance": [
+        {
+          "confidence": 0.55,
+          "evidence_hash": "sha256:744f5d86ca1a7fe34e201157144e5d584c03238c5de645e815ac263fddd651cf",
+          "extractor": "process_mining",
+          "locator": "column:shop.orders.status",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 0.55,
+          "evidence_hash": "sha256:912ef27f4c43fc4367e033cfc8e67fdb373513e954f27a0f3c4c5247e8cc9171",
+          "extractor": "process_mining",
+          "locator": "event:shop.shipments.shipped_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.orders",
+        "state_attribute": "ecommerce-db:column:shop.orders.status"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Placed → Cancelled",
+      "locator": "transition:shop.orders.status:placed>cancelled",
+      "parent": null,
+      "properties": {
+        "evidence": "from_initial,action_via_match",
+        "from_state": "placed",
+        "role": "transition",
+        "terminal_target": true,
+        "to_state": "cancelled"
+      },
+      "provenance": [
+        {
+          "confidence": 0.3,
+          "evidence_hash": "sha256:744f5d86ca1a7fe34e201157144e5d584c03238c5de645e815ac263fddd651cf",
+          "extractor": "process_mining",
+          "locator": "column:shop.orders.status",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 0.3,
+          "evidence_hash": "sha256:2866492645b3ff1697fec13a76894efca4dbb9a5d62403c7c8e96adab13bee4e",
+          "extractor": "process_mining",
+          "locator": "op:DELETE /orders/{orderId}",
+          "source_id": "ecommerce-api"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.orders",
+        "state_attribute": "ecommerce-db:column:shop.orders.status"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Placed → Delivered",
+      "locator": "transition:shop.orders.status:placed>delivered",
+      "parent": null,
+      "properties": {
+        "evidence": "from_initial,timestamp",
+        "from_state": "placed",
+        "role": "transition",
+        "terminal_target": true,
+        "to_state": "delivered"
+      },
+      "provenance": [
+        {
+          "confidence": 0.45,
+          "evidence_hash": "sha256:744f5d86ca1a7fe34e201157144e5d584c03238c5de645e815ac263fddd651cf",
+          "extractor": "process_mining",
+          "locator": "column:shop.orders.status",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 0.45,
+          "evidence_hash": "sha256:95fa2094ab5a4e04bf9a3927f0c0686d617f387db6d8a77202e82859f559cf34",
+          "extractor": "process_mining",
+          "locator": "event:shop.shipments.delivered_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.orders",
+        "state_attribute": "ecommerce-db:column:shop.orders.status"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Placed → Paid",
+      "locator": "transition:shop.orders.status:placed>paid",
+      "parent": null,
+      "properties": {
+        "evidence": "declared_order,timestamp",
+        "from_state": "placed",
+        "role": "transition",
+        "terminal_target": false,
+        "to_state": "paid"
+      },
+      "provenance": [
+        {
+          "confidence": 0.55,
+          "evidence_hash": "sha256:744f5d86ca1a7fe34e201157144e5d584c03238c5de645e815ac263fddd651cf",
+          "extractor": "process_mining",
+          "locator": "column:shop.orders.status",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 0.55,
+          "evidence_hash": "sha256:4c1589c85dc0f66d817fe9868b8c2faad406acea748c7aeee2e088f4ab30ffc8",
+          "extractor": "process_mining",
+          "locator": "event:shop.payments.paid_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.orders",
+        "state_attribute": "ecommerce-db:column:shop.orders.status"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Placed → Returned",
+      "locator": "transition:shop.orders.status:placed>returned",
+      "parent": null,
+      "properties": {
+        "evidence": "from_initial",
+        "from_state": "placed",
+        "role": "transition",
+        "terminal_target": true,
+        "to_state": "returned"
+      },
+      "provenance": [
+        {
+          "confidence": 0.15,
+          "evidence_hash": "sha256:744f5d86ca1a7fe34e201157144e5d584c03238c5de645e815ac263fddd651cf",
+          "extractor": "process_mining",
+          "locator": "column:shop.orders.status",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.orders",
+        "state_attribute": "ecommerce-db:column:shop.orders.status"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Placed → Shipped",
+      "locator": "transition:shop.orders.status:placed>shipped",
+      "parent": null,
+      "properties": {
+        "evidence": "from_initial,timestamp",
+        "from_state": "placed",
+        "role": "transition",
+        "terminal_target": false,
+        "to_state": "shipped"
+      },
+      "provenance": [
+        {
+          "confidence": 0.45,
+          "evidence_hash": "sha256:744f5d86ca1a7fe34e201157144e5d584c03238c5de645e815ac263fddd651cf",
+          "extractor": "process_mining",
+          "locator": "column:shop.orders.status",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 0.45,
+          "evidence_hash": "sha256:912ef27f4c43fc4367e033cfc8e67fdb373513e954f27a0f3c4c5247e8cc9171",
+          "extractor": "process_mining",
+          "locator": "event:shop.shipments.shipped_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.orders",
+        "state_attribute": "ecommerce-db:column:shop.orders.status"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Shipped → Delivered",
+      "locator": "transition:shop.orders.status:shipped>delivered",
+      "parent": null,
+      "properties": {
+        "evidence": "declared_order,timestamp",
+        "from_state": "shipped",
+        "role": "transition",
+        "terminal_target": true,
+        "to_state": "delivered"
+      },
+      "provenance": [
+        {
+          "confidence": 0.55,
+          "evidence_hash": "sha256:744f5d86ca1a7fe34e201157144e5d584c03238c5de645e815ac263fddd651cf",
+          "extractor": "process_mining",
+          "locator": "column:shop.orders.status",
+          "source_id": "ecommerce-db"
+        },
+        {
+          "confidence": 0.55,
+          "evidence_hash": "sha256:95fa2094ab5a4e04bf9a3927f0c0686d617f387db6d8a77202e82859f559cf34",
+          "extractor": "process_mining",
+          "locator": "event:shop.shipments.delivered_at",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.orders",
+        "state_attribute": "ecommerce-db:column:shop.orders.status"
+      },
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Customers email key",
+      "locator": "unique:shop.customers.customers_email_key",
+      "parent": "ecommerce-db:table:shop.customers",
+      "properties": {
+        "columns": "email",
+        "constraint_type": "unique",
+        "identifier": "customers_email_key"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:03b27c62fdcd67ef95ee3d512307f6c0dba69f0aec0601e83131d44506efb598",
+          "extractor": "pg_catalog",
+          "locator": "unique:shop.customers.customers_email_key",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "constraint",
+      "label": "Shipments order id key",
+      "locator": "unique:shop.shipments.shipments_order_id_key",
+      "parent": "ecommerce-db:table:shop.shipments",
+      "properties": {
+        "columns": "order_id",
+        "constraint_type": "unique",
+        "identifier": "shipments_order_id_key"
+      },
+      "provenance": [
+        {
+          "confidence": 1.0,
+          "evidence_hash": "sha256:552002f62a74ceb0c098c9bbd83c2d96fce95dcb2aaed77ecebbf30125e58b1e",
+          "extractor": "pg_catalog",
+          "locator": "unique:shop.shipments.shipments_order_id_key",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {},
+      "source_id": "ecommerce-db"
+    },
+    {
+      "description": null,
+      "kind": "workflow",
+      "label": "Orders status lifecycle",
+      "locator": "workflow:shop.orders.status",
+      "parent": null,
+      "properties": {
+        "initial": "placed",
+        "role": "process",
+        "state_count": 6,
+        "states": "placed,paid,shipped,delivered,cancelled,returned",
+        "terminal": "delivered,cancelled,returned",
+        "transition_count": 7
+      },
+      "provenance": [
+        {
+          "confidence": 0.6,
+          "evidence_hash": "sha256:744f5d86ca1a7fe34e201157144e5d584c03238c5de645e815ac263fddd651cf",
+          "extractor": "process_mining",
+          "locator": "column:shop.orders.status",
+          "source_id": "ecommerce-db"
+        }
+      ],
+      "refs": {
+        "entity": "ecommerce-db:table:shop.orders",
+        "state_attribute": "ecommerce-db:column:shop.orders.status"
+      },
+      "source_id": "ecommerce-db"
+    }
+  ],
+  "project_id": "p0",
+  "version": 1
+}

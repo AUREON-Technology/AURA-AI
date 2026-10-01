@@ -1020,10 +1020,19 @@ class AdaptationSettings:
     """
 
     enabled: bool = False
+    #: The optional labeling model (AP4, ADR-026). Off: twins keep humanised identifiers.
+    labeler_enabled: bool = False
+    labeler_batch_size: int = 8
+    labeler_timeout_s: float = 180.0
 
     @classmethod
     def from_env(cls) -> "AdaptationSettings":
-        return cls(enabled=_bool("ADAPTATION_ENABLED", False))
+        return cls(
+            enabled=_bool("ADAPTATION_ENABLED", False),
+            labeler_enabled=_bool("ADAPTATION_LABELER_ENABLED", False),
+            labeler_batch_size=max(1, min(64, _int("ADAPTATION_LABELER_BATCH_SIZE", 8))),
+            labeler_timeout_s=max(5.0, _float("ADAPTATION_LABELER_TIMEOUT_S", 180.0)),
+        )
 
 
 @dataclass(frozen=True, slots=True)
