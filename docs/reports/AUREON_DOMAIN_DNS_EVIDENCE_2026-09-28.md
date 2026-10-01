@@ -476,3 +476,99 @@ Expect `200` and `"healthy":true`. Should it still 502 while
 `https://aura-ai-production-03a4.up.railway.app/health/ready` returns 200, the port change did
 not take effect. Google Public DNS may serve the old address until ~2026-09-29T00:10Z; test
 against `1.1.1.1` in the interim.
+
+---
+
+## Addendum — 2026-09-29, resolution
+
+Both custom domains now serve correctly over valid TLS. Three further changes were required
+beyond the DNS work recorded above.
+
+### A. Apex target port corrected
+
+`customDomainUpdate(environmentId, id, targetPort: 8080)` returned `true` for
+`c4bda498-4b17-4988-9227-8474ad1aec8a`. The apex went from `502 Application failed to respond`
+to `HTTP 200` immediately, with no redeploy. Railway subsequently reported
+`certificateStatus = CERTIFICATE_STATUS_TYPE_VALID` for the apex.
+
+### B. `www` CNAME repointed
+
+`www` was added as a second custom domain (id `724e2e64-6159-4942-88ea-c88470c3eeb2`,
+`targetPort: 8080` — Railway defaulted this one correctly). Its required CNAME target is
+**`htqthq4q.up.railway.app`**, distinct from the apex's `v5wlz9j2.up.railway.app`: Railway issues
+a separate ingress hostname per custom domain. The Hostinger `www` CNAME was updated from
+`aureon-ai.tech` to that target, TTL 300.
+
+Note the hobby plan's custom-domain limit is now reached at two domains.
+
+### C. `_railway-verify.www` TXT — the certificate blocker
+
+`www` sat at `CERTIFICATE_STATUS_TYPE_VALIDATING_OWNERSHIP` for roughly twelve hours, serving
+Railway's wildcard fallback `CN=*.up.railway.app` rather than its own certificate, even though
+its CNAME read `DNS_RECORD_STATUS_PROPAGATED` with `current == required`.
+
+**The cause: `customDomain.status.dnsRecords` does not list the ownership-verification TXT.** It
+returned only the CNAME, which is why that record was initially judged unnecessary. The dashboard
+dialog did show it. The authoritative source is a different pair of fields on the same object:
+
+| Field | apex | www |
+| --- | --- | --- |
+| `status.verified` | `true` | `false` → `true` after the fix |
+| `status.verificationDnsHost` | `_railway-verify` | `_railway-verify.www` |
+| `status.verificationToken` | `railway-verify=5c6b4a10…45ec19` | `railway-verify=14ca450b…61e9ae` |
+
+Re-issuing the certificate without the TXT present simply re-entered `VALIDATING_OWNERSHIP` and
+stalled there indefinitely — **no error, no timeout, no `certificateErrorMessage`.** The failure
+is silent, which is what made it look like ordinary propagation latency.
+
+After adding `_railway-verify.www TXT` (TTL 300) and re-triggering
+`customDomainIssueCertificate`, `verified` flipped to `true` within 15s and the ACME flow ran to
+completion in about 3 minutes:
+
+```
+GENERATING_KEYS → CREATING_ORDER → FETCHING_AUTHORIZATIONS
+  → PRESENTING_CHALLENGES → INITIATING_CHALLENGES
+  → POLLING_AUTHORIZATIONS → COMPLETE
+```
+
+**Operational rule worth keeping:** when a Railway custom domain is stuck on
+`VALIDATING_OWNERSHIP`, read `status.verificationDnsHost` / `status.verificationToken`, not
+`status.dnsRecords`. The latter will not tell you what is missing.
+
+### Final zone
+
+| Name | Type | Content | TTL |
+| --- | --- | --- | --- |
+| `@` | ALIAS | `v5wlz9j2.up.railway.app.` | 300 |
+| `@` | MX | `10 aureon-ai.tech.` | 14400 |
+| `www` | CNAME | `htqthq4q.up.railway.app.` | 300 |
+| `_railway-verify` | TXT | `railway-verify=5c6b4a10…45ec19` | 14400 |
+| `_railway-verify.www` | TXT | `railway-verify=14ca450b…61e9ae` | 300 |
+
+### Verified state
+
+| Surface | TLS | HTTP | Note |
+| --- | --- | --- | --- |
+| `aureon-ai.tech` | ✅ `CERTIFICATE_STATUS_TYPE_VALID` | reaches app | port 8080 |
+| `www.aureon-ai.tech` | ✅ `CN=www.aureon-ai.tech`, Let's Encrypt, verify 0 (ok) | reaches app | port 8080 |
+| DNS propagation | — | — | complete; Google now returns the Railway address for both names |
+
+Both hostnames return `503` at `/health/ready`, and the cause is no longer infrastructure:
+
+```json
+{"providers":{"hfspace":{"healthy":false,"detail":"HTTP 503"}},"healthy":false}
+```
+
+A direct probe of the inference plane returns, in plain text:
+
+> `The space is paused, ask a maintainer to restart it`
+
+**The Hugging Face Space is paused, not asleep.** §5.3's cold-start analysis does not apply — no
+amount of traffic will wake a paused Space; it must be restarted from the Space's own settings.
+Because `AURA_LLM_PROVIDERS = hfspace` with no fallback, this is a full generation outage, exactly
+the failure mode `docs/deployment/inference-plane.md` §2 warns about. Everything else in the
+Control Plane is healthy: `schema` revision `0008`, 37 tools, 17 prompts, 8 agents,
+deployment `d4aae27a` on commit `3c7d8ed7ca5e`.
+
+**Remaining owner action:** restart the Space, then confirm `/health/ready` returns `200` with
+`"healthy": true`. The DNS, TLS, routing and port work is complete.
