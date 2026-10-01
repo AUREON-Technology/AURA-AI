@@ -208,6 +208,7 @@ New IDs `M0`–`M15` are chosen to collide with nothing (gap severities use `P0`
 | 038 | M1 | dead legacy tasks |
 | 039 | M0 (doc fix) | CLAUDE.md additionally stale on ADR range (015/016) |
 | 040 | M0 | |
+| 049–062 | AP0–AP13 | Track AP ([AURA_ADAPTIVE_PLATFORM_ROADMAP.md](AURA_ADAPTIVE_PLATFORM_ROADMAP.md)), added 2026-10-01; parallel to M-phases and gated by M0/M1/CB-11/M4/M7/M14 |
 | **New (to be added to the register):** SEC-01, SEC-02, SEC-03, SEC-08, SEC-09, SEC-10, SEC-11, SEC-12, SEC-15, dual schema authority, two Personal-OS stores, silent planning fallback | M1 / M4 / M6 / M11 | from this review |
 
 ## 6. Summary of changes
@@ -237,3 +238,4 @@ New IDs `M0`–`M15` are chosen to collide with nothing (gap severities use `P0`
 | C10 | GAP-024 "all shared" vs scoped personas | Partly stale |
 | C11 | `config.dart` comment "not hardcoded" vs hardcoded secret | SEC-03 |
 | C12 | Desktop audit "VERIFIED" vs roadmap "not proven" | Audit's VERIFIED = code-read; ladder state IMPLEMENTED until CI executes |
+| C13 | Adaptive platform proposal letters ("Phase A…") vs historical A–K IDs | New track uses the **AP** prefix (AP0–AP13) so no ID collides with `docs/AURA_UPGRADE_ROADMAP.md` |

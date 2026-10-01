@@ -9,6 +9,12 @@ statement: [AURA_FULL_SYSTEM_REVIEW.md](../reports/AURA_FULL_SYSTEM_REVIEW.md). 
 [AURA_CRITICAL_BACKLOG.md](AURA_CRITICAL_BACKLOG.md). Gap status stays machine-checked in
 [`gap_register.yaml`](../production/gap_register.yaml).
 
+**Parallel track:** the Adaptive AI Platform (attaching AURA to existing software systems) is
+planned in [AURA_ADAPTIVE_PLATFORM_ROADMAP.md](AURA_ADAPTIVE_PLATFORM_ROADMAP.md) as Track AP
+(AP0–AP13, ADR-018…028). It runs beside M0–M15 and is gated by them (M0 for any proof, M1 for
+connectors and writes, CB-11 for project knowledge, M4/M7 for label and eval quality); it does not
+reorder this roadmap.
+
 **Standing rule (binding):** a phase or item is complete only with the evidence its exit criteria
 name, linked from `docs/reports/`. Source code existing is IMPLEMENTED; nothing more. Use the
 maturity ladder in §2 and never collapse its states.
