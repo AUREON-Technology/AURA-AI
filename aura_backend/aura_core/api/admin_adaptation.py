@@ -1,4 +1,4 @@
-"""Super Admin routes for Track AP connectors (AP2, ADR-021).
+"""Super Admin routes for Track AP connectors (AP2, ADR-021) and the Project Twin (AP4).
 
 Every route requires the Super Admin role: connecting AURA to another system is the authority
 boundary the whole track rests on. The routes are always mounted -- so the route-auth suite keeps
@@ -66,6 +66,15 @@ def register_adaptation_ops(
         max_profiled_columns: int = Field(default=64, ge=0, le=512)
         max_seconds: float = Field(default=120.0, ge=1.0, le=3600.0)
         sample_values: bool = False
+
+    class SnapshotRequest(DiscoverRequest):
+        connector_ids: list[str] | None = Field(default=None, max_length=32)
+
+    def twins() -> Any:
+        service = getattr(container, "twins", None)
+        if service is None:
+            registry()  # the same 503 as every other route here
+        return service
 
     def registry() -> Any:
         connectors = getattr(container, "connectors", None)
@@ -151,6 +160,58 @@ def register_adaptation_ops(
             },
             "report": to_data(report),
         })
+
+    @router.post("/admin/twin/snapshot")
+    async def snapshot_twin(caller=Depends(principal), payload: SnapshotRequest | None = None) -> JSONResponse:
+        """Discover the active connectors, build the Project Twin and append a version (AP4).
+
+        Returns the version record and the diff from the previous version; an unchanged system
+        returns the latest version with ``created: false`` rather than a duplicate.
+        """
+        require_super_admin(caller)
+        service = twins()
+        body = payload or SnapshotRequest()
+        budget = DiscoveryBudget(**body.model_dump(exclude={"connector_ids"}))
+        result = await service.snapshot(by=actor(caller), budget=budget, connector_ids=body.connector_ids)
+        return JSONResponse(content={
+            "created": result.created, "version": to_data(result.version),
+            "diff": {"summary": result.diff.summary(), **to_data(result.diff)},
+        })
+
+    @router.get("/admin/twin/versions")
+    async def list_twin_versions(
+        caller=Depends(principal), limit: int = Query(default=50, ge=1, le=200)
+    ) -> JSONResponse:
+        require_super_admin(caller)
+        return JSONResponse(content={"versions": [to_data(v) for v in await twins().versions(limit=limit)]})
+
+    @router.get("/admin/twin/versions/{version}")
+    async def get_twin_version(
+        version: int, caller=Depends(principal), kind: str | None = Query(default=None, max_length=32)
+    ) -> JSONResponse:
+        """One stored version with its elements. Labels and descriptions are the connected
+        system's own text (or a model's proposal about it) and must be rendered as text."""
+        require_super_admin(caller)
+        found = await twins().get(version)
+        if found is None:
+            raise HTTPException(status_code=404, detail="twin version not found")
+        meta, twin = found
+        elements = twin.elements
+        if kind is not None:
+            elements = tuple(e for e in elements if e.kind.value == kind)
+        return JSONResponse(content={
+            "version": to_data(meta), "digest": twin.digest, "elements": to_data(elements),
+        })
+
+    @router.get("/admin/twin/diff")
+    async def diff_twin_versions(
+        caller=Depends(principal),
+        from_version: int = Query(ge=1, alias="from"),
+        to_version: int = Query(ge=1, alias="to"),
+    ) -> JSONResponse:
+        require_super_admin(caller)
+        diff = await twins().diff(from_version, to_version)
+        return JSONResponse(content={"summary": diff.summary(), **to_data(diff)})
 
     @router.post("/admin/connectors/{connector_id}/disable")
     async def disable_connector(connector_id: str, caller=Depends(principal)) -> JSONResponse:

@@ -5,5 +5,7 @@ executes. This package only ever produces *data* -- descriptors, twins, blueprin
 never imports kernel internals, edits tool policy or loads code. It is an engine package: it may
 use domain types and ports, never adapters (``tests/architecture/test_dependency_rules.py``).
 
-Built so far: the connector registry (AP2). See ``docs/roadmaps/AURA_ADAPTIVE_PLATFORM_ROADMAP.md``.
+Built so far: the connector registry (AP2), discovery (AP3) and the Project Twin -- normalisation,
+merge proposals, process mining v0, optional labeling, versions and diffs (AP4).
+See ``docs/roadmaps/AURA_ADAPTIVE_PLATFORM_ROADMAP.md``.
 """

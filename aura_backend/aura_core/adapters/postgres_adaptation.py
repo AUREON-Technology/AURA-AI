@@ -1,8 +1,8 @@
-"""Postgres stores for Track AP: connector records and sealed connector credentials (AP2).
+"""Postgres stores for Track AP: connector records and sealed credentials (AP2), twin versions (AP4).
 
 Unlike most older ``aura_*`` adapters these do **not** create their tables at runtime: Alembic is
-the single schema authority (master roadmap principle 9, CB-20), and migration ``0009`` owns both
-tables. A missing table surfaces as ``DependencyUnavailableError`` naming the fix, rather than
+the single schema authority (master roadmap principle 9, CB-20), and migrations ``0009``/``0010`` own
+the tables. A missing table surfaces as ``DependencyUnavailableError`` naming the fix, rather than
 being papered over with DDL from the request path.
 
 ``aura_connector_credentials`` only ever holds ciphertext (``EncryptedCredentialVault`` seals
@@ -23,10 +23,19 @@ from ..domain.connectors import (
     ConnectorState,
     IdentityMode,
 )
-from ..domain.errors import DependencyUnavailableError
+from ..domain.ausm import AusmElement, ProjectTwin
+from ..domain.errors import ConflictError, DataIntegrityError, DependencyUnavailableError, ValidationError
+from ..domain.serialization import canonical_json, from_data, to_data
+from ..domain.twin import TwinVersion
 from .postgres_store import PostgresPool
 
-__all__ = ["PostgresConnectorStore", "PostgresCiphertextStore", "ADAPTATION_SCHEMA"]
+__all__ = [
+    "PostgresConnectorStore",
+    "PostgresCiphertextStore",
+    "PostgresTwinStore",
+    "ADAPTATION_SCHEMA",
+    "TWIN_SCHEMA",
+]
 
 #: Kept textually in step with ``alembic/versions/0009_adaptation_connectors.py``
 #: (``tests/unit/test_adaptation_connectors.py`` asserts it).
@@ -216,3 +225,137 @@ class PostgresCiphertextStore:
         except Exception as exc:
             raise _unavailable("delete the credential", exc) from exc
         return status.endswith(" 1")
+
+
+#: Kept textually in step with ``alembic/versions/0010_adaptation_twin.py``
+#: (``tests/unit/test_adaptation_twin.py`` asserts it).
+TWIN_SCHEMA = (
+    """
+    CREATE TABLE IF NOT EXISTS aura_adaptation_twin_versions (
+        project_id      TEXT        NOT NULL DEFAULT 'p0',
+        version         INTEGER     NOT NULL CHECK (version >= 1),
+        digest          TEXT        NOT NULL CHECK (digest LIKE 'sha256:%'),
+        parent_version  INTEGER     NULL,
+        created_at      TIMESTAMPTZ NOT NULL,
+        created_by      TEXT        NOT NULL,
+        element_count   INTEGER     NOT NULL,
+        record          JSONB       NOT NULL,
+        PRIMARY KEY (project_id, version)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS aura_adaptation_twin_elements (
+        project_id  TEXT    NOT NULL DEFAULT 'p0',
+        version     INTEGER NOT NULL,
+        element_id  TEXT    NOT NULL,
+        kind        TEXT    NOT NULL,
+        body        JSONB   NOT NULL,
+        PRIMARY KEY (project_id, version, element_id),
+        FOREIGN KEY (project_id, version)
+            REFERENCES aura_adaptation_twin_versions (project_id, version) ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS aura_adaptation_twin_elements_kind
+        ON aura_adaptation_twin_elements (project_id, version, kind)
+    """,
+)
+
+_UNIQUE_VIOLATION = "23505"
+
+
+class PostgresTwinStore:
+    """Append-only Project Twin versions (AP4). One transaction per snapshot; no UPDATE path.
+
+    Reading a version back re-validates every element through the strict codec and re-checks the
+    twin's digest against the stored one, so a row edited behind AURA's back is refused
+    (``DataIntegrityError``) rather than planned from.
+    """
+
+    def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
+        self._pool = pool or PostgresPool(url)
+
+    async def append(self, version: TwinVersion, twin: ProjectTwin) -> None:
+        if twin.version != version.version or twin.digest != version.digest:
+            raise ValidationError("twin does not match its version record")
+        pool = await self._pool._get_pool()
+        rows = [
+            (version.project_id, version.version, e.id, str(e.kind), canonical_json(to_data(e)))
+            for e in twin.elements
+        ]
+        try:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        """
+                        INSERT INTO aura_adaptation_twin_versions
+                            (project_id, version, digest, parent_version, created_at, created_by,
+                             element_count, record)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+                        """,
+                        version.project_id, version.version, version.digest, version.parent_version,
+                        datetime.fromisoformat(version.created_at), version.created_by,
+                        version.element_count, canonical_json(to_data(version)),
+                    )
+                    await conn.executemany(
+                        """
+                        INSERT INTO aura_adaptation_twin_elements (project_id, version, element_id, kind, body)
+                        VALUES ($1, $2, $3, $4, $5::jsonb)
+                        """,
+                        rows,
+                    )
+        except Exception as exc:
+            if getattr(exc, "sqlstate", None) == _UNIQUE_VIOLATION:
+                raise ConflictError("twin version already exists", details={"version": version.version}) from None
+            raise _unavailable("store the twin version", exc) from exc
+
+    async def latest(self, project_id: str) -> TwinVersion | None:
+        versions = await self.versions(project_id, limit=1)
+        return versions[0] if versions else None
+
+    async def versions(self, project_id: str, *, limit: int = 50) -> Sequence[TwinVersion]:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT record FROM aura_adaptation_twin_versions
+                     WHERE project_id = $1 ORDER BY version DESC LIMIT $2
+                    """,
+                    project_id, limit,
+                )
+        except Exception as exc:
+            raise _unavailable("list twin versions", exc) from exc
+        return [from_data(TwinVersion, _json(row["record"])) for row in rows]
+
+    async def get(self, project_id: str, version: int) -> tuple[TwinVersion, ProjectTwin] | None:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                record = await conn.fetchval(
+                    "SELECT record FROM aura_adaptation_twin_versions WHERE project_id = $1 AND version = $2",
+                    project_id, version,
+                )
+                if record is None:
+                    return None
+                rows = await conn.fetch(
+                    """
+                    SELECT body FROM aura_adaptation_twin_elements
+                     WHERE project_id = $1 AND version = $2 ORDER BY element_id COLLATE "C"
+                    """,
+                    project_id, version,
+                )
+        except Exception as exc:
+            raise _unavailable("read the twin version", exc) from exc
+        meta = from_data(TwinVersion, _json(record))
+        elements = [from_data(AusmElement, _json(row["body"]), path=f"$.elements[{i}]") for i, row in enumerate(rows)]
+        twin = ProjectTwin.build(project_id, version, elements)
+        if twin.digest != meta.digest:
+            raise DataIntegrityError(
+                "stored twin does not match its recorded digest", details={"version": version}
+            )
+        return meta, twin
+
+
+def _json(value: Any) -> Any:
+    return json.loads(value) if isinstance(value, str) else value
