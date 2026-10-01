@@ -1,0 +1,1439 @@
+{
+  "columns": [
+    {
+      "comment": null,
+      "data_type": "text",
+      "has_default": false,
+      "is_enum": false,
+      "name": "SupplierName",
+      "not_null": true,
+      "position": 1,
+      "schema": "shop",
+      "table": "SupplierContacts",
+      "type_name": "text",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "text",
+      "has_default": false,
+      "is_enum": false,
+      "name": "ContactEmail",
+      "not_null": true,
+      "position": 2,
+      "schema": "shop",
+      "table": "SupplierContacts",
+      "type_name": "text",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "integer",
+      "has_default": false,
+      "is_enum": false,
+      "name": "id",
+      "not_null": true,
+      "position": 1,
+      "schema": "shop",
+      "table": "customers",
+      "type_name": "int4",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "text",
+      "has_default": false,
+      "is_enum": false,
+      "name": "email",
+      "not_null": true,
+      "position": 2,
+      "schema": "shop",
+      "table": "customers",
+      "type_name": "text",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "text",
+      "has_default": false,
+      "is_enum": false,
+      "name": "full_name",
+      "not_null": true,
+      "position": 3,
+      "schema": "shop",
+      "table": "customers",
+      "type_name": "text",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "text",
+      "has_default": false,
+      "is_enum": false,
+      "name": "country",
+      "not_null": true,
+      "position": 4,
+      "schema": "shop",
+      "table": "customers",
+      "type_name": "text",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "timestamp with time zone",
+      "has_default": false,
+      "is_enum": false,
+      "name": "created_at",
+      "not_null": true,
+      "position": 5,
+      "schema": "shop",
+      "table": "customers",
+      "type_name": "timestamptz",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "integer",
+      "has_default": false,
+      "is_enum": false,
+      "name": "order_id",
+      "not_null": true,
+      "position": 1,
+      "schema": "shop",
+      "table": "order_items",
+      "type_name": "int4",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "text",
+      "has_default": false,
+      "is_enum": false,
+      "name": "sku",
+      "not_null": true,
+      "position": 2,
+      "schema": "shop",
+      "table": "order_items",
+      "type_name": "text",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "integer",
+      "has_default": false,
+      "is_enum": false,
+      "name": "qty",
+      "not_null": true,
+      "position": 3,
+      "schema": "shop",
+      "table": "order_items",
+      "type_name": "int4",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "numeric(10,2)",
+      "has_default": false,
+      "is_enum": false,
+      "name": "unit_price",
+      "not_null": true,
+      "position": 4,
+      "schema": "shop",
+      "table": "order_items",
+      "type_name": "numeric",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "integer",
+      "has_default": false,
+      "is_enum": false,
+      "name": "id",
+      "not_null": true,
+      "position": 1,
+      "schema": "shop",
+      "table": "orders",
+      "type_name": "int4",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "integer",
+      "has_default": false,
+      "is_enum": false,
+      "name": "customer_id",
+      "not_null": true,
+      "position": 2,
+      "schema": "shop",
+      "table": "orders",
+      "type_name": "int4",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "shop.order_status",
+      "has_default": true,
+      "is_enum": true,
+      "name": "status",
+      "not_null": true,
+      "position": 3,
+      "schema": "shop",
+      "table": "orders",
+      "type_name": "order_status",
+      "type_schema": "shop"
+    },
+    {
+      "comment": null,
+      "data_type": "timestamp with time zone",
+      "has_default": false,
+      "is_enum": false,
+      "name": "placed_at",
+      "not_null": true,
+      "position": 4,
+      "schema": "shop",
+      "table": "orders",
+      "type_name": "timestamptz",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "numeric(12,2)",
+      "has_default": false,
+      "is_enum": false,
+      "name": "total",
+      "not_null": true,
+      "position": 5,
+      "schema": "shop",
+      "table": "orders",
+      "type_name": "numeric",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "integer",
+      "has_default": false,
+      "is_enum": false,
+      "name": "id",
+      "not_null": true,
+      "position": 1,
+      "schema": "shop",
+      "table": "payments",
+      "type_name": "int4",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "integer",
+      "has_default": false,
+      "is_enum": false,
+      "name": "order_id",
+      "not_null": true,
+      "position": 2,
+      "schema": "shop",
+      "table": "payments",
+      "type_name": "int4",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "text",
+      "has_default": false,
+      "is_enum": false,
+      "name": "method",
+      "not_null": true,
+      "position": 3,
+      "schema": "shop",
+      "table": "payments",
+      "type_name": "text",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "numeric(12,2)",
+      "has_default": false,
+      "is_enum": false,
+      "name": "amount",
+      "not_null": true,
+      "position": 4,
+      "schema": "shop",
+      "table": "payments",
+      "type_name": "numeric",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "timestamp with time zone",
+      "has_default": false,
+      "is_enum": false,
+      "name": "paid_at",
+      "not_null": true,
+      "position": 5,
+      "schema": "shop",
+      "table": "payments",
+      "type_name": "timestamptz",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "text",
+      "has_default": false,
+      "is_enum": false,
+      "name": "sku",
+      "not_null": true,
+      "position": 1,
+      "schema": "shop",
+      "table": "products",
+      "type_name": "text",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "text",
+      "has_default": false,
+      "is_enum": false,
+      "name": "title",
+      "not_null": true,
+      "position": 2,
+      "schema": "shop",
+      "table": "products",
+      "type_name": "text",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "text",
+      "has_default": false,
+      "is_enum": false,
+      "name": "category",
+      "not_null": true,
+      "position": 3,
+      "schema": "shop",
+      "table": "products",
+      "type_name": "text",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "numeric(10,2)",
+      "has_default": false,
+      "is_enum": false,
+      "name": "price",
+      "not_null": true,
+      "position": 4,
+      "schema": "shop",
+      "table": "products",
+      "type_name": "numeric",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "integer",
+      "has_default": false,
+      "is_enum": false,
+      "name": "stock",
+      "not_null": true,
+      "position": 5,
+      "schema": "shop",
+      "table": "products",
+      "type_name": "int4",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "integer",
+      "has_default": false,
+      "is_enum": false,
+      "name": "id",
+      "not_null": true,
+      "position": 1,
+      "schema": "shop",
+      "table": "returns",
+      "type_name": "int4",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "integer",
+      "has_default": false,
+      "is_enum": false,
+      "name": "order_id",
+      "not_null": true,
+      "position": 2,
+      "schema": "shop",
+      "table": "returns",
+      "type_name": "int4",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "text",
+      "has_default": false,
+      "is_enum": false,
+      "name": "sku",
+      "not_null": true,
+      "position": 3,
+      "schema": "shop",
+      "table": "returns",
+      "type_name": "text",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "text",
+      "has_default": false,
+      "is_enum": false,
+      "name": "reason",
+      "not_null": true,
+      "position": 4,
+      "schema": "shop",
+      "table": "returns",
+      "type_name": "text",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "timestamp with time zone",
+      "has_default": false,
+      "is_enum": false,
+      "name": "created_at",
+      "not_null": true,
+      "position": 5,
+      "schema": "shop",
+      "table": "returns",
+      "type_name": "timestamptz",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "integer",
+      "has_default": false,
+      "is_enum": false,
+      "name": "id",
+      "not_null": true,
+      "position": 1,
+      "schema": "shop",
+      "table": "shipments",
+      "type_name": "int4",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "integer",
+      "has_default": false,
+      "is_enum": false,
+      "name": "order_id",
+      "not_null": true,
+      "position": 2,
+      "schema": "shop",
+      "table": "shipments",
+      "type_name": "int4",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "text",
+      "has_default": false,
+      "is_enum": false,
+      "name": "carrier",
+      "not_null": true,
+      "position": 3,
+      "schema": "shop",
+      "table": "shipments",
+      "type_name": "text",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "text",
+      "has_default": false,
+      "is_enum": false,
+      "name": "tracking_url",
+      "not_null": false,
+      "position": 4,
+      "schema": "shop",
+      "table": "shipments",
+      "type_name": "text",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "timestamp with time zone",
+      "has_default": false,
+      "is_enum": false,
+      "name": "shipped_at",
+      "not_null": true,
+      "position": 5,
+      "schema": "shop",
+      "table": "shipments",
+      "type_name": "timestamptz",
+      "type_schema": "pg_catalog"
+    },
+    {
+      "comment": null,
+      "data_type": "timestamp with time zone",
+      "has_default": false,
+      "is_enum": false,
+      "name": "delivered_at",
+      "not_null": false,
+      "position": 6,
+      "schema": "shop",
+      "table": "shipments",
+      "type_name": "timestamptz",
+      "type_schema": "pg_catalog"
+    }
+  ],
+  "constraints": [
+    {
+      "columns": [
+        "SupplierName"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "SupplierContacts_pkey",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "SupplierContacts",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "email"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "customers_email_key",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "customers",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "customers_pkey",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "customers",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "order_items_order_id_fkey",
+      "ref_columns": [
+        "id"
+      ],
+      "ref_schema": "shop",
+      "ref_table": "orders",
+      "schema": "shop",
+      "table": "order_items",
+      "type": "f"
+    },
+    {
+      "columns": [
+        "order_id",
+        "sku"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "order_items_pkey",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "order_items",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "qty"
+      ],
+      "comment": null,
+      "definition": "CHECK ((qty > 0))",
+      "name": "order_items_qty_check",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "order_items",
+      "type": "c"
+    },
+    {
+      "columns": [
+        "sku"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "order_items_sku_fkey",
+      "ref_columns": [
+        "sku"
+      ],
+      "ref_schema": "shop",
+      "ref_table": "products",
+      "schema": "shop",
+      "table": "order_items",
+      "type": "f"
+    },
+    {
+      "columns": [
+        "customer_id"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "orders_customer_id_fkey",
+      "ref_columns": [
+        "id"
+      ],
+      "ref_schema": "shop",
+      "ref_table": "customers",
+      "schema": "shop",
+      "table": "orders",
+      "type": "f"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "orders_pkey",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "orders",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "total"
+      ],
+      "comment": null,
+      "definition": "CHECK ((total >= (0)::numeric))",
+      "name": "orders_total_check",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "orders",
+      "type": "c"
+    },
+    {
+      "columns": [
+        "method"
+      ],
+      "comment": null,
+      "definition": "CHECK ((method = ANY (ARRAY['card'::text, 'paypal'::text, 'bank_transfer'::text])))",
+      "name": "payments_method_check",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "payments",
+      "type": "c"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "payments_order_id_fkey",
+      "ref_columns": [
+        "id"
+      ],
+      "ref_schema": "shop",
+      "ref_table": "orders",
+      "schema": "shop",
+      "table": "payments",
+      "type": "f"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "payments_pkey",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "payments",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "sku"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "products_pkey",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "products",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "price"
+      ],
+      "comment": null,
+      "definition": "CHECK ((price > (0)::numeric))",
+      "name": "products_price_check",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "products",
+      "type": "c"
+    },
+    {
+      "columns": [
+        "sku"
+      ],
+      "comment": null,
+      "definition": "CHECK ((sku ~ '^[A-Z]{3}-[0-9]{4}$'::text))",
+      "name": "products_sku_check",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "products",
+      "type": "c"
+    },
+    {
+      "columns": [
+        "stock"
+      ],
+      "comment": null,
+      "definition": "CHECK ((stock >= 0))",
+      "name": "products_stock_check",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "products",
+      "type": "c"
+    },
+    {
+      "columns": [
+        "order_id",
+        "sku"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "returns_item_fk",
+      "ref_columns": [
+        "order_id",
+        "sku"
+      ],
+      "ref_schema": "shop",
+      "ref_table": "order_items",
+      "schema": "shop",
+      "table": "returns",
+      "type": "f"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "returns_pkey",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "returns",
+      "type": "p"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "shipments_order_id_fkey",
+      "ref_columns": [
+        "id"
+      ],
+      "ref_schema": "shop",
+      "ref_table": "orders",
+      "schema": "shop",
+      "table": "shipments",
+      "type": "f"
+    },
+    {
+      "columns": [
+        "order_id"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "shipments_order_id_key",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "shipments",
+      "type": "u"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "comment": null,
+      "definition": null,
+      "name": "shipments_pkey",
+      "ref_columns": [],
+      "ref_schema": null,
+      "ref_table": null,
+      "schema": "shop",
+      "table": "shipments",
+      "type": "p"
+    }
+  ],
+  "enums": [
+    {
+      "labels": [
+        "placed",
+        "paid",
+        "shipped",
+        "delivered",
+        "cancelled",
+        "returned"
+      ],
+      "name": "order_status",
+      "schema": "shop"
+    }
+  ],
+  "grants": [
+    {
+      "grantee": "shop_support",
+      "privilege": "SELECT",
+      "schema": "shop",
+      "table": "customers"
+    },
+    {
+      "grantee": "shop_support",
+      "privilege": "SELECT",
+      "schema": "shop",
+      "table": "order_items"
+    },
+    {
+      "grantee": "shop_ops",
+      "privilege": "SELECT",
+      "schema": "shop",
+      "table": "orders"
+    },
+    {
+      "grantee": "shop_ops",
+      "privilege": "UPDATE",
+      "schema": "shop",
+      "table": "orders"
+    },
+    {
+      "grantee": "shop_support",
+      "privilege": "SELECT",
+      "schema": "shop",
+      "table": "orders"
+    },
+    {
+      "grantee": "shop_ops",
+      "privilege": "INSERT",
+      "schema": "shop",
+      "table": "returns"
+    },
+    {
+      "grantee": "shop_ops",
+      "privilege": "SELECT",
+      "schema": "shop",
+      "table": "returns"
+    },
+    {
+      "grantee": "shop_ops",
+      "privilege": "INSERT",
+      "schema": "shop",
+      "table": "shipments"
+    },
+    {
+      "grantee": "shop_ops",
+      "privilege": "SELECT",
+      "schema": "shop",
+      "table": "shipments"
+    },
+    {
+      "grantee": "shop_support",
+      "privilege": "SELECT",
+      "schema": "shop",
+      "table": "shipments"
+    }
+  ],
+  "issues": [],
+  "profiles": [
+    {
+      "column": "SupplierName",
+      "data_type": "text",
+      "distinct": 2,
+      "non_null": 2,
+      "patterns": {
+        "email": 0,
+        "iso_date": 0,
+        "numeric_text": 0,
+        "url": 0,
+        "uuid": 0
+      },
+      "sampled_rows": 2,
+      "schema": "shop",
+      "table": "SupplierContacts",
+      "values": null
+    },
+    {
+      "column": "ContactEmail",
+      "data_type": "text",
+      "distinct": 2,
+      "non_null": 2,
+      "patterns": {
+        "email": 2,
+        "iso_date": 0,
+        "numeric_text": 0,
+        "url": 0,
+        "uuid": 0
+      },
+      "sampled_rows": 2,
+      "schema": "shop",
+      "table": "SupplierContacts",
+      "values": null
+    },
+    {
+      "column": "id",
+      "data_type": "integer",
+      "distinct": 25,
+      "non_null": 25,
+      "patterns": {},
+      "sampled_rows": 25,
+      "schema": "shop",
+      "table": "customers",
+      "values": null
+    },
+    {
+      "column": "email",
+      "data_type": "text",
+      "distinct": 25,
+      "non_null": 25,
+      "patterns": {
+        "email": 25,
+        "iso_date": 0,
+        "numeric_text": 0,
+        "url": 0,
+        "uuid": 0
+      },
+      "sampled_rows": 25,
+      "schema": "shop",
+      "table": "customers",
+      "values": null
+    },
+    {
+      "column": "full_name",
+      "data_type": "text",
+      "distinct": 25,
+      "non_null": 25,
+      "patterns": {
+        "email": 0,
+        "iso_date": 0,
+        "numeric_text": 0,
+        "url": 0,
+        "uuid": 0
+      },
+      "sampled_rows": 25,
+      "schema": "shop",
+      "table": "customers",
+      "values": null
+    },
+    {
+      "column": "country",
+      "data_type": "text",
+      "distinct": 5,
+      "non_null": 25,
+      "patterns": {
+        "email": 0,
+        "iso_date": 0,
+        "numeric_text": 0,
+        "url": 0,
+        "uuid": 0
+      },
+      "sampled_rows": 25,
+      "schema": "shop",
+      "table": "customers",
+      "values": null
+    },
+    {
+      "column": "created_at",
+      "data_type": "timestamp with time zone",
+      "distinct": 25,
+      "non_null": 25,
+      "patterns": {},
+      "sampled_rows": 25,
+      "schema": "shop",
+      "table": "customers",
+      "values": null
+    },
+    {
+      "column": "order_id",
+      "data_type": "integer",
+      "distinct": 35,
+      "non_null": 59,
+      "patterns": {},
+      "sampled_rows": 59,
+      "schema": "shop",
+      "table": "order_items",
+      "values": null
+    },
+    {
+      "column": "sku",
+      "data_type": "text",
+      "distinct": 18,
+      "non_null": 59,
+      "patterns": {
+        "email": 0,
+        "iso_date": 0,
+        "numeric_text": 0,
+        "url": 0,
+        "uuid": 0
+      },
+      "sampled_rows": 59,
+      "schema": "shop",
+      "table": "order_items",
+      "values": null
+    },
+    {
+      "column": "qty",
+      "data_type": "integer",
+      "distinct": 3,
+      "non_null": 59,
+      "patterns": {},
+      "sampled_rows": 59,
+      "schema": "shop",
+      "table": "order_items",
+      "values": null
+    },
+    {
+      "column": "unit_price",
+      "data_type": "numeric(10,2)",
+      "distinct": 18,
+      "non_null": 59,
+      "patterns": {},
+      "sampled_rows": 59,
+      "schema": "shop",
+      "table": "order_items",
+      "values": null
+    },
+    {
+      "column": "id",
+      "data_type": "integer",
+      "distinct": 35,
+      "non_null": 35,
+      "patterns": {},
+      "sampled_rows": 35,
+      "schema": "shop",
+      "table": "orders",
+      "values": null
+    },
+    {
+      "column": "customer_id",
+      "data_type": "integer",
+      "distinct": 25,
+      "non_null": 35,
+      "patterns": {},
+      "sampled_rows": 35,
+      "schema": "shop",
+      "table": "orders",
+      "values": null
+    },
+    {
+      "column": "status",
+      "data_type": "shop.order_status",
+      "distinct": 6,
+      "non_null": 35,
+      "patterns": {},
+      "sampled_rows": 35,
+      "schema": "shop",
+      "table": "orders",
+      "values": null
+    },
+    {
+      "column": "placed_at",
+      "data_type": "timestamp with time zone",
+      "distinct": 35,
+      "non_null": 35,
+      "patterns": {},
+      "sampled_rows": 35,
+      "schema": "shop",
+      "table": "orders",
+      "values": null
+    },
+    {
+      "column": "total",
+      "data_type": "numeric(12,2)",
+      "distinct": 18,
+      "non_null": 35,
+      "patterns": {},
+      "sampled_rows": 35,
+      "schema": "shop",
+      "table": "orders",
+      "values": null
+    },
+    {
+      "column": "id",
+      "data_type": "integer",
+      "distinct": 25,
+      "non_null": 25,
+      "patterns": {},
+      "sampled_rows": 25,
+      "schema": "shop",
+      "table": "payments",
+      "values": null
+    },
+    {
+      "column": "order_id",
+      "data_type": "integer",
+      "distinct": 25,
+      "non_null": 25,
+      "patterns": {},
+      "sampled_rows": 25,
+      "schema": "shop",
+      "table": "payments",
+      "values": null
+    },
+    {
+      "column": "method",
+      "data_type": "text",
+      "distinct": 3,
+      "non_null": 25,
+      "patterns": {
+        "email": 0,
+        "iso_date": 0,
+        "numeric_text": 0,
+        "url": 0,
+        "uuid": 0
+      },
+      "sampled_rows": 25,
+      "schema": "shop",
+      "table": "payments",
+      "values": null
+    },
+    {
+      "column": "amount",
+      "data_type": "numeric(12,2)",
+      "distinct": 18,
+      "non_null": 25,
+      "patterns": {},
+      "sampled_rows": 25,
+      "schema": "shop",
+      "table": "payments",
+      "values": null
+    },
+    {
+      "column": "paid_at",
+      "data_type": "timestamp with time zone",
+      "distinct": 25,
+      "non_null": 25,
+      "patterns": {},
+      "sampled_rows": 25,
+      "schema": "shop",
+      "table": "payments",
+      "values": null
+    },
+    {
+      "column": "sku",
+      "data_type": "text",
+      "distinct": 18,
+      "non_null": 18,
+      "patterns": {
+        "email": 0,
+        "iso_date": 0,
+        "numeric_text": 0,
+        "url": 0,
+        "uuid": 0
+      },
+      "sampled_rows": 18,
+      "schema": "shop",
+      "table": "products",
+      "values": null
+    },
+    {
+      "column": "title",
+      "data_type": "text",
+      "distinct": 18,
+      "non_null": 18,
+      "patterns": {
+        "email": 0,
+        "iso_date": 0,
+        "numeric_text": 0,
+        "url": 0,
+        "uuid": 0
+      },
+      "sampled_rows": 18,
+      "schema": "shop",
+      "table": "products",
+      "values": null
+    },
+    {
+      "column": "category",
+      "data_type": "text",
+      "distinct": 3,
+      "non_null": 18,
+      "patterns": {
+        "email": 0,
+        "iso_date": 0,
+        "numeric_text": 0,
+        "url": 0,
+        "uuid": 0
+      },
+      "sampled_rows": 18,
+      "schema": "shop",
+      "table": "products",
+      "values": null
+    },
+    {
+      "column": "price",
+      "data_type": "numeric(10,2)",
+      "distinct": 18,
+      "non_null": 18,
+      "patterns": {},
+      "sampled_rows": 18,
+      "schema": "shop",
+      "table": "products",
+      "values": null
+    },
+    {
+      "column": "stock",
+      "data_type": "integer",
+      "distinct": 18,
+      "non_null": 18,
+      "patterns": {},
+      "sampled_rows": 18,
+      "schema": "shop",
+      "table": "products",
+      "values": null
+    },
+    {
+      "column": "id",
+      "data_type": "integer",
+      "distinct": 8,
+      "non_null": 8,
+      "patterns": {},
+      "sampled_rows": 8,
+      "schema": "shop",
+      "table": "returns",
+      "values": null
+    },
+    {
+      "column": "order_id",
+      "data_type": "integer",
+      "distinct": 5,
+      "non_null": 8,
+      "patterns": {},
+      "sampled_rows": 8,
+      "schema": "shop",
+      "table": "returns",
+      "values": null
+    },
+    {
+      "column": "sku",
+      "data_type": "text",
+      "distinct": 8,
+      "non_null": 8,
+      "patterns": {
+        "email": 0,
+        "iso_date": 0,
+        "numeric_text": 0,
+        "url": 0,
+        "uuid": 0
+      },
+      "sampled_rows": 8,
+      "schema": "shop",
+      "table": "returns",
+      "values": null
+    },
+    {
+      "column": "reason",
+      "data_type": "text",
+      "distinct": 1,
+      "non_null": 8,
+      "patterns": {
+        "email": 0,
+        "iso_date": 0,
+        "numeric_text": 0,
+        "url": 0,
+        "uuid": 0
+      },
+      "sampled_rows": 8,
+      "schema": "shop",
+      "table": "returns",
+      "values": null
+    },
+    {
+      "column": "created_at",
+      "data_type": "timestamp with time zone",
+      "distinct": 5,
+      "non_null": 8,
+      "patterns": {},
+      "sampled_rows": 8,
+      "schema": "shop",
+      "table": "returns",
+      "values": null
+    },
+    {
+      "column": "id",
+      "data_type": "integer",
+      "distinct": 20,
+      "non_null": 20,
+      "patterns": {},
+      "sampled_rows": 20,
+      "schema": "shop",
+      "table": "shipments",
+      "values": null
+    },
+    {
+      "column": "order_id",
+      "data_type": "integer",
+      "distinct": 20,
+      "non_null": 20,
+      "patterns": {},
+      "sampled_rows": 20,
+      "schema": "shop",
+      "table": "shipments",
+      "values": null
+    },
+    {
+      "column": "carrier",
+      "data_type": "text",
+      "distinct": 2,
+      "non_null": 20,
+      "patterns": {
+        "email": 0,
+        "iso_date": 0,
+        "numeric_text": 0,
+        "url": 0,
+        "uuid": 0
+      },
+      "sampled_rows": 20,
+      "schema": "shop",
+      "table": "shipments",
+      "values": null
+    },
+    {
+      "column": "tracking_url",
+      "data_type": "text",
+      "distinct": 20,
+      "non_null": 20,
+      "patterns": {
+        "email": 0,
+        "iso_date": 0,
+        "numeric_text": 0,
+        "url": 20,
+        "uuid": 0
+      },
+      "sampled_rows": 20,
+      "schema": "shop",
+      "table": "shipments",
+      "values": null
+    },
+    {
+      "column": "shipped_at",
+      "data_type": "timestamp with time zone",
+      "distinct": 20,
+      "non_null": 20,
+      "patterns": {},
+      "sampled_rows": 20,
+      "schema": "shop",
+      "table": "shipments",
+      "values": null
+    },
+    {
+      "column": "delivered_at",
+      "data_type": "timestamp with time zone",
+      "distinct": 15,
+      "non_null": 15,
+      "patterns": {},
+      "sampled_rows": 20,
+      "schema": "shop",
+      "table": "shipments",
+      "values": null
+    }
+  ],
+  "relations": [
+    {
+      "comment": "Imported from a spreadsheet; keeps its original casing.",
+      "kind": "r",
+      "name": "SupplierContacts",
+      "readable": true,
+      "schema": "shop"
+    },
+    {
+      "comment": "People who have placed at least one order.",
+      "kind": "r",
+      "name": "customers",
+      "readable": true,
+      "schema": "shop"
+    },
+    {
+      "comment": null,
+      "kind": "r",
+      "name": "order_items",
+      "readable": true,
+      "schema": "shop"
+    },
+    {
+      "comment": "Customer orders and their fulfilment state.",
+      "kind": "r",
+      "name": "orders",
+      "readable": true,
+      "schema": "shop"
+    },
+    {
+      "comment": null,
+      "kind": "r",
+      "name": "payments",
+      "readable": true,
+      "schema": "shop"
+    },
+    {
+      "comment": null,
+      "kind": "r",
+      "name": "products",
+      "readable": true,
+      "schema": "shop"
+    },
+    {
+      "comment": null,
+      "kind": "r",
+      "name": "returns",
+      "readable": true,
+      "schema": "shop"
+    },
+    {
+      "comment": null,
+      "kind": "r",
+      "name": "shipments",
+      "readable": true,
+      "schema": "shop"
+    }
+  ],
+  "truncated": false
+}

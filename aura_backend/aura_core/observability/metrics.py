@@ -385,6 +385,23 @@ class Metrics:
             ("connector", "kind"),
             multiprocess_mode="livemax",
         )
+        self.discovery_runs = self._counter(
+            "discovery_runs_total",
+            "Track AP discovery runs by connector kind and outcome (ok, truncated, timeout, "
+            "unsupported, error).",
+            ("kind", "outcome"),
+        )
+        self.discovery_seconds = self._histogram(
+            "discovery_seconds", "Wall time of one discovery run.", ("kind",),
+            buckets=(0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300),
+        )
+        self.discovery_artifacts = self._gauge(
+            "discovery_artifacts",
+            "Artifacts found by the last successful discovery of each connector (bounded: one "
+            "install, a handful of connectors -- ADR-019).",
+            ("connector",),
+            multiprocess_mode="livemax",
+        )
         self.agent_workspaces = self._gauge(
             "agent_workspaces",
             "Durable engineer-agent workspaces by status. Only `hot` costs memory (a warm "
@@ -607,6 +624,13 @@ class Metrics:
         """
         for status in ("hot", "warm"):
             self.agent_workspaces.labels(status=status).set(counts.get(status, 0))
+
+    def observe_discovery(self, connector: str, kind: str, outcome: str, seconds: float) -> None:
+        self.discovery_runs.labels(kind=kind, outcome=outcome).inc()
+        self.discovery_seconds.labels(kind=kind).observe(seconds)
+
+    def set_discovery_artifacts(self, connector: str, count: int) -> None:
+        self.discovery_artifacts.labels(connector=connector).set(count)
 
     def set_connector_health(self, connector: str, kind: str, status: str) -> None:
         value = {"healthy": 1.0, "degraded": 0.5}.get(status, 0.0)

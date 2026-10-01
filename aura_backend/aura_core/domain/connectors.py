@@ -95,7 +95,7 @@ _SERVICE_ACCOUNT_ONLY = frozenset(
 )
 #: Kinds that cannot work without a credential of their own.
 _NEEDS_CREDENTIAL = frozenset({ConnectorKind.POSTGRES, ConnectorKind.MYSQL, ConnectorKind.SQL_SERVER})
-_SECRETISH_KEY = re.compile(r"pass|secret|token|credential|api_?key|private|auth", re.I)
+_SECRETISH_KEY = re.compile(r"pass|secret|token|credential|api_?key|private_?key|auth", re.I)
 _OPTION_KEY = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _MAX_OPTION_STR = 512
 _MAX_ENDPOINT = 2048
