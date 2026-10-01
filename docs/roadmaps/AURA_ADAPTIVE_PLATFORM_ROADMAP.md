@@ -407,6 +407,32 @@ starts at **DOCUMENTED** as of the baseline.
   persisted and diffed on a real Postgres.
 - **Rollback:** twin versions are append-only; a bad version is superseded.
 - **Evidence required:** `docs/reports/ap4-project-twin.md`.
+- **As built (2026-10-01):** IMPLEMENTED. Both pilot twins and the three diff goldens pass with no
+  database and no model. One twin is persisted, altered with real DDL, re-discovered and diffed on
+  PostgreSQL 16. Differences from the plan:
+  - **Proposals and candidates live in the twin as elements**, so they are versioned, diffed and
+    evidence-linked like everything else, and every one is below certainty:
+    - cross-source merges are `same_as` RELATIONs with `status=proposed`
+      (`adaptation/matching.py`);
+    - workflows and their transitions are WORKFLOW elements with `role=process` or
+      `role=transition`, citing their evidence by locator (`adaptation/process_mining.py`).
+  - **Process mining v0 is structural.** It works from declared order, terminal-state vocabulary,
+    state-named timestamps on related entities, and action verbs (also through a `same_as` match,
+    at half weight). It also detects history entities. Mining a history table's *rows*
+    (`mine_event_log`) is built and tested, but it needs a templated read to feed it (AP6). The
+    pilots have no history table.
+  - **Labeling** goes through the existing router (`RouterLabelingModel`), is opt-in
+    (`AURA_ADAPTATION_LABELER_ENABLED`), and is limited to ENTITY, ATTRIBUTE and ACTION names and
+    descriptions. Labels carry over for elements whose deterministic evidence is unchanged. It
+    does not propose Metrics: deterministic METRIC candidates (numeric measures) come from
+    normalisation instead.
+  - **The merge-proposal acceptance-rate metric waits for AP9.** Nothing can accept a proposal
+    yet. Labeling coverage and per-element latency are exported.
+  - **Tables are named `aura_adaptation_twin_versions` and `aura_adaptation_twin_elements`**
+    (migration `0010`), matching the `aura_` prefix of every other table.
+  - **An unchanged snapshot does not create a new version**; it returns the latest one.
+  - **Routes:** `POST /api/v3/admin/twin/snapshot`, `GET /api/v3/admin/twin/versions[/{v}]`,
+    `GET /api/v3/admin/twin/diff`.
 
 ### AP5 — Capability Registry and Planner *(Planning)*
 
@@ -650,7 +676,7 @@ M0 (CI evidence) gates every A-phase beyond BUILT.   M4 (GPU) gates label qualit
 | AP1 | AUSM + Blueprint model | Critical | AP0 | Medium | Low | IMPLEMENTED (tests pass locally; CI pending M0) | domain/ | Schema + digest tests |
 | AP2 | Connectors + vault | Critical | AP1, (SEC-01..03) | Medium | High (secrets) | IMPLEMENTED (real-Postgres tests pass locally; CI + dev stack pending) | ports/, adaptation/, api/ | Fixture connector approved |
 | AP3 | Discovery PG + OpenAPI | Critical | AP2 | Medium | Medium | IMPLEMENTED (goldens + live Postgres pass locally; CI pending) | adapters/connectors/, fixtures | Pilot goldens + live run |
-| AP4 | Twin + diff | Critical | AP3, (M4) | High | Medium | DOCUMENTED | adaptation/normalize, twin | Deterministic twins + diffs |
+| AP4 | Twin + diff | Critical | AP3, (M4) | High | Medium | IMPLEMENTED (goldens + live Postgres pass locally; CI pending) | adaptation/normalize, twin | Deterministic twins + diffs |
 | AP5 | Capabilities + planner | High | AP4 | Medium | Medium | DOCUMENTED | adaptation/capabilities | Same primitives, both pilots |
 | AP6 | Factories + compiler | Critical | AP5 | High | High (SQL safety) | DOCUMENTED | adaptation/factories, domain/tools | Valid blueprints + fitness |
 | AP7 | Blueprint runtime | Critical | AP6, (SEC-01..03) | High | High (kernel seam) | DOCUMENTED | adaptation/runtime, container | Deploy + rollback |
