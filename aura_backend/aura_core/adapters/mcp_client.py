@@ -16,6 +16,7 @@ a reachable process, to be present.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, Mapping, Sequence
 
 from ..config.settings import McpServerConfig
@@ -170,6 +171,7 @@ class McpClient:
                         name=getattr(tool, "name", ""),
                         description=getattr(tool, "description", "") or "",
                         input_schema=dict(getattr(tool, "inputSchema", None) or {}),
+                        output_schema=dict(getattr(tool, "outputSchema", None) or {}) or None,
                     )
                 )
         return descriptors
@@ -179,6 +181,11 @@ class McpClient:
             raise McpConnectionError(f"unknown MCP server {server!r}")
         session = await self._session_for(server)
         result = await session.call_tool(name, arguments)
+        structured = getattr(result, "structuredContent", None)
+        if structured is not None and not getattr(result, "isError", False):
+            # A tool with an outputSchema returns structuredContent (MCP 2025-06-18); returning it
+            # as JSON is what lets ToolRegistry.execute check it against that schema (ADR-025).
+            return json.dumps(structured, ensure_ascii=False, default=str)
         blocks = getattr(result, "content", None) or []
         parts = [text for block in blocks if (text := getattr(block, "text", None))]
         return "\n".join(parts) if parts else str(result)

@@ -433,6 +433,13 @@ class Metrics:
             (),
             buckets=(1, 2, 3, 4, 6, 8, 12, 16, 24),
         )
+        self.blueprint_artifacts = self._gauge(
+            "blueprint_artifacts",
+            "Artifacts in the last compiled blueprint by kind (templates, tools, agents, "
+            "workflows, views, eval_cases, dropped).",
+            ("kind",),
+            multiprocess_mode="livemax",
+        )
         self.agent_workspaces = self._gauge(
             "agent_workspaces",
             "Durable engineer-agent workspaces by status. Only `hot` costs memory (a warm "
@@ -679,6 +686,10 @@ class Metrics:
             self.capability_plan_selected.labels(capability=capability).set(counts.get(capability, 0))
         for selection in plan.selected:
             self.capability_plan_evidence.observe(len(selection.evidence))
+
+    def observe_blueprint(self, summary) -> None:
+        for kind in ("templates", "tools", "agents", "workflows", "views", "eval_cases", "dropped"):
+            self.blueprint_artifacts.labels(kind=kind).set(summary.get(kind, 0))
 
     def set_connector_health(self, connector: str, kind: str, status: str) -> None:
         value = {"healthy": 1.0, "degraded": 0.5}.get(status, 0.0)

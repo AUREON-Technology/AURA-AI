@@ -1,4 +1,5 @@
-"""Super Admin routes for Track AP connectors (AP2, ADR-021) and the Project Twin (AP4).
+"""Super Admin routes for Track AP connectors (AP2, ADR-021), the Project Twin (AP4)
+and blueprints (AP6).
 
 Every route requires the Super Admin role: connecting AURA to another system is the authority
 boundary the whole track rests on. The routes are always mounted -- so the route-auth suite keeps
@@ -214,6 +215,40 @@ def register_adaptation_ops(
             registry()  # the same 503 as every other route here
         plan = await planner.plan(version)
         return JSONResponse(content={"summary": plan.summary(), "digest": plan.digest, "plan": to_data(plan)})
+
+    def compiler() -> Any:
+        service = getattr(container, "blueprint_compiler", None)
+        if service is None:
+            registry()  # the same 503 as every other route here
+        return service
+
+    @router.post("/admin/twin/versions/{version}/compile")
+    async def compile_twin_version(version: int, caller=Depends(principal)) -> JSONResponse:
+        """Plan and compile one twin version into a new ``proposed`` blueprint (AP6). Nothing
+        becomes active: evaluation, approval and deployment are separate, later steps."""
+        require_super_admin(caller)
+        record = await compiler().compile(version, by=actor(caller))
+        return JSONResponse(status_code=201, content={"summary": record.summary()})
+
+    @router.get("/admin/blueprints")
+    async def list_blueprints(
+        caller=Depends(principal), limit: int = Query(default=50, ge=1, le=200)
+    ) -> JSONResponse:
+        require_super_admin(caller)
+        service = compiler()
+        records = await service.versions(container.twins.project_id, limit=limit)
+        return JSONResponse(content={"blueprints": [r.summary() for r in records]})
+
+    @router.get("/admin/blueprints/{version}")
+    async def get_blueprint(version: int, caller=Depends(principal)) -> JSONResponse:
+        """One blueprint version in full: its templates, tools, agents, views, generated eval
+        suites and every dropped item with its reason."""
+        require_super_admin(caller)
+        service = compiler()
+        record = await service.get(container.twins.project_id, version)
+        if record is None:
+            raise HTTPException(status_code=404, detail="blueprint version not found")
+        return JSONResponse(content={"summary": record.summary(), "record": to_data(record)})
 
     @router.get("/admin/twin/diff")
     async def diff_twin_versions(

@@ -52,6 +52,7 @@ from aura_core.domain.context import ContextBundle, ContextItem, ContextSection
 from aura_core.domain.errors import ConflictError, ValidationError
 from aura_core.domain.messages import TrustChannel
 from aura_core.domain.serialization import canonical_json, content_digest, from_data, to_data
+from aura_core.domain.templates import FilterOp, ReadTemplate, SqlColumn, SqlFilter, SqlSelect, TemplateKind
 from aura_core.domain.tools import ParameterSpec, ToolSensitivity, ToolSpec
 from aura_core.domain.untrusted import MAX_UNTRUSTED_CHARS, UntrustedText
 
@@ -118,6 +119,12 @@ def _blueprint(twin: ProjectTwin | None = None, **overrides: Any) -> Blueprint:
         data_model=tuple(sorted({emp, leave, status})),
         security=SecuritySection((PermissionGrant(element_id(SRC, "role:hr_manager"), search.key),)),
         capabilities=(search, timeline),
+        templates=(
+            ReadTemplate("qt_employee_search", SRC, TemplateKind.SQL, sql=SqlSelect(
+                "public", "employee", columns=(SqlColumn("full_name", "full_name"),),
+                any_of=(SqlFilter("full_name", FilterOp.CONTAINS, "query"),), limit_param=None,
+            )),
+        ),
         tools=(
             BlueprintTool(
                 name="employee_search",

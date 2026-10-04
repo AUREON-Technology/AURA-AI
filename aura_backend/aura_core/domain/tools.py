@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from .identifiers import ToolCallId
+from .output_schema import check_output_schema
 
 __all__ = [
     "ToolSensitivity",
@@ -151,6 +153,16 @@ class ToolSpec:
     since that path is exempted from confirmation entirely (see `workspace_local` above).
     """
 
+    output_schema: Mapping[str, Any] | None = None
+    """ADR-025: what a successful result looks like, in the subset of JSON Schema that
+    ``domain/output_schema.py`` accepts (top level ``object`` or ``array``). ``None`` -- every
+    hand-written tool today -- means "free text", and nothing changes for it. When set,
+    ``ToolRegistry.execute`` parses the result as JSON and checks it against this schema after the
+    tool runs; a result that does not conform is reported (and audited) as a failed call,
+    ``error_kind="invalid_output"``, never passed on as if it were valid. Generated blueprint tools
+    (AP6) always set it; MCP tools set it when their server advertises ``outputSchema``.
+    """
+
     _NAME_OK = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_")
 
     def __post_init__(self) -> None:
@@ -166,6 +178,11 @@ class ToolSpec:
         names = [p.name for p in self.parameters]
         if len(names) != len(set(names)):
             raise ValueError(f"tool {self.name!r} has duplicate parameter names")
+        if self.output_schema is not None:
+            check_output_schema(self.output_schema)
+            if self.output_schema.get("type") not in ("object", "array"):
+                raise ValueError(f"tool {self.name!r}: output_schema must describe an object or array")
+            object.__setattr__(self, "output_schema", MappingProxyType(dict(self.output_schema)))
         # A tool that changes the world and cannot be confirmed is a footgun; make the
         # combination explicit at declaration time rather than discovering it in production.
         #

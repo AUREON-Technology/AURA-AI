@@ -1,7 +1,8 @@
-"""Postgres stores for Track AP: connector records and sealed credentials (AP2), twin versions (AP4).
+"""Postgres stores for Track AP: connector records and sealed credentials (AP2), twin versions (AP4),
+blueprint versions (AP6).
 
 Unlike most older ``aura_*`` adapters these do **not** create their tables at runtime: Alembic is
-the single schema authority (master roadmap principle 9, CB-20), and migrations ``0009``/``0010`` own
+the single schema authority (master roadmap principle 9, CB-20), and migrations ``0009``-``0011`` own
 the tables. A missing table surfaces as ``DependencyUnavailableError`` naming the fix, rather than
 being papered over with DDL from the request path.
 
@@ -24,6 +25,7 @@ from ..domain.connectors import (
     IdentityMode,
 )
 from ..domain.ausm import AusmElement, ProjectTwin
+from ..domain.compilation import BlueprintRecord
 from ..domain.errors import ConflictError, DataIntegrityError, DependencyUnavailableError, ValidationError
 from ..domain.serialization import canonical_json, from_data, to_data
 from ..domain.twin import TwinVersion
@@ -33,8 +35,10 @@ __all__ = [
     "PostgresConnectorStore",
     "PostgresCiphertextStore",
     "PostgresTwinStore",
+    "PostgresBlueprintStore",
     "ADAPTATION_SCHEMA",
     "TWIN_SCHEMA",
+    "BLUEPRINT_SCHEMA",
 ]
 
 #: Kept textually in step with ``alembic/versions/0009_adaptation_connectors.py``
@@ -359,3 +363,87 @@ class PostgresTwinStore:
 
 def _json(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else value
+
+
+#: Kept textually in step with ``alembic/versions/0011_adaptation_blueprints.py``
+#: (``tests/unit/test_adaptation_compiler.py`` asserts it).
+BLUEPRINT_SCHEMA = (
+    """
+    CREATE TABLE IF NOT EXISTS aura_adaptation_blueprints (
+        project_id    TEXT        NOT NULL DEFAULT 'p0',
+        version       INTEGER     NOT NULL CHECK (version >= 1),
+        state         TEXT        NOT NULL,
+        digest        TEXT        NOT NULL CHECK (digest LIKE 'sha256:%'),
+        twin_version  INTEGER     NOT NULL,
+        created_at    TIMESTAMPTZ NOT NULL,
+        created_by    TEXT        NOT NULL,
+        record        JSONB       NOT NULL,
+        PRIMARY KEY (project_id, version)
+    )
+    """,
+)
+
+
+class PostgresBlueprintStore:
+    """Compiled blueprint versions (AP6). Reading a row back re-decodes the whole record through
+    the strict codec, which re-checks the blueprint's digest -- an edited row is refused."""
+
+    def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
+        self._pool = pool or PostgresPool(url)
+
+    async def append(self, record: BlueprintRecord) -> None:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO aura_adaptation_blueprints
+                        (project_id, version, state, digest, twin_version, created_at, created_by, record)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+                    """,
+                    record.project_id, record.version, record.state.value, record.digest,
+                    record.blueprint.project.twin_version, datetime.fromisoformat(record.created_at),
+                    record.created_by, canonical_json(to_data(record)),
+                )
+        except Exception as exc:
+            if getattr(exc, "sqlstate", None) == _UNIQUE_VIOLATION:
+                raise ConflictError("blueprint version already exists", details={"version": record.version}) from None
+            raise _unavailable("store the blueprint", exc) from exc
+
+    async def latest(self, project_id: str) -> BlueprintRecord | None:
+        found = await self.versions(project_id, limit=1)
+        return found[0] if found else None
+
+    async def get(self, project_id: str, version: int) -> BlueprintRecord | None:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                record = await conn.fetchval(
+                    "SELECT record FROM aura_adaptation_blueprints WHERE project_id = $1 AND version = $2",
+                    project_id, version,
+                )
+        except Exception as exc:
+            raise _unavailable("read the blueprint", exc) from exc
+        return _blueprint_record(record) if record is not None else None
+
+    async def versions(self, project_id: str, *, limit: int = 50) -> Sequence[BlueprintRecord]:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT record FROM aura_adaptation_blueprints
+                     WHERE project_id = $1 ORDER BY version DESC LIMIT $2
+                    """,
+                    project_id, limit,
+                )
+        except Exception as exc:
+            raise _unavailable("list blueprints", exc) from exc
+        return [_blueprint_record(row["record"]) for row in rows]
+
+
+def _blueprint_record(value: Any) -> BlueprintRecord:
+    try:
+        return from_data(BlueprintRecord, _json(value))
+    except ValidationError as exc:
+        raise DataIntegrityError("stored blueprint failed validation", details={"error": exc.message}) from None

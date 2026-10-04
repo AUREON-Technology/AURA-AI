@@ -49,3 +49,18 @@ data-access tools; if a model wrote SQL, one injected comment could become an ex
 
 - Some analytical questions need a new primitive (AP5) rather than an ad-hoc query; that is the
   intended cost.
+
+## Implementation notes (AP6, 2026-10-04)
+
+- **`ReadTemplate`** (`domain/templates.py`) is the AST: one table, optional
+  equality/containment/range filters, an OR-group for search, aggregates, `ORDER BY`, and a
+  `LIMIT` bounded by `LEAST`. HTTP templates are GET only, with whole-segment placeholders.
+- **`render_sql`** makes the statement text depend on the template alone. Optional filters render
+  as `(test OR $n IS NULL)`, with the comparison first so PostgreSQL types the parameter. Range
+  filters use a closed cast (`$n::text::timestamptz`). Fuzz tests check that hostile arguments
+  never change the text or the request path. A live test shows they match nothing.
+- **`check_against_twin`** refuses any template table, column or path that is not an element of
+  the twin.
+- **`tests/architecture/test_no_freeform_sql.py`:** the adaptation engine makes no driver calls.
+  Connector adapters execute only literals, constants or `render_sql` output, plus two named,
+  reviewed catalog builders.

@@ -1,4 +1,4 @@
-"""Golden Project Twins, twin diffs and capability plans for the Track AP reference pilots (AP4/AP5).
+"""Golden twins, twin diffs, capability plans and blueprints for the Track AP pilots (AP4-AP6).
 
 Run from the repo root (no database, no model):
 
@@ -6,7 +6,8 @@ Run from the repo root (no database, no model):
 
 For each pilot it builds the twin from the committed discovery goldens (Postgres + OpenAPI) and
 writes ``golden/twin.json`` and its capability plan, ``golden/plan.json`` (AP5: both pilots are
-planned from the same capability registry). For the ``hr`` pilot it also applies three schema changes to the
+planned from the same capability registry) and the blueprint compiled from that plan,
+``golden/blueprint.json`` (AP6). For the ``hr`` pilot it also applies three schema changes to the
 recorded catalog -- the same kind of change a real system goes through -- and writes the diff
 of each against the base twin:
 
@@ -32,7 +33,10 @@ sys.path.insert(0, str(ROOT / "aura_backend"))
 
 from aura_core.adapters.connectors.openapi import artifacts_from_openapi, parse_spec  # noqa: E402
 from aura_core.adapters.connectors.postgres_catalog import artifacts_from_catalog  # noqa: E402
+from aura_core.adaptation.compiler import compile_blueprint  # noqa: E402
 from aura_core.adaptation.planner import CapabilityRegistry, plan_capabilities  # noqa: E402
+from aura_core.domain.blueprint import ConnectorRef  # noqa: E402
+from aura_core.domain.connectors import ConnectorKind, IdentityMode  # noqa: E402
 from aura_core.adaptation.twin import build_twin, diff_twins  # noqa: E402
 from aura_core.domain.ausm import ProjectTwin  # noqa: E402
 from aura_core.domain.discovery import DiscoveryBudget, DiscoveryReport  # noqa: E402
@@ -143,6 +147,27 @@ def render_plan(pilot: str) -> str:
     return _dump({"summary": plan.summary(), "digest": plan.digest, **to_data(plan)})
 
 
+def connector_refs(pilot: str) -> list[ConnectorRef]:
+    return [
+        ConnectorRef(f"{pilot}-db", ConnectorKind.POSTGRES, IdentityMode.SERVICE_ACCOUNT),
+        ConnectorRef(f"{pilot}-api", ConnectorKind.OPENAPI, IdentityMode.DELEGATED),
+    ]
+
+
+def compile_pilot(pilot: str):
+    twin = twin_for(pilot)
+    plan = plan_capabilities(twin, CapabilityRegistry.from_directory())
+    return compile_blueprint(twin, plan, connectors=connector_refs(pilot), version=1, name=f"Reference {pilot}")
+
+
+def render_blueprint(pilot: str) -> str:
+    compiled = compile_pilot(pilot)
+    return _dump({
+        "digest": compiled.blueprint.digest, "blueprint": to_data(compiled.blueprint),
+        "suites": to_data(compiled.suites), "dropped": to_data(compiled.dropped),
+    })
+
+
 def render_diff(change: str, pilot: str = "hr") -> str:
     base = twin_for(pilot)
     changed = twin_for(pilot, version=2, cat=CHANGES[change](catalog(pilot)))
@@ -154,9 +179,10 @@ def main() -> int:
     for pilot in PILOTS:
         (PILOTS_DIR / pilot / "golden" / "twin.json").write_text(render_twin(pilot), encoding="utf-8")
         (PILOTS_DIR / pilot / "golden" / "plan.json").write_text(render_plan(pilot), encoding="utf-8")
+        (PILOTS_DIR / pilot / "golden" / "blueprint.json").write_text(render_blueprint(pilot), encoding="utf-8")
     for change in CHANGES:
         (PILOTS_DIR / "hr" / "golden" / f"diff_{change}.json").write_text(render_diff(change), encoding="utf-8")
-    print("wrote twin and plan goldens for", ", ".join(PILOTS), "and diffs:", ", ".join(CHANGES))
+    print("wrote twin, plan and blueprint goldens for", ", ".join(PILOTS), "and diffs:", ", ".join(CHANGES))
     return 0
 
 

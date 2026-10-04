@@ -33,6 +33,7 @@ from ..domain.errors import (
 )
 from ..domain.events import ToolInvoked
 from ..domain.messages import ToolCall, ToolResult
+from ..domain.output_schema import output_errors
 from ..domain.tools import ToolPolicyDecision, ToolSensitivity, ToolSpec
 from ..observability.logging import get_logger
 from ..ports.runtime import Tool, ToolContext
@@ -367,6 +368,22 @@ class ToolRegistry:
             )
 
         content = str(raw)
+        if spec.output_schema is not None:
+            # ADR-025: a result that claims a shape is held to it before the model or a UI sees it.
+            problems = _output_problems(spec.output_schema, content)
+            if problems:
+                duration = (time.perf_counter() - started) * 1000.0
+                self._observe(name, outcome="invalid_output", duration_ms=duration)
+                await self._audit_call(name, context, "error", arguments_digest, "invalid_output")
+                await self._publish(name, context, allowed=True, ok=False, duration_ms=duration,
+                                    error_kind="invalid_output")
+                return finish(
+                    ok=False,
+                    content=f"The '{name}' tool returned a result that does not match its declared "
+                            f"output schema ({'; '.join(problems)}).",
+                    error_kind="invalid_output",
+                    policy_reason=decision.reason,
+                )
         if len(content) > spec.max_result_chars:
             # Truncation is marked so the model knows the result is partial rather than
             # believing it saw everything.
@@ -523,3 +540,12 @@ class ToolRegistry:
             }
             for spec in sorted((t.spec for t in self._tools.values()), key=lambda s: s.name)
         ]
+
+
+def _output_problems(schema: Mapping[str, Any], content: str) -> list[str]:
+    """Why ``content`` is not a JSON value matching ``schema`` (empty when it is)."""
+    try:
+        value = json.loads(content)
+    except ValueError:
+        return ["result is not JSON"]
+    return output_errors(schema, value)

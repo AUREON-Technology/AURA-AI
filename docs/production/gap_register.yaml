@@ -1212,7 +1212,7 @@ gaps:
     test: tests/architecture/test_no_freeform_sql.py; parameter fuzz tests; factories emit no code
     metric: tools/agents/views/eval cases per blueprint
     exit_condition: AP6 exit criteria met; docs/reports/ap6-blueprint-compiler.md.
-    status: open
+    status: built_not_proven
 
   - gap_id: GAP-055
     component: tools/output-schema
@@ -1228,7 +1228,7 @@ gaps:
     test: registry validation tests; existing tool suite unchanged
     metric: generated-tool schema-violation count
     exit_condition: Field and validation merged with tests green in CI (part of AP6).
-    status: open
+    status: built_not_proven
 
   - gap_id: GAP-056
     component: adaptation/runtime

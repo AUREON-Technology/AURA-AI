@@ -1,15 +1,16 @@
-"""In-memory connector and twin stores: the real substrate for the default test run (no infrastructure)."""
+"""In-memory connector, twin and blueprint stores: the real substrate for the default test run (no infrastructure)."""
 
 from __future__ import annotations
 
 from typing import Sequence
 
 from ..domain.ausm import ProjectTwin
+from ..domain.compilation import BlueprintRecord
 from ..domain.connectors import ConnectorRecord, ConnectorState
 from ..domain.errors import ConflictError, ValidationError
 from ..domain.twin import TwinVersion
 
-__all__ = ["InMemoryConnectorStore", "InMemoryTwinStore"]
+__all__ = ["InMemoryConnectorStore", "InMemoryTwinStore", "InMemoryBlueprintStore"]
 
 
 class InMemoryConnectorStore:
@@ -53,4 +54,28 @@ class InMemoryTwinStore:
 
     async def versions(self, project_id: str, *, limit: int = 50) -> Sequence[TwinVersion]:
         rows = sorted((v for (p, _), (v, _) in self._rows.items() if p == project_id), key=lambda v: -v.version)
+        return rows[:limit]
+
+
+class InMemoryBlueprintStore:
+    """Compiled blueprint versions (AP6)."""
+
+    def __init__(self) -> None:
+        self._rows: dict[tuple[str, int], BlueprintRecord] = {}
+
+    async def append(self, record: BlueprintRecord) -> None:
+        key = (record.project_id, record.version)
+        if key in self._rows:
+            raise ConflictError("blueprint version already exists", details={"version": record.version})
+        self._rows[key] = record
+
+    async def latest(self, project_id: str) -> BlueprintRecord | None:
+        found = await self.versions(project_id, limit=1)
+        return found[0] if found else None
+
+    async def get(self, project_id: str, version: int) -> BlueprintRecord | None:
+        return self._rows.get((project_id, version))
+
+    async def versions(self, project_id: str, *, limit: int = 50) -> Sequence[BlueprintRecord]:
+        rows = sorted((r for (p, _), r in self._rows.items() if p == project_id), key=lambda r: -r.version)
         return rows[:limit]

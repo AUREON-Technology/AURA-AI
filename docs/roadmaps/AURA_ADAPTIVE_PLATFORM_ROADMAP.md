@@ -517,6 +517,35 @@ starts at **DOCUMENTED** as of the baseline.
 - **Exit criteria:** both pilots compile schema-valid blueprints; fitness and fuzz tests green in CI.
 - **Rollback:** additive; `output_schema` defaults to `None`.
 - **Evidence required:** `docs/reports/ap6-blueprint-compiler.md`.
+- **As built (2026-10-04):** IMPLEMENTED.
+  - Both pilots compile blueprints that are valid against the JSON Schema and keep a stable digest
+    through a strict round-trip.
+  - The fitness test and both fuzz tests pass (SQL text and HTTP path).
+  - Every compiled SQL template ran on PostgreSQL 16 and returned rows matching its output schema.
+
+  Differences from the plan:
+  - **Templates are a blueprint section** (`Blueprint.templates`, `domain/templates.py`).
+    `check_against_twin` enforces the identifier allowlist, and a tool's parameters must be
+    exactly its template's. Optional filters render as `(… OR $n IS NULL)`, so arguments never
+    change the statement text. Range filters carry a closed `ValueCast`; the first live run
+    showed both were needed.
+  - **Output schemas use a closed subset**, `domain/output_schema.py`. Anything outside it is
+    refused, not ignored. A non-conforming result is an audited `invalid_output` failure.
+  - **The rule in `test_no_freeform_sql`:**
+    - the adaptation engine makes no driver call at all;
+    - connector adapters pass only literals, UPPER_CASE constants or `render_sql(...).text` to a
+      driver;
+    - two reviewed catalog builders are named in an explicit allowlist.
+  - **API entities are reached only through `operation.read`** (GET operations). Search, list,
+    aggregate and timeline over an API are dropped with a reason. Nothing is stubbed.
+  - **Not built in AP6:**
+    - agent prompt templates and `untrusted_content` tags on tools, which happen at
+      materialisation (AP7);
+    - workflow trigger specs (AP11);
+    - the `notification.draft` factory, for which there is no draft path in v1.
+  - **Blueprints are stored** as `proposed` versions (migration `0011`) and exposed through:
+    - `POST /api/v3/admin/twin/versions/{v}/compile`
+    - `GET /api/v3/admin/blueprints[/{v}]`
 
 ### AP7 — Blueprint Runtime: Approve, Deploy, Roll Back *(Kernel integration)*
 
@@ -695,7 +724,7 @@ M0 (CI evidence) gates every A-phase beyond BUILT.   M4 (GPU) gates label qualit
 | AP3 | Discovery PG + OpenAPI | Critical | AP2 | Medium | Medium | IMPLEMENTED (goldens + live Postgres pass locally; CI pending) | adapters/connectors/, fixtures | Pilot goldens + live run |
 | AP4 | Twin + diff | Critical | AP3, (M4) | High | Medium | IMPLEMENTED (goldens + live Postgres pass locally; CI pending) | adaptation/normalize, twin | Deterministic twins + diffs |
 | AP5 | Capabilities + planner | High | AP4 | Medium | Medium | IMPLEMENTED (pilot plans pass locally; CI pending) | adaptation/capabilities | Same primitives, both pilots |
-| AP6 | Factories + compiler | Critical | AP5 | High | High (SQL safety) | DOCUMENTED | adaptation/factories, domain/tools | Valid blueprints + fitness |
+| AP6 | Factories + compiler | Critical | AP5 | High | High (SQL safety) | IMPLEMENTED (goldens + live Postgres pass locally; CI pending) | adaptation/factories, domain/tools | Valid blueprints + fitness |
 | AP7 | Blueprint runtime | Critical | AP6, (SEC-01..03) | High | High (kernel seam) | DOCUMENTED | adaptation/runtime, container | Deploy + rollback |
 | AP8 | Generated eval gate | High | AP6, AP7, (M7) | Medium | Medium | DOCUMENTED | evaluation/ | Bad blueprint blocked |
 | AP9 | Console MVP | High | AP7, AP8 | Medium | Low | DOCUMENTED | aura_admin | Both pilots via Console |

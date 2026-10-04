@@ -480,6 +480,7 @@ class Container:
         self.discovery = None
         self.twins = None
         self.capability_planner = None
+        self.blueprint_compiler = None
         if self.connectors is not None:
             from .adaptation.discovery import DiscoveryService
 
@@ -488,12 +489,14 @@ class Container:
             )
         self.twins = self._build_twins(use_postgres=use_postgres)
         self.capability_planner = None
+        self.blueprint_compiler = None
         if self.twins is not None:
             from .adaptation.planner import CapabilityRegistry, PlanningService
 
             self.capability_planner = PlanningService(
                 registry=CapabilityRegistry.from_directory(), twins=self.twins, metrics=self.metrics
             )
+            self.blueprint_compiler = self._build_compiler(use_postgres=use_postgres)
 
         self.kernel = AIKernel(
             KernelDependencies(
@@ -657,6 +660,23 @@ class Container:
                 f"unknown vector backend {backend!r}", details={"supported": ["memory", "qdrant"]}
             )
         return InMemoryVectorStore()
+
+    def _build_compiler(self, *, use_postgres: bool) -> Any:
+        """The blueprint compiler (AP6): plans a stored twin and appends a ``proposed`` blueprint."""
+        from .adaptation.compiler import CompilerService
+
+        if use_postgres:
+            from .adapters.postgres_adaptation import PostgresBlueprintStore
+
+            store: Any = PostgresBlueprintStore(self.settings.infrastructure.database_url, pool=self._postgres_pool())
+        else:
+            from .adapters.memory_adaptation import InMemoryBlueprintStore
+
+            store = InMemoryBlueprintStore()
+        return CompilerService(
+            twins=self.twins, planner=self.capability_planner, connectors=self.connectors, store=store,
+            clock=self.clock, audit=self.audit, metrics=self.metrics,
+        )
 
     def _build_twins(self, *, use_postgres: bool) -> Any:
         """The Project Twin service (AP4), or ``None`` when Track AP is off.
