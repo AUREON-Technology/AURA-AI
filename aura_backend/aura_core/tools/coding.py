@@ -39,7 +39,8 @@ from typing import Any, Mapping, Sequence
 
 from pathlib import Path
 
-from ..domain.errors import ToolExecutionError
+from ..domain.errors import ToolExecutionError, ValidationError
+from ..domain.output_schema import check_output_schema
 from ..domain.repository_identity import RepositoryIdentity
 from ..domain.tools import ParameterSpec, ToolCategory, ToolSensitivity, ToolSpec
 from ..observability.logging import get_logger
@@ -1325,6 +1326,7 @@ async def build_mcp_bridge_tools(
             timeout_s=30.0,
             max_result_chars=20_000,
             tags=() if is_safe else ("untrusted_content",),
+            output_schema=_supported_output_schema(descriptor),
         )
 
         def _make_handler(server: str, name: str) -> Any:
@@ -1335,3 +1337,25 @@ async def build_mcp_bridge_tools(
 
         tools.append(FunctionTool(spec, _make_handler(descriptor.server, descriptor.name)))
     return tools
+
+
+def _supported_output_schema(descriptor: McpToolDescriptor) -> Mapping[str, Any] | None:
+    """The server's ``outputSchema`` when it fits the subset AURA checks (ADR-025), else ``None``.
+
+    A schema outside the subset is dropped -- with a log line -- rather than trusted unchecked:
+    declaring a constraint nobody enforces would be worse than declaring none.
+    """
+    schema = descriptor.output_schema
+    if not schema:
+        return None
+    try:
+        check_output_schema(schema)
+        if schema.get("type") not in ("object", "array"):
+            raise ValidationError("top-level type must be object or array")
+    except ValidationError:
+        logger.info(
+            "MCP output schema outside the supported subset; result left unchecked",
+            extra={"server": descriptor.server, "tool": descriptor.name},
+        )
+        return None
+    return dict(schema)

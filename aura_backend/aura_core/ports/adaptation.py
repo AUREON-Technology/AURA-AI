@@ -1,13 +1,14 @@
-"""Ports for the Project Twin (AP4, ADR-020/026). Stdlib only, async throughout."""
+"""Ports for the Project Twin (AP4) and blueprints (AP6). Stdlib only, async throughout."""
 
 from __future__ import annotations
 
 from typing import Protocol, Sequence, runtime_checkable
 
 from ..domain.ausm import ProjectTwin
+from ..domain.compilation import BlueprintRecord
 from ..domain.twin import LabelProposal, LabelRequest, TwinVersion
 
-__all__ = ["TwinStore", "LabelingModel"]
+__all__ = ["TwinStore", "LabelingModel", "BlueprintStore"]
 
 
 @runtime_checkable
@@ -41,3 +42,19 @@ class LabelingModel(Protocol):
     name: str
 
     async def propose(self, requests: Sequence[LabelRequest]) -> Sequence[LabelProposal]: ...
+
+
+@runtime_checkable
+class BlueprintStore(Protocol):
+    """Compiled blueprint versions (AP6). :meth:`append` refuses an existing version
+    (``ConflictError``); lifecycle state changes arrive with AP7."""
+
+    async def append(self, record: BlueprintRecord) -> None: ...
+
+    async def latest(self, project_id: str) -> BlueprintRecord | None: ...
+
+    async def get(self, project_id: str, version: int) -> BlueprintRecord | None: ...
+
+    async def versions(self, project_id: str, *, limit: int = 50) -> Sequence[BlueprintRecord]:
+        """Newest first."""
+        ...

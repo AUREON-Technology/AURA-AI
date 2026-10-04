@@ -42,6 +42,8 @@ class McpToolDescriptor:
     name: str
     description: str
     input_schema: Mapping[str, Any] = field(default_factory=dict)
+    #: The server's ``outputSchema``, when it advertises one (ADR-025).
+    output_schema: Mapping[str, Any] | None = None
 
 
 @runtime_checkable

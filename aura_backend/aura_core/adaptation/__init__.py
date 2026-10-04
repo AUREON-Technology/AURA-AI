@@ -6,7 +6,7 @@ never imports kernel internals, edits tool policy or loads code. It is an engine
 use domain types and ports, never adapters (``tests/architecture/test_dependency_rules.py``).
 
 Built so far: the connector registry (AP2), discovery (AP3) and the Project Twin -- normalisation,
-merge proposals, process mining v0, optional labeling, versions and diffs (AP4), and
-capability planning (AP5).
+merge proposals, process mining v0, optional labeling, versions and diffs (AP4), capability
+planning (AP5), and the factories and blueprint compiler (AP6).
 See ``docs/roadmaps/AURA_ADAPTIVE_PLATFORM_ROADMAP.md``.
 """

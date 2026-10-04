@@ -25,8 +25,10 @@ from typing import Any, Iterable, Mapping
 
 from .ausm import PROJECT_ID_PATTERN, ElementKind, ProjectTwin
 from .connectors import ConnectorKind, IdentityMode
+from .discovery import quote_identifier as q
 from .errors import ConflictError, ValidationError
 from .serialization import content_digest, from_data, json_schema, to_data
+from .templates import ReadTemplate, TemplateKind
 from .tools import ParameterSpec, ToolSensitivity
 from .untrusted import UntrustedText
 
@@ -388,6 +390,8 @@ class Blueprint:
     data_model: tuple[str, ...] = ()
     security: SecuritySection = field(default_factory=SecuritySection)
     capabilities: tuple[CapabilitySelection, ...] = ()
+    #: Compiled read templates (AP6, ADR-022): the only thing a generated tool executes.
+    templates: tuple[ReadTemplate, ...] = ()
     tools: tuple[BlueprintTool, ...] = ()
     native_tools: tuple[str, ...] = ()
     agents: tuple[BlueprintAgent, ...] = ()
@@ -425,9 +429,31 @@ class Blueprint:
             raise ValidationError("generated and native tools share names", details={"names": clash})
         callable_tools = set(tools) | set(self.native_tools)
 
+        _unique((t.id for t in self.templates), "template ids")
+        kinds = {c.id: c.kind for c in self.integrations}
+        templates = {t.id: t for t in self.templates}
+        for template in self.templates:
+            _ref(template.connector in connectors, "template connector", template.id, template.connector)
+            expected = _TEMPLATE_KIND.get(kinds[template.connector])
+            if expected is not template.kind:
+                raise ValidationError(
+                    "template kind does not suit its connector",
+                    details={"template": template.id, "connector": template.connector},
+                )
         for tool in self.tools:
             _ref(tool.connector in connectors, "tool connector", tool.name, tool.connector)
             _ref(tool.capability in capabilities, "tool capability", tool.name, tool.capability)
+            template = templates.get(tool.template)
+            _ref(template is not None, "tool template", tool.name, tool.template)
+            if template.connector != tool.connector:
+                raise ValidationError("a tool and its template name different connectors", details={"tool": tool.name})
+            declared = {p.name for p in tool.parameters}
+            if declared != set(template.params()):
+                raise ValidationError(
+                    "a tool's parameters must be exactly its template's",
+                    details={"tool": tool.name, "tool_params": sorted(declared),
+                             "template_params": sorted(template.params())},
+                )
         for agent in self.agents:
             for name in agent.tools:
                 _ref(name in callable_tools, "agent tool", agent.id, name)
@@ -481,6 +507,13 @@ class Blueprint:
     @classmethod
     def from_data(cls, data: Any) -> "Blueprint":
         return from_data(cls, data)
+
+
+#: Which template body each connector kind executes. A kind absent here has no generated reads.
+_TEMPLATE_KIND: Mapping[ConnectorKind, TemplateKind] = {
+    ConnectorKind.POSTGRES: TemplateKind.SQL,
+    ConnectorKind.OPENAPI: TemplateKind.HTTP,
+}
 
 
 def _ref(ok: bool, what: str, owner: str, target: str) -> None:
@@ -538,6 +571,35 @@ def check_against_twin(blueprint: Blueprint, twin: ProjectTwin) -> None:
             need(evidence, workflow.id)
     for source in blueprint.knowledge.sources:
         need(source.element, source.connector, frozenset({ElementKind.DOCUMENT}))
+    for template in blueprint.templates:
+        _check_template_against_twin(template, twin, by_id)
+
+
+def _check_template_against_twin(template: ReadTemplate, twin: ProjectTwin, by_id: Mapping[str, Any]) -> None:
+    """Every identifier a template names is an element of the twin (ADR-022's allowlist)."""
+    if template.sql is not None:
+        select = template.sql
+        table = f"{q(select.schema)}.{q(select.table)}"
+        entity = f"{template.connector}:table:{table}"
+        if by_id.get(entity) is None or by_id[entity].kind is not ElementKind.ENTITY:
+            raise ValidationError("template table is not an entity of the twin", details={"template": template.id})
+        names = {c.name for c in select.columns} | {f.column for f in select.filters + select.any_of}
+        names |= {a.column for a in select.aggregates if a.column} | set(select.group_by) | set(select.order_by)
+        for name in names:
+            attribute = by_id.get(f"{template.connector}:column:{table}.{q(name)}")
+            if attribute is None or attribute.parent != entity:
+                raise ValidationError(
+                    "template column is not an attribute of its entity in the twin",
+                    details={"template": template.id, "column": name},
+                )
+        return
+    get = template.http
+    allowed = {
+        e.properties.get("path") for e in twin.of_kind(ElementKind.ACTION)
+        if e.source_id == template.connector and e.properties.get("http_method") == "GET"
+    }
+    if get is None or get.path not in allowed:
+        raise ValidationError("template path is not a GET operation of the twin", details={"template": template.id})
 
 
 def blueprint_json_schema() -> dict[str, Any]:
