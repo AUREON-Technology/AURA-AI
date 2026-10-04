@@ -41,7 +41,8 @@ from ...domain.discovery import (
     RawArtifact,
     quote_identifier as q,
 )
-from ...domain.errors import DependencyUnavailableError, ValidationError
+from ...domain.errors import DependencyUnavailableError, ToolExecutionError, ValidationError
+from ...domain.templates import ReadTemplate, TemplateKind, render_http
 from ...domain.network import is_internal_address
 from ...domain.untrusted import MAX_UNTRUSTED_CHARS, UntrustedText
 from ...observability.logging import get_logger
@@ -52,6 +53,8 @@ logger = get_logger("adapters.connectors.openapi")
 
 OPENAPI_EXTRACTOR = "openapi"
 MAX_SPEC_BYTES = 5 * 1024 * 1024
+#: Largest API response a generated read tool accepts (AP7). The tool's own result cap is lower.
+MAX_READ_BYTES = 2 * 1024 * 1024
 _METHODS = ("get", "put", "post", "delete", "patch", "head", "options", "trace")
 _SCHEMA_REF = "#/components/schemas/"
 _PARAM_REF = "#/components/parameters/"
@@ -292,7 +295,11 @@ class OpenApiConnector:
 
     async def _fetch(self) -> tuple[bytes | None, str]:
         """(body, "ok") or (None, reason code)."""
-        parts = urlsplit(self.descriptor.endpoint)
+        return await self._get(self.descriptor.endpoint, limit=MAX_SPEC_BYTES, too_large="spec_too_large")
+
+    async def _get(self, url: str, *, limit: int, too_large: str) -> tuple[bytes | None, str]:
+        """GET ``url`` under the SSRF policy: (body, "ok") or (None, reason code)."""
+        parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             return None, "invalid_endpoint"
         if self._credential is not None and parts.scheme != "https":
@@ -319,7 +326,7 @@ class OpenApiConnector:
         try:
             async with httpx.AsyncClient(timeout=self.descriptor.timeout_s, follow_redirects=False,
                                          transport=self._transport) as client:
-                async with client.stream("GET", self.descriptor.endpoint, headers=headers) as response:
+                async with client.stream("GET", url, headers=headers) as response:
                     if response.is_redirect:
                         return None, "redirect_refused"
                     if response.status_code in (401, 403):
@@ -329,8 +336,8 @@ class OpenApiConnector:
                     body = bytearray()
                     async for chunk in response.aiter_bytes():
                         body.extend(chunk)
-                        if len(body) > MAX_SPEC_BYTES:
-                            return None, "spec_too_large"
+                        if len(body) > limit:
+                            return None, too_large
         except httpx.TimeoutException:
             return None, "timeout"
         except httpx.HTTPError:
@@ -360,6 +367,29 @@ class OpenApiConnector:
                 details={"connector": self.descriptor.id, "reason": reason},
             )
         return artifacts_from_openapi(self.descriptor.id, parse_spec(body), budget)
+
+    async def read(self, template: ReadTemplate, arguments: Mapping[str, Any]) -> Any:
+        """``GET`` one compiled template against the approved ``base_url`` (AP7).
+
+        The base URL is a descriptor option, so it is part of the digest the registration
+        approval bound; the path comes from the template (twin-allowlisted), each argument is
+        percent-encoded into its own segment, and the request passes the same SSRF policy as the
+        spec fetch. A delegated connector forwards no user token yet (AP10): it reads what the
+        API serves anonymously.
+        """
+        if template.kind is not TemplateKind.HTTP or template.connector != self.descriptor.id:
+            raise ToolExecutionError("this template does not belong to this connector", tool=template.id)
+        base = self.descriptor.options.get("base_url")
+        if not isinstance(base, str) or urlsplit(base).scheme not in ("http", "https") or "?" in base or "#" in base:
+            raise ToolExecutionError("this API connector has no base_url configured for reads", tool=template.id)
+        body, reason = await self._get(base.rstrip("/") + render_http(template, arguments),
+                                       limit=MAX_READ_BYTES, too_large="response_too_large")
+        if body is None:
+            raise ToolExecutionError("the API read failed", tool=template.id, details={"reason": reason})
+        try:
+            return json.loads(body)
+        except ValueError:
+            raise ToolExecutionError("the API did not return JSON", tool=template.id) from None
 
     async def aclose(self) -> None:
         return None

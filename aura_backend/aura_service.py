@@ -96,6 +96,10 @@ def _build_authenticator(settings: Any):
         # until an operator explicitly opts a role in via AURA_ENGINEER_AGENT_ROLES.
         if role in settings.security.engineer_agent_roles:
             capabilities.append("engineer_agent")
+        # Gates agents and tools compiled from a deployed Project Blueprint (Track AP7) --
+        # empty by default; AURA_PROJECT_DATA_ROLES opts roles in.
+        if role in settings.security.project_data_roles:
+            capabilities.append("project_data")
         return Principal(
             user_id=UserId(str(subject)),
             email=claims.get("email") or "",

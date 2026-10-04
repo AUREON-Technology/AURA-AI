@@ -41,3 +41,18 @@ as a model or index promotion (ADR-007, ADR-008).
 
 - Every behaviour change on a live project has an approver, a digest and a revert path.
 - Throughput of change is bounded by Super Admin review; that is intentional in v1.
+
+## Implementation notes (AP7, 2026-10-04)
+
+- **Lifecycle:** evaluate → request approval (`BLUEPRINT_DEPLOYMENT`, bound to the digest) →
+  approve → deploy → rollback.
+  - Every transition is a compare-and-set on the stored state.
+  - A deploy registers `bp<version>_*` tools, then moves the pointer, the target's state and the
+    predecessor's state in one transaction (migration `0012`), then swaps the agent snapshot.
+    Old tools are retired after a grace period.
+- **Rollback** returns to a superseded version under its own approval. The approval's window may
+  have closed, but its status and digest must still match.
+- **Until AP8's gate exists**, `evaluate` refuses unless `AURA_ADAPTATION_ALLOW_UNGATED_DEPLOY` is
+  set, and the version records `gate="ungated"`. Nothing auto-applies.
+- **Startup** loads the active version or falls back to core-only with degraded readiness. Each
+  gateway worker converges on the pointer through a periodic `sync()`.

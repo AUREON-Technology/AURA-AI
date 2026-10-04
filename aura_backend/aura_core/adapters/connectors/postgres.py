@@ -27,12 +27,16 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Sequence
+import datetime as dt
+import decimal
+import uuid
+from typing import Any, Mapping, Sequence
 from urllib.parse import urlsplit
 
 from ...domain.connectors import ConnectorDescriptor, ConnectorHealth, Credential, HealthStatus
 from ...domain.discovery import DiscoveryBudget, DiscoveryReport
-from ...domain.errors import DependencyUnavailableError
+from ...domain.errors import DependencyUnavailableError, ToolExecutionError
+from ...domain.templates import ReadTemplate, TemplateKind, render_sql
 from ...observability.logging import get_logger
 from .postgres_catalog import artifacts_from_catalog, capture_catalog
 
@@ -216,6 +220,55 @@ class PostgresConnector:
             await conn.close(timeout=self.descriptor.timeout_s)
         return artifacts_from_catalog(self.descriptor.id, snapshot, budget)
 
+    async def read(self, template: ReadTemplate, arguments: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Execute one compiled template (AP7): read-only transaction, statement timeout, the
+        domain renderer only, rows converted to JSON types and capped at ``row_cap``."""
+        if template.kind is not TemplateKind.SQL or template.connector != self.descriptor.id:
+            raise ToolExecutionError("this template does not belong to this connector", tool=template.id)
+        rendered = render_sql(template, arguments)
+        conn, reason = await self._connect()
+        if conn is None:
+            raise ToolExecutionError(
+                "the connected database is not reachable right now", tool=template.id, details={"reason": reason},
+            )
+        import asyncpg
+
+        try:
+            async with conn.transaction(readonly=True):
+                # Literal SQL with a bound value (test_no_freeform_sql): transaction-local timeout.
+                await conn.execute("SELECT set_config('statement_timeout', $1, true)",
+                                   str(int(self.descriptor.timeout_s * 1000)))
+                rows = await conn.fetch(rendered.text, *rendered.values)
+        except asyncpg.QueryCanceledError:
+            raise ToolExecutionError("the query took too long and was cancelled", tool=template.id) from None
+        except (asyncpg.DataError, asyncpg.InvalidTextRepresentationError):
+            raise ToolExecutionError("an argument does not fit the column it filters", tool=template.id) from None
+        except asyncpg.PostgresError as exc:
+            logger.info("postgres read failed", extra={"connector": self.descriptor.id, "sqlstate": exc.sqlstate})
+            raise ToolExecutionError("the connected database refused the read", tool=template.id, details={"sqlstate": exc.sqlstate}) from None
+        finally:
+            await conn.close(timeout=self.descriptor.timeout_s)
+        return [{key: json_value(value) for key, value in row.items()} for row in rows[: self.descriptor.row_cap]]
+
     async def aclose(self) -> None:
-        """Nothing held between calls yet; each health check opens and closes its own session."""
+        """Nothing held between calls yet; each call opens and closes its own session."""
         return None
+
+
+def json_value(value: Any) -> Any:
+    """A driver value as JSON data: numbers stay numbers, times become ISO text."""
+    if isinstance(value, decimal.Decimal):
+        return float(value) if value.is_finite() else None
+    if isinstance(value, (dt.datetime, dt.date, dt.time)):
+        return value.isoformat()
+    if isinstance(value, dt.timedelta):
+        return value.total_seconds()
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return None  # binary is never handed to a model
+    if isinstance(value, (list, tuple)):
+        return [json_value(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): json_value(v) for k, v in value.items()}
+    return value

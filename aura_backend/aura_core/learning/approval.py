@@ -44,6 +44,9 @@ class ApprovalKind(str, enum.Enum):
     SOURCE_REGISTRATION = "source_registration"
     #: A Super Admin's decision to let AURA reach a connected system (ADR-021, Track AP2).
     CONNECTOR_REGISTRATION = "connector_registration"
+    #: A Super Admin's decision to put one compiled blueprint version live (ADR-024, Track AP7).
+    #: Bound to the blueprint's digest: a blueprint changed after review needs a new approval.
+    BLUEPRINT_DEPLOYMENT = "blueprint_deployment"
 
     def __str__(self) -> str:
         return self.value
@@ -279,6 +282,10 @@ class ApprovalService:
                 },
             )
         return request
+
+    async def get(self, approval_id: str) -> ApprovalRequest | None:
+        """The approval as recorded, whatever its status. Read-only."""
+        return await self._store.get(approval_id)
 
     async def pending(self, *, kind: ApprovalKind | None = None) -> Sequence[ApprovalRequest]:
         return await self._store.list(status=ApprovalStatus.PENDING, kind=kind)

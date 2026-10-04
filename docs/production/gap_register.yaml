@@ -1244,7 +1244,7 @@ gaps:
     test: concurrent-turn swap; digest-mismatch refusal; rollback; test_core_immutable_from_adaptation
     metric: aura_blueprint_active_version; generated-tool error rate
     exit_condition: AP7 exit criteria met; docs/reports/ap7-blueprint-runtime.md.
-    status: open
+    status: built_not_proven
 
   - gap_id: GAP-057
     component: adaptation/evaluation-gate

@@ -2,7 +2,7 @@
 blueprint versions (AP6).
 
 Unlike most older ``aura_*`` adapters these do **not** create their tables at runtime: Alembic is
-the single schema authority (master roadmap principle 9, CB-20), and migrations ``0009``-``0011`` own
+the single schema authority (master roadmap principle 9, CB-20), and migrations ``0009``-``0012`` own
 the tables. A missing table surfaces as ``DependencyUnavailableError`` naming the fix, rather than
 being papered over with DDL from the request path.
 
@@ -25,7 +25,8 @@ from ..domain.connectors import (
     IdentityMode,
 )
 from ..domain.ausm import AusmElement, ProjectTwin
-from ..domain.compilation import BlueprintRecord
+from ..domain.blueprint import BlueprintState
+from ..domain.compilation import ActivePointer, BlueprintRecord, plan_activation
 from ..domain.errors import ConflictError, DataIntegrityError, DependencyUnavailableError, ValidationError
 from ..domain.serialization import canonical_json, from_data, to_data
 from ..domain.twin import TwinVersion
@@ -39,6 +40,7 @@ __all__ = [
     "ADAPTATION_SCHEMA",
     "TWIN_SCHEMA",
     "BLUEPRINT_SCHEMA",
+    "ACTIVE_SCHEMA",
 ]
 
 #: Kept textually in step with ``alembic/versions/0009_adaptation_connectors.py``
@@ -384,7 +386,121 @@ BLUEPRINT_SCHEMA = (
 )
 
 
-class PostgresBlueprintStore:
+#: Kept textually in step with ``alembic/versions/0012_adaptation_blueprint_active.py``.
+ACTIVE_SCHEMA = (
+    """
+    CREATE TABLE IF NOT EXISTS aura_adaptation_blueprint_active (
+        project_id        TEXT        PRIMARY KEY DEFAULT 'p0',
+        version           INTEGER     NOT NULL,
+        digest            TEXT        NOT NULL CHECK (digest LIKE 'sha256:%'),
+        activated_at      TIMESTAMPTZ NOT NULL,
+        activated_by      TEXT        NOT NULL,
+        previous_version  INTEGER     NULL,
+        FOREIGN KEY (project_id, version) REFERENCES aura_adaptation_blueprints (project_id, version)
+    )
+    """,
+)
+
+
+async def _record_for_update(conn: Any, project_id: str, version: int) -> BlueprintRecord | None:
+    value = await conn.fetchval(
+        "SELECT record FROM aura_adaptation_blueprints WHERE project_id = $1 AND version = $2 FOR UPDATE",
+        project_id, version,
+    )
+    return _blueprint_record(value) if value is not None else None
+
+
+async def _write_record(conn: Any, record: BlueprintRecord) -> None:
+    await conn.execute(
+        "UPDATE aura_adaptation_blueprints SET state = $3, record = $4::jsonb WHERE project_id = $1 AND version = $2",
+        record.project_id, record.version, record.state.value, canonical_json(to_data(record)),
+    )
+
+
+class _BlueprintLifecycle:
+    """AP7 lifecycle methods of :class:`PostgresBlueprintStore`: compare-and-set transitions and
+    the one atomic activation (target live, predecessor superseded, pointer row moved)."""
+
+    _pool: PostgresPool
+
+    async def transition(self, record: BlueprintRecord, *, expected: BlueprintState) -> None:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                status = await conn.execute(
+                    """
+                    UPDATE aura_adaptation_blueprints SET state = $3, record = $4::jsonb
+                     WHERE project_id = $1 AND version = $2 AND state = $5 AND digest = $6
+                    """,
+                    record.project_id, record.version, record.state.value, canonical_json(to_data(record)),
+                    expected.value, record.digest,
+                )
+        except Exception as exc:
+            raise _unavailable("update the blueprint", exc) from exc
+        if not status.endswith(" 1"):
+            raise ConflictError("blueprint changed state concurrently", details={"version": record.version})
+
+    async def activate(self, project_id: str, version: int, *, by: str, at: str) -> ActivePointer:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    # Serialises deploys and rollbacks for the project, including the very first
+                    # one (no pointer row to lock yet).
+                    await conn.execute("SELECT pg_advisory_xact_lock(hashtext('aura_blueprint_active:' || $1))", project_id)
+                    row = await conn.fetchrow(
+                        "SELECT version FROM aura_adaptation_blueprint_active WHERE project_id = $1", project_id,
+                    )
+                    target = await _record_for_update(conn, project_id, version)
+                    if target is None:
+                        raise ConflictError("unknown blueprint version", details={"version": version})
+                    current = await _record_for_update(conn, project_id, row["version"]) if row else None
+                    live, retired, pointer = plan_activation(target, current, by=by, at=at)
+                    await _write_record(conn, live)
+                    if retired is not None:
+                        await _write_record(conn, retired)
+                    await conn.execute(
+                        """
+                        INSERT INTO aura_adaptation_blueprint_active
+                            (project_id, version, digest, activated_at, activated_by, previous_version)
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                        ON CONFLICT (project_id) DO UPDATE SET
+                            version = EXCLUDED.version, digest = EXCLUDED.digest,
+                            activated_at = EXCLUDED.activated_at, activated_by = EXCLUDED.activated_by,
+                            previous_version = EXCLUDED.previous_version
+                        """,
+                        pointer.project_id, pointer.version, pointer.digest,
+                        datetime.fromisoformat(pointer.activated_at), pointer.activated_by, pointer.previous_version,
+                    )
+        except (ConflictError, DataIntegrityError):
+            raise
+        except Exception as exc:
+            raise _unavailable("activate the blueprint", exc) from exc
+        return pointer
+
+    async def active(self, project_id: str) -> ActivePointer | None:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT project_id, version, digest, activated_at, activated_by, previous_version
+                      FROM aura_adaptation_blueprint_active WHERE project_id = $1
+                    """,
+                    project_id,
+                )
+        except Exception as exc:
+            raise _unavailable("read the active blueprint", exc) from exc
+        if row is None:
+            return None
+        return ActivePointer(
+            project_id=row["project_id"], version=row["version"], digest=row["digest"],
+            activated_at=_utc(row["activated_at"]).isoformat(), activated_by=row["activated_by"],
+            previous_version=row["previous_version"],
+        )
+
+
+class PostgresBlueprintStore(_BlueprintLifecycle):
     """Compiled blueprint versions (AP6). Reading a row back re-decodes the whole record through
     the strict codec, which re-checks the blueprint's digest -- an edited row is refused."""
 

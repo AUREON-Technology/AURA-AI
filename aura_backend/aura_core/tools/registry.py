@@ -146,6 +146,10 @@ class ToolRegistry:
     def __len__(self) -> int:
         return len(self._tools)
 
+    def names(self) -> tuple[str, ...]:
+        """Every registered tool name, sorted (no capability filtering -- see ``available``)."""
+        return tuple(sorted(self._tools))
+
     # -- discovery ---------------------------------------------------------------------
 
     def _is_visible(self, spec: ToolSpec) -> bool:

@@ -580,6 +580,22 @@ starts at **DOCUMENTED** as of the baseline.
   with audit trail.
 - **Rollback:** `rollback()`; or `AURA_ADAPTATION_ENABLED=false` → core-only.
 - **Evidence required:** `docs/reports/ap7-blueprint-runtime.md`.
+- **As built (2026-10-04):** IMPLEMENTED. It was exercised through the real HTTP API in process,
+  and the pointer and live reads were checked on PostgreSQL 16. **The exit criterion's dev-stack
+  run is still pending.**
+  - **`ActiveBlueprint`** swaps an immutable snapshot of core and generated agents. Generated
+    agents use the fixed `system.blueprint_agent` prompt and need `project_data`
+    (`AURA_PROJECT_DATA_ROLES`).
+  - **`GeneratedReadTool`** runs templates through the new `ReadConnector` port
+    (`PostgresConnector.read`, and `OpenApiConnector.read` against an approved `base_url`).
+    Tools are tagged `untrusted_content`, and their declarations carry only our own sentence plus
+    a validated identifier.
+  - **`BlueprintDeployment`:** evaluate → digest-bound approval → approve → deploy (tools, then
+    the atomic pointer, then agents) → rollback. Startup falls back to core-only with degraded
+    readiness, and `sync()` converges every worker on the pointer.
+  - **Until AP8, evaluation is refused** unless `AURA_ADAPTATION_ALLOW_UNGATED_DEPLOY` is set. It
+    is off in both compose files, and a version that used it records `gate="ungated"`.
+  - **Pointer table:** migration `0012`. Activation is one transaction under an advisory lock.
 
 ### AP8 — Generated Evaluation Gate and Simulation *(Evaluation)*
 
@@ -725,7 +741,7 @@ M0 (CI evidence) gates every A-phase beyond BUILT.   M4 (GPU) gates label qualit
 | AP4 | Twin + diff | Critical | AP3, (M4) | High | Medium | IMPLEMENTED (goldens + live Postgres pass locally; CI pending) | adaptation/normalize, twin | Deterministic twins + diffs |
 | AP5 | Capabilities + planner | High | AP4 | Medium | Medium | IMPLEMENTED (pilot plans pass locally; CI pending) | adaptation/capabilities | Same primitives, both pilots |
 | AP6 | Factories + compiler | Critical | AP5 | High | High (SQL safety) | IMPLEMENTED (goldens + live Postgres pass locally; CI pending) | adaptation/factories, domain/tools | Valid blueprints + fitness |
-| AP7 | Blueprint runtime | Critical | AP6, (SEC-01..03) | High | High (kernel seam) | DOCUMENTED | adaptation/runtime, container | Deploy + rollback |
+| AP7 | Blueprint runtime | Critical | AP6, (SEC-01..03) | High | High (kernel seam) | IMPLEMENTED (in-process API + live Postgres pass locally; dev-stack run and CI pending) | adaptation/runtime, container | Deploy + rollback |
 | AP8 | Generated eval gate | High | AP6, AP7, (M7) | Medium | Medium | DOCUMENTED | evaluation/ | Bad blueprint blocked |
 | AP9 | Console MVP | High | AP7, AP8 | Medium | Low | DOCUMENTED | aura_admin | Both pilots via Console |
 | AP10 | Files/Git + knowledge + identity | High | AP9, (CB-11) | High | High (isolation) | DOCUMENTED | adapters/connectors, knowledge | Retrieval eval + isolation probe |

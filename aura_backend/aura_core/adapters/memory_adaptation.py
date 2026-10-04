@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Sequence
 
 from ..domain.ausm import ProjectTwin
-from ..domain.compilation import BlueprintRecord
+from ..domain.blueprint import BlueprintState
+from ..domain.compilation import ActivePointer, BlueprintRecord, plan_activation
 from ..domain.connectors import ConnectorRecord, ConnectorState
 from ..domain.errors import ConflictError, ValidationError
 from ..domain.twin import TwinVersion
@@ -62,6 +63,7 @@ class InMemoryBlueprintStore:
 
     def __init__(self) -> None:
         self._rows: dict[tuple[str, int], BlueprintRecord] = {}
+        self._active: dict[str, ActivePointer] = {}
 
     async def append(self, record: BlueprintRecord) -> None:
         key = (record.project_id, record.version)
@@ -79,3 +81,29 @@ class InMemoryBlueprintStore:
     async def versions(self, project_id: str, *, limit: int = 50) -> Sequence[BlueprintRecord]:
         rows = sorted((r for (p, _), r in self._rows.items() if p == project_id), key=lambda r: -r.version)
         return rows[:limit]
+
+    async def transition(self, record: BlueprintRecord, *, expected: BlueprintState) -> None:
+        key = (record.project_id, record.version)
+        stored = self._rows.get(key)
+        if stored is None or stored.state is not expected:
+            raise ConflictError("blueprint changed state concurrently", details={"version": record.version})
+        if stored.digest != record.digest:
+            raise ConflictError("blueprint content cannot change", details={"version": record.version})
+        self._rows[key] = record
+
+    async def activate(self, project_id: str, version: int, *, by: str, at: str) -> ActivePointer:
+        # No await between reading and writing: atomic on the event loop.
+        target = self._rows.get((project_id, version))
+        if target is None:
+            raise ConflictError("unknown blueprint version", details={"version": version})
+        pointer = self._active.get(project_id)
+        current = self._rows.get((project_id, pointer.version)) if pointer else None
+        live, retired, new_pointer = plan_activation(target, current, by=by, at=at)
+        self._rows[(project_id, version)] = live
+        if retired is not None:
+            self._rows[(project_id, retired.version)] = retired
+        self._active[project_id] = new_pointer
+        return new_pointer
+
+    async def active(self, project_id: str) -> ActivePointer | None:
+        return self._active.get(project_id)
