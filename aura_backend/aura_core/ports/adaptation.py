@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Protocol, Sequence, runtime_checkable
 
 from ..domain.ausm import ProjectTwin
-from ..domain.compilation import BlueprintRecord
+from ..domain.blueprint import BlueprintState
+from ..domain.compilation import ActivePointer, BlueprintRecord
 from ..domain.twin import LabelProposal, LabelRequest, TwinVersion
 
 __all__ = ["TwinStore", "LabelingModel", "BlueprintStore"]
@@ -46,8 +47,13 @@ class LabelingModel(Protocol):
 
 @runtime_checkable
 class BlueprintStore(Protocol):
-    """Compiled blueprint versions (AP6). :meth:`append` refuses an existing version
-    (``ConflictError``); lifecycle state changes arrive with AP7."""
+    """Compiled blueprint versions (AP6) and which one is live (AP7).
+
+    :meth:`append` refuses an existing version (``ConflictError``). :meth:`transition` is a
+    compare-and-set on ``state``: it refuses (``ConflictError``) unless the stored version is still
+    in ``expected``. :meth:`activate` is the one atomic swap -- target to ``active``, the previous
+    active version to ``superseded``, the pointer row updated -- or nothing at all.
+    """
 
     async def append(self, record: BlueprintRecord) -> None: ...
 
@@ -58,3 +64,9 @@ class BlueprintStore(Protocol):
     async def versions(self, project_id: str, *, limit: int = 50) -> Sequence[BlueprintRecord]:
         """Newest first."""
         ...
+
+    async def transition(self, record: BlueprintRecord, *, expected: BlueprintState) -> None: ...
+
+    async def activate(self, project_id: str, version: int, *, by: str, at: str) -> ActivePointer: ...
+
+    async def active(self, project_id: str) -> ActivePointer | None: ...

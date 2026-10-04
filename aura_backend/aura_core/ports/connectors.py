@@ -3,19 +3,22 @@
 Stdlib only (ADR-001), async throughout. Vendor drivers live in ``aura_core/adapters/connectors/``
 and are imported lazily inside them.
 
-What is deliberately *not* here yet: templated reads (``read(QueryTemplate, ...)``) arrive with
-AP6 as their own port, so a connector gains a capability only when the code that needs it exists. There is no write port in v1 at all
+Templated reads (:class:`ReadConnector`, AP7) execute a compiled
+:class:`~aura_core.domain.templates.ReadTemplate` -- never query text. There is no write port in v1 at all
 (ADR-021): a ``WriteConnector`` is AP12c, behind argument-bound confirmation.
 """
 
 from __future__ import annotations
 
-from typing import Protocol, Sequence, runtime_checkable
+from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 from ..domain.connectors import ConnectorDescriptor, ConnectorHealth, ConnectorRecord, ConnectorState, Credential
 from ..domain.discovery import DiscoveryBudget, DiscoveryReport
+from ..domain.templates import ReadTemplate
 
-__all__ = ["Connector", "DiscoveryConnector", "ConnectorFactory", "CredentialVault", "ConnectorStore"]
+__all__ = [
+    "Connector", "DiscoveryConnector", "ReadConnector", "ConnectorFactory", "CredentialVault", "ConnectorStore",
+]
 
 
 @runtime_checkable
@@ -45,6 +48,19 @@ class DiscoveryConnector(Connector, Protocol):
     """
 
     async def discover(self, budget: DiscoveryBudget) -> DiscoveryReport: ...
+
+
+@runtime_checkable
+class ReadConnector(Connector, Protocol):
+    """A connector that executes compiled read templates (AP7, ADR-022).
+
+    Returns JSON-ready data -- a list of row objects for SQL, the decoded response for HTTP --
+    capped at the descriptor's ``row_cap``. The template is rendered by the domain renderer only
+    (``render_sql`` / ``render_http``); arguments are bound values. Failures raise a typed
+    ``AuraError`` without vendor text, which the tool registry reports as a tool error.
+    """
+
+    async def read(self, template: ReadTemplate, arguments: Mapping[str, Any]) -> Any: ...
 
 
 @runtime_checkable

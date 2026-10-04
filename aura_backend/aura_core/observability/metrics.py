@@ -440,6 +440,22 @@ class Metrics:
             ("kind",),
             multiprocess_mode="livemax",
         )
+        self.blueprint_active_version = self._gauge(
+            "blueprint_active_version",
+            "The blueprint version live in this worker (0: core personas only).",
+            (),
+            multiprocess_mode="livemax",
+        )
+        self.blueprint_swap_seconds = self._histogram(
+            "blueprint_swap_seconds", "Time to register tools, move the pointer and swap agents.", (),
+            buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5),
+        )
+        self.generated_tool_calls = self._counter(
+            "generated_tool_calls_total",
+            "Calls of blueprint-generated read tools by outcome (ok, error); the error rate is the "
+            "connected systems' availability as AURA sees it.",
+            ("outcome",),
+        )
         self.agent_workspaces = self._gauge(
             "agent_workspaces",
             "Durable engineer-agent workspaces by status. Only `hot` costs memory (a warm "
@@ -690,6 +706,15 @@ class Metrics:
     def observe_blueprint(self, summary) -> None:
         for kind in ("templates", "tools", "agents", "workflows", "views", "eval_cases", "dropped"):
             self.blueprint_artifacts.labels(kind=kind).set(summary.get(kind, 0))
+
+    def set_blueprint_active(self, version: int) -> None:
+        self.blueprint_active_version.set(version)
+
+    def observe_blueprint_swap(self, seconds: float) -> None:
+        self.blueprint_swap_seconds.observe(seconds)
+
+    def observe_generated_tool(self, outcome: str) -> None:
+        self.generated_tool_calls.labels(outcome=outcome).inc()
 
     def set_connector_health(self, connector: str, kind: str, status: str) -> None:
         value = {"healthy": 1.0, "degraded": 0.5}.get(status, 0.0)

@@ -68,6 +68,12 @@ def register_adaptation_ops(
         max_seconds: float = Field(default=120.0, ge=1.0, le=3600.0)
         sample_values: bool = False
 
+    class BlueprintApproveRequest(BaseModel):
+        approval_id: str = Field(min_length=1, max_length=128)
+
+    class RollbackRequest(BaseModel):
+        version: int | None = Field(default=None, ge=1)
+
     class SnapshotRequest(DiscoverRequest):
         connector_ids: list[str] | None = Field(default=None, max_length=32)
 
@@ -230,6 +236,13 @@ def register_adaptation_ops(
         record = await compiler().compile(version, by=actor(caller))
         return JSONResponse(status_code=201, content={"summary": record.summary()})
 
+    # Registered before "/admin/blueprints/{version}", which would otherwise match "active".
+    @router.get("/admin/blueprints/active")
+    async def active_blueprint(caller=Depends(principal)) -> JSONResponse:
+        require_super_admin(caller)
+        service = deployment()
+        return JSONResponse(content={"active": _pointer(await service.active()), **(await service.readiness())})
+
     @router.get("/admin/blueprints")
     async def list_blueprints(
         caller=Depends(principal), limit: int = Query(default=50, ge=1, le=200)
@@ -249,6 +262,53 @@ def register_adaptation_ops(
         if record is None:
             raise HTTPException(status_code=404, detail="blueprint version not found")
         return JSONResponse(content={"summary": record.summary(), "record": to_data(record)})
+
+    def deployment() -> Any:
+        service = getattr(container, "blueprint_deployment", None)
+        if service is None:
+            registry()  # the same 503 as every other route here
+        return service
+
+    def _pointer(pointer: Any) -> Any:
+        return to_data(pointer) if pointer is not None else None
+
+    @router.post("/admin/blueprints/{version}/evaluate")
+    async def evaluate_blueprint(version: int, caller=Depends(principal)) -> JSONResponse:
+        """``proposed`` -> ``evaluated``. Until AP8's gate exists this is refused unless the
+        install allows ungated deploys, and the record then says so permanently."""
+        require_super_admin(caller)
+        record = await deployment().evaluate(version, by=actor(caller))
+        return JSONResponse(content={"summary": record.summary()})
+
+    @router.post("/admin/blueprints/{version}/request-approval")
+    async def request_blueprint_approval(version: int, caller=Depends(principal)) -> JSONResponse:
+        """Open a ``blueprint_deployment`` approval bound to this version's digest. Deciding it
+        goes through the existing approvals routes, by a named person."""
+        require_super_admin(caller)
+        approval = await deployment().request_approval(version, by=actor(caller))
+        return JSONResponse(status_code=201, content={"approval": approval.as_dict()})
+
+    @router.post("/admin/blueprints/{version}/approve")
+    async def approve_blueprint(version: int, payload: BlueprintApproveRequest,
+                                caller=Depends(principal)) -> JSONResponse:
+        """``evaluated`` -> ``approved`` under a granted approval for exactly this digest."""
+        require_super_admin(caller)
+        record = await deployment().approve(version, approval_id=payload.approval_id, by=actor(caller))
+        return JSONResponse(content={"summary": record.summary()})
+
+    @router.post("/admin/blueprints/{version}/deploy")
+    async def deploy_blueprint(version: int, caller=Depends(principal)) -> JSONResponse:
+        """Make an approved version live: its tools, then the pointer, then the agents."""
+        require_super_admin(caller)
+        pointer = await deployment().deploy(version, by=actor(caller))
+        return JSONResponse(content={"active": _pointer(pointer)})
+
+    @router.post("/admin/blueprints/rollback")
+    async def rollback_blueprint(caller=Depends(principal), payload: RollbackRequest | None = None) -> JSONResponse:
+        """Return to the previous (or a named) superseded version under its own approval."""
+        require_super_admin(caller)
+        pointer = await deployment().rollback(by=actor(caller), version=(payload or RollbackRequest()).version)
+        return JSONResponse(content={"active": _pointer(pointer)})
 
     @router.get("/admin/twin/diff")
     async def diff_twin_versions(

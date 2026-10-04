@@ -803,6 +803,11 @@ class SecuritySettings:
     #: not a side effect of upgrading, matching how AURA_SANDBOX_ENABLED/AURA_GITHUB_ENABLED
     #: default off for the same reason.
     engineer_agent_roles: tuple[str, ...] = ()
+    #: Roles granted the "project_data" capability -- the gate on every agent and tool compiled
+    #: from a deployed Project Blueprint (Track AP7): reading the connected organisation's own
+    #: system. Empty by default for the same reason as `engineer_agent_roles`: which staff may
+    #: query that system through AURA is a per-deployment decision.
+    project_data_roles: tuple[str, ...] = ()
     #: Send the response header floor from the application itself. On by default: the nginx
     #: template is not in the path on every deploy target, and a Railway probe found the gateway
     #: serving no HSTS, XCTO, XFO, Referrer-Policy or Permissions-Policy at all. nginx strips the
@@ -834,6 +839,7 @@ class SecuritySettings:
             allow_mock_attestation=_bool_aliased("ALLOW_MOCK_ATTESTATION", False),
             admin_roles=_list("ADMIN_ROLES", ("Admin", "SuperAdmin")),
             engineer_agent_roles=_list("ENGINEER_AGENT_ROLES", ()),
+            project_data_roles=_list("PROJECT_DATA_ROLES", ()),
             security_headers_enabled=_bool("SECURITY_HEADERS_ENABLED", True),
             content_security_policy=(_env("CONTENT_SECURITY_POLICY", "") or "").strip(),
             rate_limit_enabled=_bool("RATE_LIMIT_ENABLED", True),
@@ -1020,6 +1026,15 @@ class AdaptationSettings:
     """
 
     enabled: bool = False
+    #: AP7 only: allow a blueprint to be marked evaluated without the generated-suite gate, which
+    #: arrives with AP8. Off by default, so no blueprint can go live ungated in production; the
+    #: record says ``gate="ungated"`` when it was used.
+    allow_ungated_deploy: bool = False
+    #: Seconds the previous version's generated tools stay registered after a swap, so a turn
+    #: that resolved them just before the swap can still finish.
+    tool_grace_s: float = 300.0
+    #: How often each gateway worker reconciles with the store's active blueprint pointer.
+    sync_s: float = 15.0
     #: The optional labeling model (AP4, ADR-026). Off: twins keep humanised identifiers.
     labeler_enabled: bool = False
     labeler_batch_size: int = 8
@@ -1029,6 +1044,9 @@ class AdaptationSettings:
     def from_env(cls) -> "AdaptationSettings":
         return cls(
             enabled=_bool("ADAPTATION_ENABLED", False),
+            allow_ungated_deploy=_bool("ADAPTATION_ALLOW_UNGATED_DEPLOY", False),
+            tool_grace_s=max(0.0, _float("ADAPTATION_TOOL_GRACE_S", 300.0)),
+            sync_s=max(1.0, _float("ADAPTATION_SYNC_S", 15.0)),
             labeler_enabled=_bool("ADAPTATION_LABELER_ENABLED", False),
             labeler_batch_size=max(1, min(64, _int("ADAPTATION_LABELER_BATCH_SIZE", 8))),
             labeler_timeout_s=max(5.0, _float("ADAPTATION_LABELER_TIMEOUT_S", 180.0)),

@@ -13,6 +13,7 @@ production swaps them by configuration.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -186,6 +187,15 @@ class Container:
 
         self.prompts = build_default_registry()
         self.agents = build_default_agent_registry()
+        if settings.adaptation.enabled:
+            # Track AP7: the same registry interface, over a snapshot a blueprint deploy can swap
+            # atomically. Wrapped here, before the kernel and the delegation tools capture it.
+            from .adaptation.runtime import ActiveBlueprint
+
+            self.agents = ActiveBlueprint(self.agents)
+        self.blueprint_store = None
+        self.blueprint_deployment = None
+        self._blueprint_sync_task = None
 
         self.safety = SafetyPipeline.from_settings(
             settings.safety, metrics=self.metrics, event_bus=self.events, audit=self.audit
@@ -497,6 +507,7 @@ class Container:
                 registry=CapabilityRegistry.from_directory(), twins=self.twins, metrics=self.metrics
             )
             self.blueprint_compiler = self._build_compiler(use_postgres=use_postgres)
+            self.blueprint_deployment = self._build_deployment()
 
         self.kernel = AIKernel(
             KernelDependencies(
@@ -673,10 +684,29 @@ class Container:
             from .adapters.memory_adaptation import InMemoryBlueprintStore
 
             store = InMemoryBlueprintStore()
+        self.blueprint_store = store
         return CompilerService(
             twins=self.twins, planner=self.capability_planner, connectors=self.connectors, store=store,
             clock=self.clock, audit=self.audit, metrics=self.metrics,
         )
+
+    def _build_deployment(self) -> Any:
+        """Approve / deploy / roll back blueprints onto the live agent and tool registries (AP7)."""
+        from .adaptation.deployment import BlueprintDeployment
+        from .adaptation.runtime import BlueprintToolMaterializer
+
+        adaptation = self.settings.adaptation
+        materializer = BlueprintToolMaterializer(
+            tools=self.tools, open_connector=self.connectors.open_active,
+            grace_s=adaptation.tool_grace_s, metrics=self.metrics,
+        )
+        deployment = BlueprintDeployment(
+            project_id=self.twins.project_id, store=self.blueprint_store, approvals=self.approvals,
+            agents=self.agents, materializer=materializer, clock=self.clock,
+            allow_ungated=adaptation.allow_ungated_deploy, audit=self.audit, metrics=self.metrics,
+        )
+        self.register_readiness_check("blueprint", deployment.readiness)
+        return deployment
 
     def _build_twins(self, *, use_postgres: bool) -> Any:
         """The Project Twin service (AP4), or ``None`` when Track AP is off.
@@ -1403,9 +1433,25 @@ class Container:
                 logger.info("MCP tools registered", extra={"count": len(mcp_tools)})
             except Exception:
                 logger.exception("MCP tool discovery failed; continuing without MCP tools")
+        if self.blueprint_deployment is not None:
+            # Never raises: a blueprint that cannot load leaves the core personas serving.
+            await self.blueprint_deployment.startup()
+            self._blueprint_sync_task = asyncio.get_running_loop().create_task(self._sync_blueprints())
         logger.info("container startup complete")
 
+    async def _sync_blueprints(self) -> None:
+        """Keep this worker on the store's active blueprint (a deploy swaps only its own process)."""
+        interval = self.settings.adaptation.sync_s
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self.blueprint_deployment.sync()
+            except Exception:  # pragma: no cover - defensive; sync() already swallows store errors
+                logger.exception("blueprint sync failed")
+
     async def shutdown(self) -> None:
+        if self._blueprint_sync_task is not None:
+            self._blueprint_sync_task.cancel()
         await self.router.close()
         close = getattr(self.embedder, "close", None)
         if close is not None:
