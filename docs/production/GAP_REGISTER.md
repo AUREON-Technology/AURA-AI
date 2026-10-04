@@ -84,8 +84,8 @@ hygiene and doc accuracy.
 | Severity | open | in_progress | built_not_proven | proven | closed_stale |
 | --- | --- | --- | --- | --- | --- |
 | P0 | 5 | 0 | 2 | 0 | 0 |
-| P1 | 11 | 0 | 6 | 0 | 1 |
-| P2 | 18 | 1 | 9 | 0 | 1 |
+| P1 | 10 | 0 | 7 | 0 | 1 |
+| P2 | 17 | 1 | 10 | 0 | 1 |
 | P3 | 6 | 0 | 1 | 0 | 1 |
 
 ## All gaps
@@ -115,7 +115,7 @@ Sorted by status (`closed_stale` last), then severity. The full text, citations 
 | GAP-042 | P1 | `open` | supply-chain/model-licensing | coordinator | No model license review is recorded anywhere in the tree. The production chat model is Qwen2.5-3B-Instruct (via the Ollama tag qwen2.5:3b-instruct-q4_K_M); fro… | License review recorded per model in MODEL_REGISTRY.md; any incompatible model replaced. | — |
 | GAP-046 | P1 | `open` | deploy/backup-secret-scope | platform-ops | The backup service mounts the whole deploy/secrets directory read-only at /run/backup-secrets (docker-compose.prod.yml, since 681780d), in a container on the e… | Backup-only secrets moved to their own directory or individual file mounts, with the fitness test, and one backup cycle run on the VPS after the change. | GAP-028 |
 | GAP-050 | P1 | `built_not_proven` | adaptation/connectors | platform-core | (2026-10-01) AP2 implemented: connector ports, ConnectorRegistry (approval bound to the descriptor digest; activation refuses unhealthy or write-capable creden… | AP2 exit criteria met; docs/reports/ap2-connector-framework.md. | GAP-049, GAP-048 |
-| GAP-054 | P1 | `open` | adaptation/compiler | platform-core | No factory or compiler produces tools, agents, workflows, UI manifests or eval suites from a system model, and no safe generated-query mechanism exists. | AP6 exit criteria met; docs/reports/ap6-blueprint-compiler.md. | GAP-053, GAP-055 |
+| GAP-054 | P1 | `built_not_proven` | adaptation/compiler | platform-core | No factory or compiler produces tools, agents, workflows, UI manifests or eval suites from a system model, and no safe generated-query mechanism exists. | AP6 exit criteria met; docs/reports/ap6-blueprint-compiler.md. | GAP-053, GAP-055 |
 | GAP-056 | P1 | `open` | adaptation/runtime | platform-core | The agent registry is immutable and process-wide, and there is no versioned, approvable activation of generated agents and tools. | AP7 exit criteria met; docs/reports/ap7-blueprint-runtime.md. | GAP-054, GAP-048 |
 | GAP-059 | P1 | `open` | adaptation/knowledge-and-identity | platform-core | No file, document or Git discovery; CompositeFetcher (aura_core/learning/sources.py:237) is never instantiated; no delegated identity passthrough; Qdrant treat… | AP10 exit criteria met after CB-11 is fixed; docs/reports/ap10-connectors-knowledge.md. | GAP-058 |
 | GAP-007 | P2 | `open` | admin/testing | admin | (2026-09-25-w2) Wave 2 did not add admin Playwright specs (the Flutter/admin stream was interrupted before reaching the admin console). node 22 and npm are ava… | PR-triggered Admin CI green with per-page specs. | GAP-005 |
@@ -140,7 +140,7 @@ Sorted by status (`closed_stale` last), then severity. The full text, citations 
 | GAP-051 | P2 | `built_not_proven` | adaptation/discovery | platform-core | (2026-10-01) AP3 implemented: Postgres catalog capture + pure mapping (structure, grants, SQL-computed profiles, values opt-in), OpenAPI 3.x fetch under the SS… | AP3 exit criteria met; docs/reports/ap3-discovery.md. | GAP-050 |
 | GAP-052 | P2 | `built_not_proven` | adaptation/project-twin | platform-core | No versioned model of a connected system and no diff between versions. | AP4 exit criteria met; docs/reports/ap4-project-twin.md. | GAP-051 |
 | GAP-053 | P2 | `built_not_proven` | adaptation/capabilities | platform-core | Capabilities are personas hardcoded in Python (build_default_agent_registry, aura_core/agents/registry.py:132); nothing selects capabilities from evidence. | AP5 exit criteria met; docs/reports/ap5-capability-planning.md. | GAP-052 |
-| GAP-055 | P2 | `open` | tools/output-schema | platform-core | ToolSpec (aura_core/domain/tools.py:112) has no output schema; tools return str, so results cannot be bound to UI views or compared to goldens structurally. | Field and validation merged with tests green in CI (part of AP6). | — |
+| GAP-055 | P2 | `built_not_proven` | tools/output-schema | platform-core | ToolSpec (aura_core/domain/tools.py:112) has no output schema; tools return str, so results cannot be bound to UI views or compared to goldens structurally. | Field and validation merged with tests green in CI (part of AP6). | — |
 | GAP-057 | P2 | `open` | adaptation/evaluation-gate | evaluation | Evaluation suites are hand-written; nothing generates or gates per-blueprint suites. | AP8 exit criteria met; docs/reports/ap8-generated-eval-gate.md. | GAP-056, GAP-021 |
 | GAP-058 | P2 | `open` | admin/project-factory | admin-console | The console has 9 fixed ops areas and no project, connector, twin or blueprint views. | AP9 exit criteria met; docs/reports/ap9-console-mvp.md. | GAP-056, GAP-057, GAP-007 |
 | GAP-060 | P2 | `open` | adaptation/drift | platform-core | No re-discovery, drift detection or impact analysis; one TriggerSpec exists; no workflow runtime. | AP11 exit criteria met; docs/reports/ap11-continuous-adaptation.md. | GAP-059 |

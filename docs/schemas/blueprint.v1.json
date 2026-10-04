@@ -35,6 +35,12 @@
             "$ref": "#/$defs/CapabilitySelection"
           }
         },
+        "templates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReadTemplate"
+          }
+        },
         "tools": {
           "type": "array",
           "items": {
@@ -338,6 +344,31 @@
       },
       "description": "Generated suites (AP6) and the minimum pass rate each must reach to deploy (AP8)."
     },
+    "HttpGet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "path_params": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "query_params": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "description": "``GET path`` with ``{placeholder}`` segments and query parameters, each bound to a param."
+    },
     "KnowledgeSection": {
       "type": "object",
       "additionalProperties": false,
@@ -514,6 +545,50 @@
         }
       }
     },
+    "ReadTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "connector": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "sql",
+            "http"
+          ]
+        },
+        "sql": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SqlSelect"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "http": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HttpGet"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "connector",
+        "kind"
+      ]
+    },
     "SecuritySection": {
       "type": "object",
       "additionalProperties": false,
@@ -525,6 +600,163 @@
           }
         }
       }
+    },
+    "SqlAggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "function": {
+          "type": "string",
+          "enum": [
+            "count",
+            "sum",
+            "avg",
+            "min",
+            "max"
+          ]
+        },
+        "alias": {
+          "type": "string"
+        },
+        "column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "function",
+        "alias"
+      ]
+    },
+    "SqlColumn": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "alias": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "alias"
+      ],
+      "description": "A projected column. ``alias`` is the output field name the tool's schema declares."
+    },
+    "SqlFilter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "column": {
+          "type": "string"
+        },
+        "op": {
+          "type": "string",
+          "enum": [
+            "eq",
+            "contains",
+            "gte",
+            "lte"
+          ]
+        },
+        "param": {
+          "type": "string"
+        },
+        "optional": {
+          "type": "boolean"
+        },
+        "cast": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "timestamptz"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "column",
+        "op",
+        "param"
+      ]
+    },
+    "SqlSelect": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SqlColumn"
+          }
+        },
+        "filters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SqlFilter"
+          }
+        },
+        "any_of": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SqlFilter"
+          }
+        },
+        "aggregates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SqlAggregate"
+          }
+        },
+        "group_by": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "order_by": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "max_rows": {
+          "type": "integer"
+        },
+        "limit_param": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema",
+        "table"
+      ]
     },
     "Transition": {
       "type": "object",

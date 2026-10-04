@@ -28,3 +28,17 @@ row-aware — none of which work on opaque strings.
 
 - UI manifests and evaluation suites can reference result fields by schema.
 - No migration is needed for existing tools.
+
+## Implementation notes (AP6, 2026-10-04)
+
+- **The subset** is in `domain/output_schema.py`:
+  - `type` (including type lists), `properties`, `required`, boolean `additionalProperties`;
+  - `items`, `maxItems`;
+  - `enum`, `format`, `description`.
+
+  Anything else is refused when declared.
+- **`ToolSpec.output_schema`** defaults to `None`, so hand-written tools are unchanged. When it is
+  set, `ToolRegistry.execute` checks the JSON result. A mismatch is an audited failure with
+  `error_kind="invalid_output"`, whose message lists paths, not values.
+- **MCP** `outputSchema` is mapped when it fits the subset, and dropped with a log line when it
+  does not. `structuredContent` is returned as JSON so the check applies.
