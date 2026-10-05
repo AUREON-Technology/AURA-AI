@@ -27,10 +27,12 @@ from ..domain.errors import (
     RateLimitedError,
     ValidationError,
 )
+from ..domain.caller_context import MAX_CALLER_CONTEXT, CallerContext
 from ..domain.identifiers import CorrelationId, DocumentId, SessionId, UserId
 from ..domain.llm import RoutingPolicy
 from ..domain.memory import MemoryKind, MemoryQuery
 from ..domain.reasoning import ReasoningStrategy
+from ..domain.untrusted import MAX_UNTRUSTED_CHARS
 from ..kernel.kernel import TurnRequest
 from ..observability.logging import get_logger
 from ..ports.runtime import AuditEvent
@@ -120,6 +122,12 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- request models ----------------------------------------------------------------
 
+    class ContextEntry(BaseModel):
+        #: AR-5: one piece of caller-supplied evidence. Shape is re-checked by `CallerContext.of`.
+        id: str = Field(min_length=1, max_length=128)
+        text: str = Field(min_length=1, max_length=MAX_UNTRUSTED_CHARS)
+        source: str = Field(default="", max_length=128)
+
     class ChatRequest(BaseModel):
         message: str = Field(min_length=1, max_length=32_000)
         session_id: str | None = None
@@ -139,6 +147,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         #: a dedicated git worktree keyed by `session_id`, rather than the user's live checkout.
         #: Silently a no-op for any caller without a live desktop pairing.
         desktop_task_isolation: bool = False
+        #: AR-5: evidence for this turn, carried on the DATA channel (fenced, guarded, tainting)
+        #: -- never in `message`, which is the USER channel and is read as instructions.
+        context: list[ContextEntry] = Field(default_factory=list, max_length=MAX_CALLER_CONTEXT)
 
     class IngestRequest(BaseModel):
         title: str = Field(min_length=1, max_length=500)
@@ -322,6 +333,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             payload = payload.model_copy(update={
                 "use_memory": False, "use_tools": False, "confirmed_tools": [], "confirmed_call_ids": [],
             })
+        caller_context = tuple(CallerContext.of(id=e.id, text=e.text, source=e.source) for e in payload.context)
+        if len({e.id for e in caller_context}) != len(caller_context):
+            raise ValidationError("context ids must be unique within a turn")
         return TurnRequest(
             message=message,
             user_id=caller.user_id,
@@ -345,6 +359,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             desktop_task_isolation=payload.desktop_task_isolation,
             # Defence in depth behind use_tools=False: an empty grant intersects to no tools.
             delegated_tool_grant=frozenset() if caller.is_service else None,
+            caller_context=caller_context,
         )
 
     # -- chat --------------------------------------------------------------------------

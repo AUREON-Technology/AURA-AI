@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from ..domain.cag import CagPrefix
+from ..domain.caller_context import CallerContext
 from ..domain.context import (
     ContextBudget,
     ContextBundle,
@@ -77,6 +78,8 @@ class ContextRequest:
     memory_token_budget: int | None = None
     #: None uses the engine default. 0 disables the extra cap (provider window only).
     max_prompt_tokens: int | None = None
+    #: Evidence the calling system supplied (AR-5), already guarded by the kernel. DATA only.
+    caller_context: Sequence[CallerContext] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,6 +312,29 @@ class ContextEngine:
             kept += 1
         return items
 
+    def _caller_context_items(self, request: ContextRequest) -> list[ContextItem]:
+        """Caller-supplied evidence (AR-5): fenced DATA exactly like a retrieved chunk, cited by
+        the caller's own id. Not clipped -- the caller bounded it, and a clipped measurement is
+        a different measurement -- so on a tight budget an entry is dropped whole, and an entry
+        that was dropped is never cited."""
+        items = []
+        for index, entry in enumerate(request.caller_context):
+            content = entry.content()
+            items.append(
+                ContextItem(
+                    content=content,
+                    section=ContextSection.KNOWLEDGE,
+                    channel=TrustChannel.DATA,
+                    relevance=1.0,
+                    # Above retrieved knowledge (25): the caller sent these for this very turn.
+                    priority=30 - min(index, 9),
+                    tokens=self._tokenizer.count(content),
+                    provenance=entry.id,
+                    item_id=f"ctx:{entry.id}",
+                )
+            )
+        return items
+
     def _tool_items(self, request: ContextRequest) -> list[ContextItem]:
         return [
             ContextItem(
@@ -405,6 +431,7 @@ class ContextEngine:
         candidates.append(self._turn_fence_item(turn_fence_rules))
         candidates += self._memory_items(request)
         candidates += self._goal_items(request)
+        candidates += self._caller_context_items(request)
         candidates += self._knowledge_items(request)
         candidates += self._tool_items(request)
         candidates += self._scratchpad_items(request)

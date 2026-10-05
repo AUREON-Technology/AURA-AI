@@ -41,6 +41,7 @@ from ..domain.errors import (
     UserConcurrencyLimitError,
 )
 from ..domain.events import TurnCompleted, TurnFailed, TurnStarted
+from ..domain.caller_context import CallerContext
 from ..domain.context import user_facing_citations
 from ..domain.engineering import EngineerRun, EngineerRunStatus
 from ..domain.identifiers import CorrelationId, EngineerRunId, SessionId, TurnId, UserId
@@ -135,6 +136,9 @@ class TurnRequest:
     #: from ``route``/``agent`` (``llm/workload.py``): Engineer -> coder pool at priority 2,
     #: voice and chat -> general-fast at priority 1. Background callers set it explicitly.
     workload: WorkloadClass | None = None
+    #: Evidence the calling system supplied for this turn (AR-5). DATA channel only: guarded
+    #: like retrieved chunks, fenced, and its presence taints the turn.
+    caller_context: tuple[CallerContext, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,6 +335,9 @@ class AIKernel:
             timings["guards_in"] = timings.get("guards_in", 0.0) + (
                 time.perf_counter() - stage_start
             ) * 1000.0
+        caller_context, context_quarantined = await self._guard_caller_context(request, turn_id)
+        quarantined_count += context_quarantined
+        tainted = tainted or bool(request.caller_context)
 
         # 6. Plan and execute --------------------------------------------------------
         tool_telemetry: list[ToolTelemetry] = []
@@ -399,6 +406,7 @@ class AIKernel:
                 context_window=self._context_window(),
                 max_output_tokens=request.max_output_tokens,
                 max_prompt_tokens=self._max_prompt_tokens(),
+                caller_context=caller_context,
             )
         )
         timings["context"] = (time.perf_counter() - stage_start) * 1000.0
@@ -494,7 +502,10 @@ class AIKernel:
         return TurnResult(
             text=answer,
             telemetry=telemetry,
-            citations=self._resolve_citations(assembled, retrieval),
+            # User-facing, as the stream path already was: `memory:`/`tool:`/`goal:` provenances
+            # are packing bookkeeping, and a caller validating citations (AR-5) must only ever
+            # see documents and the context ids it sent.
+            citations=self._resolve_citations(assembled, retrieval, user_facing=True),
             tool_calls=tuple(t.name for t in tool_telemetry),
             confidence=confidence,
             needs_confirmation=tuple(dict.fromkeys(needs_confirmation)),
@@ -562,6 +573,8 @@ class AIKernel:
                         strategy=retrieval.strategy,
                         duration_ms=retrieval.duration_ms,
                     )
+                caller_context, _ = await self._guard_caller_context(request, turn_id)
+                tainted = tainted or bool(request.caller_context)
 
                 tool_declarations = await self._tool_declarations(request)
                 tool_results: list[tuple[str, str]] = []
@@ -619,6 +632,7 @@ class AIKernel:
                         context_window=self._context_window(),
                         max_output_tokens=request.max_output_tokens,
                         max_prompt_tokens=self._max_prompt_tokens(),
+                        caller_context=caller_context,
                     )
                 )
 
@@ -1287,6 +1301,24 @@ class AIKernel:
             return ", ".join(names)
         shown = ", ".join(names[:max_names])
         return f"{shown}, ... ({len(names)} tools total)"
+
+    async def _guard_caller_context(
+        self, request: TurnRequest, turn_id: TurnId
+    ) -> tuple[tuple[CallerContext, ...], int]:
+        """Caller-supplied evidence through the same context guards as retrieved chunks (AR-5).
+
+        Returns the entries that passed and how many were quarantined. Whatever this returns,
+        the caller taints the turn when any context was *sent*: a side effect must never be
+        unlocked by evidence a calling system put in front of the model.
+        """
+        entries = request.caller_context
+        if not entries or self._deps.safety is None:
+            return entries, 0
+        accepted, quarantined, _ = await self._deps.safety.guard_context_items(
+            [(e.id, e.content()) for e in entries], user_id=request.user_id, turn_id=turn_id
+        )
+        kept = {provenance for provenance, _ in accepted}
+        return tuple(e for e in entries if e.id in kept), len(quarantined)
 
     @staticmethod
     def _resolve_citations(
