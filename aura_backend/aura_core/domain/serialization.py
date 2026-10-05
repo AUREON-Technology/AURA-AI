@@ -12,6 +12,10 @@ and all three come from one type walk over the dataclass annotations, so they ca
   value always produces the same bytes and therefore the same digest.
 * **Generated schema.** :func:`json_schema` derives the published JSON Schema from the same
   annotations the decoder enforces; ``docs/schemas/*.json`` is its output, checked by a test.
+* **Additive evolution.** A field added after values were already stored and digested is
+  declared with ``field(default=..., metadata=ADDED_FIELD)``: it is left out of the encoding while
+  it holds its default, so every value written before the field existed keeps its exact bytes and
+  digest (an approval bound to that digest still binds), and decodes as before.
 
 Supported annotations: ``str``, ``int``, ``float``, ``bool``, ``Any`` (JSON value), enums (string
 enums by value, integer enums by lower-case name), frozen dataclasses, ``UntrustedText``,
@@ -35,6 +39,7 @@ from .errors import ValidationError
 from .untrusted import MAX_UNTRUSTED_CHARS, UntrustedText
 
 __all__ = [
+    "ADDED_FIELD",
     "to_data",
     "from_data",
     "canonical_json",
@@ -43,6 +48,10 @@ __all__ = [
 ]
 
 T = TypeVar("T")
+
+#: ``dataclasses.field`` metadata for a field added to an already-stored type (see the module
+#: docstring): omitted from the encoding while equal to its default.
+ADDED_FIELD: Mapping[str, Any] = {"omit_default": True}
 
 
 # --------------------------------------------------------------------------------------- encode
@@ -55,7 +64,8 @@ def to_data(value: Any) -> Any:
     if isinstance(value, enum.Enum):
         return value.name.lower() if isinstance(value, int) else value.value
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return {f.name: to_data(getattr(value, f.name)) for f in _fields(type(value))}
+        return {f.name: to_data(getattr(value, f.name)) for f in _fields(type(value))
+                if not _omitted(f, getattr(value, f.name))}
     if isinstance(value, frozenset):
         return sorted((to_data(v) for v in value), key=canonical_json)
     if isinstance(value, (tuple, list)):
@@ -294,6 +304,13 @@ def _fields(tp: type) -> tuple[dataclasses.Field, ...]:
 @lru_cache(maxsize=None)
 def _hints(tp: type) -> dict[str, Any]:
     return get_type_hints(tp)
+
+
+def _omitted(f: dataclasses.Field, value: Any) -> bool:
+    if not f.metadata.get("omit_default"):
+        return False
+    default = f.default if f.default is not dataclasses.MISSING else f.default_factory()  # type: ignore[misc]
+    return value == default
 
 
 def _has_default(f: dataclasses.Field) -> bool:

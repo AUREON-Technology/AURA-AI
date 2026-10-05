@@ -6,7 +6,9 @@ bound. Nothing -- above all no model output -- may build SQL text any other way.
 the code (AST) rather than trusting review:
 
 * the adaptation engine (``aura_core/adaptation/``) makes no driver call at all -- it produces
-  data; executing it is an adapter's job;
+  data; executing it is an adapter's job. The one method-name collision is listed in
+  ``NOT_DRIVER_CALLS``: the evaluation gate (AP8) dispatching a candidate's tool through
+  ``ToolRegistry.execute``, which reaches a system only via ``ReadConnector.read``;
 * in ``aura_core/adapters/connectors/``, the statement passed to a driver call is a string
   literal, an UPPER_CASE module constant, or the ``.text`` of ``render_sql(...)`` -- except in
   the functions listed in ``REVIEWED_BUILDERS``, each of which interpolates only quoted catalog
@@ -29,6 +31,13 @@ _CONSTANT = re.compile(r"^[A-Z][A-Z0-9_]*$")
 REVIEWED_BUILDERS = {
     ("postgres_catalog.py", "capture_catalog"): "SET LOCAL statement_timeout from an int()",
     ("postgres_catalog.py", "_profile_table"): "profiling aggregates over _sql_ident-quoted catalog names",
+}
+
+
+#: (file, function) -> why a call named like a driver method is not one. Reviewed like the above.
+NOT_DRIVER_CALLS = {
+    ("gate.py", "_execute"): "ToolRegistry.execute: validation, ToolPolicy, taint, audit; the tool "
+                             "reads only through ReadConnector.read with a compiled template",
 }
 
 
@@ -94,6 +103,8 @@ def test_the_adaptation_engine_never_calls_a_driver() -> None:
     for path in sorted((CORE / "adaptation").rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for function, call in _driver_calls(tree):
+            if (path.name, function) in NOT_DRIVER_CALLS:
+                continue
             offenders.append(f"{path.relative_to(CORE)}:{call.lineno} ({function}) calls .{call.func.attr}()")
     assert not offenders, "the adaptation engine produces data; adapters execute it:\n  " + "\n  ".join(offenders)
 
@@ -138,3 +149,17 @@ def test_the_checker_catches_an_interpolated_statement() -> None:
                 if fn == "bad"}
     assert verdicts == {"bad": False}
     assert all(_safe_statement(call.args[0], rendered, set()) for fn, call in _driver_calls(sample) if fn == "good")
+
+
+def test_the_not_driver_exemption_stays_a_tool_registry_call() -> None:
+    """The exemption names a function, so pin what the function's driver-named calls are: the
+    gate's throwaway ToolRegistry (``self.tools``) and nothing else."""
+    for (file, function), _why in NOT_DRIVER_CALLS.items():
+        path = next((CORE / "adaptation").rglob(file))
+        calls = [call for name, call in _driver_calls(ast.parse(path.read_text(encoding="utf-8"))) if name == function]
+        assert calls, f"{file}:{function} no longer exists; drop its exemption"
+        for call in calls:
+            receiver = call.func.value
+            assert isinstance(receiver, ast.Attribute) and receiver.attr == "tools" \
+                and isinstance(receiver.value, ast.Name) and receiver.value.id == "self", \
+                f"{file}:{call.lineno} calls .{call.func.attr}() on something other than self.tools"

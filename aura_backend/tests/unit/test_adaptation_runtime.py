@@ -2,7 +2,8 @@
 
 No database, no network, no model: blueprints are compiled from the committed pilot goldens, the
 connected system is a fake ``ReadConnector``, and every generated call goes through the real
-``ToolRegistry`` + ``ToolPolicy``. The live half (the atomic pointer on a real Postgres) is
+``ToolRegistry`` + ``ToolPolicy``. Evaluation runs the real AP8 gate against the in-memory replica
+of the pilot's recorded rows (``tests/unit/test_adaptation_gate.py`` covers the gate itself). The live half (the atomic pointer on a real Postgres) is
 ``tests/load/test_adaptation_runtime_postgres.py``.
 """
 
@@ -18,6 +19,7 @@ from typing import Any
 import pytest
 
 from aura_core.adaptation.deployment import BlueprintDeployment
+from aura_core.adaptation.gate import BlueprintGate
 from aura_core.adaptation.runtime import (
     ActiveBlueprint,
     BlueprintToolMaterializer,
@@ -25,6 +27,7 @@ from aura_core.adaptation.runtime import (
     generated_agent_spec,
     model_facing_description,
 )
+from aura_core.adapters.connectors.memory import InMemoryReadConnector
 from aura_core.adapters.memory_adaptation import InMemoryBlueprintStore
 from aura_core.agents.registry import AgentSpec, build_default_agent_registry
 from aura_core.domain.blueprint import BlueprintState
@@ -34,6 +37,7 @@ from aura_core.domain.errors import (
     ApprovalRequiredError,
     ConflictError,
     DependencyUnavailableError,
+    NotFoundError,
     ValidationError,
 )
 from aura_core.domain.identifiers import ToolCallId, UserId
@@ -47,15 +51,35 @@ from aura_core.tools.registry import ToolRegistry
 BACKEND = Path(__file__).resolve().parents[2]
 
 
-def _goldens():
-    spec = importlib.util.spec_from_file_location("pilot_twin_goldens", BACKEND / "scripts" / "pilot_twin_goldens.py")
+def _script(name: str):
+    spec = importlib.util.spec_from_file_location(name, BACKEND / "scripts" / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-GOLDENS = _goldens()
+GOLDENS = _script("pilot_twin_goldens")
 HR = GOLDENS.compile_pilot("hr")
+HR_TWIN = GOLDENS.twin_for("hr")
+DISCOVERY = _script("pilot_discovery_goldens")
+HR_ROWS = DISCOVERY.load_rows("hr")
+
+
+async def open_replica(connector_id: str):
+    """The pilot's recorded rows; its API has no replica (those cases are ``not_run``)."""
+    if connector_id == "hr-db":
+        return InMemoryReadConnector(connector_id, HR_ROWS, enum_orders=DISCOVERY.enum_orders("hr"))
+    raise NotFoundError("no replica for this connector")
+
+
+class Twins:
+    async def get(self, version: int):
+        return (None, HR_TWIN) if version == HR_TWIN.version else None
+
+
+def make_gate(clock, **overrides) -> BlueprintGate:
+    options = dict(open_connector=open_replica, new_registry=lambda: ToolRegistry(policy=ToolPolicy()), clock=clock)
+    return BlueprintGate(**{**options, **overrides})
 
 
 def _blueprint(version: int):
@@ -114,7 +138,7 @@ def world(audit, clock):
     materializer = BlueprintToolMaterializer(tools=tools, open_connector=open_connector, grace_s=0)
     deployment = BlueprintDeployment(
         project_id="p0", store=store, approvals=approvals, agents=agents, materializer=materializer,
-        clock=clock, allow_ungated=True, audit=audit,
+        clock=clock, gate=make_gate(clock), twins=Twins(), audit=audit,
     )
     return type("World", (), dict(tools=tools, agents=agents, approvals=approvals, store=store,
                                   deployment=deployment, connector=connector, open=open_connector,
@@ -302,11 +326,20 @@ class TestLifecycle:
         for action in ("evaluate", "request_approval", "approve", "deploy", "rollback"):
             assert f"adaptation.blueprint.{action}" in actions
 
-    async def test_no_ungated_evaluation_unless_allowed(self, world) -> None:
+    async def test_evaluation_needs_a_gate_and_its_twin(self, world) -> None:
         await world.store.append(_record(1))
-        world.deployment._allow_ungated = False
-        with pytest.raises(ConflictError, match="AP8"):
+        world.deployment._gate = None
+        with pytest.raises(ConflictError, match="no evaluation gate"):
             await world.deployment.evaluate(1, by="sa@example.com")
+        world.deployment._gate = make_gate(world.deployment._clock)
+        class NoTwins:
+            async def get(self, version: int):
+                return None
+
+        world.deployment._twins = NoTwins()
+        with pytest.raises(ConflictError, match="no longer stored"):
+            await world.deployment.evaluate(1, by="sa@example.com")
+        assert (await world.store.get("p0", 1)).state is BlueprintState.PROPOSED
 
     async def test_an_approval_binds_one_digest(self, world) -> None:
         await world.store.append(_record(1))
@@ -421,9 +454,11 @@ def test_the_lifecycle_through_the_api(monkeypatch) -> None:
     from aura_core.container import Container
 
     monkeypatch.setenv("AURA_ADAPTATION_ENABLED", "true")
-    monkeypatch.setenv("AURA_ADAPTATION_ALLOW_UNGATED_DEPLOY", "true")
     monkeypatch.setenv("AURA_ADAPTATION_TOOL_GRACE_S", "0")
     container = Container(load_settings(refresh=True, validate=False))
+    # The container's gate reads the registered connectors; this test registers none, so the gate
+    # reads the pilot's recorded rows instead (production: the connector itself is the replica).
+    container.blueprint_deployment._gate._open = open_replica
     reports = {}
     for kind in ("postgres", "openapi"):
         from aura_core.domain.discovery import DiscoveryReport
@@ -452,7 +487,12 @@ def test_the_lifecycle_through_the_api(monkeypatch) -> None:
         client.post("/api/v3/admin/twin/snapshot", json={"connector_ids": ["hr-db", "hr-api"]})
         for version in (1, 2):
             assert client.post("/api/v3/admin/twin/versions/1/compile").status_code == 201
-            assert client.post(f"/api/v3/admin/blueprints/{version}/evaluate").status_code == 200
+            evaluated = client.post(f"/api/v3/admin/blueprints/{version}/evaluate")
+            assert evaluated.status_code == 200, evaluated.text
+            assert evaluated.json()["evaluation"]["passed"] is True
+            assert evaluated.json()["summary"]["state"] == "evaluated"
+            report = client.get(f"/api/v3/admin/blueprints/{version}/evaluation").json()
+            assert report["summary"]["suites"]["tool_contract"]["ran"] == 23
             approval = client.post(f"/api/v3/admin/blueprints/{version}/request-approval").json()["approval"]
             assert client.post(f"/api/v3/admin/approvals/{approval['id']}/decide",
                                json={"approved": True}).status_code == 200

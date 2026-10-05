@@ -1,0 +1,1317 @@
+{
+  "shop.SupplierContacts": [
+    {
+      "ContactEmail": "orders@paper-ink.example",
+      "SupplierName": "Paper & Ink GmbH"
+    },
+    {
+      "ContactEmail": "sales@toyworks.example",
+      "SupplierName": "ToyWorks Ltd"
+    }
+  ],
+  "shop.customers": [
+    {
+      "country": "FR",
+      "created_at": "2025-06-04T10:00:00+00:00",
+      "email": "customer1@shop.example",
+      "full_name": "Customer 1",
+      "id": 1
+    },
+    {
+      "country": "EG",
+      "created_at": "2025-06-07T10:00:00+00:00",
+      "email": "customer2@shop.example",
+      "full_name": "Customer 2",
+      "id": 2
+    },
+    {
+      "country": "US",
+      "created_at": "2025-06-10T10:00:00+00:00",
+      "email": "customer3@shop.example",
+      "full_name": "Customer 3",
+      "id": 3
+    },
+    {
+      "country": "GB",
+      "created_at": "2025-06-13T10:00:00+00:00",
+      "email": "customer4@shop.example",
+      "full_name": "Customer 4",
+      "id": 4
+    },
+    {
+      "country": "DE",
+      "created_at": "2025-06-16T10:00:00+00:00",
+      "email": "customer5@shop.example",
+      "full_name": "Customer 5",
+      "id": 5
+    },
+    {
+      "country": "FR",
+      "created_at": "2025-06-19T10:00:00+00:00",
+      "email": "customer6@shop.example",
+      "full_name": "Customer 6",
+      "id": 6
+    },
+    {
+      "country": "EG",
+      "created_at": "2025-06-22T10:00:00+00:00",
+      "email": "customer7@shop.example",
+      "full_name": "Customer 7",
+      "id": 7
+    },
+    {
+      "country": "US",
+      "created_at": "2025-06-25T10:00:00+00:00",
+      "email": "customer8@shop.example",
+      "full_name": "Customer 8",
+      "id": 8
+    },
+    {
+      "country": "GB",
+      "created_at": "2025-06-28T10:00:00+00:00",
+      "email": "customer9@shop.example",
+      "full_name": "Customer 9",
+      "id": 9
+    },
+    {
+      "country": "DE",
+      "created_at": "2025-07-01T10:00:00+00:00",
+      "email": "customer10@shop.example",
+      "full_name": "Customer 10",
+      "id": 10
+    },
+    {
+      "country": "FR",
+      "created_at": "2025-07-04T10:00:00+00:00",
+      "email": "customer11@shop.example",
+      "full_name": "Customer 11",
+      "id": 11
+    },
+    {
+      "country": "EG",
+      "created_at": "2025-07-07T10:00:00+00:00",
+      "email": "customer12@shop.example",
+      "full_name": "Customer 12",
+      "id": 12
+    },
+    {
+      "country": "US",
+      "created_at": "2025-07-10T10:00:00+00:00",
+      "email": "customer13@shop.example",
+      "full_name": "Customer 13",
+      "id": 13
+    },
+    {
+      "country": "GB",
+      "created_at": "2025-07-13T10:00:00+00:00",
+      "email": "customer14@shop.example",
+      "full_name": "Customer 14",
+      "id": 14
+    },
+    {
+      "country": "DE",
+      "created_at": "2025-07-16T10:00:00+00:00",
+      "email": "customer15@shop.example",
+      "full_name": "Customer 15",
+      "id": 15
+    },
+    {
+      "country": "FR",
+      "created_at": "2025-07-19T10:00:00+00:00",
+      "email": "customer16@shop.example",
+      "full_name": "Customer 16",
+      "id": 16
+    },
+    {
+      "country": "EG",
+      "created_at": "2025-07-22T10:00:00+00:00",
+      "email": "customer17@shop.example",
+      "full_name": "Customer 17",
+      "id": 17
+    },
+    {
+      "country": "US",
+      "created_at": "2025-07-25T10:00:00+00:00",
+      "email": "customer18@shop.example",
+      "full_name": "Customer 18",
+      "id": 18
+    },
+    {
+      "country": "GB",
+      "created_at": "2025-07-28T10:00:00+00:00",
+      "email": "customer19@shop.example",
+      "full_name": "Customer 19",
+      "id": 19
+    },
+    {
+      "country": "DE",
+      "created_at": "2025-07-31T10:00:00+00:00",
+      "email": "customer20@shop.example",
+      "full_name": "Customer 20",
+      "id": 20
+    },
+    {
+      "country": "FR",
+      "created_at": "2025-08-03T10:00:00+00:00",
+      "email": "customer21@shop.example",
+      "full_name": "Customer 21",
+      "id": 21
+    },
+    {
+      "country": "EG",
+      "created_at": "2025-08-06T10:00:00+00:00",
+      "email": "customer22@shop.example",
+      "full_name": "Customer 22",
+      "id": 22
+    },
+    {
+      "country": "US",
+      "created_at": "2025-08-09T10:00:00+00:00",
+      "email": "customer23@shop.example",
+      "full_name": "Customer 23",
+      "id": 23
+    },
+    {
+      "country": "GB",
+      "created_at": "2025-08-12T10:00:00+00:00",
+      "email": "customer24@shop.example",
+      "full_name": "Customer 24",
+      "id": 24
+    },
+    {
+      "country": "DE",
+      "created_at": "2025-08-15T10:00:00+00:00",
+      "email": "customer25@shop.example",
+      "full_name": "Customer 25",
+      "id": 25
+    }
+  ],
+  "shop.order_items": [
+    {
+      "order_id": 1,
+      "qty": 1,
+      "sku": "BOK-0006",
+      "unit_price": 20.0
+    },
+    {
+      "order_id": 1,
+      "qty": 1,
+      "sku": "KIT-0005",
+      "unit_price": 17.5
+    },
+    {
+      "order_id": 2,
+      "qty": 3,
+      "sku": "BOK-0009",
+      "unit_price": 27.5
+    },
+    {
+      "order_id": 2,
+      "qty": 3,
+      "sku": "TOY-0007",
+      "unit_price": 22.5
+    },
+    {
+      "order_id": 3,
+      "qty": 2,
+      "sku": "BOK-0012",
+      "unit_price": 35.0
+    },
+    {
+      "order_id": 4,
+      "qty": 1,
+      "sku": "BOK-0015",
+      "unit_price": 42.5
+    },
+    {
+      "order_id": 4,
+      "qty": 1,
+      "sku": "KIT-0014",
+      "unit_price": 40.0
+    },
+    {
+      "order_id": 5,
+      "qty": 3,
+      "sku": "BOK-0018",
+      "unit_price": 50.0
+    },
+    {
+      "order_id": 5,
+      "qty": 3,
+      "sku": "TOY-0016",
+      "unit_price": 45.0
+    },
+    {
+      "order_id": 6,
+      "qty": 2,
+      "sku": "KIT-0002",
+      "unit_price": 10.0
+    },
+    {
+      "order_id": 7,
+      "qty": 1,
+      "sku": "KIT-0005",
+      "unit_price": 17.5
+    },
+    {
+      "order_id": 7,
+      "qty": 1,
+      "sku": "TOY-0004",
+      "unit_price": 15.0
+    },
+    {
+      "order_id": 8,
+      "qty": 3,
+      "sku": "BOK-0009",
+      "unit_price": 27.5
+    },
+    {
+      "order_id": 8,
+      "qty": 3,
+      "sku": "KIT-0008",
+      "unit_price": 25.0
+    },
+    {
+      "order_id": 9,
+      "qty": 2,
+      "sku": "KIT-0011",
+      "unit_price": 32.5
+    },
+    {
+      "order_id": 10,
+      "qty": 1,
+      "sku": "KIT-0014",
+      "unit_price": 40.0
+    },
+    {
+      "order_id": 10,
+      "qty": 1,
+      "sku": "TOY-0013",
+      "unit_price": 37.5
+    },
+    {
+      "order_id": 11,
+      "qty": 3,
+      "sku": "BOK-0018",
+      "unit_price": 50.0
+    },
+    {
+      "order_id": 11,
+      "qty": 3,
+      "sku": "KIT-0017",
+      "unit_price": 47.5
+    },
+    {
+      "order_id": 12,
+      "qty": 2,
+      "sku": "TOY-0001",
+      "unit_price": 7.5
+    },
+    {
+      "order_id": 13,
+      "qty": 1,
+      "sku": "BOK-0006",
+      "unit_price": 20.0
+    },
+    {
+      "order_id": 13,
+      "qty": 1,
+      "sku": "TOY-0004",
+      "unit_price": 15.0
+    },
+    {
+      "order_id": 14,
+      "qty": 3,
+      "sku": "KIT-0008",
+      "unit_price": 25.0
+    },
+    {
+      "order_id": 14,
+      "qty": 3,
+      "sku": "TOY-0007",
+      "unit_price": 22.5
+    },
+    {
+      "order_id": 15,
+      "qty": 2,
+      "sku": "TOY-0010",
+      "unit_price": 30.0
+    },
+    {
+      "order_id": 16,
+      "qty": 1,
+      "sku": "BOK-0015",
+      "unit_price": 42.5
+    },
+    {
+      "order_id": 16,
+      "qty": 1,
+      "sku": "TOY-0013",
+      "unit_price": 37.5
+    },
+    {
+      "order_id": 17,
+      "qty": 3,
+      "sku": "KIT-0017",
+      "unit_price": 47.5
+    },
+    {
+      "order_id": 17,
+      "qty": 3,
+      "sku": "TOY-0016",
+      "unit_price": 45.0
+    },
+    {
+      "order_id": 18,
+      "qty": 2,
+      "sku": "BOK-0003",
+      "unit_price": 12.5
+    },
+    {
+      "order_id": 19,
+      "qty": 1,
+      "sku": "BOK-0006",
+      "unit_price": 20.0
+    },
+    {
+      "order_id": 19,
+      "qty": 1,
+      "sku": "KIT-0005",
+      "unit_price": 17.5
+    },
+    {
+      "order_id": 20,
+      "qty": 3,
+      "sku": "BOK-0009",
+      "unit_price": 27.5
+    },
+    {
+      "order_id": 20,
+      "qty": 3,
+      "sku": "TOY-0007",
+      "unit_price": 22.5
+    },
+    {
+      "order_id": 21,
+      "qty": 2,
+      "sku": "BOK-0012",
+      "unit_price": 35.0
+    },
+    {
+      "order_id": 22,
+      "qty": 1,
+      "sku": "BOK-0015",
+      "unit_price": 42.5
+    },
+    {
+      "order_id": 22,
+      "qty": 1,
+      "sku": "KIT-0014",
+      "unit_price": 40.0
+    },
+    {
+      "order_id": 23,
+      "qty": 3,
+      "sku": "BOK-0018",
+      "unit_price": 50.0
+    },
+    {
+      "order_id": 23,
+      "qty": 3,
+      "sku": "TOY-0016",
+      "unit_price": 45.0
+    },
+    {
+      "order_id": 24,
+      "qty": 2,
+      "sku": "KIT-0002",
+      "unit_price": 10.0
+    },
+    {
+      "order_id": 25,
+      "qty": 1,
+      "sku": "KIT-0005",
+      "unit_price": 17.5
+    },
+    {
+      "order_id": 25,
+      "qty": 1,
+      "sku": "TOY-0004",
+      "unit_price": 15.0
+    },
+    {
+      "order_id": 26,
+      "qty": 3,
+      "sku": "BOK-0009",
+      "unit_price": 27.5
+    },
+    {
+      "order_id": 26,
+      "qty": 3,
+      "sku": "KIT-0008",
+      "unit_price": 25.0
+    },
+    {
+      "order_id": 27,
+      "qty": 2,
+      "sku": "KIT-0011",
+      "unit_price": 32.5
+    },
+    {
+      "order_id": 28,
+      "qty": 1,
+      "sku": "KIT-0014",
+      "unit_price": 40.0
+    },
+    {
+      "order_id": 28,
+      "qty": 1,
+      "sku": "TOY-0013",
+      "unit_price": 37.5
+    },
+    {
+      "order_id": 29,
+      "qty": 3,
+      "sku": "BOK-0018",
+      "unit_price": 50.0
+    },
+    {
+      "order_id": 29,
+      "qty": 3,
+      "sku": "KIT-0017",
+      "unit_price": 47.5
+    },
+    {
+      "order_id": 30,
+      "qty": 2,
+      "sku": "TOY-0001",
+      "unit_price": 7.5
+    },
+    {
+      "order_id": 31,
+      "qty": 1,
+      "sku": "BOK-0006",
+      "unit_price": 20.0
+    },
+    {
+      "order_id": 31,
+      "qty": 1,
+      "sku": "TOY-0004",
+      "unit_price": 15.0
+    },
+    {
+      "order_id": 32,
+      "qty": 3,
+      "sku": "KIT-0008",
+      "unit_price": 25.0
+    },
+    {
+      "order_id": 32,
+      "qty": 3,
+      "sku": "TOY-0007",
+      "unit_price": 22.5
+    },
+    {
+      "order_id": 33,
+      "qty": 2,
+      "sku": "TOY-0010",
+      "unit_price": 30.0
+    },
+    {
+      "order_id": 34,
+      "qty": 1,
+      "sku": "BOK-0015",
+      "unit_price": 42.5
+    },
+    {
+      "order_id": 34,
+      "qty": 1,
+      "sku": "TOY-0013",
+      "unit_price": 37.5
+    },
+    {
+      "order_id": 35,
+      "qty": 3,
+      "sku": "KIT-0017",
+      "unit_price": 47.5
+    },
+    {
+      "order_id": 35,
+      "qty": 3,
+      "sku": "TOY-0016",
+      "unit_price": 45.0
+    }
+  ],
+  "shop.orders": [
+    {
+      "customer_id": 2,
+      "id": 1,
+      "placed_at": "2026-01-03T12:00:00+00:00",
+      "status": "paid",
+      "total": 37.5
+    },
+    {
+      "customer_id": 3,
+      "id": 2,
+      "placed_at": "2026-01-04T12:00:00+00:00",
+      "status": "shipped",
+      "total": 150.0
+    },
+    {
+      "customer_id": 4,
+      "id": 3,
+      "placed_at": "2026-01-05T12:00:00+00:00",
+      "status": "delivered",
+      "total": 70.0
+    },
+    {
+      "customer_id": 5,
+      "id": 4,
+      "placed_at": "2026-01-06T12:00:00+00:00",
+      "status": "delivered",
+      "total": 82.5
+    },
+    {
+      "customer_id": 6,
+      "id": 5,
+      "placed_at": "2026-01-07T12:00:00+00:00",
+      "status": "cancelled",
+      "total": 285.0
+    },
+    {
+      "customer_id": 7,
+      "id": 6,
+      "placed_at": "2026-01-08T12:00:00+00:00",
+      "status": "returned",
+      "total": 20.0
+    },
+    {
+      "customer_id": 8,
+      "id": 7,
+      "placed_at": "2026-01-09T12:00:00+00:00",
+      "status": "placed",
+      "total": 32.5
+    },
+    {
+      "customer_id": 9,
+      "id": 8,
+      "placed_at": "2026-01-10T12:00:00+00:00",
+      "status": "paid",
+      "total": 157.5
+    },
+    {
+      "customer_id": 10,
+      "id": 9,
+      "placed_at": "2026-01-11T12:00:00+00:00",
+      "status": "shipped",
+      "total": 65.0
+    },
+    {
+      "customer_id": 11,
+      "id": 10,
+      "placed_at": "2026-01-12T12:00:00+00:00",
+      "status": "delivered",
+      "total": 77.5
+    },
+    {
+      "customer_id": 12,
+      "id": 11,
+      "placed_at": "2026-01-13T12:00:00+00:00",
+      "status": "delivered",
+      "total": 292.5
+    },
+    {
+      "customer_id": 13,
+      "id": 12,
+      "placed_at": "2026-01-14T12:00:00+00:00",
+      "status": "cancelled",
+      "total": 15.0
+    },
+    {
+      "customer_id": 14,
+      "id": 13,
+      "placed_at": "2026-01-15T12:00:00+00:00",
+      "status": "returned",
+      "total": 35.0
+    },
+    {
+      "customer_id": 15,
+      "id": 14,
+      "placed_at": "2026-01-16T12:00:00+00:00",
+      "status": "placed",
+      "total": 142.5
+    },
+    {
+      "customer_id": 16,
+      "id": 15,
+      "placed_at": "2026-01-17T12:00:00+00:00",
+      "status": "paid",
+      "total": 60.0
+    },
+    {
+      "customer_id": 17,
+      "id": 16,
+      "placed_at": "2026-01-18T12:00:00+00:00",
+      "status": "shipped",
+      "total": 80.0
+    },
+    {
+      "customer_id": 18,
+      "id": 17,
+      "placed_at": "2026-01-19T12:00:00+00:00",
+      "status": "delivered",
+      "total": 277.5
+    },
+    {
+      "customer_id": 19,
+      "id": 18,
+      "placed_at": "2026-01-20T12:00:00+00:00",
+      "status": "delivered",
+      "total": 25.0
+    },
+    {
+      "customer_id": 20,
+      "id": 19,
+      "placed_at": "2026-01-21T12:00:00+00:00",
+      "status": "cancelled",
+      "total": 37.5
+    },
+    {
+      "customer_id": 21,
+      "id": 20,
+      "placed_at": "2026-01-22T12:00:00+00:00",
+      "status": "returned",
+      "total": 150.0
+    },
+    {
+      "customer_id": 22,
+      "id": 21,
+      "placed_at": "2026-01-23T12:00:00+00:00",
+      "status": "placed",
+      "total": 70.0
+    },
+    {
+      "customer_id": 23,
+      "id": 22,
+      "placed_at": "2026-01-24T12:00:00+00:00",
+      "status": "paid",
+      "total": 82.5
+    },
+    {
+      "customer_id": 24,
+      "id": 23,
+      "placed_at": "2026-01-25T12:00:00+00:00",
+      "status": "shipped",
+      "total": 285.0
+    },
+    {
+      "customer_id": 25,
+      "id": 24,
+      "placed_at": "2026-01-26T12:00:00+00:00",
+      "status": "delivered",
+      "total": 20.0
+    },
+    {
+      "customer_id": 1,
+      "id": 25,
+      "placed_at": "2026-01-27T12:00:00+00:00",
+      "status": "delivered",
+      "total": 32.5
+    },
+    {
+      "customer_id": 2,
+      "id": 26,
+      "placed_at": "2026-01-28T12:00:00+00:00",
+      "status": "cancelled",
+      "total": 157.5
+    },
+    {
+      "customer_id": 3,
+      "id": 27,
+      "placed_at": "2026-01-29T12:00:00+00:00",
+      "status": "returned",
+      "total": 65.0
+    },
+    {
+      "customer_id": 4,
+      "id": 28,
+      "placed_at": "2026-01-30T12:00:00+00:00",
+      "status": "placed",
+      "total": 77.5
+    },
+    {
+      "customer_id": 5,
+      "id": 29,
+      "placed_at": "2026-01-31T12:00:00+00:00",
+      "status": "paid",
+      "total": 292.5
+    },
+    {
+      "customer_id": 6,
+      "id": 30,
+      "placed_at": "2026-02-01T12:00:00+00:00",
+      "status": "shipped",
+      "total": 15.0
+    },
+    {
+      "customer_id": 7,
+      "id": 31,
+      "placed_at": "2026-02-02T12:00:00+00:00",
+      "status": "delivered",
+      "total": 35.0
+    },
+    {
+      "customer_id": 8,
+      "id": 32,
+      "placed_at": "2026-02-03T12:00:00+00:00",
+      "status": "delivered",
+      "total": 142.5
+    },
+    {
+      "customer_id": 9,
+      "id": 33,
+      "placed_at": "2026-02-04T12:00:00+00:00",
+      "status": "cancelled",
+      "total": 60.0
+    },
+    {
+      "customer_id": 10,
+      "id": 34,
+      "placed_at": "2026-02-05T12:00:00+00:00",
+      "status": "returned",
+      "total": 80.0
+    },
+    {
+      "customer_id": 11,
+      "id": 35,
+      "placed_at": "2026-02-06T12:00:00+00:00",
+      "status": "placed",
+      "total": 277.5
+    }
+  ],
+  "shop.payments": [
+    {
+      "amount": 37.5,
+      "id": 1,
+      "method": "card",
+      "order_id": 1,
+      "paid_at": "2026-01-03T13:00:00+00:00"
+    },
+    {
+      "amount": 150.0,
+      "id": 2,
+      "method": "paypal",
+      "order_id": 2,
+      "paid_at": "2026-01-04T13:00:00+00:00"
+    },
+    {
+      "amount": 70.0,
+      "id": 3,
+      "method": "bank_transfer",
+      "order_id": 3,
+      "paid_at": "2026-01-05T13:00:00+00:00"
+    },
+    {
+      "amount": 82.5,
+      "id": 4,
+      "method": "card",
+      "order_id": 4,
+      "paid_at": "2026-01-06T13:00:00+00:00"
+    },
+    {
+      "amount": 20.0,
+      "id": 5,
+      "method": "paypal",
+      "order_id": 6,
+      "paid_at": "2026-01-08T13:00:00+00:00"
+    },
+    {
+      "amount": 157.5,
+      "id": 6,
+      "method": "card",
+      "order_id": 8,
+      "paid_at": "2026-01-10T13:00:00+00:00"
+    },
+    {
+      "amount": 65.0,
+      "id": 7,
+      "method": "card",
+      "order_id": 9,
+      "paid_at": "2026-01-11T13:00:00+00:00"
+    },
+    {
+      "amount": 77.5,
+      "id": 8,
+      "method": "paypal",
+      "order_id": 10,
+      "paid_at": "2026-01-12T13:00:00+00:00"
+    },
+    {
+      "amount": 292.5,
+      "id": 9,
+      "method": "bank_transfer",
+      "order_id": 11,
+      "paid_at": "2026-01-13T13:00:00+00:00"
+    },
+    {
+      "amount": 35.0,
+      "id": 10,
+      "method": "card",
+      "order_id": 13,
+      "paid_at": "2026-01-15T13:00:00+00:00"
+    },
+    {
+      "amount": 60.0,
+      "id": 11,
+      "method": "bank_transfer",
+      "order_id": 15,
+      "paid_at": "2026-01-17T13:00:00+00:00"
+    },
+    {
+      "amount": 80.0,
+      "id": 12,
+      "method": "card",
+      "order_id": 16,
+      "paid_at": "2026-01-18T13:00:00+00:00"
+    },
+    {
+      "amount": 277.5,
+      "id": 13,
+      "method": "card",
+      "order_id": 17,
+      "paid_at": "2026-01-19T13:00:00+00:00"
+    },
+    {
+      "amount": 25.0,
+      "id": 14,
+      "method": "paypal",
+      "order_id": 18,
+      "paid_at": "2026-01-20T13:00:00+00:00"
+    },
+    {
+      "amount": 150.0,
+      "id": 15,
+      "method": "card",
+      "order_id": 20,
+      "paid_at": "2026-01-22T13:00:00+00:00"
+    },
+    {
+      "amount": 82.5,
+      "id": 16,
+      "method": "paypal",
+      "order_id": 22,
+      "paid_at": "2026-01-24T13:00:00+00:00"
+    },
+    {
+      "amount": 285.0,
+      "id": 17,
+      "method": "bank_transfer",
+      "order_id": 23,
+      "paid_at": "2026-01-25T13:00:00+00:00"
+    },
+    {
+      "amount": 20.0,
+      "id": 18,
+      "method": "card",
+      "order_id": 24,
+      "paid_at": "2026-01-26T13:00:00+00:00"
+    },
+    {
+      "amount": 32.5,
+      "id": 19,
+      "method": "card",
+      "order_id": 25,
+      "paid_at": "2026-01-27T13:00:00+00:00"
+    },
+    {
+      "amount": 65.0,
+      "id": 20,
+      "method": "bank_transfer",
+      "order_id": 27,
+      "paid_at": "2026-01-29T13:00:00+00:00"
+    },
+    {
+      "amount": 292.5,
+      "id": 21,
+      "method": "card",
+      "order_id": 29,
+      "paid_at": "2026-01-31T13:00:00+00:00"
+    },
+    {
+      "amount": 15.0,
+      "id": 22,
+      "method": "paypal",
+      "order_id": 30,
+      "paid_at": "2026-02-01T13:00:00+00:00"
+    },
+    {
+      "amount": 35.0,
+      "id": 23,
+      "method": "bank_transfer",
+      "order_id": 31,
+      "paid_at": "2026-02-02T13:00:00+00:00"
+    },
+    {
+      "amount": 142.5,
+      "id": 24,
+      "method": "card",
+      "order_id": 32,
+      "paid_at": "2026-02-03T13:00:00+00:00"
+    },
+    {
+      "amount": 80.0,
+      "id": 25,
+      "method": "paypal",
+      "order_id": 34,
+      "paid_at": "2026-02-05T13:00:00+00:00"
+    }
+  ],
+  "shop.products": [
+    {
+      "category": "books",
+      "price": 12.5,
+      "sku": "BOK-0003",
+      "stock": 21,
+      "title": "Product 3"
+    },
+    {
+      "category": "books",
+      "price": 20.0,
+      "sku": "BOK-0006",
+      "stock": 2,
+      "title": "Product 6"
+    },
+    {
+      "category": "books",
+      "price": 27.5,
+      "sku": "BOK-0009",
+      "stock": 23,
+      "title": "Product 9"
+    },
+    {
+      "category": "books",
+      "price": 35.0,
+      "sku": "BOK-0012",
+      "stock": 4,
+      "title": "Product 12"
+    },
+    {
+      "category": "books",
+      "price": 42.5,
+      "sku": "BOK-0015",
+      "stock": 25,
+      "title": "Product 15"
+    },
+    {
+      "category": "books",
+      "price": 50.0,
+      "sku": "BOK-0018",
+      "stock": 6,
+      "title": "Product 18"
+    },
+    {
+      "category": "kitchen",
+      "price": 10.0,
+      "sku": "KIT-0002",
+      "stock": 14,
+      "title": "Product 2"
+    },
+    {
+      "category": "kitchen",
+      "price": 17.5,
+      "sku": "KIT-0005",
+      "stock": 35,
+      "title": "Product 5"
+    },
+    {
+      "category": "kitchen",
+      "price": 25.0,
+      "sku": "KIT-0008",
+      "stock": 16,
+      "title": "Product 8"
+    },
+    {
+      "category": "kitchen",
+      "price": 32.5,
+      "sku": "KIT-0011",
+      "stock": 37,
+      "title": "Product 11"
+    },
+    {
+      "category": "kitchen",
+      "price": 40.0,
+      "sku": "KIT-0014",
+      "stock": 18,
+      "title": "Product 14"
+    },
+    {
+      "category": "kitchen",
+      "price": 47.5,
+      "sku": "KIT-0017",
+      "stock": 39,
+      "title": "Product 17"
+    },
+    {
+      "category": "toys",
+      "price": 7.5,
+      "sku": "TOY-0001",
+      "stock": 7,
+      "title": "Product 1"
+    },
+    {
+      "category": "toys",
+      "price": 15.0,
+      "sku": "TOY-0004",
+      "stock": 28,
+      "title": "Product 4"
+    },
+    {
+      "category": "toys",
+      "price": 22.5,
+      "sku": "TOY-0007",
+      "stock": 9,
+      "title": "Product 7"
+    },
+    {
+      "category": "toys",
+      "price": 30.0,
+      "sku": "TOY-0010",
+      "stock": 30,
+      "title": "Product 10"
+    },
+    {
+      "category": "toys",
+      "price": 37.5,
+      "sku": "TOY-0013",
+      "stock": 11,
+      "title": "Product 13"
+    },
+    {
+      "category": "toys",
+      "price": 45.0,
+      "sku": "TOY-0016",
+      "stock": 32,
+      "title": "Product 16"
+    }
+  ],
+  "shop.returns": [
+    {
+      "created_at": "2026-01-16T12:00:00+00:00",
+      "id": 1,
+      "order_id": 6,
+      "reason": "damaged in transit",
+      "sku": "KIT-0002"
+    },
+    {
+      "created_at": "2026-01-23T12:00:00+00:00",
+      "id": 2,
+      "order_id": 13,
+      "reason": "damaged in transit",
+      "sku": "BOK-0006"
+    },
+    {
+      "created_at": "2026-01-23T12:00:00+00:00",
+      "id": 3,
+      "order_id": 13,
+      "reason": "damaged in transit",
+      "sku": "TOY-0004"
+    },
+    {
+      "created_at": "2026-01-30T12:00:00+00:00",
+      "id": 4,
+      "order_id": 20,
+      "reason": "damaged in transit",
+      "sku": "BOK-0009"
+    },
+    {
+      "created_at": "2026-01-30T12:00:00+00:00",
+      "id": 5,
+      "order_id": 20,
+      "reason": "damaged in transit",
+      "sku": "TOY-0007"
+    },
+    {
+      "created_at": "2026-02-06T12:00:00+00:00",
+      "id": 6,
+      "order_id": 27,
+      "reason": "damaged in transit",
+      "sku": "KIT-0011"
+    },
+    {
+      "created_at": "2026-02-13T12:00:00+00:00",
+      "id": 7,
+      "order_id": 34,
+      "reason": "damaged in transit",
+      "sku": "BOK-0015"
+    },
+    {
+      "created_at": "2026-02-13T12:00:00+00:00",
+      "id": 8,
+      "order_id": 34,
+      "reason": "damaged in transit",
+      "sku": "TOY-0013"
+    }
+  ],
+  "shop.shipments": [
+    {
+      "carrier": "dhl",
+      "delivered_at": null,
+      "id": 1,
+      "order_id": 2,
+      "shipped_at": "2026-01-06T12:00:00+00:00",
+      "tracking_url": "https://track.example/2"
+    },
+    {
+      "carrier": "ups",
+      "delivered_at": "2026-01-10T12:00:00+00:00",
+      "id": 2,
+      "order_id": 3,
+      "shipped_at": "2026-01-07T12:00:00+00:00",
+      "tracking_url": "https://track.example/3"
+    },
+    {
+      "carrier": "dhl",
+      "delivered_at": "2026-01-11T12:00:00+00:00",
+      "id": 3,
+      "order_id": 4,
+      "shipped_at": "2026-01-08T12:00:00+00:00",
+      "tracking_url": "https://track.example/4"
+    },
+    {
+      "carrier": "dhl",
+      "delivered_at": "2026-01-13T12:00:00+00:00",
+      "id": 4,
+      "order_id": 6,
+      "shipped_at": "2026-01-10T12:00:00+00:00",
+      "tracking_url": "https://track.example/6"
+    },
+    {
+      "carrier": "ups",
+      "delivered_at": null,
+      "id": 5,
+      "order_id": 9,
+      "shipped_at": "2026-01-13T12:00:00+00:00",
+      "tracking_url": "https://track.example/9"
+    },
+    {
+      "carrier": "dhl",
+      "delivered_at": "2026-01-17T12:00:00+00:00",
+      "id": 6,
+      "order_id": 10,
+      "shipped_at": "2026-01-14T12:00:00+00:00",
+      "tracking_url": "https://track.example/10"
+    },
+    {
+      "carrier": "ups",
+      "delivered_at": "2026-01-18T12:00:00+00:00",
+      "id": 7,
+      "order_id": 11,
+      "shipped_at": "2026-01-15T12:00:00+00:00",
+      "tracking_url": "https://track.example/11"
+    },
+    {
+      "carrier": "ups",
+      "delivered_at": "2026-01-20T12:00:00+00:00",
+      "id": 8,
+      "order_id": 13,
+      "shipped_at": "2026-01-17T12:00:00+00:00",
+      "tracking_url": "https://track.example/13"
+    },
+    {
+      "carrier": "dhl",
+      "delivered_at": null,
+      "id": 9,
+      "order_id": 16,
+      "shipped_at": "2026-01-20T12:00:00+00:00",
+      "tracking_url": "https://track.example/16"
+    },
+    {
+      "carrier": "ups",
+      "delivered_at": "2026-01-24T12:00:00+00:00",
+      "id": 10,
+      "order_id": 17,
+      "shipped_at": "2026-01-21T12:00:00+00:00",
+      "tracking_url": "https://track.example/17"
+    },
+    {
+      "carrier": "dhl",
+      "delivered_at": "2026-01-25T12:00:00+00:00",
+      "id": 11,
+      "order_id": 18,
+      "shipped_at": "2026-01-22T12:00:00+00:00",
+      "tracking_url": "https://track.example/18"
+    },
+    {
+      "carrier": "dhl",
+      "delivered_at": "2026-01-27T12:00:00+00:00",
+      "id": 12,
+      "order_id": 20,
+      "shipped_at": "2026-01-24T12:00:00+00:00",
+      "tracking_url": "https://track.example/20"
+    },
+    {
+      "carrier": "ups",
+      "delivered_at": null,
+      "id": 13,
+      "order_id": 23,
+      "shipped_at": "2026-01-27T12:00:00+00:00",
+      "tracking_url": "https://track.example/23"
+    },
+    {
+      "carrier": "dhl",
+      "delivered_at": "2026-01-31T12:00:00+00:00",
+      "id": 14,
+      "order_id": 24,
+      "shipped_at": "2026-01-28T12:00:00+00:00",
+      "tracking_url": "https://track.example/24"
+    },
+    {
+      "carrier": "ups",
+      "delivered_at": "2026-02-01T12:00:00+00:00",
+      "id": 15,
+      "order_id": 25,
+      "shipped_at": "2026-01-29T12:00:00+00:00",
+      "tracking_url": "https://track.example/25"
+    },
+    {
+      "carrier": "ups",
+      "delivered_at": "2026-02-03T12:00:00+00:00",
+      "id": 16,
+      "order_id": 27,
+      "shipped_at": "2026-01-31T12:00:00+00:00",
+      "tracking_url": "https://track.example/27"
+    },
+    {
+      "carrier": "dhl",
+      "delivered_at": null,
+      "id": 17,
+      "order_id": 30,
+      "shipped_at": "2026-02-03T12:00:00+00:00",
+      "tracking_url": "https://track.example/30"
+    },
+    {
+      "carrier": "ups",
+      "delivered_at": "2026-02-07T12:00:00+00:00",
+      "id": 18,
+      "order_id": 31,
+      "shipped_at": "2026-02-04T12:00:00+00:00",
+      "tracking_url": "https://track.example/31"
+    },
+    {
+      "carrier": "dhl",
+      "delivered_at": "2026-02-08T12:00:00+00:00",
+      "id": 19,
+      "order_id": 32,
+      "shipped_at": "2026-02-05T12:00:00+00:00",
+      "tracking_url": "https://track.example/32"
+    },
+    {
+      "carrier": "dhl",
+      "delivered_at": "2026-02-10T12:00:00+00:00",
+      "id": 20,
+      "order_id": 34,
+      "shipped_at": "2026-02-07T12:00:00+00:00",
+      "tracking_url": "https://track.example/34"
+    }
+  ]
+}

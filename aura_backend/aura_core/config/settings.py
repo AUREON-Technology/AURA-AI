@@ -185,6 +185,17 @@ def _float(key: str, default: float, *, minimum: float | None = None, maximum: f
     return value
 
 
+def _choice(key: str, default: str, accepted: Sequence[str]) -> str:
+    raw = _env(key)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value not in accepted:
+        raise ConfigurationError(f"AURA_{key} must be one of {', '.join(accepted)}",
+                                 details={"value": raw, "accepted": list(accepted)})
+    return value
+
+
 def _list(key: str, default: Sequence[str] = ()) -> tuple[str, ...]:
     raw = _env(key)
     if raw is None:
@@ -1026,10 +1037,13 @@ class AdaptationSettings:
     """
 
     enabled: bool = False
-    #: AP7 only: allow a blueprint to be marked evaluated without the generated-suite gate, which
-    #: arrives with AP8. Off by default, so no blueprint can go live ungated in production; the
-    #: record says ``gate="ungated"`` when it was used.
-    allow_ungated_deploy: bool = False
+    #: The evaluation gate (AP8): ``enforce`` (a version that fails a gating suite stays
+    #: ``proposed``) or ``advisory`` (it runs and is recorded on the version and its approval
+    #: request, but does not block). AP7's ungated bypass is gone: every evaluation runs the gate.
+    gate_mode: str = "enforce"
+    #: The share of a gating suite's cases that must actually run (the rest had no reachable
+    #: replica or no value to call with) for the suite to count.
+    gate_min_coverage: float = 0.8
     #: Seconds the previous version's generated tools stay registered after a swap, so a turn
     #: that resolved them just before the swap can still finish.
     tool_grace_s: float = 300.0
@@ -1044,7 +1058,8 @@ class AdaptationSettings:
     def from_env(cls) -> "AdaptationSettings":
         return cls(
             enabled=_bool("ADAPTATION_ENABLED", False),
-            allow_ungated_deploy=_bool("ADAPTATION_ALLOW_UNGATED_DEPLOY", False),
+            gate_mode=_choice("ADAPTATION_GATE_MODE", "enforce", ("enforce", "advisory")),
+            gate_min_coverage=_float("ADAPTATION_GATE_MIN_COVERAGE", 0.8, minimum=0.0, maximum=1.0),
             tool_grace_s=max(0.0, _float("ADAPTATION_TOOL_GRACE_S", 300.0)),
             sync_s=max(1.0, _float("ADAPTATION_SYNC_S", 15.0)),
             labeler_enabled=_bool("ADAPTATION_LABELER_ENABLED", False),

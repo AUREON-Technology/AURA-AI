@@ -240,9 +240,9 @@ services:
       # degraded mode. On, it batches names through the self-hosted router, never a turn.
       AURA_ADAPTATION_LABELER_ENABLED: ${AURA_ADAPTATION_LABELER_ENABLED:-false}
       # Blueprint runtime (AP7): who may use generated agents/tools (empty = nobody), and the
-      # AP8 gate bypass -- false in every stack until the generated-suite gate exists.
+      # AP8 evaluation gate's mode -- enforce in every stack; advisory only as a rollback lever.
       AURA_PROJECT_DATA_ROLES: ${AURA_PROJECT_DATA_ROLES:-}
-      AURA_ADAPTATION_ALLOW_UNGATED_DEPLOY: ${AURA_ADAPTATION_ALLOW_UNGATED_DEPLOY:-false}
+      AURA_ADAPTATION_GATE_MODE: ${AURA_ADAPTATION_GATE_MODE:-enforce}
     secrets:
       [
         postgres_password,

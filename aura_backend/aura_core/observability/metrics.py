@@ -450,6 +450,23 @@ class Metrics:
             "blueprint_swap_seconds", "Time to register tools, move the pointer and swap agents.", (),
             buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5),
         )
+        self.blueprint_gate_pass_rate = self._gauge(
+            "blueprint_gate_pass_rate",
+            "Pass rate per suite of the latest evaluation-gate run (AP8), over the cases that ran.",
+            ("suite",),
+            multiprocess_mode="livemax",
+        )
+        self.blueprint_gate_coverage = self._gauge(
+            "blueprint_gate_coverage",
+            "Share of each suite's cases the latest gate run could execute (the rest had no replica).",
+            ("suite",),
+            multiprocess_mode="livemax",
+        )
+        self.blueprint_gate_runs = self._counter(
+            "blueprint_gate_runs_total",
+            "Evaluation-gate runs by outcome: passed, failed (blocked) or failed_advisory.",
+            ("outcome",),
+        )
         self.generated_tool_calls = self._counter(
             "generated_tool_calls_total",
             "Calls of blueprint-generated read tools by outcome (ok, error); the error rate is the "
@@ -712,6 +729,13 @@ class Metrics:
 
     def observe_blueprint_swap(self, seconds: float) -> None:
         self.blueprint_swap_seconds.observe(seconds)
+
+    def observe_gate(self, report: Any) -> None:
+        for suite in report.suites:
+            self.blueprint_gate_pass_rate.labels(suite=suite.name).set(suite.pass_rate)
+            self.blueprint_gate_coverage.labels(suite=suite.name).set(suite.coverage)
+        outcome = "passed" if report.passed else ("failed_advisory" if report.mode.value == "advisory" else "failed")
+        self.blueprint_gate_runs.labels(outcome=outcome).inc()
 
     def observe_generated_tool(self, outcome: str) -> None:
         self.generated_tool_calls.labels(outcome=outcome).inc()

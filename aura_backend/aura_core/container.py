@@ -691,19 +691,35 @@ class Container:
         )
 
     def _build_deployment(self) -> Any:
-        """Approve / deploy / roll back blueprints onto the live agent and tool registries (AP7)."""
+        """Evaluate / approve / deploy / roll back blueprints onto the live agent and tool
+        registries (AP7), behind the generated evaluation gate (AP8)."""
         from .adaptation.deployment import BlueprintDeployment
+        from .adaptation.gate import BlueprintGate
         from .adaptation.runtime import BlueprintToolMaterializer
+        from .domain.gate import GateMode
 
         adaptation = self.settings.adaptation
         materializer = BlueprintToolMaterializer(
             tools=self.tools, open_connector=self.connectors.open_active,
             grace_s=adaptation.tool_grace_s, metrics=self.metrics,
         )
+        # The gate's candidate runs in a throwaway registry under the *serving* policy (same
+        # allow/deny lists), so what it refuses is what a live turn would refuse. No metrics,
+        # events or audit sink: simulated calls are not user activity.
+        tool_settings = self.settings.tools
+        gate = BlueprintGate(
+            open_connector=self.connectors.open_active,
+            new_registry=lambda: ToolRegistry(
+                policy=ToolPolicy.from_settings(tool_settings), allowlist=tool_settings.allowlist,
+                denylist=tool_settings.denylist, default_timeout_s=tool_settings.default_timeout_s,
+            ),
+            clock=self.clock, mode=GateMode(adaptation.gate_mode),
+            min_coverage=adaptation.gate_min_coverage, metrics=self.metrics,
+        )
         deployment = BlueprintDeployment(
             project_id=self.twins.project_id, store=self.blueprint_store, approvals=self.approvals,
             agents=self.agents, materializer=materializer, clock=self.clock,
-            allow_ungated=adaptation.allow_ungated_deploy, audit=self.audit, metrics=self.metrics,
+            gate=gate, twins=self.twins, audit=self.audit, metrics=self.metrics,
         )
         self.register_readiness_check("blueprint", deployment.readiness)
         return deployment
