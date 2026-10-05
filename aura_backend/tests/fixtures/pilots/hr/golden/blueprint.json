@@ -512,7 +512,7 @@
     "project": {
       "id": "p0",
       "name": "Reference hr",
-      "twin_digest": "sha256:e6092fadf78d2b332b68680f78eb3a110c2c1dd44135669946707c39ea330a1b",
+      "twin_digest": "sha256:3a49a9adc50d18deb6de1852d3f13e06fe151c92c36ec46c7b4a4937e1a8642f",
       "twin_version": 1,
       "version": 1
     },
@@ -3169,7 +3169,7 @@
             "properties": {
               "department": {
                 "type": [
-                  "string",
+                  "object",
                   "null"
                 ]
               },
@@ -3225,7 +3225,7 @@
           "properties": {
             "department": {
               "type": [
-                "string",
+                "object",
                 "null"
               ]
             },

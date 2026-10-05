@@ -385,7 +385,7 @@
         "read_only": false,
         "ref": "schema:\"Department\"",
         "required": false,
-        "type": null
+        "type": "object"
       },
       "description": null,
       "extractor": "openapi",
