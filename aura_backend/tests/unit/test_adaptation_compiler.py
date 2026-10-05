@@ -246,6 +246,46 @@ def test_compilation_is_deterministic(compiled) -> None:
     assert again.blueprint.digest == compiled["hr"].blueprint.digest and again.dropped == compiled["hr"].dropped
 
 
+def test_an_enveloped_api_response_satisfies_its_compiled_output_schema() -> None:
+    """Responses wrapped as ``{data, meta}`` with nested ``$ref`` and nullable 3.1 members are
+    the common API shape. Before nested properties carried a JSON type they compiled as
+    ``string``, and the registry rejected every real response as ``invalid_output``."""
+    from aura_core.adaptation.twin import build_twin
+    from aura_core.adapters.connectors.openapi import artifacts_from_openapi
+    from aura_core.domain.blueprint import ConnectorRef
+    from aura_core.domain.connectors import ConnectorKind, IdentityMode
+    from aura_core.domain.discovery import DiscoveryBudget
+
+    spec = {
+        "openapi": "3.1.0", "info": {"title": "Experiments", "version": "1"},
+        "paths": {"/experiments/{experiment_id}": {"get": {
+            "operationId": "getExperiment",
+            "parameters": [{"name": "experiment_id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "responses": {"200": {"description": "ok", "content": {"application/json": {
+                "schema": {"$ref": "#/components/schemas/ExperimentResponse"}}}}},
+        }}},
+        "components": {"schemas": {
+            "ExperimentResponse": {"type": "object", "required": ["experiment", "meta"], "properties": {
+                "experiment": {"$ref": "#/components/schemas/Experiment"},
+                "meta": {"allOf": [{"$ref": "#/components/schemas/Meta"}]},
+                "warning": {"anyOf": [{"$ref": "#/components/schemas/Meta"}, {"type": "null"}]},
+                "count": {"type": ["integer", "null"]},
+            }},
+            "Experiment": {"type": "object", "properties": {"experiment_id": {"type": "string"}}},
+            "Meta": {"type": "object", "properties": {"request_id": {"type": "string"}}},
+        }},
+    }
+    report = artifacts_from_openapi("lab-api", spec, DiscoveryBudget())
+    twin = build_twin("p0", 1, [report]).twin
+    result = compile_blueprint(twin, plan_capabilities(twin, CapabilityRegistry.from_directory()),
+                               connectors=[ConnectorRef("lab-api", ConnectorKind.OPENAPI, IdentityMode.DELEGATED)],
+                               version=1)
+    (tool,) = [t for t in result.blueprint.tools if t.name == "api_get_experiment"]
+    response = {"experiment": {"experiment_id": "01J"}, "meta": {"request_id": "r1"}, "warning": None, "count": 3}
+    assert output_errors(dict(tool.output_schema), response) == []
+    assert output_errors(dict(tool.output_schema), {**response, "meta": "r1"}) != []  # still typed, not open
+
+
 class TestCompiledShape:
     def test_every_tool_is_a_bounded_read_with_matching_parameters(self, compiled) -> None:
         for result in compiled.values():

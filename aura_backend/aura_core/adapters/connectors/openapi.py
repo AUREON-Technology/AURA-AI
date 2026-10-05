@@ -57,6 +57,8 @@ MAX_SPEC_BYTES = 5 * 1024 * 1024
 MAX_READ_BYTES = 2 * 1024 * 1024
 _METHODS = ("get", "put", "post", "delete", "patch", "head", "options", "trace")
 _SCHEMA_REF = "#/components/schemas/"
+#: How many $ref/combinator hops a property type is followed through; also stops ref cycles.
+_MAX_TYPE_DEPTH = 8
 _PARAM_REF = "#/components/parameters/"
 
 Resolver = Callable[[str], Awaitable[list[str]]]
@@ -140,6 +142,64 @@ class _Mapper:
         self.issues.append(DiscoveryIssue("external_ref_ignored" if not target.startswith("#") else "unsupported_ref", owner))
         return None
 
+    def json_type(self, node: Any, depth: int = 0) -> tuple[str | None, bool]:
+        """(JSON type, nullable) that values of ``node`` take on the wire; (None, False) if unknown.
+
+        A property's own ``type`` is often absent: ``{"$ref": ...}``, ``allOf: [{"$ref": ...}]``,
+        ``anyOf: [X, {"type": "null"}]`` and OpenAPI 3.1's ``type: [X, "null"]`` all describe a
+        typed value without saying so directly. Recording None for them made the compiler type
+        every nested object as a string, so a tool rejected each real response (ADR-025). Pure:
+        refs are resolved against ``components/schemas`` only and record no issues (``ref``
+        does that, once per property).
+        """
+        if not isinstance(node, dict) or depth > _MAX_TYPE_DEPTH:
+            return None, False
+        nullable = node.get("nullable") is True
+        declared = node.get("type")
+        if isinstance(declared, str):
+            return declared, nullable or declared == "null"
+        if isinstance(declared, list):
+            concrete = {t for t in declared if isinstance(t, str) and t != "null"}
+            return (concrete.pop() if len(concrete) == 1 else None), nullable or "null" in declared
+        target = node.get("$ref")
+        if isinstance(target, str):
+            if not target.startswith(_SCHEMA_REF):
+                return None, nullable
+            resolved, resolved_nullable = self.json_type(self.schemas.get(target[len(_SCHEMA_REF):]), depth + 1)
+            return resolved, nullable or resolved_nullable
+        for combinator in ("allOf", "anyOf", "oneOf"):
+            members = node.get(combinator)
+            if not isinstance(members, list) or not members:
+                continue
+            types, member_nullable = set(), False
+            for member in members:
+                member_type, is_nullable = self.json_type(member, depth + 1)
+                member_nullable = member_nullable or is_nullable
+                if member_type is None:
+                    return None, nullable  # one unknown member makes the union unknown
+                if member_type != "null":
+                    types.add(member_type)
+            # allOf intersects, so one member's null does not make the whole nullable.
+            nullable = nullable or (member_nullable and combinator != "allOf")
+            return (types.pop() if len(types) == 1 else None), nullable
+        if isinstance(node.get("properties"), dict):
+            return "object", nullable
+        if isinstance(node.get("items"), dict):
+            return "array", nullable
+        return None, nullable
+
+    def single_ref(self, prop: Mapping[str, Any], owner: str) -> str | None:
+        """The schema a property points at: directly, or as the one non-null member of a union."""
+        if "$ref" in prop:
+            return self.ref(prop, owner)
+        for combinator in ("allOf", "anyOf", "oneOf"):
+            members = prop.get(combinator)
+            if isinstance(members, list):
+                concrete = [m for m in members if not (isinstance(m, dict) and m.get("type") == "null")]
+                if len(concrete) == 1 and isinstance(concrete[0], dict) and "$ref" in concrete[0]:
+                    return self.ref(concrete[0], owner)
+        return None
+
     def schema_target(self, schema: Any, owner: str) -> tuple[str | None, bool]:
         """(schema locator or 'inline', is array) for a request/response schema."""
         if not isinstance(schema, dict):
@@ -198,14 +258,16 @@ class _Mapper:
             prop_locator = f"prop:{q(name)}.{q(str(prop_name))}"
             items = prop.get("items") if isinstance(prop.get("items"), dict) else None
             enum = prop.get("enum") if isinstance(prop.get("enum"), list) else None
+            json_type, nullable = self.json_type(prop)
             self.artifacts.append(RawArtifact(
                 kind=ArtifactKind.SCHEMA_PROPERTY, locator=prop_locator, name=_text(prop_name, 200),
                 extractor=OPENAPI_EXTRACTOR, description=_optional_text(prop.get("description")), parent=locator,
                 attributes={
-                    "type": _scalar(prop.get("type")), "format": _scalar(prop.get("format")),
-                    "ref": self.ref(prop, prop_locator), "items_ref": self.ref(items, prop_locator) if items else None,
+                    "type": _scalar(json_type), "format": _scalar(prop.get("format")),
+                    "ref": self.single_ref(prop, prop_locator),
+                    "items_ref": self.ref(items, prop_locator) if items else None,
                     "enum": tuple(_scalar(v) for v in enum[:256]) if enum else None,
-                    "nullable": bool(prop.get("nullable", False)), "read_only": bool(prop.get("readOnly", False)),
+                    "nullable": nullable, "read_only": bool(prop.get("readOnly", False)),
                     "required": str(prop_name) in required,
                 },
             ))

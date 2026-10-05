@@ -510,7 +510,7 @@
     "project": {
       "id": "p0",
       "name": "Reference hr",
-      "twin_digest": "sha256:e6092fadf78d2b332b68680f78eb3a110c2c1dd44135669946707c39ea330a1b",
+      "twin_digest": "sha256:3a49a9adc50d18deb6de1852d3f13e06fe151c92c36ec46c7b4a4937e1a8642f",
       "twin_version": 1,
       "version": 1
     },
@@ -3167,7 +3167,7 @@
             "properties": {
               "department": {
                 "type": [
-                  "string",
+                  "object",
                   "null"
                 ]
               },
@@ -3223,7 +3223,7 @@
           "properties": {
             "department": {
               "type": [
-                "string",
+                "object",
                 "null"
               ]
             },
@@ -4347,7 +4347,7 @@
       }
     ]
   },
-  "digest": "sha256:1bc04822f1bb7e7e7caf25911d7b3f3096ee007721a0ce8ef7cbfa7bd4164195",
+  "digest": "sha256:a7e466554fd81d9230703a917dc8852f49b42ea5a6131b92b573197b0efb1c4d",
   "dropped": [
     {
       "key": "entity.list_filtered@hr-api:schema:\"Employee\"",

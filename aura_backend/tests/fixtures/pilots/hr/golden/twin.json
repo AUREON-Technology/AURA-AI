@@ -620,6 +620,7 @@
       "locator": "prop:\"Employee\".department",
       "parent": "hr-api:schema:\"Employee\"",
       "properties": {
+        "data_type": "object",
         "identifier": "department",
         "nullable": false,
         "read_only": false,
@@ -629,7 +630,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:fb506e1d39fc151f31910dc96ca8ec3ba16d6e1044ae6391cfb7f21a7a78a1a9",
+          "evidence_hash": "sha256:58275f40aaea84ed875393073eb541c96cc7565249fa729fe5380cf5d141c8ac",
           "extractor": "openapi",
           "locator": "prop:\"Employee\".department",
           "source_id": "hr-api"
@@ -1105,7 +1106,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:fb506e1d39fc151f31910dc96ca8ec3ba16d6e1044ae6391cfb7f21a7a78a1a9",
+          "evidence_hash": "sha256:58275f40aaea84ed875393073eb541c96cc7565249fa729fe5380cf5d141c8ac",
           "extractor": "openapi",
           "locator": "prop:\"Employee\".department",
           "source_id": "hr-api"
