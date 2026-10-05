@@ -588,13 +588,15 @@ starts at **DOCUMENTED** as of the baseline.
     (`AURA_PROJECT_DATA_ROLES`).
   - **`GeneratedReadTool`** runs templates through the new `ReadConnector` port
     (`PostgresConnector.read`, and `OpenApiConnector.read` against an approved `base_url`).
-    Tools are tagged `untrusted_content`, and their declarations carry only our own sentence plus
-    a validated identifier.
+    Tools are tagged `untrusted_content`, and their descriptions carry only our own sentence plus
+    a validated identifier. *(Correction, AP8: parameter descriptions still quoted twin labels
+    until AP8's `model_surface` check found it; they are now composed the same way.)*
   - **`BlueprintDeployment`:** evaluate → digest-bound approval → approve → deploy (tools, then
     the atomic pointer, then agents) → rollback. Startup falls back to core-only with degraded
     readiness, and `sync()` converges every worker on the pointer.
-  - **Until AP8, evaluation is refused** unless `AURA_ADAPTATION_ALLOW_UNGATED_DEPLOY` is set. It
-    is off in both compose files, and a version that used it records `gate="ungated"`.
+  - **Until AP8, evaluation was refused** unless `AURA_ADAPTATION_ALLOW_UNGATED_DEPLOY` was set.
+    AP8 removed that bypass: every evaluation now runs the gate. A version evaluated under the
+    bypass keeps `gate="ungated"`.
   - **Pointer table:** migration `0012`. Activation is one transaction under an advisory lock.
 
 ### AP8 — Generated Evaluation Gate and Simulation *(Evaluation)*
@@ -615,6 +617,36 @@ starts at **DOCUMENTED** as of the baseline.
 - **Exit criteria:** gate blocks a seeded-bad blueprint and passes a good one, recorded in CI.
 - **Rollback:** gate advisory by config, recorded in the report.
 - **Evidence required:** `docs/reports/ap8-generated-eval-gate.md`.
+- **As built (2026-10-05):** IMPLEMENTED. The gate blocks seeded-bad blueprints and passes both
+  pilots in the default test suite, so CI records it. The live PostgreSQL replays agree with the
+  in-memory replica. **"Proven" waits on M7 (AB-5): a real-model run of the advisory suites.**
+  - **`adaptation/gate.py` `BlueprintGate`** materialises the candidate into a throwaway
+    `ToolRegistry` under the serving `ToolPolicy`. Every call uses the `ToolContext` the kernel
+    builds for that agent, so the gate's verdict is what a live turn would get.
+  - **Suites:**
+    - `tool_contract`: each tool, called with identifiers the replica supplies, is compared with
+      an **oracle read composed from the twin** (the relation's foreign key, the entity's primary
+      key, the metric's measure), not from the tool's template.
+    - `permission_denied`: refused for the grant's own reason, with a positive control.
+    - `grant_scope` (gate-owned): a role agent may hold only its role's permission-map
+      capabilities.
+    - `injection_refusal`: reading rows taints the turn, and escalation afterwards is refused.
+    - `model_surface` (gate-owned): no connected-system text reaches a tool declaration.
+    - `out_of_scope`: advisory, `not_run` without a model.
+  - **Case outcomes:** a case that cannot run is `not_run`, never a pass. A coverage floor
+    (`AURA_ADAPTATION_GATE_MIN_COVERAGE`, 0.8) bounds how many may be skipped.
+  - **Seeded-bad blueprints blocked:** a wrong join, a lookup on the wrong key, an aggregate over
+    the wrong measure, an over-broad grant (including one the compiler's own suites would miss),
+    a grant that refuses everything, and declarations quoting connected-system text.
+  - **Lifecycle:** `evaluate` runs the gate. An enforced failure stays `proposed` with its report
+    stored; `ap8:advisory` advances with the failure recorded. The approval request carries the
+    verdict, and `AURA_ADAPTATION_ALLOW_UNGATED_DEPLOY` is gone.
+  - **Simulation:** runs against an in-memory replica (`adapters/connectors/memory.py`) over the
+    pilots' recorded rows. Every read the gate sends returns the same rows live on PostgreSQL 16.
+  - **Found and fixed:**
+    - generated parameter descriptions quoted twin labels, which a hostile labeller could steer;
+    - the `tool_contract` threshold was 0.95, which let one wrong tool in 23 through, so it is now
+      1.0.
 
 ### AP9 — Console Project Factory *(Admin)* — **MVP 1**
 
@@ -742,7 +774,7 @@ M0 (CI evidence) gates every A-phase beyond BUILT.   M4 (GPU) gates label qualit
 | AP5 | Capabilities + planner | High | AP4 | Medium | Medium | IMPLEMENTED (pilot plans pass locally; CI pending) | adaptation/capabilities | Same primitives, both pilots |
 | AP6 | Factories + compiler | Critical | AP5 | High | High (SQL safety) | IMPLEMENTED (goldens + live Postgres pass locally; CI pending) | adaptation/factories, domain/tools | Valid blueprints + fitness |
 | AP7 | Blueprint runtime | Critical | AP6, (SEC-01..03) | High | High (kernel seam) | IMPLEMENTED (in-process API + live Postgres pass locally; dev-stack run and CI pending) | adaptation/runtime, container | Deploy + rollback |
-| AP8 | Generated eval gate | High | AP6, AP7, (M7) | Medium | Medium | DOCUMENTED | evaluation/ | Bad blueprint blocked |
+| AP8 | Generated eval gate | High | AP6, AP7, (M7) | Medium | Medium | IMPLEMENTED (default suite + live Postgres pass locally; CI run pending; M7 for proven) | adaptation/gate, adapters/connectors/memory | Bad blueprint blocked |
 | AP9 | Console MVP | High | AP7, AP8 | Medium | Low | DOCUMENTED | aura_admin | Both pilots via Console |
 | AP10 | Files/Git + knowledge + identity | High | AP9, (CB-11) | High | High (isolation) | DOCUMENTED | adapters/connectors, knowledge | Retrieval eval + isolation probe |
 | AP11 | Drift + impact | Medium | AP10 | Medium | Medium | DOCUMENTED | adaptation/impact, triggers | Drift → approved regeneration |

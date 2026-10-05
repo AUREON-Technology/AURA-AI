@@ -27,7 +27,7 @@ from .ausm import PROJECT_ID_PATTERN, ElementKind, ProjectTwin
 from .connectors import ConnectorKind, IdentityMode
 from .discovery import quote_identifier as q
 from .errors import ConflictError, ValidationError
-from .serialization import content_digest, from_data, json_schema, to_data
+from .serialization import ADDED_FIELD, content_digest, from_data, json_schema, to_data
 from .templates import ReadTemplate, TemplateKind
 from .tools import ParameterSpec, ToolSensitivity
 from .untrusted import UntrustedText
@@ -223,6 +223,11 @@ class BlueprintAgent:
 
     ``tools`` is never empty and never "everything" -- the ``allowed_tools=None`` shape of a core
     persona is not expressible for a generated agent (ADR-024).
+
+    ``role`` is the source-system ROLE (AUSM element id) the agent was grouped for, or ``None``
+    for the whole-project agent. The evaluation gate (AP8) holds a role agent to exactly the
+    capabilities ``security.permission_map`` grants that role. Added in AP8: omitted from the
+    encoding while ``None``, so blueprints stored before it keep their digest.
     """
 
     id: str
@@ -233,6 +238,7 @@ class BlueprintAgent:
     risk_ceiling: ToolSensitivity = ToolSensitivity.PUBLIC
     max_plan_iterations: int = 1
     tool_budget: int | None = None
+    role: str | None = field(default=None, metadata=ADDED_FIELD)
 
     def __post_init__(self) -> None:
         _slug(self.id, "agent id")
@@ -562,6 +568,9 @@ def check_against_twin(blueprint: Blueprint, twin: ProjectTwin) -> None:
             need(evidence, selection.key)
     for grant in blueprint.security.permission_map:
         need(grant.role, grant.capability, frozenset({ElementKind.ROLE}))
+    for agent in blueprint.agents:
+        if agent.role is not None:
+            need(agent.role, agent.id, frozenset({ElementKind.ROLE}))
     for workflow in blueprint.workflows:
         need(workflow.entity, workflow.id, frozenset({ElementKind.ENTITY}))
         need(workflow.state_attribute, workflow.id, frozenset({ElementKind.ATTRIBUTE}))

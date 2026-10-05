@@ -274,11 +274,23 @@ def register_adaptation_ops(
 
     @router.post("/admin/blueprints/{version}/evaluate")
     async def evaluate_blueprint(version: int, caller=Depends(principal)) -> JSONResponse:
-        """``proposed`` -> ``evaluated``. Until AP8's gate exists this is refused unless the
-        install allows ungated deploys, and the record then says so permanently."""
+        """Run the evaluation gate (AP8). A pass -- or any result in advisory mode -- moves the
+        version to ``evaluated``; an enforced failure leaves it ``proposed``. Both answer 200 with
+        the gate's verdict: a blocked blueprint is an outcome, not a failed request."""
         require_super_admin(caller)
         record = await deployment().evaluate(version, by=actor(caller))
-        return JSONResponse(content={"summary": record.summary()})
+        return JSONResponse(content={"summary": record.summary(), "evaluation": record.evaluation.summary()})
+
+    @router.get("/admin/blueprints/{version}/evaluation")
+    async def blueprint_evaluation(version: int, caller=Depends(principal)) -> JSONResponse:
+        """The latest gate report for this version, every case with its outcome and reason."""
+        require_super_admin(caller)
+        record = await compiler().get(container.twins.project_id, version)
+        if record is None:
+            raise HTTPException(status_code=404, detail="blueprint version not found")
+        if record.evaluation is None:
+            raise HTTPException(status_code=404, detail="this version has not been evaluated")
+        return JSONResponse(content={"summary": record.evaluation.summary(), "report": to_data(record.evaluation)})
 
     @router.post("/admin/blueprints/{version}/request-approval")
     async def request_blueprint_approval(version: int, caller=Depends(principal)) -> JSONResponse:

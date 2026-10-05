@@ -85,7 +85,7 @@ hygiene and doc accuracy.
 | --- | --- | --- | --- | --- | --- |
 | P0 | 5 | 0 | 2 | 0 | 0 |
 | P1 | 9 | 0 | 8 | 0 | 1 |
-| P2 | 17 | 1 | 10 | 0 | 1 |
+| P2 | 16 | 1 | 11 | 0 | 1 |
 | P3 | 6 | 0 | 1 | 0 | 1 |
 
 ## All gaps
@@ -141,7 +141,7 @@ Sorted by status (`closed_stale` last), then severity. The full text, citations 
 | GAP-052 | P2 | `built_not_proven` | adaptation/project-twin | platform-core | No versioned model of a connected system and no diff between versions. | AP4 exit criteria met; docs/reports/ap4-project-twin.md. | GAP-051 |
 | GAP-053 | P2 | `built_not_proven` | adaptation/capabilities | platform-core | Capabilities are personas hardcoded in Python (build_default_agent_registry, aura_core/agents/registry.py:132); nothing selects capabilities from evidence. | AP5 exit criteria met; docs/reports/ap5-capability-planning.md. | GAP-052 |
 | GAP-055 | P2 | `built_not_proven` | tools/output-schema | platform-core | ToolSpec (aura_core/domain/tools.py:112) has no output schema; tools return str, so results cannot be bound to UI views or compared to goldens structurally. | Field and validation merged with tests green in CI (part of AP6). | — |
-| GAP-057 | P2 | `open` | adaptation/evaluation-gate | evaluation | Evaluation suites are hand-written; nothing generates or gates per-blueprint suites. | AP8 exit criteria met; docs/reports/ap8-generated-eval-gate.md. | GAP-056, GAP-021 |
+| GAP-057 | P2 | `built_not_proven` | adaptation/evaluation-gate | evaluation | Evaluation suites are hand-written; nothing generates or gates per-blueprint suites. | AP8 exit criteria met; docs/reports/ap8-generated-eval-gate.md. | GAP-056, GAP-021 |
 | GAP-058 | P2 | `open` | admin/project-factory | admin-console | The console has 9 fixed ops areas and no project, connector, twin or blueprint views. | AP9 exit criteria met; docs/reports/ap9-console-mvp.md. | GAP-056, GAP-057, GAP-007 |
 | GAP-060 | P2 | `open` | adaptation/drift | platform-core | No re-discovery, drift detection or impact analysis; one TriggerSpec exists; no workflow runtime. | AP11 exit criteria met; docs/reports/ap11-continuous-adaptation.md. | GAP-059 |
 | GAP-061 | P2 | `open` | adaptation/surfaces-and-writes | platform-core | No embeddable widget or public AI API; Flutter routes are hardcoded; no write path to external systems. | AP12a/b/c reports in docs/reports/; AP12c only after SEC-01 is closed. | GAP-060, GAP-013 |

@@ -36,7 +36,10 @@ has not happened. Backend CI on `main` is also still pending (see the AP1 report
     the turn.
   - Its output schema is checked by the registry.
   - The model-facing description is a fixed sentence per capability plus the template's validated
-    identifier. Blueprint labels, comments and API summaries never reach a tool declaration.
+    identifier. Blueprint labels, comments and API summaries never reach a tool *description*.
+    *(Correction, 2026-10-05: they could still reach a declaration through the **parameter**
+    descriptions, which quoted twin labels. AP8's `model_surface` gate check found this, and
+    parameter descriptions are now composed too. See `ap8-generated-eval-gate.md`.)*
 - **`BlueprintToolMaterializer`** registers `bp<version>_*` tools all-or-nothing, and retires the
   old version's tools after `AURA_ADAPTATION_TOOL_GRACE_S`.
 
@@ -60,7 +63,7 @@ has not happened. Backend CI on `main` is also still pending (see the AP1 report
 
 - **Evaluation gate:** none exists until AP8. `evaluate` is refused unless
   `AURA_ADAPTATION_ALLOW_UNGATED_DEPLOY=true`, which is off in both compose files. A version that
-  used the bypass records `gate="ungated"` permanently.
+  used the bypass records `gate="ungated"` permanently. *(AP8 replaced the bypass with the gate.)*
 - **Connector reads:**
   - `PostgresConnector.read` runs in a read-only transaction. It sets the timeout with literal
     `set_config` SQL plus a bound value, renders the statement with the domain renderer only,

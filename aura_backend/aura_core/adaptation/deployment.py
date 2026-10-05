@@ -18,9 +18,11 @@ The order of a deploy is what keeps it safe:
 Rollback is the same path aimed at a ``superseded`` version, under the approval that version
 already carried (its digest is unchanged, so that approval still binds it).
 
-There is no evaluation gate yet: generated suites run in AP8. Until then :meth:`evaluate` refuses
-unless the operator explicitly allows ungated deploys (``AURA_ADAPTATION_ALLOW_UNGATED_DEPLOY``),
-and the record says ``gate="ungated"`` forever after.
+:meth:`evaluate` runs the AP8 gate (``adaptation/gate.py``) against the twin the version was
+compiled from and stores the report on the record whatever the outcome. In ``enforce`` mode a
+version whose gating suites fail stays ``proposed`` -- there is nothing to approve -- and in
+``advisory`` mode it advances with the failure recorded (``gate="ap8:advisory"``). Either way the
+approval request carries the gate's result, so the person deciding sees it.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from typing import Any
 from ..domain.blueprint import BlueprintState, generated_tool_name
 from ..domain.compilation import ActivePointer, BlueprintRecord
 from ..domain.errors import ConflictError, NotFoundError, ValidationError
+from ..domain.gate import GateMode
 from ..learning.approval import ApprovalKind
 from ..observability.logging import get_logger
 from ..ports.runtime import AuditEvent
@@ -56,7 +59,8 @@ class BlueprintDeployment:
         agents: ActiveBlueprint,
         materializer: BlueprintToolMaterializer,
         clock: Any,
-        allow_ungated: bool = False,
+        gate: Any = None,
+        twins: Any = None,
         audit: Any = None,
         metrics: Any = None,
     ) -> None:
@@ -66,7 +70,8 @@ class BlueprintDeployment:
         self._agents = agents
         self._materializer = materializer
         self._clock = clock
-        self._allow_ungated = allow_ungated
+        self._gate = gate
+        self._twins = twins
         self._audit = audit
         self._metrics = metrics
         self._status: dict[str, Any] = {"state": "core_only"}
@@ -81,31 +86,48 @@ class BlueprintDeployment:
     # -- lifecycle --------------------------------------------------------------------------
 
     async def evaluate(self, version: int, *, by: str) -> BlueprintRecord:
-        """``proposed`` -> ``evaluated``. The AP8 gate runs here; until it exists, only ungated."""
+        """Run the gate. Passed (or advisory): ``proposed`` -> ``evaluated``. Failed and enforced:
+        stays ``proposed``, with the report stored so the reviewer can see what blocked it."""
         record = await self._require(version, BlueprintState.PROPOSED)
-        if not self._allow_ungated:
-            raise ConflictError(
-                "the generated evaluation gate arrives with AP8; this install does not allow "
-                "ungated deploys (AURA_ADAPTATION_ALLOW_UNGATED_DEPLOY)",
-                details={"version": version},
-            )
-        evaluated = dataclasses.replace(record, state=BlueprintState.EVALUATED, gate="ungated")
-        await self._store.transition(evaluated, expected=BlueprintState.PROPOSED)
-        await self._record("evaluate", by, evaluated, "ungated")
-        return evaluated
+        if self._gate is None or self._twins is None:
+            raise ConflictError("no evaluation gate is configured on this install", details={"version": version})
+        found = await self._twins.get(record.blueprint.project.twin_version)
+        if found is None or found[1].digest != record.blueprint.project.twin_digest:
+            raise ConflictError("the twin this blueprint was compiled from is no longer stored",
+                                details={"twin_version": record.blueprint.project.twin_version})
+        report = await self._gate.evaluate(record, found[1], by=by)
+        advances = report.passed or report.mode is GateMode.ADVISORY
+        if advances:
+            updated = dataclasses.replace(record, state=BlueprintState.EVALUATED, gate=f"ap8:{report.mode.value}",
+                                          evaluation=report)
+        else:
+            updated = dataclasses.replace(record, evaluation=report)
+        await self._store.transition(updated, expected=BlueprintState.PROPOSED)
+        outcome = "passed" if report.passed else ("failed_advisory" if advances else "failed")
+        await self._record("evaluate", by, updated, outcome, {"blocking": list(report.blocking())})
+        return updated
 
     async def request_approval(self, version: int, *, by: str) -> Any:
         """Ask for a ``BLUEPRINT_DEPLOYMENT`` decision bound to this version's digest."""
         record = await self._require(version, BlueprintState.EVALUATED)
         bp = record.blueprint
         elevated = [a.id for a in bp.elevated_agents()]
+        report = record.evaluation
+        if report is None:
+            verdict = f"gate: {record.gate}"
+        elif report.passed:
+            verdict = "evaluation gate passed"
+        else:
+            verdict = f"evaluation gate FAILED ({', '.join(report.blocking())}), advisory mode"
         request = await self._approvals.request(
             kind=ApprovalKind.BLUEPRINT_DEPLOYMENT,
             summary=(f"Deploy blueprint v{version}: {len(bp.tools)} read-only tools, "
-                     f"{len(bp.agents)} agents" + (f", elevated: {', '.join(elevated)}" if elevated else "")),
+                     f"{len(bp.agents)} agents" + (f", elevated: {', '.join(elevated)}" if elevated else "")
+                     + f"; {verdict}"),
             artefact_digest=record.digest,
             payload={"project_id": self._project_id, "version": version, "gate": record.gate,
-                     "twin_version": bp.project.twin_version},
+                     "twin_version": bp.project.twin_version,
+                     "evaluation": report.summary() if report is not None else None},
         )
         await self._record("request_approval", by, record, "pending", {"approval": request.id})
         return request

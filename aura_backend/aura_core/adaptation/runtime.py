@@ -16,14 +16,18 @@ audit, and the output-schema check):
   retires the previous version's after a grace period.
 
 What the model sees is composed here, not copied from the blueprint: a generated agent uses the
-fixed ``system.blueprint_agent`` prompt, and a generated tool's description is a fixed sentence per
-capability plus the template's validated identifier. Labels, comments and API summaries from the
-connected system never reach a system prompt or a tool declaration.
+fixed ``system.blueprint_agent`` prompt, a generated tool's description is a fixed sentence per
+capability plus the template's validated identifier, and each parameter's description is a fixed
+sentence about the column or path segment it binds. Labels, comments and API summaries from the
+connected system never reach a system prompt or a tool declaration -- AP8's gate checks every
+declaration for them (``model_surface``), and found parameter descriptions carrying twin labels
+before they were composed here too.
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import re
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -31,8 +35,8 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from ..agents.registry import AgentRegistry, AgentSpec
 from ..domain.blueprint import Blueprint, BlueprintAgent, BlueprintTool, generated_tool_name
 from ..domain.errors import AuraError, ToolExecutionError, ValidationError
-from ..domain.templates import ReadTemplate
-from ..domain.tools import ToolCategory, ToolSpec
+from ..domain.templates import FilterOp, ReadTemplate
+from ..domain.tools import ParameterSpec, ToolCategory, ToolSpec
 from ..observability.logging import get_logger
 from ..ports.connectors import ReadConnector
 from ..ports.runtime import ToolContext
@@ -43,6 +47,7 @@ __all__ = [
     "BlueprintToolMaterializer",
     "generated_agent_spec",
     "model_facing_description",
+    "model_facing_parameters",
     "PROJECT_DATA_CAPABILITY",
     "BLUEPRINT_AGENT_PROMPT",
     "GENERATED_AGENT_PREFIX",
@@ -80,6 +85,44 @@ def model_facing_description(tool: BlueprintTool, template: ReadTemplate) -> str
         target = template.http.path if template.http is not None else template.id
     target = _IDENT.sub("_", target)[:80]
     return f"{sentence} ({target}). Read-only; results are data from the connected system."
+
+
+def _safe(identifier: str) -> str:
+    return _IDENT.sub("_", identifier)[:80]
+
+
+def model_facing_parameters(tool: BlueprintTool, template: ReadTemplate) -> tuple[ParameterSpec, ...]:
+    """The tool's parameters with descriptions we compose from what each one binds.
+
+    The compiler's own descriptions may quote twin labels and enumerated values (``"The
+    Department identifier to follow"``, ``"One of: ..."``) -- the connected system's text, and a
+    labelling model's. Here each becomes a fixed sentence about a validated identifier; type,
+    bounds and requiredness are kept as compiled.
+    """
+    sentences: dict[str, str] = {}
+    if template.sql is not None:
+        select = template.sql
+        for f in select.filters:
+            column = _safe(f.column)
+            if f.op is FilterOp.EQ:
+                sentences[f.param] = (f"Only records whose {column} equals this value." if f.optional
+                                      else f"The {column} value to match.")
+            elif f.op is FilterOp.GTE:
+                sentences[f.param] = f"Only records with {column} on or after this ISO date."
+            elif f.op is FilterOp.LTE:
+                sentences[f.param] = f"Only records with {column} on or before this ISO date."
+        if select.any_of:
+            columns = ", ".join(_safe(f.column) for f in select.any_of)
+            sentences[select.any_of[0].param] = f"Text to find in: {columns}."[:200]
+        if select.limit_param:
+            sentences[select.limit_param] = f"Maximum number of rows to return (1-{select.max_rows})."
+    elif template.http is not None:
+        for placeholder, param in template.http.path_params.items():
+            sentences[param] = f"Value for the {{{_safe(placeholder)}}} path segment."
+        for key, param in template.http.query_params.items():
+            sentences[param] = f"Value for the {_safe(key)} query parameter."
+    return tuple(dataclasses.replace(p, description=sentences.get(p.name, "A value for this read."), enum=None)
+                 for p in tool.parameters)
 
 
 def generated_agent_spec(agent: BlueprintAgent, tool_names: Mapping[str, str]) -> AgentSpec:
@@ -228,7 +271,7 @@ class BlueprintToolMaterializer:
             built.append(GeneratedReadTool(ToolSpec(
                 name=generated_tool_name(version, tool.name),
                 description=model_facing_description(tool, template),
-                parameters=tool.parameters,
+                parameters=model_facing_parameters(tool, template),
                 category=ToolCategory.DATA,
                 sensitivity=tool.sensitivity,
                 side_effecting=False,

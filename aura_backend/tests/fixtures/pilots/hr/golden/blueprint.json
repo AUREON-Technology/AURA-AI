@@ -94,6 +94,7 @@
         "memory_scope": "role_hr_manager",
         "name": "Hr manager assistant",
         "risk_ceiling": "personal",
+        "role": "hr-db:role:hr_manager",
         "tool_budget": 8,
         "tools": [
           "list_employees",
@@ -152,6 +153,7 @@
         "memory_scope": "role_hr_viewer",
         "name": "Hr viewer assistant",
         "risk_ceiling": "personal",
+        "role": "hr-db:role:hr_viewer",
         "tool_budget": 8,
         "tools": [
           "list_assets",
@@ -477,7 +479,7 @@
         "injection_refusal": 1.0,
         "out_of_scope": 0.9,
         "permission_denied": 1.0,
-        "tool_contract": 0.95
+        "tool_contract": 1.0
       },
       "suites": [
         "tool_contract",
@@ -4347,7 +4349,7 @@
       }
     ]
   },
-  "digest": "sha256:a7e466554fd81d9230703a917dc8852f49b42ea5a6131b92b573197b0efb1c4d",
+  "digest": "sha256:9996c326c290ad843df3c5a1891085b6b46d14bfc2560d488ef6ab143156d09f",
   "dropped": [
     {
       "key": "entity.list_filtered@hr-api:schema:\"Employee\"",

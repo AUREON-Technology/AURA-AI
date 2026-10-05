@@ -1,9 +1,9 @@
 """What the blueprint compiler produces besides the blueprint itself (AP6, ADR-024).
 
-* :class:`EvalSuiteSpec` / :class:`EvalCaseSpec` -- generated evaluation cases, as data. AP8 runs
-  them through the existing harness (``evaluation/harness.py``, ``evaluation/agent_runs.py``)
-  against a replica of the connected system; here they are only declared, so they can be
-  reviewed and diffed with the blueprint they gate.
+* :class:`EvalSuiteSpec` / :class:`EvalCaseSpec` -- generated evaluation cases, as data, declared
+  with the blueprint so they can be reviewed and diffed with it. AP8's gate
+  (``adaptation/gate.py``) runs them against a replica of the connected system and stores the
+  :class:`~aura_core.domain.gate.GateReport` on the record.
 * :class:`DroppedItem` -- every capability, agent, workflow or view the compiler could *not*
   produce, with a reason code. A capability whose predicates were met but that has no safe
   compilation (a composite key, an API with no matching read operation) is dropped and named,
@@ -21,6 +21,7 @@ from typing import Any, Mapping
 from .ausm import PROJECT_ID_PATTERN
 from .blueprint import Blueprint, BlueprintState, blueprint_digest
 from .errors import ConflictError, ValidationError
+from .gate import GateReport
 from .untrusted import UntrustedText
 
 __all__ = [
@@ -32,6 +33,7 @@ _SLUG = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
 _CASE_ID = re.compile(r"^[a-z][a-z0-9_.-]{0,95}$")
 _CODE = re.compile(r"^[a-z][a-z0-9_]*(:[a-z0-9_.]+)?$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
+_GATES = ("ap8:enforce", "ap8:advisory", "ungated")
 
 #: The closed set of generated case kinds (ADR-024): what AP8's gate knows how to run.
 EvalCaseKind = ("tool_contract", "permission_denied", "out_of_scope", "injection_refusal")
@@ -114,13 +116,18 @@ class BlueprintRecord:
     blueprint: Blueprint
     suites: tuple[EvalSuiteSpec, ...] = ()
     dropped: tuple[DroppedItem, ...] = ()
-    #: How the version passed (or skipped) its evaluation gate, e.g. ``ap8`` or ``ungated``.
+    #: How the version passed its evaluation gate: ``ap8:enforce`` (the gate passed),
+    #: ``ap8:advisory`` (the gate ran in advisory mode, whatever its result) or ``ungated`` (an AP7
+    #: version evaluated before the gate existed).
     gate: str | None = None
     #: The ``BLUEPRINT_DEPLOYMENT`` approval that bound this digest (AP7). Kept after it goes live,
     #: so a rollback to this version is still traceable to the decision that allowed it.
     approval_id: str | None = None
     activated_at: str | None = None
     activated_by: str | None = None
+    #: The latest AP8 gate run over this digest -- kept on a ``proposed`` version whose gate
+    #: failed too, so the reviewer can see why it did not advance.
+    evaluation: GateReport | None = None
 
     def __post_init__(self) -> None:
         if not PROJECT_ID_PATTERN.match(self.project_id):
@@ -142,6 +149,16 @@ class BlueprintRecord:
             raise ValidationError("an approved blueprint records its approval")
         if self.state in (BlueprintState.ACTIVE, BlueprintState.SUPERSEDED) and not self.activated_at:
             raise ValidationError("a blueprint that went live records when")
+        if self.gate is not None and self.gate not in _GATES:
+            raise ValidationError("unknown gate", details={"gate": self.gate})
+        report = self.evaluation
+        if report is not None and (report.digest != self.digest or report.version != self.version
+                                   or report.project_id != self.project_id):
+            raise ValidationError("a gate report must be for this exact blueprint version")
+        if self.gate in ("ap8:enforce", "ap8:advisory") and report is None:
+            raise ValidationError("a version that passed the AP8 gate keeps its report")
+        if self.gate == "ap8:enforce" and not report.passed:
+            raise ValidationError("an enforced gate cannot be recorded as passed by a failing report")
         declared = set(self.blueprint.evaluation.suites)
         if {s.name for s in self.suites} != declared:
             raise ValidationError("stored suites must be exactly the suites the blueprint declares")
@@ -155,6 +172,10 @@ class BlueprintRecord:
             "capabilities": len(bp.capabilities), "templates": len(bp.templates), "tools": len(bp.tools),
             "agents": len(bp.agents), "workflows": len(bp.workflows), "views": len(bp.ui.views),
             "eval_cases": sum(len(s.cases) for s in self.suites), "dropped": len(self.dropped),
+            "evaluation": None if self.evaluation is None else {
+                "passed": self.evaluation.passed, "mode": self.evaluation.mode.value,
+                "ran_at": self.evaluation.ran_at, "blocking": list(self.evaluation.blocking()),
+            },
         }
 
 

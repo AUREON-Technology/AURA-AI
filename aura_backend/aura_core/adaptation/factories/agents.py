@@ -38,5 +38,6 @@ def build_agents(proposals: tuple[AgentProposal, ...], tools: list[CompiledTool]
             risk_ceiling=max(max(c.tool.sensitivity for c in chosen), ToolSensitivity.PERSONAL),
             max_plan_iterations=AGENT_MAX_PLAN_ITERATIONS,
             tool_budget=AGENT_TOOL_BUDGET,
+            role=proposal.role,
         ))
     return agents, dropped
