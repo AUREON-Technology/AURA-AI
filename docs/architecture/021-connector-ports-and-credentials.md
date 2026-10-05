@@ -62,6 +62,22 @@ than anything AURA stores today.
   because that store keeps a body hash, which would be an offline brute-force target for a weak
   password.
 
+## Implementation notes (Flame integration AR-3, 2026-10-05)
+
+- **Credentialed read-only OpenAPI connectors.** An OpenAPI connector with a credential reports
+  `write_capable=None` (`credential_scope_unknown`). AURA cannot see a bearer token's scope, so
+  activation refused such a connector, and only anonymous APIs could be connected.
+- **The attestation.** A Super Admin may now attest read-only scope with the connector option
+  `read_only_attested: true`:
+  - Options are part of the descriptor, so the attestation is bound into the digest the approver
+    signs. Flipping it after approval breaks that digest.
+  - Health then reports `write_capable=False` with the finding `credential_scope_attested`, and
+    the activation audit records that finding.
+  - The option is boolean, and it applies to OpenAPI only. Any other kind refuses it rather than
+    ignoring it.
+- **What it is not.** The attestation is a recorded human claim, not a probe. On AURA's side the
+  enforcement is unchanged: every generated template is a `GET`, and there is no write port.
+
 ## Consequences
 
 - Live reads put load on the target system, so per-connector concurrency limits and timeouts are

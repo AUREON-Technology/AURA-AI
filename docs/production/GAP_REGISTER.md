@@ -84,7 +84,7 @@ hygiene and doc accuracy.
 | Severity | open | in_progress | built_not_proven | proven | closed_stale |
 | --- | --- | --- | --- | --- | --- |
 | P0 | 5 | 0 | 2 | 0 | 0 |
-| P1 | 9 | 0 | 8 | 0 | 1 |
+| P1 | 9 | 0 | 9 | 0 | 1 |
 | P2 | 16 | 1 | 11 | 0 | 1 |
 | P3 | 6 | 0 | 1 | 0 | 1 |
 
@@ -118,6 +118,7 @@ Sorted by status (`closed_stale` last), then severity. The full text, citations 
 | GAP-054 | P1 | `built_not_proven` | adaptation/compiler | platform-core | No factory or compiler produces tools, agents, workflows, UI manifests or eval suites from a system model, and no safe generated-query mechanism exists. | AP6 exit criteria met; docs/reports/ap6-blueprint-compiler.md. | GAP-053, GAP-055 |
 | GAP-056 | P1 | `built_not_proven` | adaptation/runtime | platform-core | The agent registry is immutable and process-wide, and there is no versioned, approvable activation of generated agents and tools. | AP7 exit criteria met; docs/reports/ap7-blueprint-runtime.md. | GAP-054, GAP-048 |
 | GAP-059 | P1 | `open` | adaptation/knowledge-and-identity | platform-core | No file, document or Git discovery; CompositeFetcher (aura_core/learning/sources.py:237) is never instantiated; no delegated identity passthrough; Qdrant treat… | AP10 exit criteria met after CB-11 is fixed; docs/reports/ap10-connectors-knowledge.md. | GAP-058 |
+| GAP-063 | P1 | `built_not_proven` | integration/flame-readiness | platform-core | AURA-side requirements AR-1..AR-8 for Flame in Freefall (FCDS-College/Nasa, docs/AURA_INTEGRATION_REQUIREMENTS.md) are built and unit/security tested in this t… | docs/reports/flame-link2-live.md (AR-7: a deployed bp<N>_api_search answering a real question with a Flame evidence_id) and docs/reports/flame-link1-live.md both exist. | GAP-056, GAP-057, GAP-061 |
 | GAP-007 | P2 | `open` | admin/testing | admin | (2026-09-25-w2) Wave 2 did not add admin Playwright specs (the Flutter/admin stream was interrupted before reaching the admin console). node 22 and npm are ava… | PR-triggered Admin CI green with per-page specs. | GAP-005 |
 | GAP-008 | P2 | `open` | backend/unreviewed-packages | backend | 43a2d5c added aura_core/engineering2 (pipeline/models/policy), aura_core/proactive (detector/event/loop/signal), aura_core/continuous_intelligence, and aura_co… | Every one of these modules has tests and a caller, or is removed, via reviewed PR. | GAP-005 |
 | GAP-010 | P2 | `open` | repo/hygiene | repo-admin | Tracked build artefacts and strays: aura_hostd/build/aura_hostd.exe (a Windows binary built on a developer machine, last changed in 43a2d5c), aura_hostd/build/… | Files removed via reviewed PR; guard test added. | GAP-005 |

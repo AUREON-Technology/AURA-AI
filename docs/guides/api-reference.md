@@ -11,6 +11,12 @@ AUTH="Authorization: Bearer $TOKEN"
 Production (`aura_service`) serves `/api/v3` only. Unversioned and `/api/v2` paths are not
 mounted. New work must target v3.
 
+**Service keys.** Another *system* (not a person) authenticates with a service key,
+`Authorization: Bearer aurask_<key_id>_<secret>`, issued by a Super Admin
+([Service keys](#service-keys)). A key reaches only the routes it was issued for (403 elsewhere,
+WebSockets included), has its own per-minute rate, and a service turn never uses memory, tools or
+a session. See [ADR-029](../architecture/029-service-principals-and-caller-context.md).
+
 ---
 
 ## Conventions
@@ -139,6 +145,8 @@ One complete turn.
 | `confirmed_tools` | string[] | `[]` | Names the user has explicitly authorised for this turn — see `needs_confirmation` |
 | `max_output_tokens` | int | 1024 | 16–8192 |
 | `temperature` | float | 0.3 | 0.0–2.0. Only `0.0` is cacheable. |
+| `context` | `{id, text, source}[]` | `[]` | Caller-supplied evidence, at most 16 entries. Carried on the DATA channel, never as instructions — see below |
+| `response_schema` | object | none | Ask for one JSON value matching this schema. `/chat` only — see below |
 
 Response:
 
@@ -174,6 +182,79 @@ The answer is still usable; the list says what it was produced without.
 **`confidence`** — calibrated from observable signals (groundedness, verification, retrieval
 strength, self-consistency), not by asking the model how sure it is. Below ~0.45 is worth
 surfacing to the user.
+
+#### Caller context (`context`)
+
+Send the evidence an answer must rest on here, never in `message`. `message` is the USER channel
+and is read as instructions.
+
+```json
+{ "message": "Interpret analysis 01J8ZQ….",
+  "context": [
+    { "id": "ev_01J8ZQ3K", "source": "flame/evidence", "text": "FLEX-042: n-heptane, O2 0.142, extinction at 41.2 s" }
+  ] }
+```
+
+| Field | Rules |
+| --- | --- |
+| `id` | 1–128 of `A-Z a-z 0-9 _ - . :`, unique within the turn. Becomes the citation. |
+| `text` | 1–2000 characters. Sanitised: NFKC, no control or bidi characters. |
+| `source` | Optional label, ≤ 128 of `A-Z a-z 0-9 _ - . : /` and space. |
+
+Each entry is handled like a retrieved chunk:
+
+- **Guarded:** it is scanned by the same context guards, and a quarantined entry is dropped.
+- **Fenced:** it is fenced with the turn's nonce, and an entry that does not fit the budget is
+  dropped whole.
+- **Taints the turn:** sending any context taints the turn, so a side-effecting tool goes to
+  `needs_confirmation` instead of running.
+- **Cited by id:** `citations` contains an entry's `id` verbatim when it reached the context. An id
+  you did not send can never appear.
+
+`citations` from `POST /chat` are user-facing only. They name documents and your context ids,
+never internal `memory:`, `tool:` or `goal:` provenances.
+
+#### Structured output (`response_schema`)
+
+```json
+{ "message": "Interpret analysis 01J8ZQ….", "plan": false, "use_tools": false, "max_output_tokens": 400,
+  "response_schema": { "type": "object", "required": ["statements"], "properties": {
+    "statements": { "type": "array", "maxItems": 5, "items": { "type": "object",
+      "required": ["text", "claim_class", "evidence_ids"],
+      "properties": {
+        "text": { "type": "string" },
+        "claim_class": { "type": "string", "enum": ["inferred", "hypothesized", "unsupported"] },
+        "evidence_ids": { "type": "array", "items": { "type": "string" } } } } } } } }
+```
+
+**The schema.** It must use the subset in `domain/output_schema.py` ([ADR-025](../architecture/025-tool-output-schema.md)):
+
+- `type`, `properties`, `required`, boolean `additionalProperties`;
+- `items`, `maxItems`;
+- `enum`, `format`, `description`.
+
+The top level must be an object, and the schema may be at most 8000 characters. Anything else is
+a 422 before any generation.
+
+**On success** the response gains `data`, the parsed value that matched the schema. `message`
+still carries the raw text.
+
+**On a mismatch** AURA repairs once. The repair is told the error paths only, and it is skipped
+if the turn's generation budget is spent. If the answer is still invalid:
+
+```json
+{ "error": "output_invalid", "retryable": false,
+  "details": { "errors": ["$.statements[0].claim_class: not one of the declared values"], "repaired": true } }
+```
+
+with status **422**. Errors name paths, never values. Unvalidated JSON is never returned as
+`data`.
+
+**Cost.** A structured turn can cost two generations. On a CPU deployment, keep
+`max_output_tokens` small so both fit in your timeout.
+
+`POST /chat/stream` refuses `response_schema` with a 422, because a streamed answer reaches you
+before it can be checked.
 
 ### `POST /api/v3/chat/stream`
 
@@ -351,6 +432,29 @@ attestation). That path is fail-closed: only Developer+ receive a session. Mobil
 | `POST /admin/operators/{email}/revoke-sessions` | SuperAdmin | Drop refresh tokens |
 | `POST /admin/users/{subject}/forget` | SuperAdmin | GDPR erase; returns counts only |
 | `GET /admin/me` | Developer+ | Resolved role for the console chrome |
+
+### Service keys
+
+SuperAdmin only. The token is in the `POST` response **once**. AURA stores only its SHA-256, and
+no route, log or audit record can return it again.
+
+| Route | Purpose |
+| --- | --- |
+| `POST /admin/service-keys` | Issue: `{name, routes?, rate_per_minute?}` → `201 {key, token}` |
+| `GET /admin/service-keys` | List keys (id, name, routes, rate, created/revoked); never the token or digest |
+| `POST /admin/service-keys/{key_id}/revoke` | Revoke; the key's next request is a 401 |
+
+The fields of an issue request:
+
+- **`name`:** a lower-case slug, such as `svc-flame`. The key acts as `service:<name>`.
+- **`routes`:** drawn from `POST /api/v3/chat` and `POST /api/v3/knowledge/documents`. The
+  default is chat only.
+- **`rate_per_minute`:** 1–600 turns per minute, default 10. A key over its rate gets a 429 with
+  `Retry-After`.
+
+Every service chat turn is audited under the key's name with your `X-Correlation-Id`, so you can
+query a turn back by the caller's own request id (`GET /admin/audit?actor=svc-flame`). Refused
+routes, rate refusals and use of a revoked key are audited the same way.
 
 `/admin/status` never contains an API key: `ProviderConfig` stores only the *name* of the
 environment variable holding one, and `api_key` is a property rather than a field, so the
