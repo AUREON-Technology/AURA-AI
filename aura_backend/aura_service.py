@@ -23,6 +23,7 @@ from aura_core.config import load_settings
 from aura_core.container import build_container
 from aura_core.domain.errors import AuthenticationError, ConfigurationError
 from aura_core.domain.identifiers import UserId
+from aura_core.domain.service_keys import looks_like_service_token
 from aura_core.observability.logging import get_logger
 from aura_core.security import SlidingWindowRateLimiter
 from infrastructure.http_limits import PayloadSizeLimitMiddleware, RateLimitMiddleware
@@ -31,7 +32,7 @@ from infrastructure.secret_hydration import hydrate_secrets_from_files
 logger = get_logger("service")
 
 
-def _build_authenticator(settings: Any):
+def _build_authenticator(settings: Any, *, service_keys: Any = None):
     """Resolve the callable that turns a request into a :class:`Principal`.
 
     During the migration this delegates to the existing v1/v2 verification so v3 accepts the
@@ -52,6 +53,13 @@ def _build_authenticator(settings: Any):
         token = header[7:].strip()
         if not token:
             raise AuthenticationError("a bearer token is required")
+
+        # AR-4: a service key (another system, not a person) is recognised by its prefix and
+        # verified against AURA's own store -- never handed to the JWT path, and vice versa.
+        if looks_like_service_token(token):
+            if service_keys is None:
+                raise AuthenticationError("service keys are not enabled on this install")
+            return Principal.for_service(await service_keys.authenticate(token))
 
         try:
             # Imported lazily and by name so aura_core never depends on the legacy package
@@ -220,7 +228,7 @@ def create_app():
     hydrate_secrets_from_files()
     settings = load_settings()
     container = build_container(settings)
-    authenticator = _build_authenticator(settings)
+    authenticator = _build_authenticator(settings, service_keys=container.service_keys)
 
     rate_limiter = None
     if settings.security.rate_limit_enabled:

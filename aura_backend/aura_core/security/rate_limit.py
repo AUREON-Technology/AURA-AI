@@ -97,7 +97,18 @@ class SlidingWindowRateLimiter:
         policy = self._policies.get(scope)
         if policy is None or cost <= 0:
             return RateLimitDecision(allowed=True, limit=0, remaining=0, scope=scope)
+        return await self._check(policy, key=key, cost=cost)
 
+    async def check_limit(self, *, key: str, scope: str, limit: int, cost: int = 1,
+                          window_s: int = 60) -> RateLimitDecision:
+        """The same sliding window against a limit the caller carries rather than a configured
+        policy -- a service key's own budget (AR-4). Counted under its own scope, never ``user``."""
+        if cost <= 0:
+            return RateLimitDecision(allowed=True, limit=0, remaining=0, scope=scope)
+        return await self._check(RateLimitPolicy(scope=scope, limit=limit, window_s=window_s), key=key, cost=cost)
+
+    async def _check(self, policy: RateLimitPolicy, *, key: str, cost: int) -> RateLimitDecision:
+        scope = policy.scope
         now = time.time()
         window = policy.window_s
         current_bucket = int(now // window)
