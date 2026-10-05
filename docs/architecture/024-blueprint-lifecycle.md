@@ -56,3 +56,25 @@ as a model or index promotion (ADR-007, ADR-008).
   set, and the version records `gate="ungated"`. Nothing auto-applies.
 - **Startup** loads the active version or falls back to core-only with degraded readiness. Each
   gateway worker converges on the pointer through a periodic `sync()`.
+
+## Implementation notes (AP8, 2026-10-05)
+
+- **`evaluate` runs the generated gate** (`adaptation/gate.py`) against the twin the version was
+  compiled from. The `AURA_ADAPTATION_ALLOW_UNGATED_DEPLOY` bypass is removed; versions evaluated
+  under it keep `gate="ungated"`.
+- **Outcomes:**
+  - An enforced failure stays `proposed`, with its `GateReport` stored on the record.
+  - A pass records `gate="ap8:enforce"`.
+  - `AURA_ADAPTATION_GATE_MODE=advisory` lets a failing version advance as `gate="ap8:advisory"`.
+    This is the roadmap's rollback lever.
+  - The record's invariants refuse an enforced gate with a failing report, and a report for
+    another digest.
+- **The approval request cites the verdict** in its summary and payload. The person deciding sees
+  "evaluation gate passed", or which suites failed.
+- **The gate simulates; it does not enforce.** The candidate's tools run in a throwaway
+  `ToolRegistry` under the serving `ToolPolicy`, with the `ToolContext` the kernel builds for each
+  agent. Its verdict is evidence about the blueprint; the runtime's enforcement is unchanged.
+- **`BlueprintAgent.role`** (new, AP8) links a role agent to its source-system ROLE, so the gate
+  can hold the agent to that role's permission-map capabilities. It is declared with the codec's
+  `ADDED_FIELD` metadata: omitted from the encoding while `None`, so every blueprint stored before
+  AP8 keeps its digest and its approval.

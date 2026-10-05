@@ -1258,7 +1258,8 @@ gaps:
     test: gate blocks a seeded-bad blueprint and passes a good one
     metric: per-blueprint pass rate by suite
     exit_condition: AP8 exit criteria met; docs/reports/ap8-generated-eval-gate.md.
-    status: open
+    status: built_not_proven
+    evidence: docs/reports/ap8-generated-eval-gate.md
 
   - gap_id: GAP-058
     component: admin/project-factory
