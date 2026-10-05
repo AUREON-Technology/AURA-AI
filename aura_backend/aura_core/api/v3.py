@@ -31,6 +31,7 @@ from ..domain.caller_context import MAX_CALLER_CONTEXT, CallerContext
 from ..domain.identifiers import CorrelationId, DocumentId, SessionId, UserId
 from ..domain.llm import RoutingPolicy
 from ..domain.memory import MemoryKind, MemoryQuery
+from ..domain.output_schema import check_output_schema
 from ..domain.reasoning import ReasoningStrategy
 from ..domain.untrusted import MAX_UNTRUSTED_CHARS
 from ..kernel.kernel import TurnRequest
@@ -46,6 +47,8 @@ logger = get_logger("api.v3")
 #: The role a service-key principal carries (AR-4). Never an admin role, so every admin check
 #: refuses it before the route allowlist even has to.
 SERVICE_ROLE = "Service"
+#: Bound on a caller's response_schema (AR-6): it is rendered into the prompt, so it costs tokens.
+_MAX_RESPONSE_SCHEMA_CHARS = 8000
 
 
 class Principal:
@@ -150,6 +153,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         #: AR-5: evidence for this turn, carried on the DATA channel (fenced, guarded, tainting)
         #: -- never in `message`, which is the USER channel and is read as instructions.
         context: list[ContextEntry] = Field(default_factory=list, max_length=MAX_CALLER_CONTEXT)
+        #: AR-6: ask for one JSON value matching this schema (the ADR-025 subset; top level an
+        #: object). Validated, repaired at most once, else 422 `output_invalid`. `/chat` only.
+        response_schema: dict[str, Any] | None = None
 
     class IngestRequest(BaseModel):
         title: str = Field(min_length=1, max_length=500)
@@ -333,6 +339,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             payload = payload.model_copy(update={
                 "use_memory": False, "use_tools": False, "confirmed_tools": [], "confirmed_call_ids": [],
             })
+        if payload.response_schema is not None:
+            check_output_schema(payload.response_schema)
+            if payload.response_schema.get("type") != "object":
+                raise ValidationError("response_schema must describe a JSON object at the top level")
+            if len(json.dumps(payload.response_schema)) > _MAX_RESPONSE_SCHEMA_CHARS:
+                raise ValidationError("response_schema is too large",
+                                      details={"limit_chars": _MAX_RESPONSE_SCHEMA_CHARS})
         caller_context = tuple(CallerContext.of(id=e.id, text=e.text, source=e.source) for e in payload.context)
         if len({e.id for e in caller_context}) != len(caller_context):
             raise ValidationError("context ids must be unique within a turn")
@@ -360,6 +373,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             # Defence in depth behind use_tools=False: an empty grant intersects to no tools.
             delegated_tool_grant=frozenset() if caller.is_service else None,
             caller_context=caller_context,
+            response_schema=payload.response_schema,
         )
 
     # -- chat --------------------------------------------------------------------------
@@ -380,6 +394,19 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                                 {"turn_id": result.telemetry.turn_id.value},
                                 correlation_id=result.telemetry.correlation_id.value)
 
+        if result.telemetry.error_kind == "output_invalid":
+            # AR-6: the model never produced JSON matching the caller's schema. Not retryable as
+            # sent; the error paths are safe to return (they never carry values).
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "error": "output_invalid",
+                    "message": "The answer did not match the requested response_schema.",
+                    "retryable": False,
+                    "details": dict(result.error_details or {}),
+                    "correlation_id": result.telemetry.correlation_id.value,
+                },
+            )
         if result.telemetry.outcome.value != "success":
             # The kernel already produced telemetry for the failure; surface the domain error's
             # status rather than a generic 500.
@@ -423,6 +450,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "model": result.telemetry.model,
                 "cached": result.telemetry.cache.hit,
                 "degraded": result.degraded,
+                **({"data": result.data} if payload.response_schema is not None else {}),
             },
             headers={"X-Correlation-Id": result.telemetry.correlation_id.value},
         )
@@ -439,6 +467,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         ``done``, and ``error`` -- typed rather than a raw token stream the client must
         string-split for an ``[ACTIONS]`` marker, which is the v1 protocol's fragility (TD-12).
         """
+        if payload.response_schema is not None:
+            # A streamed answer reaches the client before it can be validated (AR-6).
+            raise ValidationError("response_schema is supported on POST /api/v3/chat only, not on the stream")
         await enforce_rate_limit(request, caller, "chat")
         turn = await to_turn(payload, caller, request)
 

@@ -17,12 +17,14 @@ time rather than ignored, so a schema never claims a constraint nobody checks.
 
 from __future__ import annotations
 
+import json
 import math
+import re
 from typing import Any, Mapping
 
 from .errors import ValidationError
 
-__all__ = ["check_output_schema", "output_errors", "SCHEMA_TYPES"]
+__all__ = ["check_output_schema", "output_errors", "parse_structured", "SCHEMA_TYPES"]
 
 SCHEMA_TYPES = frozenset({"object", "array", "string", "integer", "number", "boolean", "null"})
 _KEYWORDS = frozenset({
@@ -139,3 +141,26 @@ def output_errors(schema: Mapping[str, Any], value: Any) -> list[str]:
 
     walk(schema, value, "$")
     return errors[:_MAX_ERRORS]
+
+
+_FENCED = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?```$", re.S)
+
+
+def parse_structured(text: str, schema: Mapping[str, Any]) -> tuple[Any, list[str]]:
+    """A model's answer as JSON checked against ``schema``: ``(value, [])`` or ``(None, errors)``.
+
+    One surrounding Markdown code fence is tolerated -- small local models add one even when
+    told not to -- and nothing else: no prose before or after, no partial extraction. The
+    errors name paths only, like :func:`output_errors`, so a repair prompt or an error response
+    never echoes the content back (AR-6).
+    """
+    candidate = text.strip()
+    fenced = _FENCED.match(candidate)
+    if fenced:
+        candidate = fenced.group(1).strip()
+    try:
+        value = json.loads(candidate)
+    except ValueError:
+        return None, ["$: not JSON"]
+    errors = output_errors(schema, value)
+    return (None, errors) if errors else (value, [])

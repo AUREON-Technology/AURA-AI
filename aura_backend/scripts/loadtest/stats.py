@@ -36,6 +36,7 @@ SERVER_FAILURE_CLASSES = frozenset({ERR_5XX, ERR_503, ERR_TIMEOUT, ERR_CONNECTIO
 ERROR_KIND_STATUS: Mapping[str, int] = {
     "configuration_error": 500,
     "validation_error": 422,
+    "output_invalid": 422,
     "not_found": 404,
     "conflict": 409,
     "data_integrity_error": 500,
