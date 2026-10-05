@@ -42,6 +42,7 @@ __all__ = [
     "CallerIdentity",
     "CONNECTOR_ID_PATTERN",
     "SECRET_REF_PATTERN",
+    "READ_ONLY_ATTESTED",
 ]
 
 
@@ -95,6 +96,11 @@ _SERVICE_ACCOUNT_ONLY = frozenset(
 )
 #: Kinds that cannot work without a credential of their own.
 _NEEDS_CREDENTIAL = frozenset({ConnectorKind.POSTGRES, ConnectorKind.MYSQL, ConnectorKind.SQL_SERVER})
+#: Option by which a Super Admin attests that an OpenAPI connector's credential can only read
+#: (AR-3). Bound into the descriptor digest like every option, so the approver signs it.
+READ_ONLY_ATTESTED = "read_only_attested"
+#: Options that mean something only for some kinds; anywhere else they are refused, not ignored.
+_KIND_OPTIONS = {READ_ONLY_ATTESTED: frozenset({ConnectorKind.OPENAPI})}
 _SECRETISH_KEY = re.compile(r"pass|secret|token|credential|api_?key|private_?key|auth", re.I)
 _OPTION_KEY = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _MAX_OPTION_STR = 512
@@ -139,6 +145,11 @@ class ConnectorDescriptor:
                 raise ValidationError("option values must be scalars", details={"key": key})
             if isinstance(value, str) and len(value) > _MAX_OPTION_STR:
                 raise ValidationError("option value too long", details={"key": key})
+            if key in _KIND_OPTIONS and self.kind not in _KIND_OPTIONS[key]:
+                raise ValidationError(f"option {key!r} does not apply to a {self.kind} connector",
+                                      details={"key": key, "kind": str(self.kind)})
+        if READ_ONLY_ATTESTED in self.options and not isinstance(self.options[READ_ONLY_ATTESTED], bool):
+            raise ValidationError(f"{READ_ONLY_ATTESTED} must be true or false")
         if self.secret_ref is not None and not SECRET_REF_PATTERN.match(self.secret_ref):
             raise ValidationError("secret_ref is not a vault reference")
         if not 1 <= self.max_concurrency <= 32:

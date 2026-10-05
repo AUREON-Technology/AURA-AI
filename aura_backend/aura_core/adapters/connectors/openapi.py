@@ -17,9 +17,13 @@ Only internal ``#/components/...`` references are resolved. External references 
 an issue and never fetched -- following them would let the spec author make AURA request any URL.
 
 ``write_capable``: AURA itself only ever *reads* an API in v1 (there is no write port). Without a
-credential AURA cannot write at all, so health reports ``False``; with a credential the token's
+credential AURA cannot write at all, so health reports ``False``. With a credential the token's
 scope is unknown to AURA, so health reports ``None`` (finding ``credential_scope_unknown``) and
-activation stays refused until scope checks exist. Public and delegated specs work today.
+activation is refused -- unless the registering Super Admin attests the token is read-only with
+the option ``read_only_attested: true`` (AR-3). The option is part of the descriptor, so it is
+bound into the registration digest the approver signs; health then reports ``False`` with the
+finding ``credential_scope_attested``. The attestation is a recorded human claim, not a probe:
+what enforces read-only on AURA's side is unchanged -- every generated template is a ``GET``.
 """
 
 from __future__ import annotations
@@ -32,7 +36,7 @@ import time
 from typing import Any, Awaitable, Callable, Mapping
 from urllib.parse import urlsplit
 
-from ...domain.connectors import ConnectorDescriptor, ConnectorHealth, Credential, HealthStatus
+from ...domain.connectors import READ_ONLY_ATTESTED, ConnectorDescriptor, ConnectorHealth, Credential, HealthStatus
 from ...domain.discovery import (
     ArtifactKind,
     DiscoveryBudget,
@@ -481,6 +485,9 @@ class OpenApiConnector:
         except ValidationError:
             return ConnectorHealth(HealthStatus.UNHEALTHY, "invalid_spec", latency_ms=latency)
         if self._credential is not None:
+            if self.descriptor.options.get(READ_ONLY_ATTESTED) is True:
+                return ConnectorHealth(HealthStatus.HEALTHY, "ok", write_capable=False, latency_ms=latency,
+                                       findings=("credential_scope_attested",))
             return ConnectorHealth(HealthStatus.HEALTHY, "ok", write_capable=None, latency_ms=latency,
                                    findings=("credential_scope_unknown",))
         return ConnectorHealth(HealthStatus.HEALTHY, "ok", write_capable=False, latency_ms=latency)

@@ -310,6 +310,12 @@ class TestOpenApiConnector:
         tls, seen = await _health(_openapi_descriptor(), credential=Credential("tok"))
         assert seen[0].headers["authorization"] == "Bearer tok"
         assert tls.write_capable is None and tls.findings == ("credential_scope_unknown",)
+        # AR-3: a Super Admin's attestation (bound into the approved digest) makes it read-only.
+        attested, seen = await _health(_openapi_descriptor(read_only_attested=True), credential=Credential("tok"))
+        assert seen[0].headers["authorization"] == "Bearer tok"
+        assert attested.write_capable is False and attested.findings == ("credential_scope_attested",)
+        public, _ = await _health(_openapi_descriptor(read_only_attested=True))
+        assert public.write_capable is False and public.findings == ()  # nothing to attest without a token
 
     async def test_discover_matches_the_golden(self) -> None:
         transport, _ = _transport(lambda r: httpx.Response(200, content=_HR_SPEC))
