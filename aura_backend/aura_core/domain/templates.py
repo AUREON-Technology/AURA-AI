@@ -28,6 +28,9 @@ from urllib.parse import quote, urlencode
 
 from .errors import ValidationError
 
+#: Values one array-typed query parameter may carry into a single request (AR-2).
+MAX_QUERY_VALUES = 20
+
 __all__ = [
     "TemplateKind",
     "FilterOp",
@@ -315,6 +318,21 @@ def render_http(template: ReadTemplate, arguments: Mapping[str, Any]) -> str:
         return quote(str(value), safe="")
 
     path = _PLACEHOLDER.sub(segment, get.path)
-    query = [(key, str(arguments[param])) for key, param in sorted(get.query_params.items())
-             if arguments.get(param) is not None]
+    query: list[tuple[str, str]] = []
+    for key, param in sorted(get.query_params.items()):
+        value = arguments.get(param)
+        if value is None:
+            continue  # an absent optional parameter is omitted: the server applies its default
+        values = value if isinstance(value, (list, tuple)) else (value,)
+        if len(values) > MAX_QUERY_VALUES:
+            raise ValidationError("too many values for one query parameter", details={"param": param})
+        # OpenAPI ``style: form, explode: true``: an array is the key repeated per item.
+        query.extend((key, _query_value(v)) for v in values if v is not None)
     return f"{path}?{urlencode(query)}" if query else path
+
+
+def _query_value(value: Any) -> str:
+    # JSON's spelling, not Python's: ``True`` is not a boolean to any HTTP API.
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)

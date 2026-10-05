@@ -54,6 +54,7 @@ __all__ = [
     "name_tokens",
     "NORMALIZE_EXTRACTOR",
     "STATUS_NAMES",
+    "MAX_OPTIONAL_QUERY",
 ]
 
 #: Extractor of everything this module infers rather than reads off a catalog.
@@ -62,6 +63,9 @@ NORMALIZE_EXTRACTOR = "normalize"
 STATUS_NAMES = frozenset({"status", "state", "stage", "phase", "lifecycle"})
 
 _MAX_PROPERTY = 256
+#: Optional query parameters carried per API action (AR-2): each becomes an optional tool
+#: parameter, so this also caps how wide one generated tool's declaration can get.
+MAX_OPTIONAL_QUERY = 8
 _MAX_LOCATOR = 512
 _TIMESTAMP_TYPES = re.compile(r"^timestamp\b")
 _NUMERIC_TYPES = re.compile(
@@ -540,6 +544,10 @@ class _SourceMapper:
             entity = self._entity_for_path(path)
         refs = {"entity": self._id(entity)} if entity else {}
         operation_id = _str_attr(artifact, "operation_id")
+        # AR-2: optional query parameters ride as one compact descriptor each, numbered in spec
+        # order; anything past the cap, or longer than a property may be, is left unreachable.
+        optional = [d for d in (attrs.get("query_parameters") or ()) if isinstance(d, str) and _bounded(d)]
+        query = {f"query_param_{i}": d for i, d in enumerate(optional[:MAX_OPTIONAL_QUERY], start=1)}
         self._add(AusmElement(
             self.src, artifact.locator, ElementKind.ACTION, _label(artifact.name.raw()), (self._prov(artifact),),
             description=artifact.description, refs=refs,
@@ -555,6 +563,7 @@ class _SourceMapper:
                 "returns_list": bool(attrs.get("response_is_array")),
                 "required_parameters": _bounded(",".join(attrs.get("required_parameters") or ())),
                 "security": _bounded(",".join(attrs.get("security") or ())),
+                **query,
             },
         ))
 

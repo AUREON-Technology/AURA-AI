@@ -166,7 +166,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:2866492645b3ff1697fec13a76894efca4dbb9a5d62403c7c8e96adab13bee4e",
+          "evidence_hash": "sha256:40724a71fad7e7d5cbebe00af34816a1f4641b17e1c1dc0f357006e9b4767f90",
           "extractor": "openapi",
           "locator": "op:DELETE /orders/{orderId}",
           "source_id": "ecommerce-api"
@@ -198,7 +198,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:6942e71321b28cbdd981e55d3e9c88bcaa49e3dacf78d0df01232772c7ff7048",
+          "evidence_hash": "sha256:3fc5df5e644ef036c129d8f5ed5849d8c5cb9c607653c219144b1c78e81f5434",
           "extractor": "openapi",
           "locator": "op:GET /customers/{customerId}/orders",
           "source_id": "ecommerce-api"
@@ -230,7 +230,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:c20ab0a21187f68f11737ada66dcce01a68a71be494ef8cc9ca68663277e2b62",
+          "evidence_hash": "sha256:497ee9dd9bfe807bc773dee965728543038de44bbb88628fec2f999b57d84f24",
           "extractor": "openapi",
           "locator": "op:GET /orders/{orderId}",
           "source_id": "ecommerce-api"
@@ -255,6 +255,8 @@
         "mode": "read",
         "operation_id": "listProducts",
         "path": "/products",
+        "query_param_1": "{\"n\":\"category\",\"t\":\"string\"}",
+        "query_param_2": "{\"n\":\"inStock\",\"t\":\"boolean\"}",
         "required_parameters": "",
         "returns_list": true,
         "security": "apiKey"
@@ -262,7 +264,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:9e06287979606a99c7581b671206ce8e958d6655a44ddec8cf7eaddd77e459e6",
+          "evidence_hash": "sha256:3bc1b916aa94c42d26f389122f9c5ce18b44524c71375cbaaf34d3cc26f7b196",
           "extractor": "openapi",
           "locator": "op:GET /products",
           "source_id": "ecommerce-api"
@@ -294,7 +296,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:8c1f9d020541f0873e939a90b34b8b7cb0c9d02891129caf091d78cdc06b7768",
+          "evidence_hash": "sha256:e0d3e3b6dbef9d44a00f4192c0aff2c2cc858931178546d167605aff12f236c0",
           "extractor": "openapi",
           "locator": "op:GET /products/{sku}",
           "source_id": "ecommerce-api"
@@ -326,7 +328,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:c6d2a39dfe16a5dc300b0e7e11187eb63f3a1b6d31e9d05fadef721de2f61fda",
+          "evidence_hash": "sha256:86529c5eb29591b5d164ac2fd518a9ced7d47d68331f0e643c70575d79ed0fbf",
           "extractor": "openapi",
           "locator": "op:POST /returns",
           "source_id": "ecommerce-api"
@@ -1467,7 +1469,7 @@
         },
         {
           "confidence": 0.45,
-          "evidence_hash": "sha256:b7da2e5434c20c73be8311da75c44e19b2b8b66fa60f134da2fef3c57e10d95a",
+          "evidence_hash": "sha256:5590c018e562072dda6006dc09828cdcbcc1e54c459ef1c77a2971bd07b308d7",
           "extractor": "process_mining",
           "locator": "op:DELETE /orders/{orderId}",
           "source_id": "ecommerce-api"
@@ -4550,7 +4552,7 @@
         },
         {
           "confidence": 0.3,
-          "evidence_hash": "sha256:2866492645b3ff1697fec13a76894efca4dbb9a5d62403c7c8e96adab13bee4e",
+          "evidence_hash": "sha256:40724a71fad7e7d5cbebe00af34816a1f4641b17e1c1dc0f357006e9b4767f90",
           "extractor": "process_mining",
           "locator": "op:DELETE /orders/{orderId}",
           "source_id": "ecommerce-api"

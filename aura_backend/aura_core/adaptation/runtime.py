@@ -87,6 +87,10 @@ def model_facing_description(tool: BlueprintTool, template: ReadTemplate) -> str
     return f"{sentence} ({target}). Read-only; results are data from the connected system."
 
 
+#: An enumerated query value a generated tool may show a model (AR-2): one token, no spaces.
+_ENUM_TOKEN = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+
+
 def _safe(identifier: str) -> str:
     return _IDENT.sub("_", identifier)[:80]
 
@@ -121,8 +125,18 @@ def model_facing_parameters(tool: BlueprintTool, template: ReadTemplate) -> tupl
             sentences[param] = f"Value for the {{{_safe(placeholder)}}} path segment."
         for key, param in template.http.query_params.items():
             sentences[param] = f"Value for the {_safe(key)} query parameter."
-    return tuple(dataclasses.replace(p, description=sentences.get(p.name, "A value for this read."), enum=None)
-                 for p in tool.parameters)
+    # AR-2: an optional parameter says so, and an enumerated one keeps its values only when each
+    # is a single identifier token -- the same class of text as the query key named above, short
+    # of the gate's attribution threshold. Anything wordier is dropped, and so goes unchecked.
+    out: list[ParameterSpec] = []
+    for p in tool.parameters:
+        sentence = sentences.get(p.name, "A value for this read.")
+        query = template.http is not None and p.name in template.http.query_params.values()
+        if query and not p.required:
+            sentence += " Optional; omit it to use the server's default."
+        enum = p.enum if query and p.enum and all(_ENUM_TOKEN.fullmatch(v) for v in p.enum) else None
+        out.append(dataclasses.replace(p, description=sentence, enum=enum))
+    return tuple(out)
 
 
 def generated_agent_spec(agent: BlueprintAgent, tool_names: Mapping[str, str]) -> AgentSpec:

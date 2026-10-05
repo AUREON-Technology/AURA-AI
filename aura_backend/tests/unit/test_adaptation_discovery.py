@@ -173,6 +173,11 @@ class TestOpenApiMapping:
         listing = report.get("op:GET /employees").attributes
         assert listing["response_schema"] == 'schema:"Employee"' and listing["response_is_array"] is True
         assert report.get("op:GET /employees/{employeeId}").attributes["parameters"] == ("path:employeeId",)
+        # AR-2: optional query parameters keep their type and enum; their summaries are never kept.
+        assert [json.loads(d) for d in listing["query_parameters"]] == [
+            {"n": "departmentId", "t": "integer"},
+            {"n": "status", "t": "string", "e": ["active", "on_leave", "terminated"]},
+        ]
         assert report.get("op:POST /leave-requests/{requestId}/approve").attributes["security"] == ("oauth",)
         assert report.get("op:GET /departments").attributes["security"] == ("bearerAuth",)
         assert [(i.code, i.locator) for i in report.issues] == [("external_ref_ignored", 'prop:"Employee"."homeAddress"')]

@@ -22,6 +22,7 @@
         "operation_id": "listDepartments",
         "parameters": [],
         "path": "/departments",
+        "query_parameters": [],
         "request_schema": null,
         "required_parameters": [],
         "response_is_array": true,
@@ -50,6 +51,10 @@
           "query:status"
         ],
         "path": "/employees",
+        "query_parameters": [
+          "{\"n\":\"departmentId\",\"t\":\"integer\"}",
+          "{\"e\":[\"active\",\"on_leave\",\"terminated\"],\"n\":\"status\",\"t\":\"string\"}"
+        ],
         "request_schema": null,
         "required_parameters": [],
         "response_is_array": true,
@@ -77,6 +82,7 @@
           "path:employeeId"
         ],
         "path": "/employees/{employeeId}",
+        "query_parameters": [],
         "request_schema": null,
         "required_parameters": [
           "path:employeeId"
@@ -106,6 +112,9 @@
           "query:employeeId"
         ],
         "path": "/leave-requests",
+        "query_parameters": [
+          "{\"n\":\"employeeId\",\"t\":\"integer\"}"
+        ],
         "request_schema": null,
         "required_parameters": [],
         "response_is_array": true,
@@ -133,6 +142,7 @@
           "path:employeeId"
         ],
         "path": "/employees/{employeeId}",
+        "query_parameters": [],
         "request_schema": "schema:\"NewEmployee\"",
         "required_parameters": [
           "path:employeeId"
@@ -160,6 +170,7 @@
         "operation_id": "createEmployee",
         "parameters": [],
         "path": "/employees",
+        "query_parameters": [],
         "request_schema": "schema:\"NewEmployee\"",
         "required_parameters": [],
         "response_is_array": false,
@@ -185,6 +196,7 @@
         "operation_id": "createLeaveRequest",
         "parameters": [],
         "path": "/leave-requests",
+        "query_parameters": [],
         "request_schema": "schema:\"NewLeaveRequest\"",
         "required_parameters": [],
         "response_is_array": false,
@@ -212,6 +224,7 @@
           "path:requestId"
         ],
         "path": "/leave-requests/{requestId}/approve",
+        "query_parameters": [],
         "request_schema": null,
         "required_parameters": [
           "path:requestId"

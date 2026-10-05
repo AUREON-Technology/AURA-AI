@@ -170,7 +170,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:489fdb0d6f6972a02fc8520e27c354feb148f48b3e060dc5e5d47cbb0b71cfeb",
+          "evidence_hash": "sha256:28a94336308bef6fe7d826accbdc78116df8eb3de59842e048dfabf553844216",
           "extractor": "openapi",
           "locator": "op:GET /departments",
           "source_id": "hr-api"
@@ -195,6 +195,8 @@
         "mode": "read",
         "operation_id": "listEmployees",
         "path": "/employees",
+        "query_param_1": "{\"n\":\"departmentId\",\"t\":\"integer\"}",
+        "query_param_2": "{\"e\":[\"active\",\"on_leave\",\"terminated\"],\"n\":\"status\",\"t\":\"string\"}",
         "required_parameters": "",
         "returns_list": true,
         "security": "bearerAuth"
@@ -202,7 +204,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:5d8a02593af92296766642b41e1f6c23d1321ad378892cdc3020393d9f52a394",
+          "evidence_hash": "sha256:b9eb692413b6ae5273f46e4a6767f5d309e4fdd4fbb292a1a5865bf4dd892d53",
           "extractor": "openapi",
           "locator": "op:GET /employees",
           "source_id": "hr-api"
@@ -234,7 +236,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:837f675c1940fa9a9c99fcb631725fa86b9edceb4098a2a4e01ee2d5cc3649eb",
+          "evidence_hash": "sha256:addca285f3b61708cfed5e20e4306e34cc8bf2230c18490bc841d3b2c474cc33",
           "extractor": "openapi",
           "locator": "op:GET /employees/{employeeId}",
           "source_id": "hr-api"
@@ -259,6 +261,7 @@
         "mode": "read",
         "operation_id": "listLeaveRequests",
         "path": "/leave-requests",
+        "query_param_1": "{\"n\":\"employeeId\",\"t\":\"integer\"}",
         "required_parameters": "",
         "returns_list": true,
         "security": "bearerAuth"
@@ -266,7 +269,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:85ef9090e7c241697bb210a677291f5c99f68a4cb4c88ae2559556a3b39c1d0b",
+          "evidence_hash": "sha256:1d315919ccf76b4bd500777f54d18b73324fbe6855970c4588961fffafa704dc",
           "extractor": "openapi",
           "locator": "op:GET /leave-requests",
           "source_id": "hr-api"
@@ -298,7 +301,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:fc69500106db569a4790f65215faedd24158575efc8170e69f15c8e2e257dfce",
+          "evidence_hash": "sha256:3649405732c88a7f7b1681dee29f9acf9f5eedab0f0a451f07a69e88b5355537",
           "extractor": "openapi",
           "locator": "op:PATCH /employees/{employeeId}",
           "source_id": "hr-api"
@@ -330,7 +333,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:b80271aea7eda706fa667d15fca77725ae13cced9ec8d749fa2dad9c2062f831",
+          "evidence_hash": "sha256:b67d17cf141e4085e663f8abbe3888e575e9158d0f578544ea77d411d3797f01",
           "extractor": "openapi",
           "locator": "op:POST /employees",
           "source_id": "hr-api"
@@ -362,7 +365,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:66a0ec773e006b1a02bf22261971611e2e7b4d05ce2e0c4887dcdcc229e725fa",
+          "evidence_hash": "sha256:d2efa17c7d248ebbd4a531159189ffc98a470a678bd84920168bb9162e11a16f",
           "extractor": "openapi",
           "locator": "op:POST /leave-requests",
           "source_id": "hr-api"
@@ -394,7 +397,7 @@
       "provenance": [
         {
           "confidence": 1.0,
-          "evidence_hash": "sha256:bca9d8f2f5a1eaeac8903d815bfd7cd40b9e5189580bb39b34a173d9827624e9",
+          "evidence_hash": "sha256:cb6998a8dae4199c3d5628306285a8c206473396119043a5d2c4ba645ad6fb78",
           "extractor": "openapi",
           "locator": "op:POST /leave-requests/{requestId}/approve",
           "source_id": "hr-api"
@@ -1981,7 +1984,7 @@
         },
         {
           "confidence": 0.55,
-          "evidence_hash": "sha256:010cc67450f05165cce1eef1d8baff567f940199a806c3a510b1b8c221704fd8",
+          "evidence_hash": "sha256:d6ed7f34b5c048f35bb2e9b17991119540705d59482f8822e0ee1febfaa26962",
           "extractor": "process_mining",
           "locator": "op:POST /leave-requests/{requestId}/approve",
           "source_id": "hr-api"
@@ -4701,7 +4704,7 @@
         },
         {
           "confidence": 0.4,
-          "evidence_hash": "sha256:bca9d8f2f5a1eaeac8903d815bfd7cd40b9e5189580bb39b34a173d9827624e9",
+          "evidence_hash": "sha256:cb6998a8dae4199c3d5628306285a8c206473396119043a5d2c4ba645ad6fb78",
           "extractor": "process_mining",
           "locator": "op:POST /leave-requests/{requestId}/approve",
           "source_id": "hr-api"

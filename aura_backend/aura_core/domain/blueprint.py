@@ -18,6 +18,7 @@ explicit tool grant). :func:`check_against_twin` adds the ones that need the Pro
 from __future__ import annotations
 
 import enum
+import json
 import re
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
@@ -603,12 +604,37 @@ def _check_template_against_twin(template: ReadTemplate, twin: ProjectTwin, by_i
                 )
         return
     get = template.http
-    allowed = {
-        e.properties.get("path") for e in twin.of_kind(ElementKind.ACTION)
+    actions = [
+        e for e in twin.of_kind(ElementKind.ACTION)
         if e.source_id == template.connector and e.properties.get("http_method") == "GET"
-    }
-    if get is None or get.path not in allowed:
+    ]
+    matching = [e for e in actions if get is not None and e.properties.get("path") == get.path]
+    if not matching:
         raise ValidationError("template path is not a GET operation of the twin", details={"template": template.id})
+    declared = set().union(*(_declared_query_keys(e.properties) for e in matching))
+    for key in get.query_params:
+        if key not in declared:
+            raise ValidationError(
+                "template query parameter is not declared by its operation in the twin",
+                details={"template": template.id, "key": key},
+            )
+
+
+def _declared_query_keys(properties: Mapping[str, Any]) -> set[str]:
+    """The query keys an API action declares: required ones, and optional ones (AR-2)."""
+    keys = {
+        key for where, _, key in (item.partition(":") for item in str(properties.get("required_parameters") or "").split(","))
+        if where == "query" and key
+    }
+    for name, value in properties.items():
+        if name.startswith("query_param_") and isinstance(value, str):
+            try:
+                key = json.loads(value).get("n")
+            except (ValueError, AttributeError):
+                continue
+            if isinstance(key, str):
+                keys.add(key)
+    return keys
 
 
 def blueprint_json_schema() -> dict[str, Any]:

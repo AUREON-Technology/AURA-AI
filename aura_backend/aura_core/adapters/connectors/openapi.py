@@ -60,6 +60,14 @@ _SCHEMA_REF = "#/components/schemas/"
 #: How many $ref/combinator hops a property type is followed through; also stops ref cycles.
 _MAX_TYPE_DEPTH = 8
 _PARAM_REF = "#/components/parameters/"
+#: What an optional query parameter may be typed as on a generated tool (AR-2). Objects and
+#: non-``form`` styles have no unambiguous query-string rendering, so they stay unreachable.
+_QUERY_SCALARS = frozenset({"string", "integer", "number", "boolean"})
+#: Bounds on what one optional query parameter's descriptor may carry; it is stored as a
+#: single <=256-character string so it survives the AUSM scalar-property rule unchanged.
+_MAX_QUERY_ENUM = 16
+_MAX_QUERY_ENUM_CHARS = 64
+_MAX_QUERY_DESCRIPTOR = 256
 
 Resolver = Callable[[str], Awaitable[list[str]]]
 
@@ -311,6 +319,9 @@ class _Mapper:
                     "tags": tuple(str(t)[:128] for t in op.get("tags", []) if isinstance(t, str))[:32],
                     "parameters": tuple(f"{p['in']}:{p['name']}" for p in params)[:128],
                     "required_parameters": tuple(f"{p['in']}:{p['name']}" for p in params if p["required"])[:128],
+                    "query_parameters": tuple(
+                        p["query"] for p in params
+                        if p["in"] == "query" and not p["required"] and p.get("query"))[:128],
                     "request_schema": request_schema, "response_schema": response_schema,
                     "response_is_array": response_is_array, "security": tuple(schemes)[:32],
                     "deprecated": bool(op.get("deprecated", False)),
@@ -327,7 +338,60 @@ class _Mapper:
         if not isinstance(node, dict) or not node.get("name") or not node.get("in"):
             return None
         where = str(node["in"])
-        return {"name": str(node["name"])[:128], "in": where[:16], "required": bool(node.get("required", where == "path"))}
+        param = {"name": str(node["name"])[:128], "in": where[:16], "required": bool(node.get("required", where == "path"))}
+        if where == "query" and not param["required"]:
+            param["query"] = self.query_descriptor(node, owner)
+        return param
+
+    def query_descriptor(self, node: Mapping[str, Any], owner: str) -> str | None:
+        """An optional query parameter as compact JSON: name, type, and the checkable constraints.
+
+        ``{"n": name, "t": type, "i": item type, "e": enum, "lo"/"hi": bounds, "d": default}``
+        -- only what a generated tool can enforce or a caller can rely on (AR-2). The enum and
+        default are the connected system's text; the compiler decides what of it is safe to show
+        a model. None (with an issue) when the parameter cannot be rendered into a query string.
+        """
+        schema = node.get("schema") if isinstance(node.get("schema"), dict) else {}
+        target = schema.get("$ref")
+        if isinstance(target, str) and target.startswith(_SCHEMA_REF):
+            schema = self.schemas.get(target[len(_SCHEMA_REF):]) or {}
+        kind, _ = self.json_type(schema)
+        item_kind = None
+        if kind == "array":
+            explode = node.get("explode", True)
+            if node.get("style", "form") != "form" or explode is not True:
+                self.issues.append(DiscoveryIssue("unsupported_query_parameter", owner))
+                return None
+            item_kind, _ = self.json_type(schema.get("items"))
+            if item_kind not in _QUERY_SCALARS:
+                self.issues.append(DiscoveryIssue("unsupported_query_parameter", owner))
+                return None
+        elif kind not in _QUERY_SCALARS:
+            self.issues.append(DiscoveryIssue("unsupported_query_parameter", owner))
+            return None
+        out: dict[str, Any] = {"n": str(node["name"])[:128], "t": kind}
+        if item_kind:
+            out["i"] = item_kind
+        values = schema.get("enum")
+        if kind == "string" and isinstance(values, list) and 0 < len(values) <= _MAX_QUERY_ENUM and all(
+            isinstance(v, str) and 0 < len(v) <= _MAX_QUERY_ENUM_CHARS for v in values
+        ):
+            out["e"] = values
+        for key, short in (("minimum", "lo"), ("maximum", "hi")):
+            bound = schema.get(key)
+            if kind in ("integer", "number") and isinstance(bound, (int, float)) and not isinstance(bound, bool):
+                out[short] = bound
+        default = schema.get("default")
+        if isinstance(default, (str, int, float, bool)) and (not isinstance(default, str) or len(default) <= 64):
+            out["d"] = default
+        encoded = json.dumps(out, separators=(",", ":"), sort_keys=True, ensure_ascii=True)
+        if len(encoded) > _MAX_QUERY_DESCRIPTOR and "e" in out:
+            del out["e"]  # an enum too long to carry is dropped, never truncated into a wrong one
+            encoded = json.dumps(out, separators=(",", ":"), sort_keys=True, ensure_ascii=True)
+        if len(encoded) > _MAX_QUERY_DESCRIPTOR:
+            self.issues.append(DiscoveryIssue("query_parameter_too_large", owner))
+            return None
+        return encoded
 
 
 def artifacts_from_openapi(source_id: str, spec: Mapping[str, Any], budget: DiscoveryBudget) -> DiscoveryReport:
