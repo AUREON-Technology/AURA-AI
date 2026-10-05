@@ -179,6 +179,44 @@ class TestOpenApiMapping:
         injected = report.get("op:GET /leave-requests").description
         assert isinstance(injected, UntrustedText) and "Ignore" not in str(injected)
 
+    @pytest.mark.parametrize(("prop", "expected"), [
+        ({"type": "string"}, ("string", False, None)),
+        ({"type": "string", "nullable": True}, ("string", True, None)),
+        ({"type": ["integer", "null"]}, ("integer", True, None)),           # OpenAPI 3.1
+        ({"type": ["integer", "string"]}, (None, False, None)),             # genuinely ambiguous
+        ({"$ref": "#/components/schemas/Meta"}, ("object", False, 'schema:"Meta"')),
+        ({"$ref": "#/components/schemas/Status"}, ("string", False, 'schema:"Status"')),
+        ({"allOf": [{"$ref": "#/components/schemas/Meta"}]}, ("object", False, 'schema:"Meta"')),
+        ({"anyOf": [{"$ref": "#/components/schemas/Meta"}, {"type": "null"}]}, ("object", True, 'schema:"Meta"')),
+        ({"oneOf": [{"type": "string"}, {"type": "number"}]}, (None, False, None)),
+        ({"anyOf": [{"$ref": "#/components/schemas/Loop"}, {"type": "null"}]}, (None, False, 'schema:"Loop"')),
+        ({"properties": {"a": {"type": "string"}}}, ("object", False, None)),
+        ({"items": {"type": "string"}}, ("array", False, None)),
+    ])
+    def test_property_types_resolve_through_refs_and_unions(self, prop, expected) -> None:
+        """A property typed only through $ref/allOf/anyOf/oneOf or a 3.1 type list is recorded
+        with the JSON type its values have; otherwise the compiler typed nested objects as
+        strings and every real response failed its tool's output schema (ADR-025)."""
+        spec = {"openapi": "3.1.0", "info": {"title": "t", "version": "1"}, "paths": {},
+                "components": {"schemas": {
+                    "Meta": {"type": "object", "properties": {"request_id": {"type": "string"}}},
+                    "Status": {"type": "string", "enum": ["up", "down"]},
+                    "Loop": {"$ref": "#/components/schemas/Loop"},
+                    "Envelope": {"type": "object", "properties": {"field": prop}},
+                }}}
+        report = artifacts_from_openapi("api", spec, DiscoveryBudget())
+        attributes = report.get('prop:"Envelope".field').attributes
+        assert (attributes["type"], attributes["nullable"], attributes["ref"]) == expected
+        assert report.issues == ()
+
+    def test_an_external_ref_is_reported_once_and_left_untyped(self) -> None:
+        spec = {"openapi": "3.0.3", "info": {"title": "t", "version": "1"}, "paths": {},
+                "components": {"schemas": {"Envelope": {"type": "object", "properties": {
+                    "field": {"$ref": "https://evil.example/schema.json"}}}}}}
+        report = artifacts_from_openapi("api", spec, DiscoveryBudget())
+        assert report.get('prop:"Envelope".field').attributes["type"] is None
+        assert [(i.code, i.locator) for i in report.issues] == [("external_ref_ignored", 'prop:"Envelope".field')]
+
     @pytest.mark.parametrize("body", [b'{"swagger": "2.0"}', b"- not a mapping", b"{not json", b"openapi: 2.0"])
     def test_only_openapi_3_is_accepted(self, body: bytes) -> None:
         with pytest.raises(ValidationError):
