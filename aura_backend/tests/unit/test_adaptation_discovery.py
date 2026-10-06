@@ -173,6 +173,11 @@ class TestOpenApiMapping:
         listing = report.get("op:GET /employees").attributes
         assert listing["response_schema"] == 'schema:"Employee"' and listing["response_is_array"] is True
         assert report.get("op:GET /employees/{employeeId}").attributes["parameters"] == ("path:employeeId",)
+        # AR-2: optional query parameters keep their type and enum; their summaries are never kept.
+        assert [json.loads(d) for d in listing["query_parameters"]] == [
+            {"n": "departmentId", "t": "integer"},
+            {"n": "status", "t": "string", "e": ["active", "on_leave", "terminated"]},
+        ]
         assert report.get("op:POST /leave-requests/{requestId}/approve").attributes["security"] == ("oauth",)
         assert report.get("op:GET /departments").attributes["security"] == ("bearerAuth",)
         assert [(i.code, i.locator) for i in report.issues] == [("external_ref_ignored", 'prop:"Employee"."homeAddress"')]
@@ -305,6 +310,12 @@ class TestOpenApiConnector:
         tls, seen = await _health(_openapi_descriptor(), credential=Credential("tok"))
         assert seen[0].headers["authorization"] == "Bearer tok"
         assert tls.write_capable is None and tls.findings == ("credential_scope_unknown",)
+        # AR-3: a Super Admin's attestation (bound into the approved digest) makes it read-only.
+        attested, seen = await _health(_openapi_descriptor(read_only_attested=True), credential=Credential("tok"))
+        assert seen[0].headers["authorization"] == "Bearer tok"
+        assert attested.write_capable is False and attested.findings == ("credential_scope_attested",)
+        public, _ = await _health(_openapi_descriptor(read_only_attested=True))
+        assert public.write_capable is False and public.findings == ()  # nothing to attest without a token
 
     async def test_discover_matches_the_golden(self) -> None:
         transport, _ = _transport(lambda r: httpx.Response(200, content=_HR_SPEC))

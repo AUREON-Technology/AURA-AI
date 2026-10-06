@@ -650,7 +650,7 @@
     "project": {
       "id": "p0",
       "name": "Reference ecommerce",
-      "twin_digest": "sha256:e2c1221d170f00321687774b2f5a736e777d29cfe5dc5c9e799564c8cc330dd8",
+      "twin_digest": "sha256:06d5d080708582593556bffae677b4dcf59cb3763221bee77baf5c3dce5d7381",
       "twin_version": 1,
       "version": 1
     },
@@ -2253,7 +2253,10 @@
         "http": {
           "path": "/products",
           "path_params": {},
-          "query_params": {}
+          "query_params": {
+            "category": "category",
+            "inStock": "in_stock"
+          }
         },
         "id": "api_list_products",
         "kind": "http",
@@ -4563,7 +4566,34 @@
           },
           "type": "array"
         },
-        "parameters": [],
+        "parameters": [
+          {
+            "default": null,
+            "description": "Optional value for the category query parameter.",
+            "enum": null,
+            "format": null,
+            "item_type": null,
+            "max_length": 256,
+            "maximum": null,
+            "minimum": null,
+            "name": "category",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": null,
+            "description": "Optional value for the inStock query parameter.",
+            "enum": null,
+            "format": null,
+            "item_type": null,
+            "max_length": null,
+            "maximum": null,
+            "minimum": null,
+            "name": "in_stock",
+            "required": false,
+            "type": "boolean"
+          }
+        ],
         "sensitivity": "personal",
         "template": "api_list_products"
       },
@@ -5797,7 +5827,7 @@
       }
     ]
   },
-  "digest": "sha256:1d6bb89f55462599888aa060eedf6285896c3bd2d35491e66d20c38bd3de517e",
+  "digest": "sha256:524460ff47861a78c43165d003e9a32bf657447eac5a6a1d3e3fda7103fe8962",
   "dropped": [
     {
       "key": "entity.list_filtered@ecommerce-api:schema:\"NewReturn\"",

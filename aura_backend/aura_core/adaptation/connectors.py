@@ -182,7 +182,10 @@ class ConnectorRegistry:
                 activated_at=self._clock.now(),
             )
             await self._store.put(activated)
-        await self._record("adaptation.connector.activate", by, activated, "ok", {"approval": approval.id})
+        # `credential_scope_attested` lands here: the audit trail names whose claim made a
+        # credentialed connector read-only (AR-3), next to the approval that accepted it.
+        await self._record("adaptation.connector.activate", by, activated, "ok",
+                           {"approval": approval.id, "findings": list(health.findings)})
         return activated
 
     async def disable(self, connector_id: str, *, by: str) -> ConnectorRecord:

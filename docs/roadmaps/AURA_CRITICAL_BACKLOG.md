@@ -173,6 +173,7 @@ reported beyond BUILT until M0 restores CI evidence.
 | CB-39 | Medium | Console | No Project Factory UI (GAP-058) | `/console/adaptation` + Playwright | AP9 |
 | CB-40 | High | Isolation | Project knowledge isolation unprovable while CB-11 is open (GAP-059) | Fix CB-11 first; isolation probe | AP10 |
 | CB-41 | Medium | Personal OS | Personal AURA hardcoded outside any blueprint (GAP-062) | Project 0 parity → shadow → retire coupling | AP13 |
+| CB-42 | High | First integration | Flame in Freefall AR-1…AR-8 built and tested; no live run yet (GAP-063) | Run `docs/guides/flame-integration-runbook.md` on the dev stack; write the Link 1 / Link 2 live reports | AP7/AP12a |
 
 ## Not in this backlog (deliberately)
 

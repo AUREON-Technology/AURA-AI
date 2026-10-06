@@ -199,7 +199,7 @@
       "role": "ecommerce-db:role:shop_support"
     }
   ],
-  "digest": "sha256:41d692af6280f936be2e04d6edb38ca1ff0609d52295cddb6e08e956686c53be",
+  "digest": "sha256:8c23584e939fadd98affbab5d1442ed446082c528eb56d5b9c59543cfe0db368",
   "project_id": "p0",
   "reason": null,
   "registry_digest": "sha256:77d92ccc08814cb1c4b50c0f3aae684cc643de2f78d58ca19abd293b752bc5d1",
@@ -1394,6 +1394,6 @@
     "rejected": 30,
     "selected": 62
   },
-  "twin_digest": "sha256:e2c1221d170f00321687774b2f5a736e777d29cfe5dc5c9e799564c8cc330dd8",
+  "twin_digest": "sha256:06d5d080708582593556bffae677b4dcf59cb3763221bee77baf5c3dce5d7381",
   "twin_version": 1
 }

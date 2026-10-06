@@ -157,6 +157,7 @@ class Container:
         self.telemetry_sink = self._build_telemetry_sink()
         self.sources = self._build_source_registry()
         self.idempotency = self._build_idempotency_store()
+        self.service_keys = self._build_service_keys()
 
         self.providers = build_providers(
             settings.llm, model_allowlist=settings.security.model_allowlist
@@ -1121,6 +1122,23 @@ class Container:
                 self.settings.infrastructure.database_url, pool=self._postgres_pool()
             )
         return InMemoryEventOutbox()
+
+    def _build_service_keys(self) -> Any:
+        """Service keys for non-human callers (AR-4). Postgres-backed with the other stores, so a
+        revocation reaches every gateway worker on its next request; in-memory otherwise."""
+        from .security.service_keys import ServiceKeyService
+
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_service_keys import PostgresServiceKeyStore
+
+            store: Any = PostgresServiceKeyStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        else:
+            from .adapters.service_keys import InMemoryServiceKeyStore
+
+            store = InMemoryServiceKeyStore()
+        return ServiceKeyService(store=store, clock=self.clock, audit=self.audit)
 
     def _build_idempotency_store(self) -> Any:
         """`Idempotency-Key` bookkeeping (roadmap P1.4). Gated like the outbox: replay only means

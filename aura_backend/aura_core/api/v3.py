@@ -27,10 +27,13 @@ from ..domain.errors import (
     RateLimitedError,
     ValidationError,
 )
+from ..domain.caller_context import MAX_CALLER_CONTEXT, CallerContext
 from ..domain.identifiers import CorrelationId, DocumentId, SessionId, UserId
 from ..domain.llm import RoutingPolicy
 from ..domain.memory import MemoryKind, MemoryQuery
+from ..domain.output_schema import check_output_schema
 from ..domain.reasoning import ReasoningStrategy
+from ..domain.untrusted import MAX_UNTRUSTED_CHARS
 from ..kernel.kernel import TurnRequest
 from ..observability.logging import get_logger
 from ..ports.runtime import AuditEvent
@@ -41,6 +44,12 @@ __all__ = ["build_router", "build_app", "Principal"]
 
 logger = get_logger("api.v3")
 
+#: The role a service-key principal carries (AR-4). Never an admin role, so every admin check
+#: refuses it before the route allowlist even has to.
+SERVICE_ROLE = "Service"
+#: Bound on a caller's response_schema (AR-6): it is rendered into the prompt, so it costs tokens.
+_MAX_RESPONSE_SCHEMA_CHARS = 8000
+
 
 class Principal:
     """The authenticated caller.
@@ -50,7 +59,7 @@ class Principal:
     touches only the authenticator.
     """
 
-    __slots__ = ("user_id", "email", "role", "capabilities")
+    __slots__ = ("user_id", "email", "role", "capabilities", "service_key")
 
     def __init__(
         self,
@@ -59,11 +68,23 @@ class Principal:
         email: str = "",
         role: str = "User",
         capabilities: tuple[str, ...] = (),
+        service_key: Any = None,
     ) -> None:
         self.user_id = user_id
         self.email = email
         self.role = role
         self.capabilities = capabilities
+        # AR-4: set only for a non-human caller authenticated by a service key. Its routes,
+        # rate and the absence of memory, session and tools are enforced by this module.
+        self.service_key = service_key
+
+    @classmethod
+    def for_service(cls, key: Any) -> "Principal":
+        return cls(user_id=UserId(key.principal_id), role=SERVICE_ROLE, service_key=key)
+
+    @property
+    def is_service(self) -> bool:
+        return self.service_key is not None
 
     @property
     def is_admin(self) -> bool:
@@ -104,6 +125,12 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     # -- request models ----------------------------------------------------------------
 
+    class ContextEntry(BaseModel):
+        #: AR-5: one piece of caller-supplied evidence. Shape is re-checked by `CallerContext.of`.
+        id: str = Field(min_length=1, max_length=128)
+        text: str = Field(min_length=1, max_length=MAX_UNTRUSTED_CHARS)
+        source: str = Field(default="", max_length=128)
+
     class ChatRequest(BaseModel):
         message: str = Field(min_length=1, max_length=32_000)
         session_id: str | None = None
@@ -123,6 +150,12 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         #: a dedicated git worktree keyed by `session_id`, rather than the user's live checkout.
         #: Silently a no-op for any caller without a live desktop pairing.
         desktop_task_isolation: bool = False
+        #: AR-5: evidence for this turn, carried on the DATA channel (fenced, guarded, tainting)
+        #: -- never in `message`, which is the USER channel and is read as instructions.
+        context: list[ContextEntry] = Field(default_factory=list, max_length=MAX_CALLER_CONTEXT)
+        #: AR-6: ask for one JSON value matching this schema (the ADR-025 subset; top level an
+        #: object). Validated, repaired at most once, else 422 `output_invalid`. `/chat` only.
+        response_schema: dict[str, Any] | None = None
 
     class IngestRequest(BaseModel):
         title: str = Field(min_length=1, max_length=500)
@@ -167,9 +200,37 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     async def principal(request: Request) -> Principal:
         try:
-            return await authenticator(request)
+            caller = await authenticator(request)
         except AuraError as exc:
             raise HTTPException(status_code=exc.http_status, detail=exc.to_dict()) from exc
+        if caller.is_service:
+            # AR-4: a service key reaches only the routes it was issued for -- checked here, once,
+            # for every route that authenticates, so a new route is closed to services by default.
+            route = request.scope.get("route")
+            path = getattr(route, "path", request.url.path)
+            if not caller.service_key.allows(request.method, path):
+                await audit_service(request, caller, "service.denied", "refused", {"route": f"{request.method} {path}"})
+                raise HTTPException(
+                    status_code=403,
+                    detail=AuthorizationError("this service key is not permitted on this route").to_dict(),
+                )
+        return caller
+
+    async def audit_service(
+        request: Request, caller: Principal, action: str, outcome: str, detail: Mapping[str, Any],
+        *, correlation_id: str = "",
+    ) -> None:
+        key = caller.service_key
+        try:
+            await container.audit.record(AuditEvent(
+                action=action, actor=key.name, actor_role=SERVICE_ROLE, outcome=outcome,
+                resource=f"service_key:{key.key_id}",
+                correlation_id=correlation_id or request.headers.get("x-correlation-id") or "",
+                source_ip=request.client.host if request.client else None,
+                detail=dict(detail),
+            ))
+        except Exception:
+            logger.warning("service audit write failed", extra={"action": action}, exc_info=True)
 
     # Optional `Idempotency-Key` support (roadmap P1.4; see api/idempotency.py). Set before any
     # route is declared: APIRouter reads `route_class` at decoration time. A route opts in with
@@ -179,7 +240,28 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     router.route_class, _idempotency_guard = build_idempotency(container, principal=principal)
     idempotent = [_idempotency_guard]
 
+    # A service key's own budget applies whether or not per-user limiting is enabled (AR-4).
+    from ..security.rate_limit import ROUTE_COSTS, SlidingWindowRateLimiter
+
+    service_limiter = rate_limiter or SlidingWindowRateLimiter(
+        container.cache_backend, policies=(), metrics=getattr(container, "metrics", None)
+    )
+
     async def enforce_rate_limit(request: Request, caller: Principal, route_class: str) -> None:
+        if caller.is_service:
+            cost = ROUTE_COSTS.get(route_class, 1)
+            key = caller.service_key
+            decision = await service_limiter.check_limit(
+                key=key.key_id, scope="service", limit=key.rate_per_minute * max(cost, 1), cost=cost
+            )
+            if not decision.allowed:
+                await audit_service(request, caller, "service.rate_limited", "refused", {"route_class": route_class})
+                raise HTTPException(
+                    status_code=429,
+                    detail=RateLimitedError("rate limit exceeded", retry_after=decision.retry_after_s).to_dict(),
+                    headers={"Retry-After": str(decision.retry_after_s)},
+                )
+            return
         if rate_limiter is None or not settings.security.rate_limit_enabled:
             return
         decision = await rate_limiter.check_all(
@@ -249,6 +331,24 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         message = await normalize_for_turn(payload.message, engine=getattr(container, "nlp", None))
         if not message.strip():
             raise ValidationError("message contains nothing usable after normalization")
+        if caller.is_service:
+            # AR-4: a service has no memory, no conversation and no tools. Forced here rather
+            # than trusted from the body, so no request shape can make a key write personal state.
+            if payload.session_id:
+                raise ValidationError("a service key cannot use a session; send each turn on its own")
+            payload = payload.model_copy(update={
+                "use_memory": False, "use_tools": False, "confirmed_tools": [], "confirmed_call_ids": [],
+            })
+        if payload.response_schema is not None:
+            check_output_schema(payload.response_schema)
+            if payload.response_schema.get("type") != "object":
+                raise ValidationError("response_schema must describe a JSON object at the top level")
+            if len(json.dumps(payload.response_schema)) > _MAX_RESPONSE_SCHEMA_CHARS:
+                raise ValidationError("response_schema is too large",
+                                      details={"limit_chars": _MAX_RESPONSE_SCHEMA_CHARS})
+        caller_context = tuple(CallerContext.of(id=e.id, text=e.text, source=e.source) for e in payload.context)
+        if len({e.id for e in caller_context}) != len(caller_context):
+            raise ValidationError("context ids must be unique within a turn")
         return TurnRequest(
             message=message,
             user_id=caller.user_id,
@@ -270,6 +370,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             max_output_tokens=payload.max_output_tokens,
             temperature=payload.temperature,
             desktop_task_isolation=payload.desktop_task_isolation,
+            # Defence in depth behind use_tools=False: an empty grant intersects to no tools.
+            delegated_tool_grant=frozenset() if caller.is_service else None,
+            caller_context=caller_context,
+            response_schema=payload.response_schema,
         )
 
     # -- chat --------------------------------------------------------------------------
@@ -283,7 +387,26 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         """One complete turn. Use ``/chat/stream`` for incremental output."""
         await enforce_rate_limit(request, caller, "chat")
         result = await container.kernel.run(await to_turn(payload, caller, request))
+        if caller.is_service:
+            # Chat turns are not audited for people; a service's are, so one interpretation can be
+            # traced from the calling system's correlation id to the turn that produced it.
+            await audit_service(request, caller, "service.chat", result.telemetry.outcome.value,
+                                {"turn_id": result.telemetry.turn_id.value},
+                                correlation_id=result.telemetry.correlation_id.value)
 
+        if result.telemetry.error_kind == "output_invalid":
+            # AR-6: the model never produced JSON matching the caller's schema. Not retryable as
+            # sent; the error paths are safe to return (they never carry values).
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "error": "output_invalid",
+                    "message": "The answer did not match the requested response_schema.",
+                    "retryable": False,
+                    "details": dict(result.error_details or {}),
+                    "correlation_id": result.telemetry.correlation_id.value,
+                },
+            )
         if result.telemetry.outcome.value != "success":
             # The kernel already produced telemetry for the failure; surface the domain error's
             # status rather than a generic 500.
@@ -327,6 +450,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "model": result.telemetry.model,
                 "cached": result.telemetry.cache.hit,
                 "degraded": result.degraded,
+                **({"data": result.data} if payload.response_schema is not None else {}),
             },
             headers={"X-Correlation-Id": result.telemetry.correlation_id.value},
         )
@@ -343,6 +467,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         ``done``, and ``error`` -- typed rather than a raw token stream the client must
         string-split for an ``[ACTIONS]`` marker, which is the v1 protocol's fragility (TD-12).
         """
+        if payload.response_schema is not None:
+            # A streamed answer reaches the client before it can be validated (AR-6).
+            raise ValidationError("response_schema is supported on POST /api/v3/chat only, not on the stream")
         await enforce_rate_limit(request, caller, "chat")
         turn = await to_turn(payload, caller, request)
 
@@ -1223,18 +1350,37 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         Request=Request,
     )
 
+    from .admin_service_keys import register_service_key_ops
+
+    register_service_key_ops(
+        router,
+        container,
+        principal=principal,
+        require_super_admin=require_super_admin,
+        Depends=Depends,
+        JSONResponse=JSONResponse,
+    )
+
+    # The WebSocket routes authenticate per frame without the `principal` dependency, so the
+    # service-key route gate never sees them. A service key opens neither (AR-4).
+    async def person_authenticator(request: Any) -> Principal:
+        caller = await authenticator(request)
+        if caller.is_service:
+            raise AuthenticationError("a service key cannot open this connection")
+        return caller
+
     from .voice_live import register_voice_live
 
     register_voice_live(
         router,
         container,
-        authenticator=authenticator,
+        authenticator=person_authenticator,
         rate_limiter=rate_limiter,
     )
 
     from .host_agent import register_host_agent
 
-    register_host_agent(router, container, authenticator=authenticator)
+    register_host_agent(router, container, authenticator=person_authenticator)
 
     return router
 

@@ -188,7 +188,7 @@
       "role": "hr-db:role:hr_viewer"
     }
   ],
-  "digest": "sha256:a8bec880be590fa95bc0eea78cae680dda92996d7ee1a19944a1982811a14e7b",
+  "digest": "sha256:a9feafdb42c74c07b68fccebaeabaeba705191c283e90d55ff4cf1edb5b1dead",
   "project_id": "p0",
   "reason": null,
   "registry_digest": "sha256:77d92ccc08814cb1c4b50c0f3aae684cc643de2f78d58ca19abd293b752bc5d1",
@@ -1132,6 +1132,6 @@
     "rejected": 30,
     "selected": 42
   },
-  "twin_digest": "sha256:3a49a9adc50d18deb6de1852d3f13e06fe151c92c36ec46c7b4a4937e1a8642f",
+  "twin_digest": "sha256:c3f1e6256780b7f7d4bd4318b58b8623edc91a1938bfbe4113fd829a53b82746",
   "twin_version": 1
 }

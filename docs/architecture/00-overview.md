@@ -133,6 +133,7 @@ aura_backend/aura_core/
 | [026](026-deterministic-first-compiler.md) | *(Proposed)* Deterministic structure; model only labels/proposes; mandatory CPU degraded mode | Label quality depends on the GPU plane, in exchange for reproducible twins and an unchanged self-hosting invariant |
 | [027](027-ui-capability-manifest.md) | *(Proposed)* Closed-vocabulary UI Capability Manifest; staged surfaces | Rich screens need new view types, in exchange for zero client releases per project |
 | [028](028-project-zero.md) | *(Proposed)* Personal AURA becomes Project 0; zero-knowledge tables never discovered | A staged parity/shadow migration, in exchange for one code path |
+| [029](029-service-principals-and-caller-context.md) | Service keys scoped to named routes; caller evidence on the DATA channel tainting the turn; structured output repaired once then failing closed | A second principal class every caller-identity check must consider, in exchange for system-to-system integration without a person's token |
 
 ---
 

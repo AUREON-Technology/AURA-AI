@@ -24,6 +24,7 @@
           "path:orderId"
         ],
         "path": "/orders/{orderId}",
+        "query_parameters": [],
         "request_schema": null,
         "required_parameters": [
           "path:orderId"
@@ -53,6 +54,7 @@
           "path:customerId"
         ],
         "path": "/customers/{customerId}/orders",
+        "query_parameters": [],
         "request_schema": null,
         "required_parameters": [
           "path:customerId"
@@ -82,6 +84,7 @@
           "path:orderId"
         ],
         "path": "/orders/{orderId}",
+        "query_parameters": [],
         "request_schema": null,
         "required_parameters": [
           "path:orderId"
@@ -112,6 +115,10 @@
           "query:inStock"
         ],
         "path": "/products",
+        "query_parameters": [
+          "{\"n\":\"category\",\"t\":\"string\"}",
+          "{\"n\":\"inStock\",\"t\":\"boolean\"}"
+        ],
         "request_schema": null,
         "required_parameters": [],
         "response_is_array": true,
@@ -139,6 +146,7 @@
           "path:sku"
         ],
         "path": "/products/{sku}",
+        "query_parameters": [],
         "request_schema": null,
         "required_parameters": [
           "path:sku"
@@ -166,6 +174,7 @@
         "operation_id": "createReturn",
         "parameters": [],
         "path": "/returns",
+        "query_parameters": [],
         "request_schema": "schema:\"NewReturn\"",
         "required_parameters": [],
         "response_is_array": false,

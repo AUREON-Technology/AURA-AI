@@ -1312,7 +1312,9 @@ gaps:
       external systems.
     target_state: >-
       Widget + scoped public API (AP12a), server-driven Flutter from the UI manifest (AP12b) and
-      WriteConnector behind argument-bound confirmation (AP12c).
+      WriteConnector behind argument-bound confirmation (AP12c). Note (2026-10-05): AP12a's
+      scoped-key part is built narrowly for system-to-system calls (service keys, ADR-029,
+      GAP-063); the widget, CORS allowlist and delegated identity handoff remain open.
     owner: platform-core
     dependencies: [GAP-060, GAP-013]
     test: key-scope/rate-limit tests; flutter analyze + test; write eval suite
@@ -1335,3 +1337,35 @@ gaps:
     metric: shadow eval delta (target 0 regressions)
     exit_condition: AP13.1–AP13.5 exit criteria met; docs/reports/ap13-project-zero.md.
     status: open
+
+  # ------------------------------------------------------------ first external integration
+
+  - gap_id: GAP-063
+    component: integration/flame-readiness
+    severity: P1
+    current_state: >-
+      AURA-side requirements AR-1..AR-8 for Flame in Freefall (FCDS-College/Nasa,
+      docs/AURA_INTEGRATION_REQUIREMENTS.md) are built and unit/security tested in this tree:
+      typed OpenAPI output schemas (AR-1, #154); optional query parameters on generated GET tools
+      (AR-2); credentialed read-only OpenAPI connectors by attestation (AR-3); scoped service keys
+      with their own rate, audit, immediate revocation and no memory/tools/session (AR-4, Alembic
+      0013, verified on PostgreSQL 16 via tests/load/test_service_keys_postgres.py); caller
+      context on the DATA channel that taints the turn (AR-5); structured output repaired once
+      then failing closed (AR-6); drift runbook (AR-8). Flame's offline dry run compiles 8 tools,
+      8/8 ACCEPTED, no unreachable optional parameters. Nothing has run against a live Flame API.
+    target_state: >-
+      Link 2 (AURA reads Flame through a deployed generated blueprint) and Link 1 (Flame asks
+      AURA to interpret with svc-flame, context and response_schema) both exercised on the dev
+      stack against a running Flame API, per docs/guides/flame-integration-runbook.md.
+    owner: platform-core
+    dependencies: [GAP-056, GAP-057, GAP-061]
+    test: >-
+      tests/unit/test_service_keys.py, tests/security/test_caller_context.py,
+      tests/unit/test_structured_output.py, TestOptionalQueryParameters and
+      TestAttestedReadOnlyOpenApi; Flame's tests/integration/aura_blueprint_dryrun.py
+    metric: Link 1 interpretation success rate and p95 latency; Link 2 tool invalid_output rate
+    exit_condition: >-
+      docs/reports/flame-link2-live.md (AR-7: a deployed bp<N>_api_search answering a real
+      question with a Flame evidence_id) and docs/reports/flame-link1-live.md both exist.
+    status: built_not_proven
+    evidence: docs/reports/flame-integration-readiness.md

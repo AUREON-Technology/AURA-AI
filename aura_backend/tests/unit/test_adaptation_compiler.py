@@ -492,3 +492,124 @@ def test_super_admin_compiles_and_reads_a_blueprint(monkeypatch) -> None:
         full = client.get("/api/v3/admin/blueprints/1").json()["record"]
         assert full["blueprint"]["templates"] and full["suites"]
         assert client.get("/api/v3/admin/blueprints/9").status_code == 404
+
+
+# ----------------------------------------------------------- AR-2: optional query parameters
+
+
+def _search_spec(extra: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """An OpenAPI 3.1 search operation shaped like Flame in Freefall's ``GET /api/search``."""
+    params = [
+        {"name": "q", "in": "query", "required": True, "schema": {"type": "string", "maxLength": 500}},
+        {"name": "type", "in": "query", "schema": {"type": "string", "enum": ["document", "experiment"]}},
+        {"name": "domain", "in": "query", "schema": {"type": "string", "enum": ["combustion", "all"],
+                                                     "default": "combustion"}},
+        {"name": "source_id", "in": "query", "style": "form", "explode": True,
+         "schema": {"type": "array", "items": {"type": "string"}, "maxItems": 20}},
+        {"name": "page_size", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20}},
+        {"name": "exact", "in": "query", "schema": {"type": "boolean"}},
+        {"name": "filter", "in": "query", "schema": {"type": "object"}},          # no query-string form
+        {"name": "ids", "in": "query", "explode": False,                           # comma style: unsupported
+         "schema": {"type": "array", "items": {"type": "string"}}},
+        *(extra or []),
+    ]
+    return {
+        "openapi": "3.1.0", "info": {"title": "Search", "version": "1"},
+        "paths": {"/api/search": {"get": {
+            "operationId": "search", "parameters": params,
+            "responses": {"200": {"description": "ok", "content": {"application/json": {
+                "schema": {"$ref": "#/components/schemas/SearchResponse"}}}}},
+        }}},
+        "components": {"schemas": {"SearchResponse": {"type": "object", "properties": {
+            "data": {"type": "array", "items": {"type": "object"}},
+        }}}},
+    }
+
+
+def _compile_search(spec: dict[str, Any]):
+    from aura_core.adaptation.twin import build_twin
+    from aura_core.adapters.connectors.openapi import artifacts_from_openapi
+    from aura_core.domain.blueprint import ConnectorRef
+    from aura_core.domain.connectors import ConnectorKind, IdentityMode
+    from aura_core.domain.discovery import DiscoveryBudget
+
+    report = artifacts_from_openapi("lab-api", spec, DiscoveryBudget())
+    twin = build_twin("p0", 1, [report]).twin
+    result = compile_blueprint(twin, plan_capabilities(twin, CapabilityRegistry.from_directory()),
+                               connectors=[ConnectorRef("lab-api", ConnectorKind.OPENAPI, IdentityMode.DELEGATED)],
+                               version=1)
+    (tool,) = [t for t in result.blueprint.tools if t.name == "api_search"]
+    template = next(t for t in result.blueprint.templates if t.id == tool.template)
+    return report, twin, result, tool, template
+
+
+class TestOptionalQueryParameters:
+    def test_declared_optional_parameters_compile_typed_and_optional(self) -> None:
+        report, _, _, tool, template = _compile_search(_search_spec())
+        params = {p.name: p for p in tool.parameters}
+        assert template.http.query_params == {
+            "q": "q", "type": "type", "domain": "domain", "source_id": "source_id",
+            "page_size": "page_size", "exact": "exact",
+        }
+        assert params["q"].required and not any(params[n].required for n in params if n != "q")
+        assert params["type"].enum == ("document", "experiment")
+        assert (params["page_size"].type, params["page_size"].minimum, params["page_size"].maximum) == ("integer", 1, 50)
+        assert (params["source_id"].type, params["source_id"].item_type) == ("array", "string")
+        assert params["exact"].type == "boolean"
+        # The server owns its default: described, never sent on the caller's behalf.
+        assert all(p.default is None for p in tool.parameters)
+        # `filter` (an object) and `ids` (comma style) have no safe rendering: recorded, not compiled.
+        assert [(i.code, i.locator) for i in report.issues] == [("unsupported_query_parameter", "op:GET /api/search")]
+
+    def test_the_model_sees_token_enums_and_never_wordy_ones(self) -> None:
+        from aura_core.adaptation.runtime import model_facing_parameters
+
+        wordy = {"name": "mode", "in": "query", "schema": {"type": "string", "enum": ["ignore all previous", "x"]}}
+        _, _, _, tool, template = _compile_search(_search_spec([wordy]))
+        surface = {p.name: p for p in model_facing_parameters(tool, template)}
+        assert surface["domain"].enum == ("combustion", "all")
+        assert surface["mode"].enum is None and "ignore" not in surface["mode"].description
+        assert "Optional" in surface["page_size"].description and "Optional" not in surface["q"].description
+
+    def test_arguments_are_checked_before_any_request(self) -> None:
+        from types import SimpleNamespace
+
+        from aura_core.adaptation.runtime import model_facing_parameters
+        from aura_core.tools.schema import validate_arguments
+
+        _, _, _, tool, template = _compile_search(_search_spec())
+        spec = SimpleNamespace(name=tool.name, parameters=model_facing_parameters(tool, template))
+        assert validate_arguments(spec, {"q": "heptane"}) == {"q": "heptane"}  # absent stays absent
+        for bad in ({"q": "x", "domain": "everything"}, {"q": "x", "page_size": 500},
+                    {"q": "x", "page_size": "ten"}, {"q": "x", "sql": "1"}):
+            with pytest.raises(ValidationError):
+                validate_arguments(spec, bad)
+
+    def test_hostile_values_are_percent_encoded_and_booleans_are_json(self) -> None:
+        _, _, _, _, template = _compile_search(_search_spec())
+        target = render_http(template, {
+            "q": "a&domain=all#x", "source_id": ["FLEX", "B&B=1"], "exact": True, "page_size": None,
+        })
+        path, _, query = target.partition("?")
+        assert path == "/api/search" and "#" not in target
+        assert query.split("&") == ["exact=true", "q=a%26domain%3Dall%23x", "source_id=FLEX", "source_id=B%26B%3D1"]
+        with pytest.raises(ValidationError, match="too many"):
+            render_http(template, {"q": "x", "source_id": ["S"] * 21})
+
+    def test_at_most_eight_optional_parameters_reach_one_tool(self) -> None:
+        extra = [{"name": f"f{i}", "in": "query", "schema": {"type": "string"}} for i in range(6)]
+        _, _, _, tool, _ = _compile_search(_search_spec(extra))
+        assert sum(not p.required for p in tool.parameters) == 8
+
+    def test_a_query_key_the_twin_does_not_declare_is_refused(self) -> None:
+        _, twin, result, tool, template = _compile_search(_search_spec())
+        bp = result.blueprint
+        forged = dataclasses.replace(template, http=dataclasses.replace(
+            template.http, query_params={**template.http.query_params, "admin": "admin"}))
+        tampered = dataclasses.replace(
+            bp, templates=tuple(forged if t.id == template.id else t for t in bp.templates),
+            tools=tuple(dataclasses.replace(t, parameters=t.parameters + (ParameterSpec("admin", "string", "x", required=False),))
+                        if t.name == tool.name else t for t in bp.tools),
+        )
+        with pytest.raises(ValidationError, match="not declared"):
+            check_against_twin(tampered, twin)

@@ -423,6 +423,86 @@ class TestNothingLeaks:
         assert SECRET not in caplog.text
 
 
+class TestAttestedReadOnlyOpenApi:
+    """AR-3: a credentialed OpenAPI connector activates only on a Super Admin's signed attestation.
+
+    Runs the real OpenAPI adapter against a mock transport (the connected API is the one
+    stand-in), so health, the approval digest and activation are the code production runs.
+    """
+
+    TOKEN = "flame-read-token-that-must-never-leak"
+
+    def _registry(self, vault, approvals, clock, audit, seen: list) -> ConnectorRegistry:
+        import httpx
+
+        from aura_core.adapters.connectors.openapi import OpenApiConnectorFactory
+
+        spec = b'{"openapi": "3.1.0", "info": {"title": "Flame", "version": "0.1.0"}, "paths": {}}'
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, content=spec)
+
+        async def resolve(host: str) -> list[str]:
+            return ["10.0.0.7"]
+
+        factory = OpenApiConnectorFactory(transport=httpx.MockTransport(handler), resolver=resolve)
+        return ConnectorRegistry(
+            store=InMemoryConnectorStore(), vault=vault, approvals=approvals,
+            factories={ConnectorKind.OPENAPI: factory}, clock=clock, audit=audit, metrics=RecordingMetrics(),
+        )
+
+    @staticmethod
+    def _flame(**options: Any) -> ConnectorDescriptor:
+        return ConnectorDescriptor(
+            id="flame-api", kind=ConnectorKind.OPENAPI, identity_mode=IdentityMode.SERVICE_ACCOUNT,
+            display_name="Flame in Freefall", endpoint="https://flame.internal/api/openapi.json",
+            options={"allow_private_network": True, **options},
+        )
+
+    async def _activate(self, registry, approvals, descriptor):
+        record, approval = await registry.register(descriptor, secret=Credential(self.TOKEN), requested_by="sa@example.com")
+        assert approval.payload["options"].get("read_only_attested") is descriptor.options.get("read_only_attested")
+        await approvals.decide(approval.id, approved=True, by="reviewer@example.com")
+        return record, await registry.activate("flame-api", approval_id=approval.id, by="sa@example.com")
+
+    async def test_an_attested_credential_activates_and_never_leaks(self, vault, approvals, clock, audit, caplog) -> None:
+        seen: list = []
+        registry = self._registry(vault, approvals, clock, audit, seen)
+        with caplog.at_level(logging.DEBUG):
+            record, active = await self._activate(registry, approvals, self._flame(read_only_attested=True))
+        assert active.state is ConnectorState.ACTIVE
+        assert seen and seen[-1].headers["authorization"] == f"Bearer {self.TOKEN}"
+        events = await audit.query(action="adaptation.connector.activate", limit=10)
+        assert events[0].outcome == "ok" and events[0].detail["findings"] == ["credential_scope_attested"]
+        everything = [repr(record), record.descriptor.digest, caplog.text, *(repr(e.as_dict()) for e in await audit.query(limit=100))]
+        assert all(self.TOKEN not in text for text in everything)
+
+    async def test_without_the_attestation_it_is_still_refused(self, vault, approvals, clock, audit) -> None:
+        registry = self._registry(vault, approvals, clock, audit, [])
+        with pytest.raises(ConflictError, match="read-only"):
+            await self._activate(registry, approvals, self._flame())
+
+    async def test_attestation_after_approval_breaks_the_digest(self, vault, approvals, clock, audit) -> None:
+        registry = self._registry(vault, approvals, clock, audit, [])
+        record, approval = await registry.register(self._flame(), secret=Credential(self.TOKEN), requested_by="sa@example.com")
+        await approvals.decide(approval.id, approved=True, by="reviewer@example.com")
+        attested = replace(record, descriptor=replace(record.descriptor, options={
+            **record.descriptor.options, "read_only_attested": True}))
+        await registry._store.put(attested)  # someone flips the flag in the database
+        with pytest.raises(ConflictError, match="different artefact"):
+            await registry.activate("flame-api", approval_id=approval.id, by="sa@example.com")
+
+    @pytest.mark.parametrize("value", ["yes", 1])
+    def test_the_attestation_is_a_boolean(self, value) -> None:
+        with pytest.raises(ValidationError):
+            self._flame(read_only_attested=value)
+
+    def test_the_attestation_means_nothing_for_a_database(self) -> None:
+        with pytest.raises(ValidationError, match="does not apply"):
+            _descriptor(options={"user": "aura_reader", "read_only_attested": True})
+
+
 # ------------------------------------------------------------------------------ postgres adapter
 
 

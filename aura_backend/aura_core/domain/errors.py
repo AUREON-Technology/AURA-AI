@@ -26,6 +26,7 @@ __all__ = [
     "AuraError",
     "ConfigurationError",
     "ValidationError",
+    "OutputInvalidError",
     "NotFoundError",
     "ConflictError",
     "DataIntegrityError",
@@ -113,6 +114,14 @@ class ConfigurationError(AuraError):
 
 class ValidationError(AuraError):
     kind = "validation_error"
+    http_status = 422
+
+
+class OutputInvalidError(AuraError):
+    """A turn asked for structured output and the model's answer did not match the schema even
+    after one repair (AR-6). ``details["errors"]`` names paths, never values."""
+
+    kind = "output_invalid"
     http_status = 422
 
 

@@ -9,6 +9,7 @@ primitive with no factory yet -- comes back as a reason code instead of a tool.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -30,6 +31,7 @@ from ...domain.templates import (
 )
 from ...domain.tools import ParameterSpec, ToolSensitivity
 from ...domain.untrusted import UntrustedText
+from ..normalize import MAX_OPTIONAL_QUERY
 from .common import MAX_COLUMNS, TwinView, is_textual, json_type, param_type, slug, unique_slug
 
 __all__ = ["CompiledTool", "build_tool", "DEFAULT_MAX_ROWS"]
@@ -358,6 +360,12 @@ def _operation(selection, action, view: TwinView, taken):
             name = unique_slug(slug(key), used)
             query_params[key] = name
             params.append(ParameterSpec(name, "string", f"Value for the {key} query parameter.", max_length=256))
+    for index in range(1, MAX_OPTIONAL_QUERY + 1):
+        optional = _optional_query(props.get(f"query_param_{index}"), used, query_params)
+        if optional is not None:
+            key, spec = optional
+            query_params[key] = spec.name
+            params.append(spec)
     entity = view.get(action.refs.get("entity", ""))
     if entity is not None:
         attr_props: dict[str, Any] = {}
@@ -379,6 +387,50 @@ def _operation(selection, action, view: TwinView, taken):
     view_type = "entity_list" if props.get("returns_list") else "entity_detail"
     return _compiled(selection, name, description, action.source_id, template, schema, tuple(params),
                      view_type, entity.id if entity is not None else None)
+
+
+_QUERY_TYPES = frozenset({"string", "integer", "number", "boolean", "array"})
+_QUERY_ITEM_TYPES = frozenset({"string", "integer", "number", "boolean"})
+
+
+def _optional_query(raw: Any, used: set[str], bound: dict[str, str]) -> tuple[str, ParameterSpec] | None:
+    """One optional query parameter from its discovery descriptor (AR-2), or None to skip it.
+
+    The descriptor is the connected system's data: every field is re-checked here and anything
+    malformed drops the parameter rather than producing a half-typed one. The server's default
+    is described, never applied -- an omitted argument is omitted from the request.
+    """
+    if not isinstance(raw, str):
+        return None
+    try:
+        desc = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(desc, dict):
+        return None
+    key, kind, item = desc.get("n"), desc.get("t"), desc.get("i")
+    if (not isinstance(key, str) or not key or len(key) > 128 or key in bound
+            or any(ord(c) < 33 or c in "&=#?" for c in key) or kind not in _QUERY_TYPES):
+        return None
+    if kind == "array" and item not in _QUERY_ITEM_TYPES:
+        return None
+    enum = desc.get("e")
+    if not (kind == "string" and isinstance(enum, list) and enum and all(isinstance(v, str) for v in enum)):
+        enum = None
+    bounds = {}
+    for short, field in (("lo", "minimum"), ("hi", "maximum")):
+        value = desc.get(short)
+        if kind in ("integer", "number") and isinstance(value, (int, float)) and not isinstance(value, bool):
+            bounds[field] = value
+    default = desc.get("d")
+    hint = f" The server's default is {default}." if isinstance(default, (str, int, float)) and not isinstance(default, bool) else ""
+    name = unique_slug(slug(key), used)
+    spec = ParameterSpec(
+        name, kind, f"Optional value for the {key} query parameter.{hint}"[:400], required=False,
+        enum=tuple(enum) if enum else None, max_length=256 if kind == "string" else None,
+        item_type=item if kind == "array" else None, **bounds,
+    )
+    return key, spec
 
 
 _BUILDERS: dict[str, Callable[..., CompiledTool]] = {

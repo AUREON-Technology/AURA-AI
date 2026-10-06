@@ -83,3 +83,28 @@ data-access tools; if a model wrote SQL, one injected comment could become an ex
 - **`test_no_freeform_sql` gained one named exemption**, `NOT_DRIVER_CALLS`: the gate dispatches
   through `ToolRegistry.execute`, which collides with a driver method name. A second test pins
   that the exempt function calls only `self.tools`.
+
+## Implementation notes (Flame integration AR-2, 2026-10-05)
+
+- **Optional query parameters reach generated GET tools.** Before this, only required query
+  parameters did. A connected API could not be filtered or paged: Flame's contract had 14 such
+  parameters unreachable.
+  - Discovery keeps each optional parameter as one compact descriptor: name, JSON type, array
+    item type, enum, numeric bounds and default. It never keeps the parameter's description or
+    summary.
+  - The compiler re-validates every descriptor field and emits an optional `ParameterSpec`. There
+    are at most 8 per tool.
+  - The server's default is never sent on the caller's behalf: an absent argument stays absent.
+  - Objects, and arrays that are not `style: form, explode: true`, have no unambiguous query
+    string, so they stay unreachable. Discovery records them as `unsupported_query_parameter`.
+- **One relaxation of "enum hints are dropped".** An enum survives into the model-facing
+  declaration only on an HTTP query parameter, and only when every value is a single identifier
+  token (`[A-Za-z0-9_.-]{1,64}`). That is the same class of text as the query key the description
+  already names, and it is below the gate's three-word attribution threshold. Any wordier enum is
+  dropped, as before.
+  - `test_adaptation_gate.py` pins both halves.
+  - `validate_arguments` enforces a kept enum before any request is made.
+- **The allowlist is now per key.** `check_against_twin` also refuses a template query key that
+  its twin operation does not declare, whether required or optional.
+- **Rendering.** `render_http` writes booleans as `true`/`false` and arrays as repeated keys, with
+  at most 20 values. Every value is still percent-encoded.

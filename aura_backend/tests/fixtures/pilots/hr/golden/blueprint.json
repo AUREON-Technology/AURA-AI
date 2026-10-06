@@ -512,7 +512,7 @@
     "project": {
       "id": "p0",
       "name": "Reference hr",
-      "twin_digest": "sha256:3a49a9adc50d18deb6de1852d3f13e06fe151c92c36ec46c7b4a4937e1a8642f",
+      "twin_digest": "sha256:c3f1e6256780b7f7d4bd4318b58b8623edc91a1938bfbe4113fd829a53b82746",
       "twin_version": 1,
       "version": 1
     },
@@ -1583,7 +1583,10 @@
         "http": {
           "path": "/employees",
           "path_params": {},
-          "query_params": {}
+          "query_params": {
+            "departmentId": "department_id",
+            "status": "status"
+          }
         },
         "id": "api_list_employees",
         "kind": "http",
@@ -1607,7 +1610,9 @@
         "http": {
           "path": "/leave-requests",
           "path_params": {},
-          "query_params": {}
+          "query_params": {
+            "employeeId": "employee_id"
+          }
         },
         "id": "api_list_leave_requests",
         "kind": "http",
@@ -3212,7 +3217,38 @@
           },
           "type": "array"
         },
-        "parameters": [],
+        "parameters": [
+          {
+            "default": null,
+            "description": "Optional value for the departmentId query parameter.",
+            "enum": null,
+            "format": null,
+            "item_type": null,
+            "max_length": null,
+            "maximum": null,
+            "minimum": null,
+            "name": "department_id",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "default": null,
+            "description": "Optional value for the status query parameter.",
+            "enum": [
+              "active",
+              "on_leave",
+              "terminated"
+            ],
+            "format": null,
+            "item_type": null,
+            "max_length": 256,
+            "maximum": null,
+            "minimum": null,
+            "name": "status",
+            "required": false,
+            "type": "string"
+          }
+        ],
         "sensitivity": "personal",
         "template": "api_list_employees"
       },
@@ -3323,7 +3359,21 @@
           },
           "type": "array"
         },
-        "parameters": [],
+        "parameters": [
+          {
+            "default": null,
+            "description": "Optional value for the employeeId query parameter.",
+            "enum": null,
+            "format": null,
+            "item_type": null,
+            "max_length": null,
+            "maximum": null,
+            "minimum": null,
+            "name": "employee_id",
+            "required": false,
+            "type": "integer"
+          }
+        ],
         "sensitivity": "personal",
         "template": "api_list_leave_requests"
       },
@@ -4349,7 +4399,7 @@
       }
     ]
   },
-  "digest": "sha256:9996c326c290ad843df3c5a1891085b6b46d14bfc2560d488ef6ab143156d09f",
+  "digest": "sha256:5969a1b3ac7c12f3a0b669a10c4a28ee58cf511309a9fc58798ba9dd5c866f9b",
   "dropped": [
     {
       "key": "entity.list_filtered@hr-api:schema:\"Employee\"",

@@ -25,6 +25,7 @@ side effect so it cannot be forgotten (ADR-009).
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 from dataclasses import dataclass
@@ -36,11 +37,13 @@ from ..domain.errors import (
     AllProvidersFailedError,
     AuraError,
     BudgetExceededError,
+    OutputInvalidError,
     OverloadedError,
     SafetyViolationError,
     UserConcurrencyLimitError,
 )
 from ..domain.events import TurnCompleted, TurnFailed, TurnStarted
+from ..domain.caller_context import CallerContext
 from ..domain.context import user_facing_citations
 from ..domain.engineering import EngineerRun, EngineerRunStatus
 from ..domain.identifiers import CorrelationId, EngineerRunId, SessionId, TurnId, UserId
@@ -55,6 +58,7 @@ from ..domain.llm import (
     WorkloadHint,
 )
 from ..domain.memory import MemoryHit, MemoryKind, MemoryQuery, readable_scopes
+from ..domain.output_schema import parse_structured
 from ..domain.messages import Conversation, Message
 from ..domain.planning import StepKind
 from ..domain.reasoning import ReasoningStrategy
@@ -135,6 +139,12 @@ class TurnRequest:
     #: from ``route``/``agent`` (``llm/workload.py``): Engineer -> coder pool at priority 2,
     #: voice and chat -> general-fast at priority 1. Background callers set it explicitly.
     workload: WorkloadClass | None = None
+    #: Evidence the calling system supplied for this turn (AR-5). DATA channel only: guarded
+    #: like retrieved chunks, fenced, and its presence taints the turn.
+    caller_context: tuple[CallerContext, ...] = ()
+    #: Structured output (AR-6): the answer must be JSON matching this schema (the subset in
+    #: ``domain/output_schema.py``), repaired at most once, or the turn fails ``output_invalid``.
+    response_schema: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +173,12 @@ class TurnResult:
     #: The durable agent run this turn's plan/execute loop recorded (GAP-024), readable via
     #: ``GET /api/v3/agents/runs/{id}``; ``None`` when the turn planned nothing.
     agent_run_id: str | None = None
+    #: The validated JSON value when the turn asked for structured output (AR-6); never set
+    #: from an answer that failed its schema.
+    data: Any = None
+    #: Machine-readable detail of a failed turn that is safe to return (``output_invalid``'s
+    #: error paths). ``None`` for every other failure.
+    error_details: Mapping[str, Any] | None = None
 
     @property
     def degraded(self) -> bool:
@@ -331,6 +347,9 @@ class AIKernel:
             timings["guards_in"] = timings.get("guards_in", 0.0) + (
                 time.perf_counter() - stage_start
             ) * 1000.0
+        caller_context, context_quarantined = await self._guard_caller_context(request, turn_id)
+        quarantined_count += context_quarantined
+        tainted = tainted or bool(request.caller_context)
 
         # 6. Plan and execute --------------------------------------------------------
         tool_telemetry: list[ToolTelemetry] = []
@@ -387,7 +406,7 @@ class AIKernel:
         assembled = deps.context.assemble(
             ContextRequest(
                 system_prompt=system_prompt,
-                user_message=message,
+                user_message=self._with_schema_instruction(message, request.response_schema),
                 history=history,
                 memories=memories,
                 goals=goals,
@@ -399,6 +418,7 @@ class AIKernel:
                 context_window=self._context_window(),
                 max_output_tokens=request.max_output_tokens,
                 max_prompt_tokens=self._max_prompt_tokens(),
+                caller_context=caller_context,
             )
         )
         timings["context"] = (time.perf_counter() - stage_start) * 1000.0
@@ -443,6 +463,16 @@ class AIKernel:
                 if verdict.guard == "groundedness":
                     groundedness = verdict.metadata.get("groundedness")
             timings["guards_out"] = (time.perf_counter() - stage_start) * 1000.0
+
+        # 9b. Structured output (AR-6) -----------------------------------------------
+        data = None
+        if request.response_schema is not None:
+            answer, data, repair_usage, repair_cost = await self._enforce_response_schema(
+                request, assembled, answer, budget, turn_id
+            )
+            if repair_usage is not None:
+                usage = (usage or TokenUsage(prompt_tokens=assembled.prompt_tokens)) + repair_usage
+                cost += repair_cost
 
         # 10. Persist session state --------------------------------------------------
         if deps.episodic is not None and request.session_id is not None:
@@ -494,7 +524,10 @@ class AIKernel:
         return TurnResult(
             text=answer,
             telemetry=telemetry,
-            citations=self._resolve_citations(assembled, retrieval),
+            # User-facing, as the stream path already was: `memory:`/`tool:`/`goal:` provenances
+            # are packing bookkeeping, and a caller validating citations (AR-5) must only ever
+            # see documents and the context ids it sent.
+            citations=self._resolve_citations(assembled, retrieval, user_facing=True),
             tool_calls=tuple(t.name for t in tool_telemetry),
             confidence=confidence,
             needs_confirmation=tuple(dict.fromkeys(needs_confirmation)),
@@ -502,6 +535,7 @@ class AIKernel:
             plan_summary=tuple(plan_summary),
             resolved_agent=resolved_agent,
             agent_run_id=agent_run_id,
+            data=data,
         )
 
     # -- streaming ---------------------------------------------------------------------
@@ -562,6 +596,8 @@ class AIKernel:
                         strategy=retrieval.strategy,
                         duration_ms=retrieval.duration_ms,
                     )
+                caller_context, _ = await self._guard_caller_context(request, turn_id)
+                tainted = tainted or bool(request.caller_context)
 
                 tool_declarations = await self._tool_declarations(request)
                 tool_results: list[tuple[str, str]] = []
@@ -619,6 +655,7 @@ class AIKernel:
                         context_window=self._context_window(),
                         max_output_tokens=request.max_output_tokens,
                         max_prompt_tokens=self._max_prompt_tokens(),
+                        caller_context=caller_context,
                     )
                 )
 
@@ -1289,6 +1326,102 @@ class AIKernel:
         return f"{shown}, ... ({len(names)} tools total)"
 
     @staticmethod
+    def _with_schema_instruction(message: str, schema: Mapping[str, Any] | None) -> str:
+        """The user turn plus the output contract (AR-6). The schema is the caller's own input,
+        so it rides on the caller's channel, USER -- never SYSTEM."""
+        if schema is None:
+            return message
+        rendered = json.dumps(schema, sort_keys=True, separators=(",", ":"))
+        return (f"{message}\n\nReply with only one JSON value that conforms to this JSON Schema -- "
+                f"no prose, no code fence:\n{rendered}")
+
+    def _json_mode_hint(self, schema: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+        """The schema as a provider JSON-mode request, only if some provider can honour it.
+
+        On a ``CompletionRequest`` a schema is a hard routing requirement (``no_json_mode``
+        excludes a provider). AURA validates the answer itself either way, so a deployment whose
+        model has no JSON mode still gets structured output -- prompt-led, then checked --
+        rather than every such turn failing as ``all_providers_failed``.
+        """
+        if schema is None:
+            return None
+        router = self._deps.router
+        for name in router.provider_names:
+            provider = router.get(name)
+            caps = getattr(provider, "capabilities", None)
+            if caps is not None and caps.supports_json_mode:
+                return schema
+        return None
+
+    async def _enforce_response_schema(
+        self, request: TurnRequest, assembled: AssembledContext, answer: str, budget: TurnBudget,
+        turn_id: TurnId,
+    ) -> tuple[str, Any, TokenUsage | None, float]:
+        """Validate the answer; on failure repair once, then fail closed (AR-6).
+
+        The repair sees only error *paths* (``output_errors`` never echoes values) and its
+        answer goes through the same output guards. It is skipped when the turn's generation
+        or cost budget is spent -- the caller's ceiling is never exceeded to rescue a format.
+        Raises :class:`OutputInvalidError`; unvalidated JSON is never returned as data.
+        """
+        schema = request.response_schema
+        value, errors = parse_structured(answer, schema)
+        if not errors:
+            return answer, value, None, 0.0
+        affordable = budget.remaining_generations > 0 and not (
+            budget.max_cost_usd and budget.cost_used_usd >= budget.max_cost_usd
+        )
+        if not affordable:
+            raise OutputInvalidError("the answer did not match the requested schema",
+                                     details={"errors": errors, "repaired": False})
+        deps = self._deps
+        repair = CompletionRequest(
+            conversation=assembled.conversation.append(
+                Message.assistant(answer),
+                Message.user("That reply did not match the schema at: " + "; ".join(errors)
+                             + ". Reply again with only the corrected JSON value."),
+            ),
+            model=await self._assigned_model(request),
+            sampling=SamplingParams(temperature=0.0, max_output_tokens=request.max_output_tokens),
+            policy=request.routing_policy,
+            require_local=request.require_local,
+            tools=(),
+            timeout_s=self._completion_timeout_s(),
+            response_schema=self._json_mode_hint(schema),
+        )
+        response = await deps.router.complete(repair, budget=budget)
+        repaired = response.text
+        if deps.safety is not None:
+            decision = await deps.safety.guard_output(
+                repaired, system_prompt=assembled.system_text, citations_text=[],
+                user_id=request.user_id, turn_id=turn_id,
+            )
+            repaired = decision.text
+        value, errors = parse_structured(repaired, schema)
+        if errors:
+            raise OutputInvalidError("the answer did not match the requested schema",
+                                     details={"errors": errors, "repaired": True})
+        return repaired, value, response.usage or TokenUsage(), response.cost_usd
+
+    async def _guard_caller_context(
+        self, request: TurnRequest, turn_id: TurnId
+    ) -> tuple[tuple[CallerContext, ...], int]:
+        """Caller-supplied evidence through the same context guards as retrieved chunks (AR-5).
+
+        Returns the entries that passed and how many were quarantined. Whatever this returns,
+        the caller taints the turn when any context was *sent*: a side effect must never be
+        unlocked by evidence a calling system put in front of the model.
+        """
+        entries = request.caller_context
+        if not entries or self._deps.safety is None:
+            return entries, 0
+        accepted, quarantined, _ = await self._deps.safety.guard_context_items(
+            [(e.id, e.content()) for e in entries], user_id=request.user_id, turn_id=turn_id
+        )
+        kept = {provenance for provenance, _ in accepted}
+        return tuple(e for e in entries if e.id in kept), len(quarantined)
+
+    @staticmethod
     def _resolve_citations(
         assembled: AssembledContext,
         retrieval: RetrievalResult | None,
@@ -1483,6 +1616,7 @@ class AIKernel:
             require_local=request.require_local,
             tools=(),
             timeout_s=self._completion_timeout_s(),
+            response_schema=self._json_mode_hint(request.response_schema),
         )
 
         if deps.cache is not None:
@@ -1496,7 +1630,8 @@ class AIKernel:
 
         strength = retrieval.top_score if retrieval and retrieval.chunks else None
 
-        if deps.reasoner is not None:
+        # Multi-sample strategies vote over prose; a structured answer is one direct generation.
+        if deps.reasoner is not None and request.response_schema is None:
             result = await deps.reasoner.reason(
                 ReasoningRequest(
                     question=request.message,
@@ -1593,7 +1728,8 @@ class AIKernel:
             )
         )
         return TurnResult(
-            text="", telemetry=telemetry, retry_after_s=getattr(exc, "retry_after", None)
+            text="", telemetry=telemetry, retry_after_s=getattr(exc, "retry_after", None),
+            error_details=dict(exc.details) if isinstance(exc, OutputInvalidError) else None,
         )
 
     async def _record(self, telemetry: TurnTelemetry) -> None:
