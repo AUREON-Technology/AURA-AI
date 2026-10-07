@@ -66,7 +66,10 @@ class TestReleaseSettings:
 
     def test_admits_an_unidentified_build_rather_than_guessing(self, monkeypatch) -> None:
         """The failure mode worth protecting against is a confident wrong answer."""
-        for key in ("AURA_GIT_SHA", "AURA_GIT_REF", "AURA_BUILD_TIME", "AURA_DEPLOYMENT_ID"):
+        # CI and PaaS runners export their own SHA/ref/run variables, which from_env() falls back to.
+        for key in ("AURA_GIT_SHA", "AURA_GIT_REF", "AURA_BUILD_TIME", "AURA_DEPLOYMENT_ID",
+                    *ReleaseSettings.PLATFORM_SHA_VARS, *ReleaseSettings.PLATFORM_REF_VARS,
+                    *ReleaseSettings.PLATFORM_DEPLOY_VARS):
             monkeypatch.delenv(key, raising=False)
 
         release = ReleaseSettings.from_env()
@@ -77,6 +80,8 @@ class TestReleaseSettings:
 
     def test_whitespace_only_injection_does_not_count_as_identified(self, monkeypatch) -> None:
         """`--build-arg GIT_SHA=` and a stray newline both arrive as whitespace, not absence."""
+        for key in ReleaseSettings.PLATFORM_SHA_VARS:
+            monkeypatch.delenv(key, raising=False)
         monkeypatch.setenv("AURA_GIT_SHA", "  \n ")
 
         assert ReleaseSettings.from_env().identified is False

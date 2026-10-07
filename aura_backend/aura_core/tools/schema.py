@@ -208,7 +208,7 @@ def validate_arguments(tool: ToolSpec, arguments: Mapping[str, Any]) -> dict[str
             # unfiltered and nothing is changed or exposed; every other violation, every
             # required parameter and every side-effecting tool stays an error.
             if (spec.enum is not None and value not in spec.enum
-                    and not spec.required and not tool.side_effecting):
+                    and not spec.required and not getattr(tool, "side_effecting", True)):
                 continue
             raise
         if isinstance(value, str):
