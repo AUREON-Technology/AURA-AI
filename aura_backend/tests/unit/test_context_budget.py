@@ -130,6 +130,13 @@ class TestCpuPrefillBudget:
         assert 1 <= len(knowledge) <= DEFAULT_MAX_KNOWLEDGE_ITEMS
         assert all(len(item.content) <= DEFAULT_KNOWLEDGE_CHUNK_MAX_CHARS for item in knowledge)
 
+    def test_instructions_text_excludes_retrieved_data(self) -> None:
+        # The leak guard compares answers against this: quoting retrieved/tool data is not a leak.
+        assembled = ContextEngine().assemble(_typical_request())
+        assert "21 days" in assembled.system_text
+        assert "21 days" not in assembled.instructions_text
+        assert "You are AURA" in assembled.instructions_text
+
     def test_history_window_keeps_only_recent_turns(self) -> None:
         assembled = ContextEngine(history_turns=4).assemble(
             _typical_request(max_prompt_tokens=0)

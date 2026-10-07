@@ -452,7 +452,7 @@ class AIKernel:
             stage_start = time.perf_counter()
             decision = await deps.safety.guard_output(
                 answer,
-                system_prompt=assembled.system_text,
+                system_prompt=assembled.instructions_text,
                 citations_text=[c.chunk.content for c in (retrieval.chunks if retrieval else ())],
                 user_id=request.user_id,
                 turn_id=turn_id,
@@ -728,7 +728,7 @@ class AIKernel:
                     try:
                         decision = await deps.safety.guard_output(
                             answer,
-                            system_prompt=assembled.system_text,
+                            system_prompt=assembled.instructions_text,
                             citations_text=[
                                 c.chunk.content for c in (retrieval.chunks if retrieval else ())
                             ],
@@ -1393,7 +1393,7 @@ class AIKernel:
         repaired = response.text
         if deps.safety is not None:
             decision = await deps.safety.guard_output(
-                repaired, system_prompt=assembled.system_text, citations_text=[],
+                repaired, system_prompt=assembled.instructions_text, citations_text=[],
                 user_id=request.user_id, turn_id=turn_id,
             )
             repaired = decision.text
