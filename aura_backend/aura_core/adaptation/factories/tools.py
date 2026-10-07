@@ -421,7 +421,9 @@ def _optional_query(raw: Any, used: set[str], bound: dict[str, str]) -> tuple[st
     for short, field in (("lo", "minimum"), ("hi", "maximum")):
         value = desc.get(short)
         if kind in ("integer", "number") and isinstance(value, (int, float)) and not isinstance(value, bool):
-            bounds[field] = value
+            # ParameterSpec bounds are floats; an int here digests as `1` but decodes as `1.0`,
+            # so a stored blueprint would fail its own digest check on read-back.
+            bounds[field] = float(value)
     default = desc.get("d")
     hint = f" The server's default is {default}." if isinstance(default, (str, int, float)) and not isinstance(default, bool) else ""
     name = unique_slug(slug(key), used)

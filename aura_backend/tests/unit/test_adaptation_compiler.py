@@ -554,6 +554,7 @@ class TestOptionalQueryParameters:
         assert params["q"].required and not any(params[n].required for n in params if n != "q")
         assert params["type"].enum == ("document", "experiment")
         assert (params["page_size"].type, params["page_size"].minimum, params["page_size"].maximum) == ("integer", 1, 50)
+        assert all(isinstance(p.minimum, float) for p in tool.parameters if p.minimum is not None)
         assert (params["source_id"].type, params["source_id"].item_type) == ("array", "string")
         assert params["exact"].type == "boolean"
         # The server owns its default: described, never sent on the caller's behalf.
