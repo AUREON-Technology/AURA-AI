@@ -283,6 +283,13 @@ class ToolRegistry:
             arguments = validate_arguments(spec, call.arguments)
         except ValidationError as exc:
             self._observe(name, outcome="invalid_arguments")
+            # Argument values are not logged (they can carry user content); the keys and the
+            # validator's own message are enough to tell a bad name from a bad value.
+            logger.warning(
+                "tool arguments rejected",
+                extra={"tool": name, "argument_keys": sorted(map(str, call.arguments)) if isinstance(call.arguments, Mapping) else None,
+                       "reason": exc.message[:300]},
+            )
             return finish(
                 ok=False,
                 # The model needs to know precisely what was wrong to correct itself.
