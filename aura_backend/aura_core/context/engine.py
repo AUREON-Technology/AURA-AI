@@ -100,6 +100,16 @@ class AssembledContext:
         return self.bundle.utilisation
 
     @property
+    def instructions_text(self) -> str:
+        """Only the operator's instructions -- what the leak guard must compare an answer to.
+
+        ``system_text`` also carries retrieved knowledge and tool output, which an answer is
+        *meant* to quote; comparing against it blocks every well-grounded quotation as a
+        "system prompt leak" once the prompt budget is large enough to include them.
+        """
+        return self.bundle.render(include_sections=(ContextSection.INSTRUCTIONS,))
+
+    @property
     def user_citations(self) -> tuple[str, ...]:
         """Document citations for the client; excludes packing/telemetry bookkeeping."""
         return user_facing_citations(self.citations)
