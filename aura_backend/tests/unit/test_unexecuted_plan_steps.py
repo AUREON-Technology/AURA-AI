@@ -344,6 +344,43 @@ class TestTheKernelStatesWhatDidNotRun:
         assert notes and "Read the contents of README.md" in notes[0]
 
 
+class TestCompositionStepsAfterSuccessfulToolsAreLeftToTheAnswer:
+    """Seen live: a search tool step succeeded, but the plan's "select one result" and "quote the
+    id" steps have no executor. Saying the model "did NOT see" their results made it answer "I
+    cannot provide an evidence_id" with the evidence in front of it."""
+
+    @staticmethod
+    def _outcome(tool_status: str):
+        from types import SimpleNamespace
+
+        search = PlanStep(id=StepId("s1"), kind=StepKind.TOOL, tool="search", description="Search for heptane").started()
+        search = search.succeeded("results", 1.0) if tool_status == "ok" else search.failed("Timeout", 1.0)
+        pick = _step("s2", StepKind.RETRIEVE, "Select one result", depends_on=["s1"]).skipped("no handler")
+        quote = _step("s3", StepKind.GENERATE, "Quote the evidence_id", depends_on=["s2"]).blocked("dep")
+        return SimpleNamespace(plan=_plan(search, pick, quote))
+
+    def test_the_note_tells_the_model_to_do_the_remaining_steps_itself(self) -> None:
+        notes = AIKernel._execution_notes(self._outcome("ok"))
+
+        assert len(notes) == 1
+        assert "Select one result" in notes[0] and "Quote the evidence_id" in notes[0]
+        assert "do them yourself" in notes[0]
+        assert "NOT seen" not in notes[0]
+
+    def test_a_failed_tool_step_keeps_the_strict_warning(self) -> None:
+        note = AIKernel._execution_notes(self._outcome("failed"))[0]
+
+        assert "have NOT seen" in note
+        assert "Search for heptane" in note
+
+    def test_with_no_successful_tool_step_the_strict_warning_stays(self) -> None:
+        from types import SimpleNamespace
+
+        plan = _plan(_step("s1", StepKind.GENERATE, "Read README.md").skipped("no handler"))
+
+        assert "have NOT seen" in AIKernel._execution_notes(SimpleNamespace(plan=plan))[0]
+
+
 class TestTheNoteTravelsOnTheSystemChannel:
     """ADR-006. The note is the kernel's own account of what it ran, not content a tool
     returned, so fencing it as untrusted DATA alongside real tool output would both weaken it
