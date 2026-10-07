@@ -82,8 +82,17 @@ def _render_tool_line(tool: Mapping[str, Any]) -> str:
     if not properties:
         return f"- {name}: {description}"
     required = set((tool.get("parameters") or {}).get("required") or ())
+    def _signature(pschema: Mapping[str, Any]) -> str:
+        kind = pschema.get("type", "string")
+        # A closed value set is the one constraint a model cannot guess; without it, a prompt
+        # saying "evidence" gets copied into a `type` filter that only accepts other words.
+        allowed = pschema.get("enum")
+        if isinstance(allowed, (list, tuple)) and allowed:
+            return f"{kind}({'|'.join(str(v) for v in allowed)})"
+        return str(kind)
+
     args = ", ".join(
-        f"{pname}{'*' if pname in required else ''}:{pschema.get('type', 'string')}"
+        f"{pname}{'*' if pname in required else ''}:{_signature(pschema)}"
         for pname, pschema in properties.items()
     )
     return f"- {name}({args}): {description}"

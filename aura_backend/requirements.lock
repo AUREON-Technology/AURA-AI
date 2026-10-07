@@ -319,14 +319,14 @@ pydantic-settings==2.15.0
     # via -r requirements.txt
 pygments==2.21.0
     # via rich
-pyjwt==2.13.0
+pyjwt==2.15.1
     # via
     #   -r requirements.txt
     #   firebase-admin
     #   mcp
 pyparsing==3.3.2
     # via httplib2
-pypdf==6.16.1
+pypdf==6.19.0
     # via -r requirements.txt
 pytesseract==0.3.13
     # via -r requirements.txt
@@ -461,7 +461,7 @@ tzlocal==5.4.4
     # via celery
 uritemplate==4.2.0
     # via google-api-python-client
-urllib3==2.7.0
+urllib3==2.8.0
     # via
     #   docker
     #   qdrant-client

@@ -32,7 +32,7 @@ if [ "${1:-}" = "--verify" ]; then
     exit 1
 fi
 
-[ -n "${1:-}" ] && [ -n "${2:-}" ] || usage
+if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then usage; fi
 if [ -e "$2" ] && [ -n "$(ls -A "$2" 2>/dev/null)" ]; then
     echo "output directory $2 is not empty; refusing (extra files would fail the manifest check)" >&2
     exit 1

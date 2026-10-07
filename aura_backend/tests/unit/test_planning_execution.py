@@ -486,6 +486,21 @@ class TestToolArgumentSignatures:
             "Run a shell command in the sandbox."
         )
 
+    def test_an_enum_parameter_lists_its_allowed_values(self) -> None:
+        tool = {
+            "name": "search",
+            "description": "Search.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "q": {"type": "string"},
+                    "type": {"type": "string", "enum": ["document", "experiment"]},
+                },
+                "required": ["q"],
+            },
+        }
+        assert _render_tool_line(tool) == "- search(q*:string, type:string(document|experiment)): Search."
+
     def test_a_tool_with_no_parameters_falls_back_to_name_and_description(self) -> None:
         tool = {"name": "current_datetime", "description": "Return the current time."}
         assert _render_tool_line(tool) == "- current_datetime: Return the current time."

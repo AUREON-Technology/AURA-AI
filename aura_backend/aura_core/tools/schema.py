@@ -200,7 +200,17 @@ def validate_arguments(tool: ToolSpec, arguments: Mapping[str, Any]) -> dict[str
         value = coerce_value(spec, arguments[name])
         if value is None and not spec.required:
             continue
-        _check_constraints(spec, value)
+        try:
+            _check_constraints(spec, value)
+        except ValidationError:
+            # An optional closed-set filter on a read-only tool: a value outside the set is a
+            # model guess, not a request the tool could honor. Dropping it runs the call
+            # unfiltered and nothing is changed or exposed; every other violation, every
+            # required parameter and every side-effecting tool stays an error.
+            if (spec.enum is not None and value not in spec.enum
+                    and not spec.required and not getattr(tool, "side_effecting", True)):
+                continue
+            raise
         if isinstance(value, str):
             _check_unresolved(spec, value)
         validated[name] = value
