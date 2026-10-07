@@ -351,6 +351,16 @@ class TestArgumentValidation:
         with pytest.raises(ValidationError):
             validate_arguments(tool, {"mode": "unsafe"})
 
+    def test_an_optional_enum_filter_with_an_unknown_value_is_dropped_on_a_read_only_tool(self) -> None:
+        tool = self._tool(_spec(name="q"), _spec(name="type", required=False, enum=("document", "experiment")))
+        assert validate_arguments(tool, {"q": "heptane", "type": "evidence"}) == {"q": "heptane"}
+        assert validate_arguments(tool, {"q": "heptane", "type": "document"}) == {"q": "heptane", "type": "document"}
+
+    def test_a_required_enum_is_still_strict(self) -> None:
+        tool = self._tool(_spec(name="type", enum=("document", "experiment")))
+        with pytest.raises(ValidationError):
+            validate_arguments(tool, {"type": "evidence"})
+
     def test_numeric_bounds_are_enforced(self) -> None:
         tool = self._tool(_spec(name="n", type="integer", minimum=1, maximum=10))
         assert validate_arguments(tool, {"n": 5}) == {"n": 5}
