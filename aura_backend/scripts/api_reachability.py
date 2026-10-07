@@ -88,7 +88,8 @@ def sources() -> dict[str, list[tuple[str, int, str]]]:
         out = lines.setdefault(name, [])
         if not base.is_dir():
             continue
-        for path in base.rglob("*"):
+        # rglob order is filesystem-dependent; sorted keeps the committed matrix identical on every OS.
+        for path in sorted(base.rglob("*")):
             if path.suffix not in exts or SKIP_PARTS & set(path.parts):
                 continue
             rel = path.relative_to(ROOT).as_posix()
