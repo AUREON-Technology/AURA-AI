@@ -365,6 +365,8 @@ class TestCompositionStepsAfterSuccessfulToolsAreLeftToTheAnswer:
         assert len(notes) == 1
         assert "Select one result" in notes[0] and "Quote the evidence_id" in notes[0]
         assert "do them yourself" in notes[0]
+        assert "Do not call any tool" in notes[0]
+        assert "exactly as they appear" in notes[0]
         assert "NOT seen" not in notes[0]
 
     def test_a_failed_tool_step_keeps_the_strict_warning(self) -> None:

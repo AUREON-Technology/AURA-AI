@@ -1043,6 +1043,11 @@ class AIKernel:
                 "tool results, and answer the user directly:"
             ]
             lines.extend(f"- {step.description}" for step in unexecuted)
+            lines.append(
+                "Answer in plain text now. Do not call any tool and do not write out or describe "
+                "a tool call; a call you write here is not executed. Quote the values, such as "
+                "identifiers and titles, exactly as they appear in the tool results."
+            )
             return ["\n".join(lines)]
 
         lines = [
