@@ -60,7 +60,7 @@ from ..domain.llm import (
 from ..domain.memory import MemoryHit, MemoryKind, MemoryQuery, readable_scopes
 from ..domain.output_schema import parse_structured
 from ..domain.messages import Conversation, Message
-from ..domain.planning import StepKind
+from ..domain.planning import StepKind, StepStatus
 from ..domain.reasoning import ReasoningStrategy
 from ..domain.tools import ToolSensitivity
 from ..domain.telemetry import (
@@ -1023,6 +1023,27 @@ class AIKernel:
         failed = plan.failed_steps
         if not unexecuted and not failed:
             return []
+
+        # Tool steps all ran and returned the results above; what is left are non-tool steps
+        # ("select one result", "quote the id") that no executor handles because the final answer
+        # is where that work happens. Telling the model it "did NOT see" them makes it refuse
+        # an answer it has every input for (seen live: "cannot provide an evidence_id" beside a
+        # successful search). With no successful tool step this stays the strict warning below.
+        tool_steps = [s for s in plan.steps if s.kind is StepKind.TOOL]
+        if (
+            not failed
+            and tool_steps
+            and all(s.status is StepStatus.SUCCEEDED for s in tool_steps)
+            and all(s.kind is not StepKind.TOOL for s in unexecuted)
+        ):
+            lines = [
+                "Execution note (from the system, not from a tool). The tool steps ran and their "
+                "results are in the context above. These remaining steps have no separate "
+                "executor; they are work for your answer, so do them yourself now from those "
+                "tool results, and answer the user directly:"
+            ]
+            lines.extend(f"- {step.description}" for step in unexecuted)
+            return ["\n".join(lines)]
 
         lines = [
             "Execution note (from the system, not from a tool). These planned steps produced "
