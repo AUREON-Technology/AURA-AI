@@ -23,7 +23,7 @@ FROM vllm/vllm-openai:latest
 USER root
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates \
+ && apt-get install -y --no-install-recommends curl ca-certificates git \
  && rm -rf /var/lib/apt/lists/*
 
 # Spaces run the container as uid 1000. If this breaks GPU device visibility on your chosen
