@@ -1,0 +1,24 @@
+# Draft (never send, v1) a message about a record to the contact it carries.
+id: notification.draft
+version: 1
+summary: Draft a message about a record for its contact address; a person reviews and sends it.
+target: entity
+target_filter:
+  where: {source_type: [table, schema]}
+  exclude: {readable: [false]}
+requires:
+  - name: contact
+    relation: child
+    kind: attribute
+    filter: {where: {semantic_type: [email]}}
+  - name: events
+    relation: referenced_by
+    ref: entity
+    kind: event
+risk: confidential
+cost: 2
+relevance: 0.6
+produces:
+  tool: draft.notification
+  views: [approval_queue]
+  evals: [draft_not_sent]

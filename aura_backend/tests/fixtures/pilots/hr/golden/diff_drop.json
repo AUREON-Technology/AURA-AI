@@ -1,0 +1,45 @@
+{
+  "added": [],
+  "changed": [
+    {
+      "fields": [
+        "properties",
+        "provenance"
+      ],
+      "id": "hr-api:same_as:hr-db:table:public.employees",
+      "kind": "relation"
+    },
+    {
+      "fields": [
+        "properties"
+      ],
+      "id": "hr-db:source",
+      "kind": "source"
+    }
+  ],
+  "from_digest": "sha256:c3f1e6256780b7f7d4bd4318b58b8623edc91a1938bfbe4113fd829a53b82746",
+  "from_version": 1,
+  "project_id": "p0",
+  "removed": [
+    "hr-db:column:public.assets.assigned_to",
+    "hr-db:column:public.assets.id",
+    "hr-db:column:public.assets.kind",
+    "hr-db:column:public.assets.tag",
+    "hr-db:column:public.employees.salary",
+    "hr-db:fk:public.assets.assets_assigned_to_fkey",
+    "hr-db:grant:hr_viewer@public.assets",
+    "hr-db:metric:public.employees.salary",
+    "hr-db:pk:public.assets.assets_pkey",
+    "hr-db:table:public.assets",
+    "hr-db:unique:public.assets.assets_tag_key"
+  ],
+  "renames": [],
+  "summary": {
+    "added": 0,
+    "changed": 2,
+    "removed": 11,
+    "renames": 0
+  },
+  "to_digest": "sha256:aacd04106029b6051b4eba5f7f8cfb86dacc5d978ef66e64fcd6f6295110227c",
+  "to_version": 2
+}

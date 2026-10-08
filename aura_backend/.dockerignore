@@ -1,0 +1,13 @@
+venv/
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git
+.gitignore
+local_qdrant_storage/
+test_local_db/
+scratch/
+credentials.json
+Deployment_info.txt

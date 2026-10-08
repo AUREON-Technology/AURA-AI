@@ -1,0 +1,494 @@
+"""Nightly knowledge refresh (ADR-008, Loop A).
+
+Runs at 02:00 on the ``learning`` queue. The ten steps the brief specifies, with the property
+that makes them safe to run unattended: **the live index is never modified**. Everything is built
+into a new generation and promoted only if every gate passes; a failed run leaves production
+exactly as it was and raises an alert.
+
+```
+collect -> validate -> dedupe -> clean+guard -> embed into a NEW index
+        -> refresh graph -> evaluate -> report -> promote (gated) -> prune
+```
+
+Every run produces an immutable :class:`RefreshReport` and a numbered generation. Rollback is an
+alias repoint (``index_manager.rollback``), which is O(1) and needs no data movement.
+
+What this pipeline deliberately does **not** do: touch the language model. Curating datasets and
+recommending a fine-tune is Loop B (:mod:`aura_core.learning.curation`), and promoting one
+requires a recorded human approval.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Mapping, Sequence
+
+from ..domain.events import KnowledgeRefreshCompleted
+from ..domain.identifiers import GenerationId
+from ..domain.knowledge import KnowledgeSource, SourceType, TrustTier
+from ..observability.logging import LogContext, get_logger
+from .sources import SourceRegistry, SourceFetcher, FetchedDocument
+
+__all__ = ["KnowledgeRefreshPipeline", "RefreshReport", "SourceOutcome"]
+
+logger = get_logger("learning.refresh")
+
+
+@dataclass(frozen=True, slots=True)
+class SourceOutcome:
+    source_id: str
+    fetched: int = 0
+    ingested: int = 0
+    skipped_unchanged: int = 0
+    skipped_duplicate: int = 0
+    quarantined: int = 0
+    failed: int = 0
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshReport:
+    """The immutable record of one refresh run."""
+
+    generation: GenerationId
+    started_at: datetime
+    duration_ms: float
+    sources: tuple[SourceOutcome, ...] = ()
+    promoted: bool = False
+    gate_failures: tuple[str, ...] = ()
+    measurements: Mapping[str, float] = field(default_factory=dict)
+    candidate_index: str | None = None
+    previous_index: str | None = None
+
+    @property
+    def documents_ingested(self) -> int:
+        return sum(s.ingested for s in self.sources)
+
+    @property
+    def documents_skipped(self) -> int:
+        return sum(s.skipped_unchanged + s.skipped_duplicate for s in self.sources)
+
+    @property
+    def quarantined(self) -> int:
+        return sum(s.quarantined for s in self.sources)
+
+    @property
+    def failures(self) -> int:
+        return sum(s.failed for s in self.sources)
+
+    @property
+    def error_rate(self) -> float:
+        attempted = sum(s.fetched for s in self.sources)
+        return self.failures / attempted if attempted else 0.0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "generation": self.generation.value,
+            "started_at": self.started_at.isoformat(),
+            "duration_ms": round(self.duration_ms, 1),
+            "promoted": self.promoted,
+            "gate_failures": list(self.gate_failures),
+            "measurements": dict(self.measurements),
+            "candidate_index": self.candidate_index,
+            "previous_index": self.previous_index,
+            "totals": {
+                "ingested": self.documents_ingested,
+                "skipped": self.documents_skipped,
+                "quarantined": self.quarantined,
+                "failed": self.failures,
+                "error_rate": round(self.error_rate, 4),
+            },
+            "sources": [
+                {
+                    "id": s.source_id, "fetched": s.fetched, "ingested": s.ingested,
+                    "skipped_unchanged": s.skipped_unchanged,
+                    "skipped_duplicate": s.skipped_duplicate,
+                    "quarantined": s.quarantined, "failed": s.failed, "error": s.error,
+                }
+                for s in self.sources
+            ],
+        }
+
+
+class KnowledgeRefreshPipeline:
+    def __init__(
+        self,
+        *,
+        registry: SourceRegistry,
+        fetcher: SourceFetcher,
+        knowledge: Any,
+        index_manager: Any,
+        evaluator: Any = None,
+        metrics: Any = None,
+        event_bus: Any = None,
+        max_documents: int = 5000,
+        max_concurrent_sources: int = 3,
+        promote_requires_gates: bool = True,
+        index_retention_days: int = 7,
+    ) -> None:
+        self._registry = registry
+        self._fetcher = fetcher
+        self._knowledge = knowledge
+        self._indexes = index_manager
+        self._evaluator = evaluator
+        self._metrics = metrics
+        self._events = event_bus
+        self._max_documents = max_documents
+        self._max_concurrent = max(1, max_concurrent_sources)
+        self._require_gates = promote_requires_gates
+        self._retention_days = index_retention_days
+        self.last_report: RefreshReport | None = None
+
+    async def run(self, *, dry_run: bool = False) -> RefreshReport:
+        """Execute one refresh cycle."""
+        generation = GenerationId.new()
+        started_at = datetime.now(timezone.utc)
+        started = time.perf_counter()
+
+        with LogContext(correlation_id=generation.value, route="knowledge_refresh"):
+            logger.info("knowledge refresh starting", extra={"generation": generation.value})
+
+            sources = [s for s in await self._registry.list_enabled()]
+            if not sources:
+                logger.info("no enabled knowledge sources; nothing to refresh")
+                report = RefreshReport(
+                    generation=generation, started_at=started_at,
+                    duration_ms=(time.perf_counter() - started) * 1000.0,
+                )
+                self.last_report = report
+                return report
+
+            # Steps 1-6: fetch, validate, dedupe, clean, ingest (which embeds and updates the
+            # graph). Sources run concurrently but bounded -- an unbounded fan-out over a
+            # hundred sources would saturate the embedding provider and the network at once.
+            semaphore = asyncio.Semaphore(self._max_concurrent)
+            budget = _DocumentBudget(self._max_documents)
+
+            async def process(source: KnowledgeSource) -> SourceOutcome:
+                async with semaphore:
+                    return await self._process_source(source, budget)
+
+            outcomes = await asyncio.gather(*(process(s) for s in sources))
+
+            # Step 7-9: evaluate the candidate and promote only if the gates pass.
+            promoted = False
+            gate_failures: tuple[str, ...] = ()
+            measurements: Mapping[str, float] = {}
+            candidate = await self._indexes.active_identity()
+            previous = candidate
+
+            if not dry_run:
+                promoted, gate_failures, measurements, candidate, previous = await self._promote(
+                    generation, outcomes
+                )
+
+            report = RefreshReport(
+                generation=generation,
+                started_at=started_at,
+                duration_ms=(time.perf_counter() - started) * 1000.0,
+                sources=tuple(outcomes),
+                promoted=promoted,
+                gate_failures=gate_failures,
+                measurements=measurements,
+                candidate_index=candidate.physical_name if candidate else None,
+                previous_index=previous.physical_name if previous else None,
+            )
+
+            self._observe(report)
+            await self._publish(
+                KnowledgeRefreshCompleted(
+                    generation=generation,
+                    promoted=report.promoted,
+                    sources_processed=len(outcomes),
+                    documents_ingested=report.documents_ingested,
+                    documents_skipped=report.documents_skipped,
+                    quarantined=report.quarantined,
+                    gate_failures=report.gate_failures,
+                    duration_ms=report.duration_ms,
+                )
+            )
+            logger.info("knowledge refresh complete", extra=report.as_dict()["totals"])
+            self.last_report = report
+            return report
+
+    # -- per-source --------------------------------------------------------------------
+
+    async def _process_source(
+        self, source: KnowledgeSource, budget: "_DocumentBudget"
+    ) -> SourceOutcome:
+        fetched = ingested = unchanged = duplicate = quarantined = failed = 0
+        seen_hashes: set[str] = set()
+
+        try:
+            documents = await self._fetcher.fetch(source)
+        except Exception as exc:
+            logger.warning(
+                "source fetch failed",
+                extra={"source": source.id, "error": type(exc).__name__},
+            )
+            return SourceOutcome(source_id=source.id, error=type(exc).__name__)
+
+        for document in documents:
+            if not budget.take():
+                logger.warning("refresh document budget exhausted", extra={"source": source.id})
+                break
+            fetched += 1
+
+            # Step 2: validate against the source's declared ceilings.
+            problem = _validate(document, source)
+            if problem is not None:
+                failed += 1
+                logger.debug("document rejected", extra={"source": source.id, "reason": problem})
+                continue
+
+            # Step 3: exact then near-duplicate detection within this run. Cross-run duplicates
+            # are handled by the knowledge engine's content-hash idempotency.
+            digest = hashlib.sha256(document.content.encode("utf-8")).hexdigest()
+            if digest in seen_hashes:
+                duplicate += 1
+                continue
+            if _is_near_duplicate(document.content, budget):
+                duplicate += 1
+                continue
+            seen_hashes.add(digest)
+
+            # Steps 4-6: clean, guard, embed, index, graph -- all inside the knowledge engine,
+            # which is the same path a user upload takes. One ingestion path means the nightly
+            # job cannot drift from interactive behaviour.
+            try:
+                result = await self._knowledge.ingest(
+                    content=document.content,
+                    title=document.title,
+                    document_id=document.document_id,
+                    owner_id=source.owner_id,
+                    source_type=source.type,
+                    source_uri=document.uri or source.uri,
+                    trust_tier=source.trust_tier,
+                    metadata={"source_id": source.id, **dict(document.metadata)},
+                )
+            except Exception as exc:
+                failed += 1
+                logger.warning(
+                    "document ingestion failed",
+                    extra={"source": source.id, "error": type(exc).__name__},
+                )
+                continue
+
+            if result.skipped_reason == "unchanged_content":
+                unchanged += 1
+            elif result.skipped_reason == "fully_quarantined":
+                quarantined += 1
+            else:
+                ingested += 1
+                quarantined += result.quarantined
+
+        await self._registry.record_success(source.id, cursor=None, at=datetime.now(timezone.utc))
+        return SourceOutcome(
+            source_id=source.id,
+            fetched=fetched,
+            ingested=ingested,
+            skipped_unchanged=unchanged,
+            skipped_duplicate=duplicate,
+            quarantined=quarantined,
+            failed=failed,
+        )
+
+    # -- promotion ---------------------------------------------------------------------
+
+    async def _promote(
+        self, generation: GenerationId, outcomes: Sequence[SourceOutcome]
+    ) -> tuple[bool, tuple[str, ...], Mapping[str, float], Any, Any]:
+        """Build a candidate index, evaluate it, and switch the alias if the gates pass.
+
+        The candidate is a full rebuild from the document store rather than an incremental
+        update of the live index. That costs more, and buys the property that makes this safe:
+        the live index is untouched until the alias moves, so a failed run is a no-op.
+        """
+        previous = await self._indexes.active_identity()
+        candidate = self._indexes.identity_for_current_embedder()
+
+        build = await self._indexes.build(identity=candidate, generation=generation)
+
+        baseline_recall = candidate_recall = None
+        if self._evaluator is not None:
+            try:
+                baseline_recall, candidate_recall = await self._evaluator.compare(
+                    baseline=previous, candidate=candidate
+                )
+            except Exception:
+                # An unavailable evaluator means the recall gate cannot be assessed. Treating
+                # that as a pass would defeat the gate; the count and error-rate gates still
+                # apply, and the missing measurement is visible in the report.
+                logger.warning("retrieval evaluation unavailable; recall gate not assessed")
+
+        gate = await self._indexes.evaluate_promotion(
+            candidate,
+            report=build,
+            candidate_recall=candidate_recall,
+            baseline_recall=baseline_recall,
+        )
+
+        if self._require_gates and not gate.passed:
+            logger.error(
+                "refresh gates failed; keeping the previous index",
+                extra={"failures": list(gate.failures)},
+            )
+            return False, gate.failures, gate.measurements, candidate, previous
+
+        await self._indexes.promote(candidate, generation=generation, gate=gate, reason="refresh")
+
+        if self._retention_days == 0 and previous is not None and previous != candidate:
+            await self._indexes.prune(keep=[candidate])
+
+        return True, gate.failures, gate.measurements, candidate, previous
+
+    # -- observation -------------------------------------------------------------------
+
+    def _observe(self, report: RefreshReport) -> None:
+        if self._metrics is None:
+            return
+        self._metrics.refresh_duration.observe(report.duration_ms / 1000.0)
+        for failure in report.gate_failures:
+            self._metrics.refresh_gate_failures_total.labels(gate=failure.split()[0]).inc()
+        if report.promoted:
+            self._metrics.refresh_last_success_timestamp.set(time.time())
+            self._metrics.knowledge_age_seconds.set(0)
+
+    async def _publish(self, event: Any) -> None:
+        if self._events is None:
+            return
+        try:
+            await self._events.publish(event)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("refresh event publication failed", exc_info=True)
+
+
+# --------------------------------------------------------------------------------------
+# Helpers
+# --------------------------------------------------------------------------------------
+
+
+class _DocumentBudget:
+    """Global ceiling across all sources in one run, plus the SimHash corpus for dedup."""
+
+    __slots__ = ("_remaining", "simhashes", "shingles")
+
+    def __init__(self, limit: int) -> None:
+        self._remaining = limit
+        self.simhashes: list[int] = []
+        self.shingles: list[set[str]] = []
+
+    def take(self) -> bool:
+        if self._remaining <= 0:
+            return False
+        self._remaining -= 1
+        return True
+
+
+def _validate(document: FetchedDocument, source: KnowledgeSource) -> str | None:
+    """Reject documents that fail the source's declared constraints.
+
+    The size ceiling matters more than it looks: a source that starts returning an HTML error
+    page, or a redirect loop, produces plausible-looking documents that would otherwise be
+    ingested and pollute retrieval.
+    """
+    if not document.content.strip():
+        return "empty"
+    size = len(document.content.encode("utf-8"))
+    if size > source.max_bytes_per_document:
+        return f"too_large:{size}"
+    if not document.title.strip():
+        return "missing_title"
+    # A "document" that is almost entirely markup is a fetch failure, not content.
+    markup_ratio = document.content.count("<") / max(1, len(document.content) / 100)
+    if markup_ratio > 5:
+        return "markup_heavy"
+    return None
+
+
+def _simhash(text: str, *, bits: int = 64) -> int:
+    """64-bit SimHash over word shingles.
+
+    Used for *long* documents, where an O(1) comparison is the only affordable option across a
+    corpus of thousands. See :func:`_is_near_duplicate` for why short texts take a different
+    path.
+    """
+    tokens = text.lower().split()
+    if not tokens:
+        return 0
+    shingles = [" ".join(tokens[i : i + 3]) for i in range(max(1, len(tokens) - 2))]
+    vector = [0] * bits
+    for shingle in shingles:
+        digest = int.from_bytes(
+            hashlib.blake2b(shingle.encode("utf-8"), digest_size=8).digest(), "big"
+        )
+        for bit in range(bits):
+            vector[bit] += 1 if (digest >> bit) & 1 else -1
+    result = 0
+    for bit in range(bits):
+        if vector[bit] > 0:
+            result |= 1 << bit
+    return result
+
+
+def _hamming(a: int, b: int) -> int:
+    return bin(a ^ b).count("1")
+
+
+def _shingles(text: str, size: int = 3) -> set[str]:
+    tokens = text.lower().split()
+    if len(tokens) < size:
+        return {" ".join(tokens)}
+    return {" ".join(tokens[i : i + size]) for i in range(len(tokens) - size + 1)}
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+#: Below this token count SimHash is unreliable: the signature is dominated by a handful of
+#: shingles, so appending one sentence to a short document flips ~10 of 64 bits -- well past
+#: any threshold that would still be meaningful on long text. Exact Jaccard is cheap at this
+#: size, so short documents take the accurate path and long ones take the fast one.
+_SIMHASH_MIN_TOKENS = 200
+_SIMHASH_MAX_DISTANCE = 6
+_JACCARD_THRESHOLD = 0.75
+
+
+def _is_near_duplicate(text: str, seen: "_DocumentBudget") -> bool:
+    """Length-aware near-duplicate check.
+
+    Long documents are compared by SimHash distance (O(1) per comparison). Short ones are
+    compared by exact shingle Jaccard, which is affordable at that size and does not suffer
+    SimHash's small-document instability.
+    """
+    token_count = len(text.split())
+
+    if token_count >= _SIMHASH_MIN_TOKENS:
+        signature = _simhash(text)
+        if any(_hamming(signature, other) <= _SIMHASH_MAX_DISTANCE for other in seen.simhashes):
+            return True
+        seen.simhashes.append(signature)
+        return False
+
+    shingles = _shingles(text)
+    if any(_jaccard(shingles, other) >= _JACCARD_THRESHOLD for other in seen.shingles):
+        return True
+    seen.shingles.append(shingles)
+    return False
+
+
+def default_source(uri: str, *, source_id: str, type: SourceType = SourceType.WEB) -> KnowledgeSource:
+    return KnowledgeSource(
+        id=source_id, type=type, uri=uri, trust_tier=TrustTier.VERIFIED
+    )
