@@ -1,78 +1,125 @@
 ---
-title: AURA Inference vLLM
-emoji: ⚡
-colorFrom: indigo
-colorTo: red
+title: AURA AI Backend
+emoji: 🤖
+colorFrom: purple
+colorTo: indigo
 sdk: docker
-app_port: 7860
+app_port: 8000
 pinned: false
-short_description: Real vLLM GPU failover endpoint for the AURA gateway
 ---
 
-# AURA Inference (vLLM)
+# AURA AI Backend
 
-An OpenAI-compatible `/v1/chat/completions` endpoint backed by a real vLLM server, running on a
-paid GPU-tier Hugging Face Space.
+FastAPI server for the AURA AI platform — a self-hosted AI operating system with hybrid retrieval, durable memory, tool use, and self-hosted models behind a v3-only HTTP gateway.
 
-This is **not** a demo Space and there is no UI. It is a **failover** dependency for another
-application: the AURA gateway's primary provider is Ollama on a Contabo VPS it controls, and
-this node is only reached automatically when that primary is unhealthy (see
-`docs/guides/split-inference-deployment.md` §8 in the AURA-AI repo). It will refuse to start
-without an API key.
+## Architecture
 
-## Requires a paid GPU hardware tier
-
-Unlike `deploy/spaces/inference/` (llama.cpp, CPU-only), vLLM needs CUDA. Choose a GPU flavor
-(e.g. `t4-small`, `a10g-small`) when creating the Space — it will not run on `cpu-basic`, and
-GPU tiers are billed hourly rather than a flat subscription fee.
-
-## Required secret
-
-| Name | Where | Value |
-| --- | --- | --- |
-| `VLLM_API_KEY` | set at creation with `hf repo create --secrets`, or Space → Settings → Variables and secrets | a long random string |
-
-The same value goes on the gateway as `AURA_PROVIDER_HFSPACE_API_KEY`. Without it the container
-exits at startup rather than serving an open endpoint — a Space is public by default, and an
-unauthenticated vLLM server is free GPU generation for anyone who finds the URL, billed to you.
-
-## Optional variables
-
-| Name | Default | Notes |
-| --- | --- | --- |
-| `VLLM_MODEL` | `Qwen/Qwen2.5-7B-Instruct-AWQ` | any repo vLLM can serve; must match `AURA_PROVIDER_HFSPACE_MODEL` on the gateway |
-| `VLLM_MAX_MODEL_LEN` | `8192` | keep in step with `AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW` on the gateway |
-| `VLLM_GPU_MEMORY_UTILIZATION` | `0.90` | fraction of GPU memory vLLM is allowed to reserve |
-
-If the chosen model repo is gated on the Hub, also set an `HF_TOKEN` secret (authenticates the
-weight *download*, not inference calls — a different thing from `VLLM_API_KEY`).
-
-## Verifying it
-
-```bash
-curl -sS https://<user>-<space>.hf.space/v1/models \
-  -H "Authorization: Bearer $VLLM_API_KEY" | jq
-
-curl -sS https://<user>-<space>.hf.space/v1/chat/completions \
-  -H "Authorization: Bearer $VLLM_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"Qwen/Qwen2.5-7B-Instruct-AWQ","messages":[{"role":"user","content":"reply with one word: ready"}]}' | jq -r '.choices[0].message.content'
+```
+HTTP ──▶ Gateway (auth, rate limit, validation) ──▶ AI Kernel
+                                                  │
+    ┌──────────┬───────┼────────┬──────────┬─────────┬──────────┐
+    ▼          ▼       ▼        ▼          ▼         ▼          ▼
+ Safety   Prompts  Memory  Knowledge   Tools   Planning   Reasoning
+    │          │       │        │          │         │          │
+    └──────────┴───────┴────────┴──────────┴─────────┴──────────┘
+                                                  │
+                                          LLM Router ──▶ Ollama · vLLM · any OpenAI-compatible endpoint you host
 ```
 
-A request **without** the header must return 401. If it returns a completion instead, the key is
-not set and the endpoint is open — stop and fix that before pointing anything at it.
+**Hexagonal layering** (enforced by AST-based fitness tests in `tests/architecture/`):
 
-## What this costs, honestly
+```
+domain/  ports/          stdlib only — entities, value objects, Protocols
+engines                  domain + ports only (prompts, context, memory, knowledge, tools, safety, planning, reasoning, execution, llm)
+adapters/  api/          vendor SDKs, imported lazily inside functions, not at module scope
+container.py             the only place concrete meets abstract
+```
 
-Running inference here means the system no longer satisfies two of its own rules: it stops
-working without internet, and prompts plus retrieved document content leave infrastructure you
-control. That trade is recorded in
-[`docs/guides/split-inference-deployment.md`](https://github.com/anasibrahimgnedy-collab/AURA-AI/blob/main/docs/guides/split-inference-deployment.md)
-§8, and the gateway will not talk to a host like this without an explicit
-`AURA_ALLOW_REMOTE_INFERENCE=true` opt-in.
+The arrow never reverses. `container.py` is the single wiring point — every adapter is constructed lazily.
 
-GPU Spaces bill by the hour, not a flat subscription. If this node is set to sleep when idle
-(cheaper, but its disk is typically ephemeral too), every wake re-downloads the model before it
-can answer its first failover request — an unreliable failover defeats the point of having one,
-so an always-on GPU flavor is the recommended default for this specific node, at the cost of
-paying for GPU time it mostly won't use.
+## Key Components
+
+- **`aura_service.py`** — v3-only gateway, never imports legacy `main.py`
+- **`aura_core/`** — hexagonal core: domain, ports, engines, adapters
+- **AI Kernel** (`aura_core/kernel/kernel.py`) — only execution path; plans, executes tools, generates
+- **Provider Router** (`aura_core/llm/router.py`) — five routing policies (LOCAL_FIRST, CHEAPEST, FASTEST, QUALITY_FIRST, BALANCED) with circuit breakers and failover
+- **Trust Channels** (SYSTEM/USER/DATA) — gate what content can do; retrieved knowledge on DATA channel with per-turn nonce
+
+## Scheduled Tasks (Celery Beat)
+
+7 tasks defined in `celery_app.py`:
+
+| Task | Schedule | Queue |
+|------|----------|-------|
+| `generate-insights-hourly` | Every hour | realtime |
+| `memory-consolidate-daily` | 02:30 daily | realtime |
+| `drain-event-outbox` | Every 60s | realtime |
+| `daily-briefing` | 06:00 daily | realtime |
+| `reap-agent-workspaces` | Every 30 min | realtime |
+| `drain-finetune-queue` | Every 120s | learning |
+| `knowledge-refresh-nightly` | 02:00 daily (configurable via `AURA_LEARNING_REFRESH_CRON`) | learning |
+
+## Database Migrations
+
+Alembic with 5 migrations (`alembic/versions/0001_initial_schema.py` through `0005_github_identities.py`), single head at `0005`.
+
+## System Dependencies (Production Docker Image)
+
+- **Tesseract OCR** (`tesseract-ocr`) — Phase F1: scanned PDF OCR
+- **Piper TTS** — Phase F2: self-hosted text-to-speech (ONNX models)
+- **espeak-ng** — Phase F2: fallback TTS
+- **faster-whisper** — Phase F2: self-hosted speech-to-text (CTranslate2)
+
+## Running Tests
+
+```bash
+cd aura_backend
+pip install -r requirements.lock -r requirements-dev.txt
+
+# Default suite (no Docker, no network, no model)
+pytest
+
+# Architecture fitness tests
+pytest tests/architecture -q
+
+# Legacy unittest suite (also gated in CI)
+TESTING=True python -m unittest discover -p "test_*.py"
+
+# Load tests (opt-in, needs real Postgres/Qdrant/Redis/Ollama)
+pytest tests/load -m load -s
+
+# Benchmarks (opt-in, wall-clock)
+pytest tests/benchmarks -m bench
+```
+
+## Configuration
+
+Environment variables (see `aura_core/config/settings.py`):
+
+- `AURA_DATABASE_URL` — Postgres connection string
+- `AURA_JWT_SECRET` — JWT signing secret (file-hydrated in production)
+- `AURA_SANDBOX_ENABLED` — enable persistent engineer workspaces (opt-in)
+- `AURA_ALLOW_REMOTE_INFERENCE` — gate remote inference (default: false)
+- `AURA_LEARNING_REFRESH_CRON` — knowledge refresh schedule (default: `0 2 * * *`)
+- `OLLAMA_NUM_PARALLEL` — model concurrency (default: 1)
+
+## Self-Hosting Guarantee
+
+External inference APIs are rejected at construction. The build fails if a hosted provider appears in:
+- Python code (`tests/architecture/test_no_external_inference.py` layers 1-3)
+- Flutter client dependencies (layer 4)
+- Deployment manifests (layer 5)
+- Provider config templates (layer 6)
+
+## Deployment
+
+Production target: 4 vCPU, 16 GB RAM, 100 GB SSD.
+
+```bash
+cd /opt/aura-stack/deploy
+cp .env.example .env && $EDITOR .env      # set AURA_DOMAIN
+./scripts/bootstrap-secrets.sh
+docker compose -f docker-compose.prod.yml --env-file .env up -d
+```
+
+See [Deployment Guide](../docs/guides/deployment-guide.md) for full instructions.
