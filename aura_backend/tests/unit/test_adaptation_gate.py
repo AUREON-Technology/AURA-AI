@@ -466,6 +466,70 @@ def _sql(**select) -> ReadTemplate:
     return ReadTemplate("t1", "db", TemplateKind.SQL, sql=SqlSelect("s", "t", **select))
 
 
+class TestHttpProbeSeedsAndIdentifiers:
+    """An HTTP tool with a required parameter used to be `needs_identifier` always, which capped
+    coverage on any API without a SQL replica. A seed supplies a search term; identifiers found
+    in a result supply the rest."""
+
+    @staticmethod
+    def _run(seeds):
+        from types import SimpleNamespace
+
+        from aura_core.adaptation.gate import _Run
+        from aura_core.domain.templates import HttpGet, ReadTemplate, TemplateKind
+        from aura_core.domain.tools import ParameterSpec
+
+        compiled, pilot_twin, _ = PILOTS["hr"]
+        gate = BlueprintGate(open_connector=_opener("hr"), new_registry=lambda: ToolRegistry(policy=ToolPolicy()),
+                             clock=None, probe_seeds=seeds)
+        run = _Run(gate, _record(compiled), pilot_twin)
+        run.available["hr-db"] = True
+        run.templates["h1"] = ReadTemplate("h1", "hr-db", TemplateKind.HTTP, http=HttpGet("/x"))
+
+        def tool(*names, kind="string"):
+            return SimpleNamespace(name="t", connector="hr-db", template="h1",
+                                   parameters=tuple(ParameterSpec(n, kind, "d") for n in names))
+
+        return run, tool
+
+    async def test_a_required_parameter_with_no_seed_or_identifier_is_not_run(self) -> None:
+        run, tool = self._run({})
+        with pytest.raises(Exception, match="needs_identifier"):
+            await run._probe(tool("document_id"), {})
+
+    async def test_a_seed_supplies_the_value(self) -> None:
+        run, tool = self._run({"q": "heptane"})
+        assert (await run._probe(tool("q"), {})).arguments == {"q": "heptane"}
+
+    async def test_an_identifier_found_in_a_result_supplies_the_value(self) -> None:
+        run, tool = self._run({})
+        run._harvest_identifiers({"results": [{"document_id": "DOC1", "experiment_id": None},
+                                              {"experiment_id": "EXP9", "document_id": "DOC2"}]})
+        assert (await run._probe(tool("document_id", "experiment_id"), {})).arguments == {
+            "document_id": "DOC1", "experiment_id": "EXP9"}
+
+    def test_only_identifier_shaped_text_is_kept(self) -> None:
+        run, _ = self._run({})
+        run._harvest_identifiers({"a_id": "../admin", "b_id": "x y", "c_id": "${s1.output}", "d_id": 12,
+                                  "e_id": "ok-1_2", "name": "not-an-id-key"})
+        assert run.harvest == {"e_id": "ok-1_2"}
+
+    async def test_a_non_text_parameter_is_never_guessed(self) -> None:
+        run, tool = self._run({"limit": "5"})
+        with pytest.raises(Exception, match="needs_identifier"):
+            await run._probe(tool("limit", kind="integer"), {})
+
+    def test_the_seed_setting_rejects_anything_but_short_strings(self) -> None:
+        from aura_core.config.settings import _parse_probe_seeds
+        from aura_core.domain.errors import ConfigurationError
+
+        assert _parse_probe_seeds('{"q": "heptane"}') == {"q": "heptane"}
+        assert _parse_probe_seeds("") == {}
+        for bad in ("not json", '["q"]', '{"q": 1}', '{"q": ""}'):
+            with pytest.raises(ConfigurationError):
+                _parse_probe_seeds(bad)
+
+
 class TestReplica:
     async def _read(self, template, **arguments):
         return await InMemoryReadConnector("db", ROWS).read(template, arguments)

@@ -715,7 +715,8 @@ class Container:
                 denylist=tool_settings.denylist, default_timeout_s=tool_settings.default_timeout_s,
             ),
             clock=self.clock, mode=GateMode(adaptation.gate_mode),
-            min_coverage=adaptation.gate_min_coverage, metrics=self.metrics,
+            min_coverage=adaptation.gate_min_coverage, probe_seeds=adaptation.gate_probe_seeds,
+            metrics=self.metrics,
         )
         deployment = BlueprintDeployment(
             project_id=self.twins.project_id, store=self.blueprint_store, approvals=self.approvals,

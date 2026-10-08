@@ -1026,6 +1026,22 @@ def _parse_mcp_servers(raw: str) -> tuple[McpServerConfig, ...]:
     return tuple(servers)
 
 
+def _parse_probe_seeds(raw: str) -> Mapping[str, str]:
+    if not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ConfigurationError("AURA_ADAPTATION_GATE_PROBE_SEEDS must be valid JSON") from exc
+    if not isinstance(parsed, Mapping) or not all(
+        isinstance(k, str) and isinstance(v, str) and 0 < len(v) <= 200 for k, v in parsed.items()
+    ):
+        raise ConfigurationError(
+            'AURA_ADAPTATION_GATE_PROBE_SEEDS must be a JSON object of short strings, e.g. {"q": "heptane"}'
+        )
+    return dict(parsed)
+
+
 @dataclass(frozen=True, slots=True)
 class AdaptationSettings:
     """Track AP: the Adaptive Intelligence Layer (``docs/roadmaps/AURA_ADAPTIVE_PLATFORM_ROADMAP.md``).
@@ -1044,6 +1060,11 @@ class AdaptationSettings:
     #: The share of a gating suite's cases that must actually run (the rest had no reachable
     #: replica or no value to call with) for the suite to count.
     gate_min_coverage: float = 0.8
+    #: Values for required parameters a generated tool cannot get from a SQL replica (an HTTP
+    #: tool's ``q``): ``{"q": "heptane"}``. The gate calls such a tool with the seed, then reuses
+    #: identifiers found in what it returned (``document_id`` ...) to call the tools that need
+    #: one. Operator-chosen search terms, not record ids, so they survive a re-ingest.
+    gate_probe_seeds: Mapping[str, str] = field(default_factory=dict)
     #: Seconds the previous version's generated tools stay registered after a swap, so a turn
     #: that resolved them just before the swap can still finish.
     tool_grace_s: float = 300.0
@@ -1060,6 +1081,7 @@ class AdaptationSettings:
             enabled=_bool("ADAPTATION_ENABLED", False),
             gate_mode=_choice("ADAPTATION_GATE_MODE", "enforce", ("enforce", "advisory")),
             gate_min_coverage=_float("ADAPTATION_GATE_MIN_COVERAGE", 0.8, minimum=0.0, maximum=1.0),
+            gate_probe_seeds=_parse_probe_seeds(_env("ADAPTATION_GATE_PROBE_SEEDS", "") or ""),
             tool_grace_s=max(0.0, _float("ADAPTATION_TOOL_GRACE_S", 300.0)),
             sync_s=max(1.0, _float("ADAPTATION_SYNC_S", 15.0)),
             labeler_enabled=_bool("ADAPTATION_LABELER_ENABLED", False),

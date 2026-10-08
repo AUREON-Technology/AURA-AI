@@ -45,6 +45,7 @@ skipped.
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -98,6 +99,9 @@ _SURFACE_MIN_WORDS = 3
 
 OpenConnector = Callable[[str], Awaitable[Any]]
 
+#: What a harvested identifier may look like: short, no spaces, no template or path characters.
+_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+
 
 class _NotRun(Exception):
     def __init__(self, reason: str) -> None:
@@ -131,6 +135,7 @@ class BlueprintGate:
         clock: Any,
         mode: GateMode = GateMode.ENFORCE,
         min_coverage: float = DEFAULT_MIN_COVERAGE,
+        probe_seeds: Mapping[str, str] | None = None,
         metrics: Any = None,
     ) -> None:
         if not 0.0 <= min_coverage <= 1.0:
@@ -140,6 +145,7 @@ class BlueprintGate:
         self._clock = clock
         self._mode = mode
         self._min_coverage = min_coverage
+        self._seeds = dict(probe_seeds or {})
         self._metrics = metrics
 
     @property
@@ -191,6 +197,7 @@ class _Run:
         self.by_name = {t.name: t for t in self.bp.tools}
         self.templates = {t.id: t for t in self.bp.templates}
         self.available: dict[str, bool] = {}
+        self.harvest: dict[str, str] = {}
         self.agents: dict[str, Any] = {}
         self._serial = 0
 
@@ -224,6 +231,13 @@ class _Run:
         stored = [c for suite in self.record.suites for c in suite.cases]
         for case in stored:
             out.append(await self._guarded(case.id, case.kind, self._stored(case)))
+        # A tool that needs an identifier can only be called after the call that returns one, and
+        # the stored order says nothing about that. Retry those once, now that results are in.
+        for index, case in enumerate(stored):
+            first = out[index]
+            if (first.outcome is CaseOutcome.NOT_RUN and first.reason == "needs_identifier"
+                    and case.kind == "tool_contract" and self.harvest):
+                out[index] = await self._guarded(case.id, case.kind, self._stored(case))
         for agent in self.bp.agents:
             for case_id, coro in self._grant_scope(agent):
                 out.append(await self._guarded(case_id, "grant_scope", coro))
@@ -263,6 +277,7 @@ class _Run:
         probe = await self._probe(tool, case.arguments)
         data = await self._call_ok(self.agents[case.agent], tool, probe.arguments)
         self._compare(tool, data, probe)
+        self._harvest_identifiers(data)
         checked = probe.expected_count is not None or probe.rows is not None or bool(probe.values)
         return "ok" if checked else "ok_schema_only"
 
@@ -369,14 +384,39 @@ class _Run:
 
     # -- probes and oracles -----------------------------------------------------------------
 
+    def _harvest_identifiers(self, data: Any, depth: int = 0) -> None:
+        """Remember the first plain-text ``*_id`` value per key from a result, to call other tools.
+
+        The values come from the connected system, so only identifier-shaped text is kept: it
+        becomes an argument to a read-only call of a tool the blueprint already declares.
+        """
+        if depth > 4:
+            return
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if (isinstance(key, str) and key.endswith("_id") and key not in self.harvest
+                        and isinstance(value, str) and _IDENTIFIER.fullmatch(value)):
+                    self.harvest[key] = value
+                else:
+                    self._harvest_identifiers(value, depth + 1)
+        elif isinstance(data, list):
+            for item in data[:50]:
+                self._harvest_identifiers(item, depth + 1)
+
     async def _probe(self, tool: BlueprintTool, fallback: Mapping[str, Any]) -> _Probe:
         if not self.available.get(tool.connector, False):
             raise _NotRun("replica_unavailable")
         template = self.templates[tool.template]
         if template.kind is not TemplateKind.SQL:
-            if any(p.required for p in tool.parameters):
-                raise _NotRun("needs_identifier")
-            return _Probe(arguments={})
+            arguments: dict[str, Any] = {}
+            for param in (p for p in tool.parameters if p.required):
+                # Only strings: a seed or a harvested identifier is text, and a guessed number
+                # would be a made-up value the oracle cannot vouch for.
+                value = self.gate._seeds.get(param.name) or self.harvest.get(param.name)
+                if param.type != "string" or value is None:
+                    raise _NotRun("needs_identifier")
+                arguments[param.name] = value
+            return _Probe(arguments=arguments)
         capability, _, target_id = tool.capability.partition("@")
         target = self.view.get(target_id)
         if target is None:
