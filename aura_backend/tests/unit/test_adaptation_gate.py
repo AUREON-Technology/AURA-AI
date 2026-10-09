@@ -514,6 +514,15 @@ class TestHttpProbeSeedsAndIdentifiers:
                                   "e_id": "ok-1_2", "name": "not-an-id-key"})
         assert run.harvest == {"e_id": "ok-1_2"}
 
+    async def test_an_optional_page_size_keeps_the_probe_small(self) -> None:
+        from aura_core.domain.tools import ParameterSpec
+
+        run, tool = self._run({"q": "heptane"})
+        spec = tool("q")
+        spec.parameters += (ParameterSpec("page_size", "integer", "d", required=False),)
+        arguments = (await run._probe(spec, {})).arguments
+        assert arguments["q"] == "heptane" and 0 < arguments["page_size"] <= 5
+
     async def test_a_non_text_parameter_is_never_guessed(self) -> None:
         run, tool = self._run({"limit": "5"})
         with pytest.raises(Exception, match="needs_identifier"):
