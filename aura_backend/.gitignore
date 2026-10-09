@@ -17,3 +17,5 @@ sentiment_centroids.json
 telemetry_logs.jsonl
 train_lora.json
 scratch/
+__pycache__/
+*.pyc
