@@ -416,6 +416,11 @@ class _Run:
                 if param.type != "string" or value is None:
                     raise _NotRun("needs_identifier")
                 arguments[param.name] = value
+            # A full page of results can outgrow the tool's result cap, and the registry then cuts it
+            # mid-JSON; a small page keeps the probe parseable.
+            for param in tool.parameters:
+                if param.name in ("page_size", "limit") and param.type == "integer" and not param.required:
+                    arguments[param.name] = 3
             return _Probe(arguments=arguments)
         capability, _, target_id = tool.capability.partition("@")
         target = self.view.get(target_id)
