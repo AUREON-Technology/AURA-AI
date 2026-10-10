@@ -13,7 +13,8 @@ Date: 2026-10-07. Deployment: AURA on Railway (`aura-ai-production-03a4`), Flame
 
 ## Gate
 - `tool_contract`: 3/3 probed tools passed; the other 5 need an identifier and are `not_run`.
-- Coverage 0.375 against a **waived** minimum: `AURA_ADAPTATION_GATE_MIN_COVERAGE=0.35` (default 0.8). This is an explicit operator decision, not a pass at the default.
+- The 	ool_contract gate passes at the **default** minimum coverage 0.8 (no waiver): 7 of 8 tools probed, 7 passed, coverage 0.875, evaluated on blueprint v3 on 2026-10-10. get_analysis stays 
+ot_run because Flame has no analyses. The waiver AURA_ADAPTATION_GATE_MIN_COVERAGE=0.35 has been removed. The active blueprint is still v2; v3 was evaluated only and has not been approved or deployed.
 - The Super Admin approved their own request (allowed in this deployment).
 
 ## Required deployment settings found during the run
@@ -35,7 +36,7 @@ Date: 2026-10-07. Deployment: AURA on Railway (`aura-ai-production-03a4`), Flame
 
 ## Caveats
 - Prompt 3 shows the limit of the Qwen2.5-7B planner on loosely worded requests (it picks its own search query). Not a plumbing defect; a larger model or a query-rewriting step would address it.
-- The `tool_contract` gate passed 3/3 probed tools; 5 tools need an identifier and are `not_run`. Coverage 0.375 passed only because `AURA_ADAPTATION_GATE_MIN_COVERAGE` was lowered to 0.35 (default 0.8). This is a waiver, not a pass at the default.
+- 	ool_contract first passed 3/3 probed tools at coverage 0.375 under a waiver. After PRs #163 and #164 (probe seeds, identifier harvesting, small probe page) and the seed AURA_ADAPTATION_GATE_PROBE_SEEDS (q and an experiment_id that exists in Flame), a real run on v3 gave coverage 0.875 (7/8, all passed) at the default 0.8.
 - The three answers above were produced by running a script in the operator's own browser (the embedded browser could not complete the Google sign-in popup); the outputs were pasted back, not captured by tooling.
 - `docs/production/gap_register.yaml` status is unchanged by this report.
 - Dataset files are not in the Flame image; DB rows persist, source files do not survive a redeploy.
