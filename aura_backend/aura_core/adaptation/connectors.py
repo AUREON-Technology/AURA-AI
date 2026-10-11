@@ -125,6 +125,7 @@ class ConnectorRegistry:
                     artefact_digest=descriptor.digest,
                     payload=_approval_payload(descriptor),
                     ttl=REGISTRATION_APPROVAL_TTL,
+                    requested_by=requested_by,
                 )
                 record = ConnectorRecord(
                     descriptor=descriptor,

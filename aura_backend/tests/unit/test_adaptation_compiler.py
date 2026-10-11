@@ -118,6 +118,49 @@ class TestOutputSchema:
         if not ok:
             assert result not in out.content or result == "not json"
 
+    async def _run_oversized(self, audit, schema: dict, result: Any, *, limit: int = 2_000):
+        registry = ToolRegistry(policy=ToolPolicy(), audit=audit)
+
+        async def handler() -> str:
+            return json.dumps(result)
+
+        registry.register(FunctionTool(ToolSpec(
+            "big", "A tool whose result outgrows its cap.", output_schema=schema, max_result_chars=limit,
+        ), handler))
+        out, _ = await registry.execute(
+            ToolCall(ToolCallId("c1"), "big", {}), ToolContext(user_id=UserId("u"), correlation_id="c", deadline_s=10.0)
+        )
+        return out
+
+    async def test_an_oversized_list_result_is_shortened_not_cut_mid_json(self, audit) -> None:
+        """Cutting at max_result_chars left half a row and a marker: valid for the schema check
+        (which ran first) but unparseable for the model, a UI view and the AP8 gate."""
+        schema = {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "integer"},
+                                                                             "text": {"type": "string"}}}}
+        rows = [{"id": i, "text": "row " * 20} for i in range(200)]
+        out = await self._run_oversized(audit, schema, rows)
+        assert out.ok and len(out.content) <= 2_000
+        kept = json.loads(out.content)
+        assert output_errors(schema, kept) == [] and 0 < len(kept) < 200
+        assert kept == rows[:len(kept)]
+
+    async def test_an_envelope_keeps_its_fields_and_loses_rows(self, audit) -> None:
+        schema = {"type": "object", "properties": {
+            "total": {"type": "integer"},
+            "results": {"type": "array", "items": {"type": "object", "properties": {"q": {"type": "string"}}}},
+        }, "required": ["total", "results"], "additionalProperties": False}
+        out = await self._run_oversized(audit, schema, {"total": 500, "results": [{"q": "x" * 60}] * 500})
+        assert out.ok
+        kept = json.loads(out.content)
+        assert kept["total"] == 500 and 0 < len(kept["results"]) < 500
+        assert output_errors(schema, kept) == []
+
+    async def test_a_result_with_nothing_to_drop_fails_closed(self, audit) -> None:
+        schema = {"type": "object", "properties": {"blob": {"type": "string"}}}
+        out = await self._run_oversized(audit, schema, {"blob": "x" * 5_000})
+        assert not out.ok and out.error_kind == "result_too_large"
+        assert "x" * 100 not in out.content
+
     async def test_tools_without_a_schema_are_unchanged(self, audit) -> None:
         registry = ToolRegistry(policy=ToolPolicy(), audit=audit)
 

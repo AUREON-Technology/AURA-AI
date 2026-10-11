@@ -197,7 +197,9 @@ class _Run:
         self.by_name = {t.name: t for t in self.bp.tools}
         self.templates = {t.id: t for t in self.bp.templates}
         self.available: dict[str, bool] = {}
-        self.harvest: dict[str, str] = {}
+        #: ``(connector id, key) -> value``: an identifier one system returned is only ever sent
+        #: back to that system, never to another connector's API.
+        self.harvest: dict[tuple[str, str], str] = {}
         self.agents: dict[str, Any] = {}
         self._serial = 0
 
@@ -277,7 +279,7 @@ class _Run:
         probe = await self._probe(tool, case.arguments)
         data = await self._call_ok(self.agents[case.agent], tool, probe.arguments)
         self._compare(tool, data, probe)
-        self._harvest_identifiers(data)
+        self._harvest_identifiers(data, tool.connector)
         checked = probe.expected_count is not None or probe.rows is not None or bool(probe.values)
         return "ok" if checked else "ok_schema_only"
 
@@ -287,7 +289,9 @@ class _Run:
         for name in case.forbidden_tools:
             await self._expect_denied(spec, self.by_name[name], context)
         registered = {self.names[t.name]: t for t in self.bp.tools}
-        granted = next(iter(sorted(spec.allowed_tools)))
+        if not spec.allowed_tools:
+            raise _NotRun("no_tools")
+        granted = sorted(spec.allowed_tools)[0]
         tool = registered.get(granted)
         if tool is None:
             raise _Failed("granted_tool_refused", "the agent's grant names a tool that is not registered")
@@ -384,8 +388,9 @@ class _Run:
 
     # -- probes and oracles -----------------------------------------------------------------
 
-    def _harvest_identifiers(self, data: Any, depth: int = 0) -> None:
-        """Remember the first plain-text ``*_id`` value per key from a result, to call other tools.
+    def _harvest_identifiers(self, data: Any, connector: str, depth: int = 0) -> None:
+        """Remember the first plain-text ``*_id`` value per key from ``connector``'s result, to call
+        its other tools.
 
         The values come from the connected system, so only identifier-shaped text is kept: it
         becomes an argument to a read-only call of a tool the blueprint already declares.
@@ -394,14 +399,14 @@ class _Run:
             return
         if isinstance(data, dict):
             for key, value in data.items():
-                if (isinstance(key, str) and key.endswith("_id") and key not in self.harvest
+                if (isinstance(key, str) and key.endswith("_id") and (connector, key) not in self.harvest
                         and isinstance(value, str) and _IDENTIFIER.fullmatch(value)):
-                    self.harvest[key] = value
+                    self.harvest[(connector, key)] = value
                 else:
-                    self._harvest_identifiers(value, depth + 1)
+                    self._harvest_identifiers(value, connector, depth + 1)
         elif isinstance(data, list):
             for item in data[:50]:
-                self._harvest_identifiers(item, depth + 1)
+                self._harvest_identifiers(item, connector, depth + 1)
 
     async def _probe(self, tool: BlueprintTool, fallback: Mapping[str, Any]) -> _Probe:
         if not self.available.get(tool.connector, False):
@@ -412,7 +417,7 @@ class _Run:
             for param in (p for p in tool.parameters if p.required):
                 # Only strings: a seed or a harvested identifier is text, and a guessed number
                 # would be a made-up value the oracle cannot vouch for.
-                value = self.gate._seeds.get(param.name) or self.harvest.get(param.name)
+                value = self.gate._seeds.get(param.name) or self.harvest.get((tool.connector, param.name))
                 if param.type != "string" or value is None:
                     raise _NotRun("needs_identifier")
                 arguments[param.name] = value
@@ -504,9 +509,14 @@ class _Run:
         if entity is None:
             raise _NotRun("needs_identifier")
         column = self.view.identifier(attribute)
+        # Both reads order by the state column, so capping the oracle at the tool's own row cap
+        # compares the same first states; a wider oracle failed every column with more states
+        # than the tool returns as a count_mismatch.
+        template = self.templates[tool.template]
+        cap = min(template.sql.max_rows, _ORACLE_ROWS) if template.sql is not None else _ORACLE_ROWS
         groups = await self._oracle(tool.connector, entity, columns=(SqlColumn(column, "v"),),
                                     aggregates=(SqlAggregate(AggregateFunction.COUNT, "n"),),
-                                    group_by=(column,), order_by=(column,), max_rows=_ORACLE_ROWS)
+                                    group_by=(column,), order_by=(column,), max_rows=cap)
         return _Probe(arguments={}, expected_count=len(groups), rows=tuple(groups))
 
     async def _oracle_rows(self, connector_id: str, entity, *, filters: tuple[SqlFilter, ...] = (),

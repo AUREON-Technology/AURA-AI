@@ -395,7 +395,28 @@ class ToolRegistry:
                     error_kind="invalid_output",
                     policy_reason=decision.reason,
                 )
-        if len(content) > spec.max_result_chars:
+        if len(content) > spec.max_result_chars and spec.output_schema is not None:
+            # A result that claims a shape cannot be cut mid-JSON: the model, a UI view and the
+            # AP8 gate would all receive something that no longer parses. Drop whole list items
+            # instead -- the schema subset has no minItems, so a shorter list still matches it.
+            fitted = _fit_json(content, spec.max_result_chars)
+            if fitted is None:
+                duration = (time.perf_counter() - started) * 1000.0
+                self._observe(name, outcome="result_too_large", duration_ms=duration)
+                await self._audit_call(name, context, "error", arguments_digest, "result_too_large")
+                await self._publish(name, context, allowed=True, ok=False, duration_ms=duration,
+                                    error_kind="result_too_large")
+                return finish(
+                    ok=False,
+                    content=f"The '{name}' tool's result is larger than {spec.max_result_chars} "
+                            "characters even with its lists shortened; narrow the request.",
+                    error_kind="result_too_large",
+                    policy_reason=decision.reason,
+                )
+            logger.info("structured tool result shortened to fit",
+                        extra={"tool": name, "chars": len(content), "kept_chars": len(fitted)})
+            content = fitted
+        elif len(content) > spec.max_result_chars:
             # Truncation is marked so the model knows the result is partial rather than
             # believing it saw everything.
             content = (
@@ -560,3 +581,65 @@ def _output_problems(schema: Mapping[str, Any], content: str) -> list[str]:
     except ValueError:
         return ["result is not JSON"]
     return output_errors(schema, value)
+
+
+#: How many times a structured result may have a list shortened before it is declared too large.
+_FIT_PASSES = 8
+
+
+def _fit_json(content: str, limit: int) -> str | None:
+    """``content`` with trailing list items dropped until it serializes within ``limit``.
+
+    The largest list (by serialized size) is shortened first -- the rows of a search, not the
+    envelope around them -- and a binary search finds how many of its items still fit. ``None``
+    when the result is not JSON or cannot fit even with its lists emptied.
+    """
+    try:
+        value = json.loads(content)
+    except ValueError:
+        return None
+
+    def dump(data: Any) -> str:
+        return json.dumps(data, ensure_ascii=False)
+
+    for _ in range(_FIT_PASSES):
+        text = dump(value)
+        if len(text) <= limit:
+            return text
+        target = _largest_list(value)
+        if target is None:
+            return None
+        items = list(target)
+        keep_low, keep_high = 0, len(items) - 1  # at least one item goes, or this pass did nothing
+        while keep_low < keep_high:
+            middle = (keep_low + keep_high + 1) // 2
+            target[:] = items[:middle]
+            if len(dump(value)) <= limit:
+                keep_low = middle
+            else:
+                keep_high = middle - 1
+        target[:] = items[:keep_low]
+    text = dump(value)
+    return text if len(text) <= limit else None
+
+
+def _largest_list(value: Any, depth: int = 0) -> list | None:
+    """The non-empty list with the longest serialization in ``value`` (``value`` itself included)."""
+    best: list | None = None
+    best_size = -1
+    stack: list[tuple[Any, int]] = [(value, depth)]
+    while stack:
+        node, level = stack.pop()
+        if isinstance(node, list):
+            if node:
+                size = len(json.dumps(node, ensure_ascii=False))
+                if size > best_size:
+                    best, best_size = node, size
+            children = node
+        elif isinstance(node, dict):
+            children = list(node.values())
+        else:
+            continue
+        if level < 4:
+            stack.extend((child, level + 1) for child in children if isinstance(child, (list, dict)))
+    return best

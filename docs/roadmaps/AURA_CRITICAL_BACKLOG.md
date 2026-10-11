@@ -20,6 +20,11 @@ Severity: **Critical** (blocks everything / live exposure) · **High** (blocks a
 - **Required action:** repo owner restores Actions (GitHub Settings → Billing/Actions); rerun Backend CI on `main`.
 - **Verification:** linked green run with every job executing steps.
 - **Roadmap phase:** M0 · **Blocking:** everything.
+- **Update 2026-10-11:** runners are back. Backend CI on `main` executes its steps from #306
+  (2026-10-01) and is green from #332 (2026-10-07); #347 ran every job green. Verification met
+  for Backend CI (GAP-043 `proven`). Still open under M0: branch protection (CB-02), and Client,
+  Host Daemon and Admin runs (not triggered since 2026-09-29). Deploy VPS now fires but times out
+  on SSH to the VPS (runs #211–#213): see `docs/reports/AURA_ADAPTIVE_STATUS_2026-10-11.md`.
 
 ---
 **ID:** CB-02 · **Severity:** Critical · **Area:** Governance
@@ -163,17 +168,17 @@ reported beyond BUILT until M0 restores CI evidence.
 
 | ID | Sev | Area | Actual state | Required action | Phase |
 | --- | --- | --- | --- | --- | --- |
-| CB-32 | Medium | Governance | No plan, ADRs or gaps for attaching AURA to external systems | Merge track doc, ADR-018…028, GAP-049…062 | AP0 |
-| CB-33 | Medium | Domain model | No representation of an external system (GAP-049) | AUSM + Blueprint + digest | AP1 |
-| CB-34 | High | Connectors / secrets | No connector framework or credential vault (GAP-050) | Read-only ports, `secret_ref` vault, connector approval; after SEC-01..03 | AP2 |
-| CB-35 | Medium | Discovery | No DB introspection or OpenAPI parsing; no pilot systems (GAP-051, GAP-052) | Deterministic discovery, Project Twin + diff, HR/e-commerce pilots | AP3–AP4 |
-| CB-36 | High | Generated access | No safe generated-query mechanism; `ToolSpec` has no output schema (GAP-054, GAP-055) | `QueryTemplate` builder + `test_no_freeform_sql`; `output_schema` | AP6 |
-| CB-37 | High | Runtime seam | Agent registry immutable/process-wide; no versioned activation (GAP-056) | `ActiveBlueprint` swap, digest-bound approval, rollback | AP7 |
-| CB-38 | Medium | Evaluation | No generated, per-blueprint eval gate (GAP-057) | Generated suites incl. injection; gate deploy | AP8 |
+| CB-32 | Medium | Governance | Track doc, ADR-018…028 (still Proposed) and GAP-049…062 merged | Merge track doc, ADR-018…028, GAP-049…062 | AP0 |
+| CB-33 | Medium | Domain model | Built; CI green on main (#347); held at BUILT by M0 (GAP-049) | AUSM + Blueprint + digest | AP1 |
+| CB-34 | High | Connectors / secrets | Built; CI green + real Postgres; dev-stack run pending (GAP-050) | Read-only ports, `secret_ref` vault, connector approval; after SEC-01..03 | AP2 |
+| CB-35 | Medium | Discovery | Built with HR/e-commerce pilots; CI green + live Postgres; held by M0 (GAP-051, GAP-052) | Deterministic discovery, Project Twin + diff, HR/e-commerce pilots | AP3–AP4 |
+| CB-36 | High | Generated access | Built; row-aware truncation of structured results added 2026-10-11 (GAP-054, GAP-055) | `QueryTemplate` builder + `test_no_freeform_sql`; `output_schema` | AP6 |
+| CB-37 | High | Runtime seam | Built; deployed live on Railway for Flame; dev-stack run pending (GAP-056) | `ActiveBlueprint` swap, digest-bound approval, rollback | AP7 |
+| CB-38 | Medium | Evaluation | Built; Flame run needed a coverage waiver (0.375), operator reports 0.875 at default after #163/#164 (PR #165); M7 for proven (GAP-057) | Generated suites incl. injection; gate deploy | AP8 |
 | CB-39 | Medium | Console | No Project Factory UI (GAP-058) | `/console/adaptation` + Playwright | AP9 |
 | CB-40 | High | Isolation | Project knowledge isolation unprovable while CB-11 is open (GAP-059) | Fix CB-11 first; isolation probe | AP10 |
 | CB-41 | Medium | Personal OS | Personal AURA hardcoded outside any blueprint (GAP-062) | Project 0 parity → shadow → retire coupling | AP13 |
-| CB-42 | High | First integration | Flame in Freefall AR-1…AR-8 built and tested; no live run yet (GAP-063) | Run `docs/guides/flame-integration-runbook.md` on the dev stack; write the Link 1 / Link 2 live reports | AP7/AP12a |
+| CB-42 | High | First integration | Flame AR-1…AR-8 built; Link 2 live run on Railway 2026-10-07 (`flame-link2-live.md`), Link 1 not run (GAP-063) | Run `docs/guides/flame-integration-runbook.md` on the dev stack; write the Link 1 / Link 2 live reports | AP7/AP12a |
 
 ## Not in this backlog (deliberately)
 
