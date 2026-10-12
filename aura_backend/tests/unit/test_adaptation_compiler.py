@@ -118,11 +118,11 @@ class TestOutputSchema:
         if not ok:
             assert result not in out.content or result == "not json"
 
-    async def _run_oversized(self, audit, schema: dict, result: Any, *, limit: int = 2_000):
+    async def _run_oversized(self, audit, schema: dict, result: Any, *, limit: int = 2_000, indent=None):
         registry = ToolRegistry(policy=ToolPolicy(), audit=audit)
 
         async def handler() -> str:
-            return json.dumps(result)
+            return json.dumps(result, indent=indent)
 
         registry.register(FunctionTool(ToolSpec(
             "big", "A tool whose result outgrows its cap.", output_schema=schema, max_result_chars=limit,
@@ -143,17 +143,43 @@ class TestOutputSchema:
         kept = json.loads(out.content)
         assert output_errors(schema, kept) == [] and 0 < len(kept) < 200
         assert kept == rows[:len(kept)]
+        # An array has nowhere to carry a flag; the result metadata says it is partial.
+        assert out.metadata["truncation"] == {"truncated": True, "kept": len(kept), "total": 200}
 
-    async def test_an_envelope_keeps_its_fields_and_loses_rows(self, audit) -> None:
+    @pytest.mark.parametrize("closed", [False, True])
+    async def test_an_envelope_keeps_its_fields_loses_rows_and_says_so(self, audit, closed) -> None:
+        """ADR-025: whole rows plus a `truncated` flag -- in the result when its schema admits
+        one, and in the metadata either way."""
         schema = {"type": "object", "properties": {
             "total": {"type": "integer"},
             "results": {"type": "array", "items": {"type": "object", "properties": {"q": {"type": "string"}}}},
-        }, "required": ["total", "results"], "additionalProperties": False}
+        }, "required": ["total", "results"]}
+        if closed:
+            schema["additionalProperties"] = False
         out = await self._run_oversized(audit, schema, {"total": 500, "results": [{"q": "x" * 60}] * 500})
         assert out.ok
         kept = json.loads(out.content)
         assert kept["total"] == 500 and 0 < len(kept["results"]) < 500
         assert output_errors(schema, kept) == []
+        assert ("truncated" in kept) is (not closed)
+        assert out.metadata["truncation"]["kept"] == len(kept["results"])
+
+    async def test_more_lists_than_passes_once_allowed_and_deep_lists_still_fit(self, audit) -> None:
+        """Eight passes and a depth of four used to report result_too_large for results that fit
+        once their lists were shortened: nine large fields, or a list nested five levels down."""
+        wide = {f"f{i}": ["y" * 40] * 30 for i in range(9)}
+        out = await self._run_oversized(audit, {"type": "object"}, wide, limit=1_500)
+        assert out.ok and json.loads(out.content)["truncated"] is True
+
+        deep = {"a": {"b": {"c": {"d": {"e": ["z" * 50] * 200}}}}}
+        out = await self._run_oversized(audit, {"type": "object"}, deep, limit=1_000)
+        assert out.ok and 0 < len(json.loads(out.content)["a"]["b"]["c"]["d"]["e"]) < 200
+
+    async def test_a_result_that_fits_once_compacted_is_whole_and_unflagged(self, audit) -> None:
+        rows = [{"id": i} for i in range(60)]
+        schema = {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "integer"}}}}
+        out = await self._run_oversized(audit, schema, rows, limit=len(json.dumps(rows)), indent=4)
+        assert out.ok and json.loads(out.content) == rows and "truncation" not in out.metadata
 
     async def test_a_result_with_nothing_to_drop_fails_closed(self, audit) -> None:
         schema = {"type": "object", "properties": {"blob": {"type": "string"}}}

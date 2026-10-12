@@ -15,8 +15,9 @@ repository; the AURA requirements it names (AR-1…AR-8) are built in this repos
 | AR-7 | Live proof of Link 2 | **this runbook, §2 — run on Railway 2026-10-07, see `docs/reports/flame-link2-live.md`** |
 | AR-8 | Re-discovery on contract change | this runbook, §4 |
 
-**Built is not proven.** Nothing below has run against a live Flame API. The integration counts
-as proven only when the reports named in §2.6 and §3.4 exist.
+**Built is not proven.** Link 2 (§2) has run once against a live Flame API, on Railway on
+2026-10-07, and that report lacks items §2.6 asks for. Link 1 (§3) has not run. The integration
+counts as proven only when complete reports for §2.6 and §3.4 exist.
 
 All admin calls need a Super Admin token: `ADMIN="Authorization: Bearer $SUPERADMIN_JWT"`.
 

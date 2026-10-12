@@ -18,6 +18,9 @@ on:
 jobs:
   analyze-and-test:
     runs-on: ubuntu-latest
+    # The suite takes well under a minute. A hang -- PosixPtySession's reader isolate blocked in
+    # read() keeps the test process from exiting -- otherwise runs to GitHub's 6-hour job limit.
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: aura_hostd
@@ -57,6 +60,7 @@ jobs:
     # build-windows job precedent for the same "Windows-first but unproven" situation.
     runs-on: windows-latest
     continue-on-error: true
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: aura_hostd

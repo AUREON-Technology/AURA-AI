@@ -1,7 +1,9 @@
 FROM node:22-alpine AS deps
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+# The lockfile pins what `npm audit` checked; `npm install` without it re-resolved every range at
+# build time, so the deployed tree could differ from the audited one.
+COPY package.json package-lock.json ./
+RUN npm ci
 
 FROM node:22-alpine AS build
 WORKDIR /app
