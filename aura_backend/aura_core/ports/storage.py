@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
+from ..domain.errors import ValidationError
 from ..domain.events import DomainEvent
 from ..domain.github_identity import GitHubIdentity
 from ..domain.graph import FactProvenance
@@ -30,6 +31,8 @@ from ..domain.outbox import OutboxEntry
 from ..domain.personal_os import PersonalOsRecord, RecordKind
 
 __all__ = [
+    "GLOBAL_OWNER",
+    "require_point_owner",
     "VectorStore",
     "DocumentStore",
     "MemoryStore",
@@ -42,6 +45,24 @@ __all__ = [
     "GitHubIdentityPort",
     "VectorPoint",
 ]
+
+
+#: The only owner value that makes a vector point visible to every caller (CB-11, SEC-09). A
+#: point without an ``owner_id``, or with an empty one, is refused on write and matches nobody on
+#: read: "no owner" used to mean "global", so a write path that forgot to set the owner published
+#: one user's content to all of them.
+GLOBAL_OWNER = "global"
+
+
+def require_point_owner(point: "VectorPoint") -> None:
+    """Raise :class:`ValidationError` unless ``point`` names its owner (a user id or
+    :data:`GLOBAL_OWNER`). Both vector adapters call this before writing anything."""
+    owner = point.payload.get("owner_id")
+    if not isinstance(owner, str) or not owner.strip():
+        raise ValidationError(
+            "a vector point must name its owner: a user id, or the explicit global sentinel",
+            details={"point": point.id, "sentinel": GLOBAL_OWNER},
+        )
 
 
 class VectorPoint:

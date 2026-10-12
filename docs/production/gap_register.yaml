@@ -1370,7 +1370,17 @@ gaps:
     test: pilot retrieval eval; cross-identity isolation probe; Git discovery goldens
     metric: recall@k on pilot documents; delegated refusal rate
     exit_condition: AP10 exit criteria met after CB-11 is fixed; docs/reports/ap10-connectors-knowledge.md.
-    status: open
+    status: in_progress
+    progress_2026_10_12: >-
+      CB-11 fixed: GLOBAL_OWNER is the only global owner; both vector adapters refuse owner-less
+      points and an owner-less point matches no read (tests/unit/test_vector_owner_isolation.py,
+      in-memory and in-process Qdrant). Files connector, tabular part: CSV/JSON tables under
+      AURA_ADAPTATION_FILES_ROOT, discovered through the PostgreSQL snapshot mapping, read through
+      the in-memory SQL evaluator; HR pilot CSVs compile and pass the AP8 gate
+      (tests/unit/test_adaptation_files.py). Documents, Excel, Git, CompositeFetcher, MySQL/SQL
+      Server and identity modes not started; exit evidence (retrieval eval, isolation probe on a
+      real Qdrant, Git goldens) not produced.
+    evidence: docs/reports/ap10-connectors-knowledge.md
 
   - gap_id: GAP-060
     component: adaptation/drift

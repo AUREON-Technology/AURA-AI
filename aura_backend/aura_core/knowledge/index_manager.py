@@ -29,7 +29,7 @@ from ..domain.identifiers import GenerationId
 from ..domain.knowledge import Chunk, IndexIdentity
 from ..observability.logging import get_logger
 from ..ports.llm import EmbeddingProvider
-from ..ports.storage import DocumentStore, VectorPoint, VectorStore
+from ..ports.storage import GLOBAL_OWNER, DocumentStore, VectorPoint, VectorStore
 
 __all__ = ["IndexManager", "BuildReport", "PromotionGate", "GateResult"]
 
@@ -280,7 +280,7 @@ class IndexManager:
             "document_id": chunk.document_id.value,
             "document_version": chunk.document_version,
             "chunk_index": chunk.index,
-            "owner_id": chunk.owner_id.value if chunk.owner_id else "global",
+            "owner_id": chunk.owner_id.value if chunk.owner_id else GLOBAL_OWNER,
             "heading_path": list(chunk.heading_path),
             "trust_tier": int(chunk.trust_tier),
             "content": chunk.content,

@@ -73,8 +73,13 @@ def build_tool(selection: PlannedCapability, view: TwinView, taken: set[str]) ->
 # ------------------------------------------------------------------------------- helpers
 
 
+#: Sources whose tables compile to SQL read templates: PostgreSQL, and file tables (AP10), which
+#: run the same templates through the in-memory evaluator.
+_SQL_KINDS = frozenset({ConnectorKind.POSTGRES, ConnectorKind.FILES})
+
+
 def _sql_parts(entity: AusmElement, view: TwinView) -> tuple[str, str]:
-    if view.kind_of(entity) is not ConnectorKind.POSTGRES or entity.properties.get("source_type") != "table":
+    if view.kind_of(entity) not in _SQL_KINDS or entity.properties.get("source_type") != "table":
         raise _Drop("not_a_sql_table")
     schema = entity.properties.get("schema")
     if not isinstance(schema, str):

@@ -1074,6 +1074,10 @@ class AdaptationSettings:
     labeler_enabled: bool = False
     labeler_batch_size: int = 8
     labeler_timeout_s: float = 180.0
+    #: Directory under which ``files`` connectors may read CSV/JSON exports (AP10). Each connector's
+    #: endpoint is a sub-directory of it; empty disables the ``files`` kind entirely, so no path on
+    #: this host is readable through a connector unless an operator chose this root.
+    files_root: str = ""
 
     @classmethod
     def from_env(cls) -> "AdaptationSettings":
@@ -1087,6 +1091,7 @@ class AdaptationSettings:
             labeler_enabled=_bool("ADAPTATION_LABELER_ENABLED", False),
             labeler_batch_size=max(1, min(64, _int("ADAPTATION_LABELER_BATCH_SIZE", 8))),
             labeler_timeout_s=max(5.0, _float("ADAPTATION_LABELER_TIMEOUT_S", 180.0)),
+            files_root=(_env("ADAPTATION_FILES_ROOT", "") or "").strip(),
         )
 
 

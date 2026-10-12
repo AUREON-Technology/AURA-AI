@@ -33,16 +33,11 @@ from typing import Any, Mapping, Sequence
 from ..domain.errors import ConfigurationError, ConflictError, DependencyUnavailableError
 from ..domain.identifiers import UserId
 from ..domain.knowledge import IndexIdentity
-from ..ports.storage import VectorPoint
+from ..ports.storage import GLOBAL_OWNER, VectorPoint, require_point_owner
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["QdrantVectorStore"]
-
-#: Payload values that mean "not owned by any single tenant". Kept identical to
-#: InMemoryVectorStore._matches so the two adapters cannot disagree about what "global" means --
-#: a difference here would show up as content visible in one deployment and not the other.
-_GLOBAL_OWNERS = (None, "", "global")
 
 #: Qdrant's distance enum names, keyed by the port's vocabulary.
 _DISTANCES = {"cosine": "Cosine", "dot": "Dot", "euclid": "Euclid"}
@@ -309,6 +304,7 @@ class QdrantVectorStore:
         from qdrant_client import models as qmodels
 
         for point in points:
+            require_point_owner(point)
             if len(point.vector) != identity.dimension:
                 raise ConflictError(
                     f"point {point.id!r} has {len(point.vector)} dimensions but index "
@@ -403,25 +399,23 @@ class QdrantVectorStore:
         """The tenant-isolation clause, matching InMemoryVectorStore exactly.
 
         ``owner_id=None`` means *global content only*, not "everything". There is deliberately no
-        way to express an unfiltered cross-tenant search through this port.
+        way to express an unfiltered cross-tenant search through this port. Global means the
+        explicit :data:`GLOBAL_OWNER` sentinel only (CB-11): a point with no ``owner_id`` matches
+        no filter at all, so content whose owner was lost stays invisible rather than public.
         """
         from qdrant_client import models as qmodels
 
         global_match = qmodels.FieldCondition(
-            key="owner_id", match=qmodels.MatchAny(any=[v for v in _GLOBAL_OWNERS if v is not None])
+            key="owner_id", match=qmodels.MatchValue(value=GLOBAL_OWNER)
         )
-        # A missing owner_id key also counts as global, which MatchAny cannot express, so pair it
-        # with an is-empty check.
-        global_missing = qmodels.IsEmptyCondition(is_empty=qmodels.PayloadField(key="owner_id"))
-
         if owner_id is None:
-            return [qmodels.Filter(should=[global_match, global_missing])]
+            return [global_match]
 
         owned = qmodels.FieldCondition(
             key="owner_id", match=qmodels.MatchValue(value=owner_id.value)
         )
         if include_global:
-            return [qmodels.Filter(should=[owned, global_match, global_missing])]
+            return [qmodels.Filter(should=[owned, global_match])]
         return [owned]
 
     async def search(

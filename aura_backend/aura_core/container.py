@@ -776,6 +776,7 @@ class Container:
         if not self.settings.adaptation.enabled:
             return None
         from .adaptation.connectors import ConnectorRegistry
+        from .adapters.connectors.files import FilesConnectorFactory
         from .adapters.connectors.openapi import OpenApiConnectorFactory
         from .adapters.connectors.postgres import PostgresConnectorFactory
         from .adapters.credential_vault import (
@@ -801,14 +802,18 @@ class Container:
         vault = EncryptedCredentialVault(
             cipher=FieldCipher(secrets_encryption_keys(), setting=SECRETS_KEYS_ENV), store=ciphertexts
         )
+        factories: dict[Any, Any] = {
+            ConnectorKind.POSTGRES: PostgresConnectorFactory(forbidden_targets=(url,)),
+            ConnectorKind.OPENAPI: OpenApiConnectorFactory(),
+        }
+        if self.settings.adaptation.files_root:
+            # Offered only with an operator-chosen root: no root, no readable path on this host.
+            factories[ConnectorKind.FILES] = FilesConnectorFactory(root=self.settings.adaptation.files_root)
         return ConnectorRegistry(
             store=store,
             vault=vault,
             approvals=self.approvals,
-            factories={
-                ConnectorKind.POSTGRES: PostgresConnectorFactory(forbidden_targets=(url,)),
-                ConnectorKind.OPENAPI: OpenApiConnectorFactory(),
-            },
+            factories=factories,
             clock=self.clock,
             audit=self.audit,
             metrics=self.metrics,
