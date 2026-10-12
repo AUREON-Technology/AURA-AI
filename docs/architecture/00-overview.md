@@ -134,6 +134,7 @@ aura_backend/aura_core/
 | [027](027-ui-capability-manifest.md) | *(Proposed)* Closed-vocabulary UI Capability Manifest; staged surfaces | Rich screens need new view types, in exchange for zero client releases per project |
 | [028](028-project-zero.md) | *(Proposed)* Personal AURA becomes Project 0; zero-knowledge tables never discovered | A staged parity/shadow migration, in exchange for one code path |
 | [029](029-service-principals-and-caller-context.md) | Service keys scoped to named routes; caller evidence on the DATA channel tainting the turn; structured output repaired once then failing closed | A second principal class every caller-identity check must consider, in exchange for system-to-system integration without a person's token |
+| [030](030-hosted-open-weight-inference.md) | *(Proposed; Phase 1 built)* Hosted open-weight APIs become a third host category, gated by `AURA_ALLOW_HOSTED_INFERENCE`, open-weight model IDs only, never `is_local` | Prompts and retrieved content leave our infrastructure when enabled, in exchange for large models at no cost within free quotas |
 
 ---
 

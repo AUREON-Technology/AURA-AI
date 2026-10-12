@@ -20,6 +20,12 @@ Six independent layers, because no single one is sufficient:
 Plus the runtime half: ``ProviderConfig`` refuses those hostnames at construction, tested here
 so the config surface and the static scan stay in step.
 
+ADR-030 added a third host category beside "banned" and "rented compute": hosted APIs serving
+open-weight models (Groq, Workers AI, OpenRouter, ...). They are refused unless
+``AURA_ALLOW_HOSTED_INFERENCE`` is set, only for open-weight model IDs, and never named in Python
+source -- a hosted endpoint is configuration, not code. ``TestHostedOpenWeightIsGatedNotSilent``
+pins all of that, including that neither opt-in unlocks the other or a banned vendor.
+
 Layers 4-6 exist because layers 1-3 missed real violations, and it is worth being precise about
 how. Every one of them opens only ``*.py`` files under ``aura_backend/`` and ``requirements*.txt``.
 So:
@@ -457,8 +463,7 @@ class TestProviderConfigRefusesHostedEndpoints:
             "https://api.anthropic.com/v1",
             "https://generativelanguage.googleapis.com/v1beta",
             "https://my-resource.openai.azure.com/openai/deployments/x",
-            "https://api.groq.com/openai/v1",
-            "https://openrouter.ai/api/v1",
+            "https://gateway.ai.cloudflare.com/v1/acct/gw/openai",
             "https://api.together.xyz/v1",
             "https://api-inference.huggingface.co/models/x",
             "https://api.mistral.ai/v1",
@@ -537,3 +542,214 @@ class TestHostMatching:
         from aura_core.config.external_inference import is_external_inference_host
 
         assert is_external_inference_host(host) is None
+
+
+class TestHostedOpenWeightIsGatedNotSilent:
+    """ADR-030: hosted open-weight APIs are a third category, gated by their own flag.
+
+    These hosts were on the banned list until ADR-030. Moving them off it is only safe if every
+    property below holds at once: off by default, a separate consent from rented compute, open
+    weights only (several of these keys also reach closed models), never mislabelled as local, and
+    no banned vendor reachable through either flag.
+    """
+
+    HOSTED = [
+        ("https://api.groq.com/openai/v1", "openai/gpt-oss-120b"),
+        ("https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1", "@cf/openai/gpt-oss-20b"),
+        ("https://openrouter.ai/api/v1", "google/gemma-4-31b-it:free"),
+        ("https://router.huggingface.co/v1", "Qwen/Qwen3-32B"),
+        ("https://integrate.api.nvidia.com/v1", "meta/llama-3.3-70b-instruct"),
+    ]
+
+    @staticmethod
+    def _config(base_url: str, model: str, **kwargs):
+        from aura_core.config.settings import ProviderConfig
+
+        return ProviderConfig(
+            name="hosted", kind="openai_compatible", model=model, base_url=base_url, **kwargs
+        )
+
+    @pytest.mark.parametrize(("base_url", "model"), HOSTED)
+    def test_refused_without_the_opt_in(self, base_url: str, model: str, monkeypatch) -> None:
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.delenv("AURA_ALLOW_HOSTED_INFERENCE", raising=False)
+        with pytest.raises(ConfigurationError) as excinfo:
+            self._config(base_url, model)
+        message = str(excinfo.value)
+        # As with rented compute, the refusal states the cost so the operator makes a decision.
+        assert "AURA_ALLOW_HOSTED_INFERENCE" in message
+        assert "readable by its operator" in message
+
+    @pytest.mark.parametrize(("base_url", "model"), HOSTED)
+    def test_permitted_with_the_opt_in(self, base_url: str, model: str, monkeypatch) -> None:
+        monkeypatch.setenv("AURA_ALLOW_HOSTED_INFERENCE", "true")
+        assert self._config(base_url, model).base_url == base_url
+
+    @pytest.mark.parametrize(("base_url", "model"), HOSTED)
+    def test_the_rented_compute_opt_in_does_not_unlock_it(
+        self, base_url: str, model: str, monkeypatch
+    ) -> None:
+        """Consenting to your weights on rented hardware is not consenting to a third party."""
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.delenv("AURA_ALLOW_HOSTED_INFERENCE", raising=False)
+        monkeypatch.setenv("AURA_ALLOW_REMOTE_INFERENCE", "true")
+        with pytest.raises(ConfigurationError):
+            self._config(base_url, model)
+
+    def test_the_hosted_opt_in_does_not_unlock_rented_compute(self, monkeypatch) -> None:
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.setenv("AURA_ALLOW_HOSTED_INFERENCE", "true")
+        monkeypatch.delenv("AURA_ALLOW_REMOTE_INFERENCE", raising=False)
+        with pytest.raises(ConfigurationError) as excinfo:
+            self._config("https://anas-aura-inference.hf.space/v1", "m")
+        assert "AURA_ALLOW_REMOTE_INFERENCE" in str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "https://api.openai.com/v1",
+            "https://api.anthropic.com/v1",
+            "https://gateway.ai.cloudflare.com/v1/acct/gw/compat",
+            "https://api.mistral.ai/v1",
+        ],
+    )
+    def test_neither_opt_in_unlocks_a_banned_vendor(self, base_url: str, monkeypatch) -> None:
+        """Even with an open-weight model ID, a banned host stays banned.
+
+        Cloudflare's AI Gateway is the case that matters most: it shares a vendor with Workers AI
+        and forwards to closed providers.
+        """
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.setenv("AURA_ALLOW_HOSTED_INFERENCE", "true")
+        monkeypatch.setenv("AURA_ALLOW_REMOTE_INFERENCE", "true")
+        with pytest.raises(ConfigurationError) as excinfo:
+            self._config(base_url, "openai/gpt-oss-120b")
+        assert "own infrastructure" in str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        ("base_url", "model"),
+        [
+            ("https://openrouter.ai/api/v1", "openai/gpt-5"),
+            ("https://openrouter.ai/api/v1", "anthropic/claude-sonnet-4"),
+            ("https://openrouter.ai/api/v1", "google/gemini-2.5-flash"),
+            ("https://openrouter.ai/api/v1", "qwen/qwen3-max"),
+            ("https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1", "openai/gpt-4.1"),
+            ("https://router.huggingface.co/v1", "perplexity/llama-3.1-sonar-large"),
+        ],
+    )
+    def test_a_closed_model_is_refused_even_with_the_opt_in(
+        self, base_url: str, model: str, monkeypatch
+    ) -> None:
+        """Mixed catalogs are the reason the model ID is checked, not just the host."""
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.setenv("AURA_ALLOW_HOSTED_INFERENCE", "true")
+        with pytest.raises(ConfigurationError) as excinfo:
+            self._config(base_url, model)
+        assert "open-weight" in str(excinfo.value)
+
+    def test_a_hosted_provider_cannot_claim_to_be_local(self, monkeypatch) -> None:
+        """`is_local` steers local_first routing; a lie here would prefer a third party."""
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.setenv("AURA_ALLOW_HOSTED_INFERENCE", "true")
+        with pytest.raises(ConfigurationError) as excinfo:
+            self._config("https://api.groq.com/openai/v1", "openai/gpt-oss-120b", is_local=True)
+        assert "is_local" in str(excinfo.value)
+
+    def test_the_hosted_and_banned_lists_do_not_overlap(self) -> None:
+        """The banned check runs first and matches substrings, so an overlap would shadow a host."""
+        from aura_core.config.external_inference import (
+            HOSTED_OPEN_WEIGHT_HOSTS,
+            is_external_inference_host,
+            is_remote_inference_host,
+        )
+
+        for host in HOSTED_OPEN_WEIGHT_HOSTS:
+            assert is_external_inference_host(host) is None, host
+            assert is_remote_inference_host(host) is None, host
+
+    def test_suffix_match_does_not_fire_on_a_lookalike(self) -> None:
+        from aura_core.config.external_inference import is_hosted_open_weight_host
+
+        assert is_hosted_open_weight_host("api.groq.com") == "api.groq.com"
+        assert is_hosted_open_weight_host("API.Groq.com.") == "api.groq.com"
+        assert is_hosted_open_weight_host("eu.openrouter.ai") == "openrouter.ai"
+        assert is_hosted_open_weight_host("api.groq.com.internal.mycorp.net") is None
+        assert is_hosted_open_weight_host("notopenrouter.ai") is None
+        assert is_hosted_open_weight_host("") is None
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b:free",
+            "@cf/openai/gpt-oss-20b",
+            "@cf/qwen/qwen3-30b-a3b-fp8",
+            "@cf/meta/llama-3.1-8b-instruct",
+            "@cf/mistral/mistral-7b-instruct-v0.1",
+            "qwen/qwen3.8-27b",
+            "Qwen/Qwen3-32B",
+            "meta-llama/Llama-3.3-70B-Instruct:groq",
+            "google/gemma-4-31b-it:free",
+            "deepseek-ai/DeepSeek-V3.1",
+            "nvidia/llama-3.1-nemotron-70b-instruct",
+            "moonshotai/kimi-k2-instruct",
+            "llama-3.3-70b-versatile",
+        ],
+    )
+    def test_open_weight_models_are_recognised(self, model: str) -> None:
+        from aura_core.config.external_inference import is_open_weight_model
+
+        assert is_open_weight_model(model)
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "",
+            "openai/gpt-5",
+            "openai/gpt-4.1",
+            "google/gemini-2.5-flash",
+            "anthropic/claude-sonnet-4",
+            "x-ai/grok-4",
+            "perplexity/llama-3.1-sonar-large",
+            "qwen/qwen-max",
+            "qwen/qwen-plus",
+            "qwen/qwen-turbo",
+            "qwen/qwen3-max",
+            "mistralai/mistral-large",
+            "mistralai/mistral-medium-3",
+            "cohere/command-r",
+        ],
+    )
+    def test_closed_models_are_not_recognised(self, model: str) -> None:
+        from aura_core.config.external_inference import is_open_weight_model
+
+        assert not is_open_weight_model(model)
+
+    def test_no_source_file_hardcodes_a_hosted_open_weight_endpoint(self) -> None:
+        """A hosted endpoint is configuration, chosen by an operator, never a default in code.
+
+        Moving these hosts off the banned list also removed them from layer 2's scan. Without this
+        test, a hardcoded ``https://api.groq.com/...`` default would pass every check and still be
+        refused only at runtime, and only because the flag happened to be off.
+        """
+        from aura_core.config.external_inference import HOSTED_OPEN_WEIGHT_HOSTS
+
+        offenders: list[str] = []
+        for path in _sources():
+            rel = _rel(path)
+            if rel in SELF_EXEMPT:
+                continue
+            text = path.read_text(encoding="utf-8").lower()
+            for host in HOSTED_OPEN_WEIGHT_HOSTS:
+                if host in text:
+                    offenders.append(f"{rel}: references {host!r}")
+        assert not offenders, (
+            "A hosted open-weight endpoint appears in Python source. Configure it through "
+            "AURA_PROVIDER_<NAME>_BASE_URL instead (ADR-030).\n  " + "\n  ".join(offenders)
+        )

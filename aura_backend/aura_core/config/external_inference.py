@@ -19,6 +19,8 @@ boundary is the deployment's egress policy.
 
 from __future__ import annotations
 
+import re
+
 __all__ = [
     "EXTERNAL_INFERENCE_HOSTS",
     "BANNED_SDK_ROOTS",
@@ -27,8 +29,12 @@ __all__ = [
     "BANNED_CREDENTIAL_NAMES",
     "BANNED_PROVIDER_KINDS",
     "REMOTE_INFERENCE_HOSTS",
+    "HOSTED_OPEN_WEIGHT_HOSTS",
+    "OPEN_WEIGHT_MODEL_PATTERNS",
     "is_external_inference_host",
     "is_remote_inference_host",
+    "is_hosted_open_weight_host",
+    "is_open_weight_model",
     "credential_name_variants",
 ]
 
@@ -39,6 +45,12 @@ __all__ = [
 #: Deliberately excludes bare vendor words that collide with legitimate local usage: matching
 #: "openai" alone would reject the ``openai_compatible`` provider kind, which is precisely how we
 #: talk to a *local* vLLM or LocalAI server.
+#:
+#: ``api.groq.com`` and ``openrouter.ai`` used to be here. ADR-030 moved them to
+#: :data:`HOSTED_OPEN_WEIGHT_HOSTS`, which is gated rather than banned. Every host still on this
+#: list is refused with no override. ``gateway.ai.cloudflare.com`` was added at the same time:
+#: Cloudflare's AI Gateway forwards to OpenAI, Anthropic and other closed vendors under one URL
+#: shape, so allowing Workers AI without banning the gateway would have opened a proxy route.
 EXTERNAL_INFERENCE_HOSTS: tuple[str, ...] = (
     "api.openai.com",
     "api.anthropic.com",
@@ -46,8 +58,7 @@ EXTERNAL_INFERENCE_HOSTS: tuple[str, ...] = (
     "aiplatform.googleapis.com",
     "openai.azure.com",
     "bedrock-runtime",
-    "api.groq.com",
-    "openrouter.ai",
+    "gateway.ai.cloudflare.com",
     "api.together.xyz",
     "api.together.ai",
     "api.replicate.com",
@@ -235,6 +246,112 @@ def is_remote_inference_host(host: str) -> str | None:
     for gated in REMOTE_INFERENCE_HOSTS:
         if host == gated or host.endswith("." + gated):
             return gated
+    return None
+
+
+#: Hosted APIs that serve **open-weight** models on someone else's servers (ADR-030).
+#:
+#: This is a third category, separate from the other two:
+#:
+#: * :data:`EXTERNAL_INFERENCE_HOSTS` run somebody else's model. Banned, with no override.
+#: * :data:`REMOTE_INFERENCE_HOSTS` run *your* weights in *your* container on rented hardware.
+#:   Gated by ``AURA_ALLOW_REMOTE_INFERENCE``.
+#: * These run published open weights that you could self-host, but on the provider's servers.
+#:   The provider sees every prompt. Gated by ``AURA_ALLOW_HOSTED_INFERENCE``, a separate flag:
+#:   agreeing that rented hardware may run your model does not agree that a third party may read
+#:   your prompts.
+#:
+#: Each host was admitted on its own terms, recorded here so the reason survives. A host belongs
+#: here only if its free or default tier does **not** train on API inputs:
+#:
+#: * ``api.groq.com``: states it does not train on customer data. I/O logs kept up to 30 days
+#:   for abuse and reliability; operators can opt out in Data Controls.
+#: * ``api.cloudflare.com``: Workers AI's OpenAI-compatible path,
+#:   ``/client/v4/accounts/<id>/ai/v1``. Third-party closed models reachable on the same path
+#:   (``openai/gpt-4.1``) fail :func:`is_open_weight_model`. That check, not a path match, is
+#:   what keeps the shared host safe.
+#: * ``openrouter.ai``: a mixed catalog; closed models are refused by :func:`is_open_weight_model`.
+#:   Some free endpoints are served only to accounts that allow prompt training. The operator
+#:   keeps that setting **off**, and such endpoints then refuse the request upstream.
+#: * ``router.huggingface.co``: Hugging Face Inference Providers, also a mixed catalog.
+#: * ``integrate.api.nvidia.com``: the NVIDIA API catalog. Trial terms; evaluation use.
+#:
+#: Deliberately absent, so adding them takes a new decision rather than an edit: Mistral's free
+#: plan and Google AI Studio's free tier both train on inputs. Cerebras and GitHub Models are no
+#: longer free, and the remaining hosts are already on the banned list.
+HOSTED_OPEN_WEIGHT_HOSTS: tuple[str, ...] = (
+    "api.groq.com",
+    "api.cloudflare.com",
+    "openrouter.ai",
+    "router.huggingface.co",
+    "integrate.api.nvidia.com",
+)
+
+
+#: Model families whose weights are published, matched against a normalised model ID (see
+#: :func:`is_open_weight_model`). Every hosted open-weight provider must name a model matching
+#: one of these, or boot fails.
+#:
+#: Each pattern is anchored and ties the family to its publisher, which is how the same key is
+#: kept from reaching a closed model. ``openai/gpt-oss-120b`` matches but ``openai/gpt-5`` does
+#: not. ``google/gemma-4-31b-it`` matches but ``google/gemini-2.5-flash`` does not. An unknown
+#: publisher matches nothing (``perplexity/llama-3.1-sonar`` is a closed online service built on
+#: Llama). The publisher segment is optional only because some hosts, such as Groq's older IDs,
+#: omit it.
+#:
+#: A family match is not enough on its own, because some publishers sell closed API tiers under
+#: an open family's name. Qwen's ``qwen-max``, ``qwen-plus``, ``qwen-turbo`` and ``qwen3-max`` have
+#: never had weights released. :data:`_CLOSED_TIER_RE` refuses any ID carrying one of those tier
+#: words. It errs toward refusing: an open model that happened to use one would need an explicit
+#: decision to admit.
+OPEN_WEIGHT_MODEL_PATTERNS: tuple[str, ...] = (
+    r"(openai/)?gpt-oss-",
+    r"(google/)?gemma-",
+    r"(meta-llama/|meta/)?(meta-)?llama-",
+    r"(qwen/)?(qwen|qwq)",
+    r"(deepseek-ai/|deepseek/)?deepseek-",
+    r"nvidia/[\w.-]*nemotron",
+    r"(mistralai/|mistral/)?(mistral-small|mistral-nemo|mistral-7b|mixtral|ministral)",
+    r"(microsoft/)?phi-",
+    r"(moonshotai/)?kimi-k2",
+    r"(zai-org/|z-ai/|thudm/)?glm-",
+)
+
+_OPEN_WEIGHT_RE = re.compile("|".join(f"(?:{p})" for p in OPEN_WEIGHT_MODEL_PATTERNS))
+_CLOSED_TIER_RE = re.compile(r"(?:^|[-/._])(?:max|plus|turbo)(?:[-._]|$)")
+
+
+def is_open_weight_model(model: str) -> bool:
+    """True when ``model`` names a model from a family with published weights.
+
+    Normalises the spellings hosts use for the same model before matching:
+
+    * case: ``Qwen/Qwen3-32B`` on Hugging Face is ``qwen/qwen3-32b`` on Groq;
+    * Cloudflare's ``@cf/`` and ``@hf/`` namespace prefixes;
+    * a ``:variant`` suffix, such as OpenRouter's ``:free`` or Hugging Face's ``:<provider>``.
+    """
+    normalized = (model or "").strip().lower()
+    for prefix in ("@cf/", "@hf/"):
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix):]
+    normalized = normalized.split(":", 1)[0]
+    if not normalized or _CLOSED_TIER_RE.search(normalized):
+        return False
+    return _OPEN_WEIGHT_RE.match(normalized) is not None
+
+
+def is_hosted_open_weight_host(host: str) -> str | None:
+    """Return the matching entry of :data:`HOSTED_OPEN_WEIGHT_HOSTS`, or ``None``.
+
+    A suffix match, the same rule as :func:`is_remote_inference_host`, so that
+    ``api.groq.com.internal.mycorp.net``, a host you own, does not match.
+    """
+    if not host:
+        return None
+    host = host.lower().rstrip(".")
+    for hosted in HOSTED_OPEN_WEIGHT_HOSTS:
+        if host == hosted or host.endswith("." + hosted):
+            return hosted
     return None
 
 

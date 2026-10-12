@@ -27,7 +27,12 @@ from urllib.parse import urlsplit, urlunsplit
 
 from ..domain.errors import ConfigurationError
 from ..domain.llm import Modality, ModelPool, RoutingPolicy
-from .external_inference import is_external_inference_host, is_remote_inference_host
+from .external_inference import (
+    is_external_inference_host,
+    is_hosted_open_weight_host,
+    is_open_weight_model,
+    is_remote_inference_host,
+)
 
 # Stdlib logging rather than aura_core.observability: settings is the lowest layer here and
 # the observability module reads configuration, so importing it would risk a cycle for the
@@ -323,16 +328,21 @@ class ProviderConfig:
             )
 
     def _reject_external_base_url(self) -> None:
-        """Refuse a base_url on a hosted inference service; gate one on rented compute.
+        """Refuse banned hosts; gate hosted open-weight APIs and rented compute behind opt-ins.
 
         ``openai_compatible`` speaks the same protocol as several hosted APIs, so deleting the
         vendor adapters was not on its own sufficient -- a base_url is all it would take to route
         every turn back out to a third party. The host lists are shared with the architecture
         fitness tests so the runtime check and the static scan cannot disagree.
 
-        Two categories, and the difference matters:
+        Three categories, and the difference matters:
 
         * A **banned** host runs somebody else's model. Always refused, no override.
+        * A **hosted open-weight** host runs a model with published weights on the provider's
+          servers (ADR-030). Refused unless ``AURA_ALLOW_HOSTED_INFERENCE`` is true, and even
+          then only for an open-weight model ID and never as ``is_local``. The flag is separate
+          from the rented-compute one because it is a separate consent: here a third party
+          reads every prompt.
         * A **gated** host runs *your* container and *your* weights on rented infrastructure --
           a Hugging Face Space, Cloud Run, Fly. Refused *unless* ``AURA_ALLOW_REMOTE_INFERENCE``
           is true, because it is a topology an operator may legitimately choose and should have
@@ -349,6 +359,11 @@ class ProviderConfig:
                 f"service. All inference must run on our own infrastructure.",
                 details={"provider": self.name, "host": host, "matched": banned},
             )
+
+        hosted = is_hosted_open_weight_host(host)
+        if hosted:
+            self._gate_hosted_open_weight(host, hosted)
+            return
 
         gated = is_remote_inference_host(host)
         if gated and not _bool("ALLOW_REMOTE_INFERENCE", False):
@@ -368,6 +383,44 @@ class ProviderConfig:
                 "remote inference host permitted by AURA_ALLOW_REMOTE_INFERENCE",
                 extra={"provider": self.name, "host": host, "matched": gated},
             )
+
+    def _gate_hosted_open_weight(self, host: str, matched: str) -> None:
+        """ADR-030: a hosted open-weight API is allowed only on purpose, and only for open weights.
+
+        Each refusal names its own reason, because each one has a different fix.
+        """
+        details = {"provider": self.name, "host": host, "matched": matched, "model": self.model}
+        if not _bool("ALLOW_HOSTED_INFERENCE", False):
+            raise ConfigurationError(
+                f"provider {self.name!r} points at {host!r}, a hosted API that runs open-weight "
+                f"models on its own servers. This is allowed, but not by accident: every prompt, "
+                f"retrieved document passage and memory snippet sent to this provider is readable "
+                f"by its operator, and the system stops working without internet. Set "
+                f"AURA_ALLOW_HOSTED_INFERENCE=true to accept that (ADR-030), or point at a host "
+                f"you own.",
+                details=details,
+            )
+        if not is_open_weight_model(self.model):
+            raise ConfigurationError(
+                f"provider {self.name!r} names model {self.model!r} on {host!r}, which is not a "
+                f"recognised open-weight model. Hosted providers are permitted for open-weight "
+                f"models only; the same key often reaches closed models too (ADR-030).",
+                details={**details, "see": "aura_core/config/external_inference.py"},
+            )
+        if self.is_local:
+            raise ConfigurationError(
+                f"provider {self.name!r} points at {host!r} but declares is_local=true. A hosted "
+                f"provider is never local; the flag would let the local_first policy prefer it "
+                f"and let local-only routing send it data it must not see.",
+                details=details,
+            )
+        # Warned on every boot, as the rented-compute opt-in is: whoever runs the system later
+        # should see the trade-off without having been the person who accepted it.
+        logger.warning(
+            "hosted open-weight inference permitted by AURA_ALLOW_HOSTED_INFERENCE; prompts and "
+            "retrieved content are sent to this provider",
+            extra=details,
+        )
 
     @property
     def api_key(self) -> str:
