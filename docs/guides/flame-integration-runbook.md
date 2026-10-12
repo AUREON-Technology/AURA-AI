@@ -12,11 +12,12 @@ repository; the AURA requirements it names (AR-1…AR-8) are built in this repos
 | AR-4 | Service keys (`svc-flame`) | ADR-029 §1, [API reference](api-reference.md#service-keys) |
 | AR-5 | `context` on `/chat` (DATA channel) | ADR-029 §2 |
 | AR-6 | `response_schema` on `/chat` | ADR-029 §3 |
-| AR-7 | Live proof of Link 2 | **this runbook, §2 — not yet run** |
+| AR-7 | Live proof of Link 2 | **this runbook, §2 — run on Railway 2026-10-07, see `docs/reports/flame-link2-live.md`** |
 | AR-8 | Re-discovery on contract change | this runbook, §4 |
 
-**Built is not proven.** Nothing below has run against a live Flame API. The integration counts
-as proven only when the reports named in §2.6 and §3.4 exist.
+**Built is not proven.** Link 2 (§2) has run once against a live Flame API, on Railway on
+2026-10-07, and that report lacks items §2.6 asks for. Link 1 (§3) has not run. The integration
+counts as proven only when complete reports for §2.6 and §3.4 exist.
 
 All admin calls need a Super Admin token: `ADMIN="Authorization: Bearer $SUPERADMIN_JWT"`.
 
@@ -70,7 +71,10 @@ curl -X POST "$AURA/api/v3/admin/connectors" -H "$ADMIN" -H "Content-Type: appli
 
 ### 2.2 Approve and activate
 
-The approver must be a different person:
+A second person should decide the approval. The code does not refuse a self-approval (a sole
+operator has no one else), but it records the requester in the approval payload
+(`requested_by`) and marks a decision by that same person as `self_approved: true` in the audit
+entry, so the record shows which kind of decision it was:
 
 1. The approver runs `POST /api/v3/admin/approvals/{approval_id}/decide` with `{"approved": true}`.
 2. Then call `POST /api/v3/admin/connectors/flame-api/activate` with `{"approval_id": "..."}`.
@@ -95,7 +99,7 @@ curl -X POST "$AURA/api/v3/admin/blueprints/$BP/evaluate" -H "$ADMIN"
 
 ```bash
 curl -X POST "$AURA/api/v3/admin/blueprints/$BP/request-approval" -H "$ADMIN"
-# The second person decides the approval, then:
+# Ideally a second person decides the approval (a self-approval is audited as one), then:
 curl -X POST "$AURA/api/v3/admin/blueprints/$BP/approve" -H "$ADMIN" -d '{"approval_id": "..."}'
 curl -X POST "$AURA/api/v3/admin/blueprints/$BP/deploy" -H "$ADMIN"
 curl "$AURA/api/v3/admin/blueprints/active" -H "$ADMIN"   # names the bp<N>_ agents and tools
@@ -127,7 +131,9 @@ Write `docs/reports/flame-link2-live.md` with the following:
 - the tool call (from `GET /api/v3/admin/audit?action=tool.bp<N>_api_search`);
 - the answer, with the Flame `evidence_id` it cites.
 
-**That report is AR-7.** Until it exists, Link 2 is built, not proven.
+**That report is AR-7.** `docs/reports/flame-link2-live.md` (2026-10-07) is the first one. It is
+missing items from the list above: the deploy audit entries, the tool-call audit record, full
+digests and the full gate report. Until a run records all of them, Link 2 is built, not proven.
 
 ## 3. Link 1: Flame asks AURA to interpret (AR-4/5/6)
 

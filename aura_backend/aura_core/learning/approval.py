@@ -189,7 +189,12 @@ class ApprovalService:
         artefact_digest: str,
         payload: Mapping[str, Any] | None = None,
         ttl: timedelta = timedelta(days=14),
+        requested_by: str | None = None,
     ) -> ApprovalRequest:
+        """``requested_by`` is kept in the payload (no schema change), so a decision by the same
+        person is visible as a self-approval -- allowed, but never silent."""
+        if requested_by:
+            payload = {**(payload or {}), "requested_by": requested_by}
         request = ApprovalRequest.create(
             kind=kind, summary=summary, artefact_digest=artefact_digest,
             payload=payload, ttl=ttl,
@@ -237,14 +242,21 @@ class ApprovalService:
 
         decided = request.decided(approved=approved, by=by, note=note)
         await self._store.put(decided)
+        requested_by = request.payload.get("requested_by")
+        # A sole operator approving their own request is permitted; it is recorded as such so a
+        # reviewer can tell a two-person decision from a self-approval.
+        self_approved = bool(requested_by) and requested_by == by
         logger.info(
             "approval decided",
-            extra={"approval": approval_id, "approved": approved, "by": by},
+            extra={"approval": approval_id, "approved": approved, "by": by, "self_approved": self_approved},
         )
+        if self_approved and approved:
+            logger.warning("approval decided by its own requester", extra={"approval": approval_id, "by": by})
         await self._record(
             action=f"approval.decide.{request.kind}", actor=by, resource=approval_id,
             outcome="approved" if approved else "rejected",
-            detail={"digest": request.artefact_digest, "note": note[:200]},
+            detail={"digest": request.artefact_digest, "note": note[:200],
+                    "requested_by": requested_by, "self_approved": self_approved},
         )
         await self._publish(
             ApprovalDecided(

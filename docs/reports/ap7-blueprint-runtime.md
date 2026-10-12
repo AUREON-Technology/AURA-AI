@@ -178,8 +178,8 @@ AURA_TEST_DATABASE_URL=postgresql://aura:***@localhost:55440/postgres \
 
 - **Not proven on the dev stack.** That run, with its audit trail, is the remaining exit
   evidence.
-- **No evaluation gate yet.** Deploys need the explicit ungated bypass until AP8. The bypass is
-  off by default and recorded on the version.
+- ~~**No evaluation gate yet.**~~ Superseded by AP8 (`docs/reports/ap8-generated-eval-gate.md`):
+  deploys now pass the generated evaluation gate, and the bypass is gone.
 - **Workers converge by polling** (`sync_s`, default 15 s). Between a deploy and the next sync,
   other workers keep serving the previous version, which stays a complete version, never a mix.
 - **Delegated API connectors** forward no user token yet (AP10). They read only what the API

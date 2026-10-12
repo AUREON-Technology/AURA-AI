@@ -128,6 +128,7 @@ class BlueprintDeployment:
             payload={"project_id": self._project_id, "version": version, "gate": record.gate,
                      "twin_version": bp.project.twin_version,
                      "evaluation": report.summary() if report is not None else None},
+            requested_by=by,
         )
         await self._record("request_approval", by, record, "pending", {"approval": request.id})
         return request

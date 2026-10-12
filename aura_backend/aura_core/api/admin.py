@@ -532,6 +532,7 @@ def register_admin_ops(
                 "dataset_digest": current.dataset_digest,
                 "metrics": dict(current.metrics),
             },
+            requested_by=caller.email or caller.user_id.value,
         )
         await audit_admin(
             request, caller, "admin.model.request_promotion", current.key, "ok",

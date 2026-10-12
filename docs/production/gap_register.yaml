@@ -997,11 +997,25 @@ gaps:
     exit_condition: >-
       Account Actions/billing status restored (GitHub Settings -> Billing / Actions), and a linked
       Backend CI run on main shows every job executing its steps to completion.
-    status: open
+    status: proven
     evidence: >-
-      Reported by the coordinator on 2026-09-24 from the Actions UI (runs on main since 2026-09-22
-      and on PR #96, including one re-run, each ending after ~3 s with no steps or runner). Not
-      independently re-observed from this worktree.
+      Backend CI run #347
+      https://github.com/anasibrahimgnedy-collab/AURA-AI/actions/runs/37978445764 (every job's steps
+      executed, all green); first green main run since the outage: #332
+      https://github.com/anasibrahimgnedy-collab/AURA-AI/actions/runs/37692528600. The outage
+      itself was reported by the coordinator on 2026-09-24 from the Actions UI (runs on main since
+      2026-09-22 and on PR #96, including one re-run, each ending after ~3 s with no steps or
+      runner).
+    reverified_2026_10_11: >-
+      Runners returned around 2026-10-01: Backend CI on main from run #306 onward executes its steps
+      (3-15 min per run instead of ~4 s). The first green main run is #332 (17573eb, 2026-10-07);
+      main has been green since, apart from two commits fixed within the hour (#338 cfdbdac
+      Dockerfile overwrite, #342 f20a887 mass deletion). Run #347 (0288863, 2026-10-09) ran every
+      job to completion: test (3342 passed, 56 skipped), architecture, legacy unittest, pip-audit,
+      backup-scripts, docker-build. Client CI and Host Daemon CI have not been triggered since
+      2026-09-29, so whether they get a runner again is unverified, not confirmed broken. Deploy VPS
+      now fires but fails at SSH (connect to the VPS on port 22 times out, runs #211-#213): a
+      separate infrastructure problem, recorded in docs/reports/AURA_ADAPTIVE_STATUS_2026-10-11.md.
 
   - gap_id: GAP-044
     component: client/release-toolchain
@@ -1123,7 +1137,16 @@ gaps:
       AP1 implemented: aura_core/domain/{ausm,blueprint,untrusted,serialization,connectors}.py,
       docs/schemas/{blueprint,project_twin}.v1.json, 66 new tests; full default suite 2920 passed
       and legacy unittest OK, run locally. Not proven until Backend CI is green on main (M0).
-    evidence: docs/reports/ap1-domain-model.md
+    evidence: >-
+      docs/reports/ap1-domain-model.md; Backend CI run #347
+      https://github.com/anasibrahimgnedy-collab/AURA-AI/actions/runs/37978445764
+    reverified_2026_10_11: >-
+      AP1 exit criteria (schema published; tests green in CI on main) are met. Backend CI run #347
+      on main ran the AP1 tests green (aura_core/adaptation/* and the AP domain modules at 90-100%
+      line coverage); the Postgres-backed tests/load/test_adaptation_*_postgres.py suites (36 tests)
+      were re-run green on PostgreSQL 16.15 on 2026-10-11. Held at built_not_proven only by the
+      track's standing rule: no AP phase goes beyond BUILT until M0 exits (branch protection, and
+      green Client/Hostd/Admin runs on the same main SHA). Promote when M0's evidence report lands.
 
   - gap_id: GAP-050
     component: adaptation/connectors
@@ -1147,6 +1170,10 @@ gaps:
       behind AURA_ADAPTATION_ENABLED. Default suite 3012 passed, 12 real-Postgres tests pass
       locally. Not proven until CI is green on main and the dev-stack run is recorded.
     evidence: docs/reports/ap2-connector-framework.md
+    reverified_2026_10_11: >-
+      AP2's tests ran green in Backend CI run #347 and on PostgreSQL 16.15 (2026-10-11), but its
+      exit criterion also needs the dev-stack run, and the dev stack lives on the VPS that is
+      unreachable over SSH since 2026-10-07.
 
   - gap_id: GAP-051
     component: adaptation/discovery
@@ -1167,7 +1194,17 @@ gaps:
       e-commerce pilots with recorded goldens, discovery service and Super Admin route. Default
       suite 3055 passed; live capture equals the recorded catalog for both pilots on Postgres 16.
       Not proven until CI is green on main.
-    evidence: docs/reports/ap3-discovery.md
+    evidence: >-
+      docs/reports/ap3-discovery.md; Backend CI run #347
+      https://github.com/anasibrahimgnedy-collab/AURA-AI/actions/runs/37978445764
+    reverified_2026_10_11: >-
+      AP3 exit criteria (goldens green in CI; live Postgres run for both pilots recorded (ap3
+      report)) are met. Backend CI run #347 on main ran the AP3 tests green (aura_core/adaptation/*
+      and the AP domain modules at 90-100% line coverage); the Postgres-backed
+      tests/load/test_adaptation_*_postgres.py suites (36 tests) were re-run green on PostgreSQL
+      16.15 on 2026-10-11. Held at built_not_proven only by the
+      track's standing rule: no AP phase goes beyond BUILT until M0 exits (branch protection, and
+      green Client/Hostd/Admin runs on the same main SHA). Promote when M0's evidence report lands.
 
   - gap_id: GAP-052
     component: adaptation/project-twin
@@ -1182,6 +1219,17 @@ gaps:
     metric: labeling coverage; labeler latency per element
     exit_condition: AP4 exit criteria met; docs/reports/ap4-project-twin.md.
     status: built_not_proven
+    reverified_2026_10_11: >-
+      AP4 exit criteria (twins on CPU-only CI; diff goldens green; one twin persisted and diffed on
+      real Postgres (ap4 report)) are met. Backend CI run #347 on main ran the AP4 tests green
+      (aura_core/adaptation/* and the AP domain modules at 90-100% line coverage); the
+      Postgres-backed tests/load/test_adaptation_*_postgres.py suites (36 tests) were re-run green
+      on PostgreSQL 16.15 on 2026-10-11. Held at built_not_proven only by the
+      track's standing rule: no AP phase goes beyond BUILT until M0 exits (branch protection, and
+      green Client/Hostd/Admin runs on the same main SHA). Promote when M0's evidence report lands.
+    evidence: >-
+      docs/reports/ap4-project-twin.md; Backend CI run #347
+      https://github.com/anasibrahimgnedy-collab/AURA-AI/actions/runs/37978445764
 
   - gap_id: GAP-053
     component: adaptation/capabilities
@@ -1197,6 +1245,17 @@ gaps:
     metric: capabilities selected per pilot; evidence per selection
     exit_condition: AP5 exit criteria met; docs/reports/ap5-capability-planning.md.
     status: built_not_proven
+    reverified_2026_10_11: >-
+      AP5 exit criteria (both pilots planned from the same primitive set; cross-domain report) are
+      met. Backend CI run #347 on main ran the AP5 tests green (aura_core/adaptation/* and the AP
+      domain modules at 90-100% line coverage); the Postgres-backed
+      tests/load/test_adaptation_*_postgres.py suites (36 tests) were re-run green on PostgreSQL
+      16.15 on 2026-10-11. Held at built_not_proven only by the
+      track's standing rule: no AP phase goes beyond BUILT until M0 exits (branch protection, and
+      green Client/Hostd/Admin runs on the same main SHA). Promote when M0's evidence report lands.
+    evidence: >-
+      docs/reports/ap5-capability-planning.md; Backend CI run #347
+      https://github.com/anasibrahimgnedy-collab/AURA-AI/actions/runs/37978445764
 
   - gap_id: GAP-054
     component: adaptation/compiler
@@ -1213,6 +1272,17 @@ gaps:
     metric: tools/agents/views/eval cases per blueprint
     exit_condition: AP6 exit criteria met; docs/reports/ap6-blueprint-compiler.md.
     status: built_not_proven
+    reverified_2026_10_11: >-
+      AP6 exit criteria (both pilots compile schema-valid blueprints; fitness and fuzz tests green
+      in CI) are met. Backend CI run #347 on main ran the AP6 tests green (aura_core/adaptation/*
+      and the AP domain modules at 90-100% line coverage); the Postgres-backed
+      tests/load/test_adaptation_*_postgres.py suites (36 tests) were re-run green on PostgreSQL
+      16.15 on 2026-10-11. Held at built_not_proven only by the
+      track's standing rule: no AP phase goes beyond BUILT until M0 exits (branch protection, and
+      green Client/Hostd/Admin runs on the same main SHA). Promote when M0's evidence report lands.
+    evidence: >-
+      docs/reports/ap6-blueprint-compiler.md; Backend CI run #347
+      https://github.com/anasibrahimgnedy-collab/AURA-AI/actions/runs/37978445764
 
   - gap_id: GAP-055
     component: tools/output-schema
@@ -1229,6 +1299,10 @@ gaps:
     metric: generated-tool schema-violation count
     exit_condition: Field and validation merged with tests green in CI (part of AP6).
     status: built_not_proven
+    reverified_2026_10_11: >-
+      The field and its validation ran green in Backend CI run #347. The target's row-aware
+      truncation was missing until 2026-10-11 (results were cut mid-JSON after validation); the
+      registry now shortens lists instead. Promote once that change is green on main.
 
   - gap_id: GAP-056
     component: adaptation/runtime
@@ -1245,6 +1319,9 @@ gaps:
     metric: aura_blueprint_active_version; generated-tool error rate
     exit_condition: AP7 exit criteria met; docs/reports/ap7-blueprint-runtime.md.
     status: built_not_proven
+    reverified_2026_10_11: >-
+      AP7's tests ran green in Backend CI run #347 and on PostgreSQL 16.15 (2026-10-11); deploy and
+      rollback on the dev stack are still unrecorded (the VPS is unreachable).
 
   - gap_id: GAP-057
     component: adaptation/evaluation-gate
@@ -1260,6 +1337,11 @@ gaps:
     exit_condition: AP8 exit criteria met; docs/reports/ap8-generated-eval-gate.md.
     status: built_not_proven
     evidence: docs/reports/ap8-generated-eval-gate.md
+    reverified_2026_10_11: >-
+      The gate's tests ran green in Backend CI run #347. Fixes on 2026-10-11: harvested identifiers
+      are scoped per connector, the status oracle uses the tool's own row cap, and an agent without
+      tools is not_run rather than a gate error. Proven still needs M7 (real-model evaluation), per
+      the roadmap.
 
   - gap_id: GAP-058
     component: admin/project-factory

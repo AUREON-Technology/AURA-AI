@@ -235,8 +235,12 @@ class ToolRegistry:
             *, ok: bool, content: str, error_kind: str | None = None, allowed: bool = True,
             policy_reason: str = "", needs_confirmation: bool = False,
             arguments: Mapping[str, Any] | None = None, diff_preview: str | None = None,
+            truncation: Mapping[str, Any] | None = None,
         ) -> tuple[ToolResult, ToolExecutionReport]:
             duration = (time.perf_counter() - started) * 1000.0
+            metadata: dict[str, Any] = {"allowed": allowed, "policy_reason": policy_reason}
+            if truncation:
+                metadata["truncation"] = dict(truncation)
             result = ToolResult(
                 call_id=call.id,
                 name=name,
@@ -244,7 +248,7 @@ class ToolRegistry:
                 content=content,
                 duration_ms=duration,
                 error_kind=error_kind,
-                metadata={"allowed": allowed, "policy_reason": policy_reason},
+                metadata=metadata,
             )
             report = ToolExecutionReport(
                 call_id=call.id.value,
@@ -395,7 +399,31 @@ class ToolRegistry:
                     error_kind="invalid_output",
                     policy_reason=decision.reason,
                 )
-        if len(content) > spec.max_result_chars:
+        truncation: dict[str, Any] | None = None
+        if len(content) > spec.max_result_chars and spec.output_schema is not None:
+            # A result that claims a shape cannot be cut mid-JSON: the model, a UI view and the
+            # AP8 gate would all receive something that no longer parses. Drop whole list items
+            # instead -- the schema subset has no minItems, so a shorter list still matches it --
+            # and flag it (ADR-025): in the result itself when its schema admits a `truncated`
+            # field, and always in the ToolResult metadata.
+            fitted = _fit_json(content, spec.max_result_chars, spec.output_schema)
+            if fitted is None:
+                duration = (time.perf_counter() - started) * 1000.0
+                self._observe(name, outcome="result_too_large", duration_ms=duration)
+                await self._audit_call(name, context, "error", arguments_digest, "result_too_large")
+                await self._publish(name, context, allowed=True, ok=False, duration_ms=duration,
+                                    error_kind="result_too_large")
+                return finish(
+                    ok=False,
+                    content=f"The '{name}' tool's result is larger than {spec.max_result_chars} "
+                            "characters even with its lists shortened; narrow the request.",
+                    error_kind="result_too_large",
+                    policy_reason=decision.reason,
+                )
+            content, truncation = fitted
+            if truncation:
+                logger.info("structured tool result shortened to fit", extra={"tool": name, **truncation})
+        elif len(content) > spec.max_result_chars:
             # Truncation is marked so the model knows the result is partial rather than
             # believing it saw everything.
             content = (
@@ -421,7 +449,7 @@ class ToolRegistry:
         self._observe(name, outcome="ok", duration_ms=duration)
         await self._audit_call(name, context, "success", arguments_digest, decision.reason)
         await self._publish(name, context, allowed=True, ok=True, duration_ms=duration)
-        return finish(ok=True, content=content, policy_reason=decision.reason)
+        return finish(ok=True, content=content, policy_reason=decision.reason, truncation=truncation)
 
     async def execute_many(
         self,
@@ -560,3 +588,89 @@ def _output_problems(schema: Mapping[str, Any], content: str) -> list[str]:
     except ValueError:
         return ["result is not JSON"]
     return output_errors(schema, value)
+
+
+#: Work budget for shortening one structured result: how many lists may be shortened before it
+#: is declared too large. Generous -- each pass empties or shortens a whole list -- but bounded,
+#: since the result came from a connected system and its shape is not ours to trust.
+_FIT_PASSES = 256
+#: How deep into a result lists are looked for. Deeper than any accepted output schema (6), so a
+#: declared shape is always fully reachable; the bound only stops a pathological payload.
+_FIT_DEPTH = 32
+
+
+def _fit_json(content: str, limit: int, schema: Mapping[str, Any]) -> tuple[str, dict[str, Any] | None] | None:
+    """``content`` with trailing list items dropped until it serializes within ``limit``.
+
+    The largest list (by serialized size) is shortened first -- the rows of a search, not the
+    envelope around them -- and a binary search finds how many of its items still fit. A top-level
+    object whose schema admits it gets ``"truncated": true``. Returns the text and a summary
+    (``truncated``, items ``kept`` and ``total`` across the shortened lists), or ``None`` when the
+    result is not JSON or cannot fit even with every list emptied. A result that fits once
+    re-serialized compactly is returned whole, with no summary: nothing was dropped.
+    """
+    try:
+        value = json.loads(content)
+    except ValueError:
+        return None
+
+    def dump(data: Any) -> str:
+        return json.dumps(data, ensure_ascii=False)
+
+    whole = dump(value)
+    if len(whole) <= limit:
+        return whole, None
+    if isinstance(value, dict) and _admits_truncated_flag(schema):
+        value["truncated"] = True
+
+    kept = total = 0
+    for _ in range(_FIT_PASSES):
+        text = dump(value)
+        if len(text) <= limit:
+            return text, {"truncated": True, "kept": kept, "total": total}
+        target = _largest_list(value)
+        if target is None:
+            return None
+        items = list(target)
+        keep_low, keep_high = 0, len(items) - 1  # at least one item goes, or this pass did nothing
+        while keep_low < keep_high:
+            middle = (keep_low + keep_high + 1) // 2
+            target[:] = items[:middle]
+            if len(dump(value)) <= limit:
+                keep_low = middle
+            else:
+                keep_high = middle - 1
+        target[:] = items[:keep_low]
+        kept += keep_low
+        total += len(items)
+    return None
+
+
+def _admits_truncated_flag(schema: Mapping[str, Any]) -> bool:
+    declared = (schema.get("properties") or {}).get("truncated")
+    if declared is not None:
+        types = declared.get("type")
+        return types == "boolean" or (isinstance(types, (list, tuple)) and "boolean" in types)
+    return schema.get("additionalProperties") is not False
+
+
+def _largest_list(value: Any) -> list | None:
+    """The non-empty list with the longest serialization in ``value`` (``value`` itself included)."""
+    best: list | None = None
+    best_size = -1
+    stack: list[tuple[Any, int]] = [(value, 0)]
+    while stack:
+        node, level = stack.pop()
+        if isinstance(node, list):
+            if node:
+                size = len(json.dumps(node, ensure_ascii=False))
+                if size > best_size:
+                    best, best_size = node, size
+            children = node
+        elif isinstance(node, dict):
+            children = list(node.values())
+        else:
+            continue
+        if level < _FIT_DEPTH:
+            stack.extend((child, level + 1) for child in children if isinstance(child, (list, dict)))
+    return best

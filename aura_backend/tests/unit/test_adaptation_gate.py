@@ -452,6 +452,31 @@ class TestDomain:
         assert from_data(BlueprintAgent, to_data(role_agent)) == role_agent
 
 
+class TestStatusOracleCap:
+    async def test_more_states_than_the_tool_returns_is_not_a_count_mismatch(self, clock) -> None:
+        """The status tool returns at most 100 states; the oracle used to read 200, so any column
+        with more distinct states failed a correct tool as a count_mismatch and blocked deploy."""
+        rows = dict(PILOTS["hr"][2])
+        base = rows[("public", "leave_requests")]
+        states = [f"s{i:03d}" for i in range(150)]
+        rows[("public", "leave_requests")] = [
+            {**base[i % len(base)], "id": 10_000 + i, "status": state} for i, state in enumerate(states)
+        ]
+        orders = {**DISCOVERY.enum_orders("hr")}
+        for key in [k for k in orders if k[1:] == ("leave_requests", "status")]:
+            orders[key] = states
+
+        async def open_connector(connector_id: str):
+            if connector_id == "hr-db":
+                return InMemoryReadConnector(connector_id, rows, enum_orders=orders)
+            raise NotFoundError("no replica for this connector")
+
+        report = await _evaluate(clock, "hr", open_connector=open_connector)
+        status = [c for c in report.cases if "status_counts_leave_requests_status" in c.id
+                  and c.suite == "tool_contract"]
+        assert status and all(c.outcome is CaseOutcome.PASSED for c in status), [(c.id, c.reason) for c in status]
+
+
 # ------------------------------------------------------------------------------- the replica
 
 
@@ -486,8 +511,8 @@ class TestHttpProbeSeedsAndIdentifiers:
         run.available["hr-db"] = True
         run.templates["h1"] = ReadTemplate("h1", "hr-db", TemplateKind.HTTP, http=HttpGet("/x"))
 
-        def tool(*names, kind="string"):
-            return SimpleNamespace(name="t", connector="hr-db", template="h1",
+        def tool(*names, kind="string", connector="hr-db"):
+            return SimpleNamespace(name="t", connector=connector, template="h1",
                                    parameters=tuple(ParameterSpec(n, kind, "d") for n in names))
 
         return run, tool
@@ -504,15 +529,36 @@ class TestHttpProbeSeedsAndIdentifiers:
     async def test_an_identifier_found_in_a_result_supplies_the_value(self) -> None:
         run, tool = self._run({})
         run._harvest_identifiers({"results": [{"document_id": "DOC1", "experiment_id": None},
-                                              {"experiment_id": "EXP9", "document_id": "DOC2"}]})
+                                              {"experiment_id": "EXP9", "document_id": "DOC2"}]}, "hr-db")
         assert (await run._probe(tool("document_id", "experiment_id"), {})).arguments == {
             "document_id": "DOC1", "experiment_id": "EXP9"}
 
     def test_only_identifier_shaped_text_is_kept(self) -> None:
         run, _ = self._run({})
         run._harvest_identifiers({"a_id": "../admin", "b_id": "x y", "c_id": "${s1.output}", "d_id": 12,
-                                  "e_id": "ok-1_2", "name": "not-an-id-key"})
-        assert run.harvest == {"e_id": "ok-1_2"}
+                                  "e_id": "ok-1_2", "name": "not-an-id-key"}, "hr-db")
+        assert run.harvest == {("hr-db", "e_id"): "ok-1_2"}
+
+    async def test_an_identifier_is_only_sent_back_to_the_system_that_returned_it(self) -> None:
+        """One shared harvest sent an id read from connector A to connector B's external API."""
+        run, tool = self._run({})
+        run.available["other-api"] = True
+        run._harvest_identifiers({"document_id": "DOC1"}, "hr-db")
+        assert (await run._probe(tool("document_id"), {})).arguments == {"document_id": "DOC1"}
+        with pytest.raises(Exception, match="needs_identifier"):
+            await run._probe(tool("document_id", connector="other-api"), {})
+
+    async def test_an_agent_with_no_tools_is_not_run_rather_than_a_gate_error(self) -> None:
+        from types import SimpleNamespace
+
+        from aura_core.adaptation.gate import _NotRun
+
+        run, _ = self._run({})
+        run.agents["empty"] = SimpleNamespace(id="empty", allowed_tools=frozenset(), risk_ceiling=None,
+                                              memory_scope="project")
+        case = SimpleNamespace(agent="empty", forbidden_tools=())
+        with pytest.raises(_NotRun, match="no_tools"):
+            await run._permission(case)
 
     async def test_an_optional_page_size_keeps_the_probe_small(self) -> None:
         from aura_core.domain.tools import ParameterSpec

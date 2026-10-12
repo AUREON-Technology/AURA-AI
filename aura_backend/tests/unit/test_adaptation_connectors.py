@@ -307,6 +307,18 @@ class TestActivation:
         assert factory.opened[-1].closed
         assert (await registry.open_active("hr-db")).descriptor.id == "hr-db"
 
+    @pytest.mark.parametrize("decider, self_approved", [("sa@example.com", True), ("reviewer@example.com", False)])
+    async def test_a_self_approval_is_allowed_and_recorded_as_one(self, registry, approvals, audit,
+                                                                   decider, self_approved) -> None:
+        """A sole operator may approve their own registration; the audit trail says so."""
+        _, approval = await registry.register(_descriptor(), secret=Credential(SECRET), requested_by="sa@example.com")
+        assert approval.payload["requested_by"] == "sa@example.com"
+        await approvals.decide(approval.id, approved=True, by=decider)
+        decision = next(e for e in audit._events if e.action.startswith("approval.decide."))
+        assert decision.detail["requested_by"] == "sa@example.com"
+        assert decision.detail["self_approved"] is self_approved
+        assert (await registry.activate("hr-db", approval_id=approval.id, by=decider)).state is ConnectorState.ACTIVE
+
     async def test_an_undecided_approval_does_not_activate(self, registry) -> None:
         _, approval = await registry.register(_descriptor(), secret=Credential(SECRET), requested_by="sa@example.com")
         with pytest.raises(ApprovalRequiredError):

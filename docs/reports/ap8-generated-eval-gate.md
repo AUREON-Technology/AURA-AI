@@ -199,3 +199,23 @@ AURA_TEST_DATABASE_URL=postgresql://aura:***@localhost:55440/postgres \
   pooling), so a slow connected system makes a slow request.
 - **Delegated identity** (AP10) and **documents as an injection source** (AP10) are not covered
   yet.
+
+## Changes after the live Flame run (2026-10-08 … 2026-10-11)
+
+- **#163** (`9672441`): HTTP tools are probed with operator seeds (`AURA_ADAPTATION_GATE_PROBE_SEEDS`)
+  and with `*_id` values harvested from earlier results, so an API-only blueprint is no longer
+  capped at the tools that need no arguments.
+- **#164** (`19fd1ee`): an optional `page_size`/`limit` is set to 3 in the probe, because a full
+  page outgrew the tool's result cap and was cut mid-JSON (`unparseable_result`).
+- **2026-10-11:**
+  - Harvested identifiers are now kept per connector, so an identifier read from one system is
+    never sent to another system's API.
+  - `workflow.status` probes cap the oracle at the tool's own `max_rows`. A column with more
+    states than the cap used to fail a correct tool as `count_mismatch`.
+  - An agent with an empty grant is `not_run` (`no_tools`), not a `gate_error`.
+  - The registry now shortens the lists in an oversized structured result instead of cutting it
+    mid-JSON (GAP-055's row-aware truncation). This fixes the cause #164 worked around, for real
+    calls as well as for probes.
+- **CI:** Backend CI runs again; run #347 on `main` (`0288863`) ran this suite green. "Proven"
+  still depends on M7.
+

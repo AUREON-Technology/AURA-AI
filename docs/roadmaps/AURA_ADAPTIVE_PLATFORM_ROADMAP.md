@@ -761,20 +761,21 @@ AP0 ─► AP1 ─► AP2 ─► AP3 ─► AP4 ─► AP5 ─► AP6 ─► AP7
                                        │                  │                          └─► AP12c (SEC-01 gate)
                                        └─► AP13.1 ─► AP13.2 ─► AP13.3 ─► AP13.4 (after AP12b) ─► AP13.5
                                                                            AP13.6 / AP13.7 after AP11
-M0 (CI evidence) gates every A-phase beyond BUILT.   M4 (GPU) gates label quality in AP4, not function.
+M0 (CI evidence) gates every A-phase beyond BUILT; Backend CI runs again (green on main since #332,
+2026-10-07), but M0 also needs branch protection and Client/Hostd/Admin runs, so it has not exited.   M4 (GPU) gates label quality in AP4, not function.
 ```
 
 | ID | Name | Priority | Depends on | Complexity | Risk | Current status | Primary components | Exit (short) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | AP0 | Charter, ADRs, gaps | Critical | — | Low | Low | DOCUMENTED | docs/ | Merged + schema test |
-| AP1 | AUSM + Blueprint model | Critical | AP0 | Medium | Low | IMPLEMENTED (tests pass locally; CI pending M0) | domain/ | Schema + digest tests |
-| AP2 | Connectors + vault | Critical | AP1, (SEC-01..03) | Medium | High (secrets) | IMPLEMENTED (real-Postgres tests pass locally; CI + dev stack pending) | ports/, adaptation/, api/ | Fixture connector approved |
-| AP3 | Discovery PG + OpenAPI | Critical | AP2 | Medium | Medium | IMPLEMENTED (goldens + live Postgres pass locally; CI pending) | adapters/connectors/, fixtures | Pilot goldens + live run |
-| AP4 | Twin + diff | Critical | AP3, (M4) | High | Medium | IMPLEMENTED (goldens + live Postgres pass locally; CI pending) | adaptation/normalize, twin | Deterministic twins + diffs |
-| AP5 | Capabilities + planner | High | AP4 | Medium | Medium | IMPLEMENTED (pilot plans pass locally; CI pending) | adaptation/capabilities | Same primitives, both pilots |
-| AP6 | Factories + compiler | Critical | AP5 | High | High (SQL safety) | IMPLEMENTED (goldens + live Postgres pass locally; CI pending) | adaptation/factories, domain/tools | Valid blueprints + fitness |
-| AP7 | Blueprint runtime | Critical | AP6, (SEC-01..03) | High | High (kernel seam) | IMPLEMENTED (in-process API + live Postgres pass locally; dev-stack run and CI pending) | adaptation/runtime, container | Deploy + rollback |
-| AP8 | Generated eval gate | High | AP6, AP7, (M7) | Medium | Medium | IMPLEMENTED (default suite + live Postgres pass locally; CI run pending; M7 for proven) | adaptation/gate, adapters/connectors/memory | Bad blueprint blocked |
+| AP1 | AUSM + Blueprint model | Critical | AP0 | Medium | Low | IMPLEMENTED; CI green on main (Backend CI #347); held at BUILT by M0 | domain/ | Schema + digest tests |
+| AP2 | Connectors + vault | Critical | AP1, (SEC-01..03) | Medium | High (secrets) | IMPLEMENTED; CI green on main (#347) + real Postgres 2026-10-11; dev-stack run pending (VPS unreachable) | ports/, adaptation/, api/ | Fixture connector approved |
+| AP3 | Discovery PG + OpenAPI | Critical | AP2 | Medium | Medium | IMPLEMENTED; CI green on main (#347) + live Postgres; held at BUILT by M0 | adapters/connectors/, fixtures | Pilot goldens + live run |
+| AP4 | Twin + diff | Critical | AP3, (M4) | High | Medium | IMPLEMENTED; CI green on main (#347) + live Postgres; held at BUILT by M0 | adaptation/normalize, twin | Deterministic twins + diffs |
+| AP5 | Capabilities + planner | High | AP4 | Medium | Medium | IMPLEMENTED; CI green on main (#347); held at BUILT by M0 | adaptation/capabilities | Same primitives, both pilots |
+| AP6 | Factories + compiler | Critical | AP5 | High | High (SQL safety) | IMPLEMENTED; CI green on main (#347) + live Postgres; held at BUILT by M0 | adaptation/factories, domain/tools | Valid blueprints + fitness |
+| AP7 | Blueprint runtime | Critical | AP6, (SEC-01..03) | High | High (kernel seam) | IMPLEMENTED; CI green on main (#347) + live Postgres; dev-stack run pending (VPS unreachable) | adaptation/runtime, container | Deploy + rollback |
+| AP8 | Generated eval gate | High | AP6, AP7, (M7) | Medium | Medium | IMPLEMENTED; CI green on main (#347) + live Postgres; live Flame run at default coverage (Railway); M7 for proven | adaptation/gate, adapters/connectors/memory | Bad blueprint blocked |
 | AP9 | Console MVP | High | AP7, AP8 | Medium | Low | DOCUMENTED | aura_admin | Both pilots via Console |
 | AP10 | Files/Git + knowledge + identity | High | AP9, (CB-11) | High | High (isolation) | DOCUMENTED | adapters/connectors, knowledge | Retrieval eval + isolation probe |
 | AP11 | Drift + impact | Medium | AP10 | Medium | Medium | DOCUMENTED | adaptation/impact, triggers | Drift → approved regeneration |
