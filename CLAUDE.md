@@ -152,7 +152,12 @@ canonical example; match that pattern for any new adapter.
 **Self-hosting is a fitness-tested invariant, not a preference.** `aura_core/llm/registry.py`
 only builds `echo`, `openai_compatible` (vLLM/llama.cpp/TGI/Ollama's `/v1`), and `ollama`
 providers. There is no hosted-vendor branch anywhere — adding one fails
-`tests/architecture/test_no_external_inference.py`. The Flutter client is checked too.
+`tests/architecture/test_no_external_inference.py`. The Flutter client is checked too. The one
+sanctioned exception is ADR-030 (Proposed). Hosted *open-weight* APIs (Groq, Workers AI,
+OpenRouter, …) are a third host category in `aura_core/config/external_inference.py`. They are
+refused unless `AURA_ALLOW_HOSTED_INFERENCE=true`, only accept open-weight model IDs, can never be
+`is_local`, and may never be named in Python source. Closed-model vendors stay banned under
+either opt-in flag.
 
 **`AIKernel` (`aura_core/kernel/kernel.py`) is the only execution path.** It plans, then executes
 tools, then generates. A model's own emitted `tool_calls` frames are informational only — they do
@@ -183,7 +188,7 @@ permanent platform adapters mounted outside `aura_core` (ADR-002), not legacy co
 removal.
 
 Full ADR list and the ten essential decisions are in `docs/architecture/00-overview.md` and
-`docs/architecture/001-*.md`–`029-*.md` (there is no 012 or 017; 018–028 are Track AP drafts, Proposed); read the relevant one before touching
+`docs/architecture/001-*.md`–`030-*.md` (there is no 012 or 017; 018–028 are Track AP drafts, Proposed); read the relevant one before touching
 retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer workspaces
 (013/014), or service keys / caller context / structured output on `/chat` (029) — each encodes a reason something is shaped the way it is, not just what it does.
 

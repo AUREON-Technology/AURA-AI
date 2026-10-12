@@ -1,8 +1,9 @@
 # AURA AI
 
 A production AI platform that runs on a single VPS: hybrid retrieval over your own documents,
-durable memory, tool use, and a self-hosted model behind one gateway. No inference leaves your
-infrastructure.
+durable memory, tool use, and a self-hosted model behind one gateway. By default, no inference leaves
+your infrastructure. Hosted open-weight APIs are an explicit opt-in (ADR-030) that logs a warning
+on every boot while enabled.
 
 ```bash
 cd aura_backend

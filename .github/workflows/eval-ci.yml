@@ -117,6 +117,7 @@ jobs:
           AURA_ENVIRONMENT: "local"
           AURA_JWT_SECRET: "test-secret"
           AURA_ALLOW_REMOTE_INFERENCE: "false"
+          AURA_ALLOW_HOSTED_INFERENCE: "false"
         run: python -m evaluation.gate --output eval-gate-results.json --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Upload results
@@ -160,6 +161,7 @@ jobs:
           AURA_DATABASE_URL: "sqlite+aiosqlite:///:memory:"
           AURA_JWT_SECRET: "test-secret"
           AURA_ALLOW_REMOTE_INFERENCE: "false"
+          AURA_ALLOW_HOSTED_INFERENCE: "false"
           EVAL_SUITE: ${{ github.event.inputs.suite }}
           EVAL_BASELINE: ${{ github.event.inputs.baseline }}
         run: |

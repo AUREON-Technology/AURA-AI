@@ -7,11 +7,13 @@ dependency surfaces as a clear configuration error rather than an ImportError at
 This is what makes "add an inference node" a config change (ADR-003): nothing above this file
 knows which runtimes exist.
 
-**Every kind here runs on our own hardware.** There is no hosted-vendor branch, and adding one
+**Every kind here is built for our own hardware.** There is no hosted-vendor branch, and adding one
 would fail ``tests/architecture/test_no_external_inference.py``. ``openai_compatible`` covers
 vLLM, llama.cpp's server, LocalAI and TGI; ``ollama`` covers Ollama's native API. The wire
 format being shared with hosted services is why ``ProviderConfig`` also refuses their hostnames
--- see ``ProviderConfig._reject_external_base_url``.
+-- see ``ProviderConfig._reject_external_base_url``. The one gated exception, hosted open-weight
+APIs behind ``AURA_ALLOW_HOSTED_INFERENCE`` (ADR-030), still goes through ``openai_compatible``;
+it is a base URL an operator chose, not a branch here.
 """
 
 from __future__ import annotations

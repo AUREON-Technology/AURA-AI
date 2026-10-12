@@ -1,7 +1,8 @@
 # Plan: Free Hosted Open-Weight Inference for AURA
 
-**Status:** Proposed — nothing in this document is built. Needs an ADR decision (step 0) before any
-code or config lands, because it changes a fitness-tested invariant.
+**Status:** Proposed. Step 0 is drafted as
+[ADR-030](../architecture/030-hosted-open-weight-inference.md) (Proposed). Phase 1 (the policy
+layer) is **built and tested, not deployed**. Phases 2–6 are not started.
 **Date of research:** 2026-10-11. Free-tier terms in this space change monthly (see §2's change
 log); re-verify every number against the provider's own console before acting on it.
 
@@ -171,8 +172,10 @@ Files: `aura_core/config/external_inference.py`, `aura_core/config/settings.py`,
 `tests/architecture/test_no_external_inference.py`.
 
 - Add `HOSTED_OPEN_WEIGHT_HOSTS` + `is_hosted_open_weight_host()`; remove those hosts from
-  `EXTERNAL_INFERENCE_HOSTS`. Cloudflare needs a host **and path** match
-  (`api.cloudflare.com` + `/client/v4/accounts/*/ai/`), since the host also serves non-AI APIs.
+  `EXTERNAL_INFERENCE_HOSTS`. As built, Cloudflare is matched by host
+  alone. Closed models on its `/ai/v1` path fail the open-weight model check, which makes a path
+  match unnecessary. `gateway.ai.cloudflare.com` (AI Gateway, a proxy to closed vendors) was
+  added to the banned list (ADR-030 §2, §7).
 - Remove `GROQ_API_KEY` / `OPENROUTER_API_KEY` from `BANNED_CREDENTIAL_NAMES` **or** keep them
   banned and standardise on slot-named secrets (`AURA_PROVIDER_HOSTED1_API_KEY`). Prefer the
   latter: it keeps the scanner strict and the env template vendor-neutral.
