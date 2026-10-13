@@ -1,0 +1,21 @@
+{
+  "description": "AP10 pilot retrieval eval: each question must retrieve its source document within k passages. Phrased the way an employee would ask, not copied from the text.",
+  "k": 3,
+  "min_recall": 0.9,
+  "questions": [
+    {"question": "How many days of annual leave do full-time staff get each year?", "document": "leave-policy.md"},
+    {"question": "Do I need a doctor's note when I'm off sick?", "document": "leave-policy.md"},
+    {"question": "How far ahead must parental leave be requested?", "document": "leave-policy.md"},
+    {"question": "Can I cancel a holiday request that was already approved?", "document": "leave-policy.md"},
+    {"question": "What is the nightly hotel limit in a capital city?", "document": "expenses-policy.md"},
+    {"question": "Is alcohol reimbursed on an expense claim?", "document": "expenses-policy.md"},
+    {"question": "When do I need an itemised receipt for an expense?", "document": "expenses-policy.md"},
+    {"question": "How many days a week can I work from home?", "document": "remote-work.html"},
+    {"question": "Is there an allowance for a home office desk or chair?", "document": "remote-work.html"},
+    {"question": "What are the core hours for remote employees?", "document": "remote-work.html"},
+    {"question": "How long does probation last for a new starter?", "document": "onboarding.txt"},
+    {"question": "What training does a new starter complete in the first week?", "document": "onboarding.txt"},
+    {"question": "Do gifts from suppliers have to be declared?", "document": "code-of-conduct.pdf"},
+    {"question": "How do I report harassment or discrimination?", "document": "code-of-conduct.pdf"}
+  ]
+}

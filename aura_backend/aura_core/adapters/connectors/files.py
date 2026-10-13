@@ -1,9 +1,14 @@
-"""Files connector (AP10): CSV and JSON exports, read as tables.
+"""Files connector (AP10): CSV and JSON exports read as tables, documents fed to project knowledge.
 
 A ``files`` connector's endpoint is a directory, relative to the operator-configured root
 (``AURA_ADAPTATION_FILES_ROOT``). Each top-level ``*.csv`` or ``*.json`` file in it is one table in
-the ``files`` schema, named after the file. With no root configured the kind is not offered at all,
-so a Super Admin cannot point AURA at an arbitrary path on its own host.
+the ``files`` schema, named after the file. Each top-level Markdown, plain-text, HTML or PDF file is
+a DOCUMENT artifact (``document:<file name>``) carrying its format, size and SHA-256 -- never its
+text; :meth:`FilesConnector.fetch_document` hands the bytes to project knowledge
+(``adaptation/knowledge.py``) once a blueprint naming them is deployed. Office formats (DOCX,
+XLSX, ...) are reported as ``unsupported_format`` issues: reading them needs a parser this platform
+does not pin. With no root configured the kind is not offered at all, so a Super Admin cannot point
+AURA at an arbitrary path on its own host.
 
 Discovery builds the same *catalog snapshot* the PostgreSQL connector captures -- relations,
 columns, keys, profiles -- and maps it with :func:`postgres_catalog.artifacts_from_catalog`, so the
@@ -32,6 +37,7 @@ to stay inside the root after resolution. ``health()`` therefore reports ``write
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import os
@@ -42,14 +48,15 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from ...domain.connectors import ConnectorDescriptor, ConnectorHealth, Credential, HealthStatus
-from ...domain.discovery import DiscoveryBudget, DiscoveryReport
-from ...domain.errors import DependencyUnavailableError, ToolExecutionError
+from ...domain.discovery import ArtifactKind, DiscoveryBudget, DiscoveryIssue, DiscoveryReport, RawArtifact, SourceDocument
+from ...domain.errors import DependencyUnavailableError, NotFoundError, ToolExecutionError, ValidationError
 from ...domain.templates import ReadTemplate
+from ...domain.untrusted import UntrustedText
 from ...observability.logging import get_logger
 from .memory import InMemoryReadConnector
 from .postgres_catalog import _CATEGORICAL_MAX_DISTINCT, _MAX_VALUE_CHARS, _PATTERNS, artifacts_from_catalog
 
-__all__ = ["FilesConnectorFactory", "FilesConnector", "FILES_SCHEMA", "load_tables"]
+__all__ = ["FilesConnectorFactory", "FilesConnector", "FILES_SCHEMA", "load_tables", "load_documents"]
 
 logger = get_logger("adapters.connectors.files")
 
@@ -57,8 +64,15 @@ logger = get_logger("adapters.connectors.files")
 FILES_SCHEMA = "files"
 CATALOG_EXTRACTOR = "files_catalog"
 PROFILE_EXTRACTOR = "files_profile"
+DOCUMENT_EXTRACTOR = "files_documents"
 
 _SUFFIXES = (".csv", ".json")
+#: Document files for project knowledge, by suffix -> ``SourceDocument.format``.
+_DOCUMENT_SUFFIXES = {".md": "markdown", ".markdown": "markdown", ".txt": "text", ".html": "html",
+                      ".htm": "html", ".pdf": "pdf"}
+#: Recognised, but unreadable without a parser the lockfile does not carry: reported, not skipped silently.
+_UNSUPPORTED_DOCUMENTS = frozenset({".docx", ".doc", ".odt", ".rtf", ".pptx", ".ppt", ".xlsx", ".xls"})
+_MAX_DOCUMENT_NAME = 200
 #: A file larger than this is skipped with an issue rather than read into memory.
 MAX_FILE_BYTES = 20 * 1024 * 1024
 #: Rows read from one file; the rest is reported as truncation, never silently dropped.
@@ -170,6 +184,17 @@ def _read_json(data: bytes) -> tuple[list[str], list[list[Any]]]:
     return header, [[item.get(key) for key in header] for item in parsed]
 
 
+def _read_capped(path: Path) -> bytes:
+    """The file's bytes, opened read-only without following a symlink; ``ValueError`` past the cap."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    with os.fdopen(fd, "rb") as handle:
+        data = handle.read(MAX_FILE_BYTES + 1)
+    if len(data) > MAX_FILE_BYTES:
+        raise ValueError("file grew past the size cap while being read")
+    return data
+
+
 def _load(path: Path, name: str, issues: list[dict[str, str]]) -> _Table | None:
     locator = f"table:{FILES_SCHEMA}.{name}"
     try:
@@ -181,10 +206,7 @@ def _load(path: Path, name: str, issues: list[dict[str, str]]) -> _Table | None:
         issues.append(_issue("file_too_large", locator))
         return None
     try:
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(path, flags)
-        with os.fdopen(fd, "rb") as handle:
-            data = handle.read(MAX_FILE_BYTES + 1)
+        data = _read_capped(path)
         header, raw_rows = _read_csv(data) if path.suffix.lower() == ".csv" else _read_json(data)
     except (OSError, UnicodeDecodeError, ValueError, csv.Error):
         issues.append(_issue("unparseable", locator))
@@ -229,6 +251,70 @@ def load_tables(directory: Path) -> tuple[list[_Table], list[dict[str, str]]]:
         if table is not None:
             tables.append(table)
     return tables, issues
+
+
+@dataclass(frozen=True, slots=True)
+class _Document:
+    name: str
+    format: str
+    size: int
+    sha256: str
+
+
+def _document_name_ok(name: str) -> bool:
+    """A file name that survives as an untrusted-text locator unchanged (no controls, no bidi tricks)."""
+    if not 0 < len(name) <= _MAX_DOCUMENT_NAME or name.startswith("."):
+        return False
+    try:
+        return UntrustedText.of(name).raw() == name
+    except ValueError:
+        return False
+
+
+def document_locator(name: str) -> str:
+    return f"document:{name}"
+
+
+def load_documents(directory: Path) -> tuple[list[_Document], list[dict[str, str]]]:
+    """Every readable document file directly in ``directory``, sorted by name, plus the issues."""
+    issues: list[dict[str, str]] = []
+    documents: list[_Document] = []
+    for path in sorted(directory.iterdir(), key=lambda p: p.name):
+        suffix = path.suffix.lower()
+        if suffix not in _DOCUMENT_SUFFIXES and suffix not in _UNSUPPORTED_DOCUMENTS:
+            continue
+        locator = document_locator(path.name)
+        if not _document_name_ok(path.name):
+            issues.append(_issue("name_skipped", "document:"))
+            continue
+        if path.is_symlink():
+            issues.append(_issue("symlink_skipped", locator))
+            continue
+        if not path.is_file():
+            continue
+        if suffix in _UNSUPPORTED_DOCUMENTS:
+            issues.append(_issue("unsupported_format", locator))
+            continue
+        try:
+            if path.stat().st_size > MAX_FILE_BYTES:
+                issues.append(_issue("file_too_large", locator))
+                continue
+            data = _read_capped(path)
+        except (OSError, ValueError):
+            issues.append(_issue("unreadable", locator))
+            continue
+        documents.append(_Document(path.name, _DOCUMENT_SUFFIXES[suffix], len(data),
+                                   hashlib.sha256(data).hexdigest()))
+    return documents, issues
+
+
+def document_artifacts(documents: Sequence[_Document], budget: DiscoveryBudget) -> tuple[list[RawArtifact], bool]:
+    """DOCUMENT artifacts for ``documents``, capped at the budget's object count."""
+    kept = list(documents)[: budget.max_objects]
+    return [RawArtifact(
+        ArtifactKind.DOCUMENT, document_locator(d.name), UntrustedText(d.name), DOCUMENT_EXTRACTOR,
+        attributes={"format": d.format, "bytes": d.size, "sha256": d.sha256},
+    ) for d in kept], len(kept) < len(documents)
 
 
 def _primary_key(table: _Table) -> str | None:
@@ -354,20 +440,51 @@ class FilesConnector:
         # AURA opens these files read-only and has no code path that writes them.
         return ConnectorHealth(HealthStatus.HEALTHY, "ok", write_capable=False, latency_ms=latency)
 
-    def _tables(self) -> tuple[list[_Table], list[dict[str, str]]]:
+    def _require_directory(self) -> Path:
         directory, reason = self._directory()
         if directory is None:
             raise DependencyUnavailableError(
                 "the files directory is not available", dependency="connector",
                 details={"connector": self.descriptor.id, "reason": reason},
             )
-        return load_tables(directory)
+        return directory
+
+    def _tables(self) -> tuple[list[_Table], list[dict[str, str]]]:
+        return load_tables(self._require_directory())
 
     async def discover(self, budget: DiscoveryBudget) -> DiscoveryReport:
         tables, issues = self._tables()
         snapshot = catalog_snapshot(tables, issues, budget)
-        return artifacts_from_catalog(self.descriptor.id, snapshot, budget, extractor="files",
-                                      catalog_extractor=CATALOG_EXTRACTOR, profile_extractor=PROFILE_EXTRACTOR)
+        report = artifacts_from_catalog(self.descriptor.id, snapshot, budget, extractor="files",
+                                        catalog_extractor=CATALOG_EXTRACTOR, profile_extractor=PROFILE_EXTRACTOR)
+        documents, document_issues = load_documents(self._require_directory())
+        if not documents and not document_issues:
+            return report
+        artifacts, capped = document_artifacts(documents, budget)
+        extra = [DiscoveryIssue(i["code"], i["locator"]) for i in document_issues]
+        if capped:
+            extra.append(DiscoveryIssue("document_budget_exhausted", "document:"))
+        return DiscoveryReport.build(report.source_id, report.extractor, list(report.artifacts) + artifacts,
+                                     issues=list(report.issues) + extra, truncated=report.truncated or capped)
+
+    async def fetch_document(self, locator: str) -> SourceDocument:
+        """The bytes of one document this connector's discovery reported (AP10)."""
+        name = locator.removeprefix("document:")
+        suffix = Path(name).suffix.lower()
+        # A plain file name directly in the directory: no separators, so no way out of it.
+        if not locator.startswith("document:") or not _document_name_ok(name) or "/" in name or "\\" in name \
+                or suffix not in _DOCUMENT_SUFFIXES:
+            raise ValidationError("not a document locator of a files connector", details={"locator": locator[:80]})
+        path = self._require_directory() / name
+        if path.is_symlink() or not path.is_file():
+            raise NotFoundError("the document is no longer in the connector's directory",
+                                details={"connector": self.descriptor.id, "locator": locator})
+        try:
+            data = _read_capped(path)
+        except (OSError, ValueError):
+            raise NotFoundError("the document could not be read",
+                                details={"connector": self.descriptor.id, "locator": locator}) from None
+        return SourceDocument(name, _DOCUMENT_SUFFIXES[suffix], data, hashlib.sha256(data).hexdigest())
 
     async def read(self, template: ReadTemplate, arguments: Mapping[str, Any]) -> list[dict[str, Any]]:
         if template.connector != self.descriptor.id:

@@ -13,7 +13,9 @@ The order of a deploy is what keeps it safe:
    if that fails the new tools are unregistered and nothing else changed;
 4. the agent snapshot is swapped in one assignment;
 5. the old version's tools are retired after a grace period, so a turn that resolved them just
-   before the swap can finish.
+   before the swap can finish;
+6. project knowledge (AP10) is synced to the live version's ``knowledge.sources`` -- after the
+   pointer moved, so an unreadable document is a reported failure, not a blocked deploy.
 
 Rollback is the same path aimed at a ``superseded`` version, under the approval that version
 already carried (its digest is unchanged, so that approval still binds it).
@@ -33,7 +35,7 @@ import time
 from datetime import timezone
 from typing import Any
 
-from ..domain.blueprint import BlueprintState, generated_tool_name
+from ..domain.blueprint import BlueprintState
 from ..domain.compilation import ActivePointer, BlueprintRecord
 from ..domain.errors import ConflictError, NotFoundError, ValidationError
 from ..domain.gate import GateMode
@@ -63,6 +65,7 @@ class BlueprintDeployment:
         twins: Any = None,
         audit: Any = None,
         metrics: Any = None,
+        knowledge: Any = None,
     ) -> None:
         self._project_id = project_id
         self._store = store
@@ -74,6 +77,7 @@ class BlueprintDeployment:
         self._twins = twins
         self._audit = audit
         self._metrics = metrics
+        self._knowledge = knowledge
         self._status: dict[str, Any] = {"state": "core_only"}
         # One go-live at a time in this process, so agent swaps land in pointer order.
         self._lock = asyncio.Lock()
@@ -250,13 +254,37 @@ class BlueprintDeployment:
         if self._metrics is not None:
             self._metrics.observe_blueprint_swap(seconds)
         self._observe_active(record.version)
-        await self._record(action, by, record, "active",
-                           {"previous": previous.version if previous else None, "seconds": round(seconds, 3)})
+        detail: dict[str, Any] = {"previous": previous.version if previous else None, "seconds": round(seconds, 3)}
+        knowledge = await self._sync_knowledge(record)
+        if knowledge is not None:
+            detail["knowledge"] = knowledge
+            self._status["knowledge"] = knowledge
+        await self._record(action, by, record, "active", detail)
         return pointer
+
+    async def _sync_knowledge(self, record: BlueprintRecord) -> dict[str, Any] | None:
+        """Bring project knowledge in line with the version now live (AP10).
+
+        After the pointer moved, never before it: a document that cannot be read leaves the
+        blueprint live with that source reported as failed, rather than blocking the deploy -- and
+        a rollback re-syncs to the restored version's sources the same way.
+        """
+        if self._knowledge is None:
+            return None
+        try:
+            twin = None
+            if self._twins is not None:
+                found = await self._twins.get(record.blueprint.project.twin_version)
+                twin = found[1] if found is not None else None
+            report = await self._knowledge.sync(record.blueprint, twin)
+        except Exception as exc:
+            logger.warning("project knowledge sync failed", extra={"error": type(exc).__name__})
+            return {"version": record.version, "error": type(exc).__name__}
+        return report.summary()
 
     def _swap_agents(self, record: BlueprintRecord) -> None:
         bp = record.blueprint
-        names = {t.name: generated_tool_name(bp.project.version, t.name) for t in bp.tools}
+        names = self._materializer.registry_names(bp)
         specs = [generated_agent_spec(agent, names) for agent in bp.agents]
         self._agents.swap(specs, version=record.version, digest=record.digest)
 

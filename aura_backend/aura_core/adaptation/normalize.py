@@ -20,6 +20,7 @@ schema object / property  ENTITY / ATTRIBUTE; a ``$ref`` property is a RELATION
 operation                 ACTION -- ``GET`` is ``mode=read``; every other verb is ``mode=write``
                           and ``deferred`` (no write path exists in v1, ADR-021)
 security scheme           CONSTRAINT on the SOURCE (``constraint_type=auth_scheme``)
+document                  DOCUMENT -- format, size and content hash; its text never enters the twin
 timestamp / date column   EVENT candidate on its entity (confidence < 1)
 numeric measure column    METRIC candidate on its entity (confidence < 1)
 ========================  =====================================================================
@@ -231,6 +232,8 @@ class _SourceMapper:
             self._grant(artifact)
         for artifact in kinds[ArtifactKind.SECURITY_SCHEME]:
             self._security(artifact)
+        for artifact in kinds[ArtifactKind.DOCUMENT]:
+            self._document(artifact)
         self._finish_attributes()
         for artifact in kinds[ArtifactKind.SCHEMA_PROPERTY]:
             self._property_relation(artifact)
@@ -257,6 +260,22 @@ class _SourceMapper:
             self.src, SOURCE_LOCATOR, ElementKind.SOURCE, label,
             (Provenance(self.src, SOURCE_LOCATOR, self.report.extractor, 1.0, evidence),),
             description=api.description if api else None, properties=props,
+        ))
+
+    # -- documents ------------------------------------------------------------------------
+
+    def _document(self, artifact: RawArtifact) -> None:
+        """A file for project knowledge. Its label is its file name -- what a citation shows."""
+        name = artifact.name.raw()
+        bytes_ = artifact.attributes.get("bytes")
+        self._add(AusmElement(
+            self.src, artifact.locator, ElementKind.DOCUMENT, UntrustedText.of(name, max_chars=200),
+            (self._prov(artifact),),
+            properties={
+                "identifier": _bounded(name), "format": _str_attr(artifact, "format"),
+                "bytes": bytes_ if isinstance(bytes_, int) and not isinstance(bytes_, bool) else None,
+                "sha256": _str_attr(artifact, "sha256"),
+            },
         ))
 
     # -- entities and attributes ----------------------------------------------------------

@@ -1,0 +1,15 @@
+{
+  "description": "AP10 pilot retrieval eval: each question must retrieve its source document within k passages.",
+  "k": 3,
+  "min_recall": 0.9,
+  "questions": [
+    {"question": "How many days do I have to return an item after delivery?", "document": "returns-policy.md"},
+    {"question": "How long does a refund take to reach my original payment method?", "document": "returns-policy.md"},
+    {"question": "Is shipping refunded when an item arrives damaged?", "document": "returns-policy.md"},
+    {"question": "Is standard delivery free, and above what order value?", "document": "shipping-policy.md"},
+    {"question": "What is the cut-off time for next working day express delivery?", "document": "shipping-policy.md"},
+    {"question": "Who pays customs duties on international delivery?", "document": "shipping-policy.md"},
+    {"question": "How long is the warranty on electronics?", "document": "warranty.html"},
+    {"question": "Does the warranty cover water damage?", "document": "warranty.html"}
+  ]
+}

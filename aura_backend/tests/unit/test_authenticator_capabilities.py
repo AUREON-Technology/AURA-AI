@@ -80,3 +80,22 @@ async def test_default_unset_grants_the_capability_to_nobody(monkeypatch) -> Non
     # regression of the existing admin.act/admin.super path.
     assert "admin.super" in principal.capabilities
     assert "admin.act" in principal.capabilities
+
+
+@pytest.mark.parametrize("subject", ["global", "project:p0", "service:billing"])
+async def test_a_subject_in_a_reserved_owner_namespace_is_refused(monkeypatch, subject) -> None:
+    """AP10: a person whose token named ``project:p0`` would read and write as that project's
+    knowledge owner; ``global`` would publish their uploads to everyone (CB-11)."""
+    from aura_core.domain.errors import AuthenticationError
+    from aura_core.ports.storage import GLOBAL_OWNER
+
+    async def fake_verify_access_token(request, credentials):
+        return {"uid": subject, "email": "user@example.com"}
+
+    monkeypatch.setattr(jwt_auth, "verify_access_token", fake_verify_access_token)
+    _patch_role(monkeypatch, "User")
+    authenticate = _build_authenticator(load_settings(refresh=True, validate=False))
+
+    with pytest.raises(AuthenticationError):
+        await authenticate(_FakeRequest())
+    assert GLOBAL_OWNER == "global"  # the literal the identifiers module reserves
