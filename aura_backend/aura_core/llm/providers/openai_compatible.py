@@ -57,6 +57,7 @@ class OpenAICompatibleProvider(BaseProvider):
         timeout_s: float = 60.0,
         health_timeout_s: float = 5.0,
         extra_headers: Mapping[str, str] | None = None,
+        health_path: str = "/models",
     ) -> None:
         caps = capabilities or ProviderCapabilities(
             model_id=model,
@@ -74,6 +75,7 @@ class OpenAICompatibleProvider(BaseProvider):
         self._model = model
         self._api_key = api_key
         self._extra_headers = dict(extra_headers or {})
+        self._health_path = health_path or "/models"
 
     def _base_url(self) -> str:
         return self._url
@@ -304,11 +306,15 @@ class OpenAICompatibleProvider(BaseProvider):
         The timeout is ``health_timeout_s`` rather than a literal, because a provider that
         scales to zero needs a longer one than a provider that is always up -- see the field's
         own comment in ``base.py`` for the production measurement behind that.
+
+        The path is configurable (``AURA_PROVIDER_<NAME>_HEALTH_PATH``) for a hosted API that
+        serves chat but not ``/models`` at the same base URL. A health probe must never be a
+        completion: on a free tier that would spend quota just to ask whether quota is left.
         """
         started = time.perf_counter()
         try:
             client = await self._get_client()
-            response = await client.get("/models", timeout=self._health_timeout_s)
+            response = await client.get(self._health_path, timeout=self._health_timeout_s)
             elapsed = (time.perf_counter() - started) * 1000.0
             if response.status_code >= 400:
                 return HealthStatus(False, f"HTTP {response.status_code}", elapsed)

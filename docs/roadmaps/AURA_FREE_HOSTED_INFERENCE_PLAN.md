@@ -2,7 +2,8 @@
 
 **Status:** Proposed. Step 0 is drafted as
 [ADR-030](../architecture/030-hosted-open-weight-inference.md) (Proposed). Phase 1 (the policy
-layer) is **built and tested, not deployed**. Phases 2–6 are not started.
+layer) and Phase 2 (quota-aware routing) are **built and tested, not deployed**. Phases 3–6 are
+not started.
 **Date of research:** 2026-10-11. Free-tier terms in this space change monthly (see §2's change
 log); re-verify every number against the provider's own console before acting on it.
 
@@ -217,6 +218,21 @@ out the day hasn't reset. Needed:
 
 Exit: unit tests with `FrozenClock` covering bucket refill, `Retry-After` cooldown, daily reset,
 failover order; nothing in the default suite touches the network.
+
+**As built** (`aura_core/llm/quota.py`, `tests/unit/test_llm_quota.py`). The design differs from
+the list above in three places:
+
+- The budget check lives in a separate `QuotaTracker` that the router consults at planning time
+  and again just before sending, not in `admission.py`. Admission is about *concurrency* within
+  the process; quotas are about *volume* against an external meter, and mixing the two would have
+  made a quota skip look like saturation (`OverloadedError`), which deliberately does not fail
+  over.
+- Per-minute windows are exact sliding 60s windows. Per-day windows are the UTC calendar day.
+  Groq's daily window is rolling, so just after UTC midnight one request may still `429`; that
+  `429` then sets a cooldown from Groq's own reset header.
+- Persistence goes through the existing `Cache` port (Redis in production, the in-memory cache in
+  tests) and is best-effort. Only daily counters and cooldowns are stored, not per-minute
+  history.
 
 ### Phase 3 — Per-provider capability truthfulness
 

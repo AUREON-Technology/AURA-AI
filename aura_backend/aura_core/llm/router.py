@@ -19,6 +19,12 @@ Responsibilities, in order:
    :class:`GenerationTiming` value handed to the metric catalogue, so the next decision is
    better informed and the latency is decomposed on the dashboard.
 
+Quotas (ADR-030 Phase 2, ``llm/quota.py``) touch steps 1 and 4 without being health. A provider
+whose declared budget this request would exceed, or which is cooling down after a ``429``, is
+excluded at planning time and skipped if its budget runs out between planning and sending. A
+``429`` benches the provider until the reset it named and moves on to the next candidate. It
+never counts against the circuit breaker, because "come back in an hour" is not "broken".
+
 Two rules that are not obvious and matter a great deal:
 
 * **Failover happens only before the first token.** Once a stream has emitted output, switching
@@ -56,6 +62,7 @@ from ..domain.llm import (
 from ..ports.llm import LLMProvider
 from .admission import AdmissionController, AdmissionTicket, PoolLimits
 from .circuit import CircuitBreaker, CircuitState, LatencyTracker, ProviderStats
+from .quota import QuotaReservation, QuotaTracker
 from .workload import effective_workload
 
 __all__ = ["ProviderRouter", "RoutingDecision", "TurnBudget"]
@@ -151,11 +158,14 @@ class ProviderRouter:
         default_queue_timeout_s: float = 0.0,
         group_limits: Mapping[str, PoolLimits] | None = None,
         user_max_concurrent: int = 0,
+        quota: QuotaTracker | None = None,
     ) -> None:
         """``default_max_queue``/``default_queue_timeout_s``/``user_max_concurrent`` default to
         the pre-P2.4 behaviour (unbounded wait, no per-user quota). Each capacity group's slot
         count is the smallest ``max_concurrency`` among its providers unless ``group_limits``
-        names it explicitly."""
+        names it explicitly. ``quota`` defaults to a tracker with no declared limits: nothing is
+        refused by budget, and a ``429`` still benches its provider instead of tripping the
+        breaker."""
         if not providers:
             raise ValidationError("ProviderRouter requires at least one provider")
         self._providers: dict[str, LLMProvider] = {p.name: p for p in providers}
@@ -205,6 +215,8 @@ class ProviderRouter:
                 metrics=metrics,
             )
         self._admission = admission
+        self._quota = quota or QuotaTracker(metrics=metrics)
+        self._quota.track(self._providers)
         self._publish_health()
 
     # -- observation -------------------------------------------------------------------
@@ -360,6 +372,10 @@ class ProviderRouter:
             if stats.breaker.state is CircuitState.OPEN:
                 excluded[name] = "circuit_open"
                 continue
+            refusal = self._quota.refusal(name, self._estimated_tokens(request, provider))
+            if refusal is not None:
+                excluded[name] = refusal
+                continue
             if wanted is not None and wanted in caps.pools:
                 members.append(stats)
             elif wanted is not None and hint.strict_pool:
@@ -381,6 +397,42 @@ class ProviderRouter:
             pool=hint.pool_label,
             pool_members=tuple(s.name for s in members),
         )
+
+    @staticmethod
+    def _estimated_tokens(request: CompletionRequest, provider: LLMProvider) -> int:
+        """The most this request can cost ``provider`` in tokens: prompt plus the full output cap.
+
+        Matches what the provider will actually be asked for (``BaseProvider``'s effective max
+        output), so a budget check never admits a request the provider could then bill past it.
+        """
+        caps = provider.capabilities
+        requested = request.sampling.max_output_tokens or caps.max_output_tokens
+        return request.conversation.approx_tokens() + min(requested, caps.max_output_tokens)
+
+    @staticmethod
+    def _is_rate_limited(exc: BaseException) -> bool:
+        return isinstance(exc, ProviderError) and exc.details.get("status") == 429
+
+    def _record_rate_limited(self, name: str, exc: ProviderError) -> dict[str, Any]:
+        """Bench ``name`` until the reset its ``429`` named. Not a health failure.
+
+        Returns the attempt record, so the caller's error names the cooldown rather than reading
+        like a crash.
+        """
+        retry_after = exc.details.get("retry_after_s")
+        applied = self._quota.cooldown(name, retry_after)
+        stats = self._stats[name]
+        stats.total_requests += 1
+        if self._metrics is not None:
+            self._metrics.llm_requests_total.labels(
+                provider=name,
+                model=self._providers[name].capabilities.model_id,
+                outcome="rate_limited",
+            ).inc()
+        return {"provider": name, "error": "rate_limited", "cooldown_s": round(applied, 1)}
+
+    def _reserve(self, name: str, request: CompletionRequest) -> tuple[QuotaReservation | None, str | None]:
+        return self._quota.try_reserve(name, self._estimated_tokens(request, self._providers[name]))
 
     # -- execution ---------------------------------------------------------------------
 
@@ -476,6 +528,7 @@ class ProviderRouter:
         if budget is not None:
             budget.check()
 
+        await self._quota.ensure_hydrated()
         decision = self.plan(request)
         if not decision.candidates:
             raise AllProvidersFailedError(
@@ -495,17 +548,26 @@ class ProviderRouter:
 
             provider = self._providers[name]
             ticket = await self._admit(name, hint)
+            reservation, refusal = self._reserve(name, request)
+            if reservation is None:
+                # Another turn spent the budget between planning and admission. Skipped, not
+                # failed: nothing was sent, so there is nothing for the breaker to learn.
+                self._admission.release(ticket)
+                attempts.append({"provider": name, "error": refusal})
+                continue
             started = self._clock()
             stats.inflight += 1
             if self._metrics is not None:
                 self._metrics.llm_inflight.labels(provider=name).set(stats.inflight)
             outcome = "error"
             response: CompletionResponse | None = None
+            used_tokens: int | None = None
             try:
                 response = await asyncio.wait_for(
                     provider.complete(request), timeout=request.timeout_s
                 )
                 outcome = "success"
+                used_tokens = response.usage.total_tokens
                 elapsed = (self._clock() - started) * 1000.0
                 self._record_success(name, latency_ms=elapsed, ttft_ms=None, response=response)
                 if budget is not None:
@@ -520,12 +582,17 @@ class ProviderRouter:
                 self._record_failure(name, exc)
                 attempts.append({"provider": name, "error": "timeout", "timeout_s": request.timeout_s})
             except ProviderError as exc:
-                self._record_failure(name, exc)
-                attempts.append({"provider": name, "error": exc.kind, "detail": exc.message})
-                if not exc.retryable:
-                    # A malformed request fails identically everywhere; trying more providers
-                    # just multiplies latency and cost.
-                    break
+                if self._is_rate_limited(exc):
+                    outcome = "rate_limited"
+                    used_tokens = 0
+                    attempts.append(self._record_rate_limited(name, exc))
+                else:
+                    self._record_failure(name, exc)
+                    attempts.append({"provider": name, "error": exc.kind, "detail": exc.message})
+                    if not exc.retryable:
+                        # A malformed request fails identically everywhere; trying more
+                        # providers just multiplies latency and cost.
+                        break
             except Exception as exc:  # adapter bug or unexpected transport failure
                 self._record_failure(name, exc)
                 attempts.append({"provider": name, "error": type(exc).__name__})
@@ -533,6 +600,7 @@ class ProviderRouter:
                 outcome = "cancelled"
                 raise
             finally:
+                self._quota.settle(reservation, used_tokens)
                 stats.inflight -= 1
                 self._admission.release(ticket)
                 if self._metrics is not None:
@@ -580,6 +648,7 @@ class ProviderRouter:
         if budget is not None:
             budget.check()
 
+        await self._quota.ensure_hydrated()
         decision = self.plan(request)
         if not decision.candidates:
             raise AllProvidersFailedError(
@@ -602,6 +671,12 @@ class ProviderRouter:
             # Released in `finally`, which also runs when the consumer stops iterating early
             # (client disconnect -> aclose()) -- that is what keeps a dropped stream from leaking.
             ticket = await self._admit(name, hint)
+            reservation, refusal = self._reserve(name, request)
+            if reservation is None:
+                self._admission.release(ticket)
+                attempts.append({"provider": name, "error": refusal})
+                continue
+            used_tokens: int | None = None
             started = self._clock()
             first_chunk_at: float | None = None
             last_chunk_at: float | None = None
@@ -636,6 +711,8 @@ class ProviderRouter:
                         yield chunk
 
                 outcome = "success"
+                if usage is not None:
+                    used_tokens = usage.total_tokens
                 elapsed = (self._clock() - started) * 1000.0
                 ttft = (first_chunk_at - started) * 1000.0 if first_chunk_at else None
                 stats.breaker.record_success()
@@ -673,6 +750,12 @@ class ProviderRouter:
             except Exception as exc:
                 # asyncio.CancelledError is a BaseException and deliberately not caught -- a
                 # cancelled turn must unwind, not fail over to another provider.
+                if not emitted and self._is_rate_limited(exc):
+                    # A 429 arrives before any output, so moving on is still clean.
+                    outcome = "rate_limited"
+                    used_tokens = 0
+                    attempts.append(self._record_rate_limited(name, exc))
+                    continue
                 self._record_failure(name, exc)
                 kind = getattr(exc, "kind", None) or (
                     "timeout" if isinstance(exc, asyncio.TimeoutError) else type(exc).__name__
@@ -691,6 +774,7 @@ class ProviderRouter:
                 if isinstance(exc, ProviderError) and not exc.retryable:
                     break
             finally:
+                self._quota.settle(reservation, used_tokens)
                 stats.inflight -= 1
                 self._admission.release(ticket)
                 if self._metrics is not None:
@@ -735,12 +819,17 @@ class ProviderRouter:
             snap["model_revision"] = caps.model_revision or None
             snap["capacity_group"] = self._groups[name]
             snap["admission"] = admission.get(self._groups[name])
+            snap["quota"] = self._quota.snapshot(name)
             out.append(snap)
         return out
 
     @property
     def admission(self) -> AdmissionController:
         return self._admission
+
+    @property
+    def quota(self) -> QuotaTracker:
+        return self._quota
 
     async def health(self) -> dict[str, Any]:
         """Probe every provider concurrently, updating the health gauge."""
