@@ -95,6 +95,20 @@ curl -X POST "$AURA/api/v3/admin/blueprints/$BP/evaluate" -H "$ADMIN"
 - A `tool_contract` case that cannot reach a replica is `not_run`, never a pass. Record the gate
   report as it is.
 
+### 2.3a Operations Flame keeps out of discovery (`x-aura-exclude`)
+
+From Flame contract 0.2.0, `docs/api/openapi.json` also describes `POST /api/chat` and Flame's
+admin writes. Flame marks those operations with the vendor extension `x-aura-exclude: true`.
+The OpenAPI connector's discovery (`aura_core/adapters/connectors/openapi.py`) skips any
+operation, or any whole path item, that carries the literal `true`. Each skipped operation is
+reported as a discovery issue `operation_excluded` with its `op:<METHOD> <path>` locator, so the
+exclusion appears in the discovery report and the twin diff rather than vanishing silently.
+
+The reason is that Flame's `/api/chat` itself calls AURA's `/api/v3/chat` (Link 1). A tool compiled
+from it would let AURA call back into its own caller. Expect one `operation_excluded` issue per
+marked operation. The compiled read tools are the 8 above plus `api_list_documents` and
+`api_list_experiments`.
+
 ### 2.4 Approve and deploy
 
 ```bash

@@ -222,6 +222,40 @@ class TestOpenApiMapping:
         assert report.get('prop:"Envelope".field').attributes["type"] is None
         assert [(i.code, i.locator) for i in report.issues] == [("external_ref_ignored", 'prop:"Envelope".field')]
 
+    @staticmethod
+    def _ops_spec(**flags: Any) -> dict[str, Any]:
+        ok = {"responses": {"200": {"description": "ok"}}}
+        return {"openapi": "3.1.0", "info": {"title": "t", "version": "1"}, "paths": {
+            "/api/search": {"get": dict(ok)},
+            "/api/chat": {"post": {**ok, **flags.get("chat", {})}},
+            "/api/admin/mode": {**flags.get("admin_path", {}), "get": dict(ok), "put": dict(ok)},
+        }}
+
+    def test_unmarked_operations_are_all_discovered(self) -> None:
+        report = artifacts_from_openapi("api", self._ops_spec(), DiscoveryBudget())
+        ops = sorted(a.locator for a in report.artifacts if a.locator.startswith("op:"))
+        assert ops == ["op:GET /api/admin/mode", "op:GET /api/search", "op:POST /api/chat", "op:PUT /api/admin/mode"]
+        assert report.issues == ()
+
+    def test_an_operation_marked_excluded_is_reported_not_discovered(self) -> None:
+        spec = self._ops_spec(chat={"x-aura-exclude": True})
+        report = artifacts_from_openapi("api", spec, DiscoveryBudget())
+        assert report.get("op:POST /api/chat") is None
+        assert report.get("op:GET /api/search") is not None
+        assert [(i.code, i.locator) for i in report.issues] == [("operation_excluded", "op:POST /api/chat")]
+
+    def test_a_path_marked_excluded_drops_every_method_under_it(self) -> None:
+        spec = self._ops_spec(admin_path={"x-aura-exclude": True})
+        report = artifacts_from_openapi("api", spec, DiscoveryBudget())
+        assert report.get("op:GET /api/admin/mode") is None and report.get("op:PUT /api/admin/mode") is None
+        assert sorted(i.locator for i in report.issues if i.code == "operation_excluded") == [
+            "op:GET /api/admin/mode", "op:PUT /api/admin/mode"]
+
+    @pytest.mark.parametrize("value", ["true", 1, "yes", None])
+    def test_only_a_literal_true_excludes(self, value: Any) -> None:
+        report = artifacts_from_openapi("api", self._ops_spec(chat={"x-aura-exclude": value}), DiscoveryBudget())
+        assert report.get("op:POST /api/chat") is not None
+
     @pytest.mark.parametrize("body", [b'{"swagger": "2.0"}', b"- not a mapping", b"{not json", b"openapi: 2.0"])
     def test_only_openapi_3_is_accepted(self, body: bytes) -> None:
         with pytest.raises(ValidationError):

@@ -60,6 +60,9 @@ MAX_SPEC_BYTES = 5 * 1024 * 1024
 #: Largest API response a generated read tool accepts (AP7). The tool's own result cap is lower.
 MAX_READ_BYTES = 2 * 1024 * 1024
 _METHODS = ("get", "put", "post", "delete", "patch", "head", "options", "trace")
+# OpenAPI vendor extension a source system sets on an operation or path item to keep it out of
+# discovery (and so out of every blueprint compiled from it).
+EXCLUDE_EXTENSION = "x-aura-exclude"
 _SCHEMA_REF = "#/components/schemas/"
 #: How many $ref/combinator hops a property type is followed through; also stops ref cycles.
 _MAX_TYPE_DEPTH = 8
@@ -286,11 +289,18 @@ class _Mapper:
 
     def add_path(self, path: str, item: Mapping[str, Any]) -> None:
         shared = item.get("parameters") if isinstance(item.get("parameters"), list) else []
+        path_excluded = item.get(EXCLUDE_EXTENSION) is True
         for method in _METHODS:
             op = item.get(method)
             if not isinstance(op, dict):
                 continue
             locator = f"op:{method.upper()} {path}"
+            # The source system's own opt-out: an operation it marks must never become a tool
+            # (e.g. an endpoint that itself calls AURA, which would let AURA call its own caller).
+            # Reported as an issue rather than dropped silently, so the exclusion is reviewable.
+            if path_excluded or op.get(EXCLUDE_EXTENSION) is True:
+                self.issues.append(DiscoveryIssue("operation_excluded", locator))
+                continue
             params = [self.param(p, locator) for p in [*shared, *(op.get("parameters") or [])]]
             params = [p for p in params if p is not None]
             request_schema = None
