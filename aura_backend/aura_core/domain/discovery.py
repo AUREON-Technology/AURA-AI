@@ -38,6 +38,8 @@ __all__ = [
     "DiscoveryBudget",
     "DiscoveryIssue",
     "DiscoveryReport",
+    "SourceDocument",
+    "DOCUMENT_FORMATS",
     "quote_identifier",
 ]
 
@@ -47,6 +49,8 @@ _ISSUE_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _MAX_ATTR_STR = 512
 _MAX_ATTR_ITEMS = 256
 _MAX_LOCATOR = 512
+#: Document formats a connector may hand to project knowledge (AP10).
+DOCUMENT_FORMATS = frozenset({"markdown", "text", "html", "pdf"})
 
 
 def quote_identifier(name: str) -> str:
@@ -76,6 +80,10 @@ class ArtifactKind(str, enum.Enum):
     SCHEMA_OBJECT = "schema_object"
     SCHEMA_PROPERTY = "schema_property"
     SECURITY_SCHEME = "security_scheme"
+    # Unstructured content (AP10): a document destined for project knowledge. The artifact
+    # carries the file's name, format, size and content hash -- never its text, which reaches
+    # the knowledge engine on the DATA channel only.
+    DOCUMENT = "document"
 
     def __str__(self) -> str:
         return self.value
@@ -213,3 +221,22 @@ class DiscoveryReport:
 
     def get(self, locator: str) -> RawArtifact | None:
         return next((a for a in self.artifacts if a.locator == locator), None)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceDocument:
+    """One document's bytes as a connector fetched them for project knowledge (AP10).
+
+    ``sha256`` is of ``data`` and equals the ``sha256`` attribute of the DOCUMENT artifact the
+    twin recorded, so a caller can tell the file changed after the blueprint was approved.
+    """
+
+    name: str
+    format: str
+    data: bytes
+    sha256: str
+
+    def __post_init__(self) -> None:
+        if self.format not in DOCUMENT_FORMATS:
+            raise ValidationError("unsupported document format", details={"format": self.format})
+        UntrustedText(self.name)

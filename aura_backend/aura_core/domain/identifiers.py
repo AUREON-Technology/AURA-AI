@@ -35,9 +35,24 @@ __all__ = [
     "AgentRunId",
     "AgentStepId",
     "deterministic_uuid",
+    "RESERVED_PRINCIPAL_PREFIXES",
+    "is_reserved_principal",
 ]
 
 _SAFE = re.compile(r"^[A-Za-z0-9_\-.:@]{1,256}$")
+
+#: Owner namespaces that are not people: a service key acts as ``service:<name>`` (AR-4) and a
+#: project's knowledge is owned by ``project:<id>`` (AP10). With ``"global"`` -- the vector stores'
+#: shared-content sentinel (``ports.storage.GLOBAL_OWNER``) -- these are owner values a person's
+#: authenticated subject must never take, or that person would read and write as the project, the
+#: service, or everyone.
+RESERVED_PRINCIPAL_PREFIXES = ("service:", "project:")
+_RESERVED_PRINCIPALS = frozenset({"global"})
+
+
+def is_reserved_principal(subject: str) -> bool:
+    """Whether ``subject`` names a non-person owner and so cannot be a person's user id."""
+    return subject in _RESERVED_PRINCIPALS or subject.startswith(RESERVED_PRINCIPAL_PREFIXES)
 
 
 @dataclass(frozen=True, slots=True)

@@ -1380,6 +1380,17 @@ gaps:
       (tests/unit/test_adaptation_files.py). Documents, Excel, Git, CompositeFetcher, MySQL/SQL
       Server and identity modes not started; exit evidence (retrieval eval, isolation probe on a
       real Qdrant, Git goldens) not produced.
+    progress_2026_10_13: >-
+      Documents feed project knowledge: the files connector discovers Markdown/text/HTML/PDF as
+      DOCUMENT artifacts (format, size, SHA-256; never text), the twin carries them, the compiler
+      fills knowledge.sources and grants the native project_knowledge tool in the approved
+      digest, and deploy ingests them at TrustTier.UNTRUSTED under the owner project:<id>,
+      searched without global content. Isolation probe over the whole knowledge engine on the
+      in-memory and in-process Qdrant adapters; pilot retrieval eval recall@3 1.00 (HR 14, e-commerce
+      8 questions) with the test hash embedder only; the gateway refuses JWT subjects in reserved
+      owner namespaces (tests/unit/test_adaptation_project_knowledge.py). Still open: Excel/DOCX,
+      Git, CompositeFetcher, MySQL/SQL Server, identity modes, and the exit runs against a real
+      Qdrant server and the deployed embedding model.
     evidence: docs/reports/ap10-connectors-knowledge.md
 
   - gap_id: GAP-060

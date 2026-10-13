@@ -13,11 +13,12 @@ from __future__ import annotations
 from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 from ..domain.connectors import ConnectorDescriptor, ConnectorHealth, ConnectorRecord, ConnectorState, Credential
-from ..domain.discovery import DiscoveryBudget, DiscoveryReport
+from ..domain.discovery import DiscoveryBudget, DiscoveryReport, SourceDocument
 from ..domain.templates import ReadTemplate
 
 __all__ = [
-    "Connector", "DiscoveryConnector", "ReadConnector", "ConnectorFactory", "CredentialVault", "ConnectorStore",
+    "Connector", "DiscoveryConnector", "ReadConnector", "DocumentConnector", "ConnectorFactory", "CredentialVault",
+    "ConnectorStore",
 ]
 
 
@@ -61,6 +62,19 @@ class ReadConnector(Connector, Protocol):
     """
 
     async def read(self, template: ReadTemplate, arguments: Mapping[str, Any]) -> Any: ...
+
+
+@runtime_checkable
+class DocumentConnector(Connector, Protocol):
+    """A connector whose discovery reports DOCUMENT artifacts, and that fetches them (AP10).
+
+    ``locator`` is a DOCUMENT artifact's locator from this connector's own discovery. Anything
+    else -- another kind, a path, a name that no longer exists -- raises a typed ``AuraError``.
+    The bytes are untrusted content: they go to the knowledge engine's guarded ingestion, never
+    into a prompt directly.
+    """
+
+    async def fetch_document(self, locator: str) -> SourceDocument: ...
 
 
 @runtime_checkable

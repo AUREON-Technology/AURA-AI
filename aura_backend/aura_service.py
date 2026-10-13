@@ -22,7 +22,7 @@ from aura_core.api import Principal, build_app
 from aura_core.config import load_settings
 from aura_core.container import build_container
 from aura_core.domain.errors import AuthenticationError, ConfigurationError
-from aura_core.domain.identifiers import UserId
+from aura_core.domain.identifiers import UserId, is_reserved_principal
 from aura_core.domain.service_keys import looks_like_service_token
 from aura_core.observability.logging import get_logger
 from aura_core.security import SlidingWindowRateLimiter
@@ -90,6 +90,9 @@ def _build_authenticator(settings: Any, *, service_keys: Any = None):
         subject = claims.get("uid")
         if not subject:
             raise AuthenticationError("token carries no subject claim")
+        if is_reserved_principal(str(subject)):
+            # A person cannot act as the global corpus, a service key or a project (AP10).
+            raise AuthenticationError("token subject is in a reserved namespace")
 
         from services.rbac import get_user_role  # type: ignore
 

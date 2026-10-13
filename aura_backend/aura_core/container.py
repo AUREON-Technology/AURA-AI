@@ -196,6 +196,7 @@ class Container:
             self.agents = ActiveBlueprint(self.agents)
         self.blueprint_store = None
         self.blueprint_deployment = None
+        self.project_knowledge = None
         self._blueprint_sync_task = None
 
         self.safety = SafetyPipeline.from_settings(
@@ -696,13 +697,21 @@ class Container:
         registries (AP7), behind the generated evaluation gate (AP8)."""
         from .adaptation.deployment import BlueprintDeployment
         from .adaptation.gate import BlueprintGate
+        from .adaptation.knowledge import ProjectKnowledge
         from .adaptation.runtime import BlueprintToolMaterializer
         from .domain.gate import GateMode
+        from .knowledge.documents import extract_document
 
         adaptation = self.settings.adaptation
+        # AP10: the project's documents, ingested under the project's own owner on deploy and
+        # searched by the blueprint's native `project_knowledge` tool.
+        project_knowledge = ProjectKnowledge(
+            project_id=self.twins.project_id, knowledge=self.knowledge, documents=self.documents,
+            extract=extract_document, open_connector=self.connectors.open_active,
+        )
         materializer = BlueprintToolMaterializer(
             tools=self.tools, open_connector=self.connectors.open_active,
-            grace_s=adaptation.tool_grace_s, metrics=self.metrics,
+            grace_s=adaptation.tool_grace_s, metrics=self.metrics, knowledge=project_knowledge,
         )
         # The gate's candidate runs in a throwaway registry under the *serving* policy (same
         # allow/deny lists), so what it refuses is what a live turn would refuse. No metrics,
@@ -721,8 +730,9 @@ class Container:
         deployment = BlueprintDeployment(
             project_id=self.twins.project_id, store=self.blueprint_store, approvals=self.approvals,
             agents=self.agents, materializer=materializer, clock=self.clock,
-            gate=gate, twins=self.twins, audit=self.audit, metrics=self.metrics,
+            gate=gate, twins=self.twins, audit=self.audit, metrics=self.metrics, knowledge=project_knowledge,
         )
+        self.project_knowledge = project_knowledge
         self.register_readiness_check("blueprint", deployment.readiness)
         return deployment
 

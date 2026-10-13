@@ -14,17 +14,21 @@ deployment are AP7/AP8, and nothing auto-applies in v1 (ADR-024).
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import timezone
 from typing import Any, Sequence
 
 from ..domain.ausm import ElementKind, ProjectTwin
 from ..domain.blueprint import (
+    PROJECT_KNOWLEDGE_TOOL,
     Blueprint,
     BlueprintProject,
     BlueprintState,
     CapabilitySelection,
     ConnectorRef,
     EvaluationSection,
+    KnowledgeSection,
+    KnowledgeSource,
     PermissionGrant,
     PolicySection,
     SecuritySection,
@@ -79,7 +83,8 @@ def compile_blueprint(
 
     dropped: list[DroppedItem] = []
     tools: list[CompiledTool] = []
-    taken: set[str] = set()
+    # Reserved: a table called "project" must not compile a tool that shadows the knowledge tool.
+    taken: set[str] = {PROJECT_KNOWLEDGE_TOOL}
     for selection in plan.selected:
         result = build_tool(selection, view, taken)
         if isinstance(result, str):
@@ -88,6 +93,14 @@ def compile_blueprint(
             tools.append(result)
 
     agents, agent_drops = build_agents(plan.agents, tools)
+    # AP10: every DOCUMENT in the twin is a knowledge source, and every agent may search them --
+    # through one native tool whose grant is written into the blueprint, so the approval covers it.
+    knowledge_sources = tuple(KnowledgeSource(e.source_id, e.id)
+                              for e in sorted(twin.of_kind(ElementKind.DOCUMENT), key=lambda e: e.id))
+    native_tools: tuple[str, ...] = ()
+    if knowledge_sources:
+        native_tools = (PROJECT_KNOWLEDGE_TOOL,)
+        agents = [dataclasses.replace(a, tools=a.tools + (PROJECT_KNOWLEDGE_TOOL,)) for a in agents]
     workflows, workflow_drops = build_workflows(tools, view)
     ui = build_ui(tools, view)
     suites = build_suites(tools, agents)
@@ -111,8 +124,10 @@ def compile_blueprint(
         capabilities=capabilities,
         templates=tuple(t.template for t in tools),
         tools=tuple(t.tool for t in tools),
+        native_tools=native_tools,
         agents=tuple(agents),
         workflows=tuple(workflows),
+        knowledge=KnowledgeSection(knowledge_sources),
         ui=ui,
         policies=PolicySection(default_risk_ceiling=ToolSensitivity.PERSONAL,
                                max_plan_iterations=AGENT_MAX_PLAN_ITERATIONS),

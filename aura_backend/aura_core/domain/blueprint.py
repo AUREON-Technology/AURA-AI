@@ -60,9 +60,15 @@ __all__ = [
     "check_against_twin",
     "blueprint_json_schema",
     "generated_tool_name",
+    "PROJECT_KNOWLEDGE_TOOL",
 ]
 
 BLUEPRINT_SCHEMA = "aura.blueprint/v1"
+#: The native tool that searches a project's knowledge (AP10). A blueprint names it in
+#: ``native_tools`` and in an agent's grant only when ``knowledge.sources`` is non-empty, so the
+#: grant is part of what the approver signs; the compiler reserves the name so no generated tool
+#: can take it.
+PROJECT_KNOWLEDGE_TOOL = "project_knowledge"
 
 _SLUG = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
 _CONNECTOR_ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
@@ -480,6 +486,12 @@ class Blueprint:
             _ref(grant.capability in capabilities, "permission capability", grant.role, grant.capability)
         for source in self.knowledge.sources:
             _ref(source.connector in connectors, "knowledge connector", source.element, source.connector)
+            if not source.element.startswith(f"{source.connector}:"):
+                raise ValidationError("a knowledge source must be an element of its own connector",
+                                      details={"element": source.element, "connector": source.connector})
+        _unique((s.element for s in self.knowledge.sources), "knowledge sources")
+        if PROJECT_KNOWLEDGE_TOOL in self.native_tools and not self.knowledge.sources:
+            raise ValidationError("the project knowledge tool needs at least one knowledge source")
         views = {v.id for v in self.ui.views}
         for view in self.ui.views:
             if view.tool is None:

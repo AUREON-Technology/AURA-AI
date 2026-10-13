@@ -38,7 +38,9 @@ __all__ = [
     "ExtractedBlock",
     "DocumentExtraction",
     "extract_plain_text",
+    "extract_html",
     "extract_pdf",
+    "extract_document",
     "apply_ocr",
     "blocks_for_chunking",
     "pdf_support_available",
@@ -164,6 +166,54 @@ def extract_plain_text(content: str, *, modality: str = Modality.TEXT) -> Docume
     return DocumentExtraction(blocks=(ExtractedBlock(text=text, modality=modality),))
 
 
+#: Elements whose content is never prose: their text is dropped, not indexed.
+_HTML_SKIPPED = frozenset({"script", "style", "template", "noscript", "head", "svg", "iframe", "object"})
+#: Elements that end a line of text, so adjacent blocks do not run together into one word.
+_HTML_BLOCKS = frozenset({
+    "p", "div", "br", "li", "ul", "ol", "tr", "td", "th", "table", "section", "article", "header",
+    "footer", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "blockquote", "dd", "dt", "hr", "main", "nav",
+})
+
+
+def extract_html(content: str) -> DocumentExtraction:
+    """The visible text of an HTML document, one block, with scripts and styles removed.
+
+    Stdlib ``html.parser`` only: nothing is fetched (no external entities, images or stylesheets)
+    and nothing executes. Markup is a formatting hint here, never content -- an attribute such as
+    ``title`` or ``alt`` is not text a reader sees, so it is not indexed either.
+    """
+    from html.parser import HTMLParser
+
+    class _Text(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self.parts: list[str] = []
+            self.skipping = 0
+
+        def handle_starttag(self, tag: str, attrs: Any) -> None:
+            if tag in _HTML_SKIPPED:
+                self.skipping += 1
+            elif tag in _HTML_BLOCKS:
+                self.parts.append("\n")
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag in _HTML_SKIPPED:
+                self.skipping = max(0, self.skipping - 1)
+            elif tag in _HTML_BLOCKS:
+                self.parts.append("\n")
+
+        def handle_data(self, data: str) -> None:
+            if not self.skipping:
+                self.parts.append(data)
+
+    parser = _Text()
+    parser.feed(content)
+    parser.close()
+    lines = (" ".join(line.split()) for line in "".join(parser.parts).splitlines())
+    text = "\n".join(line for line in lines if line)
+    return extract_plain_text(text)
+
+
 #: A page whose text layer yields fewer characters than this is treated as unread rather than as
 #: nearly-empty. Scanned pages commonly extract to a handful of stray glyphs from a header stamp or
 #: a page number, and treating those few characters as "the content of page 7" is worse than
@@ -252,6 +302,23 @@ def extract_pdf(
         unreadable_pages=tuple(unreadable),
         blank_pages=tuple(blank),
     )
+
+
+def extract_document(data: bytes, *, format: str, title: str = "the document") -> DocumentExtraction:
+    """A connected system's document bytes as blocks, by declared format (AP10 project knowledge).
+
+    ``format`` is one of ``domain.discovery.DOCUMENT_FORMATS``. Text formats must be UTF-8.
+    Raises :class:`KnowledgeError` for anything unreadable, so the caller records it per document.
+    """
+    if format == "pdf":
+        return extract_pdf(data, title=title)
+    if format not in ("markdown", "text", "html"):
+        raise KnowledgeError("unsupported document format", details={"format": format})
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise KnowledgeError("the document is not UTF-8 text", details={"format": format}) from exc
+    return extract_html(text) if format == "html" else extract_plain_text(text)
 
 
 async def apply_ocr(
