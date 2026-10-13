@@ -301,8 +301,15 @@ def _classify(profile: Mapping[str, Any]) -> tuple[str | None, bool]:
     return None, unique
 
 
-def artifacts_from_catalog(source_id: str, snapshot: Mapping[str, Any], budget: DiscoveryBudget) -> DiscoveryReport:
-    """The deterministic mapping from a catalog snapshot to raw artifacts."""
+def artifacts_from_catalog(
+    source_id: str, snapshot: Mapping[str, Any], budget: DiscoveryBudget, *, extractor: str = "postgres",
+    catalog_extractor: str = CATALOG_EXTRACTOR, profile_extractor: str = PROFILE_EXTRACTOR,
+) -> DiscoveryReport:
+    """The deterministic mapping from a catalog snapshot to raw artifacts.
+
+    The extractor names are what provenance cites; another source that produces the same snapshot
+    shape (the Files connector, AP10) passes its own, so its artifacts never claim ``pg_catalog``.
+    """
     artifacts: list[RawArtifact] = []
     issues = [DiscoveryIssue(i["code"], i.get("locator", "")) for i in snapshot.get("issues", [])]
     relation_locators: dict[tuple[str, str], str] = {}
@@ -312,7 +319,7 @@ def artifacts_from_catalog(source_id: str, snapshot: Mapping[str, Any], budget: 
         relation_locators[(rel["schema"], rel["name"])] = locator
         artifacts.append(RawArtifact(
             kind=ArtifactKind.VIEW if rel["kind"] in ("v", "m") else ArtifactKind.TABLE,
-            locator=locator, name=_text(rel["name"]), extractor=CATALOG_EXTRACTOR,
+            locator=locator, name=_text(rel["name"]), extractor=catalog_extractor,
             description=_optional_text(rel.get("comment")),
             attributes={"schema": rel["schema"], "relkind": rel["kind"], "readable": bool(rel["readable"])},
         ))
@@ -330,7 +337,7 @@ def artifacts_from_catalog(source_id: str, snapshot: Mapping[str, Any], budget: 
         artifacts.append(RawArtifact(
             kind=ArtifactKind.COLUMN,
             locator=f"column:{q(col['schema'])}.{q(col['table'])}.{q(col['name'])}",
-            name=_text(col["name"]), extractor=CATALOG_EXTRACTOR,
+            name=_text(col["name"]), extractor=catalog_extractor,
             description=_optional_text(col.get("comment")), parent=parent, attributes=attrs,
         ))
 
@@ -355,14 +362,14 @@ def artifacts_from_catalog(source_id: str, snapshot: Mapping[str, Any], budget: 
             attrs["definition"] = definition
         artifacts.append(RawArtifact(
             kind=kind, locator=f"{prefix}:{q(con['schema'])}.{q(con['table'])}.{q(con['name'])}",
-            name=_text(con["name"]), extractor=CATALOG_EXTRACTOR,
+            name=_text(con["name"]), extractor=catalog_extractor,
             description=_optional_text(con.get("comment")), parent=parent, attributes=attrs,
         ))
 
     for enum_row in snapshot.get("enums", []):
         artifacts.append(RawArtifact(
             kind=ArtifactKind.ENUM_TYPE, locator=f"enum:{q(enum_row['schema'])}.{q(enum_row['name'])}",
-            name=_text(enum_row["name"]), extractor=CATALOG_EXTRACTOR,
+            name=_text(enum_row["name"]), extractor=catalog_extractor,
             attributes={"labels": tuple(enum_row["labels"])},
         ))
 
@@ -372,7 +379,7 @@ def artifacts_from_catalog(source_id: str, snapshot: Mapping[str, Any], budget: 
     for grantee in sorted({g for g, _, _ in grants}):
         artifacts.append(RawArtifact(
             kind=ArtifactKind.ROLE, locator=f"role:{q(grantee)}", name=_text(grantee),
-            extractor=CATALOG_EXTRACTOR,
+            extractor=catalog_extractor,
         ))
     for (grantee, schema, table), privileges in sorted(grants.items()):
         parent = relation_locators.get((schema, table))
@@ -380,7 +387,7 @@ def artifacts_from_catalog(source_id: str, snapshot: Mapping[str, Any], budget: 
             continue
         artifacts.append(RawArtifact(
             kind=ArtifactKind.GRANT, locator=f"grant:{q(grantee)}@{q(schema)}.{q(table)}",
-            name=_text(f"{grantee} on {schema}.{table}"), extractor=CATALOG_EXTRACTOR, parent=parent,
+            name=_text(f"{grantee} on {schema}.{table}"), extractor=catalog_extractor, parent=parent,
             attributes={"role": f"role:{q(grantee)}", "privileges": tuple(sorted(privileges))},
         ))
 
@@ -399,7 +406,7 @@ def artifacts_from_catalog(source_id: str, snapshot: Mapping[str, Any], budget: 
         artifacts.append(RawArtifact(
             kind=ArtifactKind.COLUMN_PROFILE,
             locator=f"profile:{q(prof['schema'])}.{q(prof['table'])}.{q(prof['column'])}",
-            name=_text(prof["column"]), extractor=PROFILE_EXTRACTOR, parent=column, attributes=attrs,
+            name=_text(prof["column"]), extractor=profile_extractor, parent=column, attributes=attrs,
         ))
 
     truncated = bool(snapshot.get("truncated"))
@@ -407,4 +414,4 @@ def artifacts_from_catalog(source_id: str, snapshot: Mapping[str, Any], budget: 
         artifacts = sorted(artifacts, key=lambda a: a.locator)[: budget.max_objects]
         truncated = True
         issues.append(DiscoveryIssue("budget_exhausted", "artifacts"))
-    return DiscoveryReport.build(source_id, "postgres", artifacts, issues=issues, truncated=truncated)
+    return DiscoveryReport.build(source_id, extractor, artifacts, issues=issues, truncated=truncated)

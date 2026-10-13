@@ -112,7 +112,7 @@ class TestDimensionGuards:
         from aura_core.ports.storage import VectorPoint
 
         with pytest.raises(ConflictError) as excinfo:
-            await store.upsert(IDENTITY, [VectorPoint("p1", [0.1] * 768, {})])
+            await store.upsert(IDENTITY, [VectorPoint("p1", [0.1] * 768, {"owner_id": "u1"})])
         assert "768" in str(excinfo.value)
 
     async def test_searching_with_a_wrong_width_vector_is_refused(self) -> None:
@@ -168,12 +168,13 @@ class TestOwnerFilterMatchesTheInMemoryAdapter:
         assert "u1" in rendered
         assert "global" not in rendered
 
-    def test_a_missing_owner_key_counts_as_global(self) -> None:
-        """MatchAny cannot express "key absent", so the filter pairs it with an is-empty check.
-        Without that, chunks written before owner_id existed become invisible."""
+    def test_a_missing_owner_key_is_not_global(self) -> None:
+        """CB-11: global is the explicit sentinel only. An is-empty clause would publish every point
+        whose owner was lost; without one, such a point matches no filter at all."""
         store = QdrantVectorStore("http://qdrant:6333")
-        rendered = repr(store._owner_filter(None, include_global=True))
-        assert "IsEmpty" in rendered or "is_empty" in rendered
+        for owner in (None, UserId("u1")):
+            rendered = repr(store._owner_filter(owner, include_global=True))
+            assert "IsEmptyCondition" not in rendered
 
 
 class TestFilterTranslation:

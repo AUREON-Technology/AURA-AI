@@ -44,7 +44,7 @@ from ..domain.memory import MemoryKind, MemoryRecord
 from ..domain.personal_os import PersonalOsRecord, RecordKind
 from dataclasses import replace as _dc_replace
 from ..llm.embeddings import cosine_similarity
-from ..ports.storage import VectorPoint
+from ..ports.storage import GLOBAL_OWNER, VectorPoint, require_point_owner
 
 __all__ = [
     "InMemoryVectorStore",
@@ -95,6 +95,8 @@ class InMemoryVectorStore:
     async def upsert(self, identity: IndexIdentity, points: Sequence[VectorPoint]) -> int:
         await self.ensure_index(identity)
         index = self._indexes[identity.physical_name]
+        for point in points:
+            require_point_owner(point)  # the whole batch, before any of it is written
         async with self._lock:
             for point in points:
                 if len(point.vector) != identity.dimension:
@@ -139,12 +141,13 @@ class InMemoryVectorStore:
         owner_value = owner_id.value if owner_id else None
         results: list[tuple[str, float, Mapping[str, Any]]] = []
         for point in index.values():
+            # Global is the explicit sentinel only (CB-11), exactly as QdrantVectorStore filters.
             payload_owner = point.payload.get("owner_id")
             if owner_value is None:
-                if payload_owner not in (None, "", "global"):
+                if payload_owner != GLOBAL_OWNER:
                     continue
             elif payload_owner != owner_value:
-                if not (include_global and payload_owner in (None, "", "global")):
+                if not (include_global and payload_owner == GLOBAL_OWNER):
                     continue
             if not self._matches(point.payload, filters):
                 continue

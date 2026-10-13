@@ -115,6 +115,10 @@ Severity: **Critical** (blocks everything / live exposure) · **High** (blocks a
 - **Actual state:** Qdrant treats missing `owner_id` as global (`qdrant_store.py:408-410`).
 - **Required action:** explicit global sentinel; reject writes without owner.
 - **Roadmap phase:** M1.
+- **Update 2026-10-12:** fixed in code. `GLOBAL_OWNER` is the only global owner; both vector adapters
+  refuse owner-less points; an owner-less point matches no read
+  (`tests/unit/test_vector_owner_isolation.py`, in-memory and in-process Qdrant). The isolation
+  probe on a real Qdrant server (AP10 exit) is still to run.
 
 ---
 **ID:** CB-12 · **Severity:** Medium · **Area:** HTTP limits (SEC-08, SEC-11)
@@ -176,7 +180,7 @@ reported beyond BUILT until M0 restores CI evidence.
 | CB-37 | High | Runtime seam | Built; deployed live on Railway for Flame; dev-stack run pending (GAP-056) | `ActiveBlueprint` swap, digest-bound approval, rollback | AP7 |
 | CB-38 | Medium | Evaluation | Built; Flame run needed a coverage waiver (0.375), operator reports 0.875 at default after #163/#164 (PR #165); M7 for proven (GAP-057) | Generated suites incl. injection; gate deploy | AP8 |
 | CB-39 | Medium | Console | No Project Factory UI (GAP-058) | `/console/adaptation` + Playwright | AP9 |
-| CB-40 | High | Isolation | Project knowledge isolation unprovable while CB-11 is open (GAP-059) | Fix CB-11 first; isolation probe | AP10 |
+| CB-40 | High | Isolation | CB-11 fixed in code (2026-10-12); isolation probe on a real Qdrant still to run (GAP-059) | Fix CB-11 first; isolation probe | AP10 |
 | CB-41 | Medium | Personal OS | Personal AURA hardcoded outside any blueprint (GAP-062) | Project 0 parity → shadow → retire coupling | AP13 |
 | CB-42 | High | First integration | Flame AR-1…AR-8 built; Link 2 live run on Railway 2026-10-07 (`flame-link2-live.md`), Link 1 not run (GAP-063) | Run `docs/guides/flame-integration-runbook.md` on the dev stack; write the Link 1 / Link 2 live reports | AP7/AP12a |
 

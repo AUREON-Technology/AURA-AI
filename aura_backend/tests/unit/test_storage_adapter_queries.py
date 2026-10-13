@@ -362,7 +362,7 @@ class TestUpsertAndSearch:
         """Qdrant ids must be int or UUID, so non-UUID keys are hashed. Search must still return
         the id the caller gave us, not the hash."""
         store, fake = _store(collections=[IDENTITY.physical_name])
-        await store.upsert(IDENTITY, [VectorPoint("doc-1:v1:0", [0.1, 0.2, 0.3, 0.4], {})])
+        await store.upsert(IDENTITY, [VectorPoint("doc-1:v1:0", [0.1, 0.2, 0.3, 0.4], {"owner_id": "u1"})])
         assert ("upsert", IDENTITY.physical_name, ("doc-1:v1:0",)) in fake.calls
 
         fake.search_result = [FakeScored(12345, 0.9, {"_point_key": "doc-1:v1:0", "owner_id": "u1"})]

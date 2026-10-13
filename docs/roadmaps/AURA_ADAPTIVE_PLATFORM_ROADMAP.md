@@ -777,7 +777,7 @@ M0 (CI evidence) gates every A-phase beyond BUILT; Backend CI runs again (green 
 | AP7 | Blueprint runtime | Critical | AP6, (SEC-01..03) | High | High (kernel seam) | IMPLEMENTED; CI green on main (#347) + live Postgres; dev-stack run pending (VPS unreachable) | adaptation/runtime, container | Deploy + rollback |
 | AP8 | Generated eval gate | High | AP6, AP7, (M7) | Medium | Medium | IMPLEMENTED; CI green on main (#347) + live Postgres; live Flame run at default coverage (Railway); M7 for proven | adaptation/gate, adapters/connectors/memory | Bad blueprint blocked |
 | AP9 | Console MVP | High | AP7, AP8 | Medium | Low | DOCUMENTED | aura_admin | Both pilots via Console |
-| AP10 | Files/Git + knowledge + identity | High | AP9, (CB-11) | High | High (isolation) | DOCUMENTED | adapters/connectors, knowledge | Retrieval eval + isolation probe |
+| AP10 | Files/Git + knowledge + identity | High | AP9, (CB-11) | High | High (isolation) | IN PROGRESS (CB-11 fixed; files connector, tabular part, compiles and passes the gate; rest open) | adapters/connectors, knowledge | Retrieval eval + isolation probe |
 | AP11 | Drift + impact | Medium | AP10 | Medium | Medium | DOCUMENTED | adaptation/impact, triggers | Drift → approved regeneration |
 | AP12 | Reach + writes | Medium | AP11, (M14), (SEC-01) | High | High (writes) | DOCUMENTED | api/, aura_client, connectors | Three sub-reports |
 | AP13 | Convergence / Project 0 | Medium | AP7 (start), AP12b | High | High (live app) | DOCUMENTED | agents/, blueprints/, aura_client | Parity + shadow evidence |

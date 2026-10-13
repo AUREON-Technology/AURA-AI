@@ -37,7 +37,7 @@ from ..domain.knowledge import (
 )
 from ..observability.logging import get_logger
 from ..ports.llm import EmbeddingProvider, Reranker
-from ..ports.storage import DocumentStore, VectorPoint, VectorStore
+from ..ports.storage import GLOBAL_OWNER, DocumentStore, VectorPoint, VectorStore
 from .chunking import ChunkingConfig, chunk_with_headings
 from .documents import ExtractedBlock
 from .graph_pipeline import KnowledgeGraphPipeline
@@ -351,7 +351,7 @@ class KnowledgeEngine:
         for chunk in chunks:
             self._lexical.add(chunk.id.value, chunk.content)
             self._lexical_owner[chunk.id.value] = (
-                chunk.owner_id.value if chunk.owner_id else "global"
+                chunk.owner_id.value if chunk.owner_id else GLOBAL_OWNER
             )
 
         if self._graph_pipeline is not None:
@@ -650,7 +650,7 @@ class KnowledgeEngine:
         allowed = {
             chunk_id
             for chunk_id, owner in self._lexical_owner.items()
-            if owner == owner_value or (include_global and owner == "global")
+            if owner == owner_value or (include_global and owner == GLOBAL_OWNER)
         }
         if not allowed:
             return []
@@ -750,7 +750,7 @@ class KnowledgeEngine:
                 index=int(payload.get("chunk_index", 0)),
                 content=content or str(payload.get("content", "")),
                 heading_path=tuple(payload.get("heading_path") or ()),
-                owner_id=UserId(owner) if owner and owner != "global" else None,
+                owner_id=UserId(owner) if owner and owner != GLOBAL_OWNER else None,
                 # Provenance keys have to survive the round trip, not just the filter. Rebuilding
                 # with only the title made `modality` and `page` write-only: the vector store could
                 # filter on them, but a retrieved chunk could not say which page it came from, so
@@ -785,7 +785,7 @@ class KnowledgeEngine:
             for chunk in batch:
                 self._lexical.add(chunk.id.value, chunk.content)
                 self._lexical_owner[chunk.id.value] = (
-                    chunk.owner_id.value if chunk.owner_id else "global"
+                    chunk.owner_id.value if chunk.owner_id else GLOBAL_OWNER
                 )
                 count += 1
         logger.info("lexical index rebuilt", extra={"chunks": count})

@@ -242,7 +242,7 @@ class TestVectorStore:
     async def test_indexes_with_different_identities_do_not_share_points(self, store) -> None:
         """Vectors from one embedding model are meaningless when searched with another."""
         await store.ensure_index(_identity(version=2))
-        await store.upsert(_identity(version=1), [_point("a", (1.0, 0.0, 0.0, 0.0))])
+        await store.upsert(_identity(version=1), [_point("a", (1.0, 0.0, 0.0, 0.0), owner_id="u1")])
 
         assert await store.count(_identity(version=1)) == 1
         assert await store.count(_identity(version=2)) == 0

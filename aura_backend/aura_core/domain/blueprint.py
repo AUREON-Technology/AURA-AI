@@ -520,6 +520,8 @@ class Blueprint:
 _TEMPLATE_KIND: Mapping[ConnectorKind, TemplateKind] = {
     ConnectorKind.POSTGRES: TemplateKind.SQL,
     ConnectorKind.OPENAPI: TemplateKind.HTTP,
+    # CSV/JSON tables run the same SQL templates through the in-memory evaluator (AP10).
+    ConnectorKind.FILES: TemplateKind.SQL,
 }
 
 
