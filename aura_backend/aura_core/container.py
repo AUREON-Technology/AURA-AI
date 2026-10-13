@@ -58,7 +58,12 @@ from .knowledge.reranking import build_reranker
 from .kernel.kernel import AIKernel, KernelDependencies
 from .llm.cache import InMemoryCache, LLMCache
 from .llm.embeddings import HashEmbeddingProvider
-from .llm.registry import admission_limits_from_settings, build_providers
+from .llm.quota import QuotaTracker
+from .llm.registry import (
+    admission_limits_from_settings,
+    build_providers,
+    quota_limits_from_settings,
+)
 from .llm.router import ProviderRouter
 from .agents import build_default_agent_registry
 from .memory.engine import MemoryEngine
@@ -174,6 +179,15 @@ class Container:
             # Admission control (P2.4): per-capacity-group caps/queues from provider config.
             group_limits=admission_limits_from_settings(settings.llm),
             user_max_concurrent=settings.llm.user_max_concurrent_generations,
+            # Quotas (ADR-030 Phase 2): declared per-provider budgets and 429 cooldowns. Daily
+            # counters persist through the shared cache so a restart does not forget them.
+            quota=QuotaTracker(
+                quota_limits_from_settings(settings.llm),
+                wall=lambda: self.clock.now().timestamp(),
+                default_cooldown_s=settings.llm.rate_limit_cooldown_s,
+                store=self.cache_backend,
+                metrics=self.metrics,
+            ),
         )
 
         self.llm_cache = LLMCache(

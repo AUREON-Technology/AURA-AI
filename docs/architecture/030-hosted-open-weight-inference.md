@@ -152,7 +152,8 @@ banning it would have opened a route to closed vendors.
 ## Follow-ups (plan §6)
 
 - **Phase 2:** quota-aware routing (declared RPM/TPM/RPD/TPD, pre-send budget check, a
-  `Retry-After` cooldown separate from the circuit breaker).
+  `Retry-After` cooldown separate from the circuit breaker). **Built and tested, not proven
+  live:** `aura_core/llm/quota.py`, wired through `ProviderRouter` and the container.
 - **Phase 3:** per-provider capability flags and planner sizing.
 - **Phase 4:** data-sensitivity routing. This must land before any deployment where private
   documents are in scope.

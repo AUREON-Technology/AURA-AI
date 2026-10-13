@@ -25,6 +25,7 @@ from ...domain.llm import (
 )
 from ...domain.messages import Conversation, Message, Role, TrustChannel
 from ...ports.llm import HealthStatus
+from ..quota import retry_after_seconds
 
 __all__ = ["BaseProvider", "http_client", "WireMessage", "flatten_conversation"]
 
@@ -185,7 +186,8 @@ class BaseProvider:
                 retryable=True,
                 details={"error_type": name, "operation": operation},
             )
-        status = getattr(getattr(exc, "response", None), "status_code", None)
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
         retryable = status is None or status >= 500 or status == 429
         return ProviderError(
             f"{self.name}: {operation} failed ({name})",
@@ -193,7 +195,12 @@ class BaseProvider:
             model=self._capabilities.model_id,
             cause=exc,
             retryable=retryable,
-            details={"error_type": name, "operation": operation, **({"status": status} if status else {})},
+            details={
+                "error_type": name,
+                "operation": operation,
+                **({"status": status} if status else {}),
+                **_rate_limit_details(status, response),
+            },
         )
 
     async def _raise_for_status(self, response: Any, *, operation: str) -> None:
@@ -211,7 +218,12 @@ class BaseProvider:
             provider=self.name,
             model=self._capabilities.model_id,
             retryable=retryable,
-            details={"status": response.status_code, "body": body, "operation": operation},
+            details={
+                "status": response.status_code,
+                "body": body,
+                "operation": operation,
+                **_rate_limit_details(response.status_code, response),
+            },
         )
 
     # -- helpers -----------------------------------------------------------------------
@@ -248,6 +260,18 @@ class BaseProvider:
 
     def stream(self, request: CompletionRequest) -> AsyncIterator[StreamChunk]:
         raise NotImplementedError
+
+
+def _rate_limit_details(status: int | None, response: Any) -> dict[str, Any]:
+    """For a ``429``, how long the provider asked us to wait (ADR-030 Phase 2).
+
+    Carried in ``ProviderError.details`` so the router can bench the provider until the reset
+    the provider named, instead of guessing or counting the ``429`` as a health failure.
+    """
+    if status != 429:
+        return {}
+    seconds = retry_after_seconds(getattr(response, "headers", None))
+    return {} if seconds is None else {"retry_after_s": round(seconds, 3)}
 
 
 def system_message(content: str) -> Message:

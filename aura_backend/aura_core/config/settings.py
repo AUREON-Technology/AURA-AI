@@ -288,6 +288,17 @@ class ProviderConfig:
     # the existing max_concurrency.
     max_queue: int | None = None
     queue_timeout_s: float | None = None
+    # Quotas (ADR-030 Phase 2) -- AURA_PROVIDER_<NAME>_{RPM,RPD,TPM,TPD}: the provider's published
+    # requests/tokens per minute/day. 0 = undeclared, which never refuses a request; a hosted
+    # free tier declares them so the router skips it *before* sending rather than learning from
+    # a 429. See aura_core/llm/quota.py.
+    rpm: int = 0
+    rpd: int = 0
+    tpm: int = 0
+    tpd: int = 0
+    #: The liveness probe's path under base_url. ``/models`` is universal for OpenAI-compatible
+    #: servers; override it for a hosted API that does not serve it at the chat base URL.
+    health_path: str = "/models"
 
     # Self-hosted runtimes only. There is deliberately no vendor kind here: `ollama` and
     # `openai_compatible` between them cover Ollama, vLLM, llama.cpp's server, LocalAI, TGI and
@@ -308,6 +319,11 @@ class ProviderConfig:
         if self.kind in {"openai_compatible", "ollama"} and not self.base_url:
             raise ConfigurationError(f"provider {self.name!r} must declare a base_url")
         self._validate_model_metadata()
+        if not self.health_path.startswith("/"):
+            raise ConfigurationError(
+                f"provider {self.name!r} health_path must start with '/'",
+                details={"provider": self.name, "health_path": self.health_path},
+            )
         self._reject_external_base_url()
 
     def _validate_model_metadata(self) -> None:
@@ -471,6 +487,11 @@ class ProviderConfig:
                 if _env(f"{p}_QUEUE_TIMEOUT_S")
                 else None
             ),
+            rpm=_int(f"{p}_RPM", 0, minimum=0),
+            rpd=_int(f"{p}_RPD", 0, minimum=0),
+            tpm=_int(f"{p}_TPM", 0, minimum=0),
+            tpd=_int(f"{p}_TPD", 0, minimum=0),
+            health_path=_env(f"{p}_HEALTH_PATH", "/models") or "/models",
         )
 
 
@@ -502,6 +523,9 @@ class LLMSettings:
     #: Concurrent generations one user may hold across all pools (and queue as many more);
     #: 0 disables the quota.
     user_max_concurrent_generations: int = 0
+    #: How long a provider is benched after a ``429`` that names no reset (ADR-030 Phase 2).
+    #: When the response carries ``Retry-After`` or ``x-ratelimit-reset*``, that wins.
+    rate_limit_cooldown_s: float = 30.0
 
     #: Used when nothing is configured, so ``aura_core`` is importable and testable out of the
     #: box. ``validate()`` refuses to let it run in staging/production.
@@ -545,6 +569,7 @@ class LLMSettings:
             user_max_concurrent_generations=_int(
                 "LLM_USER_MAX_CONCURRENT_GENERATIONS", 0, minimum=0
             ),
+            rate_limit_cooldown_s=_float("LLM_RATE_LIMIT_COOLDOWN_S", 30.0, minimum=1.0),
         )
 
     @property

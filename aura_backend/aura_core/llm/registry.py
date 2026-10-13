@@ -25,12 +25,14 @@ from ..domain.errors import ConfigurationError
 from ..domain.llm import Modality, ModelPool, ProviderCapabilities
 from ..ports.llm import LLMProvider
 from .admission import PoolLimits
+from .quota import QuotaLimits
 
 __all__ = [
     "admission_limits_from_settings",
     "build_provider",
     "build_providers",
     "capabilities_from_config",
+    "quota_limits_from_settings",
 ]
 
 
@@ -64,6 +66,22 @@ def capabilities_from_config(config: ProviderConfig) -> ProviderCapabilities:
         model_revision=config.model_revision,
         capacity_group=config.capacity_group,
     )
+
+
+def quota_limits_from_settings(settings: LLMSettings) -> dict[str, QuotaLimits]:
+    """Declared request/token limits per provider (ADR-030 Phase 2).
+
+    Only providers that declare at least one limit appear; the rest are never refused by a
+    budget, only benched by a ``429`` they actually send.
+    """
+    limits: dict[str, QuotaLimits] = {}
+    for config in settings.enabled_providers:
+        declared = QuotaLimits(
+            rpm=config.rpm, rpd=config.rpd, tpm=config.tpm, tpd=config.tpd
+        )
+        if declared.declared:
+            limits[config.name] = declared
+    return limits
 
 
 def admission_limits_from_settings(settings: LLMSettings) -> dict[str, PoolLimits]:
@@ -113,6 +131,7 @@ def build_provider(config: ProviderConfig, *, model_allowlist: Sequence[str] = (
             capabilities=capabilities,
             timeout_s=config.timeout_s,
             health_timeout_s=config.health_timeout_s,
+            health_path=config.health_path,
         )
 
     if config.kind == "ollama":

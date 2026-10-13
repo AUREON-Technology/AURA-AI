@@ -208,6 +208,13 @@ class Metrics:
         self.provider_circuit_opens_total = self._counter(
             "provider_circuit_opens_total", "Circuit breaker openings.", ("provider",)
         )
+        # ADR-030 Phase 2. `reason` is one of a fixed set (rate_limited, quota_rpm, quota_tpm,
+        # quota_rpd, quota_tpd, quota_request_too_large), so the series count stays bounded.
+        self.llm_quota_events_total = self._counter(
+            "llm_quota_events_total",
+            "Requests skipped by a provider's declared quota, and 429 cooldowns applied.",
+            ("provider", "reason"),
+        )
 
         # -- llm admission and latency decomposition (roadmap P2.4/P2.5) ------------------
         # `group` is a capacity group (one serving process); `pool` is the ModelPool the request
