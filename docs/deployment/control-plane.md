@@ -132,12 +132,41 @@ block (lines ~234–394) is the canonical reference — copy names, not VPS-spec
 (hostnames like `postgres`/`redis`/`qdrant` don't resolve on Railway; use the connection strings
 Railway's Postgres/Redis plugins or your external Qdrant provide instead).
 
+### Optional: hosted open-weight providers (ADR-030)
+
+The same slots `deploy/docker-compose.prod.yml` pre-wires (`x-hosted-providers`) apply here,
+set in the Railway dashboard instead of `.env`. The full walkthrough, with example values for
+Groq, Cloudflare Workers AI and OpenRouter, is the "Hosted open-weight providers" block in
+`deploy/.env.example`.
+
+```
+AURA_ALLOW_HOSTED_INFERENCE=true
+AURA_LLM_PROVIDERS=hosted1,hfspace         # or hosted1,local where a local provider exists
+AURA_LLM_ROUTING_POLICY=quality_first
+AURA_PROVIDER_HOSTED1_BASE_URL=<allowlisted hosted base URL>
+AURA_PROVIDER_HOSTED1_MODEL=<open-weight model id>
+AURA_PROVIDER_HOSTED1_API_KEY_ENV=AURA_PROVIDER_HOSTED1_API_KEY
+AURA_PROVIDER_HOSTED1_IS_LOCAL=false
+AURA_PROVIDER_HOSTED1_QUALITY_TIER=3
+AURA_PROVIDER_HOSTED1_RPM=... / _RPD / _TPM / _TPD   # the provider's published free limits
+```
+
+Two differences from the VPS:
+
+- **Railway has no secret files.** Set `AURA_PROVIDER_HOSTED1_API_KEY` itself as a sensitive
+  variable (§4).
+- **The hosted slot is never the fallback for sensitive content.** That content can only go to
+  `hfspace` (rented compute, ceiling `sensitive`), so a deployment whose only non-hosted provider
+  is the Space sends every document, memory and tool-output turn there (ADR-030 §8). If that
+  provider is down, those turns fail rather than going to the hosted slot.
+
 ## 4. Secrets (names only)
 
 Set as Railway environment variables marked "sensitive" in the dashboard, never committed:
 
 `AURA_DATABASE_URL`, `AURA_REDIS_URL`, `AURA_QDRANT_API_KEY`, `AURA_JWT_SECRET`,
-`AURA_SECRETS_ENCRYPTION_KEY`, `AURA_PROVIDER_HFSPACE_API_KEY`, `AURA_GITHUB_OAUTH_CLIENT_SECRET`
+`AURA_SECRETS_ENCRYPTION_KEY`, `AURA_PROVIDER_HFSPACE_API_KEY`, `AURA_PROVIDER_HOSTED<n>_API_KEY`
+(per enabled hosted slot), `AURA_GITHUB_OAUTH_CLIENT_SECRET`
 (if GitHub OAuth connect is enabled), `HF_TOKEN` (only if the embedding model or a gated model
 repo needs authenticated download — this authenticates a weight *download*, never inference,
 per `deploy/spaces/inference-vllm/README.md`).

@@ -236,6 +236,12 @@ retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer work
   routing even starts), so this is a deliberate server-block-wide HTTP/1.1-only tradeoff, not a
   location-level fix — confirmed live and fixed in PR #65 after two other hypotheses (missing
   location block, stale rendered config) were individually ruled out first.
+- **Hosted open-weight slots (ADR-030) are one YAML anchor, `x-hosted-providers`, in both compose
+  files.** It is merged into the gateway *and* every worker. Workers never route to a slot
+  (their generations are unclassified, hence SENSITIVE), but they construct every provider
+  `AURA_LLM_PROVIDERS` lists, so a slot missing from a worker is a boot failure.
+  `tests/unit/test_hosted_provider_compose_plumbing.py` pins the anchor's coverage, prod/dev
+  parity, and the `hosted{1,2,3}_api_key` placeholders `bootstrap-secrets.sh` must create.
 - **Never run a sandbox command with `docker exec`** (`exec_run`, `exec_create`/`exec_start`) in
   `aura_core/adapters/docker_sandbox.py`. The gateway reaches the daemon only through
   `docker-socket-proxy`, which sets `EXEC: "0"` in both compose files, so those calls come back
