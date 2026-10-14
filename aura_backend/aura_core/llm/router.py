@@ -19,6 +19,12 @@ Responsibilities, in order:
    :class:`GenerationTiming` value handed to the metric catalogue, so the next decision is
    better informed and the latency is decomposed on the dashboard.
 
+Data classification (ADR-030 Phase 4, ``llm/sensitivity.py``) is a step-1 filter like any
+capability: a provider whose ``max_data_classification`` is below the request's is excluded
+before ordering, and when that leaves nothing the turn fails rather than sending the content
+somewhere it may not go. Every generation a third-party provider serves is written to the audit
+log with its classification and token counts, never its content.
+
 Quotas (ADR-030 Phase 2, ``llm/quota.py``) touch steps 1 and 4 without being health. A provider
 whose declared budget this request would exceed, or which is cooling down after a ``429``, is
 excluded at planning time and skipped if its budget runs out between planning and sending. A
@@ -53,6 +59,7 @@ from ..domain.llm import (
     FALLBACK_POOLS,
     CompletionRequest,
     CompletionResponse,
+    DataClassification,
     GenerationTiming,
     RoutingPolicy,
     StreamChunk,
@@ -63,6 +70,7 @@ from ..ports.llm import LLMProvider
 from .admission import AdmissionController, AdmissionTicket, PoolLimits
 from .circuit import CircuitBreaker, CircuitState, LatencyTracker, ProviderStats
 from .quota import QuotaReservation, QuotaTracker
+from .sensitivity import effective_classification
 from .workload import effective_workload
 
 __all__ = ["ProviderRouter", "RoutingDecision", "TurnBudget"]
@@ -97,6 +105,9 @@ class RoutingDecision:
     #: than generalist fallbacks -- both surfaced so an operator can see a fallback happening.
     pool: str = "default"
     pool_members: tuple[str, ...] = ()
+    #: The request's effective data classification (ADR-030 §4), so an operator can see why a
+    #: hosted provider was skipped.
+    data_classification: str = ""
 
     @property
     def primary(self) -> str | None:
@@ -159,6 +170,7 @@ class ProviderRouter:
         group_limits: Mapping[str, PoolLimits] | None = None,
         user_max_concurrent: int = 0,
         quota: QuotaTracker | None = None,
+        audit: Any = None,
     ) -> None:
         """``default_max_queue``/``default_queue_timeout_s``/``user_max_concurrent`` default to
         the pre-P2.4 behaviour (unbounded wait, no per-user quota). Each capacity group's slot
@@ -216,6 +228,7 @@ class ProviderRouter:
             )
         self._admission = admission
         self._quota = quota or QuotaTracker(metrics=metrics)
+        self._audit = audit
         self._quota.track(self._providers)
         self._publish_health()
 
@@ -270,6 +283,7 @@ class ProviderRouter:
         request: CompletionRequest,
         provider: LLMProvider,
         hint: WorkloadHint | None = None,
+        classification: DataClassification | None = None,
     ) -> str | None:
         """Return a rejection reason, or ``None`` if the provider qualifies.
 
@@ -290,6 +304,9 @@ class ProviderRouter:
             return "context_window_too_small"
         if request.require_local and not caps.is_local:
             return "not_local"
+        classification = classification or effective_classification(request)
+        if not caps.max_data_classification.permits(classification):
+            return "data_classification"
         if request.needs_tools and not caps.supports_tools:
             return "no_tool_support"
         if request.needs_json and not caps.supports_json_mode:
@@ -351,13 +368,14 @@ class ProviderRouter:
         """
         policy = request.policy or self._default_policy
         hint = effective_workload(request)
+        classification = effective_classification(request)
         wanted = hint.pool
         excluded: dict[str, str] = {}
         members: list[ProviderStats] = []
         fallbacks: list[ProviderStats] = []
 
         for name, provider in self._providers.items():
-            reason = self._capability_filter(request, provider, hint)
+            reason = self._capability_filter(request, provider, hint, classification)
             if reason:
                 excluded[name] = reason
                 continue
@@ -396,6 +414,7 @@ class ProviderRouter:
             excluded=excluded,
             pool=hint.pool_label,
             pool_members=tuple(s.name for s in members),
+            data_classification=classification.value,
         )
 
     @staticmethod
@@ -433,6 +452,58 @@ class ProviderRouter:
 
     def _reserve(self, name: str, request: CompletionRequest) -> tuple[QuotaReservation | None, str | None]:
         return self._quota.try_reserve(name, self._estimated_tokens(request, self._providers[name]))
+
+    @property
+    def restricts_data_classification(self) -> bool:
+        """Whether any provider refuses some content (ADR-030 §4).
+
+        False for every self-hosted deployment, which lets callers skip classification work that
+        could not change a routing decision.
+        """
+        return any(
+            p.capabilities.max_data_classification is not DataClassification.SENSITIVE
+            for p in self._providers.values()
+        )
+
+    async def _audit_third_party(
+        self,
+        name: str,
+        request: CompletionRequest,
+        hint: WorkloadHint,
+        usage: TokenUsage | None,
+        *,
+        streamed: bool,
+    ) -> None:
+        """Record that a third party received this generation. Never its content.
+
+        Best-effort: an audit sink that is down must not fail a generation that already
+        happened. The record is the evidence an operator needs to answer "what left, when, for
+        whom, at what classification", which is the question the opt-in exists to answer.
+        """
+        provider = self._providers[name]
+        if self._audit is None or not provider.capabilities.third_party:
+            return
+        from ..ports.runtime import AuditEvent
+
+        try:
+            await self._audit.record(
+                AuditEvent(
+                    action="llm.third_party_generation",
+                    actor=hint.user_key or "system",
+                    outcome="success",
+                    resource=name,
+                    detail={
+                        "model": provider.capabilities.model_id,
+                        "data_classification": effective_classification(request).value,
+                        "prompt_tokens": usage.prompt_tokens if usage else None,
+                        "completion_tokens": usage.completion_tokens if usage else None,
+                        "streamed": streamed,
+                        "workload": hint.workload.value,
+                    },
+                )
+            )
+        except Exception:  # pragma: no cover - audit must never fail a generation
+            pass
 
     # -- execution ---------------------------------------------------------------------
 
@@ -572,6 +643,9 @@ class ProviderRouter:
                 self._record_success(name, latency_ms=elapsed, ttft_ms=None, response=response)
                 if budget is not None:
                     budget.consume(cost_usd=response.cost_usd)
+                await self._audit_third_party(
+                    name, request, hint, response.usage, streamed=False
+                )
                 if index > 0:
                     # Attribute the fallback to the provider that actually failed, not to the
                     # one that succeeded -- otherwise the metric points at the healthy node.
@@ -738,6 +812,7 @@ class ProviderRouter:
                         else 0.0
                     )
                     budget.consume(cost_usd=cost)
+                await self._audit_third_party(name, request, hint, usage, streamed=True)
                 return
             except asyncio.CancelledError:
                 outcome = "cancelled"
@@ -820,6 +895,8 @@ class ProviderRouter:
             snap["capacity_group"] = self._groups[name]
             snap["admission"] = admission.get(self._groups[name])
             snap["quota"] = self._quota.snapshot(name)
+            snap["max_data_classification"] = caps.max_data_classification.value
+            snap["third_party"] = caps.third_party
             out.append(snap)
         return out
 

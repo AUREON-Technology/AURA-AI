@@ -118,6 +118,60 @@ banning it would have opened a route to closed vendors.
   today, because no compose file passes `AURA_ALLOW_HOSTED_INFERENCE` through yet. That is
   Phase 5, and it must land in `docker-compose.prod.yml` and `docker-compose.dev.yml` together.
 
+### 8. Content is classified, and a hosted provider sees only what its ceiling permits (Phase 4)
+
+Every generation has a `DataClassification`: `public`, `internal` or `sensitive`
+(`domain/llm.py`). Every provider has a ceiling (`ProviderCapabilities.max_data_classification`):
+
+- `sensitive` (everything) for anything self-hosted, including rented compute;
+- `internal` for a hosted open-weight API, unless the operator sets
+  `AURA_PROVIDER_<NAME>_MAX_DATA_CLASSIFICATION`. Raising it to `sensitive` gets its own warning
+  on every boot.
+
+The router excludes a provider whose ceiling is below the request's classification, the same way
+it excludes one without tool support. When that leaves nothing, the turn fails; it never sends
+the content anyway.
+
+Who classifies (`llm/sensitivity.py`):
+
+- **The kernel** opens a scope for each turn.
+  - It starts at `internal`, or at `sensitive` for an Engineer turn or a turn carrying caller
+    evidence (ADR-029).
+  - It escalates to `sensitive` when the turn's context drew on memory, any retrieved document,
+    pinned (CAG) documents, active goals, or a session history that was not clean.
+- **The tool registry** escalates to `sensitive` as soon as any tool returns output. That covers
+  every generation after it, the agentic loop's re-planning included.
+- **Everything else** (session summariser, document extraction, insights, anything added later)
+  has no scope and counts as `sensitive`. Fail closed.
+
+Properties the design relies on:
+
+- **Monotonic.** A scope only ever escalates.
+- **Shared by reference.** Concurrent child tasks see an escalation.
+- **Nested scopes report back.** A delegated sub-turn starts at its parent's level and hands its
+  escalations back when it closes.
+
+Sessions: an earlier answer can quote a document, and the history then carries it into later
+turns.
+
+- After a turn that stayed `internal`, the kernel writes a positive "clean" marker for the
+  session through the `Cache` port. After a `sensitive` turn it deletes the marker.
+- A session with history and no marker is `sensitive`. Losing the marker therefore fails closed.
+- Deployments where no provider restricts content do no marker I/O at all.
+
+Every generation a third-party provider serves is recorded in the audit log (action
+`llm.third_party_generation`). The record holds the provider, model, classification, token
+counts and workload. It never holds content.
+
+Known limits:
+
+- **Coarse classification.** Any retrieved chunk counts, shared or owned, because the index does
+  not record which documents are safe to send.
+- **No per-user opt-in.** Under ADR-019 an install is the tenant, so the provider ceiling is the
+  install-wide setting.
+- **Admin UI.** `router.stats()` exposes each provider's ceiling and `third_party` flag, but the
+  `aura_admin/` dashboard does not display them yet.
+
 ## Consequences
 
 **Gains**
@@ -128,9 +182,10 @@ banning it would have opened a route to closed vendors.
 
 **Costs**
 
-- Prompts, retrieved document content and memory leave infrastructure we control for every turn
-  routed to a hosted provider. Until Phase 4's sensitivity routing exists, **every** turn is
-  eligible once the flag is on. Operators should enable it only where that is acceptable.
+- Whatever a turn sends to a hosted provider leaves infrastructure we control. Phase 4 limits
+  that to INTERNAL content by default: the user's message and an untainted conversation.
+  Documents, memory, goals, tool output, Engineer workspaces and caller evidence stay local
+  unless an operator raises a provider's ceiling (§8).
 - Free quotas are small (≈180 turns/day across all providers, plan §4), and free models are
   withdrawn without notice. Hosted-only deployments are discouraged; keep the local provider as
   the last candidate.
@@ -155,8 +210,7 @@ banning it would have opened a route to closed vendors.
   `Retry-After` cooldown separate from the circuit breaker). **Built and tested, not proven
   live:** `aura_core/llm/quota.py`, wired through `ProviderRouter` and the container.
 - **Phase 3:** per-provider capability flags and planner sizing.
-- **Phase 4:** data-sensitivity routing. This must land before any deployment where private
-  documents are in scope.
+- **Phase 4:** data-sensitivity routing (§8). **Built and tested, not proven live.**
 - **Phase 5:** deploy wiring.
 - **Phase 6:** a VPS evidence report. The phase is not proven until that report exists.
 - Consider also refusing `is_local=true` on `REMOTE_INFERENCE_HOSTS`. That is left out here

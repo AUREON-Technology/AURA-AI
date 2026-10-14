@@ -32,9 +32,11 @@ from ..domain.errors import (
     ValidationError,
 )
 from ..domain.events import ToolInvoked
+from ..domain.llm import DataClassification
 from ..domain.messages import ToolCall, ToolResult
 from ..domain.output_schema import output_errors
 from ..domain.tools import ToolPolicyDecision, ToolSensitivity, ToolSpec
+from ..llm.sensitivity import escalate
 from ..observability.logging import get_logger
 from ..ports.runtime import Tool, ToolContext
 from .policy import ToolPolicy
@@ -383,6 +385,11 @@ class ToolRegistry:
             )
 
         content = str(raw)
+        # ADR-030 Phase 4: tool output is whatever the tool reached -- a calendar, a file, a
+        # connected system -- so from here on this turn's generations are SENSITIVE and stay
+        # off any provider that may not see that. Every tool, not a list of the private ones: a
+        # list is the thing that goes stale when the next tool is added.
+        escalate(DataClassification.SENSITIVE, "tool_output")
         if spec.output_schema is not None:
             # ADR-025: a result that claims a shape is held to it before the model or a UI sees it.
             problems = _output_problems(spec.output_schema, content)
