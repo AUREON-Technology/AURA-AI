@@ -4,7 +4,9 @@
 [ADR-030](../architecture/030-hosted-open-weight-inference.md) (Proposed). Phase 1 (the policy
 layer), Phase 2 (quota-aware routing), Phase 3 (per-provider capability truthfulness), Phase 4
 (data-sensitivity routing) and Phase 5 (deploy wiring, inert until enabled) are **built and
-tested, not deployed**. Phase 6, the live proof, is what remains.
+tested, not deployed**. Phase 6, the live proof, has its tooling built
+(`deploy/scripts/verify-hosted-inference.sh`); the report it writes does not exist yet, so
+nothing here is proven (GAP-064).
 **Date of research:** 2026-10-11. Free-tier terms in this space change monthly (see §2's change
 log); re-verify every number against the provider's own console before acting on it.
 
@@ -362,6 +364,61 @@ Per the repo's standing rule, Phases 1–5 being green proves nothing about live
 - Run once at low load and once deliberately past Groq's TPM to show the cooldown + failover path.
 - Only then flip `AURA_LLM_PROVIDERS` in production, and add a gap-register entry with the
   report as evidence.
+
+**As built (tooling only; the evidence does not exist yet).** The gap is GAP-064.
+
+- `deploy/scripts/verify-hosted-inference.sh` runs on the VPS. It does a preflight:
+  - the gateway is running;
+  - `AURA_ALLOW_HOSTED_INFERENCE` is true *inside* the container;
+  - `AURA_LLM_PROVIDERS` lists a hosted slot;
+  - a warning if a slot's key file still looks like the bootstrap placeholder.
+
+  It then copies `deploy/scripts/verify_hosted_inference.py` into the gateway and runs it there.
+  The report goes to `docs/reports/phase-6-hosted-inference-<UTC timestamp>.txt`, headed with the
+  date, commit and providers. The exit status is the number of failed checks.
+- The driver builds `Container` from the gateway's own settings and secrets. It therefore uses the
+  same providers, Redis and audit sink as production, not a lookalike. Ten checks are scripted:
+
+  | # | Check | What it proves |
+  | --- | --- | --- |
+  | 1 | Configuration | A hosted slot exists, is never `is_local`, has a ceiling below `sensitive`, and a non-hosted fallback exists |
+  | 2 | Health | `router.health()` reaches every hosted provider |
+  | 3 | INTERNAL completion | Served by a hosted provider, with real (non-estimated) usage |
+  | 4 | INTERNAL stream | Streams, and usage arrives on the final chunk |
+  | 5 | SENSITIVE stays local | Excluded from the plan, served locally; a hosted-only router refuses with reason `data_classification`; no audit event |
+  | 6 | Kernel turns | A plain turn is audited as hosted; a turn with caller context is not |
+  | 7 | Audit content | Records carry provider, model, classification and token counts, and never the probe text |
+  | 8 | Quota persisted | The `llm:quota:v1:<name>:day:<date>` counter exists in Redis (SKIP if the slot declares no limits) |
+  | 9 | Declared budget | With `rpm=1`, the second request is skipped as `quota_rpm` before any network call |
+  | 10 | Real 429 | A burst of ~2,000-token prompts crosses the provider's TPM; the provider is benched without a breaker failure, and the next request fails over (SKIP if no 429 arrives within the burst) |
+
+  Check 11 is printed as a manual checklist, not claimed. Chat from the app should feel faster,
+  and Grafana should show `llm_quota_events_total`.
+- Check 10 spends real quota: at most `AURA_VERIFY_429_MAX_REQUESTS` requests, 12 by default.
+  `AURA_VERIFY_SKIP_429=1` leaves it out, but it then reports SKIP and the 429 path stays
+  unproven.
+- `tests/unit/test_phase6_verifier.py` runs the whole driver in the default suite. It goes
+  in-process through the real `Container`, using an echo provider that plays a hosted one and
+  answers 429 after a few large prompts. A rename in the code the driver calls therefore fails CI,
+  not the VPS run. The driver was also dry-run over HTTP against a local mock API. Both show the
+  driver works. Neither is evidence about any real provider.
+
+**Runbook** (dev stack first, per §7):
+
+1. Write the key: `printf '%s' "$KEY" > deploy/secrets/hosted1_api_key`.
+2. In `deploy/.env`, set:
+   - `AURA_ALLOW_HOSTED_INFERENCE=true`
+   - `AURA_LLM_PROVIDERS=hosted1,local`
+   - `AURA_LLM_ROUTING_POLICY=quality_first`
+   - the slot's `AURA_PROVIDER_HOSTED1_*` values, following the `deploy/.env.example` block.
+
+   Then recreate the gateway.
+3. Capture live wire fixtures with `aura_backend/scripts/capture_provider_wire.py` (its docstring
+   has the command). Diff them against the documented fixtures; where they disagree, the capture
+   wins.
+4. Run `bash deploy/scripts/verify-hosted-inference.sh`.
+5. Commit the report and the captures. Mark Phases 1–5 proven here, in ADR-030 and in GAP-064 only
+   if every scripted check passed with check 10 run, not skipped.
 
 ## 7. Rollout order and rollback
 
