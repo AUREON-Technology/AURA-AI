@@ -58,6 +58,8 @@ class SourceType(str, enum.Enum):
     REPOSITORY = "repository"
     CONVERSATION = "conversation"
     INTERNAL = "internal"
+    #: Documents read through an active Track AP connector (AP10); ``uri`` is ``connector:<id>``.
+    CONNECTOR = "connector"
 
     def __str__(self) -> str:
         return self.value

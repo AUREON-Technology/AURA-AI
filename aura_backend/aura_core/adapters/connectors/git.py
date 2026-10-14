@@ -18,7 +18,11 @@ catalog, each relation stamped with where it was declared (``declared_in``, ``fi
 4. **API descriptions** -- the first ``openapi``/``swagger`` file (3.x) -- through the OpenAPI
    connector's own mapping;
 5. **Routes** -- FastAPI and Flask handlers -- as operations, unless the description already has
-   that method and path.
+   that method and path;
+6. **Documentation** -- a root ``README`` and anything under a top-level ``docs/`` or ``doc/``
+   directory in Markdown, plain text, HTML or PDF -- as DOCUMENT artifacts (``document:<path>``),
+   which a blueprint can make project knowledge and the nightly refresh can read through
+   :meth:`GitConnector.list_documents` / :meth:`GitConnector.fetch_document`.
 
 Every artifact cites a ``code_*`` extractor, so the twin holds it below full confidence and marks
 the source ``queryable: false``: code is evidence about the live system and a candidate to match
@@ -35,6 +39,7 @@ credential at all.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import os
 import re
 import time
@@ -42,13 +47,20 @@ from pathlib import Path
 from typing import Any
 
 from ...domain.connectors import ConnectorDescriptor, ConnectorHealth, Credential, HealthStatus
-from ...domain.discovery import ArtifactKind, DiscoveryBudget, DiscoveryIssue, DiscoveryReport, RawArtifact
-from ...domain.errors import DependencyUnavailableError, ValidationError
+from ...domain.discovery import (
+    ArtifactKind,
+    DiscoveryBudget,
+    DiscoveryIssue,
+    DiscoveryReport,
+    RawArtifact,
+    SourceDocument,
+)
+from ...domain.errors import DependencyUnavailableError, NotFoundError, ValidationError
 from ...domain.untrusted import UntrustedText
 from ...observability.logging import get_logger
 from .code_python import alembic_order, read_alembic, read_python_models, resolve_foreign_keys, routes
 from .code_schema import SchemaModel, read_sql
-from .files import resolve_directory
+from .files import DOCUMENT_SUFFIXES, document_name_ok, read_capped, resolve_directory
 from .postgres_catalog import artifacts_from_catalog
 
 __all__ = ["GitConnectorFactory", "GitConnector", "scan_repository", "GIT_EXTRACTOR"]
@@ -59,6 +71,9 @@ GIT_EXTRACTOR = "git"
 SCHEMA_EXTRACTOR = "code_schema"
 OPENAPI_EXTRACTOR = "code_openapi"
 ROUTES_EXTRACTOR = "code_routes"
+DOCUMENTS_EXTRACTOR = "code_documents"
+#: Top-level directories whose documents are the repository's documentation.
+_DOC_DIRS = frozenset({"docs", "doc"})
 
 #: Directories never read: VCS metadata, dependencies, build output, and test code (whose models
 #: and routes are fixtures, not the application).
@@ -93,6 +108,7 @@ class _Scan:
     alembic: list[tuple[str, str]] = dataclasses.field(default_factory=list)
     python: list[tuple[str, str]] = dataclasses.field(default_factory=list)
     specs: list[tuple[str, bytes]] = dataclasses.field(default_factory=list)
+    documents: list[tuple[str, int, str]] = dataclasses.field(default_factory=list)  # path, bytes, sha256
     issues: list[dict[str, str]] = dataclasses.field(default_factory=list)
     truncated: bool = False
 
@@ -114,7 +130,8 @@ def _walk(root: Path) -> _Scan:
             rel = path.relative_to(root).as_posix()
             lower = name.lower()
             is_sql, is_py, is_spec = lower.endswith(".sql"), lower.endswith(".py"), lower in _SPEC_NAMES
-            if not (is_sql or is_py or is_spec):
+            is_doc = documentation_path(rel)
+            if not (is_sql or is_py or is_spec or is_doc):
                 continue
             if path.is_symlink():
                 scan.issues.append(_issue("symlink_skipped", f"file:{rel}"))
@@ -135,6 +152,9 @@ def _walk(root: Path) -> _Scan:
             except OSError:
                 scan.issues.append(_issue("unreadable", f"file:{rel}"))
                 continue
+            if is_doc:
+                scan.documents.append((rel, len(data), hashlib.sha256(data).hexdigest()))
+                continue
             if is_spec:
                 scan.specs.append((rel, data))
                 continue
@@ -150,6 +170,30 @@ def _walk(root: Path) -> _Scan:
             elif any(m in text for m in _MODEL_MARKERS) or _ROUTE_MARKER.search(text):
                 scan.python.append((rel, text))
     return scan
+
+
+def documentation_path(rel: str) -> bool:
+    """A root ``README.*`` or a file under ``docs/``/``doc/``, in a document format, named plainly.
+
+    Every segment must pass the Files connector's name check (no dot-files, no control or
+    direction-changing characters), which is also what keeps ``..`` out of a locator.
+    """
+    parts = rel.split("/")
+    if not parts or "\\" in rel or not all(document_name_ok(part) for part in parts):
+        return False
+    if Path(parts[-1]).suffix.lower() not in DOCUMENT_SUFFIXES:
+        return False
+    if len(parts) == 1:
+        return parts[0].lower().startswith("readme")
+    return parts[0] in _DOC_DIRS
+
+
+def _document_artifact(rel: str, size: int, sha256: str) -> RawArtifact:
+    return RawArtifact(
+        ArtifactKind.DOCUMENT, f"document:{rel}"[:512], UntrustedText(rel[:200]), DOCUMENTS_EXTRACTOR,
+        attributes={"format": DOCUMENT_SUFFIXES[Path(rel).suffix.lower()], "bytes": size, "sha256": sha256,
+                    "file": rel[:512]},
+    )
 
 
 def _app_label(rel: str) -> str:
@@ -224,6 +268,11 @@ def scan_repository(source_id: str, root: Path, budget: DiscoveryBudget) -> Disc
             truncated = truncated or spec_report.truncated
 
     taken = {a.locator for a in artifacts}
+    for rel, size, sha256 in scan.documents:
+        artifact = _document_artifact(rel, size, sha256)
+        if artifact.locator not in taken:
+            taken.add(artifact.locator)
+            artifacts.append(artifact)
     for rel, text in scan.python:
         for route in routes(text, path=rel):
             artifact = _route_artifact(route, rel)
@@ -274,14 +323,58 @@ class GitConnector:
         # No credential is held, and nothing here writes: files are opened read-only.
         return ConnectorHealth(HealthStatus.HEALTHY, "ok", write_capable=False, latency_ms=latency)
 
-    async def discover(self, budget: DiscoveryBudget) -> DiscoveryReport:
+    def _require_directory(self) -> Path:
         directory, reason = self._directory()
         if directory is None:
             raise DependencyUnavailableError(
                 "the repository checkout is not available", dependency="connector",
                 details={"connector": self.descriptor.id, "reason": reason},
             )
-        return scan_repository(self.descriptor.id, directory, budget)
+        return directory
+
+    async def discover(self, budget: DiscoveryBudget) -> DiscoveryReport:
+        return scan_repository(self.descriptor.id, self._require_directory(), budget)
+
+    async def list_documents(self) -> list[str]:
+        """The checkout's documentation, as ``document:<path>`` locators, without reading it."""
+        root = self._require_directory()
+        found: list[str] = []
+        candidates = [p for p in sorted(root.iterdir()) if p.name.lower().startswith("readme")]
+        for top in sorted(_DOC_DIRS):
+            base = root / top
+            if base.is_dir() and not base.is_symlink():
+                for current, dirs, files in os.walk(base, followlinks=False):
+                    dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(current, d)))
+                    candidates.extend(Path(current) / name for name in sorted(files))
+        for path in candidates:
+            rel = path.relative_to(root).as_posix()
+            if path.is_file() and not path.is_symlink() and documentation_path(rel):
+                found.append(f"document:{rel}")
+            if len(found) >= MAX_FILES:
+                break
+        return found
+
+    async def fetch_document(self, locator: str) -> SourceDocument:
+        """One documentation file's bytes. Only a path :meth:`list_documents` could have named."""
+        rel = locator.removeprefix("document:")
+        if not locator.startswith("document:") or not documentation_path(rel):
+            raise ValidationError("not a documentation locator of this checkout", details={"locator": locator[:80]})
+        root = self._require_directory()
+        path = root
+        for part in rel.split("/"):
+            path = path / part
+            if path.is_symlink():
+                raise NotFoundError("the document is not in the checkout",
+                                    details={"connector": self.descriptor.id, "locator": locator[:200]})
+        if not path.is_file():
+            raise NotFoundError("the document is not in the checkout",
+                                details={"connector": self.descriptor.id, "locator": locator[:200]})
+        try:
+            data = read_capped(path)
+        except (OSError, ValueError):
+            raise NotFoundError("the document could not be read",
+                                details={"connector": self.descriptor.id, "locator": locator[:200]}) from None
+        return SourceDocument(rel, DOCUMENT_SUFFIXES[path.suffix.lower()], data, hashlib.sha256(data).hexdigest())
 
     async def aclose(self) -> None:
         return None

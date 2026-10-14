@@ -307,9 +307,17 @@ class Container:
 
         learning = settings.learning
         from .learning.knowledge_refresh import KnowledgeRefreshPipeline
-        from .learning.sources import HttpSourceFetcher
+        from .domain.knowledge import SourceType
+        from .learning.sources import CompositeFetcher, HttpSourceFetcher
 
-        self.source_fetcher = HttpSourceFetcher()
+        # One fetcher per source type (AP10). The web types go over the HTTPS policy; the default
+        # keeps any other type a source was registered with fetched exactly as before. Track AP
+        # adds the `connector` type below, once its connector registry exists.
+        http_fetcher = HttpSourceFetcher()
+        self.source_fetcher = CompositeFetcher(
+            {SourceType.WEB: http_fetcher, SourceType.RSS: http_fetcher, SourceType.API: http_fetcher},
+            default=http_fetcher,
+        )
         self.refresh_pipeline = KnowledgeRefreshPipeline(
             registry=self.sources,
             fetcher=self.source_fetcher,
@@ -516,6 +524,14 @@ class Container:
                 registry=self.connectors, clock=self.clock, audit=self.audit, metrics=self.metrics
             )
         self.twins = self._build_twins(use_postgres=use_postgres)
+        if self.connectors is not None:
+            from .knowledge.documents import extract_document
+            from .learning.sources import ConnectorSourceFetcher
+
+            # Nightly refresh through an active connector: documents only, project-owned, untrusted.
+            self.source_fetcher.register(SourceType.CONNECTOR, ConnectorSourceFetcher(
+                open_connector=self.connectors.open_active, extract=extract_document,
+            ))
         self.capability_planner = None
         self.blueprint_compiler = None
         if self.twins is not None:

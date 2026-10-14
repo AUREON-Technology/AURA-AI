@@ -27,6 +27,7 @@ def _source_payload(source: KnowledgeSource) -> dict[str, Any]:
         "max_bytes_per_document": source.max_bytes_per_document,
         "last_success_at": source.last_success_at.isoformat() if source.last_success_at else None,
         "last_cursor": source.last_cursor,
+        "owner": source.owner_id.value if source.owner_id else None,
     }
 
 
@@ -153,12 +154,27 @@ def register_admin_ops(
         request: Request, payload: SourceCreateRequest, caller=Depends(principal)
     ) -> JSONResponse:
         require_super_admin(caller)
+        source_type = SourceType(payload.type)
+        owner_id = None
+        if source_type is SourceType.CONNECTOR:
+            # AP10: a connector's documents are its project's knowledge, and untrusted text. The
+            # owner is never caller-chosen; the trust tier is capped rather than silently lowered.
+            twins = getattr(container, "twins", None)
+            if twins is None:
+                raise HTTPException(status_code=503, detail="Track AP is not enabled on this install")
+            if payload.trust_tier > int(TrustTier.COMMUNITY):
+                raise ValidationError("connector content is untrusted: trust_tier must be 0 or 1",
+                                      details={"trust_tier": payload.trust_tier})
+            from ..adaptation.knowledge import project_owner
+
+            owner_id = project_owner(twins.project_id)
         source = KnowledgeSource(
             id=payload.id,
-            type=SourceType(payload.type),
+            type=source_type,
             uri=payload.uri,
             enabled=payload.enabled,
             trust_tier=TrustTier(payload.trust_tier),
+            owner_id=owner_id,
             max_documents=payload.max_documents,
             max_bytes_per_document=payload.max_bytes_per_document,
             schedule_cron=payload.schedule_cron,

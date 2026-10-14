@@ -1359,9 +1359,10 @@ gaps:
     component: adaptation/knowledge-and-identity
     severity: P1
     current_state: >-
-      No file, document or Git discovery; CompositeFetcher (aura_core/learning/sources.py:237) is
-      never instantiated; no delegated identity passthrough; Qdrant treats missing owner_id as
-      global (CB-11).
+      Files (tables and documents) and Git (checkout) connectors built; CompositeFetcher wired
+      with connector-backed refresh sources; CB-11 fixed. Still no MySQL/SQL Server discovery, no
+      delegated identity passthrough, no DOCX/Excel, and no dev-stack or real-Qdrant exit run
+      (see the progress entries below).
     target_state: >-
       Files/documents/Git (and MySQL/SQL Server) connectors, project knowledge ingested with an
       explicit owner sentinel, and both identity modes enforced per connector.
@@ -1401,6 +1402,15 @@ gaps:
       targets; it adds same_as evidence only (tests/unit/test_adaptation_git.py). GitHub over the
       API is not offered: a token's write capability cannot be verified. Still open: CompositeFetcher,
       MySQL/SQL Server, identity modes, DOCX/Excel, and the dev-stack and real-Qdrant exit runs.
+    progress_2026_10_14b: >-
+      CompositeFetcher is built in container.py (web/rss/api over the HTTPS policy, HTTPS as the
+      default so existing sources behave as before) and, with Track AP on, a `connector` source
+      type reads documents through an active connector (Files directory, Git checkout README and
+      docs/) for the nightly refresh. Connector sources are forced project-owned (project:<id>) and
+      capped at trust tier COMMUNITY, at registration and again at fetch time; an inactive
+      connector fails the source. End to end through the container over HTTP: approve a Files
+      connector, register the source, refresh, all five pilot documents ingested UNTRUSTED under
+      project:p0 and invisible to persons (tests/unit/test_adaptation_connector_sources.py).
     evidence: docs/reports/ap10-connectors-knowledge.md
 
   - gap_id: GAP-060
