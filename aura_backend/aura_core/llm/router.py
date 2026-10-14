@@ -425,8 +425,11 @@ class ProviderRouter:
         output), so a budget check never admits a request the provider could then bill past it.
         """
         caps = provider.capabilities
-        requested = request.sampling.max_output_tokens or caps.max_output_tokens
-        return request.conversation.approx_tokens() + min(requested, caps.max_output_tokens)
+        return request.conversation.approx_tokens() + caps.output_budget(
+            request.sampling.max_output_tokens,
+            request.preferred_max_output_tokens,
+            request.timeout_s,
+        )
 
     @staticmethod
     def _is_rate_limited(exc: BaseException) -> bool:

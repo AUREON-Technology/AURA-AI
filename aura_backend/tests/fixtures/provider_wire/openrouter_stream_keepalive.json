@@ -1,0 +1,19 @@
+{
+  "provenance": "documented",
+  "note": "SSE comment lines (': OPENROUTER PROCESSING') are keep-alives sent while the upstream is queued; usage arrives in a final chunk with empty choices.",
+  "status": 200,
+  "headers": {"content-type": "text/event-stream"},
+  "sse": [
+    ": OPENROUTER PROCESSING",
+    "",
+    ": OPENROUTER PROCESSING",
+    "",
+    "data: {\"id\":\"gen-0003\",\"provider\":\"Chutes\",\"model\":\"google/gemma-4-31b-it:free\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"},\"finish_reason\":null}]}",
+    "",
+    "data: {\"id\":\"gen-0003\",\"provider\":\"Chutes\",\"model\":\"google/gemma-4-31b-it:free\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" there\"},\"finish_reason\":\"stop\"}]}",
+    "",
+    "data: {\"id\":\"gen-0003\",\"provider\":\"Chutes\",\"model\":\"google/gemma-4-31b-it:free\",\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":2,\"total_tokens\":14}}",
+    "",
+    "data: [DONE]"
+  ]
+}

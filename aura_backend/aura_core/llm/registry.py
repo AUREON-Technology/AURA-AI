@@ -67,6 +67,7 @@ def capabilities_from_config(config: ProviderConfig) -> ProviderCapabilities:
         capacity_group=config.capacity_group,
         max_data_classification=config.data_classification_ceiling,
         third_party=config.third_party,
+        tokens_per_second=config.tokens_per_second,
     )
 
 
@@ -134,6 +135,7 @@ def build_provider(config: ProviderConfig, *, model_allowlist: Sequence[str] = (
             timeout_s=config.timeout_s,
             health_timeout_s=config.health_timeout_s,
             health_path=config.health_path,
+            extra_body=config.extra_body_fields,
         )
 
     if config.kind == "ollama":

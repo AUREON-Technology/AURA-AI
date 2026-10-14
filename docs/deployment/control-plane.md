@@ -149,6 +149,8 @@ AURA_PROVIDER_HOSTED1_API_KEY_ENV=AURA_PROVIDER_HOSTED1_API_KEY
 AURA_PROVIDER_HOSTED1_IS_LOCAL=false
 AURA_PROVIDER_HOSTED1_QUALITY_TIER=3
 AURA_PROVIDER_HOSTED1_RPM=... / _RPD / _TPM / _TPD   # the provider's published free limits
+AURA_PROVIDER_HOSTED1_TOKENS_PER_SECOND=200          # lets the planner use 1200 tokens here
+AURA_PROVIDER_HOSTED1_EXTRA_BODY={"reasoning_effort": "low"}   # reasoning models only
 ```
 
 Two differences from the VPS:

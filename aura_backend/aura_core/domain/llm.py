@@ -184,6 +184,11 @@ _CLASSIFICATION_RANK = {
 }
 
 
+#: Share of a generation's deadline counted as decode time when sizing its output; the rest is
+#: prefill and network. See :meth:`ProviderCapabilities.finishes_within`.
+_DECODE_SHARE_OF_DEADLINE = 0.8
+
+
 _WORKLOAD_PRIORITY = {
     WorkloadClass.INTERACTIVE: 1,
     WorkloadClass.VOICE: 1,
@@ -403,6 +408,12 @@ class ProviderCapabilities:
     #: A third party runs this provider and can read its prompts (a hosted open-weight API).
     #: Each generation it serves is audited with its classification and token counts.
     third_party: bool = False
+    #: Sustained decode throughput, in output tokens per second (ADR-030 Phase 3). 0 means
+    #: undeclared. Used only to decide whether a request's *preferred* output size can finish
+    #: inside its deadline (see :meth:`output_budget`); an undeclared provider never gets more
+    #: than the request's plain ``max_output_tokens``. That is the conservative default the
+    #: CPU-only provider's planner sizing depends on.
+    tokens_per_second: float = 0.0
 
     def __post_init__(self) -> None:
         if self.context_window <= 0:
@@ -421,6 +432,8 @@ class ProviderCapabilities:
             raise ValueError("memory_cost and gpu_cost cannot be negative")
         if not self.modalities:
             raise ValueError("a provider must declare at least one input modality")
+        if self.tokens_per_second < 0:
+            raise ValueError("tokens_per_second cannot be negative")
 
     @property
     def context_capacity(self) -> int:
@@ -472,6 +485,33 @@ class ProviderCapabilities:
             return False
         return self.quality_tier >= min_quality_tier
 
+    def finishes_within(self, output_tokens: int, seconds: float) -> bool:
+        """Whether ``output_tokens`` decode inside ``seconds`` at the declared throughput.
+
+        Only 80% of the deadline is counted as decode time; the rest covers prefill and the
+        network. False when throughput is undeclared: an unknown speed proves nothing.
+        """
+        if self.tokens_per_second <= 0 or seconds <= 0:
+            return False
+        return output_tokens <= self.tokens_per_second * seconds * _DECODE_SHARE_OF_DEADLINE
+
+    def output_budget(
+        self, requested: int | None, preferred: int | None = None, deadline_s: float | None = None
+    ) -> int:
+        """How many output tokens this provider should be asked for.
+
+        ``requested`` is the size that is safe everywhere. ``preferred`` is what the caller
+        would rather have, granted only by a provider whose declared speed finishes it inside
+        ``deadline_s``. Both are capped at ``max_output_tokens``. The payload and the quota
+        estimate both call this one method. The estimate passes the request's own deadline,
+        which is never shorter than the one the provider applies, so it can only over-count
+        what a request may cost, never under-count it.
+        """
+        budget = requested or self.max_output_tokens
+        if preferred and preferred > budget and deadline_s and self.finishes_within(preferred, deadline_s):
+            budget = preferred
+        return min(budget, self.max_output_tokens)
+
     def projected_cost_usd(self, prompt_tokens: int, expected_output_tokens: int) -> float:
         return TokenUsage(prompt_tokens, expected_output_tokens).cost_usd(
             self.cost_per_1k_input_usd, self.cost_per_1k_output_usd
@@ -509,6 +549,12 @@ class CompletionRequest:
     #: Pool/priority/capability hint (P2.3/P2.4). ``None`` falls back to the ambient hint the
     #: kernel sets for the turn (``aura_core.llm.workload``), then to "no requirement".
     workload: WorkloadHint | None = None
+    #: A larger output size the caller would prefer, granted only by a provider that declares a
+    #: decode speed fast enough to finish it inside ``timeout_s`` (ADR-030 Phase 3). The planner
+    #: asks for 700 tokens, which a CPU provider finishes inside 180s, and prefers 1200, which a
+    #: hosted GPU provider finishes in seconds. ``None`` means ``sampling.max_output_tokens``
+    #: everywhere, which is the behaviour before this field existed.
+    preferred_max_output_tokens: int | None = None
     #: How private this request's content is (ADR-030 §4). Combined with the ambient
     #: classification the kernel sets for the turn, and the stricter of the two wins; with
     #: neither, the request counts as ``SENSITIVE``. See ``aura_core.llm.sensitivity``.

@@ -42,6 +42,7 @@ _REQUIRED_SUFFIXES = (
     "KIND", "MODEL", "BASE_URL", "IS_LOCAL", "API_KEY_ENV", "API_KEY_FILE",
     "QUALITY_TIER", "CONTEXT_WINDOW", "MAX_OUTPUT_TOKENS", "TIMEOUT_S", "HEALTH_TIMEOUT_S",
     "MAX_CONCURRENCY", "RPM", "RPD", "TPM", "TPD", "HEALTH_PATH", "MAX_DATA_CLASSIFICATION",
+    "TOKENS_PER_SECOND", "EXTRA_BODY", "SUPPORTS_JSON_MODE", "SUPPORTS_TOOLS",
 )
 _DEFAULT = re.compile(r"^\$\{[A-Z0-9_]+:-(.*)\}$")
 
@@ -172,3 +173,4 @@ def test_the_compose_defaults_build_a_valid_provider(n: int, monkeypatch) -> Non
     assert caps.max_data_classification is DataClassification.INTERNAL
     assert (config.rpm, config.rpd, config.tpm, config.tpd) == (0, 0, 0, 0)
     assert config.health_path == "/models"
+    assert config.tokens_per_second == 0.0 and config.extra_body_fields == {}
