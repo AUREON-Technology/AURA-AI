@@ -57,6 +57,53 @@ def _request(question: str = "What is the leave policy?", **overrides) -> Reason
     return ReasoningRequest(**base)
 
 
+class RecordingRouter(ScriptedRouter):
+    """A ScriptedRouter that keeps every request it was given."""
+
+    def __init__(self, *bodies: str | Exception) -> None:
+        super().__init__(*bodies)
+        self.requests: list = []
+
+    async def complete(self, request):  # noqa: ANN001
+        self.requests.append(request)
+        return await super().complete(request)
+
+
+class TestRequireLocalReachesEveryGeneration:
+    """The engine builds its own CompletionRequests, so it has to carry the caller's constraint.
+
+    Before ``ReasoningRequest.require_local`` existed the kernel's flag was silently dropped on
+    the non-streaming path (the streaming path built its own request and honoured it), so a turn
+    that asked to stay on local providers could be routed to a non-local one.
+    """
+
+    @pytest.mark.parametrize(
+        "strategy",
+        [
+            ReasoningStrategy.DIRECT,
+            ReasoningStrategy.CHAIN_OF_THOUGHT,
+            ReasoningStrategy.SELF_CONSISTENCY,
+            ReasoningStrategy.TREE_OF_THOUGHTS,
+        ],
+    )
+    async def test_every_generation_carries_the_constraint(self, strategy) -> None:
+        router = RecordingRouter("an answer that is long enough to be a thought")
+        engine = ReasoningEngine(router=router, prompts=build_default_registry())
+
+        await engine.reason(_request(strategy=strategy, require_local=True))
+
+        assert router.requests, "the strategy made no generation at all"
+        assert all(r.require_local for r in router.requests)
+
+    async def test_the_default_is_unchanged(self) -> None:
+        router = RecordingRouter("an answer")
+        engine = ReasoningEngine(router=router, prompts=build_default_registry())
+
+        await engine.reason(_request(strategy=ReasoningStrategy.DIRECT))
+
+        assert not any(r.require_local for r in router.requests)
+
+
 class TestStrategySelection:
     def test_an_explicit_strategy_wins(self) -> None:
         engine = _engine()

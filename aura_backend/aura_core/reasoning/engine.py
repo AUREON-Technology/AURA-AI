@@ -54,7 +54,7 @@ _FACTUAL = re.compile(r"^(?:what|who|when|where|which)\b.{0,80}\?$", re.I | re.S
 
 class ReasoningRequest:
     __slots__ = ("question", "conversation", "criteria", "citations", "retrieval_strength",
-                 "strategy", "max_output_tokens")
+                 "strategy", "max_output_tokens", "require_local")
 
     def __init__(
         self,
@@ -66,6 +66,7 @@ class ReasoningRequest:
         retrieval_strength: float | None = None,
         strategy: ReasoningStrategy | None = None,
         max_output_tokens: int = 1024,
+        require_local: bool = False,
     ) -> None:
         self.question = question
         self.conversation = conversation
@@ -74,6 +75,10 @@ class ReasoningRequest:
         self.retrieval_strength = retrieval_strength
         self.strategy = strategy
         self.max_output_tokens = max_output_tokens
+        #: Carried onto every generation this request makes. The engine builds its own
+        #: ``CompletionRequest``s, so before this field existed a turn's ``require_local`` was
+        #: silently dropped on the non-streaming path -- the streaming path honoured it.
+        self.require_local = require_local
 
 
 class ReasoningResult:
@@ -217,6 +222,7 @@ class ReasoningEngine:
             CompletionRequest(
                 conversation=request.conversation,
                 sampling=SamplingParams(temperature=0.3, max_output_tokens=request.max_output_tokens),
+                require_local=request.require_local,
             )
         )
         return ReasoningResult(
@@ -248,6 +254,7 @@ class ReasoningEngine:
             CompletionRequest(
                 conversation=conversation,
                 sampling=SamplingParams(temperature=0.3, max_output_tokens=request.max_output_tokens),
+                require_local=request.require_local,
             )
         )
         return ReasoningResult(
@@ -274,6 +281,7 @@ class ReasoningEngine:
             CompletionRequest(
                 conversation=request.conversation,
                 sampling=SamplingParams(temperature=0.7, max_output_tokens=request.max_output_tokens),
+                require_local=request.require_local,
             )
             for _ in range(self._samples)
         ]
@@ -362,6 +370,7 @@ class ReasoningEngine:
             CompletionRequest(
                 conversation=conversation,
                 sampling=SamplingParams(temperature=0.3, max_output_tokens=request.max_output_tokens),
+                require_local=request.require_local,
             )
         )
         generations += 1
@@ -393,6 +402,7 @@ class ReasoningEngine:
                 CompletionRequest(
                     conversation=Conversation.of([Message.user(prompt)]),
                     sampling=SamplingParams(temperature=0.8, max_output_tokens=400),
+                    require_local=request.require_local,
                 )
             )
         except Exception:
@@ -419,6 +429,7 @@ class ReasoningEngine:
                 CompletionRequest(
                     conversation=Conversation.of([Message.user(rendered.text)]),
                     sampling=SamplingParams(temperature=0.0, max_output_tokens=120),
+                    require_local=request.require_local,
                 )
             )
             payload = _parse_json_object(response.text)
@@ -446,6 +457,7 @@ class ReasoningEngine:
                 CompletionRequest(
                     conversation=Conversation.of([Message.user(rendered.text)]),
                     sampling=SamplingParams(temperature=0.0, max_output_tokens=600),
+                    require_local=request.require_local,
                 )
             )
             payload = _parse_json_object(response.text)

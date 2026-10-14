@@ -1776,6 +1776,7 @@ class AIKernel:
                     retrieval_strength=strength,
                     strategy=request.strategy,
                     max_output_tokens=request.max_output_tokens,
+                    require_local=request.require_local,
                 )
             )
             confidence = result.confidence.score if result.confidence else None
