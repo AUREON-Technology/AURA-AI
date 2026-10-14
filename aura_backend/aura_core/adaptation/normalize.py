@@ -32,7 +32,13 @@ no labeling model the twin is complete, just plainly named (ADR-026). Declared d
 
 Structural facts come from catalog extractors at confidence 1.0. Inferences this module makes
 itself -- events, metrics, name-based references -- carry the ``normalize`` extractor and a
-confidence below 1, so later stages can tell observation from guess. Cross-source entity merges
+confidence below 1, so later stages can tell observation from guess.
+
+Facts read from source code (AP10's Git connector: extractors named ``code_*``) describe what the
+code *declares*, not what the running system holds, so they enter at :data:`CODE_CONFIDENCE`; and a
+source discovered from code alone is marked ``queryable: false`` on its SOURCE element, which is
+what tells the planner (AP5) that nothing can be read from it -- its elements are evidence and
+match candidates, never tool targets. Cross-source entity merges
 and workflows are proposed by :mod:`.matching` and :mod:`.process_mining`, not here.
 """
 
@@ -56,10 +62,18 @@ __all__ = [
     "NORMALIZE_EXTRACTOR",
     "STATUS_NAMES",
     "MAX_OPTIONAL_QUERY",
+    "CODE_CONFIDENCE",
+    "CODE_EXTRACTOR_PREFIX",
 ]
 
 #: Extractor of everything this module infers rather than reads off a catalog.
 NORMALIZE_EXTRACTOR = "normalize"
+#: Extractors that read source code rather than a running system (AP10).
+CODE_EXTRACTOR_PREFIX = "code_"
+#: How far a declaration in code is trusted as a fact about the live system.
+CODE_CONFIDENCE = 0.8
+#: Report extractors whose source can only be described, never queried.
+_DESCRIPTIVE_SOURCES = frozenset({"git"})
 #: Attribute names (as tokens) that hold a lifecycle state. Generic, not domain nouns.
 STATUS_NAMES = frozenset({"status", "state", "stage", "phase", "lifecycle"})
 
@@ -187,6 +201,8 @@ class _SourceMapper:
         return cached
 
     def _prov(self, artifact: RawArtifact, *, confidence: float = 1.0, extractor: str | None = None) -> Provenance:
+        if artifact.extractor.startswith(CODE_EXTRACTOR_PREFIX):
+            confidence = min(confidence, CODE_CONFIDENCE)
         return Provenance(self.src, artifact.locator, extractor or artifact.extractor, confidence, self._hash(artifact))
 
     def _id(self, locator: str) -> str:
@@ -255,6 +271,8 @@ class _SourceMapper:
         if api is not None:
             props["api_version"] = _str_attr(api, "api_version")
             props["openapi"] = _str_attr(api, "openapi")
+        if self.report.extractor in _DESCRIPTIVE_SOURCES:
+            props["queryable"] = False
         evidence = content_digest({"source_id": self.src, "extractor": self.report.extractor})
         self._add(AusmElement(
             self.src, SOURCE_LOCATOR, ElementKind.SOURCE, label,
@@ -591,12 +609,17 @@ class _SourceMapper:
         if not segments:
             return None
         stem = tuple(singular(t) for t in name_tokens(segments[0]))
-        matches = [
-            loc for loc, e in self.out.items()
-            if e.kind is ElementKind.ENTITY and e.properties.get("source_type") == "schema"
-            and tuple(singular(t) for t in name_tokens(e.properties.get("identifier") or "")) == stem
-        ]
-        return matches[0] if len(matches) == 1 else None
+        # An API description's own schemas first; a source that also declares tables (a repository
+        # with both an OpenAPI file and models) falls back to those.
+        for source_type in ("schema", "table"):
+            matches = [
+                loc for loc, e in self.out.items()
+                if e.kind is ElementKind.ENTITY and e.properties.get("source_type") == source_type
+                and tuple(singular(t) for t in name_tokens(e.properties.get("identifier") or "")) == stem
+            ]
+            if matches:
+                return matches[0] if len(matches) == 1 else None
+        return None
 
     # -- inferred candidates --------------------------------------------------------------
 

@@ -3,11 +3,13 @@
 **Phase:** AP10 ([Track AP roadmap](../roadmaps/AURA_ADAPTIVE_PLATFORM_ROADMAP.md)) · **Gap:** GAP-059 ·
 **Backlog:** CB-11, CB-40 · **ADRs:** 020, 021 · **Started:** 2026-10-12 · **Base:** `910949a` (main)
 
-**Maturity reached:** IN PROGRESS. Two slices so far:
+**Maturity reached:** IN PROGRESS. Three slices so far:
 - 2026-10-12: the CB-11 isolation prerequisite, and implementation area 1 for **tabular files**
   (CSV and JSON);
 - 2026-10-13: area 1 for **documents** (Markdown, plain text, HTML, PDF) feeding **project
-  knowledge**, with the cross-identity isolation probe and the pilot retrieval eval.
+  knowledge**, with the cross-identity isolation probe and the pilot retrieval eval;
+- 2026-10-14: area 2, the **Git connector**, reading a repository checkout's SQL, ORM models,
+  migrations, routes and API description as twin evidence, with Git discovery goldens.
 
 The remaining areas are listed under *Not reached*. The exit criteria are not met yet.
 
@@ -174,13 +176,106 @@ agents.
   `onboarding.txt`, `code-of-conduct.pdf` (a one-page text PDF);
 - e-commerce: `shipping-policy.md`, `warranty.html`.
 
+## Area 2: the Git connector (2026-10-14)
+
+`aura_core/adapters/connectors/git.py`, with readers in `code_schema.py` (SQL) and
+`code_python.py` (Python). `ConnectorKind.GIT`, service account, no credential.
+
+**Where the code comes from.**
+- The endpoint is a checkout directory under `AURA_ADAPTATION_GIT_ROOT`: a read-only clone the
+  operator keeps current. Containment is the Files connector's: the same `resolve_directory`
+  check, no symlinks followed, and per-file, per-repository and file-count caps, each recorded as
+  an issue when hit.
+- With the root unset, the kind is not registered.
+- AURA never runs `git` and never imports or executes a line of the repository. Python is read
+  with `ast`, and only literal values are used; a test plants a file-writing statement and
+  confirms it never runs.
+- `tests/`, `node_modules/`, virtualenvs, build output and dot-directories are skipped.
+- **GitHub over the API is not offered.** Activation requires `write_capable is False`, and a
+  GitHub token cannot prove that: a classic `repo` scope always includes write, and fine-grained
+  token permissions cannot be introspected. The way forward is a credential minted with verified
+  read-only permissions (a GitHub App installation token with `contents: read`), which belongs to
+  the identity-modes work.
+
+**What it reads, in order, into one schema model:**
+1. **SQL** (`*.sql`), in natural path order (`V2__…` before `V10__…`):
+   - `CREATE TABLE`, `CREATE TYPE … AS ENUM` (and `ALTER TYPE … ADD VALUE`), simple views;
+   - `ALTER TABLE` (add, drop and rename columns and constraints, and rename the table), `DROP`;
+   - `COMMENT ON`, `GRANT` (including `ALL TABLES IN SCHEMA`), `SET search_path`.
+
+   A tokeniser recognises strings, quoted identifiers, dollar-quoted bodies and comments, so a
+   `;` or `CREATE TABLE` inside one never counts. `ON DELETE SET NULL` is never read as
+   nullability.
+2. **Alembic** migrations, in `down_revision` order, not file order: `create_table`,
+   `add_column`, `drop_table`, `drop_column`, `create_foreign_key` and
+   `create_unique_constraint`.
+3. **ORM models**, for tables no migration declared:
+   - SQLAlchemy: classic `Column` and 2.0 `Mapped[...]`, including annotation-only columns,
+     `__table_args__`, and `Enum` over literals or a local `enum.Enum`;
+   - Django: default and `db_table` names, the implicit `bigint` key, `ForeignKey` and
+     `OneToOneField` as `<name>_id`, and `choices` as a closed value set.
+4. The first **OpenAPI 3.x** file, through the OpenAPI connector's own mapping.
+5. **FastAPI and Flask routes**, as operations: `APIRouter(prefix=)`, `Blueprint(url_prefix=)` and
+   `<int:id>` converters are handled. Where the API description already has the same operation,
+   the description wins.
+
+Types, nullability, defaults and **constraint names follow PostgreSQL's own rules**
+(`numeric(10,2)`, `employees_email_key`, an enum outside `public` printed schema-qualified). The
+result is mapped by the same `artifacts_from_catalog` as a live database, and each table records
+where it was declared (`declared_in`, `file`).
+
+**How the twin and planner use it.** Code says what the system *declares*, not what it holds:
+- Every `code_*` artifact enters the twin at `CODE_CONFIDENCE` (0.8).
+- The Git source's SOURCE element carries `queryable: false`.
+- The planner skips such sources entirely: none of their elements is a target, their roles get
+  no agent, and their permissions widen nothing.
+- What code contributes is evidence and `same_as` proposals. A route like
+  `PATCH /leave-requests/{id}/approve`, matched to the database's `leave_requests` table, counts
+  (at half weight, per the existing process-mining rule) as a transition into `approved`. In the
+  HR pilot that carries `workflow.status` on the **database** column, which a database-only twin
+  left just below the threshold. The tool still reads the database; the approver sees the added
+  capability and its evidence.
+
+**Evidence:** `tests/unit/test_adaptation_git.py` (30 tests).
+- **Parity with the live catalog.** Each pilot's `schema.sql`, read as code, equals
+  `golden/catalog.json`, the catalog PostgreSQL 16 recorded from the same DDL:
+  - **HR:** 6 relations, 33 columns (type, nullability, default, comment), 20 constraints by name,
+    the enum and 11 grants;
+  - **e-commerce:** 8 relations, 37 columns, 22 constraints, the enum and 10 grants, including a
+    quoted mixed-case table, a composite foreign key and an enum in another schema.
+
+  The hostile column comment arrives as text.
+- **Git discovery goldens.** `golden/discovery_git.json` for both pilot repositories
+  (`tests/fixtures/pilots/<pilot>/repo/`), rendered by `scripts/pilot_discovery_goldens.py`. The
+  existing PostgreSQL and OpenAPI goldens are byte-identical after the change.
+  - **HR app** (SQLAlchemy 2.0, Alembic, FastAPI): it declares exactly the database's five base
+    tables, every column name, and the same primary, unique and foreign keys. Two real
+    code-versus-database differences are kept, not smoothed over: `assets.tag` is `varchar(32)` in
+    code but `text` in the database, and `attendance.id` is `integer` in code but `bigint` in the
+    database.
+  - **Shop app** (Django, Flask, an OpenAPI file) exercises the Django conventions and
+    description-over-route precedence.
+- **Twin and plan.**
+  - Code elements stay at or below 0.8 confidence and database elements at 1.0.
+  - `same_as` is proposed for every one of the five HR tables against its model.
+  - Routes attach to the entity they serve.
+  - Adding the repository never targets it and never removes a capability or an agent from the
+    database-only plan, for either pilot. A mutation check confirmed both pilots fail without the
+    planner rule.
+  - A blueprint compiles with the repository attached, and every read template targets the
+    database.
+
 ## Not reached (rest of AP10)
 
 1. **DOCX and Excel.** Both need a parser the lockfile does not carry (`python-docx`, `openpyxl`).
    For now they are discovered as `unsupported_format` issues.
-2. **Git connector:** ORM models, migrations, routes and API docs → AUSM candidates.
+2. **Git beyond a mounted checkout:**
+   - GitHub over the API (blocked on verifiable read-only credentials, see Area 2);
+   - JavaScript/TypeScript ORMs and routes (Prisma, TypeORM, Express);
+   - Django URL confs;
+   - prefixes added in another file (`include_router(prefix=)`, `register_blueprint`).
 3. **`CompositeFetcher`** wired in `container.py`.
-4. **MySQL and SQL Server** discovery adapters.
+4. **MySQL and SQL Server** discovery adapters. The SQL reader is PostgreSQL-dialect only.
 5. **Identity modes:**
    - service-account role → policy mapping;
    - delegated OIDC passthrough;
@@ -192,7 +287,9 @@ agents.
    - the retrieval eval with the deployed embedding model on the dev stack;
    - the isolation probe against a real Qdrant server (the in-process mode evaluates the same
      filter objects, but it is not the server);
-   - Git discovery goldens.
+   - a Git connector registered and discovered through the approval flow on the dev stack.
+     The goldens are recorded, but the kind is off until `AURA_ADAPTATION_GIT_ROOT` is set and a
+     checkout is mounted.
 
 ## Residual risks
 
@@ -212,3 +309,15 @@ agents.
   documents are ingested but no generated agent holds the tool. It is not a leak, just unused.
 - Foreign keys are inferred only from the `_id` naming convention. Other relationships stay
   undiscovered rather than guessed.
+- **A repository can only add evidence, but evidence is not nothing.** A hostile repository cannot
+  create a target, an agent or a grant. It *can*, through `same_as` and process mining, raise a
+  database workflow's confidence enough to carry a read capability (see Area 2). That capability
+  is still a read of data the twin already exposes, it is listed on the approval request with its
+  evidence, and the repository is chosen by the Super Admin who registers the connector.
+- **The checkout is a snapshot.** AURA reads whatever is in the mounted directory. Keeping it
+  current, and noticing that it changed, are the operator's job until AP11 drift detection.
+- **Code readers cover the common forms, not every form.**
+  - Anything computed at runtime is invisible: a table name from a variable, a column type from a
+    function call. It is skipped or recorded as an issue, never guessed.
+  - Django's implicit key is assumed `bigint` (`BigAutoField`), and `DateTimeField` time-zone
+    aware. Both are stated defaults of a candidate schema.

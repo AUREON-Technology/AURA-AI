@@ -804,6 +804,7 @@ class Container:
             return None
         from .adaptation.connectors import ConnectorRegistry
         from .adapters.connectors.files import FilesConnectorFactory
+        from .adapters.connectors.git import GitConnectorFactory
         from .adapters.connectors.openapi import OpenApiConnectorFactory
         from .adapters.connectors.postgres import PostgresConnectorFactory
         from .adapters.credential_vault import (
@@ -836,6 +837,9 @@ class Container:
         if self.settings.adaptation.files_root:
             # Offered only with an operator-chosen root: no root, no readable path on this host.
             factories[ConnectorKind.FILES] = FilesConnectorFactory(root=self.settings.adaptation.files_root)
+        if self.settings.adaptation.git_root:
+            # Read-only checkouts under an operator-chosen root (AP10): discovery only, never run.
+            factories[ConnectorKind.GIT] = GitConnectorFactory(root=self.settings.adaptation.git_root)
         return ConnectorRegistry(
             store=store,
             vault=vault,
