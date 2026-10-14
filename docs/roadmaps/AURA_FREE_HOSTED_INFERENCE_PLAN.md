@@ -2,8 +2,8 @@
 
 **Status:** Proposed. Step 0 is drafted as
 [ADR-030](../architecture/030-hosted-open-weight-inference.md) (Proposed). Phase 1 (the policy
-layer) and Phase 2 (quota-aware routing) are **built and tested, not deployed**. Phases 3–6 are
-not started.
+layer), Phase 2 (quota-aware routing) and Phase 4 (data-sensitivity routing) are **built and
+tested, not deployed**. Phases 3, 5 and 6 are not started.
 **Date of research:** 2026-10-11. Free-tier terms in this space change monthly (see §2's change
 log); re-verify every number against the provider's own console before acting on it.
 
@@ -264,6 +264,22 @@ Hosted inference changes who sees AURA's DATA channel. Minimum controls:
 
 Exit: tests proving a `sensitive` turn never reaches a hosted provider even when it is the only
 healthy one.
+
+**As built** (`aura_core/llm/sensitivity.py`, `tests/unit/test_llm_data_classification.py`;
+ADR-030 §8). It differs from the list above in four places:
+
+- **The filter keys on a provider ceiling, not on `is_local`.** A rented-compute provider (your
+  weights on a Space) is not local, but it is not a third party either. Keying on `is_local`
+  would have quietly broken the existing `local,hfspace` failover topology.
+- **Unclassified generations count as `sensitive`.** That covers the session summariser,
+  document extraction, insights and anything added later. Background work over user data
+  therefore stays local without each caller having to remember to say so.
+- **Tool output escalates the turn** from inside `ToolRegistry.execute`, so the agentic loop's
+  later generations are covered too.
+- **The "per-tenant toggle" is the per-provider ceiling.** Under ADR-019 an install is the
+  tenant. It defaults to `internal` and is raised with
+  `AURA_PROVIDER_<NAME>_MAX_DATA_CLASSIFICATION`. The `aura_admin/` dashboard does not show it
+  yet; `router.stats()` does.
 
 ### Phase 5 — Deployment wiring
 

@@ -188,6 +188,8 @@ class Container:
                 store=self.cache_backend,
                 metrics=self.metrics,
             ),
+            # ADR-030 Phase 4: every generation a third-party provider serves is audited.
+            audit=self.audit,
         )
 
         self.llm_cache = LLMCache(
@@ -544,6 +546,7 @@ class Container:
                 engineer_runs=self.engineer_runs,
                 episodic=self.episodic,
                 cache=self.llm_cache,
+                session_marks=self.cache_backend,
                 metrics=self.metrics,
                 event_bus=self.events,
                 telemetry_sink=self.telemetry_sink,

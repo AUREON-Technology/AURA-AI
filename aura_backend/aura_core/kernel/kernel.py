@@ -51,6 +51,7 @@ from ..domain.knowledge import RetrievalResult
 from ..domain.llm import (
     CompletionRequest,
     CompletionResponse,
+    DataClassification,
     RoutingPolicy,
     SamplingParams,
     TokenUsage,
@@ -74,6 +75,7 @@ from ..domain.telemetry import (
 from ..execution.agentic_loop import AgentRunContext
 from ..execution.engine import ExecutionOutcome, StepEvent
 from ..llm.router import TurnBudget
+from ..llm.sensitivity import DataScope, data_scope, escalate
 from ..llm.workload import workload_for_turn, workload_scope
 from ..observability.logging import LogContext, get_logger
 from ..ports.runtime import ToolContext
@@ -93,6 +95,11 @@ _URL_RE = re.compile(r"https?://\S+")
 # `github_create_branch`'s result text ends "... (<sha[:7]>)" -- best-effort extraction, not a
 # guarantee every tool's prose embeds a SHA in this exact shape.
 _SHA_RE = re.compile(r"\(([0-9a-f]{7,40})\)\s*$")
+#: ADR-030 Phase 4: a session is "clean" while none of its turns was SENSITIVE. Stored as a
+#: positive marker so that losing it (eviction, a Redis restart) fails *closed*: a session whose
+#: marker is missing but which has history is treated as having been sensitive.
+_SESSION_CLEAN_KEY = "llm:session-clean:v1:{user}:{session}"
+_SESSION_CLEAN_TTL_S = 30 * 86400
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +225,10 @@ class KernelDependencies:
     engineer_runs: Any = None
     episodic: Any = None
     cache: Any = None
+    #: Key/value store (the ``Cache`` port, not ``LLMCache``) for ADR-030 Phase 4's per-session
+    #: "clean" marker. ``None`` means every session with history counts as having been
+    #: SENSITIVE once any provider restricts content -- fail closed.
+    session_marks: Any = None
     metrics: Any = None
     event_bus: Any = None
     telemetry_sink: Any = None
@@ -259,8 +270,12 @@ class AIKernel:
                 )
             )
             try:
-                with workload_scope(self._workload_hint(request)):
-                    return await self._run_turn(request, correlation, turn_id, started)
+                with workload_scope(self._workload_hint(request)), data_scope(
+                    *self._baseline_classification(request)
+                ) as scope:
+                    result = await self._run_turn(request, correlation, turn_id, started)
+                    await self._remember_session_classification(request, scope)
+                    return result
             except UserConcurrencyLimitError as exc:
                 return self._error_result(
                     request, correlation, turn_id, started, exc, TurnOutcome.RATE_LIMITED
@@ -320,6 +335,7 @@ class AIKernel:
             request, message
         )
         timings["memory"] = timings["retrieval"] = (time.perf_counter() - stage_start) * 1000.0
+        await self._classify_context(request, memories, retrieval, history, goals, cag_prefix)
 
         # 5. Guard retrieved content -------------------------------------------------
         tainted = False
@@ -560,7 +576,7 @@ class AIKernel:
 
         with LogContext(correlation_id=correlation.value, route=request.route), workload_scope(
             self._workload_hint(request)
-        ):
+        ), data_scope(*self._baseline_classification(request)) as scope:
             try:
                 deps = self._deps
                 resolved_spec = self._resolve_agent(request)
@@ -574,6 +590,9 @@ class AIKernel:
 
                 memories, retrieval, history, history_summary, goals, cag_prefix = await self._gather_context(
                     request, message
+                )
+                await self._classify_context(
+                    request, memories, retrieval, history, goals, cag_prefix
                 )
 
                 tainted = False
@@ -771,6 +790,7 @@ class AIKernel:
                 searched_empty = bool(
                     retrieval is not None and retrieval.is_empty_but_searched
                 )
+                await self._remember_session_classification(request, scope)
                 yield {
                     "type": "done",
                     "tainted": tainted,
@@ -896,6 +916,96 @@ class AIKernel:
             recall(), retrieve(), load_history(), load_goals(), load_cag()
         )
         return memories, retrieval, history, summary, goals, cag_prefix
+
+    # -- data classification (ADR-030 Phase 4) ----------------------------------------------
+
+    def _baseline_classification(self, request: TurnRequest) -> tuple[DataClassification, str]:
+        """What a turn is before any context is gathered.
+
+        An Engineer turn works on a repository checkout and a turn carrying caller evidence
+        works on a calling system's data, so both start SENSITIVE. Everything else starts at
+        INTERNAL, the user's own words, and is escalated by :meth:`_classify_context` and by
+        tool output.
+        """
+        if self._workload_hint(request).workload is WorkloadClass.ENGINEER:
+            return DataClassification.SENSITIVE, "engineer_workspace"
+        if request.caller_context:
+            return DataClassification.SENSITIVE, "caller_evidence"
+        return DataClassification.INTERNAL, ""
+
+    async def _classify_context(
+        self,
+        request: TurnRequest,
+        memories: Sequence[MemoryHit],
+        retrieval: RetrievalResult | None,
+        history: Conversation,
+        goals: Sequence[GoalSnapshot],
+        cag_prefix: Any,
+    ) -> None:
+        """Escalate the turn for every private source its context drew on.
+
+        Deliberately coarse: any retrieved chunk counts, shared or owned, because "this
+        document was safe to send" is not something the index records. An operator who wants
+        documents to reach a hosted provider raises that provider's ceiling instead.
+        """
+        if memories:
+            escalate(DataClassification.SENSITIVE, "memory")
+        if retrieval is not None and retrieval.chunks:
+            escalate(DataClassification.SENSITIVE, "documents")
+        if cag_prefix:
+            escalate(DataClassification.SENSITIVE, "pinned_documents")
+        if goals:
+            escalate(DataClassification.SENSITIVE, "goals")
+        if len(history) and not await self._session_was_clean(request):
+            # An earlier turn's answer may quote a document or a memory; the history carries it.
+            escalate(DataClassification.SENSITIVE, "session_history")
+
+    def _restricts_data(self) -> bool:
+        return bool(getattr(self._deps.router, "restricts_data_classification", False))
+
+    def _session_clean_key(self, request: TurnRequest) -> str | None:
+        if request.session_id is None:
+            return None
+        return _SESSION_CLEAN_KEY.format(
+            user=request.user_id.value, session=request.session_id.value
+        )
+
+    async def _session_was_clean(self, request: TurnRequest) -> bool:
+        """Whether every earlier turn of this session stayed below SENSITIVE.
+
+        Answers True without any I/O when no provider restricts content (every self-hosted
+        deployment), because then the answer cannot change a routing decision. Otherwise a
+        missing marker or an unreachable cache means False -- fail closed.
+        """
+        if not self._restricts_data():
+            return True
+        key = self._session_clean_key(request)
+        cache = self._deps.session_marks
+        if key is None or cache is None:
+            return False
+        try:
+            return await cache.get(key) is not None
+        except Exception:
+            return False
+
+    async def _remember_session_classification(
+        self, request: TurnRequest, scope: DataScope
+    ) -> None:
+        """Mark the session clean after an INTERNAL turn, or unmark it after a SENSITIVE one."""
+        if not self._restricts_data():
+            return
+        key = self._session_clean_key(request)
+        cache = self._deps.session_marks
+        if key is None or cache is None:
+            return
+        try:
+            if scope.level.rank <= DataClassification.INTERNAL.rank:
+                await cache.set(key, b"1", ttl_s=_SESSION_CLEAN_TTL_S)
+            else:
+                await cache.delete(key)
+        except Exception:
+            # A marker that failed to be written reads as "not clean" next turn: safe.
+            logger.warning("session classification marker update failed")
 
     def _workload_hint(self, request: TurnRequest) -> WorkloadHint:
         """The ambient admission/routing hint for this turn's generations (P2.3/P2.4).

@@ -157,7 +157,9 @@ sanctioned exception is ADR-030 (Proposed). Hosted *open-weight* APIs (Groq, Wor
 OpenRouter, …) are a third host category in `aura_core/config/external_inference.py`. They are
 refused unless `AURA_ALLOW_HOSTED_INFERENCE=true`, only accept open-weight model IDs, can never be
 `is_local`, and may never be named in Python source. Closed-model vendors stay banned under
-either opt-in flag.
+either opt-in flag. Every generation also has a data classification (`llm/sensitivity.py`). A
+hosted provider receives only `internal` content by default. An unclassified generation counts
+as `sensitive`, so any new background caller of the router stays local unless it opts in.
 
 **`AIKernel` (`aura_core/kernel/kernel.py`) is the only execution path.** It plans, then executes
 tools, then generates. A model's own emitted `tool_calls` frames are informational only — they do

@@ -26,7 +26,7 @@ from typing import ClassVar, Any, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from ..domain.errors import ConfigurationError
-from ..domain.llm import Modality, ModelPool, RoutingPolicy
+from ..domain.llm import DataClassification, Modality, ModelPool, RoutingPolicy
 from .external_inference import (
     is_external_inference_host,
     is_hosted_open_weight_host,
@@ -299,6 +299,10 @@ class ProviderConfig:
     #: The liveness probe's path under base_url. ``/models`` is universal for OpenAI-compatible
     #: servers; override it for a hosted API that does not serve it at the chat base URL.
     health_path: str = "/models"
+    #: The most private content this provider may receive -- public | internal | sensitive
+    #: (ADR-030 §4). Empty = the category default: ``internal`` for a hosted open-weight API,
+    #: ``sensitive`` (everything) for anything else. AURA_PROVIDER_<NAME>_MAX_DATA_CLASSIFICATION.
+    max_data_classification: str = ""
 
     # Self-hosted runtimes only. There is deliberately no vendor kind here: `ollama` and
     # `openai_compatible` between them cover Ollama, vLLM, llama.cpp's server, LocalAI, TGI and
@@ -323,6 +327,13 @@ class ProviderConfig:
             raise ConfigurationError(
                 f"provider {self.name!r} health_path must start with '/'",
                 details={"provider": self.name, "health_path": self.health_path},
+            )
+        known_classes = {c.value for c in DataClassification}
+        if self.max_data_classification and self.max_data_classification not in known_classes:
+            raise ConfigurationError(
+                f"provider {self.name!r} has unknown max_data_classification "
+                f"{self.max_data_classification!r}",
+                details={"supported": sorted(known_classes)},
             )
         self._reject_external_base_url()
 
@@ -400,6 +411,20 @@ class ProviderConfig:
                 extra={"provider": self.name, "host": host, "matched": gated},
             )
 
+    @property
+    def third_party(self) -> bool:
+        """Whether a third party runs this provider and can read its prompts (ADR-030)."""
+        if not self.base_url:
+            return False
+        return is_hosted_open_weight_host(urlsplit(self.base_url).hostname or "") is not None
+
+    @property
+    def data_classification_ceiling(self) -> DataClassification:
+        """The declared ceiling, or the category default when none is declared."""
+        if self.max_data_classification:
+            return DataClassification(self.max_data_classification)
+        return DataClassification.INTERNAL if self.third_party else DataClassification.SENSITIVE
+
     def _gate_hosted_open_weight(self, host: str, matched: str) -> None:
         """ADR-030: a hosted open-weight API is allowed only on purpose, and only for open weights.
 
@@ -435,8 +460,17 @@ class ProviderConfig:
         logger.warning(
             "hosted open-weight inference permitted by AURA_ALLOW_HOSTED_INFERENCE; prompts and "
             "retrieved content are sent to this provider",
-            extra=details,
+            extra={**details, "max_data_classification": self.data_classification_ceiling.value},
         )
+        if self.data_classification_ceiling is DataClassification.SENSITIVE:
+            # The default keeps documents, memory, tool output and Engineer workspaces local.
+            # Raising it is allowed, and is the one setting that sends all of them out, so it
+            # gets its own line rather than hiding in the one above.
+            logger.warning(
+                "hosted provider may receive SENSITIVE content (documents, memory, tool output, "
+                "Engineer workspaces): AURA_PROVIDER_<NAME>_MAX_DATA_CLASSIFICATION=sensitive",
+                extra=details,
+            )
 
     @property
     def api_key(self) -> str:
@@ -492,6 +526,7 @@ class ProviderConfig:
             tpm=_int(f"{p}_TPM", 0, minimum=0),
             tpd=_int(f"{p}_TPD", 0, minimum=0),
             health_path=_env(f"{p}_HEALTH_PATH", "/models") or "/models",
+            max_data_classification=(_env(f"{p}_MAX_DATA_CLASSIFICATION", "") or "").lower(),
         )
 
 

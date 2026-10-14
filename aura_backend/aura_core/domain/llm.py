@@ -29,6 +29,7 @@ __all__ = [
     "WorkloadClass",
     "WorkloadHint",
     "GenerationTiming",
+    "DataClassification",
     "GENERATIVE_POOLS",
     "FALLBACK_POOLS",
 ]
@@ -143,6 +144,44 @@ class WorkloadClass(str, enum.Enum):
     @property
     def priority(self) -> int:
         return _WORKLOAD_PRIORITY[self]
+
+
+class DataClassification(str, enum.Enum):
+    """How private the content of a generation is, which decides who may see it (ADR-030 §4).
+
+    Ordered: a provider that accepts ``INTERNAL`` also accepts ``PUBLIC``, never ``SENSITIVE``.
+    Self-hosted providers accept everything; a hosted open-weight provider accepts ``INTERNAL``
+    unless the operator raises it.
+
+    * ``PUBLIC`` -- nothing of the user's in the prompt (evaluation fixtures, canned text).
+    * ``INTERNAL`` -- the user's own message and an untainted conversation.
+    * ``SENSITIVE`` -- anything drawn from what the user stored or connected: documents, memory,
+      goals, tool output, Engineer workspaces, a calling system's evidence. Also what an
+      unclassified generation is treated as, so background work over user data stays local by
+      default.
+    """
+
+    PUBLIC = "public"
+    INTERNAL = "internal"
+    SENSITIVE = "sensitive"
+
+    def __str__(self) -> str:
+        return self.value
+
+    @property
+    def rank(self) -> int:
+        return _CLASSIFICATION_RANK[self]
+
+    def permits(self, content: "DataClassification") -> bool:
+        """Whether a provider whose ceiling is ``self`` may receive ``content``."""
+        return content.rank <= self.rank
+
+
+_CLASSIFICATION_RANK = {
+    DataClassification.PUBLIC: 0,
+    DataClassification.INTERNAL: 1,
+    DataClassification.SENSITIVE: 2,
+}
 
 
 _WORKLOAD_PRIORITY = {
@@ -358,6 +397,12 @@ class ProviderCapabilities:
     #: Providers sharing a group share one admission queue and concurrency cap -- two model
     #: names served by the same Ollama process are one capacity, not two. Empty = own group.
     capacity_group: str = ""
+    #: The most private content this provider may receive (ADR-030 §4). Defaults to everything:
+    #: a self-hosted provider sees what the user stored by design.
+    max_data_classification: DataClassification = DataClassification.SENSITIVE
+    #: A third party runs this provider and can read its prompts (a hosted open-weight API).
+    #: Each generation it serves is audited with its classification and token counts.
+    third_party: bool = False
 
     def __post_init__(self) -> None:
         if self.context_window <= 0:
@@ -464,6 +509,10 @@ class CompletionRequest:
     #: Pool/priority/capability hint (P2.3/P2.4). ``None`` falls back to the ambient hint the
     #: kernel sets for the turn (``aura_core.llm.workload``), then to "no requirement".
     workload: WorkloadHint | None = None
+    #: How private this request's content is (ADR-030 §4). Combined with the ambient
+    #: classification the kernel sets for the turn, and the stricter of the two wins; with
+    #: neither, the request counts as ``SENSITIVE``. See ``aura_core.llm.sensitivity``.
+    data_classification: DataClassification | None = None
 
     def with_conversation(self, conversation: Conversation) -> "CompletionRequest":
         return replace(self, conversation=conversation)

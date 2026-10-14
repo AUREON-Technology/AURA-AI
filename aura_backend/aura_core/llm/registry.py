@@ -65,6 +65,8 @@ def capabilities_from_config(config: ProviderConfig) -> ProviderCapabilities:
         languages=config.languages,
         model_revision=config.model_revision,
         capacity_group=config.capacity_group,
+        max_data_classification=config.data_classification_ceiling,
+        third_party=config.third_party,
     )
 
 
