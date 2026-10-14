@@ -1156,6 +1156,9 @@ class AdaptationSettings:
     #: endpoint is a sub-directory of it; empty disables the ``files`` kind entirely, so no path on
     #: this host is readable through a connector unless an operator chose this root.
     files_root: str = ""
+    #: Directory under which ``git`` connectors may read repository checkouts (AP10), on the same
+    #: terms: each connector's endpoint is a sub-directory; empty disables the ``git`` kind.
+    git_root: str = ""
 
     @classmethod
     def from_env(cls) -> "AdaptationSettings":
@@ -1170,6 +1173,7 @@ class AdaptationSettings:
             labeler_batch_size=max(1, min(64, _int("ADAPTATION_LABELER_BATCH_SIZE", 8))),
             labeler_timeout_s=max(5.0, _float("ADAPTATION_LABELER_TIMEOUT_S", 180.0)),
             files_root=(_env("ADAPTATION_FILES_ROOT", "") or "").strip(),
+            git_root=(_env("ADAPTATION_GIT_ROOT", "") or "").strip(),
         )
 
 

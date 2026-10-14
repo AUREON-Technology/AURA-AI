@@ -19,6 +19,11 @@ was made from.
    PERMISSIONs reach, extended through proposed ``same_as`` matches to the same entity in another
    source.
 
+A source whose SOURCE element says ``queryable: false`` -- one described from code (AP10) -- takes
+no part: its elements are never targets, its roles never get agents, and its permissions never
+widen another source's role. What it contributes is evidence in the twin and ``same_as``
+proposals, not capability.
+
 There is no domain knowledge anywhere in this module or the capability files
 (``test_capabilities_are_domain_agnostic``): the same primitives plan every connected system.
 """
@@ -96,6 +101,9 @@ class CapabilityRegistry:
 class _Index:
     def __init__(self, twin: ProjectTwin) -> None:
         self.twin = twin
+        #: Sources nothing can be read from: their elements are not planned on.
+        self.descriptive = frozenset(e.source_id for e in twin.of_kind(ElementKind.SOURCE)
+                                     if e.properties.get("queryable") is False)
         self.by_id = {e.id: e for e in twin.elements}
         self.children: dict[str, list[AusmElement]] = {}
         self.referrers: dict[tuple[str, str], list[AusmElement]] = {}
@@ -138,7 +146,8 @@ def plan_capabilities(twin: ProjectTwin, registry: CapabilityRegistry, *,
     selected: list[PlannedCapability] = []
     rejected: list[RejectedCapability] = []
     for spec in registry:
-        candidates = [e for e in twin.of_kind(spec.target) if spec.target_filter.matches(e)]
+        candidates = [e for e in twin.of_kind(spec.target)
+                      if e.source_id not in index.descriptive and spec.target_filter.matches(e)]
         if not candidates:
             rejected.append(RejectedCapability(spec.id, "", ("no_candidates",)))
             continue
@@ -212,6 +221,8 @@ def _readers(index: _Index) -> dict[str, set[str]]:
     """entity id -> ROLE ids with a read PERMISSION on it (directly or through ``same_as``)."""
     direct: dict[str, set[str]] = {}
     for permission in index.twin.of_kind(ElementKind.PERMISSION):
+        if permission.source_id in index.descriptive:
+            continue
         if permission.properties.get("access") in _READ_ACCESS:
             direct.setdefault(permission.refs["target"], set()).add(permission.refs["role"])
     matches = _same_as(index)
@@ -229,7 +240,7 @@ def _slug(text: str) -> str:
 
 def _agents(selected: Sequence[PlannedCapability], index: _Index, readers: dict[str, set[str]]) -> list[AgentProposal]:
     entity_of = {s.key: index.entity_of(index.by_id[s.target]) for s in selected}
-    sources = sorted(e.id for e in index.twin.of_kind(ElementKind.SOURCE))
+    sources = sorted(e.id for e in index.twin.of_kind(ElementKind.SOURCE) if e.source_id not in index.descriptive)
     agents = [AgentProposal(
         id="agent.project", label=UntrustedText("Project assistant"), role=None,
         capabilities=tuple(s.key for s in selected),
@@ -240,6 +251,8 @@ def _agents(selected: Sequence[PlannedCapability], index: _Index, readers: dict[
     matches = _same_as(index)
     used: set[str] = {"agent.project"}
     for role in index.twin.of_kind(ElementKind.ROLE):
+        if role.source_id in index.descriptive:
+            continue
         permissions = [
             p for p in index.twin.of_kind(ElementKind.PERMISSION)
             if p.refs["role"] == role.id and p.properties.get("access") in _READ_ACCESS

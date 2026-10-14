@@ -1,0 +1,797 @@
+{
+  "artifacts": [
+    {
+      "attributes": {
+        "api_version": "1.2",
+        "openapi": "3.0.3",
+        "servers": []
+      },
+      "description": null,
+      "extractor": "code_openapi",
+      "kind": "api",
+      "locator": "api:spec",
+      "name": "Shop public API",
+      "parent": null
+    },
+    {
+      "attributes": {
+        "columns": [
+          "status"
+        ],
+        "definition": "CHECK (status IN ('placed', 'paid', 'shipped', 'delivered', 'cancelled', 'returned'))"
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "check",
+      "locator": "check:public.orders.orders_status_check",
+      "name": "orders_status_check",
+      "parent": "table:public.orders"
+    },
+    {
+      "attributes": {
+        "columns": [
+          "method"
+        ],
+        "definition": "CHECK (method IN ('card', 'paypal', 'bank_transfer'))"
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "check",
+      "locator": "check:public.shop_payment.shop_payment_method_check",
+      "name": "shop_payment_method_check",
+      "parent": "table:public.shop_payment"
+    },
+    {
+      "attributes": {
+        "data_type": "character varying(2)",
+        "has_default": false,
+        "nullable": false,
+        "position": 4
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.customers.country",
+      "name": "country",
+      "parent": "table:public.customers"
+    },
+    {
+      "attributes": {
+        "data_type": "timestamp with time zone",
+        "has_default": false,
+        "nullable": false,
+        "position": 5
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.customers.created_at",
+      "name": "created_at",
+      "parent": "table:public.customers"
+    },
+    {
+      "attributes": {
+        "data_type": "character varying(254)",
+        "has_default": false,
+        "nullable": false,
+        "position": 2
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.customers.email",
+      "name": "email",
+      "parent": "table:public.customers"
+    },
+    {
+      "attributes": {
+        "data_type": "text",
+        "has_default": false,
+        "nullable": false,
+        "position": 3
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.customers.full_name",
+      "name": "full_name",
+      "parent": "table:public.customers"
+    },
+    {
+      "attributes": {
+        "data_type": "bigint",
+        "has_default": false,
+        "nullable": false,
+        "position": 1
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.customers.id",
+      "name": "id",
+      "parent": "table:public.customers"
+    },
+    {
+      "attributes": {
+        "data_type": "bigint",
+        "has_default": false,
+        "nullable": false,
+        "position": 2
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.orders.customer_id",
+      "name": "customer_id",
+      "parent": "table:public.orders"
+    },
+    {
+      "attributes": {
+        "data_type": "bigint",
+        "has_default": false,
+        "nullable": false,
+        "position": 1
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.orders.id",
+      "name": "id",
+      "parent": "table:public.orders"
+    },
+    {
+      "attributes": {
+        "data_type": "timestamp with time zone",
+        "has_default": false,
+        "nullable": false,
+        "position": 4
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.orders.placed_at",
+      "name": "placed_at",
+      "parent": "table:public.orders"
+    },
+    {
+      "attributes": {
+        "data_type": "character varying(16)",
+        "has_default": false,
+        "nullable": false,
+        "position": 3
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.orders.status",
+      "name": "status",
+      "parent": "table:public.orders"
+    },
+    {
+      "attributes": {
+        "data_type": "numeric(12,2)",
+        "has_default": false,
+        "nullable": false,
+        "position": 5
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.orders.total",
+      "name": "total",
+      "parent": "table:public.orders"
+    },
+    {
+      "attributes": {
+        "data_type": "text",
+        "has_default": false,
+        "nullable": false,
+        "position": 3
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.products.category",
+      "name": "category",
+      "parent": "table:public.products"
+    },
+    {
+      "attributes": {
+        "data_type": "numeric(10,2)",
+        "has_default": false,
+        "nullable": false,
+        "position": 4
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.products.price",
+      "name": "price",
+      "parent": "table:public.products"
+    },
+    {
+      "attributes": {
+        "data_type": "character varying(8)",
+        "has_default": false,
+        "nullable": false,
+        "position": 1
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.products.sku",
+      "name": "sku",
+      "parent": "table:public.products"
+    },
+    {
+      "attributes": {
+        "data_type": "integer",
+        "has_default": false,
+        "nullable": false,
+        "position": 5
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.products.stock",
+      "name": "stock",
+      "parent": "table:public.products"
+    },
+    {
+      "attributes": {
+        "data_type": "text",
+        "has_default": false,
+        "nullable": false,
+        "position": 2
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.products.title",
+      "name": "title",
+      "parent": "table:public.products"
+    },
+    {
+      "attributes": {
+        "data_type": "text",
+        "has_default": false,
+        "nullable": false,
+        "position": 3
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.shipments.carrier",
+      "name": "carrier",
+      "parent": "table:public.shipments"
+    },
+    {
+      "attributes": {
+        "data_type": "timestamp with time zone",
+        "has_default": false,
+        "nullable": true,
+        "position": 6
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.shipments.delivered_at",
+      "name": "delivered_at",
+      "parent": "table:public.shipments"
+    },
+    {
+      "attributes": {
+        "data_type": "bigint",
+        "has_default": false,
+        "nullable": false,
+        "position": 1
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.shipments.id",
+      "name": "id",
+      "parent": "table:public.shipments"
+    },
+    {
+      "attributes": {
+        "data_type": "bigint",
+        "has_default": false,
+        "nullable": false,
+        "position": 2
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.shipments.order_id",
+      "name": "order_id",
+      "parent": "table:public.shipments"
+    },
+    {
+      "attributes": {
+        "data_type": "timestamp with time zone",
+        "has_default": false,
+        "nullable": false,
+        "position": 5
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.shipments.shipped_at",
+      "name": "shipped_at",
+      "parent": "table:public.shipments"
+    },
+    {
+      "attributes": {
+        "data_type": "character varying(200)",
+        "has_default": false,
+        "nullable": true,
+        "position": 4
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.shipments.tracking_url",
+      "name": "tracking_url",
+      "parent": "table:public.shipments"
+    },
+    {
+      "attributes": {
+        "data_type": "numeric(12,2)",
+        "has_default": false,
+        "nullable": false,
+        "position": 4
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.shop_payment.amount",
+      "name": "amount",
+      "parent": "table:public.shop_payment"
+    },
+    {
+      "attributes": {
+        "data_type": "bigint",
+        "has_default": false,
+        "nullable": false,
+        "position": 1
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.shop_payment.id",
+      "name": "id",
+      "parent": "table:public.shop_payment"
+    },
+    {
+      "attributes": {
+        "data_type": "character varying(16)",
+        "has_default": false,
+        "nullable": false,
+        "position": 3
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.shop_payment.method",
+      "name": "method",
+      "parent": "table:public.shop_payment"
+    },
+    {
+      "attributes": {
+        "data_type": "bigint",
+        "has_default": false,
+        "nullable": false,
+        "position": 2
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.shop_payment.order_id",
+      "name": "order_id",
+      "parent": "table:public.shop_payment"
+    },
+    {
+      "attributes": {
+        "data_type": "timestamp with time zone",
+        "has_default": false,
+        "nullable": false,
+        "position": 5
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "column",
+      "locator": "column:public.shop_payment.paid_at",
+      "name": "paid_at",
+      "parent": "table:public.shop_payment"
+    },
+    {
+      "attributes": {
+        "columns": [
+          "customer_id"
+        ],
+        "ref_columns": [
+          "id"
+        ],
+        "ref_table": "table:public.customers"
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "foreign_key",
+      "locator": "fk:public.orders.orders_customer_id_fkey",
+      "name": "orders_customer_id_fkey",
+      "parent": "table:public.orders"
+    },
+    {
+      "attributes": {
+        "columns": [
+          "order_id"
+        ],
+        "ref_columns": [
+          "id"
+        ],
+        "ref_table": "table:public.orders"
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "foreign_key",
+      "locator": "fk:public.shipments.shipments_order_id_fkey",
+      "name": "shipments_order_id_fkey",
+      "parent": "table:public.shipments"
+    },
+    {
+      "attributes": {
+        "columns": [
+          "order_id"
+        ],
+        "ref_columns": [
+          "id"
+        ],
+        "ref_table": "table:public.orders"
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "foreign_key",
+      "locator": "fk:public.shop_payment.shop_payment_order_id_fkey",
+      "name": "shop_payment_order_id_fkey",
+      "parent": "table:public.shop_payment"
+    },
+    {
+      "attributes": {
+        "deprecated": false,
+        "method": "GET",
+        "operation_id": "listCustomers",
+        "parameters": [],
+        "path": "/shop/customers",
+        "query_parameters": [],
+        "request_schema": null,
+        "required_parameters": [],
+        "response_is_array": true,
+        "response_schema": "schema:\"Customer\"",
+        "security": [],
+        "tags": []
+      },
+      "description": "List customers, newest first.",
+      "extractor": "code_openapi",
+      "kind": "operation",
+      "locator": "op:GET /shop/customers",
+      "name": "listCustomers",
+      "parent": null
+    },
+    {
+      "attributes": {
+        "declared_in": "route",
+        "file": "shop/views.py",
+        "method": "GET",
+        "operation_id": "orders",
+        "parameters": [],
+        "path": "/shop/orders",
+        "required_parameters": []
+      },
+      "description": "List or place orders.",
+      "extractor": "code_routes",
+      "kind": "operation",
+      "locator": "op:GET /shop/orders",
+      "name": "orders",
+      "parent": null
+    },
+    {
+      "attributes": {
+        "declared_in": "route",
+        "file": "shop/views.py",
+        "method": "GET",
+        "operation_id": "order",
+        "parameters": [
+          "path:order_id"
+        ],
+        "path": "/shop/orders/{order_id}",
+        "required_parameters": [
+          "path:order_id"
+        ]
+      },
+      "description": "One order with its items.",
+      "extractor": "code_routes",
+      "kind": "operation",
+      "locator": "op:GET /shop/orders/{order_id}",
+      "name": "order",
+      "parent": null
+    },
+    {
+      "attributes": {
+        "declared_in": "route",
+        "file": "shop/views.py",
+        "method": "POST",
+        "operation_id": "orders",
+        "parameters": [],
+        "path": "/shop/orders",
+        "required_parameters": []
+      },
+      "description": "List or place orders.",
+      "extractor": "code_routes",
+      "kind": "operation",
+      "locator": "op:POST /shop/orders",
+      "name": "orders",
+      "parent": null
+    },
+    {
+      "attributes": {
+        "declared_in": "route",
+        "file": "shop/views.py",
+        "method": "POST",
+        "operation_id": "cancel",
+        "parameters": [
+          "path:order_id"
+        ],
+        "path": "/shop/orders/{order_id}/cancel",
+        "required_parameters": [
+          "path:order_id"
+        ]
+      },
+      "description": "Cancel an order that has not shipped.",
+      "extractor": "code_routes",
+      "kind": "operation",
+      "locator": "op:POST /shop/orders/{order_id}/cancel",
+      "name": "cancel",
+      "parent": null
+    },
+    {
+      "attributes": {
+        "columns": [
+          "id"
+        ]
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "primary_key",
+      "locator": "pk:public.customers.customers_pkey",
+      "name": "customers_pkey",
+      "parent": "table:public.customers"
+    },
+    {
+      "attributes": {
+        "columns": [
+          "id"
+        ]
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "primary_key",
+      "locator": "pk:public.orders.orders_pkey",
+      "name": "orders_pkey",
+      "parent": "table:public.orders"
+    },
+    {
+      "attributes": {
+        "columns": [
+          "sku"
+        ]
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "primary_key",
+      "locator": "pk:public.products.products_pkey",
+      "name": "products_pkey",
+      "parent": "table:public.products"
+    },
+    {
+      "attributes": {
+        "columns": [
+          "id"
+        ]
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "primary_key",
+      "locator": "pk:public.shipments.shipments_pkey",
+      "name": "shipments_pkey",
+      "parent": "table:public.shipments"
+    },
+    {
+      "attributes": {
+        "columns": [
+          "id"
+        ]
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "primary_key",
+      "locator": "pk:public.shop_payment.shop_payment_pkey",
+      "name": "shop_payment_pkey",
+      "parent": "table:public.shop_payment"
+    },
+    {
+      "attributes": {
+        "enum": null,
+        "format": "email",
+        "items_ref": null,
+        "nullable": false,
+        "read_only": false,
+        "ref": null,
+        "required": true,
+        "type": "string"
+      },
+      "description": null,
+      "extractor": "code_openapi",
+      "kind": "schema_property",
+      "locator": "prop:\"Customer\".email",
+      "name": "email",
+      "parent": "schema:\"Customer\""
+    },
+    {
+      "attributes": {
+        "enum": null,
+        "format": null,
+        "items_ref": null,
+        "nullable": false,
+        "read_only": false,
+        "ref": null,
+        "required": false,
+        "type": "string"
+      },
+      "description": null,
+      "extractor": "code_openapi",
+      "kind": "schema_property",
+      "locator": "prop:\"Customer\".full_name",
+      "name": "full_name",
+      "parent": "schema:\"Customer\""
+    },
+    {
+      "attributes": {
+        "enum": null,
+        "format": null,
+        "items_ref": null,
+        "nullable": false,
+        "read_only": false,
+        "ref": null,
+        "required": true,
+        "type": "integer"
+      },
+      "description": null,
+      "extractor": "code_openapi",
+      "kind": "schema_property",
+      "locator": "prop:\"Customer\".id",
+      "name": "id",
+      "parent": "schema:\"Customer\""
+    },
+    {
+      "attributes": {
+        "required": [
+          "id",
+          "email"
+        ],
+        "type": "object"
+      },
+      "description": null,
+      "extractor": "code_openapi",
+      "kind": "schema_object",
+      "locator": "schema:\"Customer\"",
+      "name": "Customer",
+      "parent": null
+    },
+    {
+      "attributes": {
+        "declared_in": "orm",
+        "file": "shop/models.py",
+        "readable": false,
+        "relkind": "r",
+        "schema": "public"
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "table",
+      "locator": "table:public.customers",
+      "name": "customers",
+      "parent": null
+    },
+    {
+      "attributes": {
+        "declared_in": "orm",
+        "file": "shop/models.py",
+        "readable": false,
+        "relkind": "r",
+        "schema": "public"
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "table",
+      "locator": "table:public.orders",
+      "name": "orders",
+      "parent": null
+    },
+    {
+      "attributes": {
+        "declared_in": "orm",
+        "file": "shop/models.py",
+        "readable": false,
+        "relkind": "r",
+        "schema": "public"
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "table",
+      "locator": "table:public.products",
+      "name": "products",
+      "parent": null
+    },
+    {
+      "attributes": {
+        "declared_in": "orm",
+        "file": "shop/models.py",
+        "readable": false,
+        "relkind": "r",
+        "schema": "public"
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "table",
+      "locator": "table:public.shipments",
+      "name": "shipments",
+      "parent": null
+    },
+    {
+      "attributes": {
+        "declared_in": "orm",
+        "file": "shop/models.py",
+        "readable": false,
+        "relkind": "r",
+        "schema": "public"
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "table",
+      "locator": "table:public.shop_payment",
+      "name": "shop_payment",
+      "parent": null
+    },
+    {
+      "attributes": {
+        "columns": [
+          "email"
+        ]
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "unique",
+      "locator": "unique:public.customers.customers_email_key",
+      "name": "customers_email_key",
+      "parent": "table:public.customers"
+    },
+    {
+      "attributes": {
+        "columns": [
+          "order_id"
+        ]
+      },
+      "description": null,
+      "extractor": "code_schema",
+      "kind": "unique",
+      "locator": "unique:public.shipments.shipments_order_id_key",
+      "name": "shipments_order_id_key",
+      "parent": "table:public.shipments"
+    }
+  ],
+  "extractor": "git",
+  "issues": [],
+  "source_id": "ecommerce-repo",
+  "truncated": false
+}

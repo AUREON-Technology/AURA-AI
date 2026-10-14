@@ -1391,6 +1391,16 @@ gaps:
       owner namespaces (tests/unit/test_adaptation_project_knowledge.py). Still open: Excel/DOCX,
       Git, CompositeFetcher, MySQL/SQL Server, identity modes, and the exit runs against a real
       Qdrant server and the deployed embedding model.
+    progress_2026_10_14: >-
+      Git connector over a read-only checkout under AURA_ADAPTATION_GIT_ROOT: SQL DDL and
+      migrations, Alembic, SQLAlchemy and Django models, FastAPI/Flask routes and an OpenAPI file,
+      parsed as text (nothing executed) into the PostgreSQL snapshot shape. Each pilot's
+      schema.sql read as code equals its recorded live catalog (relations, columns, constraint
+      names, enums, grants); Git discovery goldens recorded for both pilot repositories. Code
+      enters the twin at confidence 0.8 from a source marked queryable=false that the planner never
+      targets; it adds same_as evidence only (tests/unit/test_adaptation_git.py). GitHub over the
+      API is not offered: a token's write capability cannot be verified. Still open: CompositeFetcher,
+      MySQL/SQL Server, identity modes, DOCX/Excel, and the dev-stack and real-Qdrant exit runs.
     evidence: docs/reports/ap10-connectors-knowledge.md
 
   - gap_id: GAP-060

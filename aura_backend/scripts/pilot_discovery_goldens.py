@@ -12,8 +12,10 @@ Two jobs, both run from the repo root:
     python aura_backend/scripts/pilot_discovery_goldens.py --record-rows postgresql://aura:pw@localhost:55436/postgres
 
 Inputs per pilot (``aura_backend/tests/fixtures/pilots/<pilot>/``): ``schema.sql`` + ``seed.sql``
-(loaded into a fresh database to record ``golden/catalog.json``) and ``openapi.yaml`` or
-``openapi.json``. Outputs: ``golden/discovery_postgres.json`` and ``golden/discovery_openapi.json``.
+(loaded into a fresh database to record ``golden/catalog.json``), ``openapi.yaml`` or
+``openapi.json``, and ``repo/`` -- the application's code, read by the Git connector (AP10).
+Outputs: ``golden/discovery_postgres.json``, ``golden/discovery_openapi.json`` and
+``golden/discovery_git.json``.
 
 ``tests/unit/test_adaptation_discovery.py`` fails when a committed golden differs from what this
 renders; ``tests/load/test_adaptation_discovery_postgres.py`` proves a live capture still equals
@@ -39,6 +41,7 @@ from urllib.parse import urlsplit, urlunsplit
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "aura_backend"))
 
+from aura_core.adapters.connectors.git import scan_repository  # noqa: E402
 from aura_core.adapters.connectors.openapi import artifacts_from_openapi, parse_spec  # noqa: E402
 from aura_core.adapters.connectors.postgres_catalog import artifacts_from_catalog, capture_catalog  # noqa: E402
 from aura_core.domain.discovery import DiscoveryBudget  # noqa: E402
@@ -60,6 +63,10 @@ def api_source_id(pilot: str) -> str:
     return f"{pilot}-api"
 
 
+def repo_source_id(pilot: str) -> str:
+    return f"{pilot}-repo"
+
+
 def spec_path(pilot: str) -> Path:
     for name in ("openapi.yaml", "openapi.json"):
         if (PILOTS_DIR / pilot / name).exists():
@@ -75,6 +82,11 @@ def render_postgres(pilot: str) -> str:
 def render_openapi(pilot: str) -> str:
     spec = parse_spec(spec_path(pilot).read_bytes())
     return _dump(to_data(artifacts_from_openapi(api_source_id(pilot), spec, DiscoveryBudget())))
+
+
+def render_git(pilot: str) -> str:
+    report = scan_repository(repo_source_id(pilot), PILOTS_DIR / pilot / "repo", DiscoveryBudget())
+    return _dump(to_data(report))
 
 
 async def load_pilot(admin_dsn: str, pilot: str) -> str:
@@ -181,7 +193,8 @@ def main() -> int:
         golden.mkdir(parents=True, exist_ok=True)
         (golden / "discovery_postgres.json").write_text(render_postgres(pilot), encoding="utf-8")
         (golden / "discovery_openapi.json").write_text(render_openapi(pilot), encoding="utf-8")
-        print(f"rendered {pilot}/golden/discovery_postgres.json, discovery_openapi.json")
+        (golden / "discovery_git.json").write_text(render_git(pilot), encoding="utf-8")
+        print(f"rendered {pilot}/golden/discovery_postgres.json, discovery_openapi.json, discovery_git.json")
     return 0
 
 
