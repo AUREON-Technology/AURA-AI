@@ -1,7 +1,8 @@
 # ADR-030: Hosted open-weight inference as a gated third category
 
-**Status:** Proposed. Phase 1 (policy layer) is built and tested, but not deployed and not used:
-the flag defaults to off and no compose file passes it through yet.
+**Status:** Proposed. Phases 1–5 are built and tested, but not deployed and not used: the flag
+defaults to off. Phase 6's verification tooling exists; its report does not, so nothing here is
+proven (GAP-064).
 **Date:** 2026-10-11 · **Plan:** `docs/roadmaps/AURA_FREE_HOSTED_INFERENCE_PLAN.md`
 **Amends:** the self-hosting invariant (`tests/architecture/test_no_external_inference.py`,
 `aura_core/config/external_inference.py`) · **Related:** ADR-003 (provider routing), ADR-006
@@ -216,6 +217,9 @@ Known limits:
 - **Phase 4:** data-sensitivity routing (§8). **Built and tested, not proven live.**
 - **Phase 5:** deploy wiring. **Built, inert until enabled:** `x-hosted-providers` in both
   compose files, `hosted{1,2,3}_api_key` secrets, and the `deploy/.env.example` operator block.
-- **Phase 6:** a VPS evidence report. The phase is not proven until that report exists.
+- **Phase 6:** a VPS evidence report. **Tooling built, evidence pending:**
+  `deploy/scripts/verify-hosted-inference.sh` runs ten scripted checks inside the gateway. The
+  plan's Phase 6 section lists them and gives the runbook. The phase, and with it Phases 1–5, is
+  not proven until a passing report is committed to `docs/reports/` (GAP-064).
 - Consider also refusing `is_local=true` on `REMOTE_INFERENCE_HOSTS`. That is left out here
   because it could break an existing private deployment config without warning.

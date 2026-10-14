@@ -53,7 +53,9 @@ reconciled from every earlier plan in `docs/roadmaps/AURA_ROADMAP_RECONCILIATION
 `docs/roadmaps/AURA_CRITICAL_BACKLOG.md`. `docs/AURA_UPGRADE_ROADMAP.md` (phases A–K) is kept as the
 historical evidence ledger for work done before 2026-09-25, and `docs/production/gap_register.yaml`
 stays the machine-checked gap status. Check these before assuming a capability does or doesn't
-exist. `docs/roadmaps/AURA_ADAPTIVE_PLATFORM_ROADMAP.md` is the canonical plan for the one parallel
+exist. ADR-030's hosted open-weight inference (Phases 1–5) is **built, not proven** until
+`deploy/scripts/verify-hosted-inference.sh`, run on the VPS with a hosted slot enabled, commits a
+passing report (GAP-064). `docs/roadmaps/AURA_ADAPTIVE_PLATFORM_ROADMAP.md` is the canonical plan for the one parallel
 track, **Track AP** (AP0–AP13: attaching AURA to existing software systems via connectors, a
 Universal Semantic Model, a versioned Project Blueprint and Super-Admin-approved deployment;
 ADR-018…028, GAP-049…062). It is gated by M0–M15, not a replacement for them. The standing rule applies to any work you do here: **don't mark something done without the

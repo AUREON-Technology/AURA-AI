@@ -1505,3 +1505,26 @@ gaps:
       question with a Flame evidence_id) and docs/reports/flame-link1-live.md both exist.
     status: built_not_proven
     evidence: docs/reports/flame-integration-readiness.md
+
+  - gap_id: GAP-064
+    component: llm/hosted-open-weight
+    severity: P2
+    current_state: >-
+      ADR-030 hosted open-weight inference, Phases 1-5, is built and unit/fitness tested: the
+      gated host category and open-weight model check, quota-aware routing with 429 cooldowns,
+      decode-speed-aware output sizing and wire contract tests on documented fixtures,
+      data-classification routing with a content-free third-party audit, and the compose slots
+      (inert, AURA_ALLOW_HOSTED_INFERENCE defaults to false). Nothing has run against a live
+      hosted provider, and the wire fixtures are documented reconstructions, not captures.
+    target_state: >-
+      A hosted slot enabled on the dev or prod stack passes the live checks, with SENSITIVE
+      content shown to stay local and a real 429 shown to bench the provider and fail over.
+    owner: platform-core
+    dependencies: []
+    test: deploy/scripts/verify-hosted-inference.sh (writes docs/reports/)
+    metric: live checks passed (target 10/10 scripted, plus the manual check 11)
+    exit_condition: >-
+      A docs/reports/phase-6-hosted-inference-*.txt report committed with every scripted check
+      passing and check 10 run (not skipped), and tests/fixtures/provider_wire/ carrying live
+      captures from scripts/capture_provider_wire.py.
+    status: built_not_proven
