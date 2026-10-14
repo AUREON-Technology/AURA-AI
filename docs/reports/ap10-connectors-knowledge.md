@@ -9,7 +9,9 @@
 - 2026-10-13: area 1 for **documents** (Markdown, plain text, HTML, PDF) feeding **project
   knowledge**, with the cross-identity isolation probe and the pilot retrieval eval;
 - 2026-10-14: area 2, the **Git connector**, reading a repository checkout's SQL, ORM models,
-  migrations, routes and API description as twin evidence, with Git discovery goldens.
+  migrations, routes and API description as twin evidence, with Git discovery goldens;
+- 2026-10-14: area 3, **`CompositeFetcher`** in `container.py`, with a fetcher that reads
+  documents through Track AP connectors for the nightly refresh.
 
 The remaining areas are listed under *Not reached*. The exit criteria are not met yet.
 
@@ -265,6 +267,67 @@ where it was declared (`declared_in`, `file`).
   - A blueprint compiles with the repository attached, and every read template targets the
     database.
 
+## Area 3: `CompositeFetcher` and connector-backed knowledge sources (2026-10-14)
+
+**Before:** the container sent every registered knowledge source, whatever its type, to
+`HttpSourceFetcher`. `CompositeFetcher` (`learning/sources.py`) existed and was tested, but
+nothing built it.
+
+**Now** the container builds it:
+- `web`, `rss` and `api` go to the HTTPS fetcher.
+- The default stays the HTTPS fetcher, so a source registered under any other type is fetched
+  exactly as before.
+- With Track AP on, a new `connector` type is registered, served by `ConnectorSourceFetcher`.
+
+**A `connector` source** (`uri: connector:<connector id>`) is read through the connector
+registry's `open_active`:
+- A connector that is pending, disabled or deleted fails the source; it is never read around.
+- The connector must implement the new `DocumentConnector.list_documents()`, which the Files
+  connector does for its directory, and the Git connector for a checkout's root `README` and
+  `docs/` or `doc/` tree. Those files are now also DOCUMENT artifacts in Git discovery, so a
+  blueprint can make them project knowledge too.
+- Every run re-lists the documents. A new or edited file reaches knowledge without a new
+  blueprint, and the knowledge engine's content hash keeps unchanged ones from being re-embedded.
+- Document ids are stable per connector and locator.
+- The source's `max_documents` and `max_bytes_per_document` ceilings hold.
+- One unreadable file is skipped, not fatal.
+
+**Two rules, each enforced twice.** The admin API applies them on registration, and the fetcher
+again on every run, because a registry row is data and the refresh runs unattended:
+- **Untrusted.** A trust tier above `COMMUNITY` is refused (422 at registration, an error at fetch
+  time), never quietly lowered.
+- **Project-owned.** The owner is set to `project:<id>` by the API, never chosen by the caller, and
+  the fetcher refuses any other owner. A connector's documents therefore keep AP10's isolation:
+  no person and no global search sees them.
+
+The API answers 503 for a `connector` source when Track AP is off. With Track AP off, a
+`connector` row would fall to the HTTPS default and be refused there, because its uri is not
+https.
+
+**Git documentation paths are contained:**
+- Only a root `README.*` or a file under `docs/` or `doc/`, in a document format, with plain
+  segment names, is a valid locator.
+- A symlink anywhere on the path is not followed.
+- `..`, absolute paths, source files and dot-files are refused.
+
+**Evidence:** `tests/unit/test_adaptation_connector_sources.py` (30 tests), covering:
+- fetch, extraction, stable ids and ceilings;
+- trust, owner and uri refusals;
+- an inactive connector, a connector that cannot list documents, and an unreadable document;
+- Git documentation scope, containment and discovery;
+- the container's dispatch table with Track AP off and on.
+
+**End to end through the real container over HTTP:**
+1. A trust-tier-2 connector source is refused (422).
+2. A Files connector is registered.
+3. A `connector` source is registered, and its owner reads `project:p0`.
+4. A refresh before activation fails that source with `ConflictError`.
+5. The connector is approved and activated.
+6. The next refresh ingests all five pilot documents at `UNTRUSTED`, owned by `project:p0`. None
+   of them is visible to a person or to the global listing.
+
+Without Track AP, the same API call answers 503.
+
 ## Not reached (rest of AP10)
 
 1. **DOCX and Excel.** Both need a parser the lockfile does not carry (`python-docx`, `openpyxl`).
@@ -274,7 +337,8 @@ where it was declared (`declared_in`, `file`).
    - JavaScript/TypeScript ORMs and routes (Prisma, TypeORM, Express);
    - Django URL confs;
    - prefixes added in another file (`include_router(prefix=)`, `register_blueprint`).
-3. **`CompositeFetcher`** wired in `container.py`.
+3. **More fetchers behind `CompositeFetcher`:** `drive` and `repository` sources still fall to
+   the HTTPS default, as they always did; a fetcher of their own is not built.
 4. **MySQL and SQL Server** discovery adapters. The SQL reader is PostgreSQL-dialect only.
 5. **Identity modes:**
    - service-account role → policy mapping;

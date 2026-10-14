@@ -56,7 +56,8 @@ from ...observability.logging import get_logger
 from .memory import InMemoryReadConnector
 from .postgres_catalog import _CATEGORICAL_MAX_DISTINCT, _MAX_VALUE_CHARS, _PATTERNS, artifacts_from_catalog
 
-__all__ = ["FilesConnectorFactory", "FilesConnector", "FILES_SCHEMA", "load_tables", "load_documents"]
+__all__ = ["FilesConnectorFactory", "FilesConnector", "FILES_SCHEMA", "load_tables", "load_documents",
+           "DOCUMENT_SUFFIXES", "document_name_ok", "read_capped", "document_locator"]
 
 logger = get_logger("adapters.connectors.files")
 
@@ -68,7 +69,7 @@ DOCUMENT_EXTRACTOR = "files_documents"
 
 _SUFFIXES = (".csv", ".json")
 #: Document files for project knowledge, by suffix -> ``SourceDocument.format``.
-_DOCUMENT_SUFFIXES = {".md": "markdown", ".markdown": "markdown", ".txt": "text", ".html": "html",
+DOCUMENT_SUFFIXES = {".md": "markdown", ".markdown": "markdown", ".txt": "text", ".html": "html",
                       ".htm": "html", ".pdf": "pdf"}
 #: Recognised, but unreadable without a parser the lockfile does not carry: reported, not skipped silently.
 _UNSUPPORTED_DOCUMENTS = frozenset({".docx", ".doc", ".odt", ".rtf", ".pptx", ".ppt", ".xlsx", ".xls"})
@@ -184,7 +185,7 @@ def _read_json(data: bytes) -> tuple[list[str], list[list[Any]]]:
     return header, [[item.get(key) for key in header] for item in parsed]
 
 
-def _read_capped(path: Path) -> bytes:
+def read_capped(path: Path) -> bytes:
     """The file's bytes, opened read-only without following a symlink; ``ValueError`` past the cap."""
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(path, flags)
@@ -206,7 +207,7 @@ def _load(path: Path, name: str, issues: list[dict[str, str]]) -> _Table | None:
         issues.append(_issue("file_too_large", locator))
         return None
     try:
-        data = _read_capped(path)
+        data = read_capped(path)
         header, raw_rows = _read_csv(data) if path.suffix.lower() == ".csv" else _read_json(data)
     except (OSError, UnicodeDecodeError, ValueError, csv.Error):
         issues.append(_issue("unparseable", locator))
@@ -261,7 +262,7 @@ class _Document:
     sha256: str
 
 
-def _document_name_ok(name: str) -> bool:
+def document_name_ok(name: str) -> bool:
     """A file name that survives as an untrusted-text locator unchanged (no controls, no bidi tricks)."""
     if not 0 < len(name) <= _MAX_DOCUMENT_NAME or name.startswith("."):
         return False
@@ -281,10 +282,10 @@ def load_documents(directory: Path) -> tuple[list[_Document], list[dict[str, str
     documents: list[_Document] = []
     for path in sorted(directory.iterdir(), key=lambda p: p.name):
         suffix = path.suffix.lower()
-        if suffix not in _DOCUMENT_SUFFIXES and suffix not in _UNSUPPORTED_DOCUMENTS:
+        if suffix not in DOCUMENT_SUFFIXES and suffix not in _UNSUPPORTED_DOCUMENTS:
             continue
         locator = document_locator(path.name)
-        if not _document_name_ok(path.name):
+        if not document_name_ok(path.name):
             issues.append(_issue("name_skipped", "document:"))
             continue
         if path.is_symlink():
@@ -299,11 +300,11 @@ def load_documents(directory: Path) -> tuple[list[_Document], list[dict[str, str
             if path.stat().st_size > MAX_FILE_BYTES:
                 issues.append(_issue("file_too_large", locator))
                 continue
-            data = _read_capped(path)
+            data = read_capped(path)
         except (OSError, ValueError):
             issues.append(_issue("unreadable", locator))
             continue
-        documents.append(_Document(path.name, _DOCUMENT_SUFFIXES[suffix], len(data),
+        documents.append(_Document(path.name, DOCUMENT_SUFFIXES[suffix], len(data),
                                    hashlib.sha256(data).hexdigest()))
     return documents, issues
 
@@ -467,24 +468,29 @@ class FilesConnector:
         return DiscoveryReport.build(report.source_id, report.extractor, list(report.artifacts) + artifacts,
                                      issues=list(report.issues) + extra, truncated=report.truncated or capped)
 
+    async def list_documents(self) -> list[str]:
+        """Document locators in the directory, as discovery reports them; no file is read twice."""
+        documents, _issues = load_documents(self._require_directory())
+        return [document_locator(d.name) for d in documents]
+
     async def fetch_document(self, locator: str) -> SourceDocument:
         """The bytes of one document this connector's discovery reported (AP10)."""
         name = locator.removeprefix("document:")
         suffix = Path(name).suffix.lower()
         # A plain file name directly in the directory: no separators, so no way out of it.
-        if not locator.startswith("document:") or not _document_name_ok(name) or "/" in name or "\\" in name \
-                or suffix not in _DOCUMENT_SUFFIXES:
+        if not locator.startswith("document:") or not document_name_ok(name) or "/" in name or "\\" in name \
+                or suffix not in DOCUMENT_SUFFIXES:
             raise ValidationError("not a document locator of a files connector", details={"locator": locator[:80]})
         path = self._require_directory() / name
         if path.is_symlink() or not path.is_file():
             raise NotFoundError("the document is no longer in the connector's directory",
                                 details={"connector": self.descriptor.id, "locator": locator})
         try:
-            data = _read_capped(path)
+            data = read_capped(path)
         except (OSError, ValueError):
             raise NotFoundError("the document could not be read",
                                 details={"connector": self.descriptor.id, "locator": locator}) from None
-        return SourceDocument(name, _DOCUMENT_SUFFIXES[suffix], data, hashlib.sha256(data).hexdigest())
+        return SourceDocument(name, DOCUMENT_SUFFIXES[suffix], data, hashlib.sha256(data).hexdigest())
 
     async def read(self, template: ReadTemplate, arguments: Mapping[str, Any]) -> list[dict[str, Any]]:
         if template.connector != self.descriptor.id:

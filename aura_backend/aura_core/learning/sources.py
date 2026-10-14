@@ -17,18 +17,20 @@ Consequently:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import ipaddress
 import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
+from typing import Any, Awaitable, Callable, Mapping, Protocol, Sequence, runtime_checkable
 from urllib.parse import urlparse
 
-from ..domain.errors import AuthorizationError, NotFoundError, ValidationError
+from ..domain.errors import AuraError, AuthorizationError, NotFoundError, ValidationError
 from ..domain.identifiers import DocumentId
-from ..domain.knowledge import KnowledgeSource, SourceType
+from ..domain.knowledge import KnowledgeSource, SourceType, TrustTier
 from ..domain.network import is_internal_address
 from ..observability.logging import get_logger
+from ..ports.connectors import DocumentConnector
 
 __all__ = [
     "FetchedDocument",
@@ -38,6 +40,8 @@ __all__ = [
     "HttpSourceFetcher",
     "StaticSourceFetcher",
     "CompositeFetcher",
+    "ConnectorSourceFetcher",
+    "CONNECTOR_URI_PREFIX",
 ]
 
 logger = get_logger("learning.sources")
@@ -260,6 +264,82 @@ class CompositeFetcher:
         # Enforce the per-source document ceiling here rather than trusting each fetcher to
         # respect it -- one place to get right.
         return list(documents)[: source.max_documents]
+
+
+#: A connector-backed source's ``uri``: ``connector:<connector id>``.
+CONNECTOR_URI_PREFIX = "connector:"
+_CONNECTOR_ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+
+
+class ConnectorSourceFetcher:
+    """Documents read through an active Track AP connector (AP10), for the nightly refresh.
+
+    A ``connector`` source names a registered connector (``connector:<id>``) whose kind can list
+    and fetch documents -- a Files directory or a Git checkout's documentation. Every run re-lists
+    them, so a document added or edited in the connected system reaches knowledge without a new
+    blueprint; the knowledge engine's content hash keeps unchanged ones from being re-embedded.
+
+    Two rules hold here, not in the caller, because a source registry row is data an
+    administrator typed and this runs unattended:
+
+    * **untrusted content** -- the text was written by whoever administers the connected system
+      (ADR-022), so a source above ``TrustTier.COMMUNITY`` is refused rather than ingested with
+      lighter guards;
+    * **project ownership** -- the source's owner must be a project's knowledge owner
+      (``project:<id>``). A connector's documents are that project's knowledge; ingesting them
+      globally or under a person would reach users the project's isolation was built to exclude.
+
+    The connector is opened through the registry's ``open_active``, so a connector that is not
+    active (pending approval, disabled, deleted) fails the source -- it is never read around.
+    """
+
+    def __init__(self, *, open_connector: Callable[[str], Awaitable[Any]], extract: Callable[..., Any],
+                 owner_prefix: str = "project:") -> None:
+        self._open = open_connector
+        self._extract = extract
+        self._owner_prefix = owner_prefix
+
+    async def fetch(self, source: KnowledgeSource) -> list[FetchedDocument]:
+        connector_id = source.uri.removeprefix(CONNECTOR_URI_PREFIX)
+        if not source.uri.startswith(CONNECTOR_URI_PREFIX) or not _CONNECTOR_ID.match(connector_id):
+            raise ValidationError("a connector source's uri is connector:<connector id>",
+                                  details={"source": source.id})
+        if source.trust_tier > TrustTier.COMMUNITY:
+            raise AuthorizationError("connector content is untrusted; register it at trust tier 1 or lower",
+                                     details={"source": source.id, "trust_tier": int(source.trust_tier)})
+        if source.owner_id is None or not source.owner_id.value.startswith(self._owner_prefix):
+            raise AuthorizationError("a connector source must be owned by a project",
+                                     details={"source": source.id})
+        connector = await self._open(connector_id)
+        try:
+            if not isinstance(connector, DocumentConnector):
+                raise ValidationError("this connector cannot list documents", details={"connector": connector_id})
+            locators = list(await connector.list_documents())[: source.max_documents]
+            documents: list[FetchedDocument] = []
+            for locator in locators:
+                try:
+                    fetched = await connector.fetch_document(locator)
+                    if len(fetched.data) > source.max_bytes_per_document:
+                        logger.info("connector document over the source's ceiling",
+                                    extra={"source": source.id, "bytes": len(fetched.data)})
+                        continue
+                    extraction = self._extract(fetched.data, format=fetched.format, title=fetched.name)
+                    text = "\n\n".join(b.text for b in extraction.blocks if b.text).strip()
+                except AuraError as exc:
+                    logger.warning("connector document skipped",
+                                   extra={"source": source.id, "error": exc.kind})
+                    continue
+                if not text:
+                    continue
+                key = hashlib.sha256(f"{connector_id}\x00{locator}".encode("utf-8")).hexdigest()[:32]
+                documents.append(FetchedDocument(
+                    title=fetched.name[:200], content=text, document_id=DocumentId(f"cs-{key}"),
+                    uri=f"connector://{connector_id}/{locator}"[:2000],
+                    metadata={"connector": connector_id, "locator": locator[:512], "format": fetched.format},
+                ))
+            return documents
+        finally:
+            await connector.aclose()
 
 
 async def gather_sources(

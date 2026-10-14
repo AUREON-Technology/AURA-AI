@@ -407,6 +407,20 @@
     },
     {
       "attributes": {
+        "bytes": 306,
+        "file": "README.md",
+        "format": "markdown",
+        "sha256": "064916560c55de478be9514cf773f00034ade369d6fae594367be478ae90e7f2"
+      },
+      "description": null,
+      "extractor": "code_documents",
+      "kind": "document",
+      "locator": "document:README.md",
+      "name": "README.md",
+      "parent": null
+    },
+    {
+      "attributes": {
         "columns": [
           "customer_id"
         ],

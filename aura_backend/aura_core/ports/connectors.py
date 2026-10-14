@@ -74,6 +74,10 @@ class DocumentConnector(Connector, Protocol):
     into a prompt directly.
     """
 
+    async def list_documents(self) -> Sequence[str]:
+        """The DOCUMENT locators available now, in a stable order, without reading their bytes."""
+        ...
+
     async def fetch_document(self, locator: str) -> SourceDocument: ...
 
 

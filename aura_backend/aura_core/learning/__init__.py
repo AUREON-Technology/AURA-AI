@@ -39,6 +39,7 @@ from .knowledge_refresh import KnowledgeRefreshPipeline, RefreshReport, SourceOu
 from .jobs import run_knowledge_refresh, run_memory_consolidate, run_outbox_drain
 from .sources import (
     CompositeFetcher,
+    ConnectorSourceFetcher,
     FetchedDocument,
     HttpSourceFetcher,
     InMemorySourceRegistry,
@@ -57,6 +58,7 @@ __all__ = [
     "HttpSourceFetcher",
     "StaticSourceFetcher",
     "CompositeFetcher",
+    "ConnectorSourceFetcher",
     "FetchedDocument",
     "run_knowledge_refresh",
     "run_memory_consolidate",
