@@ -58,6 +58,7 @@ class OpenAICompatibleProvider(BaseProvider):
         health_timeout_s: float = 5.0,
         extra_headers: Mapping[str, str] | None = None,
         health_path: str = "/models",
+        extra_body: Mapping[str, Any] | None = None,
     ) -> None:
         caps = capabilities or ProviderCapabilities(
             model_id=model,
@@ -76,6 +77,9 @@ class OpenAICompatibleProvider(BaseProvider):
         self._api_key = api_key
         self._extra_headers = dict(extra_headers or {})
         self._health_path = health_path or "/models"
+        #: Provider-specific body fields (``AURA_PROVIDER_<NAME>_EXTRA_BODY``). Reserved fields
+        #: are refused at configuration time; merged *under* AURA's own, so AURA's win anyway.
+        self._extra_body = dict(extra_body or {})
 
     def _base_url(self) -> str:
         return self._url
@@ -92,6 +96,7 @@ class OpenAICompatibleProvider(BaseProvider):
         _, messages = flatten_conversation(request.conversation)
         sampling = request.sampling
         payload: dict[str, Any] = {
+            **self._extra_body,
             "model": request.model or self._model,
             "messages": messages,
             "temperature": sampling.temperature,
@@ -126,6 +131,41 @@ class OpenAICompatibleProvider(BaseProvider):
                 },
             }
         return payload
+
+    def _upstream_error(self, error: Any, *, operation: str) -> ProviderError:
+        """An ``{"error": ...}`` object a provider sent inside a 200 response or an SSE stream.
+
+        OpenRouter does this when an upstream it routed to fails after the stream has started.
+        Ignoring it -- what a parser that only looks at ``choices`` does -- turns a failed
+        generation into an empty successful one. A numeric ``code`` is treated as the HTTP status
+        it stands for, so an upstream 429 still benches the provider instead of tripping the
+        breaker (ADR-030 Phase 2).
+        """
+        message = error.get("message") if isinstance(error, Mapping) else error
+        code = error.get("code") if isinstance(error, Mapping) else None
+        status = code if isinstance(code, int) and 100 <= code < 600 else None
+        retryable = status is None or status >= 500 or status == 429
+        return ProviderError(
+            f"{self.name}: {operation} reported an upstream error",
+            provider=self.name,
+            model=self._model,
+            retryable=retryable,
+            details={
+                "operation": operation,
+                "upstream_error": str(message)[:300],
+                **({"status": status} if status else {}),
+            },
+        )
+
+    @staticmethod
+    def _event_usage(event: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """Usage from a response or stream event: standard ``usage``, else Groq's ``x_groq.usage``."""
+        if event.get("usage"):
+            return event["usage"]
+        vendor = event.get("x_groq")
+        if isinstance(vendor, Mapping) and vendor.get("usage"):
+            return vendor["usage"]
+        return None
 
     @staticmethod
     def _usage(raw: Mapping[str, Any] | None) -> TokenUsage | None:
@@ -190,6 +230,8 @@ class OpenAICompatibleProvider(BaseProvider):
             ) from exc
 
         choices = body.get("choices") or []
+        if not choices and body.get("error"):
+            raise self._upstream_error(body["error"], operation="complete")
         if not choices:
             raise ProviderError(
                 f"{self.name}: response contained no choices",
@@ -202,7 +244,7 @@ class OpenAICompatibleProvider(BaseProvider):
         text = message.get("content") or ""
         tool_calls = self._parse_tool_calls(message.get("tool_calls"))
 
-        usage = self._usage(body.get("usage"))
+        usage = self._usage(self._event_usage(body))
         estimated = usage is None
         if usage is None:
             usage = self._estimate_usage(request, text)
@@ -256,8 +298,11 @@ class OpenAICompatibleProvider(BaseProvider):
                 except json.JSONDecodeError:
                     continue
 
-                if event.get("usage"):
-                    usage = self._usage(event["usage"])
+                if event.get("error"):
+                    raise self._upstream_error(event["error"], operation="stream")
+                event_usage = self._event_usage(event)
+                if event_usage:
+                    usage = self._usage(event_usage)
 
                 for choice in event.get("choices") or []:
                     delta = choice.get("delta") or {}

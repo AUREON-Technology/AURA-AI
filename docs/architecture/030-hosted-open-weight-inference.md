@@ -209,7 +209,10 @@ Known limits:
 - **Phase 2:** quota-aware routing (declared RPM/TPM/RPD/TPD, pre-send budget check, a
   `Retry-After` cooldown separate from the circuit breaker). **Built and tested, not proven
   live:** `aura_core/llm/quota.py`, wired through `ProviderRouter` and the container.
-- **Phase 3:** per-provider capability flags and planner sizing.
+- **Phase 3:** per-provider capability truthfulness. **Built and tested, not proven live:**
+  decode-speed-aware output sizing (`TOKENS_PER_SECOND`, `preferred_max_output_tokens`),
+  `EXTRA_BODY` with reserved fields refused, mid-stream upstream errors raised instead of
+  swallowed, and wire contract tests on documented fixtures.
 - **Phase 4:** data-sensitivity routing (§8). **Built and tested, not proven live.**
 - **Phase 5:** deploy wiring. **Built, inert until enabled:** `x-hosted-providers` in both
   compose files, `hosted{1,2,3}_api_key` secrets, and the `deploy/.env.example` operator block.

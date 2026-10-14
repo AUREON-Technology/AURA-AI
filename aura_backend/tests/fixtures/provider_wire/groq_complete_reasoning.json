@@ -1,0 +1,21 @@
+{
+  "provenance": "documented",
+  "note": "gpt-oss returns its reasoning in message.reasoning, separate from content; usage carries Groq timing fields and the response an x_groq object.",
+  "status": 200,
+  "headers": {"content-type": "application/json"},
+  "json": {
+    "id": "chatcmpl-0001",
+    "object": "chat.completion",
+    "created": 1791000000,
+    "model": "openai/gpt-oss-120b",
+    "choices": [{
+      "index": 0,
+      "message": {"role": "assistant", "content": "Paris.", "reasoning": "The user asks for the capital of France."},
+      "logprobs": null,
+      "finish_reason": "stop"
+    }],
+    "usage": {"queue_time": 0.02, "prompt_tokens": 80, "prompt_time": 0.004, "completion_tokens": 40, "completion_time": 0.08, "total_tokens": 120, "total_time": 0.084},
+    "system_fingerprint": "fp_0001",
+    "x_groq": {"id": "req_0001"}
+  }
+}

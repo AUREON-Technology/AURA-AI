@@ -1,0 +1,17 @@
+{
+  "provenance": "documented",
+  "note": "Usage arrives only in the final chunk's x_groq.usage, not a top-level usage field.",
+  "status": 200,
+  "headers": {"content-type": "text/event-stream"},
+  "sse": [
+    "data: {\"id\":\"chatcmpl-0002\",\"object\":\"chat.completion.chunk\",\"model\":\"openai/gpt-oss-120b\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}],\"x_groq\":{\"id\":\"req_0002\"}}",
+    "",
+    "data: {\"id\":\"chatcmpl-0002\",\"object\":\"chat.completion.chunk\",\"model\":\"openai/gpt-oss-120b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Par\"},\"finish_reason\":null}]}",
+    "",
+    "data: {\"id\":\"chatcmpl-0002\",\"object\":\"chat.completion.chunk\",\"model\":\"openai/gpt-oss-120b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"is.\"},\"finish_reason\":null}]}",
+    "",
+    "data: {\"id\":\"chatcmpl-0002\",\"object\":\"chat.completion.chunk\",\"model\":\"openai/gpt-oss-120b\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"x_groq\":{\"id\":\"req_0002\",\"usage\":{\"prompt_tokens\":80,\"completion_tokens\":3,\"total_tokens\":83}}}",
+    "",
+    "data: [DONE]"
+  ]
+}

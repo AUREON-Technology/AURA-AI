@@ -234,8 +234,16 @@ class BaseProvider:
         )
 
     def _effective_max_output(self, request: CompletionRequest) -> int:
-        requested = request.sampling.max_output_tokens or self._capabilities.max_output_tokens
-        return min(requested, self._capabilities.max_output_tokens)
+        """The output size to ask for -- see :meth:`ProviderCapabilities.output_budget`.
+
+        The deadline is the shorter of the request's and this provider's own HTTP timeout:
+        whichever fires first is the one the generation has to finish inside.
+        """
+        return self._capabilities.output_budget(
+            request.sampling.max_output_tokens,
+            request.preferred_max_output_tokens,
+            min(request.timeout_s, self._timeout_s),
+        )
 
     def _tool_declarations(self, request: CompletionRequest) -> Sequence[Mapping[str, Any]]:
         """Tools in OpenAI function-calling shape. Vendors that differ override this."""

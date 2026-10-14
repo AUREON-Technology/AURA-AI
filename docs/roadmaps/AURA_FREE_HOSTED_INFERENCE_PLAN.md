@@ -2,9 +2,9 @@
 
 **Status:** Proposed. Step 0 is drafted as
 [ADR-030](../architecture/030-hosted-open-weight-inference.md) (Proposed). Phase 1 (the policy
-layer), Phase 2 (quota-aware routing), Phase 4 (data-sensitivity routing) and Phase 5 (deploy
-wiring, inert until enabled) are **built and tested, not deployed**. Phases 3 and 6 are not
-started.
+layer), Phase 2 (quota-aware routing), Phase 3 (per-provider capability truthfulness), Phase 4
+(data-sensitivity routing) and Phase 5 (deploy wiring, inert until enabled) are **built and
+tested, not deployed**. Phase 6, the live proof, is what remains.
 **Date of research:** 2026-10-11. Free-tier terms in this space change monthly (see §2's change
 log); re-verify every number against the provider's own console before acting on it.
 
@@ -250,6 +250,34 @@ the list above in three places:
   streaming SSE shape, `finish_reason`, usage block, `429` body + headers, tool-call frames.
 
 Exit: contract tests green; a manual capture script exists to refresh fixtures.
+
+**As built** (`tests/unit/test_provider_wire_contracts.py`, `tests/fixtures/provider_wire/`,
+`scripts/capture_provider_wire.py`):
+
+- **Planner sizing is per provider, keyed on a declared decode speed** rather than a
+  hosted/local switch.
+  - `AURA_PROVIDER_<NAME>_TOKENS_PER_SECOND` feeds `ProviderCapabilities.output_budget()`, which
+    both the request payload and the quota estimate use.
+  - The planner asks for 700 tokens and prefers 1200 (`preferred_max_output_tokens`). A provider
+    gets 1200 only if its declared speed finishes 1200 tokens within 80% of the deadline.
+  - An undeclared provider, the CPU one included, still gets exactly 700, so the production
+    sizing CLAUDE.md records cannot regress by omission.
+- **`AURA_PROVIDER_<NAME>_EXTRA_BODY`** is a JSON object merged into every request, for example
+  `{"reasoning_effort": "low"}`. Fields AURA sets (model, messages, max_tokens, tools,
+  response_format, ...) are refused at boot, because overriding them would make the router's
+  capability checks untrue.
+- **Two adapter bugs were found by the fixtures and fixed:**
+  - An `{"error": ...}` event mid-stream, which OpenRouter sends when an upstream fails after
+    HTTP 200, was ignored. The turn ended as an empty successful answer. It now raises, and a
+    numeric 429 code keeps its meaning, so the provider is benched rather than counted as a
+    breaker failure.
+  - Usage reported only under Groq's `x_groq.usage` was missed, so quotas settled on an
+    estimate instead of the real count.
+- **JSON mode was already truthful.** `response_format` is sent only to a provider declaring
+  `SUPPORTS_JSON_MODE`, and the router excludes the rest from schema requests. Tests now pin
+  both.
+- **The fixtures are `documented` reconstructions, not live captures.** Phase 6 runs the capture
+  script with a real key and replaces them.
 
 ### Phase 4 — Data-sensitivity routing
 

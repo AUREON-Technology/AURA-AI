@@ -303,6 +303,23 @@ class ProviderConfig:
     #: (ADR-030 §4). Empty = the category default: ``internal`` for a hosted open-weight API,
     #: ``sensitive`` (everything) for anything else. AURA_PROVIDER_<NAME>_MAX_DATA_CLASSIFICATION.
     max_data_classification: str = ""
+    #: Declared decode throughput, output tokens/s (ADR-030 Phase 3). 0 = undeclared: the
+    #: provider is never given a request's larger *preferred* output size. Set it for a fast
+    #: hosted API; leave it unset for a CPU provider. AURA_PROVIDER_<NAME>_TOKENS_PER_SECOND.
+    tokens_per_second: float = 0.0
+    #: Extra top-level fields merged into every OpenAI-compatible request body, as a JSON object
+    #: -- e.g. ``{"reasoning_effort": "low"}`` so a reasoning model does not spend its output
+    #: budget, and its per-minute token quota, on hidden reasoning. Fields AURA itself sets
+    #: (model, messages, max_tokens, tools, response_format, ...) are refused: those decide what
+    #: the request is, and a provider override there would make the router's capability checks
+    #: untrue. AURA_PROVIDER_<NAME>_EXTRA_BODY.
+    extra_body: str = ""
+
+    #: Request-body fields an ``extra_body`` may not set. See :attr:`extra_body`.
+    _RESERVED_BODY_FIELDS: ClassVar[frozenset[str]] = frozenset({
+        "model", "messages", "stream", "stream_options", "max_tokens", "max_completion_tokens",
+        "tools", "tool_choice", "functions", "function_call", "response_format", "n",
+    })
 
     # Self-hosted runtimes only. There is deliberately no vendor kind here: `ollama` and
     # `openai_compatible` between them cover Ollama, vLLM, llama.cpp's server, LocalAI, TGI and
@@ -328,6 +345,7 @@ class ProviderConfig:
                 f"provider {self.name!r} health_path must start with '/'",
                 details={"provider": self.name, "health_path": self.health_path},
             )
+        self._validate_extra_body()
         known_classes = {c.value for c in DataClassification}
         if self.max_data_classification and self.max_data_classification not in known_classes:
             raise ConfigurationError(
@@ -410,6 +428,34 @@ class ProviderConfig:
                 "remote inference host permitted by AURA_ALLOW_REMOTE_INFERENCE",
                 extra={"provider": self.name, "host": host, "matched": gated},
             )
+
+    def _validate_extra_body(self) -> None:
+        if not self.extra_body:
+            return
+        try:
+            parsed = json.loads(self.extra_body)
+        except json.JSONDecodeError as exc:
+            raise ConfigurationError(
+                f"provider {self.name!r} extra_body is not valid JSON",
+                details={"provider": self.name, "error": str(exc)},
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise ConfigurationError(
+                f"provider {self.name!r} extra_body must be a JSON object",
+                details={"provider": self.name},
+            )
+        reserved = sorted(set(parsed) & self._RESERVED_BODY_FIELDS)
+        if reserved:
+            raise ConfigurationError(
+                f"provider {self.name!r} extra_body may not set {reserved}: AURA sets those, and "
+                f"the router's capability checks depend on them being what AURA sent",
+                details={"provider": self.name, "reserved": reserved},
+            )
+
+    @property
+    def extra_body_fields(self) -> dict[str, Any]:
+        """:attr:`extra_body` parsed (validated at construction)."""
+        return json.loads(self.extra_body) if self.extra_body else {}
 
     @property
     def third_party(self) -> bool:
@@ -527,6 +573,8 @@ class ProviderConfig:
             tpd=_int(f"{p}_TPD", 0, minimum=0),
             health_path=_env(f"{p}_HEALTH_PATH", "/models") or "/models",
             max_data_classification=(_env(f"{p}_MAX_DATA_CLASSIFICATION", "") or "").lower(),
+            tokens_per_second=_float(f"{p}_TOKENS_PER_SECOND", 0.0, minimum=0.0),
+            extra_body=(_env(f"{p}_EXTRA_BODY", "") or "").strip(),
         )
 
 

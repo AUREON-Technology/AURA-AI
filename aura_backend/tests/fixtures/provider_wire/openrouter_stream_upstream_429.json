@@ -1,0 +1,11 @@
+{
+  "provenance": "documented",
+  "note": "The same mid-stream error shape carrying a 429 code, as when the free endpoint behind the route is rate limited.",
+  "status": 200,
+  "headers": {"content-type": "text/event-stream"},
+  "sse": [
+    "data: {\"id\":\"gen-0005\",\"object\":\"chat.completion.chunk\",\"model\":\"google/gemma-4-31b-it:free\",\"error\":{\"code\":429,\"message\":\"Rate limit exceeded: free-models-per-day\"},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\"},\"finish_reason\":\"error\"}]}",
+    "",
+    "data: [DONE]"
+  ]
+}

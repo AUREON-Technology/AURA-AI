@@ -200,6 +200,11 @@ class PlanningEngine:
                     # single RESPOND step below), just via a fast, parseable return instead of a
                     # 180s wait ending in an exception.
                     sampling=SamplingParams(temperature=0.0, max_output_tokens=700),
+                    # ADR-030 Phase 3: 1200 was the size this call wanted before the CPU
+                    # incident above forced it down. A provider that declares a decode speed
+                    # fast enough to finish 1200 inside this deadline (a hosted GPU API) gets it;
+                    # every other provider, including the CPU one, still gets 700.
+                    preferred_max_output_tokens=1200,
                     policy=self._policy,
                     timeout_s=self._request_timeout_s,
                 )
