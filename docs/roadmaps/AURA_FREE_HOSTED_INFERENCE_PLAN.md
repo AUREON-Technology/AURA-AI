@@ -2,8 +2,9 @@
 
 **Status:** Proposed. Step 0 is drafted as
 [ADR-030](../architecture/030-hosted-open-weight-inference.md) (Proposed). Phase 1 (the policy
-layer), Phase 2 (quota-aware routing) and Phase 4 (data-sensitivity routing) are **built and
-tested, not deployed**. Phases 3, 5 and 6 are not started.
+layer), Phase 2 (quota-aware routing), Phase 4 (data-sensitivity routing) and Phase 5 (deploy
+wiring, inert until enabled) are **built and tested, not deployed**. Phases 3 and 6 are not
+started.
 **Date of research:** 2026-10-11. Free-tier terms in this space change monthly (see §2's change
 log); re-verify every number against the provider's own console before acting on it.
 
@@ -297,6 +298,30 @@ ADR-030 §8). It differs from the list above in four places:
   untouched otherwise.
 
 Exit: `docker compose config` renders both files; fitness tests pass on the new templates.
+
+**As built.** The deliverables:
+
+- **`x-hosted-providers`**, one identical anchor in both compose files. It carries three
+  vendor-neutral slots `HOSTED1..3` plus `AURA_ALLOW_HOSTED_INFERENCE` (default `false`),
+  `AURA_LLM_ROUTING_POLICY` and `AURA_LLM_RATE_LIMIT_COOLDOWN_S`. It is merged into the gateway
+  and every worker.
+- **File-backed keys** `hosted{1,2,3}_api_key`, created as placeholders by
+  `bootstrap-secrets.sh`, which `vps-update.sh` runs on every deploy.
+- **An operator block in `deploy/.env.example`** with Groq, Workers AI and OpenRouter examples.
+- **A Railway section** in `docs/deployment/control-plane.md`.
+- **A fitness test**, `tests/unit/test_hosted_provider_compose_plumbing.py`, which pins every
+  slot setting in every provider-building service, prod/dev parity, the secret files, and that
+  the compose defaults parse.
+
+Differences from the plan above:
+
+- **No network change.** The gateway already reaches the internet over `edge` (as it does for
+  GitHub and the HF Space). Workers stay on the internal `data` network: they never route to a
+  slot, because their generations are unclassified and count as SENSITIVE.
+- **`AURA_LLM_ROUTING_POLICY` had never been forwarded.** The gateway ran the code default
+  `balanced`, whatever `.env` said. It is forwarded now, with that same default.
+- **Ollama keeps its current model.** Shrinking the fallback model is an operator choice, best
+  made after Phase 6 shows how much traffic the fallback really takes.
 
 ### Phase 6 — Proof on the VPS
 

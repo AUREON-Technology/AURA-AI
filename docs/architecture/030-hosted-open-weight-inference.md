@@ -114,9 +114,9 @@ banning it would have opened a route to closed vendors.
   exactly `{openai_compatible, ollama, echo}`.
 - Embeddings, ASR, TTS, OCR and reranking stay local. This ADR covers chat/planning generation
   only.
-- With the flag unset, behaviour is identical to before. That is the state of every deployment
-  today, because no compose file passes `AURA_ALLOW_HOSTED_INFERENCE` through yet. That is
-  Phase 5, and it must land in `docker-compose.prod.yml` and `docker-compose.dev.yml` together.
+- With the flag unset, behaviour is identical to before. Both compose files forward
+  `AURA_ALLOW_HOSTED_INFERENCE` with a default of `false` (Phase 5). Turning a slot on is an
+  explicit `.env` change.
 
 ### 8. Content is classified, and a hosted provider sees only what its ceiling permits (Phase 4)
 
@@ -211,7 +211,8 @@ Known limits:
   live:** `aura_core/llm/quota.py`, wired through `ProviderRouter` and the container.
 - **Phase 3:** per-provider capability flags and planner sizing.
 - **Phase 4:** data-sensitivity routing (§8). **Built and tested, not proven live.**
-- **Phase 5:** deploy wiring.
+- **Phase 5:** deploy wiring. **Built, inert until enabled:** `x-hosted-providers` in both
+  compose files, `hosted{1,2,3}_api_key` secrets, and the `deploy/.env.example` operator block.
 - **Phase 6:** a VPS evidence report. The phase is not proven until that report exists.
 - Consider also refusing `is_local=true` on `REMOTE_INFERENCE_HOSTS`. That is left out here
   because it could break an existing private deployment config without warning.

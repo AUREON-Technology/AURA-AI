@@ -49,6 +49,12 @@ generate grafana_admin_password 24
 # unconditionally like the secrets above -- gateway/workers declare it in their `secrets:` list,
 # and docker compose refuses to start a service whose declared secret file does not exist.
 generate hfspace_api_key 48
+# Hosted open-weight provider slots (x-hosted-providers in both compose files; ADR-030).
+# Placeholders for the same "the file must exist" reason -- overwrite each with the real
+# provider key before listing its slot in AURA_LLM_PROVIDERS.
+generate hosted1_api_key 48
+generate hosted2_api_key 48
+generate hosted3_api_key 48
 # Unused unless AURA_GITHUB_OAUTH_ENABLED is set, but present unconditionally for the same
 # "the file must exist for the service to start" reason as hfspace_api_key.
 generate_fernet_key secrets_encryption_key

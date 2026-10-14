@@ -30,6 +30,99 @@ x-logging: &logging
 x-restart: &restart
   restart: unless-stopped
 
+# Mirrors docker-compose.prod.yml's x-hosted-providers exactly (parity rule: the stacks share
+# a host). Hosted open-weight providers (ADR-030; docs/roadmaps/AURA_FREE_HOSTED_INFERENCE_PLAN.md).
+# Three vendor-neutral slots, HOSTED1..HOSTED3, each pointed at a provider by .env. Every slot
+# is a no-op until BOTH AURA_ALLOW_HOSTED_INFERENCE=true AND AURA_LLM_PROVIDERS lists it (e.g.
+# `hosted1,hosted2,local`). Even then, ProviderConfig refuses a slot whose base URL is not on
+# the hosted allowlist or whose model is not open-weight, and the router sends a slot only
+# content at or below its MAX_DATA_CLASSIFICATION (internal by default: documents, memory,
+# tool output and Engineer workspaces stay on `local`).
+#
+# Merged into the gateway AND every worker. Workers never route to a slot: their generations
+# carry no turn classification, so they count as SENSITIVE and stay local. They still need the
+# variables, though: AURA_LLM_PROVIDERS is shared, and a listed provider with no base URL is a
+# boot failure. Workers sit on the internal `data` network and have no route out anyway. The
+# gateway reaches the internet over `edge`, the same path it already uses for GitHub and the
+# HF Space; no network was widened for this.
+#
+# Keys are file-backed like hfspace_api_key: secret_hydration.py reads
+# /run/secrets/hostedN_api_key into AURA_PROVIDER_HOSTEDN_API_KEY. bootstrap-secrets.sh writes a
+# random placeholder so the file exists; overwrite it with the real key before enabling a slot:
+#   printf '%s' "$KEY" > deploy/secrets/hosted1_api_key
+#
+# AURA_ALLOW_HOSTED_INFERENCE defaults to "false", not empty: aura_core rejects an empty boolean,
+# and that error would mask the one that explains the opt-in. AURA_LLM_ROUTING_POLICY was never
+# forwarded before (the gateway ran the code default, `balanced`, whatever .env said); a
+# hosted-primary topology needs `quality_first`, so it is forwarded here with the same default.
+x-hosted-providers: &hosted_providers
+  AURA_ALLOW_HOSTED_INFERENCE: ${AURA_ALLOW_HOSTED_INFERENCE:-false}
+  AURA_LLM_ROUTING_POLICY: ${AURA_LLM_ROUTING_POLICY:-balanced}
+  AURA_LLM_RATE_LIMIT_COOLDOWN_S: ${AURA_LLM_RATE_LIMIT_COOLDOWN_S:-30}
+  AURA_PROVIDER_HOSTED1_KIND: ${AURA_PROVIDER_HOSTED1_KIND:-openai_compatible}
+  AURA_PROVIDER_HOSTED1_MODEL: ${AURA_PROVIDER_HOSTED1_MODEL:-}
+  AURA_PROVIDER_HOSTED1_BASE_URL: ${AURA_PROVIDER_HOSTED1_BASE_URL:-}
+  AURA_PROVIDER_HOSTED1_QUALITY_TIER: ${AURA_PROVIDER_HOSTED1_QUALITY_TIER:-3}
+  AURA_PROVIDER_HOSTED1_SPEED_TIER: ${AURA_PROVIDER_HOSTED1_SPEED_TIER:-3}
+  AURA_PROVIDER_HOSTED1_CONTEXT_WINDOW: ${AURA_PROVIDER_HOSTED1_CONTEXT_WINDOW:-8192}
+  AURA_PROVIDER_HOSTED1_MAX_OUTPUT_TOKENS: ${AURA_PROVIDER_HOSTED1_MAX_OUTPUT_TOKENS:-1024}
+  AURA_PROVIDER_HOSTED1_SUPPORTS_TOOLS: ${AURA_PROVIDER_HOSTED1_SUPPORTS_TOOLS:-true}
+  AURA_PROVIDER_HOSTED1_SUPPORTS_JSON_MODE: ${AURA_PROVIDER_HOSTED1_SUPPORTS_JSON_MODE:-false}
+  AURA_PROVIDER_HOSTED1_TIMEOUT_S: ${AURA_PROVIDER_HOSTED1_TIMEOUT_S:-60}
+  AURA_PROVIDER_HOSTED1_HEALTH_TIMEOUT_S: ${AURA_PROVIDER_HOSTED1_HEALTH_TIMEOUT_S:-10}
+  AURA_PROVIDER_HOSTED1_HEALTH_PATH: ${AURA_PROVIDER_HOSTED1_HEALTH_PATH:-/models}
+  AURA_PROVIDER_HOSTED1_MAX_CONCURRENCY: ${AURA_PROVIDER_HOSTED1_MAX_CONCURRENCY:-4}
+  AURA_PROVIDER_HOSTED1_RPM: ${AURA_PROVIDER_HOSTED1_RPM:-0}
+  AURA_PROVIDER_HOSTED1_RPD: ${AURA_PROVIDER_HOSTED1_RPD:-0}
+  AURA_PROVIDER_HOSTED1_TPM: ${AURA_PROVIDER_HOSTED1_TPM:-0}
+  AURA_PROVIDER_HOSTED1_TPD: ${AURA_PROVIDER_HOSTED1_TPD:-0}
+  AURA_PROVIDER_HOSTED1_MAX_DATA_CLASSIFICATION: ${AURA_PROVIDER_HOSTED1_MAX_DATA_CLASSIFICATION:-}
+  AURA_PROVIDER_HOSTED1_IS_LOCAL: "false"
+  AURA_PROVIDER_HOSTED1_API_KEY_ENV: AURA_PROVIDER_HOSTED1_API_KEY
+  AURA_PROVIDER_HOSTED1_API_KEY_FILE: /run/secrets/hosted1_api_key
+  AURA_PROVIDER_HOSTED2_KIND: ${AURA_PROVIDER_HOSTED2_KIND:-openai_compatible}
+  AURA_PROVIDER_HOSTED2_MODEL: ${AURA_PROVIDER_HOSTED2_MODEL:-}
+  AURA_PROVIDER_HOSTED2_BASE_URL: ${AURA_PROVIDER_HOSTED2_BASE_URL:-}
+  AURA_PROVIDER_HOSTED2_QUALITY_TIER: ${AURA_PROVIDER_HOSTED2_QUALITY_TIER:-3}
+  AURA_PROVIDER_HOSTED2_SPEED_TIER: ${AURA_PROVIDER_HOSTED2_SPEED_TIER:-3}
+  AURA_PROVIDER_HOSTED2_CONTEXT_WINDOW: ${AURA_PROVIDER_HOSTED2_CONTEXT_WINDOW:-8192}
+  AURA_PROVIDER_HOSTED2_MAX_OUTPUT_TOKENS: ${AURA_PROVIDER_HOSTED2_MAX_OUTPUT_TOKENS:-1024}
+  AURA_PROVIDER_HOSTED2_SUPPORTS_TOOLS: ${AURA_PROVIDER_HOSTED2_SUPPORTS_TOOLS:-true}
+  AURA_PROVIDER_HOSTED2_SUPPORTS_JSON_MODE: ${AURA_PROVIDER_HOSTED2_SUPPORTS_JSON_MODE:-false}
+  AURA_PROVIDER_HOSTED2_TIMEOUT_S: ${AURA_PROVIDER_HOSTED2_TIMEOUT_S:-60}
+  AURA_PROVIDER_HOSTED2_HEALTH_TIMEOUT_S: ${AURA_PROVIDER_HOSTED2_HEALTH_TIMEOUT_S:-10}
+  AURA_PROVIDER_HOSTED2_HEALTH_PATH: ${AURA_PROVIDER_HOSTED2_HEALTH_PATH:-/models}
+  AURA_PROVIDER_HOSTED2_MAX_CONCURRENCY: ${AURA_PROVIDER_HOSTED2_MAX_CONCURRENCY:-4}
+  AURA_PROVIDER_HOSTED2_RPM: ${AURA_PROVIDER_HOSTED2_RPM:-0}
+  AURA_PROVIDER_HOSTED2_RPD: ${AURA_PROVIDER_HOSTED2_RPD:-0}
+  AURA_PROVIDER_HOSTED2_TPM: ${AURA_PROVIDER_HOSTED2_TPM:-0}
+  AURA_PROVIDER_HOSTED2_TPD: ${AURA_PROVIDER_HOSTED2_TPD:-0}
+  AURA_PROVIDER_HOSTED2_MAX_DATA_CLASSIFICATION: ${AURA_PROVIDER_HOSTED2_MAX_DATA_CLASSIFICATION:-}
+  AURA_PROVIDER_HOSTED2_IS_LOCAL: "false"
+  AURA_PROVIDER_HOSTED2_API_KEY_ENV: AURA_PROVIDER_HOSTED2_API_KEY
+  AURA_PROVIDER_HOSTED2_API_KEY_FILE: /run/secrets/hosted2_api_key
+  AURA_PROVIDER_HOSTED3_KIND: ${AURA_PROVIDER_HOSTED3_KIND:-openai_compatible}
+  AURA_PROVIDER_HOSTED3_MODEL: ${AURA_PROVIDER_HOSTED3_MODEL:-}
+  AURA_PROVIDER_HOSTED3_BASE_URL: ${AURA_PROVIDER_HOSTED3_BASE_URL:-}
+  AURA_PROVIDER_HOSTED3_QUALITY_TIER: ${AURA_PROVIDER_HOSTED3_QUALITY_TIER:-3}
+  AURA_PROVIDER_HOSTED3_SPEED_TIER: ${AURA_PROVIDER_HOSTED3_SPEED_TIER:-3}
+  AURA_PROVIDER_HOSTED3_CONTEXT_WINDOW: ${AURA_PROVIDER_HOSTED3_CONTEXT_WINDOW:-8192}
+  AURA_PROVIDER_HOSTED3_MAX_OUTPUT_TOKENS: ${AURA_PROVIDER_HOSTED3_MAX_OUTPUT_TOKENS:-1024}
+  AURA_PROVIDER_HOSTED3_SUPPORTS_TOOLS: ${AURA_PROVIDER_HOSTED3_SUPPORTS_TOOLS:-true}
+  AURA_PROVIDER_HOSTED3_SUPPORTS_JSON_MODE: ${AURA_PROVIDER_HOSTED3_SUPPORTS_JSON_MODE:-false}
+  AURA_PROVIDER_HOSTED3_TIMEOUT_S: ${AURA_PROVIDER_HOSTED3_TIMEOUT_S:-60}
+  AURA_PROVIDER_HOSTED3_HEALTH_TIMEOUT_S: ${AURA_PROVIDER_HOSTED3_HEALTH_TIMEOUT_S:-10}
+  AURA_PROVIDER_HOSTED3_HEALTH_PATH: ${AURA_PROVIDER_HOSTED3_HEALTH_PATH:-/models}
+  AURA_PROVIDER_HOSTED3_MAX_CONCURRENCY: ${AURA_PROVIDER_HOSTED3_MAX_CONCURRENCY:-4}
+  AURA_PROVIDER_HOSTED3_RPM: ${AURA_PROVIDER_HOSTED3_RPM:-0}
+  AURA_PROVIDER_HOSTED3_RPD: ${AURA_PROVIDER_HOSTED3_RPD:-0}
+  AURA_PROVIDER_HOSTED3_TPM: ${AURA_PROVIDER_HOSTED3_TPM:-0}
+  AURA_PROVIDER_HOSTED3_TPD: ${AURA_PROVIDER_HOSTED3_TPD:-0}
+  AURA_PROVIDER_HOSTED3_MAX_DATA_CLASSIFICATION: ${AURA_PROVIDER_HOSTED3_MAX_DATA_CLASSIFICATION:-}
+  AURA_PROVIDER_HOSTED3_IS_LOCAL: "false"
+  AURA_PROVIDER_HOSTED3_API_KEY_ENV: AURA_PROVIDER_HOSTED3_API_KEY
+  AURA_PROVIDER_HOSTED3_API_KEY_FILE: /run/secrets/hosted3_api_key
+
 networks:
   # Internal app bridge (gateway â†” console). Nginx reaches these via aura_edge.
   edge:
@@ -82,6 +175,14 @@ secrets:
     file: ./secrets/data_encryption_keys
   github_oauth_client_secret:
     file: ./secrets/github_oauth_client_secret
+  # API keys for the hosted open-weight slots (x-hosted-providers above). Placeholders from
+  # bootstrap-secrets.sh until overwritten; unused unless the slot is enabled.
+  hosted1_api_key:
+    file: ./secrets/hosted1_api_key
+  hosted2_api_key:
+    file: ./secrets/hosted2_api_key
+  hosted3_api_key:
+    file: ./secrets/hosted3_api_key
 
 services:
   console:
@@ -140,6 +241,7 @@ services:
       --proxy-headers --forwarded-allow-ips='*'
       --timeout-keep-alive 65
     environment:
+      <<: *hosted_providers
       AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-development}
       AURA_LOG_FORMAT: json
       AURA_LOG_LEVEL: ${AURA_LOG_LEVEL:-DEBUG}
@@ -253,6 +355,9 @@ services:
         secrets_encryption_key,
         github_oauth_client_secret,
         data_encryption_keys,
+        hosted1_api_key,
+        hosted2_api_key,
+        hosted3_api_key,
       ]
     volumes:
       - aura_workspace_dev:/var/lib/aura/workspace
@@ -344,6 +449,7 @@ services:
     logging: *logging
     command: celery -A tasks worker -Q realtime -c 2 --loglevel=info --max-tasks-per-child=200
     environment: &worker_env
+      <<: *hosted_providers
       AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-development}
       AURA_LOG_FORMAT: json
       AURA_VECTOR_BACKEND: qdrant
@@ -381,7 +487,7 @@ services:
       AURA_LEARNING_DATASET_DIR: /var/lib/aura/datasets
       LEARNING_FINETUNE_ALLOW_CPU: ${LEARNING_FINETUNE_ALLOW_CPU:-true}
       DEBUG_MODE: "false"
-    secrets: [postgres_password, redis_password, qdrant_api_key, data_encryption_keys]
+    secrets: [postgres_password, redis_password, qdrant_api_key, data_encryption_keys, hosted1_api_key, hosted2_api_key, hosted3_api_key]
     networks: [data]
     depends_on:
       postgres: {condition: service_healthy}
@@ -399,7 +505,7 @@ services:
     logging: *logging
     command: celery -A tasks worker -Q ingestion,learning -c 2 --loglevel=info --max-tasks-per-child=50
     environment: *worker_env
-    secrets: [postgres_password, redis_password, qdrant_api_key, data_encryption_keys]
+    secrets: [postgres_password, redis_password, qdrant_api_key, data_encryption_keys, hosted1_api_key, hosted2_api_key, hosted3_api_key]
     volumes:
       - aura_workspace_dev:/var/lib/aura/workspace
       - aura_datasets_dev:/var/lib/aura/datasets
@@ -430,7 +536,7 @@ services:
       AURA_FINETUNE_TRAINER: local
       LEARNING_FINETUNE_ALLOW_CPU: ${LEARNING_FINETUNE_ALLOW_CPU:-true}
       AURA_LEARNING_DATASET_DIR: /var/lib/aura/datasets
-    secrets: [postgres_password, redis_password, qdrant_api_key, data_encryption_keys]
+    secrets: [postgres_password, redis_password, qdrant_api_key, data_encryption_keys, hosted1_api_key, hosted2_api_key, hosted3_api_key]
     volumes:
       - aura_workspace_dev:/var/lib/aura/workspace
       - aura_datasets_dev:/var/lib/aura/datasets
@@ -451,7 +557,7 @@ services:
     logging: *logging
     command: celery -A celery_app beat --loglevel=info
     environment: *worker_env
-    secrets: [postgres_password, redis_password, qdrant_api_key, data_encryption_keys]
+    secrets: [postgres_password, redis_password, qdrant_api_key, data_encryption_keys, hosted1_api_key, hosted2_api_key, hosted3_api_key]
     networks: [data]
     depends_on:
       redis: {condition: service_healthy}
