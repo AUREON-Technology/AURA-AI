@@ -1,4 +1,4 @@
-# AP10: Files, Documents and Git Connectors; Project Knowledge; Identity Modes (evidence)
+# AP10: Files, Documents, Git, MySQL and SQL Server Connectors; Project Knowledge; Identity Modes (evidence)
 
 **Phase:** AP10 ([Track AP roadmap](../roadmaps/AURA_ADAPTIVE_PLATFORM_ROADMAP.md)) · **Gap:** GAP-059 ·
 **Backlog:** CB-11, CB-40 · **ADRs:** 020, 021 · **Started:** 2026-10-12 · **Base:** `910949a` (main)
@@ -11,7 +11,9 @@
 - 2026-10-14: area 2, the **Git connector**, reading a repository checkout's SQL, ORM models,
   migrations, routes and API description as twin evidence, with Git discovery goldens;
 - 2026-10-14: area 3, **`CompositeFetcher`** in `container.py`, with a fetcher that reads
-  documents through Track AP connectors for the nightly refresh.
+  documents through Track AP connectors for the nightly refresh;
+- 2026-10-14: area 4, **MySQL and SQL Server discovery** behind the same port as PostgreSQL,
+  proven against live MySQL 8.0 and SQL Server 2022 servers.
 
 The remaining areas are listed under *Not reached*. The exit criteria are not met yet.
 
@@ -328,6 +330,138 @@ https.
 
 Without Track AP, the same API call answers 503.
 
+## Area 4: MySQL and SQL Server discovery (2026-10-14)
+
+**Before:** `ConnectorKind.MYSQL` and `SQL_SERVER` existed in the domain (with service-account and
+credential rules), but no factory served them. Registering one answered "unsupported kind".
+
+**Now** `adapters/connectors/mysql.py` and `mssql.py` implement the same `DiscoveryConnector` port
+as PostgreSQL, and `container.py` wires both factories:
+- The drivers are **PyMySQL** and **python-tds**. Both are pure Python, so the image needs no
+  `libmysqlclient` or ODBC driver. They are imported lazily and run in a worker thread.
+  pyOpenSSL is added because python-tds negotiates TLS through it. The lockfile is regenerated
+  with its own command; the only new pins are `pymysql`, `python-tds` and `pyopenssl`.
+- Each capture produces the **PostgreSQL snapshot shape**, so `artifacts_from_catalog` and
+  everything after it (normalizer, twin, planner, compiler) are shared, not forked.
+  - Column types take the twin's canonical names: `varchar(n)` / `nvarchar(n)` become
+    `character varying(n)`; `tinyint(1)` and `bit` become `boolean`; `datetime` and `datetime2`
+    become `timestamp without time zone`; MySQL `timestamp` and `datetimeoffset` become
+    `timestamp with time zone`. The engine's own type name stays as `type_name`.
+  - A MySQL column `ENUM` becomes an enum type named `<table>_<column>`.
+  - **CHECK text is rewritten only outside string literals.**
+    - MySQL: `information_schema` escapes the clause once more, and adds charset introducers
+      (`_utf8mb4'…'`) and backticks. All are undone, so a value such as `'on_leave'` is never
+      cut.
+    - SQL Server: `col IN (…)` is stored as a reversed OR chain, `([col]='b' OR [col]='a')`. That
+      exact shape becomes `col IN ('a', 'b')` again, in declaration order. Other boolean
+      structure stays as it is.
+    - A LIKE pattern's `[0-9]` is not treated as an identifier.
+  - **Grants are read from other principals too.** MySQL keeps them in `mysql.db` and
+    `mysql.tables_priv`; SQL Server keeps them in `sys.database_permissions` at object, schema and
+    database scope, each expanded to the tables it covers.
+    - Without `SELECT` on those grant tables, or without `VIEW DEFINITION`, the result is the
+      `grants_not_visible` issue, not a failed run. SQL Server additionally reports
+      `check_definition_hidden`.
+    - The connector's own account is excluded, as PostgreSQL excludes owner grants.
+  - **Profiles are aggregates computed on the server**, exactly as on PostgreSQL. MySQL uses
+    REGEXP. T-SQL has no regular expressions, so each pattern rule is an exact LIKE equivalent
+    over a binary collation.
+- **Read-only:**
+  - MySQL sessions are opened `READ ONLY` and the capture runs in a `READ ONLY` transaction with
+    `MAX_EXECUTION_TIME`.
+  - SQL Server has no read-only session. The capture runs in one transaction that is always rolled
+    back, with a `LOCK_TIMEOUT`.
+  - Both connectors only ever send constant statements, plus one reviewed profiling builder each,
+    which `test_no_freeform_sql.py` now lists.
+- **Privilege inspection** feeds `ConnectorHealth.write_capable`, so activation refuses any
+  finding:
+  - **MySQL** parses `SHOW GRANTS`. Anything beyond `SELECT`, `SHOW VIEW`, `SHOW DATABASES` or
+    `USAGE` is a finding, and so are a granted role and `WITH GRANT OPTION`.
+  - **SQL Server** reads *effective* permissions (`fn_my_permissions`, which follows role
+    membership, so `db_datawriter` and `sysadmin` are found), object- and schema-level
+    `HAS_PERMS_BY_NAME`, and `WITH GRANT OPTION`.
+    - `EXECUTE` is a finding (`procedure_execute`): through ownership chaining, a procedure writes
+      whatever the account's table grants say.
+    - Each fixed database role owns an empty schema of its own name. Those schemas are skipped;
+      without that, `db_datareader` itself read as DDL-capable.
+- **TLS:**
+  - MySQL `tls` is `require` (the default), `verify-full` or `disable`, with an optional
+    `ca_file`.
+  - SQL Server `tls` is `verify-full` (the default), `verify-ca` or `disable`. python-tds can only
+    encrypt against a CA, so there is deliberately no "trust anything" mode; a self-signed
+    server's certificate is passed as `ca_file`.
+  - **python-tds's host-name check is replaced.** It is the only check that runs before the
+    password is sent, and as shipped it calls `X509.get_extension`, which pyOpenSSL has removed.
+    Any certificate that names the host only in its subjectAltName raised `AttributeError`.
+    `mssql._validate_host` matches the RFC 6125 way using `cryptography`: SAN DNS names, one
+    leftmost wildcard label at most, and IP SANs; the CN is consulted only when there is no SAN.
+    It fails closed.
+  - A verification failure reports `tls_failed`, not `unreachable`.
+- **Discovery only.** Neither dialect has templated reads behind `render_sql` yet:
+  - the compiler drops every read capability on these sources with the reason
+    `sql_dialect_unsupported`;
+  - `read()` raises;
+  - a blueprint still compiles, with the source as an integration and the twin complete.
+
+**The HR pilot in three dialects.** `hr/mysql/schema.sql` and `hr/mssql/schema.sql` are the system
+`hr/schema.sql` describes, written the way each shop would write it. They keep what the dialect
+forces to differ:
+- `VARCHAR` / `NVARCHAR` unique columns;
+- table-level foreign keys in MySQL, which parses and ignores an inline `REFERENCES`;
+- `ENUM` in MySQL, and `CHECK … IN` in SQL Server, which has no enum type;
+- `COMMENT` clauses in MySQL, `MS_Description` extended properties in SQL Server;
+- the same hostile column comment in both.
+
+Each is seeded from `golden/rows.json`, so every engine holds the same 146 rows.
+
+**Goldens.** `scripts/pilot_discovery_goldens.py --record-mysql URL --record-mssql URL` loads the
+pilot into a fresh `aura_pilot_hr` database, creates a read-only `aura_discovery` account, and
+captures. The commands were run against MySQL 8.0.46 and SQL Server 2022 (RTM-CU27); re-recording
+reproduces the files byte for byte. The script writes:
+- `golden/catalog_mysql.json` and `catalog_mssql.json`: the *raw* catalog rows, so the default
+  suite exercises the mapping;
+- `golden/discovery_mysql.json` and `discovery_mssql.json`: the rendered reports.
+
+**Evidence: `tests/unit/test_adaptation_sql_engines.py` (101 tests)**, covering:
+- **Goldens:** each committed report equals the mapping, and the recorded captures are complete
+  and carry no seeded row value.
+- **Parity with PostgreSQL.**
+  - The same relations, columns and positions; the same primary, unique and foreign keys
+    (columns and targets); the same 11 grants; and the same profile counts.
+  - The same twin elements (entities, attributes, states, roles, relations, permissions,
+    metrics).
+  - **An identical capability plan (22 selections) and agent set** for MySQL and for SQL Server.
+    The only difference in the twin: SQL Server's `leave_type` is a CHECK constraint rather than
+    an enum, and it yields the same four states.
+  - The hostile comment stays `UntrustedText`.
+- **Mapping edges:** type tables, MySQL escaping and introducers, SQL Server OR chains and LIKE
+  brackets, grant expansion and own-account exclusion, identity and view defaults, hidden check
+  definitions, and both engines' privilege findings.
+- **The TLS host check:** 11 certificates generated with `cryptography`, covering SAN over CN, the
+  wildcard limits and IP SANs. It fails closed, and it is installed in place of python-tds's
+  check.
+- **Before any socket is opened:** preflight refusals (endpoint, options, TLS mode, `ca_file`
+  type), `read()` refused, and the compile drop reason. The real container offers both kinds.
+
+**Against live servers:** `tests/load/test_adaptation_discovery_engines.py` (opt-in, `-m load`,
+with `AURA_TEST_MYSQL_URL` and `AURA_TEST_MSSQL_URL`) passes **12 of 12**, 6 per engine, against
+the same MySQL 8.0.46 and SQL Server 2022:
+- a live capture equals the recorded raw catalog;
+- the connector, through its own connect path, discovers exactly the committed golden;
+- the read-only account is healthy and not write-capable;
+- an account granted `INSERT` on one table is `table_write`;
+- an account without grant-table access, or without `VIEW DEFINITION`, gets `grants_not_visible`
+  (and `check_definition_hidden`) with tables still discovered;
+- a small budget truncates honestly.
+
+Checked by hand on the same servers:
+- `auth_failed`, `unreachable` and `tls_failed`, including `verify-full` against a certificate
+  for another name;
+- `verify-full` and `verify-ca` succeeding with the server's certificate as `ca_file`;
+- MySQL root reported as `admin`, `ddl`, `grant_option` and `table_write`;
+- a SQL Server account that may only `EXECUTE` a procedure, with `GRANT … WITH GRANT OPTION`,
+  reported as `procedure_execute` and `grant_option`.
+
 ## Not reached (rest of AP10)
 
 1. **DOCX and Excel.** Both need a parser the lockfile does not carry (`python-docx`, `openpyxl`).
@@ -339,7 +473,9 @@ Without Track AP, the same API call answers 503.
    - prefixes added in another file (`include_router(prefix=)`, `register_blueprint`).
 3. **More fetchers behind `CompositeFetcher`:** `drive` and `repository` sources still fall to
    the HTTPS default, as they always did; a fetcher of their own is not built.
-4. **MySQL and SQL Server** discovery adapters. The SQL reader is PostgreSQL-dialect only.
+4. **MySQL and SQL Server reads.** Discovery is done (Area 4). Templated reads need each
+   dialect behind `render_sql`: backtick or bracket quoting, `LIMIT` vs `TOP`/`OFFSET … FETCH`,
+   and parameter style. Until then the compiler drops those capabilities with a reason.
 5. **Identity modes:**
    - service-account role → policy mapping;
    - delegated OIDC passthrough;
@@ -356,6 +492,18 @@ Without Track AP, the same API call answers 503.
      checkout is mounted.
 
 ## Residual risks
+
+- **python-tds's host check is replaced process-wide** (`pytds.tls.validate_host`). It is installed
+  only when a SQL Server connector uses `verify-full`, it is stricter than the original, and a
+  unit test pins that the attribute is the one replaced. A python-tds upgrade that renames it
+  would surface there, not silently.
+- **SQL Server discovery is not read-only at the session level.** The account is what activation
+  vouches for (no write, DDL, EXECUTE or grant option), and every statement is a constant inside a
+  rolled-back transaction. That is the same trust PostgreSQL rests on, minus the
+  `READ ONLY` transaction belt.
+- MySQL `require` (the default) encrypts but does not verify the certificate, as libpq's
+  `sslmode=require`. `verify-full` is available, and the default can be raised once pilots show
+  certificates are in place.
 
 - The kind is off until an operator sets `AURA_ADAPTATION_FILES_ROOT` and mounts a directory. The
   production and dev compose files deliberately do neither yet.

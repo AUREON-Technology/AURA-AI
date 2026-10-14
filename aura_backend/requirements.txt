@@ -26,6 +26,14 @@ cryptography>=42.0.0
 # OpenAPI descriptions in YAML (aura_core/adapters/connectors/openapi.py, safe_load only). Already
 # pinned transitively; declared because the connector imports it directly.
 pyyaml>=6.0
+# Track AP discovery of MySQL and SQL Server (aura_core/adapters/connectors/mysql.py, mssql.py).
+# Both pure Python, imported lazily inside the adapters and run in a worker thread; chosen over
+# native-extension drivers so the image needs no client libraries (no libmysqlclient, no ODBC).
+PyMySQL>=1.1.1
+python-tds>=1.16.0
+# python-tds negotiates TLS through pyOpenSSL (over the `cryptography` pinned above); SQL Server
+# endpoints that require encryption (Azure SQL always does) cannot be reached without it.
+pyOpenSSL>=24.0.0
 # aura_core.observability.metrics imports this behind a try/except so the domain stays
 # importable on bare CPython, but the deployed stack is not optional about it: the prod compose
 # sets AURA_METRICS_ENABLED=true and runs Prometheus, Grafana, and Alertmanager against

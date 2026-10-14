@@ -1360,9 +1360,9 @@ gaps:
     severity: P1
     current_state: >-
       Files (tables and documents) and Git (checkout) connectors built; CompositeFetcher wired
-      with connector-backed refresh sources; CB-11 fixed. Still no MySQL/SQL Server discovery, no
-      delegated identity passthrough, no DOCX/Excel, and no dev-stack or real-Qdrant exit run
-      (see the progress entries below).
+      with connector-backed refresh sources; MySQL and SQL Server discovery built (reads not yet:
+      no T-SQL/MySQL render_sql); CB-11 fixed. Still no delegated identity passthrough, no
+      DOCX/Excel, and no dev-stack or real-Qdrant exit run (see the progress entries below).
     target_state: >-
       Files/documents/Git (and MySQL/SQL Server) connectors, project knowledge ingested with an
       explicit owner sentinel, and both identity modes enforced per connector.
@@ -1411,6 +1411,19 @@ gaps:
       connector fails the source. End to end through the container over HTTP: approve a Files
       connector, register the source, refresh, all five pilot documents ingested UNTRUSTED under
       project:p0 and invisible to persons (tests/unit/test_adaptation_connector_sources.py).
+    progress_2026_10_14c: >-
+      MySQL and SQL Server discovery behind the PostgreSQL port (adapters/connectors/mysql.py,
+      mssql.py; PyMySQL and python-tds, pure Python, lazily imported, run in a worker thread),
+      mapped into the PostgreSQL snapshot shape so normalizer, twin, planner and compiler are
+      shared. Privilege inspection feeds activation (MySQL SHOW GRANTS; SQL Server effective
+      permissions, object/schema write and EXECUTE paths, grant option). The HR pilot in MySQL
+      and T-SQL, seeded from rows.json, gives the same twin and an identical 22-selection
+      capability plan and agent set as PostgreSQL (tests/unit/test_adaptation_sql_engines.py,
+      101 tests); raw captures recorded from MySQL 8.0.46 and SQL Server 2022, and
+      tests/load/test_adaptation_discovery_engines.py passes 12/12 against those live servers.
+      Discovery only: the compiler drops their reads with sql_dialect_unsupported. python-tds's
+      pre-login host-name check is replaced by an RFC 6125 matcher (the shipped one breaks on
+      current pyOpenSSL for SAN-only certificates).
     evidence: docs/reports/ap10-connectors-knowledge.md
 
   - gap_id: GAP-060
