@@ -76,9 +76,13 @@ def build_tool(selection: PlannedCapability, view: TwinView, taken: set[str]) ->
 #: Sources whose tables compile to SQL read templates: PostgreSQL, and file tables (AP10), which
 #: run the same templates through the in-memory evaluator.
 _SQL_KINDS = frozenset({ConnectorKind.POSTGRES, ConnectorKind.FILES})
+#: Discovered (AP10) but not yet readable: their SQL dialects have no ``render_sql`` yet.
+_DISCOVERY_ONLY_KINDS = frozenset({ConnectorKind.MYSQL, ConnectorKind.SQL_SERVER})
 
 
 def _sql_parts(entity: AusmElement, view: TwinView) -> tuple[str, str]:
+    if view.kind_of(entity) in _DISCOVERY_ONLY_KINDS:
+        raise _Drop("sql_dialect_unsupported")
     if view.kind_of(entity) not in _SQL_KINDS or entity.properties.get("source_type") != "table":
         raise _Drop("not_a_sql_table")
     schema = entity.properties.get("schema")

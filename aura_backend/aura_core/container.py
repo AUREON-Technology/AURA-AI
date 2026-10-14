@@ -821,6 +821,8 @@ class Container:
         from .adaptation.connectors import ConnectorRegistry
         from .adapters.connectors.files import FilesConnectorFactory
         from .adapters.connectors.git import GitConnectorFactory
+        from .adapters.connectors.mssql import SqlServerConnectorFactory
+        from .adapters.connectors.mysql import MySqlConnectorFactory
         from .adapters.connectors.openapi import OpenApiConnectorFactory
         from .adapters.connectors.postgres import PostgresConnectorFactory
         from .adapters.credential_vault import (
@@ -849,6 +851,9 @@ class Container:
         factories: dict[Any, Any] = {
             ConnectorKind.POSTGRES: PostgresConnectorFactory(forbidden_targets=(url,)),
             ConnectorKind.OPENAPI: OpenApiConnectorFactory(),
+            # Discovery only (AP10): their tables compile to no tool until each dialect has reads.
+            ConnectorKind.MYSQL: MySqlConnectorFactory(),
+            ConnectorKind.SQL_SERVER: SqlServerConnectorFactory(),
         }
         if self.settings.adaptation.files_root:
             # Offered only with an operator-chosen root: no root, no readable path on this host.

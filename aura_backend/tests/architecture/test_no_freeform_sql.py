@@ -31,6 +31,12 @@ _CONSTANT = re.compile(r"^[A-Z][A-Z0-9_]*$")
 REVIEWED_BUILDERS = {
     ("postgres_catalog.py", "capture_catalog"): "SET LOCAL statement_timeout from an int()",
     ("postgres_catalog.py", "_profile_table"): "profiling aggregates over _sql_ident-quoted catalog names",
+    ("mysql.py", "_profile_table"): "profiling aggregates over _mysql_ident-quoted catalog names; the "
+                                    "pattern regexes and the sample size are bound parameters",
+    ("mssql.py", "capture_mssql"): "SET LOCK_TIMEOUT from an int(), sent unparameterized because a SET "
+                                   "inside sp_executesql reverts when that batch ends",
+    ("mssql.py", "_profile_table"): "profiling aggregates over _mssql_ident-quoted catalog names; the "
+                                    "LIKE patterns and the sample size are bound parameters",
 }
 
 

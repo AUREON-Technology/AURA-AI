@@ -70,6 +70,7 @@ cryptography==50.0.0
     #   -r requirements.txt
     #   google-auth
     #   pyjwt
+    #   pyopenssl
 ctranslate2==4.8.1
     # via faster-whisper
 docker==7.2.0
@@ -324,6 +325,10 @@ pyjwt==2.15.1
     #   -r requirements.txt
     #   firebase-admin
     #   mcp
+pymysql==1.2.3
+    # via -r requirements.txt
+pyopenssl==26.4.0
+    # via -r requirements.txt
 pyparsing==3.3.2
     # via httplib2
 pypdf==6.19.0
@@ -341,6 +346,8 @@ python-multipart==0.0.32
     # via
     #   -r requirements.txt
     #   mcp
+python-tds==1.17.1
+    # via -r requirements.txt
 pyyaml==6.0.3
     # via
     #   -r requirements.txt
@@ -443,6 +450,7 @@ typing-extensions==4.16.0
     #   opentelemetry-semantic-conventions
     #   pydantic
     #   pydantic-core
+    #   pyopenssl
     #   referencing
     #   sentence-transformers
     #   sqlalchemy
