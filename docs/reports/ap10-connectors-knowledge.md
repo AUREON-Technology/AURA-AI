@@ -13,7 +13,10 @@
 - 2026-10-14: area 3, **`CompositeFetcher`** in `container.py`, with a fetcher that reads
   documents through Track AP connectors for the nightly refresh;
 - 2026-10-14: area 4, **MySQL and SQL Server discovery** behind the same port as PostgreSQL,
-  proven against live MySQL 8.0 and SQL Server 2022 servers.
+  proven against live MySQL 8.0 and SQL Server 2022 servers;
+- 2026-10-18: area 5, **identity modes**: delegated token passthrough with refusal on a missing,
+  expired or rejected token, and service-account role bindings enforced through the existing
+  tool and agent gates.
 
 The remaining areas are listed under *Not reached*. The exit criteria are not met yet.
 
@@ -462,6 +465,71 @@ Checked by hand on the same servers:
 - a SQL Server account that may only `EXECUTE` a procedure, with `GRANT … WITH GRANT OPTION`,
   reported as `procedure_execute` and `grant_option`.
 
+## Area 5: identity modes (2026-10-18)
+
+**Before:**
+- `ReadConnector.read(template, arguments)` took no identity, so every generated read ran as the
+  connector. A `DELEGATED` OpenAPI connector read anonymously; its docstring said so.
+- Every generated agent and tool was gated by `project_data` alone. Any holder could pick
+  `bp_role_hr_manager`, and the orchestrator could call every generated tool.
+
+**Delegated** (ADR-021 implementation notes have the details):
+- **The token's path.** A client sends `X-Aura-Connector-Token: <connector id>=<token>`. The
+  value is wrapped in `Credential` at parse time and carried in memory only:
+  `TurnRequest.connector_tokens`, then `ToolContext.credentials`, then that one connector's read
+  as `CallerIdentity.delegated_token`. Delegated sub-turns carry it too. A service key may not send
+  one.
+- **Refusals.** A delegated OpenAPI read sends the caller's token as the bearer. It refuses, with
+  a re-authentication hint, when:
+  - no token was sent, or it is a JWT already expired (30 s leeway) -- in both cases before
+    anything is sent;
+  - the target answers 401 or 403 -- refused once and never retried.
+- **No stand-in, ever.** An anonymous, stored or service credential never replaces the caller's
+  token. A delegated connector holding a stored credential is refused outright.
+- **The gate** records a delegated connector's contract cases as `not_run: delegated_identity`.
+  It has no person, so it holds no token, and it never borrows one.
+
+**Service account:**
+- **Role bindings.** `Blueprint.security.role_bindings` (AURA role → discovered ROLE id) is a
+  compile input, checked against the twin. It is part of the approved digest.
+- **With bindings,** `adaptation/access.py` turns them into capability names the existing gates
+  already enforce:
+  - a tool that the discovered grants give to any role needs `project_data:<capability>`;
+  - a role agent needs `project_role:<role>`.
+- **Per request.** The gateway adds a `project_data` holder's bound names from the blueprint this
+  worker serves. That covers chat, streaming, live voice, `/tools` and `/agents`, and look-alike
+  names are stripped first.
+- **Who refuses.** `ToolPolicy` refuses the call and the registry hides the declaration;
+  `AgentRegistry.resolve` falls back to the orchestrator.
+- **Without bindings nothing changes**, the blueprint digest included.
+
+**Evidence: `tests/unit/test_adaptation_identity.py` (60 tests).**
+- **Delegated:**
+  - the caller's token is the bearer;
+  - a missing, expired or near-expiry token is refused with nothing sent;
+  - a 401 or 403 is refused and never retried;
+  - a stored credential is refused, and so is a token over HTTP;
+  - a service-account connector ignores a caller's token;
+  - the JWT expiry reader handles six token shapes.
+- **The token's path:** a token reaches only its own connector, and stays redacted in `repr`;
+  a generated tool passes the identity to `read`; the kernel carries tokens into the tool
+  context; the header parses, and a bad header is refused without echoing the token.
+- **Over HTTP**, through the real gateway authenticator: the header reaches the turn, with
+  `project_data` from `AURA_PROJECT_DATA_ROLES`, and appears in no response. A malformed header
+  is a 422 that names no token.
+- **Role bindings:**
+  - no bindings gives an identical digest and only `project_data`;
+  - bindings are compiled into the signed blueprint and round-trip;
+  - bad bindings are refused at compile and in the blueprint;
+  - each AURA role gets exactly its bound roles' grants;
+  - expansion needs `project_data` and a binding, and self-asserted role names are stripped.
+- **Role bindings through the real registry:** a `HR-Manager` caller is refused a tool only the
+  viewer role was granted (the viewer is allowed it), and does not even see it. A `project_data`
+  holder with no binding sees no role-governed tool. A role agent resolves only for its own role.
+  The gate acts with every grant, and the deployment grants from the version it has loaded.
+- The 665 existing adaptation, kernel, delegation, v3 and connector tests still pass, with their
+  read fakes taking the new parameter.
+
 ## Not reached (rest of AP10)
 
 1. **DOCX and Excel.** Both need a parser the lockfile does not carry (`python-docx`, `openpyxl`).
@@ -476,13 +544,17 @@ Checked by hand on the same servers:
 4. **MySQL and SQL Server reads.** Discovery is done (Area 4). Templated reads need each
    dialect behind `render_sql`: backtick or bracket quoting, `LIMIT` vs `TOP`/`OFFSET … FETCH`,
    and parameter style. Until then the compiler drops those capabilities with a reason.
-5. **Identity modes:**
-   - service-account role → policy mapping;
-   - delegated OIDC passthrough;
-   - refusal on an expired delegated token.
-
-   Project knowledge is currently visible to every holder of `project_data`; there are no
-   per-document permissions.
+5. **Identity, beyond Area 5:**
+   - **No client sends the header yet.** The Flutter client and the console have no plumbing
+     for `X-Aura-Connector-Token`, and AURA does not obtain a target system's token for the user
+     (an OIDC token exchange or login handoff belongs with AP12a's delegated identity handoff).
+     Until a client does, a delegated connector's tools refuse with the re-auth hint.
+   - The live voice WebSocket carries no connector token. Voice turns get role bindings, but
+     not delegated reads.
+   - The console has no editor for `role_bindings`; the compile API takes them.
+   - Project knowledge is visible to every holder of `project_data`; there are no per-document
+     permissions.
+   - The gate cannot exercise delegated reads (`not_run: delegated_identity`).
 6. **Exit evidence still to produce:**
    - the retrieval eval with the deployed embedding model on the dev stack;
    - the isolation probe against a real Qdrant server (the in-process mode evaluates the same
@@ -492,6 +564,13 @@ Checked by hand on the same servers:
      checkout is mounted.
 
 ## Residual risks
+
+- **Role bindings restrict what the source restricts, no more.** A capability no discovered role
+  governs (an API or file source has no roles) stays open to every `project_data` holder. And the
+  whole-project agent stays selectable by every holder: under bindings it simply shows them only
+  the tools their roles grant, so a holder with no binding gets an agent with no governed tools.
+- **A delegated token's expiry is only pre-checked for JWTs.** An opaque token is sent, and its
+  expiry is learned from the target's 401.
 
 - **python-tds's host check is replaced process-wide** (`pytds.tls.validate_host`). It is installed
   only when a SQL Server connector uses `verify-full`, it is stricter than the original, and a

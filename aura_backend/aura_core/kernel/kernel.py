@@ -44,6 +44,7 @@ from ..domain.errors import (
 )
 from ..domain.events import TurnCompleted, TurnFailed, TurnStarted
 from ..domain.caller_context import CallerContext
+from ..domain.connectors import Credential, connector_token_key
 from ..domain.context import user_facing_citations
 from ..domain.engineering import EngineerRun, EngineerRunStatus
 from ..domain.identifiers import CorrelationId, EngineerRunId, SessionId, TurnId, UserId
@@ -152,6 +153,10 @@ class TurnRequest:
     #: Structured output (AR-6): the answer must be JSON matching this schema (the subset in
     #: ``domain/output_schema.py``), repaired at most once, or the turn fails ``output_invalid``.
     response_schema: Mapping[str, Any] | None = None
+    #: The caller's own tokens for ``DELEGATED`` connectors, by connector id (AP10, ADR-021).
+    #: Redacting ``Credential`` values, carried for this turn only into ``ToolContext.credentials``
+    #: and from there to that one connector's reads; nothing stores a ``TurnRequest``.
+    connector_tokens: Mapping[str, Credential] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1284,6 +1289,7 @@ class AIKernel:
             memory_scope=agent.memory_scope if agent is not None else "shared",
             capabilities=request.capabilities,
             delegation_depth=request.delegation_depth,
+            credentials={connector_token_key(c): token for c, token in (request.connector_tokens or {}).items()},
             # D8: carried via the existing free-form `metadata` field rather than a new
             # `ToolContext` slot -- see `ports/runtime.py::ToolContext`'s own doc comment on why
             # that field exists (policy inputs only get dedicated slots; this is caller data

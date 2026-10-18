@@ -215,7 +215,7 @@ class TestSeededBadBlueprints:
 
         real = gate_module.generated_agent_spec
         monkeypatch.setattr(gate_module, "generated_agent_spec",
-                            lambda agent, names: real(agent, {k: v.replace("bp1_", "bp9_") for k, v in names.items()}))
+                            lambda agent, names, **kw: real(agent, {k: v.replace("bp1_", "bp9_") for k, v in names.items()}, **kw))
         report = await _evaluate(clock)
         failed = _failed(report)
         assert failed["permission.role_hr_manager"] == "granted_tool_refused"

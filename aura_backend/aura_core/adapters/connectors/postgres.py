@@ -33,7 +33,7 @@ import uuid
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlsplit
 
-from ...domain.connectors import ConnectorDescriptor, ConnectorHealth, Credential, HealthStatus
+from ...domain.connectors import CallerIdentity, ConnectorDescriptor, ConnectorHealth, Credential, HealthStatus
 from ...domain.discovery import DiscoveryBudget, DiscoveryReport
 from ...domain.errors import DependencyUnavailableError, ToolExecutionError
 from ...domain.templates import ReadTemplate, TemplateKind, render_sql
@@ -220,7 +220,8 @@ class PostgresConnector:
             await conn.close(timeout=self.descriptor.timeout_s)
         return artifacts_from_catalog(self.descriptor.id, snapshot, budget)
 
-    async def read(self, template: ReadTemplate, arguments: Mapping[str, Any]) -> list[dict[str, Any]]:
+    async def read(self, template: ReadTemplate, arguments: Mapping[str, Any],
+                   identity: CallerIdentity | None = None) -> list[dict[str, Any]]:
         """Execute one compiled template (AP7): read-only transaction, statement timeout, the
         domain renderer only, rows converted to JSON types and capped at ``row_cap``."""
         if template.kind is not TemplateKind.SQL or template.connector != self.descriptor.id:

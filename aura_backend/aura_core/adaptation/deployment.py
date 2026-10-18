@@ -42,6 +42,7 @@ from ..domain.gate import GateMode
 from ..learning.approval import ApprovalKind
 from ..observability.logging import get_logger
 from ..ports.runtime import AuditEvent
+from .access import expand_capabilities, grants_by_aura_role
 from .runtime import ActiveBlueprint, BlueprintToolMaterializer, generated_agent_spec
 
 __all__ = ["BlueprintDeployment", "DEPLOYMENT_APPROVAL_KIND"]
@@ -71,6 +72,8 @@ class BlueprintDeployment:
         self._store = store
         self._approvals = approvals
         self._agents = agents
+        #: AURA role -> role-derived capabilities under the loaded blueprint (access.py).
+        self._grants: dict[str, frozenset[str]] = {}
         self._materializer = materializer
         self._clock = clock
         self._gate = gate
@@ -167,6 +170,13 @@ class BlueprintDeployment:
     async def active(self) -> ActivePointer | None:
         return await self._store.active(self._project_id)
 
+    def caller_capabilities(self, capabilities: tuple[str, ...], aura_role: str) -> tuple[str, ...]:
+        """``capabilities`` plus what the live blueprint binds ``aura_role`` to (AP10).
+
+        Read from this process's loaded snapshot, the same one its agents and tools come from,
+        so a caller is never granted against a version this worker is not serving."""
+        return expand_capabilities(capabilities, aura_role, self._grants)
+
     # -- startup and readiness --------------------------------------------------------------
 
     async def startup(self) -> None:
@@ -201,6 +211,7 @@ class BlueprintDeployment:
             pointer = await self._store.active(self._project_id)
             if pointer is None:
                 self._agents.reset()
+                self._grants = {}
                 self._loaded_version = None
                 self._status = {"state": "core_only"}
                 return
@@ -222,6 +233,7 @@ class BlueprintDeployment:
             logger.warning("active blueprint failed to load; running core-only",
                            extra={"error": type(exc).__name__})
             self._agents.reset()
+            self._grants = {}
             self._loaded_version = None
             self._status = {"state": "degraded", "reason": type(exc).__name__}
             self._observe_active(0)
@@ -285,8 +297,9 @@ class BlueprintDeployment:
     def _swap_agents(self, record: BlueprintRecord) -> None:
         bp = record.blueprint
         names = self._materializer.registry_names(bp)
-        specs = [generated_agent_spec(agent, names) for agent in bp.agents]
+        specs = [generated_agent_spec(agent, names, blueprint=bp) for agent in bp.agents]
         self._agents.swap(specs, version=record.version, digest=record.digest)
+        self._grants = grants_by_aura_role(bp)
 
     async def _require(self, version: int, state: BlueprintState) -> BlueprintRecord:
         record = await self._store.get(self._project_id, version)

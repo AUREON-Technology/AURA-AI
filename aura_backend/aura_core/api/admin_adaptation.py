@@ -19,6 +19,7 @@ Two things these routes never do:
 # No `from __future__ import annotations`: FastAPI resolves `Request` (passed in, not imported)
 # from the closure at definition time, the same reason `admin.py` omits it.
 
+import json
 from typing import Any, Callable
 
 from ..domain.connectors import (
@@ -229,11 +230,16 @@ def register_adaptation_ops(
         return service
 
     @router.post("/admin/twin/versions/{version}/compile")
-    async def compile_twin_version(version: int, caller=Depends(principal)) -> JSONResponse:
+    async def compile_twin_version(version: int, request: Request, caller=Depends(principal)) -> JSONResponse:
         """Plan and compile one twin version into a new ``proposed`` blueprint (AP6). Nothing
-        becomes active: evaluation, approval and deployment are separate, later steps."""
+        becomes active: evaluation, approval and deployment are separate, later steps.
+
+        Optional body ``{"role_bindings": {"<AURA role>": ["<twin ROLE id>", ...]}}`` (AP10):
+        which AURA roles act as which discovered source roles. Bound into the blueprint, so the
+        approval covers it; without it every generated agent is open to all ``project_data``."""
         require_super_admin(caller)
-        record = await compiler().compile(version, by=actor(caller))
+        bindings = await _role_bindings_body(request)
+        record = await compiler().compile(version, by=actor(caller), role_bindings=bindings)
         return JSONResponse(status_code=201, content={"summary": record.summary()})
 
     # Registered before "/admin/blueprints/{version}", which would otherwise match "active".
@@ -355,6 +361,24 @@ async def _json_object(request: Any) -> dict[str, Any]:
     if unknown:
         raise ValidationError("unknown fields", details={"fields": unknown})
     return body
+
+
+async def _role_bindings_body(request: Any) -> dict[str, list[str]] | None:
+    raw = await request.body()
+    if not raw.strip():
+        return None
+    try:
+        body = json.loads(raw)
+    except ValueError as exc:
+        raise ValidationError("request body must be a JSON object") from exc
+    if not isinstance(body, dict) or set(body) - {"role_bindings"}:
+        raise ValidationError("the compile body takes only role_bindings")
+    bindings = body.get("role_bindings") or {}
+    if not isinstance(bindings, dict) or not all(
+            isinstance(k, str) and isinstance(v, list) and all(isinstance(r, str) for r in v)
+            for k, v in bindings.items()):
+        raise ValidationError("role_bindings maps an AURA role to a list of discovered role ids")
+    return bindings or None
 
 
 def _take_secret(body: dict[str, Any]) -> Credential | None:

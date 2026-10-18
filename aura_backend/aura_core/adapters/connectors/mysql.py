@@ -44,7 +44,7 @@ import time
 from typing import Any, Mapping, Sequence
 from urllib.parse import unquote, urlsplit
 
-from ...domain.connectors import ConnectorDescriptor, ConnectorHealth, Credential, HealthStatus
+from ...domain.connectors import CallerIdentity, ConnectorDescriptor, ConnectorHealth, Credential, HealthStatus
 from ...domain.discovery import DiscoveryBudget, DiscoveryReport, quote_identifier as q
 from ...domain.errors import DependencyUnavailableError, ToolExecutionError
 from ...domain.templates import ReadTemplate
@@ -639,7 +639,8 @@ class MySqlConnector:
         return artifacts_from_catalog(self.descriptor.id, snapshot_from_mysql(rows), budget, extractor="mysql",
                                       catalog_extractor=CATALOG_EXTRACTOR, profile_extractor=PROFILE_EXTRACTOR)
 
-    async def read(self, template: ReadTemplate, arguments: Mapping[str, Any]) -> list[dict[str, Any]]:
+    async def read(self, template: ReadTemplate, arguments: Mapping[str, Any],
+                   identity: CallerIdentity | None = None) -> list[dict[str, Any]]:
         raise ToolExecutionError("templated reads are not available for MySQL yet", tool=template.id)
 
     async def aclose(self) -> None:

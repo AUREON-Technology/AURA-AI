@@ -38,6 +38,7 @@ __all__ = [
     "BlueprintProject",
     "ConnectorRef",
     "PermissionGrant",
+    "RoleBinding",
     "SecuritySection",
     "CapabilitySelection",
     "BlueprintTool",
@@ -158,9 +159,41 @@ class PermissionGrant:
     capability: str
 
 
+#: An AURA role name as the identity provider issues it (``services.rbac``): ``Admin``, ``HR-Staff``.
+_AURA_ROLE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+
+
+@dataclass(frozen=True, slots=True)
+class RoleBinding:
+    """Holders of one AURA role act as one source-system role (AP10, ADR-021 ``SERVICE_ACCOUNT``).
+
+    ``role`` is an AUSM ROLE id, as in :class:`PermissionGrant`. The binding is part of the
+    blueprint, so the approver signs who may act as which role.
+    """
+
+    aura_role: str
+    role: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.aura_role, str) or not _AURA_ROLE.match(self.aura_role):
+            raise ValidationError("an AURA role name is 1-64 letters, digits, '_', '.' or '-'",
+                                  details={"role": self.role})
+
+
 @dataclass(frozen=True, slots=True)
 class SecuritySection:
+    """Who may use what (ADR-021).
+
+    ``role_bindings`` empty (the default, and every blueprint before AP10's identity slice):
+    every holder of ``project_data`` may use every generated agent and tool. Non-empty: AURA is
+    the enforcing authority for the discovered roles -- a role agent needs a binding to its role,
+    and a tool whose capability ``permission_map`` grants to any role needs a binding to one of
+    those roles. Added in AP10: omitted from the encoding while empty, so stored blueprints keep
+    their digest.
+    """
+
     permission_map: tuple[PermissionGrant, ...] = ()
+    role_bindings: tuple[RoleBinding, ...] = field(default=(), metadata=ADDED_FIELD)
 
 
 @dataclass(frozen=True, slots=True)
@@ -484,6 +517,10 @@ class Blueprint:
                 )
         for grant in self.security.permission_map:
             _ref(grant.capability in capabilities, "permission capability", grant.role, grant.capability)
+        _unique(((b.aura_role, b.role) for b in self.security.role_bindings), "role bindings")
+        known_roles = {g.role for g in self.security.permission_map} | {a.role for a in self.agents if a.role}
+        for binding in self.security.role_bindings:
+            _ref(binding.role in known_roles, "role binding", binding.aura_role, binding.role)
         for source in self.knowledge.sources:
             _ref(source.connector in connectors, "knowledge connector", source.element, source.connector)
             if not source.element.startswith(f"{source.connector}:"):
@@ -586,6 +623,8 @@ def check_against_twin(blueprint: Blueprint, twin: ProjectTwin) -> None:
     for agent in blueprint.agents:
         if agent.role is not None:
             need(agent.role, agent.id, frozenset({ElementKind.ROLE}))
+    for binding in blueprint.security.role_bindings:
+        need(binding.role, binding.aura_role, frozenset({ElementKind.ROLE}))
     for workflow in blueprint.workflows:
         need(workflow.entity, workflow.id, frozenset({ElementKind.ENTITY}))
         need(workflow.state_attribute, workflow.id, frozenset({ElementKind.ATTRIBUTE}))

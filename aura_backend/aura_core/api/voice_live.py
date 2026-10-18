@@ -169,7 +169,7 @@ def register_voice_live(
                 config=cfg,
                 language=language,
                 voice=voice_name,
-                capabilities=tuple(principal.capabilities),
+                capabilities=_granted(container, principal),
                 safety_guards_enabled=bool(live.get("safety_guards_enabled", True)),
             )
             lang_err = session.check_language()
@@ -304,3 +304,13 @@ def _ws_client_ip(websocket: Any) -> str:
     if client is not None and getattr(client, "host", None):
         return str(client.host)
     return "0.0.0.0"
+
+
+def _granted(container: Any, principal: Any) -> tuple[str, ...]:
+    """The caller's capabilities plus what the live blueprint binds their role to (AP10) -- the
+    same expansion ``/chat`` applies, so a voice turn reaches exactly the tools a typed one does."""
+    deployment = getattr(container, "blueprint_deployment", None)
+    capabilities = tuple(principal.capabilities)
+    if deployment is None or getattr(principal, "is_service", False):
+        return capabilities
+    return deployment.caller_capabilities(capabilities, getattr(principal, "role", ""))

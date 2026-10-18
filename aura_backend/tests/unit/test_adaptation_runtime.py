@@ -107,7 +107,7 @@ class FakeConnector:
     async def health(self) -> ConnectorHealth:
         return ConnectorHealth(HealthStatus.HEALTHY, write_capable=False)
 
-    async def read(self, template, arguments):
+    async def read(self, template, arguments, identity=None):
         self.reads.append((template.id, dict(arguments)))
         if isinstance(self.behaviour, BaseException):
             raise self.behaviour

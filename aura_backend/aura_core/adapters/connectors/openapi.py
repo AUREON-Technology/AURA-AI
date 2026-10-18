@@ -36,7 +36,17 @@ import time
 from typing import Any, Awaitable, Callable, Mapping
 from urllib.parse import urlsplit
 
-from ...domain.connectors import READ_ONLY_ATTESTED, ConnectorDescriptor, ConnectorHealth, Credential, HealthStatus
+from ...domain.connectors import (
+    DELEGATED_EXPIRY_LEEWAY_S,
+    READ_ONLY_ATTESTED,
+    CallerIdentity,
+    ConnectorDescriptor,
+    ConnectorHealth,
+    Credential,
+    HealthStatus,
+    IdentityMode,
+    bearer_token_expiry,
+)
 from ...domain.discovery import (
     ArtifactKind,
     DiscoveryBudget,
@@ -437,12 +447,17 @@ class OpenApiConnector:
         """(body, "ok") or (None, reason code)."""
         return await self._get(self.descriptor.endpoint, limit=MAX_SPEC_BYTES, too_large="spec_too_large")
 
-    async def _get(self, url: str, *, limit: int, too_large: str) -> tuple[bytes | None, str]:
-        """GET ``url`` under the SSRF policy: (body, "ok") or (None, reason code)."""
+    async def _get(self, url: str, *, limit: int, too_large: str,
+                   bearer: Credential | None = None) -> tuple[bytes | None, str]:
+        """GET ``url`` under the SSRF policy: (body, "ok") or (None, reason code).
+
+        ``bearer`` is the token sent; it defaults to the connector's own credential, and a
+        delegated read passes the caller's instead."""
+        bearer = bearer if bearer is not None else self._credential
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.hostname:
             return None, "invalid_endpoint"
-        if self._credential is not None and parts.scheme != "https":
+        if bearer is not None and parts.scheme != "https":
             return None, "credential_requires_https"
         allow_private = self.descriptor.options.get("allow_private_network") is True
         try:
@@ -461,8 +476,8 @@ class OpenApiConnector:
         import httpx  # lazy
 
         headers = {"Accept": "application/json, application/yaml;q=0.9, */*;q=0.1", "User-Agent": "AURA/3.0"}
-        if self._credential is not None:
-            headers["Authorization"] = f"Bearer {self._credential.reveal()}"
+        if bearer is not None:
+            headers["Authorization"] = f"Bearer {bearer.reveal()}"
         try:
             async with httpx.AsyncClient(timeout=self.descriptor.timeout_s, follow_redirects=False,
                                          transport=self._transport) as client:
@@ -511,28 +526,62 @@ class OpenApiConnector:
             )
         return artifacts_from_openapi(self.descriptor.id, parse_spec(body), budget)
 
-    async def read(self, template: ReadTemplate, arguments: Mapping[str, Any]) -> Any:
+    async def read(self, template: ReadTemplate, arguments: Mapping[str, Any],
+                   identity: CallerIdentity | None = None) -> Any:
         """``GET`` one compiled template against the approved ``base_url`` (AP7).
 
         The base URL is a descriptor option, so it is part of the digest the registration
         approval bound; the path comes from the template (twin-allowlisted), each argument is
         percent-encoded into its own segment, and the request passes the same SSRF policy as the
-        spec fetch. A delegated connector forwards no user token yet (AP10): it reads what the
-        API serves anonymously.
+        spec fetch.
+
+        **Identity.** A service-account connector sends its own vaulted credential (or none). A
+        ``DELEGATED`` connector sends the caller's own token, from ``identity`` (ADR-021): the API
+        then enforces that person's permissions, and AURA's grants still decide which tools they
+        may call at all. A delegated read with no token, a plainly expired one, or one the API
+        rejects is refused with a re-authentication hint -- never retried anonymously or with any
+        other credential.
         """
         if template.kind is not TemplateKind.HTTP or template.connector != self.descriptor.id:
             raise ToolExecutionError("this template does not belong to this connector", tool=template.id)
         base = self.descriptor.options.get("base_url")
         if not isinstance(base, str) or urlsplit(base).scheme not in ("http", "https") or "?" in base or "#" in base:
             raise ToolExecutionError("this API connector has no base_url configured for reads", tool=template.id)
+        delegated = self.descriptor.identity_mode is IdentityMode.DELEGATED
+        bearer = self._delegated_bearer(identity, template) if delegated else self._credential
         body, reason = await self._get(base.rstrip("/") + render_http(template, arguments),
-                                       limit=MAX_READ_BYTES, too_large="response_too_large")
+                                       limit=MAX_READ_BYTES, too_large="response_too_large", bearer=bearer)
         if body is None:
+            if delegated and reason == "auth_failed":
+                raise _reauth(self.descriptor.id, template.id, "delegated_token_rejected",
+                              "the connected system refused your sign-in for this source")
             raise ToolExecutionError("the API read failed", tool=template.id, details={"reason": reason})
         try:
             return json.loads(body)
         except ValueError:
             raise ToolExecutionError("the API did not return JSON", tool=template.id) from None
 
+    def _delegated_bearer(self, identity: CallerIdentity | None, template: ReadTemplate) -> Credential:
+        """The caller's own token for this connector, or a refusal -- never a substitute."""
+        if self._credential is not None:
+            # Registration refuses a secret on a delegated connector; this is the belt behind it.
+            raise ToolExecutionError("a delegated connector must not hold a stored credential", tool=template.id,
+                                     details={"reason": "delegated_misconfigured", "connector": self.descriptor.id})
+        token = identity.delegated_token if identity is not None else None
+        if token is None:
+            raise _reauth(self.descriptor.id, template.id, "delegated_token_missing",
+                          "this source reads with your own sign-in, and none was sent for it")
+        expiry = bearer_token_expiry(token.reveal())
+        if expiry is not None and expiry <= time.time() + DELEGATED_EXPIRY_LEEWAY_S:
+            raise _reauth(self.descriptor.id, template.id, "delegated_token_expired",
+                          "your sign-in for this source has expired")
+        return token
+
     async def aclose(self) -> None:
         return None
+
+
+def _reauth(connector_id: str, tool: str, reason: str, what: str) -> ToolExecutionError:
+    """A refusal that tells the person what to do: sign in to the source again."""
+    return ToolExecutionError(f"{what}; sign in to it again and retry", tool=tool,
+                              details={"reason": reason, "connector": connector_id, "reauthenticate": True})
