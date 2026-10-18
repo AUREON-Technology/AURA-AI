@@ -203,9 +203,9 @@ markupsafe==3.0.3
     # via
     #   jinja2
     #   mako
-mcp==2.1.1
+mcp==2.3.0
     # via -r requirements.txt
-mcp-types==2.1.1
+mcp-types==2.3.0
     # via mcp
 mdurl==0.1.2
     # via markdown-it-py
