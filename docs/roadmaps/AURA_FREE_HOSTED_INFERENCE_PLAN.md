@@ -403,7 +403,34 @@ Per the repo's standing rule, Phases 1–5 being green proves nothing about live
   not the VPS run. The driver was also dry-run over HTTP against a local mock API. Both show the
   driver works. Neither is evidence about any real provider.
 
-**Runbook** (dev stack first, per §7):
+**Runbook from GitHub** (no SSH session needed): `.github/workflows/verify-hosted-inference.yml`.
+
+1. In the `production` environment, add:
+   - the secret `AURA_HOSTED1_API_KEY`;
+   - the variables `AURA_HOSTED1_BASE_URL` and `AURA_HOSTED1_MODEL`;
+   - optionally the variables `AURA_HOSTED1_RPM`/`_RPD`/`_TPM`/`_TPD`/`_TOKENS_PER_SECOND`/`_CONTEXT_WINDOW`/`_EXTRA_BODY`.
+
+   The names are vendor-neutral, as everywhere else.
+2. Actions → *Verify Hosted Inference* → *Run workflow*, with `stack: dev` and a
+   `capture_prefix` such as `groq`. The run does the following:
+   - captures the live wire fixtures on the runner;
+   - writes the key to `deploy/secrets/hosted1_api_key` on the host;
+   - recreates the dev gateway with slot 1 switched on, using environment overrides for that one
+     `compose up`, so `.env.development` is never edited;
+   - runs the ten checks;
+   - recreates the gateway from its own env again, unless `keep_enabled` is set.
+3. Download the `phase-6-evidence` artifact. Commit the report to `docs/reports/` and the captures
+   to `aura_backend/tests/fixtures/provider_wire/`. `TestLiveCaptures` in
+   `tests/unit/test_provider_wire_contracts.py` replays every committed capture, so a capture
+   that does not parse fails CI.
+4. Repeat with `stack: prod` only after dev passes. On prod the gateway restarts twice, with a
+   few seconds of 502 each.
+
+The run shares Deploy VPS's concurrency group, so a merge's deploy waits for it rather than
+recreating the gateway mid-check. It cannot push; committing the evidence stays a reviewed
+change.
+
+**Runbook by hand** (dev stack first, per §7):
 
 1. Write the key: `printf '%s' "$KEY" > deploy/secrets/hosted1_api_key`.
 2. In `deploy/.env`, set:
@@ -416,7 +443,9 @@ Per the repo's standing rule, Phases 1–5 being green proves nothing about live
 3. Capture live wire fixtures with `aura_backend/scripts/capture_provider_wire.py` (its docstring
    has the command). Diff them against the documented fixtures; where they disagree, the capture
    wins.
-4. Run `bash deploy/scripts/verify-hosted-inference.sh`.
+4. Run `bash deploy/scripts/verify-hosted-inference.sh`. For the dev stack, add
+   `AURA_COMPOSE_FILE=deploy/docker-compose.dev.yml AURA_COMPOSE_ENV_FILE=deploy/.env.development
+   AURA_GATEWAY_SERVICE=dev-gateway`.
 5. Commit the report and the captures. Mark Phases 1–5 proven here, in ADR-030 and in GAP-064 only
    if every scripted check passed with check 10 run, not skipped.
 
