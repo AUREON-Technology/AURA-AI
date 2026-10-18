@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
-from ..domain.connectors import ConnectorDescriptor, ConnectorHealth, ConnectorRecord, ConnectorState, Credential
+from ..domain.connectors import CallerIdentity, ConnectorDescriptor, ConnectorHealth, ConnectorRecord, ConnectorState, Credential
 from ..domain.discovery import DiscoveryBudget, DiscoveryReport, SourceDocument
 from ..domain.templates import ReadTemplate
 
@@ -61,7 +61,8 @@ class ReadConnector(Connector, Protocol):
     ``AuraError`` without vendor text, which the tool registry reports as a tool error.
     """
 
-    async def read(self, template: ReadTemplate, arguments: Mapping[str, Any]) -> Any: ...
+    async def read(self, template: ReadTemplate, arguments: Mapping[str, Any],
+                   identity: CallerIdentity | None = None) -> Any: ...
 
 
 @runtime_checkable

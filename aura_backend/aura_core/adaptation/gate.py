@@ -55,6 +55,7 @@ from typing import Any, Awaitable, Callable, Iterable, Mapping
 from ..domain.ausm import ElementKind, ProjectTwin
 from ..domain.blueprint import Blueprint, BlueprintTool
 from ..domain.compilation import BlueprintRecord, EvalCaseSpec
+from ..domain.connectors import IdentityMode
 from ..domain.errors import AuraError, ValidationError
 from ..domain.gate import CaseOutcome, GateCaseResult, GateMode, GateReport, suite_result
 from ..domain.identifiers import ToolCallId, UserId
@@ -73,7 +74,8 @@ from ..domain.tools import ToolSensitivity
 from ..observability.logging import get_logger
 from ..ports.runtime import ToolContext
 from .factories.common import TwinView
-from .runtime import PROJECT_DATA_CAPABILITY, BlueprintToolMaterializer, generated_agent_spec
+from .access import all_grants
+from .runtime import BlueprintToolMaterializer, generated_agent_spec
 
 __all__ = ["BlueprintGate", "GATE_SUITES", "DEFAULT_MIN_COVERAGE"]
 
@@ -201,12 +203,16 @@ class _Run:
         #: back to that system, never to another connector's API.
         self.harvest: dict[tuple[str, str], str] = {}
         self.agents: dict[str, Any] = {}
+        self.delegated = {c.id for c in self.bp.integrations if c.identity_mode is IdentityMode.DELEGATED}
+        #: What the gate acts with: every grant the blueprint can give, so each agent is held to
+        #: its own tool grant (and grant_scope to its role's), not to one caller's bindings.
+        self.grants = all_grants(self.bp)
         self._serial = 0
 
     async def setup(self) -> None:
         self.materializer.register(self.bp)
         for agent in self.bp.agents:
-            self.agents[agent.id] = generated_agent_spec(agent, self.names)
+            self.agents[agent.id] = generated_agent_spec(agent, self.names, blueprint=self.bp)
         for connector in self.bp.integrations:
             self.available[connector.id] = await self._reachable(connector.id)
 
@@ -328,7 +334,7 @@ class _Run:
 
     def _model_surface(self) -> Iterable[tuple[str, Awaitable[str]]]:
         corpus = sorted(_untrusted_corpus(self.bp, self.view.twin))
-        declarations = self.tools.declarations(capabilities=(PROJECT_DATA_CAPABILITY,),
+        declarations = self.tools.declarations(capabilities=self.grants,
                                                max_sensitivity=ToolSensitivity.SYSTEM)
         generated = set(self.names.values())
 
@@ -355,13 +361,13 @@ class _Run:
         return ToolContext(
             user_id=_GATE_USER, correlation_id=f"gate-{self.record.version}-{self._serial}", deadline_s=60.0,
             agent_id=spec.id, allowed_tools=spec.allowed_tools, max_sensitivity=spec.risk_ceiling,
-            memory_scope=spec.memory_scope, capabilities=(PROJECT_DATA_CAPABILITY,),
+            memory_scope=spec.memory_scope, capabilities=self.grants,
         )
 
     async def _execute(self, tool: BlueprintTool, arguments: Mapping[str, Any], context: ToolContext):
         self._serial += 1
         call = ToolCall(ToolCallId(f"gate-{self._serial}"), self.names[tool.name], dict(arguments))
-        return await self.tools.execute(call, context, capabilities=(PROJECT_DATA_CAPABILITY,))
+        return await self.tools.execute(call, context, capabilities=self.grants)
 
     async def _call_ok(self, spec: Any, tool: BlueprintTool, arguments: Mapping[str, Any], *,
                        context: ToolContext | None = None) -> Any:
@@ -411,6 +417,11 @@ class _Run:
     async def _probe(self, tool: BlueprintTool, fallback: Mapping[str, Any]) -> _Probe:
         if not self.available.get(tool.connector, False):
             raise _NotRun("replica_unavailable")
+        if tool.connector in self.delegated:
+            # A delegated read runs as a person, with their own token (AP10); the gate is no
+            # person and holds none, and borrowing any other credential is what delegation
+            # forbids. Recorded as not run, so the report says what was not exercised.
+            raise _NotRun("delegated_identity")
         template = self.templates[tool.template]
         if template.kind is not TemplateKind.SQL:
             arguments: dict[str, Any] = {}

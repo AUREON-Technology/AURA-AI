@@ -1361,8 +1361,10 @@ gaps:
     current_state: >-
       Files (tables and documents) and Git (checkout) connectors built; CompositeFetcher wired
       with connector-backed refresh sources; MySQL and SQL Server discovery built (reads not yet:
-      no T-SQL/MySQL render_sql); CB-11 fixed. Still no delegated identity passthrough, no
-      DOCX/Excel, and no dev-stack or real-Qdrant exit run (see the progress entries below).
+      no T-SQL/MySQL render_sql); both identity modes enforced per connector (delegated token
+      passthrough, service-account role bindings); CB-11 fixed. Still no client that sends a
+      delegated token, no DOCX/Excel, and no dev-stack or real-Qdrant exit run (see the progress
+      entries below).
     target_state: >-
       Files/documents/Git (and MySQL/SQL Server) connectors, project knowledge ingested with an
       explicit owner sentinel, and both identity modes enforced per connector.
@@ -1424,6 +1426,18 @@ gaps:
       Discovery only: the compiler drops their reads with sql_dialect_unsupported. python-tds's
       pre-login host-name check is replaced by an RFC 6125 matcher (the shipped one breaks on
       current pyOpenSSL for SAN-only certificates).
+    progress_2026_10_18: >-
+      Identity modes. ReadConnector.read takes a CallerIdentity. A DELEGATED OpenAPI connector
+      reads with the caller's own token (X-Aura-Connector-Token -> TurnRequest.connector_tokens ->
+      ToolContext.credentials, in memory, redacted) and refuses a missing, expired (JWT exp) or
+      rejected token with a re-auth hint -- never retried and never replaced by a stored, anonymous
+      or service credential; the gate records such cases not_run. Service-account role bindings
+      (Blueprint.security.role_bindings, a compile input bound into the approved digest) map AURA
+      roles to discovered roles: role-governed tools need project_data:<capability> and role
+      agents project_role:<role>, added per request from the served blueprint and enforced by the
+      existing ToolPolicy and agent gates; no bindings means no change, digest included
+      (tests/unit/test_adaptation_identity.py, 60 tests). Not yet: a client that sends the token
+      (AP12a handoff), voice delegated reads, a console bindings editor.
     evidence: docs/reports/ap10-connectors-knowledge.md
 
   - gap_id: GAP-060

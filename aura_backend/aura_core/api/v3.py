@@ -28,6 +28,7 @@ from ..domain.errors import (
     ValidationError,
 )
 from ..domain.caller_context import MAX_CALLER_CONTEXT, CallerContext
+from ..domain.connectors import CONNECTOR_ID_PATTERN, Credential
 from ..domain.identifiers import CorrelationId, DocumentId, SessionId, UserId
 from ..domain.llm import RoutingPolicy
 from ..domain.memory import MemoryKind, MemoryQuery
@@ -49,6 +50,37 @@ logger = get_logger("api.v3")
 SERVICE_ROLE = "Service"
 #: Bound on a caller's response_schema (AR-6): it is rendered into the prompt, so it costs tokens.
 _MAX_RESPONSE_SCHEMA_CHARS = 8000
+
+
+#: A caller's own token for one ``DELEGATED`` connector (AP10, ADR-021): ``<connector id>=<token>``,
+#: repeated (or comma-separated) for several. A header rather than the body, so it is never part
+#: of what idempotency hashes or what a request log might keep, and it lives for this turn only.
+CONNECTOR_TOKEN_HEADER = "x-aura-connector-token"
+_MAX_CONNECTOR_TOKENS = 8
+_MAX_CONNECTOR_TOKEN_CHARS = 8192
+
+
+def _connector_tokens(request: Any) -> dict[str, Credential]:
+    """Parse ``X-Aura-Connector-Token``; every error names the problem, never the token."""
+    tokens: dict[str, Credential] = {}
+    for header in request.headers.getlist(CONNECTOR_TOKEN_HEADER):
+        for entry in header.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            connector_id, sep, token = entry.partition("=")
+            connector_id, token = connector_id.strip(), token.strip()
+            if not sep or not CONNECTOR_ID_PATTERN.match(connector_id):
+                raise ValidationError(f"{CONNECTOR_TOKEN_HEADER} entries are <connector id>=<token>")
+            if not token or len(token) > _MAX_CONNECTOR_TOKEN_CHARS or any(c.isspace() for c in token):
+                raise ValidationError("a connector token is empty, too long or contains whitespace",
+                                      details={"connector": connector_id})
+            if connector_id in tokens:
+                raise ValidationError("one token per connector", details={"connector": connector_id})
+            tokens[connector_id] = Credential(token)
+            if len(tokens) > _MAX_CONNECTOR_TOKENS:
+                raise ValidationError("too many connector tokens", details={"limit": _MAX_CONNECTOR_TOKENS})
+    return tokens
 
 
 class Principal:
@@ -324,6 +356,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         except Exception:
             logger.debug("admin audit write failed", extra={"action": action}, exc_info=True)
 
+    def granted(caller: Principal) -> tuple[str, ...]:
+        """The caller's capabilities, plus what the live blueprint binds their role to (AP10)."""
+        deployment = getattr(container, "blueprint_deployment", None)
+        if deployment is None or caller.is_service:
+            return tuple(caller.capabilities)
+        return deployment.caller_capabilities(tuple(caller.capabilities), caller.role)
+
     async def to_turn(payload: ChatRequest, caller: Principal, request: Request) -> TurnRequest:
         # Phase I: shared transcript/message normalize before the kernel (same path live voice uses).
         from ..nlp import normalize_for_turn
@@ -346,6 +385,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             if len(json.dumps(payload.response_schema)) > _MAX_RESPONSE_SCHEMA_CHARS:
                 raise ValidationError("response_schema is too large",
                                       details={"limit_chars": _MAX_RESPONSE_SCHEMA_CHARS})
+        connector_tokens = _connector_tokens(request)
+        if caller.is_service and connector_tokens:
+            raise ValidationError("a service key cannot act with a person's connector sign-in")
         caller_context = tuple(CallerContext.of(id=e.id, text=e.text, source=e.source) for e in payload.context)
         if len({e.id for e in caller_context}) != len(caller_context):
             raise ValidationError("context ids must be unique within a turn")
@@ -364,7 +406,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             strategy=_parse_enum(ReasoningStrategy, payload.strategy),
             routing_policy=_parse_enum(RoutingPolicy, payload.routing_policy),
             require_local=payload.require_local,
-            capabilities=caller.capabilities,
+            capabilities=granted(caller),
             confirmed_tools=tuple(payload.confirmed_tools),
             confirmed_call_ids=tuple(payload.confirmed_call_ids),
             max_output_tokens=payload.max_output_tokens,
@@ -374,6 +416,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             delegated_tool_grant=frozenset() if caller.is_service else None,
             caller_context=caller_context,
             response_schema=payload.response_schema,
+            connector_tokens=connector_tokens or None,
         )
 
     # -- chat --------------------------------------------------------------------------
@@ -1051,7 +1094,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     @router.get("/tools")
     async def list_tools(caller: Principal = Depends(principal)) -> JSONResponse:
-        specs = container.tools.available(capabilities=caller.capabilities)
+        specs = container.tools.available(capabilities=granted(caller))
         return JSONResponse(
             content={
                 "tools": [
@@ -1070,7 +1113,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
 
     @router.get("/agents")
     async def list_agents(caller: Principal = Depends(principal)) -> JSONResponse:
-        granted = frozenset(caller.capabilities)
+        caps = frozenset(granted(caller))
         return JSONResponse(
             content={
                 "agents": [
@@ -1091,7 +1134,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                         # under-privileged for the caller silently resolves to the orchestrator
                         # at turn time (AgentRegistry.resolve), so surfacing it here lets a client
                         # grey it out instead of offering a choice that quietly does something else.
-                        "usable": spec.required_capabilities.issubset(granted),
+                        "usable": spec.required_capabilities.issubset(caps),
                     }
                     for spec in container.agents
                 ]

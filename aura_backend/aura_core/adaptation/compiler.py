@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import timezone
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from ..domain.ausm import ElementKind, ProjectTwin
 from ..domain.blueprint import (
@@ -31,6 +31,7 @@ from ..domain.blueprint import (
     KnowledgeSource,
     PermissionGrant,
     PolicySection,
+    RoleBinding,
     SecuritySection,
     blueprint_digest,
     check_against_twin,
@@ -71,7 +72,10 @@ def compile_blueprint(
     connectors: Sequence[ConnectorRef],
     version: int,
     name: str = "Connected system",
+    role_bindings: Mapping[str, Sequence[str]] | None = None,
 ) -> Compiled:
+    """``role_bindings``: AURA role -> the twin ROLE ids its holders act as (AP10). Empty or
+    ``None`` keeps every generated agent and tool open to all ``project_data`` holders."""
     if (plan.project_id, plan.twin_version, plan.twin_digest) != (twin.project_id, twin.version, twin.digest):
         raise ValidationError("the plan was made from a different twin", details={"plan_twin": plan.twin_version})
     sources = sorted(e.source_id for e in twin.of_kind(ElementKind.SOURCE))
@@ -120,7 +124,7 @@ def compile_blueprint(
         project=BlueprintProject(twin.project_id, name, version, twin.version, twin.digest),
         integrations=tuple(refs[s] for s in sources),
         data_model=tuple(data_model),
-        security=SecuritySection(grants),
+        security=SecuritySection(grants, _role_bindings(twin, role_bindings, grants, agents)),
         capabilities=capabilities,
         templates=tuple(t.template for t in tools),
         tools=tuple(t.tool for t in tools),
@@ -142,6 +146,28 @@ def compile_blueprint(
 # ------------------------------------------------------------------------------- service
 
 
+def _role_bindings(twin: ProjectTwin, requested: Mapping[str, Sequence[str]] | None,
+                   grants: Sequence[PermissionGrant], agents: Sequence[Any]) -> tuple[RoleBinding, ...]:
+    """Requested bindings, checked against what was discovered and compiled."""
+    if not requested:
+        return ()
+    discovered = {e.id for e in twin.of_kind(ElementKind.ROLE)}
+    compiled = {g.role for g in grants} | {a.role for a in agents if a.role}
+    bindings: list[RoleBinding] = []
+    for aura_role, roles in sorted(requested.items()):
+        if isinstance(roles, str) or not roles:
+            raise ValidationError("each AURA role binds a non-empty list of discovered roles",
+                                  details={"aura_role": aura_role})
+        for role in sorted(set(roles)):
+            if role not in discovered:
+                raise ValidationError("a role binding names no discovered role", details={"role": role})
+            if role not in compiled:
+                raise ValidationError("a role binding names a role no compiled agent or grant uses",
+                                      details={"role": role})
+            bindings.append(RoleBinding(aura_role, role))
+    return tuple(bindings)
+
+
 class CompilerService:
     """Plan and compile a stored twin version into a new ``proposed`` blueprint version."""
 
@@ -156,7 +182,8 @@ class CompilerService:
         self._audit = audit
         self._metrics = metrics
 
-    async def compile(self, twin_version: int, *, by: str) -> BlueprintRecord:
+    async def compile(self, twin_version: int, *, by: str,
+                      role_bindings: Mapping[str, Sequence[str]] | None = None) -> BlueprintRecord:
         found = await self._twins.get(twin_version)
         if found is None:
             raise NotFoundError("twin version not found", details={"version": twin_version})
@@ -168,7 +195,8 @@ class CompilerService:
             refs.append(ConnectorRef(d.id, d.kind, d.identity_mode))
         latest = await self._store.latest(twin.project_id)
         version = (latest.version + 1) if latest else 1
-        compiled = compile_blueprint(twin, plan, connectors=refs, version=version, name=self._name)
+        compiled = compile_blueprint(twin, plan, connectors=refs, version=version, name=self._name,
+                                     role_bindings=role_bindings)
         record = BlueprintRecord(
             project_id=twin.project_id, version=version, state=BlueprintState.PROPOSED,
             digest=blueprint_digest(compiled.blueprint),

@@ -34,12 +34,14 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from ..agents.registry import AgentRegistry, AgentSpec
 from ..domain.blueprint import PROJECT_KNOWLEDGE_TOOL, Blueprint, BlueprintAgent, BlueprintTool, generated_tool_name
+from ..domain.connectors import CallerIdentity, Credential, connector_token_key
 from ..domain.errors import AuraError, ToolExecutionError, ValidationError
 from ..domain.templates import FilterOp, ReadTemplate
 from ..domain.tools import ParameterSpec, ToolCategory, ToolSensitivity, ToolSpec
 from ..observability.logging import get_logger
 from ..ports.connectors import ReadConnector
 from ..ports.runtime import ToolContext
+from .access import PROJECT_DATA_CAPABILITY, PROJECT_ROLE_PREFIX, agent_capabilities, tool_capability
 
 __all__ = [
     "ActiveBlueprint",
@@ -50,14 +52,14 @@ __all__ = [
     "model_facing_description",
     "model_facing_parameters",
     "PROJECT_DATA_CAPABILITY",
+    "PROJECT_ROLE_PREFIX",
+    "caller_identity",
     "BLUEPRINT_AGENT_PROMPT",
     "GENERATED_AGENT_PREFIX",
 ]
 
 logger = get_logger("adaptation.runtime")
 
-#: The grant every generated agent and tool requires (``AURA_PROJECT_DATA_ROLES``).
-PROJECT_DATA_CAPABILITY = "project_data"
 #: The one fixed system prompt all generated agents share.
 BLUEPRINT_AGENT_PROMPT = "system.blueprint_agent"
 #: Generated agent ids are stable across versions (a client's persona choice survives a deploy).
@@ -140,8 +142,12 @@ def model_facing_parameters(tool: BlueprintTool, template: ReadTemplate) -> tupl
     return tuple(out)
 
 
-def generated_agent_spec(agent: BlueprintAgent, tool_names: Mapping[str, str]) -> AgentSpec:
-    """An :class:`AgentSpec` for a blueprint agent: explicit grant, capability-gated, fixed prompt."""
+def generated_agent_spec(agent: BlueprintAgent, tool_names: Mapping[str, str], *,
+                         blueprint: Blueprint | None = None) -> AgentSpec:
+    """An :class:`AgentSpec` for a blueprint agent: explicit grant, capability-gated, fixed prompt.
+
+    ``blueprint`` decides the gate (``access.agent_capabilities``): with role bindings a role
+    agent also needs its ``project_role:`` grant. Without it, plain ``project_data``."""
     granted = frozenset(tool_names[name] for name in agent.tools if name in tool_names)
     if not granted:
         raise ValidationError("a generated agent needs an explicit, non-empty tool grant", details={"agent": agent.id})
@@ -150,7 +156,8 @@ def generated_agent_spec(agent: BlueprintAgent, tool_names: Mapping[str, str]) -
         name=agent.name.raw()[:80] or agent.id,
         prompt_template_id=BLUEPRINT_AGENT_PROMPT,
         allowed_tools=granted,
-        required_capabilities=frozenset({PROJECT_DATA_CAPABILITY}),
+        required_capabilities=(agent_capabilities(blueprint, agent) if blueprint is not None
+                               else frozenset({PROJECT_DATA_CAPABILITY})),
         risk_ceiling=agent.risk_ceiling,
         memory_scope=f"{GENERATED_AGENT_PREFIX}{agent.memory_scope}"[:64],
         max_plan_iterations=agent.max_plan_iterations,
@@ -222,6 +229,18 @@ class ActiveBlueprint:
 # ------------------------------------------------------------------------------- tools
 
 
+def caller_identity(context: ToolContext, connector_id: str) -> CallerIdentity:
+    """Who a generated read is made for: the turn's user, the source-system roles AURA bound
+    them to (``project_role:<role>`` grants), and -- only for this connector -- the token the
+    caller sent for it. The token is never copied anywhere else; a ``ToolContext`` is not stored.
+    """
+    token = context.credentials.get(connector_token_key(connector_id))
+    roles = frozenset(c.removeprefix(PROJECT_ROLE_PREFIX) for c in context.capabilities
+                      if c.startswith(PROJECT_ROLE_PREFIX))
+    return CallerIdentity(context.user_id, roles=roles,
+                          delegated_token=token if isinstance(token, Credential) else None)
+
+
 class GeneratedReadTool:
     """One blueprint tool, executed through its connector's :meth:`ReadConnector.read`."""
 
@@ -247,7 +266,8 @@ class GeneratedReadTool:
             try:
                 if not isinstance(connector, ReadConnector):
                     raise ToolExecutionError("this connector cannot execute read templates", tool=self._spec.name)
-                data = await connector.read(self._template, arguments)
+                data = await connector.read(self._template, arguments, identity=caller_identity(
+                    context, self._template.connector))
             finally:
                 await connector.aclose()
             outcome = "ok"
@@ -361,7 +381,7 @@ class BlueprintToolMaterializer:
                 category=ToolCategory.DATA,
                 sensitivity=tool.sensitivity,
                 side_effecting=False,
-                required_capability=PROJECT_DATA_CAPABILITY,
+                required_capability=tool_capability(blueprint, tool),
                 timeout_s=30.0,
                 max_result_chars=16_000,
                 version=f"bp{version}",

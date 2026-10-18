@@ -128,7 +128,7 @@ async def test_every_gate_read_answers_the_same_on_the_replica_and_live(live_pil
     sent: list[tuple] = []
 
     class Recording(InMemoryReadConnector):
-        async def read(self, template, arguments):
+        async def read(self, template, arguments, identity=None):
             try:
                 result = await super().read(template, arguments)
             except AuraError as exc:

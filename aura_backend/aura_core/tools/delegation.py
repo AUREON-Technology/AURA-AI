@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Callable
 from uuid import uuid4
 
 from ..agents.registry import AgentRegistry
+from ..domain.connectors import CONNECTOR_TOKEN_PREFIX
 from ..domain.errors import ToolExecutionError
 from ..domain.identifiers import CorrelationId
 from ..domain.tools import ToolCategory, ToolSensitivity
@@ -140,6 +141,10 @@ def build_delegation_tools(
             delegation_depth=context.delegation_depth + 1,
             delegated_tool_grant=child_tools,
             delegated_risk_ceiling=child_ceiling,
+            # The same person's delegated-connector tokens (AP10): a sub-turn reads as its caller.
+            connector_tokens={key.removeprefix(CONNECTOR_TOKEN_PREFIX): token
+                              for key, token in context.credentials.items()
+                              if key.startswith(CONNECTOR_TOKEN_PREFIX)},
         )
 
         result = await kernel().run(child_request)

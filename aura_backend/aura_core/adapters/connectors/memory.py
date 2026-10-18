@@ -24,7 +24,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any, Iterable, Mapping, Sequence
 
-from ...domain.connectors import ConnectorDescriptor, ConnectorHealth, ConnectorKind, HealthStatus, IdentityMode
+from ...domain.connectors import CallerIdentity, ConnectorDescriptor, ConnectorHealth, ConnectorKind, HealthStatus, IdentityMode
 from ...domain.errors import ToolExecutionError
 from ...domain.templates import AggregateFunction, FilterOp, ReadTemplate, SqlFilter, SqlSelect, TemplateKind
 
@@ -54,7 +54,8 @@ class InMemoryReadConnector:
     async def aclose(self) -> None:
         return None
 
-    async def read(self, template: ReadTemplate, arguments: Mapping[str, Any]) -> list[dict[str, Any]]:
+    async def read(self, template: ReadTemplate, arguments: Mapping[str, Any],
+                   identity: CallerIdentity | None = None) -> list[dict[str, Any]]:
         if template.kind is not TemplateKind.SQL or template.connector != self.descriptor.id:
             raise ToolExecutionError("this template does not belong to this replica", tool=template.id)
         select = template.sql

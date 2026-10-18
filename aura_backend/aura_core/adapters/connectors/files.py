@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from ...domain.connectors import ConnectorDescriptor, ConnectorHealth, Credential, HealthStatus
+from ...domain.connectors import CallerIdentity, ConnectorDescriptor, ConnectorHealth, Credential, HealthStatus
 from ...domain.discovery import ArtifactKind, DiscoveryBudget, DiscoveryIssue, DiscoveryReport, RawArtifact, SourceDocument
 from ...domain.errors import DependencyUnavailableError, NotFoundError, ToolExecutionError, ValidationError
 from ...domain.templates import ReadTemplate
@@ -492,7 +492,8 @@ class FilesConnector:
                                 details={"connector": self.descriptor.id, "locator": locator}) from None
         return SourceDocument(name, DOCUMENT_SUFFIXES[suffix], data, hashlib.sha256(data).hexdigest())
 
-    async def read(self, template: ReadTemplate, arguments: Mapping[str, Any]) -> list[dict[str, Any]]:
+    async def read(self, template: ReadTemplate, arguments: Mapping[str, Any],
+                   identity: CallerIdentity | None = None) -> list[dict[str, Any]]:
         if template.connector != self.descriptor.id:
             raise ToolExecutionError("this template does not belong to this connector", tool=template.id)
         try:

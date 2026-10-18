@@ -78,6 +78,50 @@ than anything AURA stores today.
 - **What it is not.** The attestation is a recorded human claim, not a probe. On AURA's side the
   enforcement is unchanged: every generated template is a `GET`, and there is no write port.
 
+## Implementation notes (AP10 identity modes, 2026-10-18)
+
+- **The port carries identity.** `ReadConnector.read(template, arguments, identity=None)` takes a
+  `CallerIdentity` (`user_id`, the source roles AURA bound the caller to, and the caller's
+  delegated token for that connector only), as decision 1 always described.
+  `GeneratedReadTool` builds it from the turn's `ToolContext`.
+- **Delegated: how a token travels.**
+  - A client sends `X-Aura-Connector-Token: <connector id>=<token>` on `/chat` or
+    `/chat/stream`. It is a header rather than the body, so idempotency never hashes it and a
+    body log never holds it.
+  - The value is wrapped in `Credential` at parse time. Errors name the problem, never the
+    token. A service key may not send one.
+  - From there it is carried in memory only: `TurnRequest.connector_tokens`, then
+    `ToolContext.credentials["connector:<id>"]`, then that one connector's read. `delegate_to_agent`
+    sub-turns carry the same person's tokens.
+- **Delegated reads (OpenAPI)** send the caller's token as the bearer, and are refused with a
+  re-authentication hint (`details.reauthenticate: true`) in each of these cases:
+  - **No token** (`delegated_token_missing`): refused before anything is sent.
+  - **A plainly expired JWT** (`delegated_token_expired`): the `exp` claim is read without
+    verification, with a 30 s leeway, and the request is refused before it is sent. An opaque
+    token is left to the target.
+  - **A 401/403 from the target** (`delegated_token_rejected`): refused once, never retried.
+
+  No stored, anonymous or service credential ever stands in. A delegated connector that somehow
+  holds a stored credential is refused outright (`delegated_misconfigured`), behind the
+  registration rule that already forbids one.
+- **The gate has no person, so it holds no token.** A delegated connector's contract cases are
+  `not_run: delegated_identity`; they are never borrowed through another credential.
+- **Service account: role bindings.** `Blueprint.security.role_bindings` (AURA role → AUSM ROLE
+  id) is a compile input (`POST /admin/twin/versions/{v}/compile` with `{"role_bindings": {...}}`),
+  checked against the twin's discovered roles. It is part of the approved digest. With bindings,
+  `adaptation/access.py` maps them onto the existing enforcement, with no new enforcement point:
+  - A tool that `permission_map` grants to any role needs `project_data:<capability>`. A tool
+    whose capability no discovered role governs stays at `project_data`.
+  - A role agent needs `project_role:<role>`.
+  - The gateway adds those names to a `project_data` holder's capabilities from the blueprint
+    this worker is serving (`BlueprintDeployment.caller_capabilities`), on chat, streaming, live
+    voice, `/tools` and `/agents`. Look-alike names a caller could otherwise carry are stripped
+    first.
+  - `ToolPolicy` and `AgentRegistry.resolve` do the refusing. The gate acts with every grant the
+    blueprint can give, so each agent is still held to its own tool grant.
+- **Unchanged without bindings.** A blueprint compiled without bindings has the same digest and the
+  same behaviour as before (`role_bindings` is omitted from the encoding while empty).
+
 ## Consequences
 
 - Live reads put load on the target system, so per-connector concurrency limits and timeouts are

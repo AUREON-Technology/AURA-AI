@@ -18,7 +18,9 @@ only then used. Three rules shape everything here:
 
 from __future__ import annotations
 
+import base64
 import enum
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -43,6 +45,10 @@ __all__ = [
     "CONNECTOR_ID_PATTERN",
     "SECRET_REF_PATTERN",
     "READ_ONLY_ATTESTED",
+    "DELEGATED_EXPIRY_LEEWAY_S",
+    "CONNECTOR_TOKEN_PREFIX",
+    "connector_token_key",
+    "bearer_token_expiry",
 ]
 
 
@@ -275,3 +281,38 @@ class CallerIdentity:
     user_id: UserId
     roles: frozenset[str] = frozenset()
     delegated_token: Credential | None = field(default=None, repr=False)
+
+
+#: Where a caller's token for one delegated connector travels in ``ToolContext.credentials``:
+#: per turn, in memory, keyed by connector id. Nothing stores a ``ToolContext``.
+CONNECTOR_TOKEN_PREFIX = "connector:"
+
+
+def connector_token_key(connector_id: str) -> str:
+    return f"{CONNECTOR_TOKEN_PREFIX}{connector_id}"
+
+
+#: A delegated token this close to expiry is refused rather than sent: the target would accept
+#: it now and reject the next call of the same turn, mid-answer.
+DELEGATED_EXPIRY_LEEWAY_S = 30.0
+
+
+def bearer_token_expiry(token: str) -> float | None:
+    """The ``exp`` claim of a JWT-shaped bearer token (seconds since the epoch), else ``None``.
+
+    Read without verifying the signature: this is not authentication -- the target system
+    verifies its own token -- only a way to refuse a token that is plainly expired before it is
+    sent, with a re-authentication hint, instead of after a round trip. An opaque token (not three
+    base64url segments, or no numeric ``exp``) has no knowable expiry and is left to the target.
+    """
+    parts = token.split(".")
+    if len(parts) != 3 or not parts[1]:
+        return None
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+    except (ValueError, TypeError):
+        return None
+    exp = payload.get("exp") if isinstance(payload, dict) else None
+    if isinstance(exp, bool) or not isinstance(exp, (int, float)):
+        return None
+    return float(exp)
