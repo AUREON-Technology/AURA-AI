@@ -11,6 +11,8 @@ suite stays offline.
   way.
 - `captured <date>`: written by `aura_backend/scripts/capture_provider_wire.py` against the live
   API, with the key redacted. Replacing a `documented` file with a capture is part of Phase 6.
+  Captures are named `<prefix>_capture_{complete,stream,tool_call}.json`.
+  `TestLiveCaptures` replays every one of them as soon as it is committed.
 
 File shape: `{"provenance", "status", "headers", "json"}` for a plain response, or
 `{"provenance", "status", "headers", "sse": [lines...]}` for a stream.

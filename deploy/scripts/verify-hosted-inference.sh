@@ -23,11 +23,21 @@
 # cross the per-minute token limit. Set AURA_VERIFY_SKIP_429=1 to leave the burst out (check 10
 # then reports SKIP, and the 429 path stays unproven).
 #
+# The dev stack (docker-compose.dev.yml, its own .env.development, service dev-gateway):
+#
+#     AURA_COMPOSE_FILE=deploy/docker-compose.dev.yml \
+#     AURA_COMPOSE_ENV_FILE=deploy/.env.development AURA_GATEWAY_SERVICE=dev-gateway \
+#         bash deploy/scripts/verify-hosted-inference.sh
+#
+# .github/workflows/verify-hosted-inference.yml runs exactly that from GitHub Actions.
+#
 # Exit status is the number of failed checks; 0 means every scripted check passed.
 set -uo pipefail
 
 COMPOSE_FILE=${AURA_COMPOSE_FILE:-deploy/docker-compose.prod.yml}
+ENV_FILE=${AURA_COMPOSE_ENV_FILE:-}
 SERVICE=${AURA_GATEWAY_SERVICE:-gateway}
+SECRETS_DIR="$(dirname "$COMPOSE_FILE")/secrets"
 DRIVER="$(dirname "$0")/verify_hosted_inference.py"
 REPORT_DIR=${AURA_VERIFY_REPORT_DIR:-docs/reports}
 REPORT="$REPORT_DIR/phase-6-hosted-inference-$(date -u +%Y%m%dT%H%M%SZ).txt"
@@ -36,8 +46,16 @@ say()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
 die()  { printf '\033[1;31m    %s\033[0m\n' "$*" >&2; exit 125; }
 
+compose() {
+    if [ -n "$ENV_FILE" ]; then
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
+    else
+        docker compose -f "$COMPOSE_FILE" "$@"
+    fi
+}
+
 gateway_env() {
-    docker compose -f "$COMPOSE_FILE" exec -T "$SERVICE" \
+    compose exec -T "$SERVICE" \
         sh -lc "printf %s \"\${$1:-}\"" 2>/dev/null | tr -d '[:space:]'
 }
 
@@ -46,8 +64,9 @@ say "Preflight"
 command -v docker >/dev/null 2>&1 || die "docker is not on PATH; run this on the VPS host."
 [ -f "$COMPOSE_FILE" ] || die "no $COMPOSE_FILE here. Run from the repository root (/opt/aura-stack)."
 [ -f "$DRIVER" ] || die "missing $DRIVER"
+[ -z "$ENV_FILE" ] || [ -f "$ENV_FILE" ] || die "no env file at $ENV_FILE"
 
-docker compose -f "$COMPOSE_FILE" ps --status running --services 2>/dev/null | grep -qx "$SERVICE" \
+compose ps --status running --services 2>/dev/null | grep -qx "$SERVICE" \
     || die "the '$SERVICE' service is not running. Bring the stack up first."
 info "gateway is up"
 
@@ -66,7 +85,7 @@ esac
 
 for n in 1 2 3; do
     case ",$providers," in *,hosted$n,*) ;; *) continue ;; esac
-    key_file="deploy/secrets/hosted${n}_api_key"
+    key_file="$SECRETS_DIR/hosted${n}_api_key"
     # bootstrap-secrets.sh writes a 48-character alphanumeric placeholder. A real key that
     # happens to look like that is possible but unlikely; this warns rather than refuses.
     if [ -f "$key_file" ] && grep -Eqx '[A-Za-z0-9]{48}' "$key_file"; then
@@ -76,7 +95,7 @@ done
 
 say "Running checks inside the gateway"
 
-GATEWAY_CID=$(docker compose -f "$COMPOSE_FILE" ps -q "$SERVICE")
+GATEWAY_CID=$(compose ps -q "$SERVICE")
 [ -n "$GATEWAY_CID" ] || die "could not resolve the gateway container id"
 docker cp "$DRIVER" "$GATEWAY_CID":/tmp/verify_phase_6.py || die "could not copy the driver into the gateway"
 
@@ -89,7 +108,7 @@ mkdir -p "$REPORT_DIR"
     echo
 } > "$REPORT"
 
-docker compose -f "$COMPOSE_FILE" exec -T \
+compose exec -T \
     -e AURA_VERIFY_SKIP_429="${AURA_VERIFY_SKIP_429:-}" \
     -e AURA_VERIFY_429_MAX_REQUESTS="${AURA_VERIFY_429_MAX_REQUESTS:-12}" \
     -e AURA_VERIFY_TRACEBACK="${AURA_VERIFY_TRACEBACK:-}" \

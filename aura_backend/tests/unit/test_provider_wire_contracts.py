@@ -282,3 +282,43 @@ class TestCapabilityTruthfulness:
         ))
         router = ProviderRouter([no_json])
         assert router.plan(_request(response_schema=schema)).excluded == {"hosted": "no_json_mode"}
+
+
+# -- live captures (Phase 6) -----------------------------------------------------------------
+
+#: Written by ``scripts/capture_provider_wire.py`` (or the Verify Hosted Inference workflow) against
+#: a live API. Each one replays here as soon as it is committed: the documented fixtures above say
+#: what the adapter expects, these say what the provider actually sends.
+_CAPTURES = sorted(_FIXTURES.glob("*_capture_*.json"))
+
+
+def _capture_params():
+    if not _CAPTURES:
+        return [pytest.param(None, marks=pytest.mark.skip(reason="no live captures committed yet"))]
+    return [pytest.param(path, id=path.stem) for path in _CAPTURES]
+
+
+class TestLiveCaptures:
+    @pytest.mark.parametrize("path", _capture_params())
+    async def test_a_live_capture_parses_with_real_usage(self, path: Path) -> None:
+        fixture = json.loads(path.read_text(encoding="utf-8"))
+        assert fixture["provenance"].startswith("captured "), path.name
+        assert fixture["status"] == 200, f"{path.name} recorded HTTP {fixture['status']}"
+        provider = _provider(fixture)
+
+        if "sse" in fixture:
+            chunks = await _drain(provider)
+            assert "".join(c.delta for c in chunks).strip(), "the stream carried no text"
+            usage = next((c.usage for c in reversed(chunks) if c.usage is not None), None)
+            assert usage is not None and usage.completion_tokens > 0, "no usage in the stream"
+            return
+
+        response = await provider.complete(_request())
+        assert response.raw_metadata["usage_estimated"] is False, "the provider reported no usage"
+        message = fixture["json"]["choices"][0]["message"]
+        if message.get("tool_calls"):
+            assert response.finish_reason is FinishReason.TOOL_CALLS
+            assert [c.name for c in response.tool_calls] == ["get_weather"]
+            assert "city" in dict(response.tool_calls[0].arguments)
+        else:
+            assert response.text.strip(), "the completion carried no text"

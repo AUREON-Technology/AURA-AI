@@ -1,0 +1,281 @@
+name: Verify Hosted Inference
+
+# ADR-030 Phase 6: the live proof for hosted open-weight inference, run from GitHub instead of
+# an SSH session. Actions → Verify Hosted Inference → Run workflow.
+#
+# It does three things, and changes nothing permanently unless `keep_enabled` is set:
+#
+#   1. Captures the provider's real responses (scripts/capture_provider_wire.py), on the runner.
+#   2. Recreates the chosen stack's gateway with slot 1 switched on, through the same compose file
+#      and secret the stack already uses. Overrides are passed as environment for that one
+#      `compose up`; .env and .env.development are never edited.
+#   3. Runs deploy/scripts/verify-hosted-inference.sh inside it, then recreates the gateway from
+#      the stack's own env again, which switches hosted inference back off.
+#
+# On the prod stack that is two gateway restarts, a few seconds of 502 each; run dev first.
+#
+# The report and the captures come back as the run's `phase-6-evidence` artifact. Committing
+# them under docs/reports/ and tests/fixtures/provider_wire/ is what makes Phase 6 proven
+# (GAP-064); this workflow cannot push, on purpose.
+#
+# Configure in the `production` environment (vendor-neutral names; the provider is data):
+#   secrets.AURA_HOSTED1_API_KEY   the provider key. Written to deploy/secrets/hosted1_api_key on
+#                                  the host. Leave unset to use the key file already there.
+#   vars.AURA_HOSTED1_BASE_URL     e.g. the provider's OpenAI-compatible /v1 base URL
+#   vars.AURA_HOSTED1_MODEL        an open-weight model ID the policy admits
+#   vars.AURA_HOSTED1_RPM / _RPD / _TPM / _TPD / _TOKENS_PER_SECOND / _CONTEXT_WINDOW
+#                                  optional; the provider's published free-tier limits
+#   vars.AURA_HOSTED1_EXTRA_BODY   optional JSON, e.g. {"reasoning_effort":"low"}
+# Plus the VPS_SSH_KEY / VPS_HOST / VPS_USER that Deploy VPS already uses.
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: "Which stack's gateway to verify against (dev first, per the rollout order)"
+        type: choice
+        options: [dev, prod]
+        default: dev
+      providers:
+        description: "AURA_LLM_PROVIDERS for the run (keep local last)"
+        default: "hosted1,local"
+      skip_429:
+        description: "Leave out the 429 burst (check 10 then reports SKIP and stays unproven)"
+        type: boolean
+        default: false
+      max_429_requests:
+        description: "Most requests the 429 burst may send"
+        default: "12"
+      capture_prefix:
+        description: "Fixture name prefix for the wire captures, e.g. groq (empty = skip capture)"
+        default: ""
+      keep_enabled:
+        description: "Leave hosted inference on afterwards (until the next deploy or restart)"
+        type: boolean
+        default: false
+
+# Shared with Deploy VPS: a deploy recreating the gateway mid-run would void the run, and this
+# run recreating it mid-deploy would undo the deploy's own recreate.
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 40
+    env:
+      HOSTED1_BASE_URL: ${{ vars.AURA_HOSTED1_BASE_URL }}
+      HOSTED1_MODEL: ${{ vars.AURA_HOSTED1_MODEL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check configuration
+        env:
+          PROVIDERS: ${{ inputs.providers }}
+        run: |
+          test -n "$HOSTED1_BASE_URL" || { echo "vars.AURA_HOSTED1_BASE_URL is not set" >&2; exit 1; }
+          test -n "$HOSTED1_MODEL" || { echo "vars.AURA_HOSTED1_MODEL is not set" >&2; exit 1; }
+          case ",$PROVIDERS," in
+            *,hosted1,*) ;;
+            *) echo "providers must list hosted1 (got '$PROVIDERS')" >&2; exit 1 ;;
+          esac
+          mkdir -p evidence
+
+      - name: Capture live wire fixtures
+        if: ${{ inputs.capture_prefix != '' }}
+        env:
+          AURA_PROVIDER_HOSTED1_API_KEY: ${{ secrets.AURA_HOSTED1_API_KEY }}
+          PREFIX: ${{ inputs.capture_prefix }}
+          EXTRA_BODY: ${{ vars.AURA_HOSTED1_EXTRA_BODY }}
+        run: |
+          test -n "$AURA_PROVIDER_HOSTED1_API_KEY" \
+            || { echo "capture needs secrets.AURA_HOSTED1_API_KEY" >&2; exit 1; }
+          pip install --quiet httpx
+          python aura_backend/scripts/capture_provider_wire.py \
+            --base-url "$HOSTED1_BASE_URL" --model "$HOSTED1_MODEL" \
+            --api-key-env AURA_PROVIDER_HOSTED1_API_KEY \
+            --prefix "$PREFIX" --extra-body "$EXTRA_BODY" --out evidence/provider_wire
+
+      - name: Install SSH key
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          test -n "$VPS_SSH_KEY" || { echo "VPS_SSH_KEY is not set" >&2; exit 1; }
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cp deploy/known_hosts ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Install the provider key on the host
+        env:
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+          HOSTED1_API_KEY: ${{ secrets.AURA_HOSTED1_API_KEY }}
+        run: |
+          if [ -z "$HOSTED1_API_KEY" ]; then
+            echo "secrets.AURA_HOSTED1_API_KEY is unset: using the key file already on the host."
+            exit 0
+          fi
+          # Over stdin, so the key never appears in a command line on either side.
+          printf '%s' "$HOSTED1_API_KEY" | ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes \
+            -o BatchMode=yes -o UserKnownHostsFile=~/.ssh/known_hosts "${VPS_USER}@${VPS_HOST}" \
+            'umask 077; cat > /opt/aura-stack/deploy/secrets/hosted1_api_key'
+
+      - name: Run the Phase 6 checks on the VPS
+        id: verify
+        env:
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+          STACK: ${{ inputs.stack }}
+          PROVIDERS: ${{ inputs.providers }}
+          SKIP_429: ${{ inputs.skip_429 && '1' || '' }}
+          MAX_429: ${{ inputs.max_429_requests }}
+          KEEP_ENABLED: ${{ inputs.keep_enabled }}
+          RUN_DIR: /tmp/aura-phase6-${{ github.run_id }}
+          HOSTED1_RPM: ${{ vars.AURA_HOSTED1_RPM }}
+          HOSTED1_RPD: ${{ vars.AURA_HOSTED1_RPD }}
+          HOSTED1_TPM: ${{ vars.AURA_HOSTED1_TPM }}
+          HOSTED1_TPD: ${{ vars.AURA_HOSTED1_TPD }}
+          HOSTED1_TPS: ${{ vars.AURA_HOSTED1_TOKENS_PER_SECOND }}
+          HOSTED1_CONTEXT: ${{ vars.AURA_HOSTED1_CONTEXT_WINDOW }}
+          HOSTED1_EXTRA_BODY: ${{ vars.AURA_HOSTED1_EXTRA_BODY }}
+        run: |
+          test -n "$VPS_HOST" && test -n "$VPS_USER"
+          SSH="ssh -i $HOME/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+          # The scripts run from this workflow's commit, not from whatever the host has checked out.
+          $SSH "${VPS_USER}@${VPS_HOST}" "mkdir -p '$RUN_DIR'"
+          scp -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            deploy/scripts/verify-hosted-inference.sh deploy/scripts/verify_hosted_inference.py \
+            "${VPS_USER}@${VPS_HOST}:$RUN_DIR/"
+
+          # ssh joins its arguments into one string the remote shell re-parses, so every value is
+          # quoted with %q first; a JSON EXTRA_BODY would otherwise lose its quotes.
+          REMOTE_ENV=$(printf '%q ' \
+            "STACK=$STACK" "PROVIDERS=$PROVIDERS" "SKIP_429=$SKIP_429" "MAX_429=$MAX_429" \
+            "KEEP_ENABLED=$KEEP_ENABLED" "RUN_DIR=$RUN_DIR" "COMMIT=$GITHUB_SHA" \
+            "AURA_PROVIDER_HOSTED1_BASE_URL=$HOSTED1_BASE_URL" \
+            "AURA_PROVIDER_HOSTED1_MODEL=$HOSTED1_MODEL" \
+            "AURA_PROVIDER_HOSTED1_RPM=$HOSTED1_RPM" "AURA_PROVIDER_HOSTED1_RPD=$HOSTED1_RPD" \
+            "AURA_PROVIDER_HOSTED1_TPM=$HOSTED1_TPM" "AURA_PROVIDER_HOSTED1_TPD=$HOSTED1_TPD" \
+            "AURA_PROVIDER_HOSTED1_TOKENS_PER_SECOND=$HOSTED1_TPS" \
+            "AURA_PROVIDER_HOSTED1_CONTEXT_WINDOW=$HOSTED1_CONTEXT" \
+            "AURA_PROVIDER_HOSTED1_EXTRA_BODY=$HOSTED1_EXTRA_BODY")
+
+          set +e
+          $SSH "${VPS_USER}@${VPS_HOST}" "env $REMOTE_ENV bash -s" <<'REMOTE'
+          set -uo pipefail
+          cd /opt/aura-stack
+
+          case "$STACK" in
+            dev)  FILE=deploy/docker-compose.dev.yml;  ENVF=deploy/.env.development; SVC=dev-gateway ;;
+            prod) FILE=deploy/docker-compose.prod.yml; ENVF=;                        SVC=gateway ;;
+            *) echo "unknown stack $STACK" >&2; exit 125 ;;
+          esac
+          compose() {
+            if [ -n "$ENVF" ]; then docker compose -f "$FILE" --env-file "$ENVF" "$@"
+            else docker compose -f "$FILE" "$@"; fi
+          }
+
+          # Shell environment outranks the env file in compose interpolation, so these switch the
+          # slot on for one recreate without editing .env. An empty value would outrank it too and
+          # blank the operator's own setting, so unset vars are dropped rather than passed empty.
+          SLOT_VARS=(AURA_PROVIDER_HOSTED1_BASE_URL AURA_PROVIDER_HOSTED1_MODEL
+                     AURA_PROVIDER_HOSTED1_RPM AURA_PROVIDER_HOSTED1_RPD AURA_PROVIDER_HOSTED1_TPM
+                     AURA_PROVIDER_HOSTED1_TPD AURA_PROVIDER_HOSTED1_TOKENS_PER_SECOND
+                     AURA_PROVIDER_HOSTED1_CONTEXT_WINDOW AURA_PROVIDER_HOSTED1_EXTRA_BODY)
+          OVERRIDES=(AURA_ALLOW_HOSTED_INFERENCE=true "AURA_LLM_PROVIDERS=$PROVIDERS"
+                     AURA_LLM_ROUTING_POLICY=quality_first)
+          for v in "${SLOT_VARS[@]}"; do
+            [ -n "${!v:-}" ] && OVERRIDES+=("$v=${!v}")
+          done
+          # Out of this shell's environment, so restore() recreates from the env file alone.
+          unset "${SLOT_VARS[@]}"
+
+          wait_ready() {
+            local cid state
+            for _ in $(seq 1 60); do
+              cid=$(compose ps -q "$SVC")
+              state=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null)
+              case "$state" in healthy|running) return 0 ;; esac
+              sleep 3
+            done
+            echo "==> $SVC did not become ready (last state: ${state:-unknown})" >&2
+            compose logs --tail=60 "$SVC" >&2
+            return 1
+          }
+
+          restore() {
+            if [ "$KEEP_ENABLED" = "true" ]; then
+              echo "==> keep_enabled: $SVC stays on hosted inference until the next deploy or restart"
+              return
+            fi
+            echo "==> Recreating $SVC from the stack's own env (hosted inference off again)"
+            compose up -d --no-deps --force-recreate "$SVC" && wait_ready
+          }
+          trap restore EXIT
+
+          echo "==> Recreating $SVC on the $STACK stack with slot 1 enabled"
+          ( export "${OVERRIDES[@]}"; compose up -d --no-deps --force-recreate "$SVC" ) || exit 125
+          wait_ready || exit 125
+
+          AURA_COMPOSE_FILE="$FILE" AURA_COMPOSE_ENV_FILE="$ENVF" AURA_GATEWAY_SERVICE="$SVC" \
+          AURA_VERIFY_REPORT_DIR="$RUN_DIR/reports" AURA_VERIFY_SKIP_429="$SKIP_429" \
+          AURA_VERIFY_429_MAX_REQUESTS="$MAX_429" \
+            bash "$RUN_DIR/verify-hosted-inference.sh"
+          status=$?
+          echo "==> stack=$STACK service=$SVC workflow commit=$COMMIT exit=$status"
+          exit "$status"
+          REMOTE
+          status=$?
+          set -e
+
+          mkdir -p evidence/reports
+          scp -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            "${VPS_USER}@${VPS_HOST}:$RUN_DIR/reports/*" evidence/reports/ || true
+          $SSH "${VPS_USER}@${VPS_HOST}" "rm -rf '$RUN_DIR'" || true
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Summarise
+        if: ${{ always() }}
+        env:
+          STATUS: ${{ steps.verify.outputs.status }}
+        run: |
+          {
+            echo "### ADR-030 Phase 6 (${{ inputs.stack }} stack)"
+            echo
+            for f in evidence/reports/*.txt; do
+              [ -f "$f" ] || continue
+              echo '```'
+              cat "$f"
+              echo '```'
+            done
+            ls evidence/provider_wire/*.json >/dev/null 2>&1 \
+              && echo "Wire captures: $(ls evidence/provider_wire | tr '\n' ' ')"
+            echo
+            echo "Commit the report to \`docs/reports/\` and the captures to"
+            echo "\`aura_backend/tests/fixtures/provider_wire/\` (artifact \`phase-6-evidence\`)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: phase-6-evidence
+          path: evidence/
+          if-no-files-found: warn
+
+      - name: Fail on failed checks
+        if: ${{ steps.verify.outputs.status != '0' }}
+        env:
+          STATUS: ${{ steps.verify.outputs.status }}
+        run: |
+          echo "verify-hosted-inference.sh exited $STATUS: 125 means it could not run; anything else is the number of failed checks." >&2
+          exit 1

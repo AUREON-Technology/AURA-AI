@@ -219,7 +219,9 @@ Known limits:
   compose files, `hosted{1,2,3}_api_key` secrets, and the `deploy/.env.example` operator block.
 - **Phase 6:** a VPS evidence report. **Tooling built, evidence pending:**
   `deploy/scripts/verify-hosted-inference.sh` runs ten scripted checks inside the gateway. The
-  plan's Phase 6 section lists them and gives the runbook. The phase, and with it Phases 1–5, is
+  `.github/workflows/verify-hosted-inference.yml` runs them from GitHub Actions against the dev
+  or prod stack, and returns the report and live wire captures as an artifact. The plan's
+  Phase 6 section lists the checks and gives both runbooks. The phase, and with it Phases 1–5, is
   not proven until a passing report is committed to `docs/reports/` (GAP-064).
 - Consider also refusing `is_local=true` on `REMOTE_INFERENCE_HOSTS`. That is left out here
   because it could break an existing private deployment config without warning.

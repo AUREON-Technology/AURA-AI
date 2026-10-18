@@ -1521,7 +1521,9 @@ gaps:
       content shown to stay local and a real 429 shown to bench the provider and fail over.
     owner: platform-core
     dependencies: []
-    test: deploy/scripts/verify-hosted-inference.sh (writes docs/reports/)
+    test: >-
+      deploy/scripts/verify-hosted-inference.sh (writes docs/reports/), run on the VPS or via
+      .github/workflows/verify-hosted-inference.yml; captures replayed by TestLiveCaptures
     metric: live checks passed (target 10/10 scripted, plus the manual check 11)
     exit_condition: >-
       A docs/reports/phase-6-hosted-inference-*.txt report committed with every scripted check
