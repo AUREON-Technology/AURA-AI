@@ -205,7 +205,7 @@ The response text names the reason.
 | --- | --- |
 | `missing_capability:<name>` | The caller lacks the grant. Capability checks fail closed by design. |
 | `side_effect_in_tainted_context` | The turn's context contained quarantined content, so a side-effecting tool needs explicit confirmation. **This is the SEC-02 defence working.** Investigate what was quarantined before confirming. |
-| `tool_requires_confirmation` | Re-send with the tool in `confirmed_tools`. |
+| `tool_requires_confirmation` | Re-send in the same session with the call's `approval_id` in `approval_ids`. A 409 `confirmation_invalid` means the id was unknown, expired or already used: ask the turn again. |
 | `tool_not_found` | Not registered, or filtered out for this caller — tools the caller cannot use are deliberately not advertised. |
 
 ---

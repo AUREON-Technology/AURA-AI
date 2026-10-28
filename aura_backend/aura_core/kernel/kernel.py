@@ -28,7 +28,7 @@ import asyncio
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Mapping, Sequence
 
@@ -74,7 +74,9 @@ from ..domain.telemetry import (
     TurnTelemetry,
 )
 from ..execution.agentic_loop import AgentRunContext
+from ..execution.confirmations import PendingConfirmationStore, ResumedTurn
 from ..execution.engine import ExecutionOutcome, StepEvent
+from ..llm.cache import InMemoryCache
 from ..llm.router import TurnBudget
 from ..llm.sensitivity import DataScope, data_scope, escalate
 from ..llm.workload import workload_for_turn, workload_scope
@@ -120,11 +122,12 @@ class TurnRequest:
     routing_policy: RoutingPolicy | None = None
     require_local: bool = False
     capabilities: tuple[str, ...] = ()
-    confirmed_tools: tuple[str, ...] = ()
-    #: Precise per-call confirmation: a `ToolCallId` value (e.g. `"step_<plan-step-id>"`) rather
-    #: than a tool name, so two pending calls to the same tool in one turn can be confirmed
-    #: independently. Checked before `confirmed_tools`; either alone is sufficient.
-    confirmed_call_ids: tuple[str, ...] = ()
+    #: Server-issued ids (``pending_tool_calls[].approval_id``) of the held calls the user
+    #: approved. A request carrying them *resumes that pending turn*: its stored plan runs -- it
+    #: is not re-planned -- and only a call identical to an approved one is dispatched as
+    #: confirmed, once (``execution/confirmations.py``; ADR-006, F-04). Tool names and
+    #: positional call ids no longer confirm anything.
+    approval_ids: tuple[str, ...] = ()
     max_output_tokens: int = 1024
     temperature: float = 0.3
     route: str = "chat"
@@ -169,7 +172,10 @@ class TurnResult:
     tool_calls: tuple[str, ...] = ()
     confidence: float | None = None
     needs_confirmation: tuple[str, ...] = ()
-    #: One entry per confirm-required tool call this turn, `{"call_id", "tool", "arguments"}`.
+    #: One entry per confirm-required tool call this turn, `{"call_id", "tool", "arguments",
+    #: "diff_preview", "approval_id"}`. `approval_id` is what a caller sends back (in
+    #: `TurnRequest.approval_ids`) to approve exactly that call; it is absent only when the
+    #: pending turn could not be stored, and then the call cannot be confirmed at all.
     #: Not deduplicated by tool name (unlike `needs_confirmation`) -- two distinct calls to the
     #: same tool must surface as two separate pending calls, not collapse into one.
     pending_tool_calls: tuple[Mapping[str, Any], ...] = ()
@@ -244,6 +250,10 @@ class KernelDependencies:
     #: entirely, so `_tool_declarations` behaves exactly as before (matching every other optional
     #: dependency's "absent means off" contract).
     host_agent_registry: Any = None
+    #: `PendingConfirmationStore` (`execution/confirmations.py`) holding confirm-gated turns
+    #: until the user approves them. `None` falls back to a process-local store, which is
+    #: correct for one process; the container wires one over the shared cache (Redis).
+    tool_confirmations: Any = None
 
 
 class AIKernel:
@@ -252,6 +262,9 @@ class AIKernel:
     def __init__(self, deps: KernelDependencies) -> None:
         self._deps = deps
         self._metrics = deps.metrics
+        self._confirmations = deps.tool_confirmations or PendingConfirmationStore(
+            InMemoryCache(max_entries=1024, default_ttl_s=3600)
+        )
 
     # -- public API --------------------------------------------------------------------
 
@@ -313,6 +326,9 @@ class AIKernel:
         started: float,
     ) -> TurnResult:
         deps = self._deps
+        resume = await self._claim_confirmation(request)
+        if resume is not None:
+            request = self._resumed_request(request, resume)
         resolved_spec = self._resolve_agent(request)
         resolved_agent = resolved_spec.id if resolved_spec is not None else request.agent
         timings: dict[str, float] = {}
@@ -370,7 +386,7 @@ class AIKernel:
             ) * 1000.0
         caller_context, context_quarantined = await self._guard_caller_context(request, turn_id)
         quarantined_count += context_quarantined
-        tainted = tainted or bool(request.caller_context)
+        tainted = tainted or bool(request.caller_context) or bool(resume and resume.tainted)
 
         # 6. Plan and execute --------------------------------------------------------
         tool_telemetry: list[ToolTelemetry] = []
@@ -383,11 +399,11 @@ class AIKernel:
         agent_run_id: str | None = None
 
         tool_declarations = await self._tool_declarations(request)
-        if self._should_plan(request, tool_declarations):
+        if resume is not None or self._should_plan(request, tool_declarations):
             stage_start = time.perf_counter()
             outcome = await self._plan_and_execute(
                 request, message, tool_declarations, tainted,
-                turn_id=turn_id, correlation=correlation,
+                turn_id=turn_id, correlation=correlation, resume=resume,
             )
             timings["planning"] = (time.perf_counter() - stage_start) * 1000.0
             if outcome is not None:
@@ -411,12 +427,9 @@ class AIKernel:
                     )
                     if report.needs_confirmation:
                         needs_confirmation.append(report.tool)
-                        pending_tool_calls.append({
-                            "call_id": report.call_id,
-                            "tool": report.tool,
-                            "arguments": dict(report.arguments),
-                            "diff_preview": report.diff_preview,
-                        })
+                pending_tool_calls = await self._hold_for_confirmation(
+                    request, turn_id, outcome
+                )
                 await self._record_engineer_runs(
                     request, turn_id, correlation, resolved_agent, outcome
                 )
@@ -584,6 +597,9 @@ class AIKernel:
         ), data_scope(*self._baseline_classification(request)) as scope:
             try:
                 deps = self._deps
+                resume = await self._claim_confirmation(request)
+                if resume is not None:
+                    request = self._resumed_request(request, resume)
                 resolved_spec = self._resolve_agent(request)
                 resolved_agent = resolved_spec.id if resolved_spec is not None else request.agent
                 message = request.message
@@ -621,7 +637,9 @@ class AIKernel:
                         duration_ms=retrieval.duration_ms,
                     )
                 caller_context, _ = await self._guard_caller_context(request, turn_id)
-                tainted = tainted or bool(request.caller_context)
+                tainted = (
+                    tainted or bool(request.caller_context) or bool(resume and resume.tainted)
+                )
 
                 tool_declarations = await self._tool_declarations(request)
                 tool_results: list[tuple[str, str]] = []
@@ -629,11 +647,11 @@ class AIKernel:
                 pending_tool_calls: list[Mapping[str, Any]] = []
                 plan_summary: list[Mapping[str, Any]] = []
                 outcome: ExecutionOutcome | None = None
-                if self._should_plan(request, tool_declarations):
+                if resume is not None or self._should_plan(request, tool_declarations):
                     try:
                         async for item in self._iter_execution(
                             request, message, tool_declarations, tainted,
-                            turn_id=turn_id, correlation=correlation,
+                            turn_id=turn_id, correlation=correlation, resume=resume,
                         ):
                             if isinstance(item, StepEvent):
                                 yield {"type": "step", **item.as_dict()}
@@ -652,11 +670,9 @@ class AIKernel:
                     for report in outcome.tool_reports:
                         if report.needs_confirmation:
                             needs_confirmation.append(report.tool)
-                            pending_tool_calls.append({
-                                "call_id": report.call_id,
-                                "tool": report.tool,
-                                "arguments": dict(report.arguments),
-                            })
+                    pending_tool_calls = await self._hold_for_confirmation(
+                        request, turn_id, outcome
+                    )
                     await self._record_engineer_runs(
                         request, turn_id, correlation, resolved_agent, outcome
                     )
@@ -1247,12 +1263,8 @@ class AIKernel:
         if deps.planner is None or deps.executor is None or not tools:
             return False
         force = request.plan
-        if force is None and (request.confirmed_tools or request.confirmed_call_ids):
-            # A caller supplying confirmed_tools/confirmed_call_ids is resuming a tool the user just approved;
-            # that must run through planning/execution (the only sanctioned execute path,
-            # ADR-006) regardless of whether the confirmation reply itself matches the
-            # short-message heuristic below.
-            force = True
+        # A resumed confirmation never depends on this: it executes its stored plan whatever
+        # the heuristics below would say (`_run_turn`/`stream`).
         if force is None:
             agent = self._resolve_agent(request)
             if agent is not None and agent.max_plan_iterations > 1:
@@ -1373,10 +1385,11 @@ class AIKernel:
         *,
         turn_id: TurnId | None = None,
         correlation: CorrelationId | None = None,
+        resume: ResumedTurn | None = None,
     ) -> Any:
         deps = self._deps
         try:
-            plan = await self._compose_plan(request, message, tools)
+            plan, confirmations = await self._plan_for(request, message, tools, resume)
             if plan is None:
                 return None
             context = self._tool_context(request, tainted)
@@ -1386,8 +1399,7 @@ class AIKernel:
                     plan,
                     context=context,
                     capabilities=request.capabilities,
-                    confirmed_tools=request.confirmed_tools,
-                    confirmed_call_ids=request.confirmed_call_ids,
+                    confirmations=confirmations,
                     available_tools=tools,
                     **loop,
                 )
@@ -1395,8 +1407,7 @@ class AIKernel:
                 plan,
                 context=context,
                 capabilities=request.capabilities,
-                confirmed_tools=request.confirmed_tools,
-                confirmed_call_ids=request.confirmed_call_ids,
+                confirmations=confirmations,
             )
         except Exception:
             logger.warning("planning or execution failed; answering directly")
@@ -1411,10 +1422,11 @@ class AIKernel:
         *,
         turn_id: TurnId | None = None,
         correlation: CorrelationId | None = None,
+        resume: ResumedTurn | None = None,
     ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
         """Yield step progress, then the outcome. Prefer ``executor.stream``."""
         deps = self._deps
-        plan = await self._compose_plan(request, message, tools)
+        plan, confirmations = await self._plan_for(request, message, tools, resume)
         if plan is None:
             return
         context = self._tool_context(request, tainted)
@@ -1424,8 +1436,7 @@ class AIKernel:
                 plan,
                 context=context,
                 capabilities=request.capabilities,
-                confirmed_tools=request.confirmed_tools,
-                confirmed_call_ids=request.confirmed_call_ids,
+                confirmations=confirmations,
                 available_tools=tools,
                 **loop,
             ):
@@ -1437,8 +1448,7 @@ class AIKernel:
                 plan,
                 context=context,
                 capabilities=request.capabilities,
-                confirmed_tools=request.confirmed_tools,
-                confirmed_call_ids=request.confirmed_call_ids,
+                confirmations=confirmations,
             ):
                 yield item
             return
@@ -1446,9 +1456,92 @@ class AIKernel:
             plan,
             context=context,
             capabilities=request.capabilities,
-            confirmed_tools=request.confirmed_tools,
-            confirmed_call_ids=request.confirmed_call_ids,
+            confirmations=confirmations,
         )
+
+    async def _plan_for(
+        self,
+        request: TurnRequest,
+        message: str,
+        tools: Sequence[Mapping[str, Any]],
+        resume: ResumedTurn | None,
+    ) -> tuple[Any, Any]:
+        """The plan to execute, and the confirmations it may use.
+
+        A resumed turn executes the plan stored when it was held -- never a fresh one: a re-plan
+        is not deterministic and can be steered, so it could produce a different call from the
+        one the user approved (F-04). Only a resumed turn carries a grant.
+        """
+        if resume is not None:
+            return resume.plan, resume.grant
+        return await self._compose_plan(request, message, tools), None
+
+    # -- confirmations (ADR-006, F-04) --------------------------------------------------
+
+    async def _claim_confirmation(self, request: TurnRequest) -> ResumedTurn | None:
+        """Consume the pending turn ``request.approval_ids`` approve; ``None`` without ids.
+
+        Raises :class:`~aura_core.domain.errors.ConfirmationInvalidError` when the ids do not
+        name a pending turn this caller may resume -- and then nothing runs.
+        """
+        if not request.approval_ids:
+            return None
+        resume = await self._confirmations.claim(
+            request.approval_ids,
+            user_id=request.user_id.value,
+            session_id=request.session_id.value if request.session_id else None,
+        )
+        logger.info(
+            "resuming a confirmed turn",
+            extra={"origin_turn_id": resume.origin_turn_id,
+                   "approved_calls": len(resume.approved_call_ids)},
+        )
+        return resume
+
+    @staticmethod
+    def _resumed_request(request: TurnRequest, resume: ResumedTurn) -> TurnRequest:
+        """The held turn's own message and persona, not whatever the resuming request carried:
+        the plan, its grants and the answer all belong to the turn the user approved."""
+        return replace(request, message=resume.message or request.message, agent=resume.agent)
+
+    async def _hold_for_confirmation(
+        self, request: TurnRequest, turn_id: TurnId, outcome: Any
+    ) -> list[Mapping[str, Any]]:
+        """Store this turn's confirm-gated calls; describe each, with its approval id."""
+        reports = [r for r in outcome.tool_reports if r.needs_confirmation]
+        if not reports:
+            return []
+        approval_ids: Mapping[str, str] = {}
+        calls = list(getattr(outcome, "pending_calls", ()) or ())
+        if calls:
+            try:
+                approval_ids = await self._confirmations.issue(
+                    user_id=request.user_id.value,
+                    session_id=request.session_id.value if request.session_id else None,
+                    agent=request.agent,
+                    message=request.message,
+                    plan=outcome.plan,
+                    tainted=bool(getattr(outcome, "tainted", False)),
+                    calls=calls,
+                    turn_id=turn_id.value,
+                )
+            except Exception:
+                # Fails closed: with no stored pending turn there is nothing to approve, so the
+                # held calls stay held rather than becoming confirmable some looser way.
+                logger.warning("could not store pending confirmations; they cannot be approved")
+        pending: list[Mapping[str, Any]] = []
+        for report in reports:
+            entry: dict[str, Any] = {
+                "call_id": report.call_id,
+                "tool": report.tool,
+                "arguments": dict(report.arguments or {}),
+                "diff_preview": report.diff_preview,
+            }
+            approval_id = approval_ids.get(report.call_id)
+            if approval_id:
+                entry["approval_id"] = approval_id
+            pending.append(entry)
+        return pending
 
     @staticmethod
     def _format_tool_capabilities(

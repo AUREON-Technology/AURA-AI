@@ -55,6 +55,7 @@ __all__ = [
     "ExecutionError",
     "EvaluationError",
     "ApprovalRequiredError",
+    "ConfirmationInvalidError",
 ]
 
 
@@ -191,6 +192,18 @@ class ApprovalRequiredError(AuraError):
     recorded human decision. See ADR-008."""
 
     kind = "approval_required"
+    http_status = 409
+
+
+class ConfirmationInvalidError(ConflictError):
+    """A tool-call confirmation names no pending call this caller may approve: unknown, expired,
+    already used, issued to someone else or for another session (ADR-006, F-04).
+
+    Not retryable: a confirmation is one-shot, so the same ids will be refused again. The turn
+    has to be re-asked so the server can issue a fresh confirmation for what it would now run.
+    """
+
+    kind = "confirmation_invalid"
     http_status = 409
 
 

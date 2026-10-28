@@ -205,7 +205,13 @@ def register_voice_live(
                 elif ftype == "commit":
                     await session.commit()
                 elif ftype == "confirm":
-                    tools = frame.get("tools") or []
+                    # F-04: confirmation is by the approval ids this session was given, never by
+                    # tool name -- a `tools` list from an older client is ignored, and with no
+                    # ids the session approves exactly the turn it is holding.
+                    raw_ids = frame.get("approval_ids")
+                    approval_ids = (
+                        [str(i) for i in raw_ids][:32] if isinstance(raw_ids, list) else None
+                    )
                     if rate_limiter is not None:
                         decision = await rate_limiter.check_all(
                             user_key=principal.user_id.value,
@@ -217,7 +223,7 @@ def register_voice_live(
                                 {"type": "error", "error": "rate_limited", "message": "budget"}
                             )
                             continue
-                    await session.confirm([str(t) for t in tools])
+                    await session.confirm(approval_ids)
                 elif ftype == "reject":
                     await session.reject()
                 elif ftype == "reauth":

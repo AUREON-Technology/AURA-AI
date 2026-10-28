@@ -20,7 +20,8 @@ WebSockets deliver their output incrementally to a caller that has already rende
 no single response body to store and hand back, and replaying a recorded stream would re-render
 text the user has already seen. A client that needs an exactly-once chat turn uses the non-
 streaming ``POST /chat`` with a key; a streamed turn's side-effecting tools are protected instead
-by the confirmation gate (``confirmed_call_ids``, ADR-006), which is itself keyed per call.
+by the confirmation gate (``approval_ids``, ADR-006), which binds one approval to one call
+(digest of tool + arguments) and is consumed on first use.
 """
 
 # NOTE: deliberately no ``from __future__ import annotations`` -- same reason as v3.py: FastAPI

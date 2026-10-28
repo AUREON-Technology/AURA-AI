@@ -148,3 +148,55 @@ async def test_language_gate_rejects_arabic_on_english_only() -> None:
         config=LiveVoiceConfig(english_only_stt=True),
     )
     assert session.check_language() is not None
+
+
+class _RecordingStreamer:
+    """Holds one call on the first turn; records every request it is given."""
+
+    def __init__(self) -> None:
+        self.requests: list[Any] = []
+
+    async def stream(self, request: Any) -> AsyncIterator[Mapping[str, Any]]:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            yield {
+                "type": "done",
+                "needs_confirmation": ["propose_task"],
+                "pending_tool_calls": [{
+                    "call_id": "step_s1", "tool": "propose_task",
+                    "arguments": {"title": "x"}, "approval_id": "apr.tok.n1",
+                }],
+            }
+        else:
+            yield {"type": "done", "needs_confirmation": []}
+
+
+@pytest.mark.anyio
+async def test_voice_confirms_by_the_held_approval_id_never_by_name() -> None:
+    """F-04: a voice confirmation resumes the call this session is holding, by its approval id.
+    Tool names a client sends authorise nothing, and an id it was not given is dropped."""
+    streamer = _RecordingStreamer()
+    session = LiveVoiceSession(
+        stt=InMemoryStt(default="do it"), tts=InMemoryTts(), turn_streamer=streamer,
+        user_id=UserId("u1"), session_id=SessionId("s1"),
+        nlp=NlpEngine(extract_entities=False), config=LiveVoiceConfig(hold_tts_until_done=True),
+    )
+    await session.start()
+    await session._run_kernel_turn(message="create a task")
+    events: list[Any] = []
+    while not session._outbound.empty():
+        events.append(await session._outbound.get())
+    (confirmation,) = [
+        e for e in events if isinstance(e, dict) and e.get("type") == "confirmation"
+    ]
+    assert confirmation["calls"][0]["approval_id"] == "apr.tok.n1"
+    assert confirmation["calls"][0]["arguments"] == {"title": "x"}
+
+    await session.confirm(["propose_task", "apr.forged.id", "apr.tok.n1"])
+    assert streamer.requests[-1].approval_ids == ("apr.tok.n1",)
+
+    # One-shot on the session side too: nothing is left to approve.
+    session.state = type(session.state).AWAITING_CONFIRMATION
+    await session.confirm(None)
+    assert len(streamer.requests) == 2
+    await session.close()

@@ -3,7 +3,7 @@
 These tools do not write Postgres or any other server store. They return a canonical
 ``{type, params}`` payload that the Flutter ``PendingActionsExecutor`` applies locally
 after the user approves the card. Server-side they are side-effecting so a tainted
-turn cannot emit them without ``confirmed_tools`` (ADR-006).
+turn cannot emit them without a bound confirmation (``approval_ids``, ADR-006).
 """
 
 from __future__ import annotations

@@ -4,8 +4,8 @@ Routes and payloads are the gateway's own (``aura_core/api/v3.py``): ``ChatReque
 ``/chat/stream``, multipart ``file`` for ``/voice/transcribe``, ``SpeakRequest`` for
 ``/voice/speak``, ``IngestRequest`` for ``/knowledge/documents``, ``SearchRequest`` for
 ``/knowledge/search``. The Engineer flow resumes a turn exactly the way the Flutter client does
-(``chat_repository.dart::confirmTaintedTools``): the same message again, with
-``confirmed_tools`` and ``confirmed_call_ids`` naming the pending calls it approves.
+(``chat_repository.dart::confirmPendingCalls``): the held turn's message again, with
+``approval_ids`` naming the pending calls it approves (F-04: the server resumes that stored turn).
 """
 
 from __future__ import annotations
@@ -197,7 +197,9 @@ async def scenario_engineer(gw: Gateway, vu: VU) -> list[Sample]:
         if not sample.ok or result.done is None:
             break
         pending = list(result.done.get("pending_tool_calls") or [])
-        approve = [p for p in pending if p.get("tool") in ENGINEER_AUTO_CONFIRM and p.get("call_id")]
+        approve = [
+            p for p in pending if p.get("tool") in ENGINEER_AUTO_CONFIRM and p.get("approval_id")
+        ]
         refused = len(pending) - len(approve)
         if refused:
             gw.count("engineer.pending_not_auto_confirmed", refused)
@@ -205,8 +207,7 @@ async def scenario_engineer(gw: Gateway, vu: VU) -> list[Sample]:
             break
         gw.count("engineer.confirm_rounds")
         payload = dict(base)
-        payload["confirmed_tools"] = sorted({p["tool"] for p in approve})
-        payload["confirmed_call_ids"] = [p["call_id"] for p in approve]
+        payload["approval_ids"] = [p["approval_id"] for p in approve]
         sample, result = await gw.chat_stream(
             vu, scenario="engineer", op="confirm_stream", payload=payload,
         )

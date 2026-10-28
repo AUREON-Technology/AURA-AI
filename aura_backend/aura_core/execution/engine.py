@@ -33,6 +33,7 @@ from ..domain.messages import ToolCall
 from ..domain.planning import Plan, PlanStep, StepKind, StepStatus
 from ..observability.logging import get_logger
 from ..ports.runtime import ToolContext
+from .confirmations import NEEDS_CONFIRMATION, ConfirmationGrant, PendingCall
 
 __all__ = ["ExecutionEngine", "ExecutionOutcome", "StepEvent"]
 
@@ -115,7 +116,7 @@ class StepEvent:
 
 class ExecutionOutcome:
     __slots__ = ("plan", "results", "tool_reports", "succeeded", "duration_ms", "steps_run",
-                 "blocked_reason", "run_id")
+                 "blocked_reason", "run_id", "pending_calls", "tainted")
 
     def __init__(
         self,
@@ -128,6 +129,8 @@ class ExecutionOutcome:
         steps_run: int = 0,
         blocked_reason: str | None = None,
         run_id: str | None = None,
+        pending_calls: Sequence[PendingCall] = (),
+        tainted: bool = False,
     ) -> None:
         self.plan = plan
         self.results = dict(results)
@@ -139,6 +142,12 @@ class ExecutionOutcome:
         #: The durable ``AgentRun`` this outcome belongs to, when the agent loop recorded one
         #: (``execution/agentic_loop.py``); ``None`` otherwise.
         self.run_id = run_id
+        #: Each confirm-gated call exactly as it would have been dispatched (resolved arguments),
+        #: which is what a confirmation is bound to (``execution/confirmations.py``).
+        self.pending_calls = list(pending_calls)
+        #: Whether the tool context ended this execution tainted -- an untrusted tool that
+        #: already ran taints it, and a resumed turn must start from that, not from clean.
+        self.tainted = tainted
 
     def summary_for_context(self) -> list[tuple[str, str]]:
         """Step results as ``(label, text)`` pairs for the context engine.
@@ -177,8 +186,7 @@ class ExecutionEngine:
         *,
         context: ToolContext,
         capabilities: Sequence[str] = (),
-        confirmed_tools: Sequence[str] = (),
-        confirmed_call_ids: Sequence[str] = (),
+        confirmations: ConfirmationGrant | None = None,
         handlers: Mapping[StepKind, Callable[[PlanStep], Any]] | None = None,
         on_event: Callable[[StepEvent], Any] | None = None,
         gate: Any = None,
@@ -190,11 +198,17 @@ class ExecutionEngine:
         through or a reason string (``"tool_budget_exceeded"``, ``"risk_budget_exceeded"``) to
         refuse it. It only ever *removes* a dispatch: an admitted step still goes through
         ``ToolRegistry.execute`` and its policy exactly as it would without a gate.
+
+        ``confirmations`` is the only way a call reaches the registry as user-confirmed: a
+        :class:`~aura_core.execution.confirmations.ConfirmationGrant` for a resumed turn, which
+        admits a call only if it is identical to the one the user approved, and only once. There
+        is no name- or position-based confirmation (F-04).
         """
         started = time.perf_counter()
         deadline = started + self._deadline_s
         results: dict[str, str] = {}
         tool_reports: list[Any] = []
+        pending_calls: list[PendingCall] = []
         steps_run = 0
         blocked_reason: str | None = None
         current = plan
@@ -260,7 +274,7 @@ class ExecutionEngine:
                 *(
                     self._run_step(
                         step, context=context, capabilities=capabilities,
-                        confirmed_tools=confirmed_tools, confirmed_call_ids=confirmed_call_ids,
+                        confirmations=confirmations,
                         handlers=handlers or {}, plan=current,
                     )
                     for step in running
@@ -332,8 +346,16 @@ class ExecutionEngine:
                     # BLOCKED plus `blocked_reason="needs_confirmation"` (in `_TERMINAL_BLOCKS`,
                     # `agentic_loop.py`) stops the loop here instead, so this outcome -- and the
                     # report on it -- is what the kernel actually sees.
-                    blocked_reason = "needs_confirmation"
-                    updated.append(step.blocked("needs_confirmation"))
+                    blocked_reason = NEEDS_CONFIRMATION
+                    updated.append(step.blocked(NEEDS_CONFIRMATION))
+                    # What the user will be asked to approve, exactly as it would be dispatched:
+                    # the same resolution `_run_step` just did, against the same plan state.
+                    resolved, _ = _resolve_output_tokens(step.arguments, current)
+                    pending_calls.append(PendingCall(
+                        step_id=step.id.value, call_id=getattr(report, "call_id", None)
+                        or f"step_{step.id.value}",
+                        tool=step.tool or "", arguments=resolved,
+                    ))
                     await self._emit(
                         on_event,
                         StepEvent(
@@ -391,6 +413,8 @@ class ExecutionEngine:
             duration_ms=duration,
             steps_run=steps_run,
             blocked_reason=blocked_reason,
+            pending_calls=pending_calls,
+            tainted=bool(getattr(context, "tainted", False)),
         )
 
     def _tool_spec(self, step: PlanStep) -> Any:
@@ -455,8 +479,7 @@ class ExecutionEngine:
         *,
         context: ToolContext,
         capabilities: Sequence[str],
-        confirmed_tools: Sequence[str],
-        confirmed_call_ids: Sequence[str],
+        confirmations: ConfirmationGrant | None,
         handlers: Mapping[StepKind, Callable[[PlanStep], Any]],
         plan: Plan,
     ) -> tuple[str, bool, float, Any]:
@@ -478,10 +501,12 @@ class ExecutionEngine:
                 name=step.tool,
                 arguments=arguments,
             )
-            # Precise per-call confirmation first (two pending calls to the same tool in one
-            # turn must be confirmable independently); tool-name matching remains for callers
-            # still on the older `confirmed_tools`-only contract.
-            confirmed = call_id in confirmed_call_ids or step.tool in confirmed_tools
+            # Confirmed only by a grant for this exact call: same call id, same tool, same
+            # resolved arguments as the user approved, consumed on first use. A different call
+            # -- a re-planned target, changed arguments, a second dispatch -- is held again.
+            confirmed = confirmations is not None and confirmations.admits(
+                call_id, step.tool, arguments
+            )
             result, report = await self._tools.execute(
                 call,
                 context,
@@ -521,8 +546,7 @@ class ExecutionEngine:
         *,
         context: ToolContext,
         capabilities: Sequence[str] = (),
-        confirmed_tools: Sequence[str] = (),
-        confirmed_call_ids: Sequence[str] = (),
+        confirmations: ConfirmationGrant | None = None,
         handlers: Mapping[StepKind, Callable[[PlanStep], Any]] | None = None,
         gate: Any = None,
     ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
@@ -544,8 +568,7 @@ class ExecutionEngine:
                     plan,
                     context=context,
                     capabilities=capabilities,
-                    confirmed_tools=confirmed_tools,
-                    confirmed_call_ids=confirmed_call_ids,
+                    confirmations=confirmations,
                     handlers=handlers,
                     on_event=emit,
                     gate=gate,

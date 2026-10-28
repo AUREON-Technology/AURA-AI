@@ -45,6 +45,7 @@ ERROR_KIND_STATUS: Mapping[str, int] = {
     "rate_limited": 429,
     "budget_exceeded": 429,
     "approval_required": 409,
+    "confirmation_invalid": 409,
     "timeout": 504,
     "dependency_unavailable": 503,
     "provider_error": 502,
