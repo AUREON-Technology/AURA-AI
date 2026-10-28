@@ -11,17 +11,28 @@ for fetching the Flutter version `client-ci.yml` pins and running `analyze` + `t
 which is how every "awaiting CI" row below became a measured result instead of a hope.
 
 **Last local run** (Flutter 3.44.6 / Dart 3.12.2, the CI pin):
-`flutter analyze` → **No issues found!**; `flutter test` → **381 passed, 0 failed, 3 skipped**,
-including the 115 in `test/ux/`.
+`flutter analyze` → **No issues found!**; `flutter test` → **445 passed, 0 failed, 3 skipped**,
+including the 126 in `test/ux/`. The suite grew past the 381 this transformation last measured
+because other work landed alongside it; the UX figure is the one this document is accountable
+for.
 
-**GitHub `Client CI` is not a gate right now.** It has not been assigned a runner in weeks: every
-run, on `main` as well as on PRs, fails in 2–4 seconds with no step starting and no log archive.
-Local runs are the only real verification until that is fixed at the repository/account level.
+**`Client CI` executed again on 2026-10-28, after weeks of not being assigned a runner — and it
+confirmed these numbers.** `CLAUDE.md` records runs 142–143 running every step with
+`analyze-and-test` green at 381 tests, which is exactly what the local runs below had been
+reporting. Two other jobs are red for reasons of their own (`build-android` runs the runner out of
+disk; `build-windows`, which is `continue-on-error`, fails 10 `path_containment_test.dart` cases on
+8.3 short paths), so **read the `analyze-and-test` job for a client diff, not the run's overall
+tick.**
+
+It is intermittent, though, and worth knowing before you read a red X as a verdict: four of that
+same day's runs — 148, 149, 150 and 151, the last being the one on the `#143` merge — still died in
+2–4 seconds with `runner_id: 0` and no log archive. So a local run remains the verification that
+is actually available on demand.
 
 | Phase | Scope | Status | Evidence |
 |---|---|---|---|
 | 0 | UX baseline audit | **COMPLETE** | `UX_BASELINE_AUDIT.md` — 12 findings, each citing file and line |
-| 1 | Design tokens | **COMPLETE** (analyze clean, 299 tests pass locally) | `DESIGN_SYSTEM.md`, `test/ux/design_tokens_test.dart`, contrast gate extended |
+| 1 | Design tokens | **COMPLETE** (analyze clean; suite green) | `DESIGN_SYSTEM.md`, `test/ux/design_tokens_test.dart`, contrast gate extended |
 | 2 | Shared component system | **PARTIALLY IMPLEMENTED** | `AuraCommandPalette` added; `AuraTextField` gained autofocus/focusNode/prefixIcon so search inputs need not drop to a raw TextField. 11 of ~27 target components exist — `COMPONENT_GUIDE.md` lists the rest in duplication order |
 | 3 | Desktop shell | **IMPLEMENTED** | F-01, F-02, F-06 and F-09 all closed with passing tests. Shell *rendering* at three surface sizes still uncovered — the layout rules are tested as a value, not as pixels |
 | 4 | Explorer + Editor | **PARTIALLY IMPLEMENTED** | F-08 closed (unimplemented editor commands now throw). Explorer search/filter, editor breadcrumbs, symbols and the selection→AURA actions NOT STARTED |
@@ -31,7 +42,7 @@ Local runs are the only real verification until that is fixed at the repository/
 | 8 | Agent Workspace | **NOT STARTED** | |
 | 9 | Approval + Security UX | **BLOCKED** | F-03: the approval payload carries `command`, `root`, `paths`, `diff_preview` and nothing else. Reason, risk and reversibility are not transmitted, and inventing them client-side would be fabrication. Protocol change across backend + hostd + client is the prerequisite |
 | 10 | Host Management | **NOT STARTED** | |
-| 11 | Universal loading/error/empty/offline states | **IMPLEMENTED for failures** | `AuraStateTone` + `AuraFailure`/`AuraFailureView`: the backend's ~30 stable `kind` slugs classify into 12 states with their own copy, Retry only where retrying can help, and a `compact` form for failures that own one slot rather than a page. Adopted across 13 surfaces — every `AsyncValue.error` that rendered a raw `$err`. `syncing` / `stale` NOT STARTED |
+| 11 | Universal loading/error/empty/offline states | **COMPLETE** | Failures: `AuraFailure`/`AuraFailureView` classify the backend's ~30 `kind` slugs into 12 states, Retry only where it helps, a `compact` form for one-slot failures, adopted across 13 surfaces. Sync: `AuraSyncStatusView` folds `SyncState` and the parked-outbox count into five phases including `pendingRefused` — a change the server refused, which the engine reports as settled and which used to render as "Synced" |
 | 12 | Mobile UX | **NOT STARTED** | Not audited yet — see audit §3 |
 | 13 | Accessibility | **PARTIALLY IMPLEMENTED** | Contrast gate extended; activity bar semantics, focus and non-colour badge counts added; Escape dismisses a floating panel. Keyboard traversal order, focus visuals and real screen-reader output all still unverified |
 | 14 | Themes + Personalization | **PARTIALLY PRE-EXISTING** | Light/dark via `AuraPalette`; desktop layout persistence already real |
@@ -52,12 +63,12 @@ Local runs are the only real verification until that is fixed at the repository/
 
 In order, and each on its own commit:
 
-1. **`syncing` / `stale`** — the two states left from rule 19's vocabulary. Both need a real
-   signal first: check what the sync layer actually exposes before designing UI for them, the way
-   the failure states were built on the backend's existing `kind` slugs rather than on invented
-   distinctions.
-2. **Phase 2 proper** — promote the most-duplicated one-offs (tree item, status badge, toolbar,
-   context menu) into the shared set, in duplication order. See `COMPONENT_GUIDE.md`.
+1. **Mount `AuraSyncStatusView` outside chat.** It is shared now, and chat is still the only
+   surface showing it — so on Tasks, Finance or Calendar a change the server refused is as
+   invisible as it ever was. The component is the easy half; deciding where the pill belongs on
+   each shell is the half worth doing deliberately.
+2. **Phase 2 proper** — promote the most-duplicated one-offs (tree item, toolbar, context menu)
+   into the shared set, in duplication order. See `COMPONENT_GUIDE.md`.
 3. **Migrate the mobile command palette** onto `AuraCommandPalette`, behind tests written first.
 4. **F-04 / F-05** — the per-screen colour, type and monospace migration. Several of the screens
    touched by the failure-state adoption are still on V1's `AuraTheme` constants, which is the

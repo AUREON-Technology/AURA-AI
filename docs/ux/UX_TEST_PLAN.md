@@ -20,9 +20,13 @@ cd aura_client && flutter pub get \
 
 **Do this rather than assuming a client change is unverifiable.** Several commits in this
 repository's history say a client change could not be checked locally; for `analyze` and `test`
-that is not true, and it matters, because GitHub's `Client CI` has not been assigned a runner in
-weeks — every run, on `main` as well as on PRs, fails in 2–4 seconds with no step ever starting.
-Treating CI as the gate while CI cannot run means nothing is gated at all.
+that is not true.
+
+It mattered more than usual for a while, because `Client CI` went weeks without being assigned a
+runner. It executed again on 2026-10-28 and `analyze-and-test` came back green on the same numbers
+the local runs had been reporting — but some runs that same day still died in 2–4 seconds with no
+runner, so treat a red X there as a question rather than a verdict, and read the
+`analyze-and-test` job rather than the run's overall tick.
 
 What the local run *cannot* settle stays unsettled: it is a headless Linux host with no device, so
 font fallback resolution per platform, screen-reader output, keyboard traversal as a human
@@ -118,6 +122,17 @@ keeps its promises** — unreachable does not claim to know whose fault it is,
 inference-down says the Control Plane is up because that is the useful part, and a rate limit
 names its wait rather than inventing one.
 
+### `test/ux/sync_status_test.dart` — Phase 11 (rule 19's `syncing` / `stale`)
+
+The phase fold as a pure function — parked changes override a *settled* sync, while a live
+`syncing` / `offline` / `error` state wins over them, because mid-sync what is happening now is
+more useful than what is stuck. Then the labels (`Sync failed`, not `Error`; singular vs plural
+parked counts), that every phase has its own glyph so colour is never the only signal, and the
+widget: that a parked change reads as "2 changes not synced" rather than "Synced", that hiding the
+label on a narrow surface still leaves the status in a live-region announcement, that mid-sync
+shows a spinner and no button at all rather than a disabled one, and that the view is read-only
+when given no callback.
+
 ### `test/ux/editor_commands_test.dart` — Phase 4 (F-08)
 
 Format / GoToDefinition / FindReferences / RenameSymbol / CodeAction throw `UnimplementedError`;
@@ -152,7 +167,7 @@ Listed so the gaps are explicit:
 | Streaming / agent-activity rendering | **NOT COVERED.** Phases 7–8. |
 | Approval UX | **NOT COVERED**, and blocked: the approval payload does not carry reason, risk or reversibility, so there is nothing truthful to assert yet (F-03). |
 | State restoration end to end | **NOT COVERED.** `test/desktop/layout_notifier_test.dart` covers layout persistence at the notifier level; nothing covers restore-after-restart as a user-visible flow. |
-| `syncing` / `stale` | **NOT COVERED** — these two states do not exist yet, and need a real signal from the sync layer before any UI is designed for them. |
+| `syncing` / `stale` | **COVERED** — built on the signals the sync layer already exposed (`SyncState`, `parkedOutboxCountProvider`) rather than on invented ones. Adopted in chat's header; other surfaces can now mount `AuraSyncStatusView` but none do yet. |
 | Internet vs Control Plane unavailable | **NOT DISTINGUISHABLE**, by design rather than by omission — see the note at the end of `TRANSFORMATION_STATUS.md`. |
 | Per-screen adoption of `AuraFailureView` | **DONE for `AsyncValue.error`** — 13 surfaces. Covered by the classifier's own tests plus an overflow assertion on the compact form; there is no per-screen widget test, since each is the same two-line swap. |
 | Every runtime performance metric in the transformation brief | **UNKNOWN — needs instrumentation on a real device.** No number in this repository should be quoted for any of them until it is measured. |

@@ -24,6 +24,7 @@ screen's folder gets copied into the next screen rather than reused.
 | `AuraSelectTile` | Row that picks one of several | |
 | `AuraSkeleton` | Loading placeholder | Prefer over a bare spinner where the shape of the content is known. |
 | `AuraSnackbar` | Transient confirmation | |
+| `AuraSyncStatusView` | "Is my work saved?" | In `core/sync/`, not the UI kit — the design system has no business knowing what a parked outbox row is. Folds `SyncState` and the parked count into five phases; see `TRANSFORMATION_STATUS.md` Phase 11. |
 | `AuraTextField` | Text input | Now also `autofocus`, `focusNode` and `prefixIcon`, so a search input does not have to drop to a raw `TextField`. |
 
 ## `AuraCommandPalette`
@@ -70,13 +71,15 @@ colours and 296 raw font sizes the baseline audit counted (F-04). Listed roughly
 often they are duplicated:
 
 ```text
-status badge      toast            banner
+toast             banner           avatar
 tree item         tabs             toolbar
-context menu      avatar           progress indicator
+context menu      progress bar     dropdown
 approval card     agent step       diff summary
-activity item     search field     dropdown
-bottom sheet
+activity item     search field     bottom sheet
 ```
+
+(`status badge` came off this list with `AuraSyncStatusView` — the sync pill was the most
+duplicated instance of it, and it was duplicated exactly once, inside chat.)
 
 **Phase 2 scope**, and the order to take them in is by duplication count, not by how interesting
 they are — the tree item, the status badge and the toolbar are copied the most.
