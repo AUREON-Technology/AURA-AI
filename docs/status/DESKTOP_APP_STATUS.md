@@ -78,6 +78,16 @@ all.
 7. **Stale PRs #78 and #88.** Open drafts last touched in 2026-09, with no merge base with `main`.
    Their features already landed by other routes. Close them as superseded.
 
+## Fixed on PR #185 (not merged)
+
+- **Client, Windows:** `path_containment.dart` canonicalizes the root like the candidate, so 8.3
+  short paths match. Client CI run 145 was fully green, including Windows tests and the Windows
+  release bundle (the first time that step was reached).
+- **hostd:** the POSIX PTY reader isolate is woken through a pipe on dispose, so the Linux suite
+  exits (229 passed in 28 s locally); every drive root is denied as a workspace root; git worktree
+  paths are canonical; a timed-out command kills its whole tree (`taskkill /T`). Host Daemon CI
+  has not run on these commits yet.
+
 ## Changed since 2026-10-15
 
 - `627a03d`: hostd untrusted tier hardening (allowlist, path containment, config files written

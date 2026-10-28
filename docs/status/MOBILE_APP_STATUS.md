@@ -77,6 +77,13 @@ So backend fixes such as F-02 and F-15 are live, even though the VPS deploy is b
      iOS likely fails.
    - `NSFaceIDUsageDescription` is missing, though biometric login is used.
 
+**Fixed on PR #185 (TESTED locally: analyze clean, 430 passed / 3 skipped; not merged):**
+F-11 (pull runs even when push fails; outbox records attempts and last error, Drift schema 13),
+F-12 (server-side cursor), F-13 (memories sent as `fact_enc` under a UUID, pinned by
+`test/fixtures/sync_payload_contract.json`), F-07 (memory forget and chat delete reach the
+server), F-04 (approvals carry the server's `approval_id`; older builds cannot confirm held calls
+until updated), and the `build-android` disk fix (Client CI run 145 green).
+
 **Fixed since 2026-10-26:** F-05 sign-out (`5153394`). Backend fixes F-02 and F-15, now live on
 Railway.
 

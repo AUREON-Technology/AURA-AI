@@ -57,7 +57,7 @@ are fixed since then and two partly.
 | Backup / DR | TESTED in a sandbox; OPEN on any live target | A2 sandbox (`phase-a2-restore-drill.md`); GAP-028, GAP-046 |
 | 50-user capacity | OPEN | GAP-011 (P0), GAP-041 |
 | Real-model evaluation gates | OPEN | GAP-021; GAP-006 (`eval-ci.yml` is dispatch-only) |
-| Schema / migrations | TESTED, risk open | Alembic `0001`→`0013`, single head; F-27: 16 runtime-DDL tables exist in no migration |
+| Schema / migrations | TESTED, risk open | Alembic `0001`→`0013` on `main` (`0014` on PR #185), single head; F-27: 16 runtime-DDL tables exist in no migration |
 | Learning / fine-tuning | BUILT | GAP-017; GAP-018 (a failed train is recorded as success) |
 | Voice | BUILT | GAP-020: speech-to-text is English-only while an Arabic voice ships |
 | Track AP: AP1–AP8 | TESTED (`built_not_proven`) | GAP-049…057; held at BUILT until M0 |
@@ -82,17 +82,21 @@ are fixed since then and two partly.
 - F-02, partly (`2d42388`): role is re-resolved on refresh. `db_role` is never populated and
   demotion revokes no sessions.
 
+**Fixed on PR #185 (TESTED locally; not merged, CI not yet run)**
+- **F-03:** dev stack gets its own `dev_jwt_secret` and `dev_data_encryption_keys`; tokens carry
+  `iss`/`aud`, with legacy tokens accepted until `AURA_JWT_LEGACY_TOKENS_UNTIL` (2026-12-15).
+- **F-04:** confirmation is by single-use `approval_id` bound to the stored turn and call digest
+  (`aura_core/execution/confirmations.py`); a stale or reused id is a 409.
+- **F-19:** `CircuitBreaker.release_probe()` frees the half-open slot on cancel, 429 or refusal.
+- **F-14:** lexical hits for inactive documents are dropped.
+- **F-11, F-12:** per-row SAVEPOINT on push; the pull cursor is `pg_current_xact_id()`
+  (migration `0014`, Postgres-verified in `tests/load/test_sync_postgres.py`).
+- **F-07 (sync half):** `DELETE /api/v3/sessions/{id}`; deletes clear `*_enc` server side.
+
 **Still open (High)**
-- **F-03:** the dev stack mounts the prod `jwt_secret` and `data_encryption_keys`, and tokens
-  carry no `iss`/`aud`.
-- **F-04:** tool confirmation is not bound to the approved call.
-- **F-19:** a breaker probe can lock out the only LLM until restart.
-- **F-14:** deleted documents stay searchable.
 - **F-21:** hostd non-streaming `run` returns nothing.
 - **F-20:** Celery reuses one asyncpg pool across event loops.
-- **F-11, F-12:** sync stalls on one bad row and can skip rows.
-- **F-06, F-07:** admin erasure reports success while incomplete; client deletes never reach the
-  server.
+- **F-06:** admin erasure reports success while incomplete.
 - **F-22:** timeouts disagree between layers.
 - **F-27:** 16 tables have no migration.
 - **GAP-011, GAP-041 (P0):** inference is single-slot and no load matrix exists.
