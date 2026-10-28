@@ -9,6 +9,8 @@ import 'widgets/add_task_dialog.dart';
 import 'widgets/empty_state_tasks.dart';
 import 'widgets/task_item_card.dart';
 import 'widgets/task_sync_logs_sheet.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 
 class TasksPage extends ConsumerWidget {
   const TasksPage({super.key});
@@ -230,9 +232,8 @@ class TasksPage extends ConsumerWidget {
                       child: CircularProgressIndicator(color: AuraTheme.accentIndigo),
                     ),
                     error: (err, stack) => Center(
-                      child: Text(
-                        'Failed to load tasks: $err',
-                        style: const TextStyle(color: Colors.redAccent),
+                      child: SingleChildScrollView(
+                        child: AuraFailureView(failure: AuraFailure.from(err)),
                       ),
                     ),
                   ),

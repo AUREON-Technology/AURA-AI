@@ -14,6 +14,8 @@ import 'widgets/chat_sidebar.dart';
 import 'widgets/empty_state_chat.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/pending_actions_card.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 
 /// "Copilot" -- chat, rebuilt on the V2 design system.
 ///
@@ -207,7 +209,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       },
                       loading: () => Center(child: CircularProgressIndicator(color: palette.brand)),
                       error: (err, _) => Center(
-                        child: Text('Failed to load message history: $err', style: TextStyle(color: palette.danger)),
+                        child: AuraFailureView(failure: AuraFailure.from(err)),
                       ),
                     ),
                   ),

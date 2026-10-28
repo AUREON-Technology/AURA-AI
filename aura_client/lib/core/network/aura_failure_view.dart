@@ -7,7 +7,9 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../design_system/aura_palette.dart';
 import '../design_system/components/aura_empty_state.dart';
+import '../design_system/tokens.dart';
 import 'aura_failure.dart';
 
 class AuraFailureView extends StatelessWidget {
@@ -18,7 +20,15 @@ class AuraFailureView extends StatelessWidget {
     this.secondaryActionLabel,
     this.onSecondaryAction,
     this.showDetail = true,
+    this.compact = false,
   });
+
+  /// Renders as a single row instead of a full-height state.
+  ///
+  /// For a failure that owns one slot in a larger layout — a stats strip, one
+  /// card in a dashboard — where the page around it is fine and a centred
+  /// 36px icon with padding would both misrepresent the scope of the problem
+  /// and, inside a fixed-height slot, overflow it.
 
   final AuraFailure failure;
 
@@ -33,6 +43,8 @@ class AuraFailureView extends StatelessWidget {
   /// Appends the server's own message under the explanation. Useful in
   /// developer-facing surfaces, noise in a consumer one.
   final bool showDetail;
+
+  final bool compact;
 
   static IconData iconFor(AuraFailureKind kind) => switch (kind) {
         AuraFailureKind.unreachable => Icons.cloud_off,
@@ -74,6 +86,8 @@ class AuraFailureView extends StatelessWidget {
     final showRetry = failure.canRetry && onRetry != null;
     final detail = showDetail ? failure.detail : null;
 
+    if (compact) return _buildCompact(context, showRetry: showRetry);
+
     return AuraEmptyState(
       icon: iconFor(failure.kind),
       tone: toneFor(failure.kind),
@@ -83,6 +97,53 @@ class AuraFailureView extends StatelessWidget {
       onAction: showRetry ? onRetry : null,
       secondaryActionLabel: onSecondaryAction == null ? null : secondaryActionLabel,
       onSecondaryAction: onSecondaryAction,
+    );
+  }
+
+  Widget _buildCompact(BuildContext context, {required bool showRetry}) {
+    final palette = AuraPalette.of(context);
+    final tone = toneFor(failure.kind);
+    final colour = switch (tone) {
+      AuraStateTone.neutral => palette.textSecondary,
+      AuraStateTone.error => palette.danger,
+      AuraStateTone.warning => palette.warning,
+      AuraStateTone.offline => palette.textSecondary,
+    };
+
+    return Semantics(
+      liveRegion: true,
+      // The compact form drops the explanation to fit; the announcement keeps
+      // it, because a screen reader has no size constraint.
+      label: '${failure.title}. ${failure.message}',
+      excludeSemantics: true,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: AuraSpacing.sm),
+        child: Row(
+          children: [
+            Icon(iconFor(failure.kind), size: 16, color: colour),
+            const SizedBox(width: AuraSpacing.sm),
+            Expanded(
+              child: Text(
+                failure.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colour),
+              ),
+            ),
+            if (showRetry) ...[
+              const SizedBox(width: AuraSpacing.sm),
+              TextButton(
+                onPressed: onRetry,
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  foregroundColor: palette.brandOnSurfaceText,
+                ),
+                child: const Text('Retry'),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

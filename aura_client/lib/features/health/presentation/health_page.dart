@@ -6,6 +6,8 @@ import '../data/health_repository.dart';
 import 'health_view_model.dart';
 import 'widgets/health_daily_dashboard.dart';
 import 'widgets/health_trend_charts.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 
 class HealthPage extends ConsumerWidget {
   const HealthPage({super.key});
@@ -47,12 +49,14 @@ class HealthPage extends ConsumerWidget {
                       final isDesktop = constraints.maxWidth > 900;
                       final dailySummary = dailyRecordAsync.when(
                         loading: () => const Center(child: CircularProgressIndicator(color: AuraTheme.accentIndigo)),
-                        error: (err, stack) => Text('Error: $err', style: const TextStyle(color: Colors.redAccent)),
+                        error: (err, stack) =>
+                            AuraFailureView(failure: AuraFailure.from(err), compact: true),
                         data: (record) => HealthDailyDashboard(record: record),
                       );
                       final chartsWidget = weeklyRecordsAsync.when(
                         loading: () => const Center(child: CircularProgressIndicator(color: AuraTheme.accentIndigo)),
-                        error: (err, stack) => Text('Error: $err', style: const TextStyle(color: Colors.redAccent)),
+                        error: (err, stack) =>
+                            AuraFailureView(failure: AuraFailure.from(err), compact: true),
                         data: (records) => HealthTrendCharts(records: records),
                       );
 

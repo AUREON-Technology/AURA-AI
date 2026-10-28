@@ -179,4 +179,49 @@ void main() {
       expect(AuraFailureView.toneFor(AuraFailureKind.forbidden), AuraStateTone.error);
     });
   });
+
+  group('compact', () {
+    Future<void> pumpCompact(WidgetTester tester, AuraFailure failure,
+        {VoidCallback? onRetry, double width = 320}) {
+      return tester.pumpWidget(MaterialApp(
+        theme: AuraThemeV2.dark,
+        home: Scaffold(
+          // A narrow, fixed-height slot — the shape the compact form exists
+          // for, and the one a full state would overflow.
+          body: SizedBox(
+            width: width,
+            height: 56,
+            child: AuraFailureView(failure: failure, compact: true, onRetry: onRetry),
+          ),
+        ),
+      ));
+    }
+
+    testWidgets('fits a small slot without overflowing it', (tester) async {
+      await pumpCompact(tester, _kind('all_providers_failed', status: 503), onRetry: () {});
+      // tester.takeException() would surface a RenderFlex overflow here.
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('keeps the title and the retry, drops the long explanation', (tester) async {
+      await pumpCompact(tester, _kind('unreachable'), onRetry: () {});
+      expect(find.text("Couldn't reach AURA"), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+      expect(find.textContaining('safe on this device'), findsNothing);
+    });
+
+    testWidgets('still announces the full explanation, which has no size limit',
+        (tester) async {
+      await pumpCompact(tester, _kind('unreachable'));
+      final semantics = tester
+          .widgetList<Semantics>(find.byType(Semantics))
+          .firstWhere((s) => s.properties.liveRegion == true);
+      expect(semantics.properties.label, contains('your connection or the server'));
+    });
+
+    testWidgets('obeys the same retry rule as the full form', (tester) async {
+      await pumpCompact(tester, _kind('safety_violation'), onRetry: () {});
+      expect(find.text('Retry'), findsNothing);
+    });
+  });
 }

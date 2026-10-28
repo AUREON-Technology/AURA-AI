@@ -7,6 +7,8 @@ import 'widgets/finance_charts.dart';
 import 'widgets/finance_summary_cards.dart';
 import 'widgets/finance_transaction_form.dart';
 import 'widgets/finance_transaction_history.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 
 class FinancePage extends ConsumerWidget {
   const FinancePage({super.key});
@@ -43,7 +45,11 @@ class FinancePage extends ConsumerWidget {
                 const SizedBox(height: 24),
                 statsAsync.when(
                   loading: () => const Center(child: CircularProgressIndicator(color: AuraTheme.accentIndigo)),
-                  error: (err, stack) => Text('Error loading stats: $err', style: const TextStyle(color: Colors.redAccent)),
+                  error: (err, stack) => AuraFailureView(
+                    failure: AuraFailure.from(err),
+                    compact: true,
+                    onRetry: () => ref.invalidate(financeStatsProvider),
+                  ),
                   data: (stats) {
                     return Expanded(
                       child: LayoutBuilder(

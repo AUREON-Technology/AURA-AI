@@ -11,8 +11,8 @@ for fetching the Flutter version `client-ci.yml` pins and running `analyze` + `t
 which is how every "awaiting CI" row below became a measured result instead of a hope.
 
 **Last local run** (Flutter 3.44.6 / Dart 3.12.2, the CI pin):
-`flutter analyze` → **No issues found!**; `flutter test` → **377 passed, 0 failed, 3 skipped**,
-including the 111 in `test/ux/`.
+`flutter analyze` → **No issues found!**; `flutter test` → **381 passed, 0 failed, 3 skipped**,
+including the 115 in `test/ux/`.
 
 **GitHub `Client CI` is not a gate right now.** It has not been assigned a runner in weeks: every
 run, on `main` as well as on PRs, fails in 2–4 seconds with no step starting and no log archive.
@@ -31,7 +31,7 @@ Local runs are the only real verification until that is fixed at the repository/
 | 8 | Agent Workspace | **NOT STARTED** | |
 | 9 | Approval + Security UX | **BLOCKED** | F-03: the approval payload carries `command`, `root`, `paths`, `diff_preview` and nothing else. Reason, risk and reversibility are not transmitted, and inventing them client-side would be fabrication. Protocol change across backend + hostd + client is the prerequisite |
 | 10 | Host Management | **NOT STARTED** | |
-| 11 | Universal loading/error/empty/offline states | **IMPLEMENTED for failures** | `AuraStateTone` + `AuraFailure`/`AuraFailureView`: the backend's ~30 stable `kind` slugs classify into 12 distinct states with their own copy, and Retry appears only where retrying can help. `syncing` / `stale` / explicit `retrying` are NOT STARTED, and per-screen adoption beyond the agent panel and Explorer is ongoing |
+| 11 | Universal loading/error/empty/offline states | **IMPLEMENTED for failures** | `AuraStateTone` + `AuraFailure`/`AuraFailureView`: the backend's ~30 stable `kind` slugs classify into 12 states with their own copy, Retry only where retrying can help, and a `compact` form for failures that own one slot rather than a page. Adopted across 13 surfaces — every `AsyncValue.error` that rendered a raw `$err`. `syncing` / `stale` NOT STARTED |
 | 12 | Mobile UX | **NOT STARTED** | Not audited yet — see audit §3 |
 | 13 | Accessibility | **PARTIALLY IMPLEMENTED** | Contrast gate extended; activity bar semantics, focus and non-colour badge counts added; Escape dismisses a floating panel. Keyboard traversal order, focus visuals and real screen-reader output all still unverified |
 | 14 | Themes + Personalization | **PARTIALLY PRE-EXISTING** | Light/dark via `AuraPalette`; desktop layout persistence already real |
@@ -52,19 +52,29 @@ Local runs are the only real verification until that is fixed at the repository/
 
 In order, and each on its own commit:
 
-1. **Adopt `AuraFailureView` across the remaining error surfaces.** The classifier exists and is
-   tested; most screens still render `$err` in red. This is mechanical and high-value — one
-   screen per commit.
-2. **`syncing` / `stale`** — the two states left from rule 19's vocabulary. Both need a real
-   signal first: check what the sync layer actually exposes before designing UI for it, the way
+1. **`syncing` / `stale`** — the two states left from rule 19's vocabulary. Both need a real
+   signal first: check what the sync layer actually exposes before designing UI for them, the way
    the failure states were built on the backend's existing `kind` slugs rather than on invented
    distinctions.
-3. **Phase 2 proper** — promote the most-duplicated one-offs (tree item, status badge, toolbar,
+2. **Phase 2 proper** — promote the most-duplicated one-offs (tree item, status badge, toolbar,
    context menu) into the shared set, in duplication order. See `COMPONENT_GUIDE.md`.
-4. **Migrate the mobile command palette** onto `AuraCommandPalette`, behind tests written first.
-5. **F-04 / F-05** — the per-screen colour, type and monospace migration.
+3. **Migrate the mobile command palette** onto `AuraCommandPalette`, behind tests written first.
+4. **F-04 / F-05** — the per-screen colour, type and monospace migration. Several of the screens
+   touched by the failure-state adoption are still on V1's `AuraTheme` constants, which is the
+   next thing a reader of those files will notice.
 
 Phase 9 stays blocked until the approval payload carries reason, risk and reversibility.
+
+## Deliberately still rendering their own error text
+
+Not oversights — each is a different axis from the HTTP failures `AuraFailure` classifies:
+
+- `desktop/host/host_panel.dart` — uses `describeHostdError`, a purpose-built describer for the
+  local daemon. Host reachability is its own axis, with its own vocabulary.
+- `features/auth/presentation/login_page.dart` — inline validation feedback under a form field,
+  not a page-level state.
+- `features/automations/.../gmail_view_model.dart` and `core/security/path_containment.dart` —
+  strings, not widgets.
 
 ## Known limit of the failure states
 

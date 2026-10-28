@@ -6,6 +6,8 @@ import 'package:aura_client/core/theme/theme.dart';
 import '../../auth/presentation/auth_provider.dart';
 import '../data/project_providers.dart';
 import 'projects_view_model.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 
 class ProjectsPage extends ConsumerWidget {
   const ProjectsPage({super.key});
@@ -137,7 +139,14 @@ class ProjectsPage extends ConsumerWidget {
                       );
                     },
                     loading: () => const Center(child: CircularProgressIndicator()),
-                    error: (e, st) => Center(child: Text('Error: $e')),
+                    error: (e, st) => Center(
+                      child: SingleChildScrollView(
+                        child: AuraFailureView(
+                          failure: AuraFailure.from(e),
+                          onRetry: () => ref.invalidate(projectsStreamProvider),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ],

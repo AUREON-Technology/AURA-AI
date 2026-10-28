@@ -6,6 +6,8 @@ import 'package:aura_client/core/design_system/design_system.dart';
 
 import '../chat_view_model.dart';
 import 'persona_picker.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 
 class ChatSidebar extends ConsumerWidget {
   final String activeSessionId;
@@ -104,11 +106,8 @@ class ChatSidebar extends ConsumerWidget {
               ),
             ),
             error: (err, _) => Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Text(
-                'Error: $err',
-                style: TextStyle(color: palette.danger),
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: AuraFailureView(failure: AuraFailure.from(err), compact: true),
             ),
           ),
           if (isMobile) ...[
