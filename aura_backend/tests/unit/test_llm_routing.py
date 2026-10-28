@@ -229,6 +229,97 @@ class TestCircuitBreaker:
         plan = router.plan(_request())
         assert plan.excluded.get("broken") == "circuit_open"
 
+    def test_releasing_a_probe_admits_the_next_one_without_a_transition(self) -> None:
+        clock = FrozenClock()
+        breaker = CircuitBreaker(failure_threshold=1, open_seconds=30, now=clock.monotonic)
+        breaker.record_failure()
+        clock.advance(31)
+        assert breaker.allows_request()
+        assert not breaker.allows_request()
+
+        breaker.release_probe()
+        assert breaker.state is CircuitState.HALF_OPEN
+        assert breaker.allows_request()
+
+
+class TestAbandonedHalfOpenProbe:
+    """A half-open probe that ends without a verdict must give its slot back (F-19).
+
+    Only success and failure freed the slot, so a probe that was cancelled, closed by its
+    consumer or answered with a 429 left the breaker refusing every later request as
+    ``circuit_open``, with the provider long recovered, until the process restarted. Production
+    runs one local provider, so that was a whole worker's LLM gone.
+    """
+
+    @staticmethod
+    def _tripped(clock: FrozenClock, probe: ScriptedTurn, **router_kwargs) -> tuple[ProviderRouter, EchoProvider]:
+        down = ScriptedTurn(raise_error=ProviderError("down", provider="local"))
+        provider = EchoProvider(name="local", model="l", script=[down, down, probe])
+        router = ProviderRouter(
+            [provider], clock=clock.monotonic,
+            circuit_failure_threshold=2, circuit_open_seconds=30, **router_kwargs,
+        )
+        return router, provider
+
+    @staticmethod
+    async def _trip(router: ProviderRouter, clock: FrozenClock) -> None:
+        for _ in range(2):
+            with pytest.raises(AllProvidersFailedError):
+                await router.complete(_request())
+        assert router.plan(_request()).excluded.get("local") == "circuit_open"
+        clock.advance(31)
+
+    async def test_a_cancelled_probe_does_not_lock_the_provider_out(self) -> None:
+        clock = FrozenClock()
+        # The probe hangs; it is cancelled long before the delay, so nothing actually sleeps.
+        router, provider = self._tripped(clock, ScriptedTurn(text="late", delay_ms=3_600_000))
+        await self._trip(router, clock)
+
+        probe = asyncio.create_task(router.complete(_request()))
+        while provider.call_count < 3:
+            await asyncio.sleep(0)
+        probe.cancel()  # e.g. the client disconnected mid-probe
+        with pytest.raises(asyncio.CancelledError):
+            await probe
+
+        response = await router.complete(_request())
+        assert response.provider == "local"
+        assert router._stats["local"].breaker.state is CircuitState.CLOSED
+
+    async def test_a_stream_probe_closed_by_its_consumer_does_not_lock_the_provider_out(
+        self,
+    ) -> None:
+        clock = FrozenClock()
+        router, _provider = self._tripped(clock, ScriptedTurn(text="a longer streamed answer"))
+        await self._trip(router, clock)
+
+        stream = router.stream(_request())
+        assert (await stream.__anext__()).delta
+        await stream.aclose()  # GeneratorExit inside the router: the consumer went away
+
+        response = await router.complete(_request())
+        assert response.provider == "local"
+
+    async def test_a_rate_limited_probe_does_not_lock_the_provider_out(self) -> None:
+        from aura_core.llm.quota import QuotaTracker
+
+        clock = FrozenClock()
+        limited = ScriptedTurn(raise_error=ProviderError(
+            "slow down", provider="local", details={"status": 429, "retry_after_s": 5},
+        ))
+        router, _provider = self._tripped(
+            clock, limited, quota=QuotaTracker(wall=clock.monotonic)
+        )
+        await self._trip(router, clock)
+
+        with pytest.raises(AllProvidersFailedError) as excinfo:
+            await router.complete(_request())
+        assert excinfo.value.attempts[0]["error"] == "rate_limited"
+
+        clock.advance(60)  # past the cooldown the 429 named
+        response = await router.complete(_request())
+        assert response.provider == "local"
+
 
 class TestLatencyTracker:
     def test_ewma_responds_to_recent_samples(self) -> None:
