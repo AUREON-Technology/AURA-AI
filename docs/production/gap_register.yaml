@@ -1529,7 +1529,9 @@ gaps:
       decode-speed-aware output sizing and wire contract tests on documented fixtures,
       data-classification routing with a content-free third-party audit, and the compose slots
       (inert, AURA_ALLOW_HOSTED_INFERENCE defaults to false). Nothing has run against a live
-      hosted provider, and the wire fixtures are documented reconstructions, not captures.
+      hosted provider from the VPS. 2026-10-28: an in-process run against live OpenRouter
+      (docs/reports/phase-6-hosted-inference-openrouter-inprocess-20261028.txt) passed 9/10 with
+      the 429 burst skipped, and live OpenRouter wire captures are committed and replayed.
     target_state: >-
       A hosted slot enabled on the dev or prod stack passes the live checks, with SENSITIVE
       content shown to stay local and a real 429 shown to bench the provider and fail over.

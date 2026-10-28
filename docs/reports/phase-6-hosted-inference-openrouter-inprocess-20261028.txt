@@ -1,0 +1,57 @@
+ADR-030 Phase 6 verification -- IN-PROCESS run against a live hosted API (not the VPS run)
+date:      2026-10-28
+base:      d011280 plus the change that commits this report (ALLOW_PROMPT_TRAINING, reasoning guard)
+provider:  hosted1 = OpenRouter, nvidia/nemotron-3-ultra-550b-a55b:free (served by Nvidia),
+           ALLOW_PROMPT_TRAINING=true, EXTRA_BODY={"reasoning": {"enabled": false}}, RPM 20, RPD 50
+fallback:  local = the deterministic echo provider (no Ollama in the environment that ran this)
+how:       deploy/scripts/verify_hosted_inference.py run directly, in a development container,
+           through aura_core's real Container: real router, quota tracker and audit sink, with
+           in-memory storage (check 8's "shared cache" is the in-memory Cache, not Redis)
+skipped:   check 10 (the 429 burst), to keep most of the account's 50 free requests/day
+
+What this proves: the adapter, routing, data-classification exclusion, kernel turn classification,
+content-free audit, quota accounting and declared budgets all work against the live API.
+What it does not prove: the VPS stack's wiring (Redis, Ollama fallback, compose env, secrets) and
+the real 429 path. GAP-064 stays built_not_proven until the Verify Hosted Inference workflow's
+report from the VPS is committed with check 10 run.
+
+
+ADR-030 Phase 6 live checks -- hosted open-weight inference
+
+hosted open-weight inference permitted by AURA_ALLOW_HOSTED_INFERENCE; prompts and retrieved content are sent to this provider
+hosted provider may train on the prompts it receives: AURA_PROVIDER_<NAME>_ALLOW_PROMPT_TRAINING=true (ADR-030 §3)
+  PASS    1. configuration: hosted slots are gated, open-weight, never local, with a fallback
+         hosted1: model=nvidia/nemotron-3-ultra-550b-a55b:free ceiling=internal tier=3 tps=0 limits rpm=20 rpd=50 tpm=0 tpd=0
+         fallback: local
+  PASS    2. health probe reaches every hosted provider without spending a completion
+         hosted1: healthy=True detail=ok latency_ms=1092.1
+  PASS    3. an INTERNAL completion is served by a hosted provider, with real usage
+         hosted1 answered in 4806 ms (29+2 tokens, ~0 tok/s incl. latency): 'ready'
+  PASS    4. an INTERNAL stream is served by a hosted provider, with usage on the last chunk
+         TTFT 1179 ms, usage 29+2
+  PASS    5. SENSITIVE content never reaches a hosted provider -- it goes local, or fails
+         plan excluded ['hosted1']; served by local; hosted-only router refused
+  PASS    6. kernel turns: a plain turn goes hosted, a turn with caller evidence stays local
+         plain turn: 1 hosted generation(s) audited; evidence turn: none (answered by fallback: True)
+  PASS    7. the audit log records each hosted generation, never its content
+         3 record(s); classifications ['internal']
+  PASS    8. daily quota counters are persisted to the shared cache
+         hosted1: {"requests": 3, "tokens": 272}
+  PASS    9. a declared budget skips the provider before anything is sent
+         hosted1: 1 sent, then excluded as quota_rpm without a request
+  SKIP   10. a real 429 benches the provider until its reset, without tripping the breaker
+         AURA_VERIFY_SKIP_429 is set
+  MANUAL 11. MANUAL: chat from the app feels faster, and Grafana shows llm_quota_events_total
+         Not scriptable from here: send a few ordinary chat messages from the client, confirm
+         the answers come from the hosted model (llm_requests_total{provider="hosted1"}) and
+         that asking about an uploaded document still works (served by `local`).
+
+  Observations:
+    - complete via hosted1: 4806 ms, prompt=29 completion=2 tokens
+    - stream via hosted1: TTFT 1179 ms
+
+  9/10 scripted checks passed, 1 skipped
+  1 check (11) is manual and is not counted either way.
+
+Every check that ran passed, but some were skipped -- proven only for the checks marked PASS.
+

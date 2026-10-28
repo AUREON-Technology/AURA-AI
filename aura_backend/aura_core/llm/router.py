@@ -502,6 +502,7 @@ class ProviderRouter:
                         "completion_tokens": usage.completion_tokens if usage else None,
                         "streamed": streamed,
                         "workload": hint.workload.value,
+                        "may_train_on_prompts": provider.capabilities.may_train_on_prompts,
                     },
                 )
             )
@@ -900,6 +901,7 @@ class ProviderRouter:
             snap["quota"] = self._quota.snapshot(name)
             snap["max_data_classification"] = caps.max_data_classification.value
             snap["third_party"] = caps.third_party
+            snap["may_train_on_prompts"] = caps.may_train_on_prompts
             out.append(snap)
         return out
 

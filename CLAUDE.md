@@ -158,7 +158,8 @@ providers. There is no hosted-vendor branch anywhere — adding one fails
 sanctioned exception is ADR-030 (Proposed). Hosted *open-weight* APIs (Groq, Workers AI,
 OpenRouter, …) are a third host category in `aura_core/config/external_inference.py`. They are
 refused unless `AURA_ALLOW_HOSTED_INFERENCE=true`, only accept open-weight model IDs, can never be
-`is_local`, and may never be named in Python source. Closed-model vendors stay banned under
+`is_local`, and may never be named in Python source. One that may train on prompts (any `:free`
+model ID) also needs its slot's `ALLOW_PROMPT_TRAINING=true` and can never be raised to `sensitive`. Closed-model vendors stay banned under
 either opt-in flag. Every generation also has a data classification (`llm/sensitivity.py`). A
 hosted provider receives only `internal` content by default. An unclassified generation counts
 as `sensitive`, so any new background caller of the router stays local unless it opts in.

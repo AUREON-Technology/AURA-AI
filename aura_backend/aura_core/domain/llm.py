@@ -408,6 +408,9 @@ class ProviderCapabilities:
     #: A third party runs this provider and can read its prompts (a hosted open-weight API).
     #: Each generation it serves is audited with its classification and token counts.
     third_party: bool = False
+    #: The operator accepted that this provider may train on what it receives (ADR-030 §3).
+    #: Never set without ``third_party``; recorded on every audited generation.
+    may_train_on_prompts: bool = False
     #: Sustained decode throughput, in output tokens per second (ADR-030 Phase 3). 0 means
     #: undeclared. Used only to decide whether a request's *preferred* output size can finish
     #: inside its deadline (see :meth:`output_budget`); an undeclared provider never gets more

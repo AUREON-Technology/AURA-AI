@@ -124,6 +124,23 @@ class TestResponseShapes:
         assert "".join(c.delta for c in chunks) == "Hello there"
         assert chunks[-1].usage.total_tokens == 14
 
+    async def test_reasoning_copied_into_content_is_not_an_answer(self) -> None:
+        response = await _provider(_fixture("openrouter_truncated_reasoning")).complete(_request())
+        assert response.text == ""
+        assert response.finish_reason is FinishReason.LENGTH
+        assert response.usage.completion_tokens == 32
+
+    async def test_a_stream_does_not_replay_its_reasoning_as_the_answer(self) -> None:
+        chunks = await _drain(_provider(_fixture("openrouter_stream_truncated_reasoning")))
+        assert "".join(c.delta for c in chunks) == ""
+        assert chunks[-1].finish_reason is FinishReason.LENGTH
+
+    async def test_a_real_answer_next_to_reasoning_is_kept(self) -> None:
+        fixture = _fixture("openrouter_truncated_reasoning")
+        fixture["json"]["choices"][0]["message"]["content"] = "ready"
+        response = await _provider(fixture).complete(_request())
+        assert response.text == "ready"
+
     async def test_tool_calls_from_workers_ai_parse(self) -> None:
         response = await _provider(_fixture("workers_ai_tool_call")).complete(_request())
         assert response.finish_reason is FinishReason.TOOL_CALLS

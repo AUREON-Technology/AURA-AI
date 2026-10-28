@@ -1,0 +1,32 @@
+{
+  "provenance": "captured 2026-10-28 (abridged: ids, timestamps and cost fields dropped)",
+  "note": "A reasoning model out of output budget mid-thought: the upstream copies its reasoning into content.",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "json": {
+    "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "provider": "Nvidia",
+    "choices": [
+      {
+        "index": 0,
+        "finish_reason": "length",
+        "native_finish_reason": "length",
+        "message": {
+          "role": "assistant",
+          "content": "The user is asking for a specific response: the single word \"ready\". This appears to be a test or probe command. I should comply exactly as requested.",
+          "reasoning": "The user is asking for a specific response: the single word \"ready\". This appears to be a test or probe command. I should comply exactly as requested."
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 29,
+      "completion_tokens": 32,
+      "total_tokens": 61,
+      "completion_tokens_details": {
+        "reasoning_tokens": 38
+      }
+    }
+  }
+}
