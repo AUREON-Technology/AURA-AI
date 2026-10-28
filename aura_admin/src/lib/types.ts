@@ -86,4 +86,6 @@ export type Operator = {
   auth_subject: string;
   display_name: string;
   role: OperatorRole;
+  /** "Access page", an env list (e.g. "ADMIN_EMAILS"), or "roles.json". */
+  granted_by?: string | null;
 };

@@ -54,6 +54,13 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(200), default="")
     photo_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     role: Mapped[str] = mapped_column(String(32), default="User")
+    # Set only when an operator assigns ``role`` on the Access page; only then does ``role``
+    # count in role resolution (services/rbac.py). NULL rows hold whatever an earlier sign-in
+    # wrote there and are display-only -- see migration 0015 for why.
+    role_assigned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    role_assigned_by: Mapped[str | None] = mapped_column(String(320), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

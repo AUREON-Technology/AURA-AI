@@ -66,42 +66,87 @@ def _roles_file_role(email: str, uid: str) -> str | None:
     return None
 
 
-def get_user_role(user_info: dict) -> str:
-    """Resolve the highest applicable role from env lists, persisted role, JWT, and roles.json.
+def configured_identities() -> set[str]:
+    """Every email or uid the env lists or roles.json name -- the people who may hold a role
+    without any Access-page assignment, so the operator directory can list them."""
+    names: set[str] = set()
+    for var in CONSOLE_ROLE_ENV_VARS:
+        names.update(_email_list(var))
+    if os.path.exists(ROLES_FILE):
+        try:
+            with open(ROLES_FILE, "r", encoding="utf-8") as f:
+                names.update(str(k) for k in json.load(f))
+        except Exception:
+            pass
+    return names
+
+
+def granted_role(email: str, uid: str) -> tuple[str, str | None]:
+    """The role the operator's configuration grants, and where it comes from.
+
+    The env lists and roles.json -- the sources only someone with access to the deployment can
+    change. An Access-page assignment cannot go below this (``api/admin_platform.py``): demoting
+    someone the env still names would be undone at their next sign-in, so it is refused with the
+    source named instead. Returns ``("User", None)`` when nothing grants a role.
+    """
+    email = (email or "").strip()
+    if email and email in _email_list("SUPERADMIN_EMAILS"):
+        return "SuperAdmin", "SUPERADMIN_EMAILS"
+    best, source = "User", None
+    for role, granted_by in (
+        ("Admin" if email and email in _email_list("ADMIN_EMAILS") else None, "ADMIN_EMAILS"),
+        ("Developer" if email and email in _email_list("DEVELOPER_EMAILS") else None,
+         "DEVELOPER_EMAILS"),
+        (_roles_file_role(email, uid), ROLES_FILE),
+    ):
+        if role and ROLE_HIERARCHY[role] > ROLE_HIERARCHY[best]:
+            best, source = role, granted_by
+    return best, source
+
+
+def get_user_role(user_info: dict, *, assigned_role: str | None = None) -> str:
+    """Resolve the highest applicable role from env lists, roles.json, an Access-page
+    assignment, and the token's own claim.
 
     ``SUPERADMIN_EMAILS`` is the only env list that can mint SuperAdmin. ``ADMIN_EMAILS``
     never auto-upgrades to SuperAdmin.
+
+    ``assigned_role`` is the Access page's ``users.role`` for this subject
+    (``infrastructure/db/user_repo.assigned_role``), looked up by the caller because it needs the
+    database. The claimed ``role`` is honoured because an access token is the server's own
+    15-minute statement of the role; refresh strips it before re-resolving
+    (``services/jwt_auth.refresh_token_pair``) so it can never outlive its sources.
     """
     email = (user_info.get("email") or "").strip()
     uid = str(user_info.get("uid") or user_info.get("sub") or "")
 
-    if email and email in _email_list("SUPERADMIN_EMAILS"):
-        return "SuperAdmin"
-
-    candidates: list[str] = []
-    persisted = user_info.get("db_role") or user_info.get("persisted_role")
+    granted, _ = granted_role(email, uid)
+    candidates: list[str] = [granted]
+    persisted = assigned_role or user_info.get("db_role") or user_info.get("persisted_role")
     if persisted in ROLE_HIERARCHY:
         candidates.append(persisted)
     claimed = user_info.get("role")
     if claimed in ROLE_HIERARCHY:
         candidates.append(claimed)
-    if email and email in _email_list("ADMIN_EMAILS"):
-        candidates.append("Admin")
-    if email and email in _email_list("DEVELOPER_EMAILS"):
-        candidates.append("Developer")
-    mapped = _roles_file_role(email, uid)
-    if mapped:
-        candidates.append(mapped)
-
-    if not candidates:
-        return "User"
     return max(candidates, key=lambda role: ROLE_HIERARCHY[role])
 
 
-def stamp_resolved_role(user_info: dict) -> dict:
+def stamp_resolved_role(user_info: dict, *, assigned_role: str | None = None) -> dict:
     """Mutate and return user_info with a resolved ``role`` claim."""
-    user_info["role"] = get_user_role(user_info)
+    user_info["role"] = get_user_role(user_info, assigned_role=assigned_role)
     return user_info
+
+
+async def stamp_role(user_info: dict) -> dict:
+    """``stamp_resolved_role`` including the subject's Access-page assignment.
+
+    Every place that issues a token calls this, so an assignment takes effect at the subject's
+    next sign-in or refresh (at most an access-token lifetime, 15 minutes).
+    """
+    from infrastructure.db.user_repo import assigned_role
+
+    uid = str(user_info.get("uid") or user_info.get("sub") or "")
+    return stamp_resolved_role(user_info, assigned_role=await assigned_role(uid))
 
 
 def is_console_operator(role: str) -> bool:

@@ -49,9 +49,9 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/admin/models/{model_id}/request-promotion` | — | `aura_admin/app/(console)/models/page.tsx:111` | — | called |  |
 | POST | `/api/v3/admin/models/{model_id}/rollback` | — | `aura_admin/app/(console)/models/page.tsx:174` | — | called |  |
 | POST | `/api/v3/admin/models/{model_id}/transition` | — | `aura_admin/app/(console)/models/page.tsx:158` | — | called |  |
-| GET | `/api/v3/admin/operators` | — | `aura_admin/app/(console)/access/page.tsx:19` | — | called |  |
-| POST | `/api/v3/admin/operators/{email}/revoke-sessions` | — | `aura_admin/app/(console)/access/page.tsx:71` | — | called |  |
-| PATCH | `/api/v3/admin/operators/{email}/role` | — | `aura_admin/app/(console)/access/page.tsx:56` | — | called |  |
+| GET | `/api/v3/admin/operators` | — | `aura_admin/app/(console)/access/page.tsx:21` | — | called |  |
+| POST | `/api/v3/admin/operators/{email}/revoke-sessions` | — | `aura_admin/app/(console)/access/page.tsx:126` | — | called |  |
+| PATCH | `/api/v3/admin/operators/{email}/role` | — | `aura_admin/app/(console)/access/page.tsx:61`, `aura_admin/app/(console)/access/page.tsx:97` (+1) | — | called |  |
 | POST | `/api/v3/admin/prompts/{template_id}/pin` | — | `aura_admin/app/(console)/prompts/page.tsx:50` | — | called |  |
 | POST | `/api/v3/admin/providers/{name}/reset-circuit` | — | `aura_admin/app/(console)/providers/page.tsx:51` | — | called |  |
 | GET | `/api/v3/admin/refresh/latest` | — | — | — | none | to wire: admin console page missing for this route |
@@ -70,7 +70,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/admin/twin/versions/{version}` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | POST | `/api/v3/admin/twin/versions/{version}/compile` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | GET | `/api/v3/admin/twin/versions/{version}/plan` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
-| POST | `/api/v3/admin/users/{subject}/forget` | — | `aura_admin/app/(console)/access/page.tsx:102` | — | called |  |
+| POST | `/api/v3/admin/users/{subject}/forget` | — | `aura_admin/app/(console)/access/page.tsx:157` | — | called |  |
 | GET | `/api/v3/agents` | `aura_client/lib/features/chat/data/agents_repository.dart:9`, `aura_client/lib/features/chat/data/agents_repository.dart:94` | — | — | called |  |
 | GET | `/api/v3/agents/runs` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
 | GET | `/api/v3/agents/runs/{run_id}` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
