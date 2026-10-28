@@ -148,6 +148,11 @@ void main() {
     workspaceDir.deleteSync(recursive: true);
   });
 
+  test('control.json (it holds the bearer token) is readable by the owner only', () {
+    final mode = File('${configDir.path}/control.json').statSync().mode & 0x1FF;
+    expect(mode, 0x180, reason: 'expected 0600, got ${mode.toRadixString(8)}');
+  }, testOn: '!windows');
+
   test('GET /status requires no token and reports roots', () async {
     final (status, body) = await client.request('GET', '/status', withToken: false);
     expect(status, 200);
