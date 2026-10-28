@@ -232,7 +232,13 @@ def refresh_token_pair(refresh_token: str) -> Optional[Dict[str, Any]]:
         return None
     from services.rbac import stamp_resolved_role
 
-    return issue_token_pair(stamp_resolved_role(dict(user_info)))
+    # The stored ``role`` is the claim this server stamped at the previous issue. Left in, it is
+    # one of the candidates ``get_user_role`` takes the max of, so a role once granted would
+    # survive every rotation for as long as the user keeps refreshing -- removing someone from
+    # ADMIN_EMAILS or roles.json would never take effect. Re-resolve from the sources instead.
+    fresh = dict(user_info)
+    fresh.pop("role", None)
+    return issue_token_pair(stamp_resolved_role(fresh))
 
 
 def revoke_refresh_token(refresh_token: str) -> None:
