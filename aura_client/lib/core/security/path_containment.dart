@@ -8,12 +8,48 @@
 library;
 
 import 'dart:io';
+import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 
 /// Normalizes a path for comparison (case-insensitive on Windows).
-String _normalizeForCompare(String path) {
-  final normalized = p.normalize(path);
-  return Platform.isWindows ? normalized.toLowerCase() : normalized;
+String _normalizeForCompare(String path) => normalizePathForCompare(
+      path,
+      context: p.context,
+      caseInsensitive: Platform.isWindows,
+    );
+
+/// Normalizes [path] under [context] (collapsing `.`/`..` and, for a Windows context, turning
+/// `/` into `\`), lower-cased when [caseInsensitive]. Parameterized only so tests can exercise
+/// the Windows rules on a Linux runner; production goes through [_normalizeForCompare].
+@visibleForTesting
+String normalizePathForCompare(
+  String path, {
+  required p.Context context,
+  required bool caseInsensitive,
+}) {
+  final normalized = context.normalize(path);
+  return caseInsensitive ? normalized.toLowerCase() : normalized;
+}
+
+/// True if [candidate] is [root] itself or lies beneath it. Both arguments must already be
+/// canonical (symlinks resolved, long-form on Windows) -- this only compares strings, after
+/// normalizing separators, `.`/`..` and (when [caseInsensitive]) case. The separator suffix is
+/// what refuses sibling-prefix tricks (`/work` must not contain `/work2`); a root that already
+/// ends in a separator (a drive or filesystem root) is not given a second one.
+@visibleForTesting
+bool isSameOrWithinCanonical(
+  String root,
+  String candidate, {
+  required p.Context context,
+  required bool caseInsensitive,
+}) {
+  final normalizedRoot = normalizePathForCompare(root, context: context, caseInsensitive: caseInsensitive);
+  final normalizedCandidate =
+      normalizePathForCompare(candidate, context: context, caseInsensitive: caseInsensitive);
+  if (normalizedCandidate == normalizedRoot) return true;
+  final prefix =
+      normalizedRoot.endsWith(context.separator) ? normalizedRoot : '$normalizedRoot${context.separator}';
+  return normalizedCandidate.startsWith(prefix);
 }
 
 /// Absolute paths that can never be granted as a workspace root.
@@ -118,17 +154,28 @@ void validateWorkspaceRoot(String rawPath) {
 ///
 /// Returns the resolved, canonical path if contained. Throws [ClientContainmentViolation] otherwise.
 /// This is the single enforcement point for client-side filesystem operations.
-String requireContainedClient(String rootCanonicalPath, String rawPath) {
-  final candidate = p.isAbsolute(rawPath) ? rawPath : p.join(rootCanonicalPath, rawPath);
+///
+/// [rootPath] may be any spelling of the root -- callers pass the workspace path as the user
+/// picked it, which need not be canonical. Both sides are canonicalized the same way before they
+/// are compared: the candidate is resolved (symlinks, and on Windows the long form of 8.3 short
+/// names such as `RUNNER~1`) and so is the root. Comparing a resolved candidate against an
+/// unresolved root refused legitimate files whenever the root was reached through an alias --
+/// an 8.3 short name on Windows, a symlinked directory anywhere (macOS's `/var` ->
+/// `/private/var` included).
+String requireContainedClient(String rootPath, String rawPath) {
+  final rootCanonical = _resolveAsFarAsPossible(rootPath);
+  final candidate = p.isAbsolute(rawPath) ? rawPath : p.join(rootCanonical, rawPath);
   final resolved = _resolveAsFarAsPossible(candidate);
-  final normalizedResolved = _normalizeForCompare(resolved);
-  final normalizedRoot = _normalizeForCompare(rootCanonicalPath);
-  final isContained = normalizedResolved == normalizedRoot ||
-      normalizedResolved.startsWith('$normalizedRoot${p.separator}');
+  final isContained = isSameOrWithinCanonical(
+    rootCanonical,
+    resolved,
+    context: p.context,
+    caseInsensitive: Platform.isWindows,
+  );
   if (!isContained) {
     throw ClientContainmentViolation(
       '$rawPath resolves to $resolved, which is outside the granted workspace root '
-      '$rootCanonicalPath — grant that path as its own root to use it',
+      '$rootPath (canonically $rootCanonical) — grant that path as its own root to use it',
     );
   }
   return resolved;
