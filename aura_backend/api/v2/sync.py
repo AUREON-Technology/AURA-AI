@@ -275,6 +275,18 @@ _NATURAL_KEYS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _drop_tombstone_content(row) -> None:
+    """Drop a tombstoned row's content (audit F-07).
+
+    The tombstone itself has to stay, so every other device learns of the delete on its next
+    pull; the user's encrypted text does not. A delete used to keep the full ciphertext on the
+    server indefinitely behind `deleted_at`. NOT NULL columns get the empty string.
+    """
+    for column in row.__table__.columns:
+        if column.name.endswith("_enc"):
+            setattr(row, column.name, None if column.nullable else "")
+
+
 class _RowError(Exception):
     def __init__(self, detail: str, *, retryable: bool) -> None:
         super().__init__(detail)
@@ -336,6 +348,7 @@ async def _apply_mutation(db: AsyncSession, user_id, raw: dict[str, Any], *, now
         if existing is not None:
             existing.deleted_at = now
             existing.client_updated_at = client_clock
+            _drop_tombstone_content(existing)
     else:
         if existing is None:
             existing = model(id=row_id, user_id=user_id)

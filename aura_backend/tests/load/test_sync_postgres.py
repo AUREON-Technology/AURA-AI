@@ -342,3 +342,46 @@ async def test_the_old_memory_payload_fails_only_itself(migrated_url, monkeypatc
         assert response.status_code == 200, response.text
         assert [r["status"] for r in response.json()] == ["error", "applied"]
         assert _ids(await api.pull(), "tasks") == [good]
+
+
+# -- F-07: deletes ---------------------------------------------------------------------------
+
+
+async def test_a_forgotten_memory_is_a_tombstone_without_its_text(migrated_url, monkeypatch) -> None:
+    """The tombstone reaches other devices; the encrypted fact does not stay on the server."""
+    import asyncpg
+
+    async with _Api(migrated_url, monkeypatch) as api:
+        memory_id = str(uuid.uuid4())
+        await api.push({
+            "table": "memories", "op": "upsert", "id": memory_id, "client_updated_at": "2026-10-28T09:00:00Z",
+            "payload": {"fact_enc": "gcm:iv:secret"},
+        })
+        cursor = (await api.pull())["cursor"]
+        forget = {"table": "memories", "op": "delete", "id": memory_id, "client_updated_at": "2026-10-28T09:05:00Z"}
+        assert (await api.push(forget)).json()[0]["status"] == "applied"
+
+        rows = (await api.pull(cursor))["data"]["memories"]
+        assert [r["id"] for r in rows] == [memory_id]
+        assert rows[0]["deleted_at"] is not None and rows[0]["fact_enc"] == ""
+
+        conn = await asyncpg.connect(migrated_url)
+        try:
+            stored = await conn.fetchval("SELECT fact_enc FROM memories WHERE id = $1", uuid.UUID(memory_id))
+        finally:
+            await conn.close()
+        assert stored == ""
+
+
+async def test_a_deleted_message_keeps_no_ciphertext(migrated_url, monkeypatch) -> None:
+    async with _Api(migrated_url, monkeypatch) as api:
+        message_id = str(uuid.uuid4())
+        await api.push({
+            "table": "messages", "op": "upsert", "id": message_id, "client_updated_at": "2026-10-28T09:00:00Z",
+            "payload": {"conversation_id": "s1", "role": "user", "content_enc": "gcm:iv:hello",
+                        "citations_enc": "gcm:iv:cites", "tool_calls_enc": None},
+        })
+        await api.push({"table": "messages", "op": "delete", "id": message_id, "client_updated_at": "2026-10-28T09:01:00Z"})
+        row = (await api.pull())["data"]["messages"][0]
+        assert row["deleted_at"] is not None
+        assert row["content_enc"] == "" and row["citations_enc"] is None

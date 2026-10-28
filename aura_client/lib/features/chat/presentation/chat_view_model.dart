@@ -81,9 +81,14 @@ class ChatViewModel extends Notifier<ChatUiState> {
     ref.read(activeConversationIdProvider.notifier).setSession(sessionId);
   }
 
-  void deleteSession(String sessionId) {
-    ref.read(chatRepositoryProvider).clearConversation(sessionId);
-    ref.read(activeConversationIdProvider.notifier).setSession('default_session');
+  /// Deleting the active session switches to a fresh session id rather than
+  /// back to `default_session`:
+  /// if the server has not confirmed clearing the deleted session's
+  /// transcript yet (offline), reusing an id could still carry its history
+  /// into the next turn (F-07).
+  Future<void> deleteSession(String sessionId) async {
+    if (ref.read(activeConversationIdProvider) == sessionId) startNewSession();
+    await ref.read(chatRepositoryProvider).clearConversation(sessionId);
   }
 
   Future<void> synchronize() {

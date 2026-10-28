@@ -10,6 +10,7 @@ import '../database/database_provider.dart';
 import '../security/device_validation_service.dart';
 import '../security/encryption_service.dart';
 import 'outbox_ack.dart';
+import 'remote_deletes.dart';
 import 'sync_result.dart';
 
 /// V2 cursor-based sync client (Doc/V2_BLUEPRINT.md §5/§7) — talks to
@@ -95,6 +96,9 @@ class SyncClient {
   Future<SyncResult> synchronize() async {
     final pushed = await push();
     if (pushed.failure == SyncFailureKind.unauthorized) return pushed;
+    // Deletes the outbox does not carry (a memory in the server's memory
+    // store, a chat transcript) are retried here until confirmed (F-07).
+    await RemoteDeletes(_db, _ref, httpClient: _http).flush();
     final pulled = await pull();
     if (!pulled.ok) return pulled;
     return pushed;
@@ -283,6 +287,21 @@ class SyncClient {
     await _applyMessages(rows("messages"));
     await _applyProjects(rows("projects"));
     await _applyGoals(rows("goals"));
+    await _applyMemoryTombstones(rows("memories"));
+  }
+
+  /// A memory forgotten on another device arrives as a tombstone under the
+  /// server's memory id, which every device's local copy now shares (F-07).
+  /// Live memory rows are not applied from here: the memory list is the
+  /// server's memory store (`MemoryRepository.syncMemories`), and these rows
+  /// are only its encrypted copy.
+  Future<void> _applyMemoryTombstones(List<dynamic> rows) async {
+    final forgotten = [
+      for (final raw in rows)
+        if ((raw as Map<String, dynamic>)["deleted_at"] != null) raw["id"] as String,
+    ];
+    if (forgotten.isEmpty) return;
+    await (_db.delete(_db.userMemories)..where((m) => m.id.isIn(forgotten))).go();
   }
 
   Future<void> _applyTasks(List<dynamic> rows) async {

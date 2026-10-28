@@ -1059,6 +1059,28 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise HTTPException(status_code=404, detail={"error": "not_found"})
         return JSONResponse(content={"deleted": True})
 
+    # -- sessions ----------------------------------------------------------------------
+
+    @router.delete("/sessions/{session_id}", dependencies=idempotent)
+    async def delete_session(
+        request: Request, session_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Forget the server's transcript of one conversation (audit F-07).
+
+        Deleting a chat on the client removed its local rows and tombstoned their sync copies, but
+        the episodic transcript the kernel injects into every later turn of that session (cache,
+        30-day TTL) stayed: the assistant kept "remembering" a conversation the user had deleted.
+        Owner-scoped like every episodic call, so naming another user's session id clears nothing
+        of theirs; idempotent, so a client retrying a delete it could not confirm gets 200 again.
+        """
+        await enforce_rate_limit(request, caller, "read")
+        try:
+            session = SessionId(session_id)
+        except ValueError as exc:
+            raise ValidationError("session id is not a valid identifier") from exc
+        await container.episodic.clear(session, caller.user_id)
+        return JSONResponse(content={"deleted": True})
+
     # -- feedback ----------------------------------------------------------------------
 
     @router.post("/feedback", dependencies=idempotent)

@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/ai/online_agents/sse_agent_client.dart';
+import 'package:aura_client/core/sync/remote_deletes.dart';
 import 'package:aura_client/core/sync/sync_payloads.dart';
 import 'package:aura_client/core/network/aura_api_error.dart';
 import 'agent_config_repository.dart';
@@ -558,12 +559,19 @@ class ChatRepository {
   }
 
   // Delete Conversation session history
+  //
+  // Local rows, their sync copies (tombstones through the outbox), and the
+  // server's transcript of the session, which the assistant re-reads on every
+  // later turn of it. That last part used to be missing: a deleted chat's
+  // history kept being injected into new turns (audit F-07). It is retried by
+  // [RemoteDeletes] until the server confirms it.
   Future<void> clearConversation(String conversationId) async {
     final rows = await (_db.select(_db.messages)..where((m) => m.conversationId.equals(conversationId))).get();
     await (_db.delete(_db.messages)..where((m) => m.conversationId.equals(conversationId))).go();
     for (final row in rows) {
       await _enqueueDelete(row.id);
     }
+    await _ref.read(remoteDeletesProvider).request(RemoteDeleteKind.chatSession, conversationId);
   }
 }
 
