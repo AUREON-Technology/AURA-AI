@@ -228,21 +228,35 @@ def is_device_revoked(device_id: str) -> bool:
     return device_id in _local_revoked_devices
 
 
-def refresh_token_pair(refresh_token: str) -> Optional[Dict[str, Any]]:
-    """Rotates the refresh token on every use (the old one stops working
-    immediately) so a stolen-but-unused refresh token has a shrinking
-    window of validity rather than living for the full 30 days."""
+def consume_refresh_token(refresh_token: str) -> Optional[Dict[str, Any]]:
+    """Spend a refresh token (single use) and return the identity it was issued for, with the
+    previously stamped role removed, ready to be re-resolved; None when it is not valid.
+
+    The stored ``role`` is the claim this server stamped at the previous issue. Left in, it is
+    one of the candidates ``get_user_role`` takes the max of, so a role once granted would
+    survive every rotation for as long as the user keeps refreshing -- removing someone from
+    ADMIN_EMAILS or roles.json, or demoting them on the Access page, would never take effect.
+    """
     user_info = _refresh_store_take(refresh_token)
     if user_info is None:
         return None
-    from services.rbac import stamp_resolved_role
-
-    # The stored ``role`` is the claim this server stamped at the previous issue. Left in, it is
-    # one of the candidates ``get_user_role`` takes the max of, so a role once granted would
-    # survive every rotation for as long as the user keeps refreshing -- removing someone from
-    # ADMIN_EMAILS or roles.json would never take effect. Re-resolve from the sources instead.
     fresh = dict(user_info)
     fresh.pop("role", None)
+    return fresh
+
+
+def refresh_token_pair(refresh_token: str) -> Optional[Dict[str, Any]]:
+    """Rotates the refresh token on every use (the old one stops working
+    immediately) so a stolen-but-unused refresh token has a shrinking
+    window of validity rather than living for the full 30 days.
+
+    Resolves the role without the Access page's assignment, which needs the database; the
+    ``/refresh`` endpoint uses ``consume_refresh_token`` and ``services.rbac.stamp_role``."""
+    fresh = consume_refresh_token(refresh_token)
+    if fresh is None:
+        return None
+    from services.rbac import stamp_resolved_role
+
     return issue_token_pair(stamp_resolved_role(fresh))
 
 

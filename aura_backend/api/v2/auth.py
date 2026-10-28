@@ -16,7 +16,7 @@ from services import device_pairing
 from services.jwt_auth import (
     issue_device_token,
     issue_token_pair,
-    refresh_token_pair,
+    consume_refresh_token,
     revoke_device,
     revoke_refresh_token,
     verify_access_token,
@@ -25,7 +25,7 @@ from services.rbac import (
     CONSOLE_MIN_ROLE,
     console_operators_configured,
     is_console_operator,
-    stamp_resolved_role,
+    stamp_role,
 )
 from services.security import store_nonce, verify_identity_token, verify_token
 
@@ -130,7 +130,7 @@ async def _persist_user(user_info: dict) -> None:
 async def exchange_token(user_info: dict = Depends(verify_token)):
     """Exchanges a verified Google/Firebase ID token (+ device attestation,
     both checked by verify_token) for a backend-issued access/refresh pair."""
-    stamp_resolved_role(user_info)
+    await stamp_role(user_info)
     await _persist_user(user_info)
     return issue_token_pair(user_info)
 
@@ -149,7 +149,7 @@ async def exchange_web_token(
     path as a mobile-attestation bypass.
     """
     user_info = await verify_identity_token(request, authorization)
-    stamp_resolved_role(user_info)
+    await stamp_role(user_info)
     if not is_console_operator(user_info["role"]):
         # Two different failures wear the same 403, and telling them apart is the difference
         # between a five-minute fix and an afternoon. "Your role is too low" is true in both
@@ -177,10 +177,10 @@ async def exchange_web_token(
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(request: RefreshRequest):
-    result = refresh_token_pair(request.refresh_token)
-    if result is None:
+    user_info = consume_refresh_token(request.refresh_token)
+    if user_info is None:
         raise HTTPException(status_code=401, detail="Refresh token is invalid, expired, or already used.")
-    return result
+    return issue_token_pair(await stamp_role(user_info))
 
 
 @router.post("/revoke")
@@ -221,7 +221,7 @@ async def poll_desktop_pairing(body: PairingPollRequest):
     if outcome["status"] != "approved":
         return outcome
     user_info = dict(outcome["user_info"])
-    stamp_resolved_role(user_info)
+    await stamp_role(user_info)
     await _persist_user(user_info)
     token = issue_device_token(user_info, device_id=outcome["device_id"])
     return {"status": "approved", **token}
@@ -259,7 +259,7 @@ async def desktop_login(
     verify_identity_token has no attestation requirement of its own to enforce as a dependency,
     and this keeps both non-attested identity endpoints in the same shape."""
     user_info = await verify_identity_token(request, authorization)
-    stamp_resolved_role(user_info)
+    await stamp_role(user_info)
     await _persist_user(user_info)
     device_id = secrets.token_urlsafe(16)
     return issue_device_token(user_info, device_id=device_id)
