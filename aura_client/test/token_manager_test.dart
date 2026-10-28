@@ -213,4 +213,44 @@ void main() {
       );
     });
   });
+
+  group('TokenManager.clear(revoke: true)', () {
+    test('revokes the refresh token server-side before forgetting it', () async {
+      final store = _MemoryRefreshTokenStore('refresh-to-revoke');
+      String? revoked;
+      final httpClient = MockClient((request) async {
+        if (request.url.path.endsWith('/revoke')) {
+          revoked = jsonDecode(request.body)['refresh_token'] as String;
+          return http.Response('{"status":"revoked"}', 200);
+        }
+        fail('unexpected ${request.method} ${request.url}');
+      });
+      final container = ProviderContainer(overrides: [
+        tokenManagerProvider.overrideWith(
+          (ref) => TokenManager(ref, httpClient: httpClient, store: store),
+        ),
+      ]);
+      addTearDown(container.dispose);
+
+      await container.read(tokenManagerProvider).clear(revoke: true);
+
+      expect(revoked, 'refresh-to-revoke');
+      expect(store.token, isNull);
+    });
+
+    test('an offline revoke still signs out locally', () async {
+      final store = _MemoryRefreshTokenStore('refresh-offline');
+      final httpClient = MockClient((_) async => throw http.ClientException('offline'));
+      final container = ProviderContainer(overrides: [
+        tokenManagerProvider.overrideWith(
+          (ref) => TokenManager(ref, httpClient: httpClient, store: store),
+        ),
+      ]);
+      addTearDown(container.dispose);
+
+      await container.read(tokenManagerProvider).clear(revoke: true);
+
+      expect(store.token, isNull);
+    });
+  });
 }

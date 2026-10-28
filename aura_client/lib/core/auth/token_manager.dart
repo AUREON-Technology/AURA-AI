@@ -302,7 +302,28 @@ class TokenManager {
 
   /// Call from AuthNotifier.signOut() so a signed-out session's refresh
   /// token can't be replayed after logout.
-  Future<void> clear() async {
+  ///
+  /// With [revoke], the refresh token is also revoked server-side first
+  /// (best effort): forgetting it locally alone leaves it valid on the
+  /// backend for its full 30-day lifetime, so a copy taken from this
+  /// device before sign-out would keep working. A failed or offline
+  /// revoke never blocks sign-out.
+  Future<void> clear({bool revoke = false}) async {
+    if (revoke) {
+      await _loadCachedRefreshToken();
+      final token = _refreshToken;
+      if (token != null && token.isNotEmpty) {
+        try {
+          await _post(
+            "$_authUrl/revoke",
+            headers: {"Content-Type": "application/json"},
+            body: jsonEncode({"refresh_token": token}),
+          );
+        } catch (e) {
+          debugPrint("[TokenManager] revoke on sign-out failed (continuing): $e");
+        }
+      }
+    }
     _accessToken = null;
     _accessTokenExpiry = null;
     await _clearRefreshToken();

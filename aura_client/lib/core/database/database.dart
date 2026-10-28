@@ -372,6 +372,35 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
+  /// Removes everything that belongs to the signed-in account, for sign-out.
+  ///
+  /// Local tables carry no user column and the outbox and sync cursor are
+  /// global, so without this the next account to sign in on this device
+  /// would see the previous one's tasks, finance, health, chats and
+  /// memories; its first push would upload the previous account's unsynced
+  /// rows as its own; and its first pull would start from the previous
+  /// account's cursor and skip its own older data.
+  ///
+  /// Kept: downloaded offline model weights and local telemetry, which
+  /// describe the device rather than the person.
+  Future<void> wipeUserData() async {
+    await transaction(() async {
+      await delete(tasks).go();
+      await delete(calendarEvents).go();
+      await delete(financeRecords).go();
+      await delete(healthRecords).go();
+      await delete(messages).go();
+      await delete(agentConfigurations).go();
+      await delete(userMemories).go();
+      await delete(projects).go();
+      await delete(goals).go();
+      await delete(learningLogs).go();
+      await delete(pendingDeletes).go();
+      await delete(outboxEntries).go();
+      await delete(syncMetadata).go();
+    });
+  }
+
   /// Watermark for the Notification Center's unread badge -- reuses the
   /// same key/value table as the sync cursor rather than adding a
   /// dedicated table for one timestamp.
