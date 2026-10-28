@@ -35,7 +35,15 @@ void main() {
 
     test('rejects the filesystem root', () {
       final roots = WorkspaceRoots(const []);
+      // On Windows '/' is the current drive's root -- D:\ on the GitHub runner, which a
+      // C:\-only denylist let through.
       expect(() => roots.addRoot('/'), throwsA(isA<InvalidRootError>()));
+    });
+
+    test('rejects the root of the drive or volume the temp directory lives on', () {
+      final roots = WorkspaceRoots(const []);
+      final volumeRoot = p.rootPrefix(tempDir.absolute.path);
+      expect(() => roots.addRoot(volumeRoot), throwsA(isA<InvalidRootError>()));
     });
 
     test('rejects a system directory even when it exists', () {
@@ -191,6 +199,57 @@ void main() {
       roots.addRoot(workspaceDir.path);
       expect(roots.removeRoot(workspaceDir.path), isTrue);
       expect(roots.all, isEmpty);
+    });
+  });
+
+  // Pure string logic with an explicit style, so the Windows rules run (and are pinned) on every
+  // host, not only on the Windows runner.
+  group('isFilesystemRoot', () {
+    test('every Windows drive root is a root, not just C:', () {
+      for (final letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')) {
+        for (final path in ['$letter:\\', '$letter:/', '$letter:', '${letter.toLowerCase()}:\\']) {
+          expect(isFilesystemRoot(path, style: p.Style.windows), isTrue, reason: path);
+        }
+      }
+    });
+
+    test('Windows current-drive, UNC and long-path roots are roots', () {
+      for (final path in [
+        r'\',
+        r'\\server',
+        r'\\server\share',
+        r'\\server\share\',
+        '//server/share/',
+        r'\\?\D:\',
+        r'\\?\UNC\server\share',
+        r'\\.\E:\',
+        r'C:\..',
+        r'C:\foo\..',
+      ]) {
+        expect(isFilesystemRoot(path, style: p.Style.windows), isTrue, reason: path);
+      }
+    });
+
+    test('a folder on a Windows drive or share is not a root', () {
+      for (final path in [
+        r'C:\Users\me\project',
+        r'D:\a',
+        r'D:\a\AURA-AI\aura_hostd',
+        r'\\server\share\project',
+        r'\\?\D:\work',
+        r'\\?\UNC\server\share\project',
+        r'relative\path',
+      ]) {
+        expect(isFilesystemRoot(path, style: p.Style.windows), isFalse, reason: path);
+      }
+    });
+
+    test('POSIX: only / is a root', () {
+      expect(isFilesystemRoot('/', style: p.Style.posix), isTrue);
+      expect(isFilesystemRoot('//', style: p.Style.posix), isTrue);
+      expect(isFilesystemRoot('/home/me/project', style: p.Style.posix), isFalse);
+      expect(isFilesystemRoot('/etc', style: p.Style.posix), isFalse);
+      expect(isFilesystemRoot('relative', style: p.Style.posix), isFalse);
     });
   });
 }

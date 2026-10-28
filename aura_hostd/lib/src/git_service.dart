@@ -360,7 +360,10 @@ class GitService {
       if (_looksLikeNotARepo(result.stderr)) throw GitNotARepositoryError('not a git repository');
       throw GitCommandError('git worktree add failed: ${result.stderr}');
     }
-    return {'worktree_path': worktreePath, 'branch': branch};
+    // Reported in canonical form -- the same one git itself records and prints, and the one
+    // containment compares against -- whatever spelling [cwd] arrived in (on Windows, an 8.3
+    // short path such as C:\Users\RUNNER~1\... names the same directory as its long form).
+    return {'worktree_path': Directory(worktreePath).resolveSymbolicLinksSync(), 'branch': branch};
   }
 
   /// D8/D9: tears down a task's worktree and its branch -- only ever invoked by a human's
@@ -566,7 +569,7 @@ class GitService {
     try {
       exitCode = await process.exitCode.timeout(_networkTimeout);
     } on TimeoutException {
-      process.kill(ProcessSignal.sigkill);
+      await _killTree(process);
       throw GitCommandError('git ${args.join(' ')} timed out after ${_networkTimeout.inSeconds}s');
     }
     try {
@@ -574,6 +577,28 @@ class GitService {
     } on FormatException {
       throw GitDecodeError('git output is not valid UTF-8 text');
     }
+  }
+
+  /// Kills a timed-out network git and waits until it is actually gone, so nothing it holds (the
+  /// repo as its working directory, `.git/index.lock`, the transport socket) outlives the error.
+  ///
+  /// On Windows the `git.exe` on PATH is normally Git for Windows' launcher (`cmd\git.exe` or
+  /// `bin\git.exe`), which runs the real `mingw64\bin\git.exe` as a child. [Process.kill] is a
+  /// TerminateProcess of the launcher alone, so the real git kept running with the repo as its
+  /// working directory -- on the Windows runner the test's cleanup then failed to delete it
+  /// (errno 32, in use by another process). `taskkill /T` takes the whole tree, and has to run
+  /// while the launcher is still alive, since that is how it finds the children.
+  Future<void> _killTree(Process process) async {
+    if (Platform.isWindows) {
+      try {
+        await Process.run('taskkill', ['/F', '/T', '/PID', '${process.pid}'])
+            .timeout(const Duration(seconds: 10));
+      } on Object {
+        // Fall through to the plain kill below; it at least ends the launcher.
+      }
+    }
+    process.kill(ProcessSignal.sigkill);
+    await process.exitCode.timeout(const Duration(seconds: 10), onTimeout: () => -1);
   }
 }
 
