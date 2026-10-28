@@ -88,6 +88,9 @@ def _bad_credentials() -> dict[str, dict[str, str]]:
         "expired": {"Authorization": "Bearer " + _jwt(_claims(iat=past - timedelta(minutes=15),
                                                                exp=past))},
         "wrong_signature": {"Authorization": "Bearer " + _jwt(_claims(), key="not-the-secret")},
+        # Right key, minted for another deployment -- a dev token while dev shared prod's key (F-03).
+        "other_environment": {"Authorization": "Bearer " + _jwt(_claims(
+            iss="aura-other-environment", aud="aura-api-other-environment"))},
         "alg_none": {"Authorization": "Bearer " + jwt.encode(_claims(), None, algorithm="none")},
         "refresh_token_as_access": {"Authorization": f"Bearer {refresh}"},
         "revoked_device": {"Authorization": f"Bearer {_revoked_device_token()}"},

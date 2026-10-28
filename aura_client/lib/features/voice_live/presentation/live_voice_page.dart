@@ -92,6 +92,7 @@ class _LiveVoicePageState extends ConsumerState<LiveVoicePage>
                 ),
               ),
             EngineerConfirmationCard(
+              calls: ref.watch(liveVoicePendingProvider),
               onConfirm: () =>
                   ref.read(liveVoiceViewModelProvider.notifier).confirmPending(),
               onCancel: () =>

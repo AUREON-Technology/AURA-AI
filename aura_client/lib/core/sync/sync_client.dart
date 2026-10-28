@@ -10,6 +10,7 @@ import '../database/database_provider.dart';
 import '../security/device_validation_service.dart';
 import '../security/encryption_service.dart';
 import 'outbox_ack.dart';
+import 'remote_deletes.dart';
 import 'sync_result.dart';
 
 /// V2 cursor-based sync client (Doc/V2_BLUEPRINT.md §5/§7) — talks to
@@ -17,7 +18,7 @@ import 'sync_result.dart';
 /// relational source of truth. Replaces V1's `SyncEngine`, which wrote
 /// directly to Firestore from the client and hand-rolled five nearly
 /// identical last-write-wins comparators (577 lines). Here the server does
-/// the diffing (`WHERE user_id = ? AND updated_at > ?`); the client only
+/// the diffing (`WHERE user_id = ? AND sync_txid >= ?`); the client only
 /// has to (1) push its outbox and (2) apply whatever rows come back.
 ///
 /// Scope note: Tasks/CalendarEvents/FinanceRecords/HealthRecords/Messages
@@ -87,67 +88,157 @@ class SyncClient {
   /// Pushes the outbox, then pulls everything changed since the last
   /// cursor. Distinguishes 401 / 503 / network so the UI can show error
   /// vs offline while still allowing retry.
+  ///
+  /// The pull runs whether or not the push succeeded. It used to return
+  /// early on a failed push, so one row the server kept refusing stopped
+  /// this device from ever *receiving* anything again either (audit F-11).
+  /// A push failure is still reported when the pull itself succeeds.
   Future<SyncResult> synchronize() async {
     final pushed = await push();
-    if (!pushed.ok) return pushed;
-    return pull();
+    if (pushed.failure == SyncFailureKind.unauthorized) return pushed;
+    // Deletes the outbox does not carry (a memory in the server's memory
+    // store, a chat transcript) are retried here until confirmed (F-07).
+    await RemoteDeletes(_db, _ref, httpClient: _http).flush();
+    final pulled = await pull();
+    if (!pulled.ok) return pulled;
+    return pushed;
+  }
+
+  /// Mutations per request: bounds the body under the gateway's size limit,
+  /// so a large backlog cannot turn into a request that is refused forever.
+  static const int pushBatchSize = 100;
+
+  Map<String, dynamic> _mutationJson(OutboxEntry e) => {
+        "table": e.targetTable,
+        "op": e.operation,
+        "id": e.recordId,
+        "client_updated_at": e.clientUpdatedAt.toUtc().toIso8601String(),
+        "payload": e.payloadJson != null ? jsonDecode(e.payloadJson!) : null,
+      };
+
+  Future<http.Response?> _postMutations(List<OutboxEntry> entries) {
+    return _send((headers) {
+      return _post(
+        Uri.parse(_syncUrl),
+        headers: headers,
+        body: jsonEncode({"mutations": entries.map(_mutationJson).toList()}),
+      );
+    });
   }
 
   Future<SyncResult> push() async {
-    final pending = await _db.select(_db.outboxEntries).get();
+    final pending = await _db.pendingOutbox();
     if (pending.isEmpty) return const SyncResult.success();
 
-    final mutations = pending
-        .map((e) => {
-              "table": e.targetTable,
-              "op": e.operation,
-              "id": e.recordId,
-              "client_updated_at": e.clientUpdatedAt.toUtc().toIso8601String(),
-              "payload": e.payloadJson != null ? jsonDecode(e.payloadJson!) : null,
-            })
-        .toList();
-
     try {
-      final response = await _send((headers) {
-        return _post(
-          Uri.parse(_syncUrl),
-          headers: headers,
-          body: jsonEncode({"mutations": mutations}),
-        );
-      });
-      if (response == null || response.statusCode == 401) {
-        debugPrint("[SyncClient] push unauthorized: ${response?.statusCode}");
-        return const SyncResult.fail(SyncFailureKind.unauthorized);
-      }
-      if (response.statusCode == 503) {
-        debugPrint("[SyncClient] Postgres sync not configured on the backend yet.");
-        return const SyncResult.fail(SyncFailureKind.unavailable);
-      }
-      if (response.statusCode != 200) {
-        debugPrint("[SyncClient] push failed: ${response.statusCode} ${response.body}");
-        return const SyncResult.fail(SyncFailureKind.unknown);
-      }
-
-      // Applied and conflicted rows are done from this client's point of
-      // view (a conflict is resolved by the subsequent pull). Error rows
-      // stay in the outbox for retry — HTTP 200 used to wipe them too.
-      final decoded = jsonDecode(response.body);
-      if (decoded is! List) {
-        debugPrint("[SyncClient] push response was not a result list; leaving outbox intact");
-        return const SyncResult.fail(SyncFailureKind.unknown);
-      }
-      final idsToDrop = outboxIdsToDrop(
-        pendingIds: pending.map((e) => e.id).toList(),
-        results: decoded,
-      );
-      if (idsToDrop.isNotEmpty) {
-        await (_db.delete(_db.outboxEntries)..where((t) => t.id.isIn(idsToDrop))).go();
+      for (var start = 0; start < pending.length; start += pushBatchSize) {
+        final end = start + pushBatchSize < pending.length ? start + pushBatchSize : pending.length;
+        final outcome = await _pushBatch(pending.sublist(start, end));
+        if (!outcome.ok) return outcome;
       }
       return const SyncResult.success();
     } catch (e) {
       debugPrint("[SyncClient] push error: $e");
       return const SyncResult.fail(SyncFailureKind.network);
     }
+  }
+
+  /// One request for [batch]. When the server refuses the request as a whole
+  /// (a server without per-row isolation answers 500 for one bad row; a 413
+  /// or 422 is the same shape), each row is resent on its own so the bad one
+  /// is found and the others still land.
+  Future<SyncResult> _pushBatch(List<OutboxEntry> batch) async {
+    final response = await _postMutations(batch);
+    final refused = _refusal(response);
+    if (refused != null) return refused;
+    if (response!.statusCode == 200) {
+      return _acknowledge(batch, response.body);
+    }
+    debugPrint("[SyncClient] push batch failed: ${response.statusCode}; retrying rows one by one");
+    if (batch.length == 1) {
+      return _countFailures(batch, "HTTP ${response.statusCode}", isolated: false);
+    }
+
+    final rejected = <OutboxEntry>[];
+    var anyAccepted = false;
+    for (final entry in batch) {
+      final single = await _postMutations([entry]);
+      final refusedSingle = _refusal(single);
+      if (refusedSingle != null) return refusedSingle;
+      if (single!.statusCode == 200) {
+        anyAccepted = true;
+        final acked = await _acknowledge([entry], single.body);
+        if (!acked.ok) return acked;
+      } else {
+        rejected.add(entry);
+      }
+    }
+    // Only count it against the rows when the server took others: when every
+    // row fails alike the server is what is broken, and charging attempts
+    // would park the whole outbox during an outage.
+    return _countFailures(rejected, "HTTP ${response.statusCode}", isolated: anyAccepted);
+  }
+
+  /// A failure that is about the session or the server, not a row.
+  SyncResult? _refusal(http.Response? response) {
+    if (response == null || response.statusCode == 401) {
+      debugPrint("[SyncClient] push unauthorized: ${response?.statusCode}");
+      return const SyncResult.fail(SyncFailureKind.unauthorized);
+    }
+    if (response.statusCode == 503) {
+      debugPrint("[SyncClient] Postgres sync not configured on the backend yet.");
+      return const SyncResult.fail(SyncFailureKind.unavailable);
+    }
+    return null;
+  }
+
+  Future<SyncResult> _countFailures(List<OutboxEntry> rows, String detail, {required bool isolated}) async {
+    if (rows.isEmpty) return const SyncResult.success();
+    if (!isolated) return const SyncResult.fail(SyncFailureKind.unknown);
+    await _recordFailures([
+      for (final row in rows) OutboxFailure(outboxId: row.id, detail: detail, retryable: true),
+    ], rows);
+    return const SyncResult.success();
+  }
+
+  Future<void> _recordFailures(List<OutboxFailure> failures, List<OutboxEntry> sent) async {
+    final byId = {for (final e in sent) e.id: e};
+    for (final failure in failures) {
+      final entry = byId[failure.outboxId];
+      if (entry == null) continue;
+      final attempts = failure.retryable ? entry.attempts + 1 : kMaxOutboxAttempts;
+      if (attempts >= kMaxOutboxAttempts) {
+        debugPrint("[SyncClient] parking ${entry.targetTable}/${entry.recordId}: ${failure.detail}");
+      }
+      await (_db.update(_db.outboxEntries)..where((t) => t.id.equals(failure.outboxId))).write(
+        OutboxEntriesCompanion(attempts: Value(attempts), lastError: Value(failure.detail)),
+      );
+    }
+  }
+
+  /// Applies one 200 response's per-row results to the outbox.
+  Future<SyncResult> _acknowledge(List<OutboxEntry> sent, String body) async {
+    final decoded = jsonDecode(body);
+    if (decoded is! List) {
+      debugPrint("[SyncClient] push response was not a result list; leaving outbox intact");
+      return const SyncResult.fail(SyncFailureKind.unknown);
+    }
+    final ack = classifyOutboxResults(
+      pendingIds: sent.map((e) => e.id).toList(),
+      results: decoded,
+    );
+    // Applied and conflicted rows are done from this client's point of view;
+    // a conflict's server row (and a merged row's) is applied right here.
+    // Error rows stay in the outbox -- retried, or parked when the server
+    // says retrying cannot help.
+    await _db.transaction(() async {
+      if (ack.drop.isNotEmpty) {
+        await (_db.delete(_db.outboxEntries)..where((t) => t.id.isIn(ack.drop))).go();
+      }
+      await _recordFailures(ack.failures, sent);
+      if (ack.serverRows.isNotEmpty) await _applyRows(ack.serverRows);
+    });
+    return const SyncResult.success();
   }
 
   Future<SyncResult> pull() async {
@@ -172,15 +263,7 @@ class SyncClient {
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       final data = body["data"] as Map<String, dynamic>;
 
-      await _db.transaction(() async {
-        await _applyTasks(data["tasks"] as List<dynamic>? ?? const []);
-        await _applyCalendarEvents(data["calendar_events"] as List<dynamic>? ?? const []);
-        await _applyFinanceRecords(data["finance_records"] as List<dynamic>? ?? const []);
-        await _applyHealthRecords(data["health_records"] as List<dynamic>? ?? const []);
-        await _applyMessages(data["messages"] as List<dynamic>? ?? const []);
-        await _applyProjects(data["projects"] as List<dynamic>? ?? const []);
-        await _applyGoals(data["goals"] as List<dynamic>? ?? const []);
-      });
+      await _db.transaction(() => _applyRows(data));
 
       await _db.setSyncCursor(body["cursor"] as String);
       return const SyncResult.success();
@@ -191,6 +274,35 @@ class SyncClient {
   }
 
   DateTime? _parseDate(dynamic v) => v == null ? null : DateTime.parse(v as String).toLocal();
+
+  /// Applies server rows, keyed by table, onto Drift. Used for a pull's
+  /// `data` and for the rows a push's conflict and merge results carry.
+  /// Callers wrap it in a transaction.
+  Future<void> _applyRows(Map<String, dynamic> data) async {
+    List<dynamic> rows(String table) => data[table] as List<dynamic>? ?? const [];
+    await _applyTasks(rows("tasks"));
+    await _applyCalendarEvents(rows("calendar_events"));
+    await _applyFinanceRecords(rows("finance_records"));
+    await _applyHealthRecords(rows("health_records"));
+    await _applyMessages(rows("messages"));
+    await _applyProjects(rows("projects"));
+    await _applyGoals(rows("goals"));
+    await _applyMemoryTombstones(rows("memories"));
+  }
+
+  /// A memory forgotten on another device arrives as a tombstone under the
+  /// server's memory id, which every device's local copy now shares (F-07).
+  /// Live memory rows are not applied from here: the memory list is the
+  /// server's memory store (`MemoryRepository.syncMemories`), and these rows
+  /// are only its encrypted copy.
+  Future<void> _applyMemoryTombstones(List<dynamic> rows) async {
+    final forgotten = [
+      for (final raw in rows)
+        if ((raw as Map<String, dynamic>)["deleted_at"] != null) raw["id"] as String,
+    ];
+    if (forgotten.isEmpty) return;
+    await (_db.delete(_db.userMemories)..where((m) => m.id.isIn(forgotten))).go();
+  }
 
   Future<void> _applyTasks(List<dynamic> rows) async {
     for (final raw in rows) {
@@ -269,9 +381,17 @@ class SyncClient {
         await (_db.delete(_db.healthRecords)..where((t) => t.id.equals(id))).go();
         continue;
       }
+      final recordDate = _parseDate(row["record_date"])!;
+      // One record per day: the server merges a second device's "today" onto
+      // the row it already had (audit F-11), so a local row for the same day
+      // under another id is that device's own copy. Replace it, or the day
+      // has two rows and every single-row lookup for it throws.
+      await (_db.delete(_db.healthRecords)
+            ..where((t) => t.recordDate.equals(recordDate) & t.id.equals(id).not()))
+          .go();
       await _db.into(_db.healthRecords).insertOnConflictUpdate(HealthRecordsCompanion(
             id: Value(id),
-            recordDate: Value(_parseDate(row["record_date"])!),
+            recordDate: Value(recordDate),
             weight: Value((row["weight"] as num?)?.toDouble()),
             waterIntakeMl: Value(row["water_ml"] as int? ?? 0),
             sleepMinutes: Value(row["sleep_minutes"] as int? ?? 0),
@@ -371,4 +491,9 @@ class SyncClient {
 final syncClientProvider = Provider<SyncClient>((ref) {
   final db = ref.watch(databaseProvider);
   return SyncClient(db, ref);
+});
+
+/// Outbox rows the server keeps refusing (parked; see `OutboxEntries.attempts`).
+final parkedOutboxCountProvider = StreamProvider<int>((ref) {
+  return ref.watch(databaseProvider).watchParkedOutboxCount();
 });

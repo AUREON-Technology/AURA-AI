@@ -1,7 +1,7 @@
 """record which user roles an operator assigned on the Access page
 
-Revision ID: 0014
-Revises: 0013
+Revision ID: 0015
+Revises: 0014
 Create Date: 2026-10-28
 
 `users.role` was written on every sign-in from whatever role the token resolved -- mostly the
@@ -15,8 +15,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "0014"
-down_revision: Union[str, None] = "0013"
+revision: str = "0015"
+down_revision: Union[str, None] = "0014"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

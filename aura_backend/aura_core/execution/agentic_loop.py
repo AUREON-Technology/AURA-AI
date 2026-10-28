@@ -41,6 +41,7 @@ from ..domain.agent_runs import AgentBudget, BudgetKind, risk_cost
 from ..domain.planning import Plan, PlanStep, StepStatus
 from ..observability.logging import get_logger
 from ..ports.runtime import ToolContext
+from .confirmations import ConfirmationGrant
 from .engine import ExecutionEngine, ExecutionOutcome, StepEvent
 from .run_recorder import AgentRunContext, RunRecorder
 
@@ -266,13 +267,12 @@ class AgenticExecutor:
         gate: RunBudgetGate,
         context: ToolContext,
         capabilities: Sequence[str],
-        confirmed_tools: Sequence[str],
-        confirmed_call_ids: Sequence[str],
+        confirmations: ConfirmationGrant | None,
         on_event: Callable[[StepEvent], Any] | None,
     ) -> AsyncIterator[StepEvent | ExecutionOutcome]:
         common = dict(
             context=context, capabilities=capabilities,
-            confirmed_tools=confirmed_tools, confirmed_call_ids=confirmed_call_ids,
+            confirmations=confirmations,
         )
         stream = getattr(self._executor, "stream", None)
         if streaming and callable(stream):
@@ -294,8 +294,7 @@ class AgenticExecutor:
         streaming: bool,
         context: ToolContext,
         capabilities: Sequence[str],
-        confirmed_tools: Sequence[str],
-        confirmed_call_ids: Sequence[str],
+        confirmations: ConfirmationGrant | None,
         available_tools: Sequence[Mapping[str, Any]],
         max_iterations: int,
         deadline_s: float,
@@ -334,8 +333,8 @@ class AgenticExecutor:
                 outcome = None
                 async for item in self._pass(
                     current, streaming=streaming, gate=gate, context=context,
-                    capabilities=capabilities, confirmed_tools=confirmed_tools,
-                    confirmed_call_ids=confirmed_call_ids, on_event=on_event,
+                    capabilities=capabilities, confirmations=confirmations,
+                    on_event=on_event,
                 ):
                     if isinstance(item, StepEvent):
                         yield item
@@ -390,8 +389,7 @@ class AgenticExecutor:
         *,
         context: ToolContext,
         capabilities: Sequence[str] = (),
-        confirmed_tools: Sequence[str] = (),
-        confirmed_call_ids: Sequence[str] = (),
+        confirmations: ConfirmationGrant | None = None,
         available_tools: Sequence[Mapping[str, Any]] = (),
         max_iterations: int = 1,
         deadline_s: float = 600.0,
@@ -403,7 +401,7 @@ class AgenticExecutor:
         outcome: ExecutionOutcome | None = None
         async for item in self._drive(
             plan, streaming=False, context=context, capabilities=capabilities,
-            confirmed_tools=confirmed_tools, confirmed_call_ids=confirmed_call_ids,
+            confirmations=confirmations,
             available_tools=available_tools, max_iterations=max_iterations,
             deadline_s=deadline_s, on_event=on_event, budget=budget, run_context=run_context,
         ):
@@ -417,8 +415,7 @@ class AgenticExecutor:
         *,
         context: ToolContext,
         capabilities: Sequence[str] = (),
-        confirmed_tools: Sequence[str] = (),
-        confirmed_call_ids: Sequence[str] = (),
+        confirmations: ConfirmationGrant | None = None,
         available_tools: Sequence[Mapping[str, Any]] = (),
         max_iterations: int = 1,
         deadline_s: float = 600.0,
@@ -435,7 +432,7 @@ class AgenticExecutor:
         """
         async for item in self._drive(
             plan, streaming=True, context=context, capabilities=capabilities,
-            confirmed_tools=confirmed_tools, confirmed_call_ids=confirmed_call_ids,
+            confirmations=confirmations,
             available_tools=available_tools, max_iterations=max_iterations,
             deadline_s=deadline_s, on_event=None, budget=budget, run_context=run_context,
         ):

@@ -160,7 +160,7 @@ class TestRoleAssignmentIntegration(unittest.TestCase):
             self.assertEqual(self._role(pair), "User")
 
     def test_a_role_an_old_sign_in_copied_into_the_row_is_not_a_grant(self):
-        """Rows written before migration 0014 hold env-derived roles with no assignment stamp."""
+        """Rows written before migration 0015 hold env-derived roles with no assignment stamp."""
         from sqlalchemy import update
 
         from infrastructure.db.base import get_session_factory

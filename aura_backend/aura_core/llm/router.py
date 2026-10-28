@@ -580,6 +580,17 @@ class ProviderRouter:
             ).inc()
             self._metrics.llm_duration.labels(provider=name, model=model).observe(latency_ms / 1000.0)
 
+    @staticmethod
+    def _release_probe(stats: ProviderStats, probe: bool) -> None:
+        """Give back the half-open probe slot of an attempt that ended without a verdict.
+
+        Only the attempt that took the slot releases it. A non-probe attempt that started while
+        the circuit was closed and finished after it half-opened must not free the slot a later
+        probe now holds, or two probes would run at once.
+        """
+        if probe:
+            stats.breaker.release_probe()
+
     def _record_failure(self, name: str, error: BaseException) -> None:
         stats = self._stats[name]
         stats.breaker.record_failure()
@@ -617,17 +628,25 @@ class ProviderRouter:
 
         for index, name in enumerate(decision.candidates[:limit]):
             stats = self._stats[name]
+            # Read before `allows_request`, which takes the half-open probe slot as a side
+            # effect. Nothing awaits in between, so this is the attempt that holds the slot.
+            probe = stats.breaker.state is CircuitState.HALF_OPEN
             if not stats.breaker.allows_request():
                 attempts.append({"provider": name, "error": "circuit_open"})
                 continue
 
             provider = self._providers[name]
-            ticket = await self._admit(name, hint)
+            try:
+                ticket = await self._admit(name, hint)
+            except BaseException:
+                self._release_probe(stats, probe)
+                raise
             reservation, refusal = self._reserve(name, request)
             if reservation is None:
                 # Another turn spent the budget between planning and admission. Skipped, not
                 # failed: nothing was sent, so there is nothing for the breaker to learn.
                 self._admission.release(ticket)
+                self._release_probe(stats, probe)
                 attempts.append({"provider": name, "error": refusal})
                 continue
             started = self._clock()
@@ -637,6 +656,7 @@ class ProviderRouter:
             outcome = "error"
             response: CompletionResponse | None = None
             used_tokens: int | None = None
+            verdict = False
             try:
                 response = await asyncio.wait_for(
                     provider.complete(request), timeout=request.timeout_s
@@ -644,6 +664,7 @@ class ProviderRouter:
                 outcome = "success"
                 used_tokens = response.usage.total_tokens
                 elapsed = (self._clock() - started) * 1000.0
+                verdict = True
                 self._record_success(name, latency_ms=elapsed, ttft_ms=None, response=response)
                 if budget is not None:
                     budget.consume(cost_usd=response.cost_usd)
@@ -657,6 +678,7 @@ class ProviderRouter:
                 return replace(response, queue_wait_ms=ticket.queue_wait_ms)
             except asyncio.TimeoutError as exc:
                 outcome = "timeout"
+                verdict = True
                 self._record_failure(name, exc)
                 attempts.append({"provider": name, "error": "timeout", "timeout_s": request.timeout_s})
             except ProviderError as exc:
@@ -665,6 +687,7 @@ class ProviderRouter:
                     used_tokens = 0
                     attempts.append(self._record_rate_limited(name, exc))
                 else:
+                    verdict = True
                     self._record_failure(name, exc)
                     attempts.append({"provider": name, "error": exc.kind, "detail": exc.message})
                     if not exc.retryable:
@@ -672,12 +695,17 @@ class ProviderRouter:
                         # providers just multiplies latency and cost.
                         break
             except Exception as exc:  # adapter bug or unexpected transport failure
+                verdict = True
                 self._record_failure(name, exc)
                 attempts.append({"provider": name, "error": type(exc).__name__})
             except asyncio.CancelledError:
                 outcome = "cancelled"
                 raise
             finally:
+                if not verdict:
+                    # Cancelled or rate-limited: nothing was learned about the provider's
+                    # health, but a held probe slot must still be given back.
+                    self._release_probe(stats, probe)
                 self._quota.settle(reservation, used_tokens)
                 stats.inflight -= 1
                 self._admission.release(ticket)
@@ -740,6 +768,8 @@ class ProviderRouter:
 
         for index, name in enumerate(decision.candidates[:limit]):
             stats = self._stats[name]
+            # As in `complete`: whether this attempt holds the half-open probe slot.
+            probe = stats.breaker.state is CircuitState.HALF_OPEN
             if not stats.breaker.allows_request():
                 attempts.append({"provider": name, "error": "circuit_open"})
                 continue
@@ -748,12 +778,18 @@ class ProviderRouter:
             # The slot is held for the whole stream: decode is when the model server is busiest.
             # Released in `finally`, which also runs when the consumer stops iterating early
             # (client disconnect -> aclose()) -- that is what keeps a dropped stream from leaking.
-            ticket = await self._admit(name, hint)
+            try:
+                ticket = await self._admit(name, hint)
+            except BaseException:
+                self._release_probe(stats, probe)
+                raise
             reservation, refusal = self._reserve(name, request)
             if reservation is None:
                 self._admission.release(ticket)
+                self._release_probe(stats, probe)
                 attempts.append({"provider": name, "error": refusal})
                 continue
+            verdict = False
             used_tokens: int | None = None
             started = self._clock()
             first_chunk_at: float | None = None
@@ -793,6 +829,7 @@ class ProviderRouter:
                     used_tokens = usage.total_tokens
                 elapsed = (self._clock() - started) * 1000.0
                 ttft = (first_chunk_at - started) * 1000.0 if first_chunk_at else None
+                verdict = True
                 stats.breaker.record_success()
                 stats.latency.observe(elapsed)
                 if ttft is not None:
@@ -835,6 +872,7 @@ class ProviderRouter:
                     used_tokens = 0
                     attempts.append(self._record_rate_limited(name, exc))
                     continue
+                verdict = True
                 self._record_failure(name, exc)
                 kind = getattr(exc, "kind", None) or (
                     "timeout" if isinstance(exc, asyncio.TimeoutError) else type(exc).__name__
@@ -853,6 +891,9 @@ class ProviderRouter:
                 if isinstance(exc, ProviderError) and not exc.retryable:
                     break
             finally:
+                if not verdict:
+                    # Cancelled, closed by the consumer, or rate-limited: see `complete`.
+                    self._release_probe(stats, probe)
                 self._quota.settle(reservation, used_tokens)
                 stats.inflight -= 1
                 self._admission.release(ticket)

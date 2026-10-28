@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/sync/sync_client.dart';
 import 'package:aura_client/features/chat/data/agent_config_repository.dart';
 import 'package:aura_client/features/chat/data/agents_repository.dart';
 import 'package:aura_client/features/chat/presentation/widgets/chat_header.dart';
@@ -140,6 +141,9 @@ Future<void> _pumpMobileChatHeader(WidgetTester tester, Size size) async {
       overrides: [
         activeAgentIdProvider.overrideWith(_HealthCompanionAgent.new),
         syncEngineProvider.overrideWith(_IdleSyncEngine.new),
+        // The sync indicator also shows parked outbox rows, read from the
+        // database; this layout test has none.
+        parkedOutboxCountProvider.overrideWith((ref) => Stream.value(0)),
       ],
       child: MaterialApp(
         theme: AuraThemeV2.dark,

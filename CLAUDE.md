@@ -13,8 +13,9 @@ Four independent apps in one repo:
   essential.
 - **`aura_client/`** — Flutter app (Android/iOS/macOS/web/desktop) that talks to the backend's
   `/api/v3/*` routes.
-- **`aura_admin/`** — Next.js admin dashboard (lightly used so far; `npm run dev|build|lint`,
-  `npm run test:e2e` for Playwright).
+- **`aura_admin/`** — Next.js operator console served at `/console` (10 pages; `npm run
+  dev|build|lint`, `npm run test:e2e` for Playwright against a mock gateway). Built, but not
+  reachable on any live target as of 2026-10-28, and Admin CI has never run.
 - **`aura_hostd/`** — pure-Dart local daemon (no Flutter dependency) that lets the desktop Engineer
   agent act on the user's real files and terminal. Pairs with the backend's
   `/api/v3/host/agent` WebSocket. `dart pub get && dart test` (`.github/workflows/hostd-ci.yml`
@@ -40,6 +41,18 @@ Plane (`aura_backend/`) talking to a Hugging Face GPU Space Inference Plane
 `docs/deployment/architecture.md` first for the ownership boundary and why this is a logical
 split within one repo rather than two physically separate ones. Both targets stay live side by
 side until a deliberate cutover; neither workflow redeploys the other.
+
+**Current status lives in `docs/status/`**: one file each for the backend, desktop app, mobile
+app and web console, plus an index. Read it before assuming what is deployed or green. Two facts
+from it change how the paragraph above reads (checked live on 2026-10-28):
+
+- `aureon-ai.tech` is now served by **Railway** (`server: railway-hikari`), running current
+  `main`, with providers `hosted1` (healthy) and `hfspace` (503), and no Ollama.
+  `dev.aureon-ai.tech` no longer resolves.
+- **Deploy VPS has failed on every run since at least 2026-09-27.** Since 2026-10-18 it fails
+  with `Host key verification failed`: 169.58.188.43 presents a new ED25519 key. Do not update
+  `deploy/known_hosts` to make it pass. A changed host key is either a reinstall or an
+  interception, and only the owner can establish which.
 
 The end-user guide (tabs, personas, the Engineer persona's repository tools, troubleshooting) is
 published at https://claude.ai/code/artifact/2743a01b-ba92-4473-99e9-04f84996ba8a — not part of
@@ -98,11 +111,16 @@ flutter test test/some_test.dart         # single file
 flutter build apk --release --dart-define=BACKEND_URL=<url>
 ```
 
-**Client CI is not currently a gate — verify locally instead.** `Client CI` has not been
-assigned a runner in weeks: every run, on `main` as well as on PRs, fails in 2–4 seconds with no
-step starting and no log archive (confirmed across runs 127–133, both `push` and `pull_request`).
-Until that is fixed at the repository/account level, a green tick there is unavailable and a red
-X there says nothing about the diff.
+**Client CI runs again (since 2026-10-28), but is red for reasons outside most diffs.** After
+weeks with no runner, runs 142–143 executed every step:
+- `analyze-and-test` and `build-linux` are green (analyze clean, 381 tests passed);
+- `build-android` fails because the runner runs out of disk (Gradle `mergeJavaRes`);
+- `build-windows` (`continue-on-error`) fails 10 `path_containment_test.dart` cases on 8.3
+  short paths.
+
+So read the `analyze-and-test` job for a client diff, not the run's overall tick. Host Daemon CI
+is red too: on Linux all tests pass, then a `PosixPtySession` isolate hangs until the 15-minute
+timeout; on Windows 5 tests fail.
 
 No Flutter SDK is preinstalled in the environment a change is usually written in, but one can be
 fetched in about two minutes, and `analyze` + `test` then run exactly as CI would:
@@ -273,7 +291,9 @@ retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer work
   comment — after the previous 1200-token ceiling was measured taking up to 240s in production.
 - Push-triggered pipeline: `Deploy VPS` (`.github/workflows/deploy-backend.yml`) fires via
   `workflow_run` only after `Backend CI` succeeds on `main` — merging to `main` is the entire
-  deploy action, there is no separate manual step.
+  deploy action, there is no separate manual step. `Deploy Control Plane (Railway)` fires the
+  same way and is what actually reaches `aureon-ai.tech` today. Deploy VPS is currently blocked
+  by the host-key change described near the top of this file.
 
 ## Testing conventions worth knowing before writing a test
 

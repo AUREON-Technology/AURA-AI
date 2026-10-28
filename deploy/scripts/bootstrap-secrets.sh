@@ -1,5 +1,5 @@
 #!/bin/sh
-# Generate the secret files docker-compose.prod.yml expects.
+# Generate the secret files docker-compose.prod.yml and docker-compose.dev.yml expect.
 #
 # Run once on a new host. Nothing here has a default value anywhere in the stack -- SEC-08 was
 # partly caused by POSTGRES_PASSWORD defaulting to a publicly-known string, so a deployment
@@ -65,6 +65,18 @@ generate_fernet_key secrets_encryption_key
 # Never regenerate it by deleting the file -- rotate by prepending a new key line (newest first),
 # restarting, and running scripts/reencrypt_fields.py in the gateway (see its docstring).
 generate_fernet_key data_encryption_keys
+# The aura-dev stack (docker-compose.dev.yml) shares this host and this directory, so it gets its
+# own signing and data keys, generated exactly like the prod ones above (F-03, GAP-047). With
+# prod's jwt_secret, any token dev minted -- or anyone who compromised a dev container could
+# mint -- was a valid prod session; with prod's data_encryption_keys, dev could decrypt prod rows.
+# Never copy a prod key into these files.
+# dev_data_encryption_keys starts with only a fresh key, so dev rows sealed under the old shared
+# key stop decrypting. Reseeding dev is the clean answer. If those rows must be kept, append
+# prod's key as a second line (newest first), run scripts/reencrypt_fields.py in the dev gateway
+# until it reports nothing left, then delete that line at once and restart dev -- dev holds the
+# prod key for that window, which is the exposure this split exists to end.
+generate dev_jwt_secret 64
+generate_fernet_key dev_data_encryption_keys
 # Placeholder only -- unlike the secrets above, this one cannot be generated. Overwrite it with
 # the real client secret from the GitHub App's settings page before setting
 # AURA_GITHUB_OAUTH_ENABLED=true: printf '%s' "$CLIENT_SECRET" > "$DIR/github_oauth_client_secret"

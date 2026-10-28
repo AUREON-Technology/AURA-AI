@@ -314,12 +314,36 @@ class TestAuth:
 
         secret = "unit-test-secret-not-real-0123456789"
         monkeypatch.setattr(jwt_auth, "_secret", lambda: secret)
-        source = TokenSource.minted(secret=secret, role="Developer")
+        # Bound to this gateway's iss/aud, so the check does not lean on the legacy grace period.
+        monkeypatch.setattr(jwt_auth, "_legacy_tokens_until", lambda: jwt_auth.datetime.min.replace(
+            tzinfo=jwt_auth.timezone.utc))
+        source = TokenSource.minted(
+            secret=secret, role="Developer", issuer=jwt_auth._issuer(), audience=jwt_auth._audience(),
+        )
         claims = asyncio.run(jwt_auth.verify_access_token(
             None, HTTPAuthorizationCredentials(scheme="Bearer", credentials=source.token(4)),
         ))
         assert claims["uid"] == "loadtest-vu-005"
         assert get_user_role(claims) == "Developer"
+
+    def test_env_minted_tokens_default_to_the_production_binding(self, monkeypatch) -> None:
+        """minted_from_env targets production by default; its iss/aud must be what a production
+        gateway derives, or every minted request 401s once the legacy grace period ends."""
+        import services.jwt_auth as jwt_auth
+        from scripts.loadtest.auth import DEFAULT_TARGET_AUDIENCE, DEFAULT_TARGET_ISSUER
+
+        monkeypatch.setenv("AURA_ENVIRONMENT", "production")
+        monkeypatch.setattr(jwt_auth.settings, "jwt_issuer", "")
+        monkeypatch.setattr(jwt_auth.settings, "jwt_audience", "")
+        monkeypatch.delenv("AURA_JWT_ISSUER", raising=False)
+        monkeypatch.delenv("AURA_JWT_AUDIENCE", raising=False)
+        assert (DEFAULT_TARGET_ISSUER, DEFAULT_TARGET_AUDIENCE) == (jwt_auth._issuer(), jwt_auth._audience())
+
+        monkeypatch.setenv("LT_TEST_SECRET", "x" * 32)
+        monkeypatch.delenv("AURA_LOADTEST_JWT_ISSUER", raising=False)
+        monkeypatch.setenv("AURA_LOADTEST_JWT_AUDIENCE", "aura-api-staging")
+        source = TokenSource.minted_from_env("LT_TEST_SECRET")
+        assert (source.issuer, source.audience) == (DEFAULT_TARGET_ISSUER, "aura-api-staging")
 
     def test_distinct_identity_per_vu_and_token_reuse(self) -> None:
         source = TokenSource.minted(secret="s" * 32)

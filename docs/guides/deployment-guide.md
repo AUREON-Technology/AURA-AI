@@ -118,6 +118,15 @@ dev uses a separate `aura-dev` project with its own Postgres, Qdrant, and Redis 
 Prod nginx terminates TLS for both hostnames and proxies dev traffic to `aura-dev-gateway` /
 `aura-dev-console` over the shared Docker network `aura_edge`. Ollama remains on prod only.
 
+Both stacks read `deploy/secrets/`, but dev's JWT signing key and data-encryption key are its
+own files, `dev_jwt_secret` and `dev_data_encryption_keys` (F-03, GAP-047), which
+`bootstrap-secrets.sh` generates. Never point dev at prod's `jwt_secret` or
+`data_encryption_keys`. If dev held prod's signing key, a dev compromise could mint prod
+sessions. If it held prod's data key, dev could decrypt prod rows.
+`tests/unit/test_dev_prod_secret_separation.py` fails if either file is shared again. Tokens are
+also bound to their stack through `iss`/`aud` (`aura-production` vs `aura-development`, derived
+from `AURA_ENVIRONMENT`), so neither stack accepts the other's tokens.
+
 ### Apply on an existing VPS
 
 1. Deploy code (prod unchanged): `./deploy/scripts/vps-update.sh`

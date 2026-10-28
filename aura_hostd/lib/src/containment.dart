@@ -20,12 +20,14 @@ import 'package:path/path.dart' as p;
 /// asks for. This is a hard floor under the user's own consent -- granting one of these as a root
 /// would make "contained to the workspace" meaningless, so the daemon refuses at grant time
 /// rather than trusting the human not to fat-finger a path.
+///
+/// Filesystem roots themselves (`/`, every Windows drive root, every UNC share root) are not
+/// listed here: there is no finite list of them, so [isFilesystemRoot] refuses them by shape.
 final List<String> _rootDenylist = _buildRootDenylist();
 
 List<String> _buildRootDenylist() {
   final home = _homeDirectory();
   final entries = <String>{
-    '/',
     '/etc',
     '/usr',
     '/bin',
@@ -37,17 +39,51 @@ List<String> _buildRootDenylist() {
     '/var',
     '/System',
     '/Library',
-    r'C:\',
+    // macOS: /etc and /var are symlinks into /private, and a root is compared after symlink
+    // resolution, so without these two a grant of /etc would resolve past the entries above.
+    '/private/etc',
+    '/private/var',
     r'C:\Windows',
     r'C:\Program Files',
     r'C:\Program Files (x86)',
   };
+  if (Platform.isWindows) {
+    // Windows is not always on C:. These name wherever this machine actually put it.
+    for (final name in ['SystemRoot', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432']) {
+      final value = Platform.environment[name];
+      if (value != null && value.isNotEmpty) entries.add(value);
+    }
+  }
   if (home != null) {
     // The home directory itself is denied (too broad to be a meaningful boundary); a project
     // folder *inside* home is fine and is exactly the common case.
     entries.add(home);
   }
   return entries.map(_normalizeForCompare).toList(growable: false);
+}
+
+/// Whether [path] is a filesystem root itself rather than something inside one: `/` on POSIX; on
+/// Windows any drive root (`C:\`, `D:\`, ... -- not just `C:\`), a bare drive (`D:`), the
+/// current-drive root `\`, and a UNC server or share root (`\\server`, `\\server\share`),
+/// including their `\\?\` / `\\?\UNC\` / `\\.\` long-path spellings.
+///
+/// [style] defaults to the host platform's; passing it lets the Windows rules be checked on any
+/// host. Pure string logic -- touches no filesystem.
+bool isFilesystemRoot(String path, {p.Style? style}) {
+  final context = style == null ? p.context : p.Context(style: style);
+  var candidate = path;
+  if (context.style == p.Style.windows) {
+    candidate = candidate.replaceAll('/', r'\');
+    final lower = candidate.toLowerCase();
+    if (lower.startsWith(r'\\?\unc\')) {
+      candidate = '\\\\${candidate.substring(8)}';
+    } else if (lower.startsWith(r'\\?\') || lower.startsWith(r'\\.\')) {
+      candidate = candidate.substring(4);
+    }
+    if (RegExp(r'^[A-Za-z]:\\*$').hasMatch(candidate)) return true;
+  }
+  final normalized = context.normalize(candidate);
+  return context.isAbsolute(normalized) && context.split(normalized).length == 1;
 }
 
 String? _homeDirectory() {
@@ -141,6 +177,12 @@ class WorkspaceRoots {
     final canonical = File(rawPath).resolveSymbolicLinksSync();
     if (!Directory(canonical).existsSync()) {
       throw InvalidRootError('$rawPath does not resolve to a directory');
+    }
+    if (isFilesystemRoot(canonical)) {
+      throw InvalidRootError(
+        '$rawPath resolves to $canonical, a filesystem root, which is on the denylist and can '
+        'never be a workspace root -- grant a project folder inside it instead',
+      );
     }
     final normalized = _normalizeForCompare(canonical);
     for (final denied in _rootDenylist) {

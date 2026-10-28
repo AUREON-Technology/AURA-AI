@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:uuid/uuid.dart';
 
 class _StubTokenManager extends TokenManager {
   _StubTokenManager(super.ref);
@@ -103,6 +104,32 @@ void main() {
     final body = jsonDecode(recorded!.body) as Map<String, dynamic>;
     expect(body['content'], 'I live in Cairo');
     expect(body.containsKey('fact'), isFalse);
+  });
+
+  test('saveMemory queues a sync row the server can accept: a UUID id and fact_enc (F-13)', () async {
+    final httpClient = MockClient((request) async => http.Response('offline', 503));
+    final container = ProviderContainer(
+      overrides: [
+        databaseProvider.overrideWith((ref) {
+          ref.onDispose(db.close);
+          return db;
+        }),
+        tokenManagerProvider.overrideWith((ref) => _StubTokenManager(ref)),
+        memoryRepositoryProvider.overrideWith(
+          (ref) => MemoryRepository(db, ref, httpClient: httpClient),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(memoryRepositoryProvider).saveMemory('I live in Cairo');
+
+    final queued = await db.select(db.outboxEntries).getSingle();
+    expect(queued.targetTable, 'memories');
+    expect(Uuid.isValidUUID(fromString: queued.recordId), isTrue, reason: queued.recordId);
+    final payload = jsonDecode(queued.payloadJson!) as Map<String, dynamic>;
+    expect(payload.keys, ['fact_enc']);
+    expect(EncryptionService.decryptText(payload['fact_enc'] as String), 'I live in Cairo');
   });
 
   test('deleteMemory DELETEs JWT to /api/v3/memory/{id}', () async {

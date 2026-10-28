@@ -227,7 +227,11 @@ void main() {
   });
 
   test('grant refuses a denylisted path the same way the CLI does', () async {
-    final (status, body) = await client.request('POST', '/roots', body: {'action': 'grant', 'path': '/etc'});
+    // A denylisted directory that exists on this platform: an absent one is refused earlier, as
+    // "does not exist", which would never reach the denylist this test is about.
+    final denylisted = Platform.isWindows ? (Platform.environment['SystemRoot'] ?? r'C:\Windows') : '/etc';
+    final (status, body) =
+        await client.request('POST', '/roots', body: {'action': 'grant', 'path': denylisted});
     expect(status, 400);
     expect(body['error'], contains('denylist'));
   });

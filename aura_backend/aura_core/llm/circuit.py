@@ -109,6 +109,18 @@ class CircuitBreaker:
         if self._failures >= self._threshold:
             self._open()
 
+    def release_probe(self) -> None:
+        """Free the half-open probe slot of a probe that ended without a verdict.
+
+        A probe can end without saying anything about the provider's health: the caller was
+        cancelled or went away, the provider answered 429, the quota reservation or admission
+        refused it. None of those is a success or a failure, so the state stays as it is -- but
+        the slot must be freed. Only ``record_success`` and ``record_failure`` freed it before,
+        so such a probe left every later request refused as ``circuit_open`` until a restart
+        (F-19).
+        """
+        self._half_open_inflight = False
+
     def reset(self) -> None:
         self._failures = 0
         self._half_open_inflight = False

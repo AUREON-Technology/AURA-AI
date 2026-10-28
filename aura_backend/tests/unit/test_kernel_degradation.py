@@ -498,54 +498,92 @@ class TestStreamToolExecution:
             for p in pending
         )
 
-    async def test_tainted_side_effect_runs_when_confirmed(self, container) -> None:
-        await container.startup()
+    async def _held(self, container, title: str) -> dict:
+        """One streamed turn that holds `propose_task(title)` for confirmation."""
         container.kernel._deps.planner = _FixedPlanner(
-            _tool_plan("propose_task", {"title": "Backup notes"})
+            _tool_plan("propose_task", {"title": title})
         )
         container.kernel._deps.knowledge.retrieve = _tainted_retrieve()
         container.kernel._deps.safety.guard_context_items = _force_taint(
             container.kernel._deps.safety
         )
+        frames = [
+            frame async for frame in container.kernel.stream(
+                _request(f"add a task called {title}", plan=True)
+            )
+        ]
+        (pending,) = frames[-1]["pending_tool_calls"]
+        assert pending["approval_id"], "a held call must carry a server-issued approval id"
+        return pending
+
+    async def test_tainted_side_effect_runs_when_confirmed_by_approval_id(
+        self, container
+    ) -> None:
+        await container.startup()
+        pending = await self._held(container, "Backup notes")
 
         frames = [
             frame async for frame in container.kernel.stream(
-                _request(
-                    "add a backup task",
-                    plan=True,
-                    confirmed_tools=("propose_task",),
-                )
+                _request("yes, approve.", approval_ids=(pending["approval_id"],))
             )
         ]
         actions = next(f for f in frames if f["type"] == "actions")
         assert actions["actions"][0]["type"] == "add_task"
         assert actions["actions"][0]["params"]["title"] == "Backup notes"
+        assert frames[-1]["pending_tool_calls"] == []
 
-    async def test_tainted_side_effect_runs_when_confirmed_by_call_id(self, container) -> None:
-        """`confirmed_call_ids` confirms the specific pending call, not just its tool name."""
+    async def test_a_resume_executes_the_stored_plan_without_re_planning(
+        self, container
+    ) -> None:
+        """The resume runs what the user approved even when the reply ("yes, approve.") would
+        never trip the planning heuristic -- and the planner is not asked again at all."""
+        await container.startup()
+        pending = await self._held(container, "Backup notes")
+        asked: list[str] = []
+
+        class _Refusing(_FixedPlanner):
+            async def plan(self, goal, available_tools=()):  # noqa: ANN001
+                asked.append(goal.description)
+                return _tool_plan("propose_task", {"title": "Something else"})
+
+        container.kernel._deps.planner = _Refusing(None)
+        frames = [
+            frame async for frame in container.kernel.stream(
+                _request("yes, approve.", approval_ids=(pending["approval_id"],))
+            )
+        ]
+        assert asked == []
+        actions = next(f for f in frames if f["type"] == "actions")
+        assert actions["actions"][0]["params"]["title"] == "Backup notes"
+
+    async def test_tool_names_and_positional_call_ids_no_longer_confirm(
+        self, container
+    ) -> None:
+        """The pre-F-04 confirmation fields are gone: nothing about a name or `step_s1`
+        authorizes a held call, so the call is simply held again."""
+        await container.startup()
+        await self._held(container, "Backup notes")
+        frames = [
+            frame async for frame in container.kernel.stream(
+                _request("add a task called Backup notes", plan=True)
+            )
+        ]
+        assert not any(f.get("type") == "actions" for f in frames)
+        assert "propose_task" in frames[-1]["needs_confirmation"]
+
+    async def test_an_unknown_approval_id_is_refused_and_runs_nothing(self, container) -> None:
         await container.startup()
         container.kernel._deps.planner = _FixedPlanner(
-            _tool_plan("propose_task", {"title": "Backup notes"})
+            _tool_plan("propose_task", {"title": "Forged"})
         )
-        container.kernel._deps.knowledge.retrieve = _tainted_retrieve()
-        container.kernel._deps.safety.guard_context_items = _force_taint(
-            container.kernel._deps.safety
-        )
-
         frames = [
             frame async for frame in container.kernel.stream(
-                _request(
-                    "add a backup task",
-                    plan=True,
-                    # _tool_plan's single step is StepId("s1"), so its deterministic call_id
-                    # (ExecutionEngine._run_step) is "step_s1" -- no confirmed_tools needed.
-                    confirmed_call_ids=("step_s1",),
-                )
+                _request("yes", approval_ids=("apr.forged-token.forged-nonce",))
             )
         ]
-        actions = next(f for f in frames if f["type"] == "actions")
-        assert actions["actions"][0]["type"] == "add_task"
-        assert actions["actions"][0]["params"]["title"] == "Backup notes"
+        assert frames[-1]["type"] == "error"
+        assert frames[-1]["error"] == "confirmation_invalid"
+        assert not any(f.get("type") == "actions" for f in frames)
 
     async def test_a_non_streaming_turn_exposes_pending_tool_call_arguments(
         self, container
@@ -569,31 +607,6 @@ class TestStreamToolExecution:
         assert "propose_task" in result.needs_confirmation
         assert result.pending_tool_calls[0]["tool"] == "propose_task"
         assert result.pending_tool_calls[0]["arguments"]["title"] == "Exfiltrate files"
-
-    async def test_confirmed_tools_alone_forces_planning_without_plan_true(
-        self, container
-    ) -> None:
-        """A confirmation reply resuming a tool the user just approved must reach planning
-        even when the reply text itself ("yes, approve.") is too short/generic to match the
-        needs_plan heuristic on its own -- confirmed_tools is a signal in its own right."""
-        await container.startup()
-        captured: dict[str, object] = {}
-        original_needs_plan = container.kernel._deps.planner.needs_plan
-
-        def spy_needs_plan(message, *, available_tools=(), force=None):  # noqa: ANN001
-            captured["force"] = force
-            return original_needs_plan(message, available_tools=available_tools, force=force)
-
-        container.kernel._deps.planner.needs_plan = spy_needs_plan
-
-        frames = [
-            frame async for frame in container.kernel.stream(
-                _request("yes, approve.", confirmed_tools=("propose_task",))
-            )
-        ]
-
-        assert captured["force"] is True
-        assert frames[-1]["type"] == "done"
 
     async def test_tool_calls_only_generation_does_not_surface_as_empty_success(
         self, container

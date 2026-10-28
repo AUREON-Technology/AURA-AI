@@ -92,6 +92,9 @@ class LiveVoiceSession:
         self._turn_task: asyncio.Task[None] | None = None
         self._playback_rate = self.config.playback_sample_rate_hint
         self._closed = False
+        #: F-04: the approval ids of the calls this session's last turn held for confirmation.
+        #: Confirming resumes exactly those (server-side state); a client cannot name tools.
+        self._pending_approval_ids: tuple[str, ...] = ()
 
     async def start(self) -> None:
         self.state = SessionState.LISTENING
@@ -159,17 +162,34 @@ class LiveVoiceSession:
     async def barge_in(self) -> None:
         await self._handle_barge_in()
 
-    async def confirm(self, tools: Sequence[str]) -> None:
+    async def confirm(self, approval_ids: Sequence[str] | None = None) -> None:
+        """Approve the calls this session's last turn held -- by approval id, never by name.
+
+        ``approval_ids`` narrows the approval to some of them; an id this session was not
+        given is ignored. ``None`` approves every call the held turn asked about (what the
+        spoken prompt listed). The kernel then resumes that exact turn (F-04).
+        """
         if self.state is not SessionState.AWAITING_CONFIRMATION:
             return
-        await self._run_kernel_turn(
-            message="continue",
-            confirmed_tools=tuple(tools),
-        )
+        held = self._pending_approval_ids
+        if approval_ids is not None:
+            wanted = {str(i) for i in approval_ids}
+            held = tuple(i for i in held if i in wanted)
+        self._pending_approval_ids = ()
+        if not held:
+            self.state = SessionState.LISTENING
+            await self._emit(
+                {"type": "error", "error": "confirmation_invalid",
+                 "message": "There is nothing pending to confirm."}
+            )
+            await self._emit_state()
+            return
+        await self._run_kernel_turn(message="continue", approval_ids=held)
 
     async def reject(self) -> None:
         if self.state is not SessionState.AWAITING_CONFIRMATION:
             return
+        self._pending_approval_ids = ()
         self.state = SessionState.LISTENING
         await self._emit_state()
 
@@ -208,7 +228,7 @@ class LiveVoiceSession:
         self,
         *,
         message: str = "",
-        confirmed_tools: tuple[str, ...] = (),
+        approval_ids: tuple[str, ...] = (),
     ) -> None:
         await self._cancel_turn()
         self.state = SessionState.THINKING
@@ -221,7 +241,7 @@ class LiveVoiceSession:
                 session_id=self.session_id,
                 correlation_id=CorrelationId.new(),
                 capabilities=self.capabilities,
-                confirmed_tools=confirmed_tools,
+                approval_ids=approval_ids,
                 max_output_tokens=self.config.max_output_tokens,
                 route="voice_live",
             )
@@ -258,6 +278,12 @@ class LiveVoiceSession:
                 await self._emit(dict(frame))
             elif ftype == "done":
                 needs_confirmation = tuple(frame.get("needs_confirmation") or ())
+                pending_calls = [
+                    p for p in (frame.get("pending_tool_calls") or ()) if isinstance(p, Mapping)
+                ]
+                self._pending_approval_ids = tuple(
+                    str(p["approval_id"]) for p in pending_calls if p.get("approval_id")
+                )
                 full_text = "".join(token_buf)
                 if needs_confirmation:
                     confirm_line = (
@@ -269,6 +295,17 @@ class LiveVoiceSession:
                         {
                             "type": "confirmation",
                             "tools": list(needs_confirmation),
+                            # The held calls with their arguments and approval ids, so the
+                            # client can show what is being approved and approve by id.
+                            "calls": [
+                                {
+                                    "approval_id": p.get("approval_id"),
+                                    "call_id": p.get("call_id"),
+                                    "tool": p.get("tool"),
+                                    "arguments": dict(p.get("arguments") or {}),
+                                }
+                                for p in pending_calls
+                            ],
                             "text": confirm_line,
                         }
                     )

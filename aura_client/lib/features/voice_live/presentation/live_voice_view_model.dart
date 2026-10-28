@@ -12,6 +12,21 @@ import 'package:aura_client/features/chat/data/turn_meta.dart';
 import 'package:aura_client/features/voice_live/data/live_voice_history.dart';
 import 'package:aura_client/features/voice_live/presentation/live_voice_state.dart';
 
+/// Calls the live-voice session is holding for confirmation. Separate from chat's
+/// [pendingConfirmationProvider] (UX-05): voice must neither show nor clear chat's pending calls,
+/// and approving here approves only what this session's server-side turn is holding (F-04).
+class LiveVoicePending extends Notifier<List<PendingToolCall>> {
+  @override
+  List<PendingToolCall> build() => const [];
+
+  void set(List<PendingToolCall> calls) => state = calls;
+
+  void clear() => state = const [];
+}
+
+final liveVoicePendingProvider =
+    NotifierProvider<LiveVoicePending, List<PendingToolCall>>(LiveVoicePending.new);
+
 class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
   LiveVoiceSocket? _socket;
   LiveMicSource? _mic;
@@ -72,16 +87,20 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
   }
 
   Future<void> confirmPending() async {
-    final tools = state.pendingTools;
-    if (tools.isEmpty) return;
-    _socket?.confirm(tools);
-    ref.read(pendingConfirmationProvider.notifier).clear();
+    final calls = ref.read(liveVoicePendingProvider);
+    if (calls.isEmpty && state.pendingTools.isEmpty) return;
+    // By approval id, never by tool name; with none (an older server) the session still
+    // approves only the turn it is itself holding.
+    _socket?.confirm(
+      calls.map((c) => c.approvalId).whereType<String>().toList(),
+    );
+    ref.read(liveVoicePendingProvider.notifier).clear();
     state = state.copyWith(pendingTools: const [], phase: 'thinking');
   }
 
   Future<void> rejectPending() async {
     _socket?.reject();
-    ref.read(pendingConfirmationProvider.notifier).clear();
+    ref.read(liveVoicePendingProvider.notifier).clear();
     state = state.copyWith(pendingTools: const [], phase: 'listening');
   }
 
@@ -125,13 +144,13 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
         }
       case LiveTokenFrame(:final text):
         state = state.copyWith(assistantDraft: state.assistantDraft + text);
-      case LiveConfirmationFrame(:final tools):
-        // The live-voice WS protocol only ever sends tool names, no arguments -- unlike the
-        // SSE chat path's `pending_tool_calls`, this frame predates that and is out of scope
-        // here. Render with empty arguments so the shared confirmation UI still works, just
-        // without per-tool detail for this path.
-        ref.read(pendingConfirmationProvider.notifier).setPending(
-              tools.map((t) => PendingToolCall(tool: t)).toList(),
+      case LiveConfirmationFrame(:final tools, :final calls):
+        // The server sends the held calls with their arguments and approval ids; an older
+        // server sends names only, which still render (without detail).
+        ref.read(liveVoicePendingProvider.notifier).set(
+              calls.isNotEmpty
+                  ? calls.map(PendingToolCall.fromJson).toList()
+                  : tools.map((t) => PendingToolCall(tool: t)).toList(),
             );
         state = state.copyWith(
           pendingTools: tools,

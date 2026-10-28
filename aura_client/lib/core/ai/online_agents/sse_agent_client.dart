@@ -125,8 +125,9 @@ class SseAgentClient {
     bool useKnowledge = true,
     bool useMemory = true,
     bool useTools = true,
-    List<String> confirmedTools = const [],
-    List<String> confirmedCallIds = const [],
+    // Server-issued approval ids (`PendingToolCall.approvalId`) of the held calls the user
+    // approved. The backend then resumes that stored turn and runs only those exact calls (F-04).
+    List<String> approvalIds = const [],
     String? correlationId,
     int maxOutputTokens = 1024,
     double temperature = 0.3,
@@ -153,8 +154,7 @@ class SseAgentClient {
         "use_knowledge": useKnowledge,
         "use_memory": useMemory,
         "use_tools": useTools,
-        "confirmed_tools": confirmedTools,
-        "confirmed_call_ids": confirmedCallIds,
+        "approval_ids": approvalIds,
         "max_output_tokens": maxOutputTokens,
         "temperature": temperature,
       });

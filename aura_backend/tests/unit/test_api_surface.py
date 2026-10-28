@@ -177,6 +177,58 @@ class TestMemoryRoutes:
         response = user_client.delete("/api/v3/memory/never-existed")
         assert response.status_code in (200, 404)
 
+    def test_a_forgotten_memory_is_no_longer_listed(self, user_client) -> None:
+        """F-07: the client now deletes by the id the server returned, so this is the whole
+        server half of "forget"."""
+        memory_id = user_client.post("/api/v3/memory", json={"content": "The user lives in Cairo."}).json()["id"]
+        assert user_client.delete(f"/api/v3/memory/{memory_id}").status_code == 200
+        listed = user_client.get("/api/v3/memory").json()["memories"]
+        assert memory_id not in [m["id"] for m in listed]
+        assert user_client.delete(f"/api/v3/memory/{memory_id}").status_code == 404
+
+
+class TestSessionRoutes:
+    """F-07: deleting a chat must clear the transcript the kernel re-injects into the session."""
+
+    @staticmethod
+    def _seed(container, owner: str, session: str) -> None:
+        import asyncio
+
+        from aura_core.domain.identifiers import SessionId
+
+        asyncio.run(container.episodic.append(
+            SessionId(session), UserId(owner), user_message="my secret", assistant_message="noted",
+        ))
+
+    @staticmethod
+    def _history(container, owner: str, session: str):
+        import asyncio
+
+        from aura_core.domain.identifiers import SessionId
+
+        conversation, summary = asyncio.run(container.episodic.history(SessionId(session), UserId(owner)))
+        return list(conversation.messages), summary
+
+    def test_deleting_a_session_clears_its_history(self, container, user_client) -> None:
+        self._seed(container, "test-user", "default_session")
+        assert self._history(container, "test-user", "default_session")[0]
+
+        response = user_client.delete("/api/v3/sessions/default_session")
+
+        assert response.status_code == 200
+        assert self._history(container, "test-user", "default_session") == ([], "")
+
+    def test_deleting_is_idempotent(self, user_client) -> None:
+        assert user_client.delete("/api/v3/sessions/never-existed").status_code == 200
+
+    def test_a_session_id_names_only_the_callers_own_session(self, container, user_client) -> None:
+        self._seed(container, "someone-else", "default_session")
+        assert user_client.delete("/api/v3/sessions/default_session").status_code == 200
+        assert self._history(container, "someone-else", "default_session")[0]
+
+    def test_an_invalid_session_id_is_a_validation_error(self, user_client) -> None:
+        assert user_client.delete("/api/v3/sessions/bad id!").status_code == 422
+
 
 class TestIntrospection:
     def test_tools_are_listed_with_their_declared_properties(self, user_client) -> None:

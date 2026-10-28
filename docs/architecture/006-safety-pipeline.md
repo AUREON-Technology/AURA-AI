@@ -65,6 +65,16 @@ A turn whose context contains a **quarantined** chunk marks its `ExecutionContex
 user confirmation (`tools/policy.py`). This directly closes the SEC-02 attack: a poisoned document
 cannot cause a Drive ingestion.
 
+A confirmation is bound to the exact call the user saw (audit F-04, CB-04;
+`execution/confirmations.py`). When a turn stops on a held call, the server stores that turn -- its
+plan as executed so far, its taint, owner, session and message -- and issues one opaque
+`approval_id` per held call, recorded with a digest of the tool name and its resolved arguments.
+Approving sends those ids back (`approval_ids`); the server consumes the stored turn once, executes
+**that plan** rather than re-planning, and dispatches a call as confirmed only if its tool and
+arguments match the approved digest, once. Tool names and positional call ids confirm nothing, an
+id from another user, session or turn is refused (409 `confirmation_invalid`), and steps that
+already ran are not run again.
+
 ### 5. Fail-closed by category
 
 Guards that detect **exfiltration** (secrets, system-prompt leakage) fail closed — the response is

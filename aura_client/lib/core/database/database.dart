@@ -234,9 +234,21 @@ class OutboxEntries extends Table {
   DateTimeColumn get clientUpdatedAt => dateTime()();
   DateTimeColumn get createdAt => dateTime()();
 
+  /// Failed pushes of this one mutation. At [kMaxOutboxAttempts] the row is
+  /// *parked*: kept (so nothing is lost and the count is visible) but no
+  /// longer sent, so one bad row can no longer hold up every other change
+  /// (audit F-11). A server `error` marked non-retryable parks it at once.
+  IntColumn get attempts => integer().withDefault(const Constant(0))();
+
+  /// The server's `detail` for the last failure, for diagnosis.
+  TextColumn get lastError => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
+
+/// Pushes of one outbox row before it is parked (see [OutboxEntries.attempts]).
+const int kMaxOutboxAttempts = 5;
 
 /// Small key/value store for sync bookkeeping -- currently just the last
 /// server cursor returned by `GET /api/v3/sync`, so the next pull only
@@ -327,7 +339,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.e);
 
   @override
-  int get schemaVersion => 12;
+  int get schemaVersion => 13;
 
   Future<List<TelemetryLog>> getTelemetry() => select(telemetryLogs).get();
   Future<void> insertTelemetry(TelemetryLogsCompanion log) => into(telemetryLogs).insert(log);
@@ -359,6 +371,24 @@ class AppDatabase extends _$AppDatabase {
         createdAt: now,
       ),
     );
+  }
+
+  /// Outbox rows still being sent, oldest first. Parked rows are left out.
+  Future<List<OutboxEntry>> pendingOutbox() {
+    return (select(outboxEntries)
+          ..where((t) => t.attempts.isSmallerThanValue(kMaxOutboxAttempts))
+          ..orderBy([(t) => OrderingTerm(expression: t.createdAt)]))
+        .get();
+  }
+
+  /// Number of parked outbox rows: changes this device holds that the server
+  /// keeps refusing. Shown by the sync indicator instead of a silent "Synced".
+  Stream<int> watchParkedOutboxCount() {
+    final count = outboxEntries.id.count();
+    final query = selectOnly(outboxEntries)
+      ..addColumns([count])
+      ..where(outboxEntries.attempts.isBiggerOrEqualValue(kMaxOutboxAttempts));
+    return query.map((row) => row.read(count) ?? 0).watchSingle();
   }
 
   Future<String?> getSyncCursor() async {
@@ -501,6 +531,19 @@ class AppDatabase extends _$AppDatabase {
             await m.createTable(desktopTerminalState);
             await m.createTable(desktopLayoutState);
             await m.createTable(desktopAgentState);
+          }
+          if (from < 13) {
+            await m.addColumn(outboxEntries, outboxEntries.attempts);
+            await m.addColumn(outboxEntries, outboxEntries.lastError);
+            // Memory rows queued before F-13 have a decimal hash for an id and
+            // a `content_enc` key: the server can never accept them, and they
+            // would sit parked in the "not synced" count forever. The memory
+            // itself lives in the server's memory store (POST /api/v3/memory);
+            // these were only its encrypted sync copy.
+            await customStatement(
+              "DELETE FROM outbox_entries WHERE target_table = 'memories' "
+              "AND record_id NOT LIKE '________-____-____-____-____________'",
+            );
           }
         },
         beforeOpen: (details) async {

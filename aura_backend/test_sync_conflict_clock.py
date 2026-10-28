@@ -105,10 +105,11 @@ class TestClientUpdatedAtIsNotPayloadWritable(unittest.TestCase):
 
 class TestCursorClockIsUnchanged(unittest.TestCase):
     def test_updated_at_remains_server_set(self):
-        """Cursor pagination (`WHERE updated_at > ?`) must keep using the server clock.
+        """`updated_at` stays server-set: it was the cursor when this fix landed, and a cursor
+        built from client clocks would skip or repeat rows whenever two devices disagreed.
 
-        This is why the fix added a column rather than redefining `updated_at`: a cursor built from
-        client clocks would skip or repeat rows whenever two devices disagreed about the time.
+        The cursor has since moved to `sync_txid`, a database transaction id (audit F-12; see
+        tests/unit/test_sync_cursor.py), because even a server clock cannot order commits.
         """
         column = Task.__table__.columns["updated_at"]
         self.assertIsNotNone(column.server_default)

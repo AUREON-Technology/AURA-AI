@@ -39,7 +39,10 @@ class TestJwtAuth(unittest.TestCase):
     def test_access_token_round_trip(self):
         user_info = {"uid": "abc123", "email": "user@aura.ai", "name": "Test User", "picture": None, "role": "User"}
         token = create_access_token(user_info)
-        decoded = pyjwt.decode(token, jwt_auth._secret(), algorithms=[jwt_auth.ALGORITHM])
+        decoded = pyjwt.decode(
+            token, jwt_auth._secret(), algorithms=[jwt_auth.ALGORITHM],
+            issuer=jwt_auth._issuer(), audience=jwt_auth._audience(),
+        )
         self.assertEqual(decoded["sub"], "abc123")
         self.assertEqual(decoded["email"], "user@aura.ai")
 
