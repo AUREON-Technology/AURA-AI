@@ -55,7 +55,8 @@ if not (settings.jwt_secret or os.environ.get("JWT_SECRET") or os.environ.get("A
     logger.warning("JWT_SECRET is not configured — using a random per-process dev secret. Set JWT_SECRET for stable sessions across restarts.")
 
 
-def _secret() -> str:
+def configured_secret() -> str:
+    """The operator-configured signing secret, or "" when only the dev fallback exists."""
     # Read env at call time so a secret hydrated after Settings() was
     # constructed (AURA_JWT_SECRET from the Docker secret file) is still used
     # instead of the per-process random fallback.
@@ -63,8 +64,12 @@ def _secret() -> str:
         settings.jwt_secret
         or os.environ.get("JWT_SECRET")
         or os.environ.get("AURA_JWT_SECRET")
-        or _dev_secret
+        or ""
     )
+
+
+def _secret() -> str:
+    return configured_secret() or _dev_secret
 
 
 # In-process fallback store for refresh tokens if Redis is unreachable.
