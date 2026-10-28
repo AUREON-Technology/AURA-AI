@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/sync/sync_client.dart';
 
 import '../../../sync/sync_engine.dart';
 import '../chat_view_model.dart';
@@ -15,9 +16,9 @@ class ChatSyncIndicator extends ConsumerWidget {
     final palette = AuraPalette.of(context);
     final syncState = ref.watch(syncEngineProvider);
 
-    late final Color indicatorColor;
-    late final String statusText;
-    late final IconData syncIcon;
+    late Color indicatorColor;
+    late String statusText;
+    late IconData syncIcon;
     final isSyncing = syncState == SyncState.syncing;
 
     switch (syncState) {
@@ -37,6 +38,15 @@ class ChatSyncIndicator extends ConsumerWidget {
         indicatorColor = palette.danger;
         statusText = 'Error';
         syncIcon = Icons.sync_problem;
+    }
+
+    // Changes the server keeps refusing are parked rather than retried
+    // forever; say so instead of a plain "Synced" that would be untrue.
+    final parked = ref.watch(parkedOutboxCountProvider).value ?? 0;
+    if (parked > 0 && syncState == SyncState.synced) {
+      indicatorColor = palette.warning;
+      statusText = parked == 1 ? '1 change not synced' : '$parked changes not synced';
+      syncIcon = Icons.sync_problem;
     }
 
     return Container(
@@ -62,7 +72,7 @@ class ChatSyncIndicator extends ConsumerWidget {
                   child: CircularProgressIndicator(strokeWidth: 1.5, valueColor: AlwaysStoppedAnimation<Color>(palette.warning)),
                 )
               : IconButton(
-                  tooltip: 'Sync Now',
+                  tooltip: parked > 0 ? '$statusText. Sync Now' : 'Sync Now',
                   onPressed: isSyncing
                       ? null
                       : () => ref.read(chatViewModelProvider.notifier).synchronize(),

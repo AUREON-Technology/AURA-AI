@@ -12,6 +12,8 @@ the migration's, not the model's. A throwaway cluster is enough::
 
 What only a real database shows, and why each test is here:
 
+* **F-11** -- constraint violations only surface at flush, inside Postgres; the per-row SAVEPOINT
+  is what keeps one from aborting the batch.
 * **F-12** -- the cursor race needs two real transactions: a push still open while a pull runs.
   The old cursor (application clock, compared with ``updated_at`` = the writer's transaction
   *start*) skipped that row for good; the transaction-id cursor delivers it on the next pull.
@@ -206,3 +208,103 @@ async def test_a_far_future_client_clock_is_clamped(migrated_url, monkeypatch) -
         finally:
             await conn.close()
         assert stored <= datetime.now(timezone.utc) + timedelta(minutes=5, seconds=5)
+
+
+# -- F-11: per-mutation isolation ----------------------------------------------------------------
+
+
+async def test_one_bad_row_does_not_fail_the_batch(migrated_url, monkeypatch) -> None:
+    """[valid, unparseable date, valid] -> [applied, error, applied], and both valid rows land.
+
+    Before, the `ValueError` escaped the loop: HTTP 500 for the batch, nothing committed, and the
+    same 500 on every later sync of that device."""
+    async with _Api(migrated_url, monkeypatch) as api:
+        good_a, bad, good_b = (str(uuid.uuid4()) for _ in range(3))
+        response = await api.push(_task(good_a), _task(bad, due_date="not-a-date"), _task(good_b))
+        assert response.status_code == 200, response.text
+        results = response.json()
+        assert [r["status"] for r in results] == ["applied", "error", "applied"]
+        assert results[1]["id"] == bad and results[1]["retryable"] is False
+        assert sorted(_ids(await api.pull(), "tasks")) == sorted([good_a, good_b])
+
+
+async def test_a_constraint_violation_fails_only_its_own_row(migrated_url, monkeypatch) -> None:
+    """A goal naming a project that does not exist violates the foreign key at flush. It is
+    reported as a retryable error -- the project may simply not have arrived yet."""
+    async with _Api(migrated_url, monkeypatch) as api:
+        before, goal, after = (str(uuid.uuid4()) for _ in range(3))
+        orphan = {
+            "table": "goals", "op": "upsert", "id": goal, "client_updated_at": "2026-01-01T00:00:00Z",
+            "payload": {"title_enc": "gcm:a:b", "project_id": str(uuid.uuid4())},
+        }
+        response = await api.push(_task(before), orphan, _task(after))
+        assert response.status_code == 200, response.text
+        assert [r["status"] for r in response.json()] == ["applied", "error", "applied"]
+        assert response.json()[1]["retryable"] is True
+        assert sorted(_ids(await api.pull(), "tasks")) == sorted([before, after])
+
+
+async def test_a_malformed_envelope_fails_only_its_own_row(migrated_url, monkeypatch) -> None:
+    """Before, the request model validated every mutation up front, so one bad
+    `client_updated_at` was a 422 for the batch."""
+    async with _Api(migrated_url, monkeypatch) as api:
+        good, bad = str(uuid.uuid4()), str(uuid.uuid4())
+        response = await api.push(_task(good), {**_task(bad), "client_updated_at": "yesterday"})
+        assert response.status_code == 200, response.text
+        assert [r["status"] for r in response.json()] == ["applied", "error"]
+        assert _ids(await api.pull(), "tasks") == [good]
+
+
+def _health(record_id: str, *, at: str, water: int) -> dict:
+    return {
+        "table": "health_records", "op": "upsert", "id": record_id, "client_updated_at": at,
+        "payload": {"record_date": "2026-10-26T21:00:00Z", "water_ml": water},
+    }
+
+
+async def test_two_devices_logging_the_same_day_merge_instead_of_failing(migrated_url, monkeypatch) -> None:
+    """Each device mints its own id for "today"; the second insert hit
+    `uq_health_records_user_date` and 500'd the batch forever. Now it merges onto the existing
+    row under last-write-wins and tells the client which id the server kept."""
+    async with _Api(migrated_url, monkeypatch) as api:
+        phone, laptop = str(uuid.uuid4()), str(uuid.uuid4())
+        assert (await api.push(_health(phone, at="2026-10-27T08:00:00Z", water=500))).json()[0]["status"] == "applied"
+
+        response = await api.push(_health(laptop, at="2026-10-27T09:00:00Z", water=300), _task(str(uuid.uuid4())))
+        assert response.status_code == 200, response.text
+        merged, task = response.json()
+        assert merged["status"] == "applied" and task["status"] == "applied"
+        assert merged["server_id"] == phone
+        assert merged["row"]["id"] == phone and merged["row"]["water_ml"] == 300
+
+        rows = (await api.pull())["data"]["health_records"]
+        assert [(r["id"], r["water_ml"]) for r in rows] == [(phone, 300)]
+
+        stale = await api.push(_health(str(uuid.uuid4()), at="2026-10-27T07:00:00Z", water=1))
+        assert stale.json()[0]["status"] == "conflict"
+        assert stale.json()[0]["server_id"] == phone and stale.json()[0]["row"]["water_ml"] == 300
+
+
+async def test_a_conflict_carries_the_server_row(migrated_url, monkeypatch) -> None:
+    """So the client can converge without depending on a cursor the unchanged row is behind."""
+    async with _Api(migrated_url, monkeypatch) as api:
+        task_id = str(uuid.uuid4())
+        await api.push(_task(task_id, at="2026-01-02T00:00:00Z", priority="high"))
+        conflict = (await api.push(_task(task_id, at="2026-01-01T00:00:00Z", priority="low"))).json()[0]
+        assert conflict["status"] == "conflict"
+        assert conflict["row"]["id"] == task_id and conflict["row"]["priority"] == "high"
+
+
+async def test_the_same_row_twice_in_one_batch(migrated_url, monkeypatch) -> None:
+    """The second mutation reads a row the first one flushed in this same request; its
+    server-generated columns must be reloaded, not lazily (and illegally) fetched under asyncio."""
+    async with _Api(migrated_url, monkeypatch) as api:
+        task_id = str(uuid.uuid4())
+        response = await api.push(
+            _task(task_id, at="2026-01-01T00:00:00Z"),
+            _task(task_id, at="2026-01-02T00:00:00Z", priority="high"),
+            _task(task_id, at="2026-01-01T12:00:00Z", priority="low"),
+        )
+        assert response.status_code == 200, response.text
+        assert [r["status"] for r in response.json()] == ["applied", "applied", "conflict"]
+        assert (await api.pull())["data"]["tasks"][0]["priority"] == "high"
