@@ -40,6 +40,9 @@ SHARED_MEMORY_SCOPE = "shared"
 #: Where a record's scope lives: in ``MemoryRecord.metadata`` rather than a new column, so every
 #: memory store (in-memory, Postgres ``aura_memories.metadata`` JSONB) carries it unchanged.
 SCOPE_METADATA_KEY = "memory_scope"
+#: When decay was last applied to ``confidence`` (ISO-8601). Kept in metadata for the same reason
+#: as the scope: no schema change, and every store already round-trips it.
+DECAYED_AT_METADATA_KEY = "decayed_at"
 
 
 def readable_scopes(scope: str | None) -> tuple[str, ...] | None:
@@ -167,6 +170,18 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _parse_instant(value: Any) -> datetime | None:
+    """An ISO-8601 stamp from metadata, or None when absent or unreadable (decay then starts over
+    from the last access, which is the pre-stamp behaviour, rather than failing consolidation)."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
 @dataclass(frozen=True, slots=True)
 class Provenance:
     """Where a memory came from.
@@ -256,13 +271,38 @@ class MemoryRecord:
         than lingering at the bottom of every result set forever.
         """
         moment = now or _utcnow()
-        factor = self.policy.recency_factor(moment - self.last_accessed_at)
+
         # Blend toward the decayed value rather than replacing it: a high-confidence fact
         # should not become worthless purely through disuse.
-        new_confidence = self.confidence * (0.5 + 0.5 * factor)
+        def blend(age: timedelta) -> float:
+            return 0.5 + 0.5 * self.policy.recency_factor(age)
+
+        # Consolidation persists the result and runs daily, so the stored confidence already
+        # carries the decay up to the previous run. Multiplying it by the blend for the *total*
+        # age again would compound -- a 180-day half-life fact was gone in about three weeks.
+        # Apply only the step since the last decay instead: the steps telescope, so after any
+        # number of runs ``confidence == undecayed * blend(total age)``, exactly what one run at
+        # that age gives. Access resets the age, so a decay stamp older than the last access no
+        # longer counts.
+        previous = _parse_instant(self.metadata.get(DECAYED_AT_METADATA_KEY))
+        if previous is not None and moment <= previous:
+            # A clock behind the last run (replica skew, an injected clock) would make the ratio
+            # below exceed 1 and *raise* confidence. Nothing has elapsed; nothing to apply.
+            return self
+        already = (
+            previous - self.last_accessed_at
+            if previous is not None and previous > self.last_accessed_at
+            else timedelta(0)
+        )
+        new_confidence = self.confidence * blend(moment - self.last_accessed_at) / blend(already)
+        metadata = {**self.metadata, DECAYED_AT_METADATA_KEY: moment.isoformat()}
         # Clamped rather than trusted: confidence is a validated field, and a decay step must
         # never be able to produce a value the entity would reject.
-        return replace(self, confidence=round(min(1.0, max(0.0, new_confidence)), 6))
+        return replace(
+            self,
+            confidence=round(min(1.0, max(0.0, new_confidence)), 6),
+            metadata=metadata,
+        )
 
     def retrieval_score(self, similarity: float, *, now: datetime | None = None) -> float:
         """Blend similarity, recency, and reinforcement using this kind's weights."""
