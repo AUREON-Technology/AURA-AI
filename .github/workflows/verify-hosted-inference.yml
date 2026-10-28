@@ -30,6 +30,10 @@ name: Verify Hosted Inference
 #                                  `true` only for a model whose upstream may train on prompts
 #                                  (any `:free` ID); boot refuses such a model without it
 # Plus the VPS_SSH_KEY / VPS_HOST / VPS_USER that Deploy VPS already uses.
+#
+# Or pick `preset: openrouter-free` and set only the secret: the preset supplies the variables
+# deploy/.env.example documents for OpenRouter's free Nemotron 3 Ultra (consent to prompt
+# training included, ADR-030 §3). Any variable that is set still wins over the preset.
 
 on:
   workflow_dispatch:
@@ -56,6 +60,11 @@ on:
         description: "Leave hosted inference on afterwards (until the next deploy or restart)"
         type: boolean
         default: false
+      preset:
+        description: "Slot settings to use where a vars.AURA_HOSTED1_* variable is unset"
+        type: choice
+        options: [none, openrouter-free]
+        default: none
 
 # Shared with Deploy VPS: a deploy recreating the gateway mid-run would void the run, and this
 # run recreating it mid-deploy would undo the deploy's own recreate.
@@ -71,9 +80,18 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 40
+    # Each slot setting: the variable when it is set, else the chosen preset's value, else empty.
     env:
-      HOSTED1_BASE_URL: ${{ vars.AURA_HOSTED1_BASE_URL }}
-      HOSTED1_MODEL: ${{ vars.AURA_HOSTED1_MODEL }}
+      HOSTED1_BASE_URL: ${{ vars.AURA_HOSTED1_BASE_URL || (inputs.preset == 'openrouter-free' && 'https://openrouter.ai/api/v1' || '') }}
+      HOSTED1_MODEL: ${{ vars.AURA_HOSTED1_MODEL || (inputs.preset == 'openrouter-free' && 'nvidia/nemotron-3-ultra-550b-a55b:free' || '') }}
+      HOSTED1_ALLOW_TRAINING: ${{ vars.AURA_HOSTED1_ALLOW_PROMPT_TRAINING || (inputs.preset == 'openrouter-free' && 'true' || '') }}
+      HOSTED1_EXTRA_BODY: ${{ vars.AURA_HOSTED1_EXTRA_BODY || (inputs.preset == 'openrouter-free' && '{"reasoning":{"enabled":false}}' || '') }}
+      HOSTED1_RPM: ${{ vars.AURA_HOSTED1_RPM || (inputs.preset == 'openrouter-free' && '20' || '') }}
+      HOSTED1_RPD: ${{ vars.AURA_HOSTED1_RPD || (inputs.preset == 'openrouter-free' && '50' || '') }}
+      HOSTED1_TPM: ${{ vars.AURA_HOSTED1_TPM }}
+      HOSTED1_TPD: ${{ vars.AURA_HOSTED1_TPD }}
+      HOSTED1_TPS: ${{ vars.AURA_HOSTED1_TOKENS_PER_SECOND }}
+      HOSTED1_CONTEXT: ${{ vars.AURA_HOSTED1_CONTEXT_WINDOW || (inputs.preset == 'openrouter-free' && '32768' || '') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -81,8 +99,8 @@ jobs:
         env:
           PROVIDERS: ${{ inputs.providers }}
         run: |
-          test -n "$HOSTED1_BASE_URL" || { echo "vars.AURA_HOSTED1_BASE_URL is not set" >&2; exit 1; }
-          test -n "$HOSTED1_MODEL" || { echo "vars.AURA_HOSTED1_MODEL is not set" >&2; exit 1; }
+          test -n "$HOSTED1_BASE_URL" || { echo "vars.AURA_HOSTED1_BASE_URL is not set (or pick a preset)" >&2; exit 1; }
+          test -n "$HOSTED1_MODEL" || { echo "vars.AURA_HOSTED1_MODEL is not set (or pick a preset)" >&2; exit 1; }
           case ",$PROVIDERS," in
             *,hosted1,*) ;;
             *) echo "providers must list hosted1 (got '$PROVIDERS')" >&2; exit 1 ;;
@@ -94,7 +112,6 @@ jobs:
         env:
           AURA_PROVIDER_HOSTED1_API_KEY: ${{ secrets.AURA_HOSTED1_API_KEY }}
           PREFIX: ${{ inputs.capture_prefix }}
-          EXTRA_BODY: ${{ vars.AURA_HOSTED1_EXTRA_BODY }}
         run: |
           test -n "$AURA_PROVIDER_HOSTED1_API_KEY" \
             || { echo "capture needs secrets.AURA_HOSTED1_API_KEY" >&2; exit 1; }
@@ -102,7 +119,7 @@ jobs:
           python aura_backend/scripts/capture_provider_wire.py \
             --base-url "$HOSTED1_BASE_URL" --model "$HOSTED1_MODEL" \
             --api-key-env AURA_PROVIDER_HOSTED1_API_KEY \
-            --prefix "$PREFIX" --extra-body "$EXTRA_BODY" --out evidence/provider_wire
+            --prefix "$PREFIX" --extra-body "$HOSTED1_EXTRA_BODY" --out evidence/provider_wire
 
       - name: Install SSH key
         env:
@@ -142,14 +159,6 @@ jobs:
           MAX_429: ${{ inputs.max_429_requests }}
           KEEP_ENABLED: ${{ inputs.keep_enabled }}
           RUN_DIR: /tmp/aura-phase6-${{ github.run_id }}
-          HOSTED1_RPM: ${{ vars.AURA_HOSTED1_RPM }}
-          HOSTED1_RPD: ${{ vars.AURA_HOSTED1_RPD }}
-          HOSTED1_TPM: ${{ vars.AURA_HOSTED1_TPM }}
-          HOSTED1_TPD: ${{ vars.AURA_HOSTED1_TPD }}
-          HOSTED1_TPS: ${{ vars.AURA_HOSTED1_TOKENS_PER_SECOND }}
-          HOSTED1_CONTEXT: ${{ vars.AURA_HOSTED1_CONTEXT_WINDOW }}
-          HOSTED1_EXTRA_BODY: ${{ vars.AURA_HOSTED1_EXTRA_BODY }}
-          HOSTED1_ALLOW_TRAINING: ${{ vars.AURA_HOSTED1_ALLOW_PROMPT_TRAINING }}
         run: |
           test -n "$VPS_HOST" && test -n "$VPS_USER"
           SSH="ssh -i $HOME/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
