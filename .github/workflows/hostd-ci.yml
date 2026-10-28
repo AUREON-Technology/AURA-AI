@@ -18,8 +18,9 @@ on:
 jobs:
   analyze-and-test:
     runs-on: ubuntu-latest
-    # The suite takes well under a minute. A hang -- PosixPtySession's reader isolate blocked in
-    # read() keeps the test process from exiting -- otherwise runs to GitHub's 6-hour job limit.
+    # The suite takes well under a minute. This bounds any hang that keeps the test process from
+    # exiting (PosixPtySession's reader isolate blocked in read() once did, up to GitHub's 6-hour
+    # job limit) instead of letting it run to that limit.
     timeout-minutes: 15
     defaults:
       run:
