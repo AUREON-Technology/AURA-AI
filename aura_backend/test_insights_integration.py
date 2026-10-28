@@ -166,6 +166,50 @@ class TestInsightsIntegration(unittest.TestCase):
         self.assertIn(goal_id, payload["citations"])
         self.assertIn("1 overdue task", payload["explanation"])
 
+    def test_hourly_insights_do_not_delete_the_daily_briefing(self):
+        """Insights regenerate hourly and replace their own stale rows. The replacement query
+        had no ``kind`` filter, so it also deleted the 06:00 daily briefing: the briefing lived
+        at most until the next hourly run."""
+        import asyncio
+
+        from sqlalchemy import select
+
+        from infrastructure.db.base import get_session_factory
+        from infrastructure.db.models import Insight, Task, User
+        from services.daily_briefing import generate_daily_briefing_for_user
+        from services.insights import generate_insights_for_user
+
+        async def scenario():
+            factory = get_session_factory()
+            async with factory() as db:
+                user = User(
+                    id=uuid.uuid4(), auth_subject="briefing-survives",
+                    email="briefing-survives@example.com", display_name="Briefing Survives",
+                )
+                db.add(user)
+                await db.flush()
+                db.add(Task(
+                    id=uuid.uuid4(), user_id=user.id, title_enc="gcm:iv:t",
+                    due_date=datetime.now(timezone.utc) - timedelta(days=1),
+                ))
+                await db.commit()
+
+                briefing = await generate_daily_briefing_for_user(db, user.id)
+                await db.commit()
+                await generate_insights_for_user(db, user.id)
+                await db.commit()
+
+                kinds = (await db.execute(
+                    select(Insight.kind).where(Insight.user_id == user.id)
+                )).scalars().all()
+                survivor = await db.get(Insight, briefing.id)
+                return kinds, survivor
+
+        kinds, survivor = asyncio.run(scenario())
+        self.assertIsNotNone(survivor, "the daily briefing was deleted by the insights run")
+        self.assertIn("daily_briefing", kinds)
+        self.assertIn("overdue_tasks", kinds)
+
 
 if __name__ == "__main__":
     unittest.main()
