@@ -11,6 +11,7 @@ import time
 from typing import Dict, List
 
 from fastapi import Request, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from infrastructure.redis_client import get_redis_client
@@ -82,25 +83,96 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-class PayloadSizeLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, max_bytes: int = 5 * 1024 * 1024):  # 5MB limit
-        super().__init__(app)
-        self.max_bytes = max_bytes
+class _PayloadTooLarge(StarletteHTTPException):
+    """Raised from inside the body stream once it passes the limit.
 
-    async def dispatch(self, request: Request, call_next):
-        if request.method in ("POST", "PUT", "PATCH"):
-            content_length = request.headers.get("content-length")
-            if content_length:
-                try:
-                    size = int(content_length)
-                    if size > self.max_bytes:
-                        return Response(
-                            content="Payload Too Large. Maximum size is 5MB.",
-                            status_code=413
-                        )
-                except ValueError:
-                    return Response(
-                        content="Invalid Content-Length header.",
-                        status_code=400
-                    )
-        return await call_next(request)
+    An ``HTTPException`` on purpose: FastAPI turns any other exception raised while reading a body
+    into a 400 "error parsing the body", which would hide the real reason.
+    """
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(
+            status_code=413,
+            detail=f"Payload Too Large. Maximum size is {limit // (1024 * 1024)}MB.",
+        )
+
+
+class PayloadSizeLimitMiddleware:
+    """Caps request bodies by counting the bytes that actually arrive.
+
+    This used to be a ``BaseHTTPMiddleware`` that only read ``Content-Length``: a body sent with
+    ``Transfer-Encoding: chunked`` (no length header) was never measured at all. ``Content-Length``
+    is still checked first, so an honest oversized request is refused before any of it is read;
+    the receive stream is then counted, so a missing or understated header cannot get past.
+
+    ``route_limits`` maps a path prefix to its own ceiling, for the routes whose real payloads are
+    larger than the default (document upload is bounded by ``knowledge.max_document_bytes``, which
+    a single global 5MB cap used to undercut).
+    """
+
+    def __init__(
+        self,
+        app,
+        max_bytes: int = 5 * 1024 * 1024,
+        route_limits: Dict[str, int] | None = None,
+    ) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+        self.route_limits = dict(route_limits or {})
+
+    def _limit_for(self, path: str) -> int:
+        for prefix, limit in self.route_limits.items():
+            if path.startswith(prefix):
+                return limit
+        return self.max_bytes
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http" or scope.get("method") not in ("POST", "PUT", "PATCH"):
+            await self.app(scope, receive, send)
+            return
+
+        limit = self._limit_for(scope.get("path", ""))
+        declared = dict(scope.get("headers") or []).get(b"content-length")
+        if declared is not None:
+            try:
+                size = int(declared)
+            except ValueError:
+                await Response(content="Invalid Content-Length header.", status_code=400)(
+                    scope, receive, send
+                )
+                return
+            if size > limit:
+                await self._too_large(limit)(scope, receive, send)
+                return
+
+        received = 0
+        response_started = False
+
+        async def counted_receive():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    raise _PayloadTooLarge(limit)
+            return message
+
+        async def tracked_send(message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, counted_receive, tracked_send)
+        except _PayloadTooLarge:
+            # Reached only when nothing inside the app turned it into a response first.
+            if not response_started:
+                await self._too_large(limit)(scope, receive, send)
+
+    @staticmethod
+    def _too_large(limit: int) -> Response:
+        return Response(
+            content=f"Payload Too Large. Maximum size is {limit // (1024 * 1024)}MB.",
+            status_code=413,
+        )
