@@ -85,9 +85,34 @@ def _coerce_value(model, key: str, value: Any) -> Any:
 # `client_updated_at` is on this list even though it *is* a client value: it may
 # only arrive through the mutation envelope, which is validated, never through
 # the free-form payload, which is not.
+#
+# `sync_txid` is the pull cursor's column; a payload that set it low would hide
+# the row from every other device's next pull.
 _SERVER_OWNED_COLUMNS = frozenset({
-    "id", "user_id", "created_at", "updated_at", "client_updated_at", "deleted_at",
+    "id", "user_id", "created_at", "updated_at", "client_updated_at", "deleted_at", "sync_txid",
 })
+
+
+def payload_contract() -> dict[str, dict[str, list[str]]]:
+    """What a push payload may and must carry, per table: the client/server contract.
+
+    `columns` are the keys the server writes (any other key is ignored); `required` are the
+    columns a new row cannot be inserted without. Checked into the client as
+    `aura_client/test/fixtures/sync_payload_contract.json` and asserted on both sides, because
+    the two drifted once already: the client sent memories as `content_enc` to a `fact_enc NOT
+    NULL` column, so every saved memory was a row the server could never accept (F-13).
+    """
+    contract: dict[str, dict[str, list[str]]] = {}
+    for table, model in sorted(SYNCABLE_MODELS.items()):
+        writable = [c for c in model.__table__.columns if c.name not in _SERVER_OWNED_COLUMNS]
+        contract[table] = {
+            "columns": sorted(c.name for c in writable),
+            "required": sorted(
+                c.name for c in writable
+                if not c.nullable and c.default is None and c.server_default is None
+            ),
+        }
+    return contract
 
 
 def conflict_comparand(existing) -> datetime:

@@ -78,7 +78,10 @@ class SyncPayloads {
         "progress_pct": g.progressPct,
       };
 
-  static Map<String, dynamic> userMemory(String id, String fact) => {
-        "content_enc": EncryptionService.encryptText(fact),
+  /// Postgres `memories.fact_enc` (NOT NULL). This was sent as `content_enc`,
+  /// which the server ignores as an unknown key, so no memory row could ever
+  /// be inserted (audit F-13). Pinned by `test/sync_payload_contract_test.dart`.
+  static Map<String, dynamic> userMemory(String fact) => {
+        "fact_enc": EncryptionService.encryptText(fact),
       };
 }

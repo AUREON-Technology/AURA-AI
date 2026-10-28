@@ -8,8 +8,8 @@ import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/security/device_validation_service.dart';
-import 'package:aura_client/core/security/deterministic_id.dart';
 import 'package:aura_client/core/sync/sync_payloads.dart';
+import 'package:uuid/uuid.dart';
 
 class MemoryItem {
   final String id;
@@ -33,6 +33,7 @@ class MemoryRepository {
   final AppDatabase _db;
   final Ref _ref;
   final http.Client? _http;
+  static const _uuid = Uuid();
   MemoryRepository(this._db, this._ref, {http.Client? httpClient}) : _http = httpClient;
 
   String get _backendUrl => '${_ref.read(backendUrlProvider)}/api/v3/memory';
@@ -168,7 +169,12 @@ class MemoryRepository {
     String kind = 'semantic',
     String? subject,
   }) async {
-    final id = getDeterministicId(fact);
+    // A UUID: the sync table's primary key is one, and the decimal
+    // `getDeterministicId` hash this used to be was rejected by every push
+    // ("id must be a UUID"), leaving the row in the outbox forever (F-13).
+    // Random rather than derived from the text: two users saving the same
+    // sentence must not collide on one global primary key.
+    final id = _uuid.v4();
     await _db.into(_db.userMemories).insertOnConflictUpdate(
       UserMemoriesCompanion.insert(
         id: id,
@@ -182,7 +188,7 @@ class MemoryRepository {
       table: 'memories',
       recordId: id,
       operation: 'upsert',
-      payload: SyncPayloads.userMemory(id, fact),
+      payload: SyncPayloads.userMemory(fact),
     );
 
     try {

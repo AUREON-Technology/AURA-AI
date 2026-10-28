@@ -535,6 +535,15 @@ class AppDatabase extends _$AppDatabase {
           if (from < 13) {
             await m.addColumn(outboxEntries, outboxEntries.attempts);
             await m.addColumn(outboxEntries, outboxEntries.lastError);
+            // Memory rows queued before F-13 have a decimal hash for an id and
+            // a `content_enc` key: the server can never accept them, and they
+            // would sit parked in the "not synced" count forever. The memory
+            // itself lives in the server's memory store (POST /api/v3/memory);
+            // these were only its encrypted sync copy.
+            await customStatement(
+              "DELETE FROM outbox_entries WHERE target_table = 'memories' "
+              "AND record_id NOT LIKE '________-____-____-____-____________'",
+            );
           }
         },
         beforeOpen: (details) async {

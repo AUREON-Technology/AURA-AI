@@ -17,6 +17,8 @@ What only a real database shows, and why each test is here:
 * **F-12** -- the cursor race needs two real transactions: a push still open while a pull runs.
   The old cursor (application clock, compared with ``updated_at`` = the writer's transaction
   *start*) skipped that row for good; the transaction-id cursor delivers it on the next pull.
+* **F-13** -- `fact_enc NOT NULL` is enforced by Postgres, not by the model; only a real insert
+  shows the client's memory payload is accepted.
 """
 
 from __future__ import annotations
@@ -308,3 +310,35 @@ async def test_the_same_row_twice_in_one_batch(migrated_url, monkeypatch) -> Non
         assert response.status_code == 200, response.text
         assert [r["status"] for r in response.json()] == ["applied", "applied", "conflict"]
         assert (await api.pull())["data"]["tasks"][0]["priority"] == "high"
+
+
+# -- F-13: the memory payload --------------------------------------------------------------------
+
+
+async def test_a_memory_as_the_client_now_sends_it_is_applied(migrated_url, monkeypatch) -> None:
+    """`SyncPayloads.userMemory` under a UUID id: `{"fact_enc": ...}`."""
+    async with _Api(migrated_url, monkeypatch) as api:
+        memory_id = str(uuid.uuid4())
+        mutation = {
+            "table": "memories", "op": "upsert", "id": memory_id, "client_updated_at": "2026-10-28T09:00:00Z",
+            "payload": {"fact_enc": "gcm:iv:ct"},
+        }
+        assert (await api.push(mutation)).json()[0]["status"] == "applied"
+        rows = (await api.pull())["data"]["memories"]
+        assert [(r["id"], r["fact_enc"]) for r in rows] == [(memory_id, "gcm:iv:ct")]
+
+
+async def test_the_old_memory_payload_fails_only_itself(migrated_url, monkeypatch) -> None:
+    """The pre-F-13 shape (`content_enc`, a key the server ignores) inserts NULL into
+    `fact_enc NOT NULL`. The audit noted this would 500 every push the moment the id was fixed
+    without the key; with per-row isolation it is one error row."""
+    async with _Api(migrated_url, monkeypatch) as api:
+        good = str(uuid.uuid4())
+        old = {
+            "table": "memories", "op": "upsert", "id": str(uuid.uuid4()), "client_updated_at": "2026-10-28T09:00:00Z",
+            "payload": {"content_enc": "gcm:iv:ct"},
+        }
+        response = await api.push(old, _task(good))
+        assert response.status_code == 200, response.text
+        assert [r["status"] for r in response.json()] == ["error", "applied"]
+        assert _ids(await api.pull(), "tasks") == [good]
