@@ -60,9 +60,20 @@ final RegExp _shellMetacharacters = RegExp(r'[;&|`$<>\n]');
 /// Commands safe to run without a trusted workspace: read-only inspection, the kind a linter or
 /// CI dry-run would do. Matched as a prefix of the command, which is only safe because
 /// [_shellMetacharacters] has already ruled out chaining/piping/redirection/substitution by the
-/// time these are checked -- see that field's doc for why the ordering matters.
+/// time these are checked -- see that field's doc for why the ordering matters. A match is also
+/// necessary but not sufficient: [_escapesReadOnlyTier] then refuses the argument shapes that
+/// turn an inspection verb into a write or a read outside the workspace.
+///
+/// Verbs that *run repository-supplied code* are absent on purpose, however read-only they sound:
+/// `npm test` runs the repo's `scripts.test`, `pytest --collect-only` imports `conftest.py` and
+/// every test module, and `rg --pre <cmd>` runs `<cmd>` on each file it searches. In an untrusted
+/// workspace -- a freshly cloned repo is exactly that -- those are arbitrary code execution.
 final List<RegExp> readOnlyAllowlistPatterns = [
-  RegExp(r'^git\s+(status|diff|log|show|branch|remote|blame)\b'),
+  RegExp(r'^git\s+(status|diff|log|show|blame)\b'),
+  // `git branch <name>` creates and `-d/-m/-c` delete, rename and copy; `git remote add/remove`
+  // rewrites `.git/config`. Only the listing forms are inspection.
+  RegExp(r'^git\s+branch(\s+(-a|-r|-v|-vv|--all|--remotes|--list|--show-current))*\s*$'),
+  RegExp(r'^git\s+remote(\s+(-v|--verbose))?\s*$'),
   // `find` is deliberately excluded despite being conceptually "read-only": `-delete`, `-exec`,
   // and `-fprintf` are all mutating actions expressible without any of the blocked shell
   // metacharacters above (e.g. `find . -delete`), so a bare `^find\b` prefix would not actually
@@ -71,11 +82,48 @@ final List<RegExp> readOnlyAllowlistPatterns = [
   // *runs* `<command>` -- it is a general-purpose "execute anything" primitive wearing an
   // inspection-tool name, and allowlisting it would let any refused command through by prefixing
   // it with `env `.
-  RegExp(r'^(ls|pwd|cat|head|tail|wc|grep|rg|file|which)\b'),
-  RegExp(r'^(pytest|python -m pytest)\s.*--collect-only\b'),
-  RegExp(r'^npm\s+(ls|list|outdated|test)\b'),
-  RegExp(r'^(node|python3?|dart|flutter)\s+--version\b'),
+  RegExp(r'^(ls|pwd|cat|head|tail|wc|grep|file|which)\b'),
+  RegExp(r'^npm\s+(ls|list|outdated)\b'),
+  RegExp(r'^(node|python3?|dart|flutter)\s+--version\s*$'),
 ];
+
+/// git flags that make an otherwise read-only verb write a file (`--output`), run a configured
+/// program (`--ext-diff`, `--textconv`), or read paths outside the repository (`--no-index`).
+const List<String> _gitEscapeFlags = ['--output', '--ext-diff', '--textconv', '--no-index'];
+
+/// Whether an allowlisted command uses an argument that takes it out of the read-only tier: one of
+/// [_gitEscapeFlags], or a path that leaves the workspace (absolute, home-relative, a drive
+/// letter, or a `..` segment) -- `cat ~/.ssh/id_rsa` or `grep -f /etc/x` would otherwise read
+/// anything the user can, including this daemon's own control token.
+///
+/// Containment is checked on the *spelling* of each argument, including the value of a
+/// `--flag=value` or a short flag with an attached value (`-f/etc/x`); it cannot see through a
+/// symlink inside the workspace that points out of it. A command this refuses is not denied -- it
+/// falls through to the approval tier, so a legitimate `grep -r "/api" .` still runs once a human
+/// approves it.
+bool _escapesReadOnlyTier(String command) {
+  final tokens = command.split(RegExp(r'\s+')).map((t) => t.replaceAll(RegExp(r'''['"]'''), ''));
+  final isGit = command.startsWith('git');
+  for (final token in tokens) {
+    if (isGit && _gitEscapeFlags.any((f) => token == f || token.startsWith('$f='))) {
+      return true;
+    }
+    final candidates = <String>[token];
+    final eq = token.indexOf('=');
+    if (token.startsWith('-') && eq > 0) candidates.add(token.substring(eq + 1));
+    if (token.startsWith('-') && !token.startsWith('--') && token.length > 2) {
+      candidates.add(token.substring(2));
+    }
+    if (candidates.any(_leavesWorkspace)) return true;
+  }
+  return false;
+}
+
+bool _leavesWorkspace(String path) {
+  if (path.startsWith('/') || path.startsWith('~') || path.startsWith(r'\')) return true;
+  if (RegExp(r'^[A-Za-z]:').hasMatch(path)) return true;
+  return path.split(RegExp(r'[/\\]')).contains('..');
+}
 
 /// `needsApproval` is D5's interactive consent tier (`docs/architecture/015-desktop-ide.md`):
 /// a command that is neither hard-denied nor allowlisted, in an untrusted workspace, is queued
@@ -121,7 +169,7 @@ CommandVerdict evaluateCommand(
     );
   }
   for (final pattern in readOnlyAllowlistPatterns) {
-    if (pattern.hasMatch(trimmed)) {
+    if (pattern.hasMatch(trimmed) && !_escapesReadOnlyTier(trimmed)) {
       return const CommandVerdict(
         CommandDecision.allow,
         'read-only command allowlisted for untrusted workspaces',

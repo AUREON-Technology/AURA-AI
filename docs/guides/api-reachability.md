@@ -81,7 +81,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/auth/desktop/pair/start` | — | — | `aura_hostd/lib/src/pairing_client.dart:85`, `aura_hostd/test/pairing_client_test.dart:64` (+3) | called |  |
 | POST | `/api/v3/auth/nonce` | `aura_client/lib/core/security/device_validation_service.dart:139` | — | — | called |  |
 | POST | `/api/v3/auth/refresh` | `aura_client/lib/core/auth/token_manager.dart:89`, `aura_client/lib/core/auth/token_manager.dart:124` (+1) | `aura_admin/app/api/v3/[...path]/route.ts:7` | — | called |  |
-| POST | `/api/v3/auth/revoke` | — | `aura_admin/app/api/auth/logout/route.ts:8` | — | called |  |
+| POST | `/api/v3/auth/revoke` | `aura_client/lib/core/auth/token_manager.dart:318` | `aura_admin/app/api/auth/logout/route.ts:8` | — | called |  |
 | POST | `/api/v3/auth/token` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:63`, `aura_client/lib/core/auth/token_manager.dart:180` (+3) | — | — | called |  |
 | POST | `/api/v3/auth/web/token` | `aura_client/lib/core/auth/token_manager.dart:211`, `aura_client/lib/core/auth/token_manager.dart:217` | `aura_admin/app/api/auth/login/route.ts:10` | — | called |  |
 | POST | `/api/v3/automation/analyze-email` | `aura_client/lib/features/automations/data/automation_repository.dart:218` | — | — | called |  |

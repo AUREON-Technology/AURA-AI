@@ -8,6 +8,8 @@ correcting the newer fact.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 
 from aura_core.adapters import InMemoryMemoryStore, InMemoryVectorStore
@@ -207,6 +209,31 @@ class TestConsolidation:
 
         assert outcome.decayed >= 1
         assert (await engine._store.get(record.id)).confidence < record.confidence
+
+    async def test_daily_consolidation_decays_like_a_single_run(self, engine, user) -> None:
+        """Consolidation runs every night and persists what it decays. Re-applying the decay for
+        the *total* age on each run compounded it: a semantic fact with a 180-day half-life fell
+        below the floor and was deleted after about three weeks of disuse."""
+        record = await engine.remember(
+            owner_id=user, content="The user's sister is called Mona.", subject="sister",
+            source="t1",
+        )
+        for _ in range(30):
+            engine._clock.advance(86_400)
+            await engine.consolidate(user)
+
+        survivor = await engine._store.get(record.id)
+        assert survivor is not None, "a month of disuse must not delete a 180-day fact"
+        single_run = record.decayed(now=record.last_accessed_at + timedelta(days=30))
+        assert survivor.confidence == pytest.approx(single_run.confidence, abs=1e-5)
+
+    async def test_a_clock_behind_the_last_decay_never_raises_confidence(self, engine, user) -> None:
+        record = await engine.remember(
+            owner_id=user, content="The user drives a blue car.", subject="car", source="t1"
+        )
+        decayed = record.decayed(now=record.last_accessed_at + timedelta(days=20))
+        earlier = decayed.decayed(now=record.last_accessed_at + timedelta(days=10))
+        assert earlier.confidence == decayed.confidence
 
     async def test_records_below_the_confidence_floor_expire(self, engine, user) -> None:
         record = await engine.remember(

@@ -7,7 +7,9 @@ import 'package:aura_client/core/auth/desktop_oauth_client.dart';
 import 'package:aura_client/core/auth/platform_login_support.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/config/config.dart';
+import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/security/aura_secure_storage.dart';
+import 'package:aura_client/core/sync/sync_client.dart';
 
 /// Reads the display-only claims (name/email/picture) out of a Google ID token's payload without
 /// verifying its signature -- safe here because it's only for populating [UserProfile] in the
@@ -286,16 +288,32 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       await _googleSignIn.signOut();
     } catch (_) {} // Might fail if never logged into google
     _currentAccount = null;
+
+    // Last chance to upload offline edits before they are wiped below.
+    // Best effort and bounded: signing out must work offline too, and an
+    // edit that cannot be pushed now is lost either way once the local
+    // data goes.
+    try {
+      await ref.read(syncClientProvider).push().timeout(const Duration(seconds: 20));
+    } catch (e) {
+      debugPrint("[Auth] final push before sign-out failed (continuing): $e");
+    }
+
+    // Revokes the refresh token server-side, then clears TokenManager's
+    // in-memory access/refresh token cache — without the latter, a
+    // still-valid (up to 15min) cached v2 access token from the outgoing
+    // session could authenticate v2 API calls as the wrong user if a
+    // different account signs in before the app restarts.
+    await ref.read(tokenManagerProvider).clear(revoke: true);
+
+    // The local DB is not keyed by user, so the next account to sign in
+    // would otherwise inherit this one's data, unsynced outbox and cursor.
+    await ref.read(databaseProvider).wipeUserData();
+
     await _storage.deleteAll();
     // Shared storage also drops the DB encryption-key copy. Tokens must be
     // re-issued on login; EncryptionService restores the Drift key from
     // `.aura_db_key` on the next init() so encrypted rows stay readable.
-
-    // Clears TokenManager's in-memory access/refresh token cache — without
-    // this, a still-valid (up to 15min) cached v2 access token from the
-    // outgoing session could authenticate v2 API calls as the wrong user
-    // if a different account signs in before the app restarts.
-    await ref.read(tokenManagerProvider).clear();
     state = const AsyncValue.data(null);
   }
 

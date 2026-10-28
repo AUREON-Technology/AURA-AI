@@ -56,8 +56,24 @@ class ConfigStore {
 
   void save(DaemonConfig config) {
     _file.parent.createSync(recursive: true);
-    _file.writeAsStringSync(jsonEncode(config.toJson()));
+    writePrivateFile(_file, jsonEncode(config.toJson()));
   }
+}
+
+/// Writes [content] to [file] readable by the owner only. `config.json` holds the 30-day device
+/// token and `control.json` the control server's bearer token, and the default umask would leave
+/// both world-readable. The mode is set on the empty file *before* the secret is written, so there
+/// is no window in which the secret sits in a readable file. Windows has no POSIX mode bits; the
+/// per-user `%APPDATA%` ACL is what protects the file there.
+void writePrivateFile(File file, String content) {
+  if (!Platform.isWindows) {
+    file.writeAsStringSync('');
+    final result = Process.runSync('chmod', ['600', file.path]);
+    if (result.exitCode != 0) {
+      throw FileSystemException('could not restrict permissions: ${result.stderr}', file.path);
+    }
+  }
+  file.writeAsStringSync(content);
 }
 
 /// The daemon's per-user config/state directory: `$XDG_CONFIG_HOME/aura_hostd` on Linux,
