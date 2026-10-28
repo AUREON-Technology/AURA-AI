@@ -1,6 +1,6 @@
 # Desktop app status
 
-**As of 2026-10-28, `main` at `dc87beb`.** Covers the Flutter client `aura_client/` on
+**As of 2026-10-28 (evening), `main` at `2337577`.** Covers the Flutter client `aura_client/` on
 Windows, Linux and macOS, plus `aura_hostd/` (the local daemon that lets the Engineer agent work
 on the user's real files and terminal, ADR-011). Evidence scale and refresh steps:
 [README.md](README.md).
@@ -14,6 +14,20 @@ On 2026-10-28, desktop code ran in CI for the first time since 2026-09-11:
 - **Linux:** the client analyzes clean, passes 381 tests and builds a release bundle.
 - **Windows:** red.
 - **hostd on Linux:** passes 220 tests, then hangs.
+
+Since then #185 merged fixes for all three red jobs (Windows 8.3-path canonicalization
+`bbc028a`; hostd drive-root denylist and Windows failures `130b58f`; POSIX PTY reader isolate
+stopped on dispose `4b1968e`; `rpc_client` connect wait `e512b4e`). **None of them has run in CI**:
+Actions stopped assigning runners around 19:50 UTC (CB-44), so the CI rows below still describe
+`dc87beb`.
+
+Open PRs #78 (Linux/Windows loopback login) and #88 (D8 per-task worktrees) were closed as
+superseded: `main` already carries both, reworked (Unit 7 `desktop_oauth_client_io.dart`; D8/D9
+`isolated_task_registry.dart` with the Agent Review panel, which keeps the worktree on disk as the
+durable record instead of #88's backend `HostTaskStore` + `reopen_task` RPC).
+
+Desktop sign-in on the live backend is likely failing until the production database is migrated
+to `0015` (CB-43, see the Backend file).
 
 Nothing is packaged, signed or released for any desktop platform, and macOS is not built in CI at
 all.

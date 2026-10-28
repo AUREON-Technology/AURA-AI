@@ -1,6 +1,6 @@
 # Web console status
 
-**As of 2026-10-28, `main` at `dc87beb`.** Covers `aura_admin/`, the Next.js operator console
+**As of 2026-10-28 (evening), `main` at `2337577`.** Covers `aura_admin/`, the Next.js operator console
 (Next 15.5.27) served under `/console`. The Flutter client's web target (`aura_client/web/`) is a
 different thing: it is built locally but deployed nowhere. Evidence scale and refresh steps:
 [README.md](README.md).
@@ -27,7 +27,7 @@ and both nginx server blocks. None of it is proven:
 | Providers: ADR-030 ceiling, `third_party`, `may_train_on_prompts` | OPEN | `router.stats()` emits them, but `src/lib/types.ts` `ProviderRow` lacks the fields |
 | Prompts (pin version) | BUILT; e2e spec | `prompts/page.tsx` |
 | Approvals (any kind, including `blueprint_deployment`) | BUILT; e2e spec | `approvals/page.tsx`; `admin.py` |
-| Access (operators, roles, session revoke, GDPR forget, last-SuperAdmin guard) | BUILT; e2e spec; backend TESTED | `access/page.tsx`; `tests/unit/test_admin_platform.py` |
+| Access (operators, roles, session revoke, GDPR forget, last-SuperAdmin guard) | BUILT; e2e spec; backend TESTED at `dc87beb` | `access/page.tsx`; `tests/unit/test_admin_platform.py`. #188 (`3e4e0f5`, `0e27c51`): grant/remove roles, shows who granted each, and assignments now take effect in role resolution — needs migration `0015`, which production lacks (CB-43); not CI-run (CB-44) |
 | Knowledge, Models, Learning, Audit | BUILT; no spec | `knowledge/`, `models/`, `learning/`, `audit/` pages |
 | Track AP Project Factory (connectors, twin, blueprint evaluate / approve / deploy / rollback) | OPEN (not started) | AP9 / GAP-058 / CB-39. Backend routes exist (`admin_adaptation.py`) with no console caller. |
 | Service keys, scorecard, CAG pin | OPEN | Backend routes exist with no console caller |
