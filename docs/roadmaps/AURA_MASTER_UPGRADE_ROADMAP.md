@@ -500,15 +500,15 @@ M3 + M5 + M6 + M7 + M9 + M10 (+ M8.13) ─► M15 Certification ─► canary �
 
 | ID | Name | Priority | Depends on | Complexity | Risk | Current status | Primary components | Exit (short) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| M0 | Evidence pipeline & governance | Critical | — | Low | Low (account action) | Not started (blocked on account) | `.github/`, repo settings | Green CI + protection |
-| M1 | Security & correctness blockers | Critical | M0 (exit) | Medium | Medium | Not started (SEC-01/02/03 new) | tools/policy, execution, client chat, hostd, compose | All fixes + failing-first tests green |
-| M2 | Production reconciliation | Critical | M0, M1 | Medium | High (first deploy after 25 merges) | Not started | deploy/, VPS | Live SHA == main |
+| M0 | Evidence pipeline & governance | Critical | — | Low | Low (account action) | Regressed 2026-10-28: runners restored 10-01 (GAP-043), lost again ~19:50 UTC 10-28 (CB-44); no protection | `.github/`, repo settings | Green CI + protection |
+| M1 | Security & correctness blockers | Critical | M0 (exit) | Medium | Medium | Mostly fixed in code, not CI-run: F-01 (daemon), F-02, F-03, F-04, F-05, F-10 merged; F-01b open | tools/policy, execution, client chat, hostd, compose | All fixes + failing-first tests green |
+| M2 | Production reconciliation | Critical | M0, M1 | Medium | High (first deploy after 25 merges) | Railway live SHA == `main` (`2337577`) but DB schema `0013` < `0015` (CB-43); VPS dead (CB-03) | deploy/, VPS, Railway | Live SHA == main and `/health/ready` healthy |
 | M3 | Observability foundation | High | M0, M2 | Medium | Low | Partial (turn metrics) | observability/, deploy/prometheus | All SLOs measurable |
 | M4 | Inference platform | Critical | M1, M3, ADR-017 | High | High | Built (config), unproven | llm/, deploy/spaces, compose gpu | Pinned GPU pool in prod + failure report |
 | M5 | Capacity evidence | Critical | M3, M4 | Medium | Medium | Harness built | tests/load | 50-user SLO report |
 | M6 | Data protection & DR | High | M1, M2 | High | High (schema) | Partial (built, not deployed) | adapters, alembic, backup | Offsite drill + no runtime DDL |
 | M7 | Evaluation gates | High | M0, M4 | Medium | Medium | Scripted gates only | evaluation/ | EV baselines gated |
-| M8 | Desktop IDE productization | High (product) | M0, M1 | High | Medium | Implemented, uncompiled since 09-13 | aura_client/desktop, aura_hostd | M8.13 golden path |
+| M8 | Desktop IDE productization | High (product) | M0, M1 | High | Medium | Linux built + 381 tests at `dc87beb`; Windows/hostd fixes merged, not CI-run | aura_client/desktop, aura_hostd | M8.13 golden path |
 | M9 | Engineer execution proof | Medium | M1, M2, M8.7 | Medium | Medium | Built, unproven | sandbox, hostd | Two reports |
 | M10 | Knowledge & memory quality | High | M7, M4, M6 | Medium | Medium | Tested (hash embedder) | rag/, knowledge/, memory/ | RAG targets met |
 | M11 | Agents, proactivity, Personal OS | Medium | M1, M7 | Medium | Medium | Tested (echo) | agents/, triggers/, personal-OS | ADRs + measured success |
@@ -523,6 +523,47 @@ M5 and M6 run beside it and must finish before M15).
 cutover).
 **Parallel lanes after M1:** Desktop (M8) · Client/admin (M14) · Data protection (M6, after M2) ·
 Observability (M3).
+
+## 20a. Next phases — plan as of 2026-10-28 (`main` at `2337577`)
+
+The table above is the long-run shape; this is the order of work from today's actual state
+(`docs/status/`). Each step names its exit evidence; none is "done" without it.
+
+**Phase N0 — stop the bleeding (owner actions, today)**
+1. CB-43: migrate the Railway production database to `0015`; find why `preDeployCommand` did not.
+   *Exit:* `/health/ready` schema revision == expected; a real sign-in succeeds.
+2. CB-44: restore GitHub Actions runners. *Exit:* Backend, Client and Host Daemon CI execute on
+   `main`; their results replace the "not CI-run" caveats in `docs/status/`.
+3. CB-44: gate Railway on CI (disable its GitHub auto-deploy, or "Wait for CI").
+   *Exit:* a Railway deployment triggered by `control-plane-deploy.yml`.
+
+**Phase N1 — close M0 (governance)**
+4. Branch protection with required checks (CB-02 / GAP-005). *Exit:* a failing PR shown blocked.
+5. Decide the VPS's future (CB-03): retire it, or verify the host-key change and redeploy.
+   Update CLAUDE.md's deploy section to match whichever target is production.
+
+**Phase N2 — finish M1 (security & correctness)**
+6. F-01b: routing-aware `workspace_local` taint exemption; block writes to `.git/hooks`.
+7. F-02 remainder: revoke sessions on demotion. 8. F-20, F-21, F-06, F-22.
+   *Exit:* failing-first tests for each, green in CI.
+
+**Phase N3 — evidence on the live target (M2/M3/M4)**
+9. ADR-030 Phase 6: `AURA_HOSTED1_API_KEY` secret → Verify Hosted Inference (`openrouter-free`
+   preset) → committed report (GAP-064).
+10. HTTP request metrics and widened buckets (CB-15 / GAP-036), then the M5 load matrix (GAP-041).
+11. Bring `hfspace` back or remove it from `AURA_LLM_PROVIDERS` so readiness reflects reality.
+
+**Phase N4 — product lanes (parallel once N1 holds)**
+- **M8 Desktop:** make `build-windows` gating; hostd supervisor/restart (CB-26); packaging and
+  signing (M8.10); D9 Agent Review golden path recorded (M8.13).
+- **M14 Client/admin:** serve `/console` on Railway; first Admin CI run; mobile real-device report;
+  iOS pipeline.
+- **M9 Engineer proof:** `verify-engineer-workspaces.sh` report (needs a Docker host — the VPS or
+  a replacement).
+- **Track AP:** stays at BUILT until N1; then AP9 console and the Flame Link 1 run (GAP-063).
+
+**Then** M6 (Alembic baseline for the 16 runtime-DDL tables, offsite restore drill), M7
+(real-model eval gates), M10–M13, and M15 certification, in the order of §20.
 
 ## 21. Definition of Done
 

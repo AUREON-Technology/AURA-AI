@@ -43,12 +43,20 @@ split within one repo rather than two physically separate ones. Both targets sta
 side until a deliberate cutover; neither workflow redeploys the other.
 
 **Current status lives in `docs/status/`**: one file each for the backend, desktop app, mobile
-app and web console, plus an index. Read it before assuming what is deployed or green. Two facts
-from it change how the paragraph above reads (checked live on 2026-10-28):
+app and web console, plus an index. Read it before assuming what is deployed or green. These facts
+from it change how the paragraph above reads (checked live on 2026-10-28, `main` at `2337577`):
 
 - `aureon-ai.tech` is now served by **Railway** (`server: railway-hikari`), running current
   `main`, with providers `hosted1` (healthy) and `hfspace` (503), and no Ollama.
   `dev.aureon-ai.tech` no longer resolves.
+- **Its database is behind the code** (CB-43): `/health/ready` reports schema `0013`, expected
+  `0015`, and the ORM maps the columns `0014`/`0015` add — so `User` and sync queries fail live
+  until `alembic upgrade head` runs against it. Check `/health/ready`'s `schema` block after any
+  merge that adds a migration; `railway.json`'s `preDeployCommand` did not apply these two.
+- **Railway auto-deploys every `main` push itself, CI or not**, and **CI stopped getting runners
+  again around 19:50 UTC on 2026-10-28** (CB-44: jobs end in 2–4 s with no log). Until that is
+  fixed, a merge ships to production with no CI, and a PR's "CI green" cannot be had — run the
+  suites locally and say so.
 - **Deploy VPS has failed on every run since at least 2026-09-27.** Since 2026-10-18 it fails
   with `Host key verification failed`: 169.58.188.43 presents a new ED25519 key. Do not update
   `deploy/known_hosts` to make it pass. A changed host key is either a reinstall or an
@@ -292,8 +300,10 @@ retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer work
 - Push-triggered pipeline: `Deploy VPS` (`.github/workflows/deploy-backend.yml`) fires via
   `workflow_run` only after `Backend CI` succeeds on `main` — merging to `main` is the entire
   deploy action, there is no separate manual step. `Deploy Control Plane (Railway)` fires the
-  same way and is what actually reaches `aureon-ai.tech` today. Deploy VPS is currently blocked
-  by the host-key change described near the top of this file.
+  same way, but Railway's own GitHub auto-deploy also ships every `main` push and is what
+  actually reached `aureon-ai.tech` for the last merges — so the CI gate does not hold for
+  Railway (CB-44). Deploy VPS is currently blocked by the host-key change described near the top
+  of this file.
 
 ## Testing conventions worth knowing before writing a test
 

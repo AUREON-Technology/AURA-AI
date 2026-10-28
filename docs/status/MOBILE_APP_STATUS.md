@@ -1,6 +1,6 @@
 # Mobile app status
 
-**As of 2026-10-28, `main` at `dc87beb`.** Covers the Flutter client `aura_client/` on Android and
+**As of 2026-10-28 (evening), `main` at `2337577`.** Covers the Flutter client `aura_client/` on Android and
 iOS:
 - talks to the backend's `/api/v3/*`;
 - Riverpod for state, `go_router` for navigation;
@@ -22,8 +22,15 @@ Client CI has runners again:
 iOS has no build pipeline. The APK committed to the repo is stale and points at the old
 `nip.io` host.
 
-The production backend the app talks to (`aureon-ai.tech`) now runs on Railway at current `main`.
-So backend fixes such as F-02 and F-15 are live, even though the VPS deploy is blocked.
+The production backend the app talks to (`aureon-ai.tech`) runs on Railway at current `main`, but
+its database is at schema `0013` while the code needs `0015` (CB-43): sign-in and sync very likely
+fail for every user until it is migrated.
+
+Merged since `dc87beb`, not yet CI-run (CB-44): F-04 client half (approve by `approval_id`,
+`a0c1b38`); sync F-07/F-11/F-12/F-13 (`98143ff`, `31608f9`, `19c64f9`, `c5b1924`); the Android
+CI disk fix (`5ec27c9`); the failure classifier on every `AsyncValue.error` (#143). The
+capability rows below that cite those findings as open describe `dc87beb`; treat them as BUILT
+(fixed, unverified) until a Client CI run is green.
 
 ## Capabilities
 

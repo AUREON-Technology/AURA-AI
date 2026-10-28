@@ -8,6 +8,24 @@ closes, record the evidence in `docs/reports/` and update `gap_register.yaml`; r
 Severity: **Critical** (blocks everything / live exposure) · **High** (blocks a production claim) ·
 **Medium** · **Low**.
 
+## Tier 0 — live production incidents (added 2026-10-28, `main` at `2337577`)
+
+---
+**ID:** CB-43 · **Severity:** Critical · **Area:** Production / Schema
+- **Actual state:** `aureon-ai.tech/health/ready` → `healthy: false`, `schema: expected 0015, revision 0013`. The image (`2337577`) maps `users.role_assigned_at/_by` (0015) and `sync_txid` (0014) on its ORM models, so `User` loads and sync reads fail on this database.
+- **Evidence:** live probe 2026-10-28 ~21:20 UTC; `infrastructure/db/models.py:60-63,108`; `alembic upgrade 0013 → head` applies cleanly on a fresh Postgres 16 (checked locally).
+- **Impact:** sign-in and `/api/v3/sync` very likely fail for every user (inferred from code; not probed with a real account).
+- **Required action (owner, Railway):** read the deploy's pre-deploy log (`=== MIGRATION START/OK/FAILED ===` markers from `railway.json`); run `railway run --service <gateway> alembic upgrade head` against the production `DATABASE_URL`; find why `preDeployCommand` did not move the revision (not run, different DB, or Postgres < 13 — `0014` needs `pg_current_xact_id()`).
+- **Verification:** `/health/ready` reports `schema.revision == expected` and `healthy: true` (modulo `hfspace`); a real sign-in succeeds.
+- **Roadmap phase:** M2 · **Blocking:** every user.
+
+---
+**ID:** CB-44 · **Severity:** High · **Area:** CI/CD
+- **Actual state:** CI stopped executing again ~19:50 UTC 2026-10-28 (every job 2–4 s, no log — CB-01's signature). Railway's own GitHub auto-deploy shipped #187, #185, #188 and #143 anyway; Deploy Control Plane never succeeded for them. So the Railway target has no CI gate, and four merges reached production unverified by CI.
+- **Required action:** owner restores Actions (Billing → spending limit / minutes); then either turn off Railway's GitHub auto-deploy so `control-plane-deploy.yml` is the only path, or enable "Wait for CI" on the Railway service. Re-run Backend, Client and Host Daemon CI on `main`.
+- **Verification:** a green run on `main` with every job executing steps; a Railway deploy whose trigger is the workflow.
+- **Roadmap phase:** M0 · **Blocking:** every "TESTED" claim made since `dc87beb`.
+
 ## Tier 1 — do first (M0/M1/M2)
 
 ---
@@ -25,6 +43,7 @@ Severity: **Critical** (blocks everything / live exposure) · **High** (blocks a
   for Backend CI (GAP-043 `proven`). Still open under M0: branch protection (CB-02), and Client,
   Host Daemon and Admin runs (not triggered since 2026-09-29). Deploy VPS now fires but times out
   on SSH to the VPS (runs #211–#213): see `docs/reports/AURA_ADAPTIVE_STATUS_2026-10-11.md`.
+- **Update 2026-10-28:** regressed — no runner assigned again from ~19:50 UTC; tracked as CB-44.
 
 ---
 **ID:** CB-02 · **Severity:** Critical · **Area:** Governance
@@ -58,6 +77,7 @@ Severity: **Critical** (blocks everything / live exposure) · **High** (blocks a
 - **Required action:** server-stored pending approvals keyed by argument digest; opaque approval tokens; execute the stored step; drop name-level confirmation.
 - **Verification:** test — approve `delete_task(A)`, force re-plan to `delete_task(B)` → refused.
 - **Roadmap phase:** M1 · **Blocking:** side-effecting autonomy, desktop AI coding (M8.5a).
+- **Update 2026-10-28:** fixed in code by #185 (audit F-04: `d6ced5a` server-stored single-use `approval_id` bound to the call digest; `a0c1b38` client). TESTED in the authoring session only — CI did not run (CB-44); close once a CI run on `main` is green.
 
 ---
 **ID:** CB-05 · **Severity:** High · **Area:** Desktop Engineer (SEC-02)
