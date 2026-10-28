@@ -91,7 +91,7 @@ class LiveVoiceSocket {
 
   void bargeIn() => send(const LiveBargeInFrame());
   void commit() => send(const LiveCommitFrame());
-  void confirm(List<String> tools) => send(LiveConfirmFrame(tools: tools));
+  void confirm(List<String> approvalIds) => send(LiveConfirmFrame(approvalIds: approvalIds));
   void reject() => send(const LiveRejectFrame());
   void stop() => send(const LiveStopFrame());
 

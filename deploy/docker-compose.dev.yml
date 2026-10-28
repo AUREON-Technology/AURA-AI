@@ -170,8 +170,12 @@ secrets:
     file: ./secrets/redis_password
   qdrant_api_key:
     file: ./secrets/qdrant_api_key
+  # Dev signs with its OWN key (F-03): the two stacks share this host and this deploy/secrets
+  # directory, and with prod's jwt_secret any dev-minted token -- or any dev compromise -- was a
+  # valid prod session. The compose name stays `jwt_secret` so every mount below is unchanged;
+  # only the file differs. bootstrap-secrets.sh generates it.
   jwt_secret:
-    file: ./secrets/jwt_secret
+    file: ./secrets/dev_jwt_secret
   firebase_credentials:
     file: ./secrets/firebase_credentials.json
   # See docker-compose.prod.yml's `secrets:` block for what these two are.
@@ -179,9 +183,11 @@ secrets:
     file: ./secrets/secrets_encryption_key
   # Encryption-at-rest key for memories/personal-OS records -- see docker-compose.prod.yml's
   # `secrets:` block. Optional here (AURA_ENVIRONMENT=development runs in plaintext without it)
-  # but wired the same way so the dev stack exercises the encrypted path prod runs.
+  # but wired the same way so the dev stack exercises the encrypted path prod runs. Its own file,
+  # never prod's (F-03, GAP-047): dev must not be able to decrypt production rows, and a dev key
+  # rotation must not touch prod. bootstrap-secrets.sh generates it.
   data_encryption_keys:
-    file: ./secrets/data_encryption_keys
+    file: ./secrets/dev_data_encryption_keys
   github_oauth_client_secret:
     file: ./secrets/github_oauth_client_secret
   # API keys for the hosted open-weight slots (x-hosted-providers above). Placeholders from
@@ -288,6 +294,11 @@ services:
       AURA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
       AURA_QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
       AURA_JWT_SECRET_FILE: /run/secrets/jwt_secret
+      # Token environment binding (F-03; services/jwt_auth.py). Empty = derived from
+      # AURA_ENVIRONMENT (aura-<env> / aura-api-<env>), so prod and dev already differ.
+      AURA_JWT_ISSUER: ${AURA_JWT_ISSUER:-}
+      AURA_JWT_AUDIENCE: ${AURA_JWT_AUDIENCE:-}
+      AURA_JWT_LEGACY_TOKENS_UNTIL: ${AURA_JWT_LEGACY_TOKENS_UNTIL:-}
       AURA_SECRETS_ENCRYPTION_KEY_FILE: /run/secrets/secrets_encryption_key
       AURA_GITHUB_OAUTH_CLIENT_SECRET_FILE: /run/secrets/github_oauth_client_secret
       # Encryption at rest for memories/personal-OS records -- see the top-level `secrets:` block.

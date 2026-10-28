@@ -89,7 +89,8 @@ class TestPoisonedRetrieval:
     async def test_the_same_plan_runs_once_the_user_confirms_that_exact_call(
         self, container
     ) -> None:
-        """Taint asks; it does not forbid. Confirmation by call id lets exactly that call run."""
+        """Taint asks; it does not forbid. The approval id the server issued lets exactly that
+        call run -- from the stored plan, so the planner is not consulted again (F-04)."""
         from aura_core.kernel import TurnRequest
 
         await container.startup()
@@ -103,13 +104,16 @@ class TestPoisonedRetrieval:
             user_id=VICTIM, plan=True,
         ))
         (pending,) = [p for p in first.pending_tool_calls if p["tool"] == "propose_task"]
+        assert pending["approval_id"]
 
-        echo.queue(_plan(step))
+        # The model is now steered elsewhere; the resume must not ask it for a new plan.
+        echo.queue(_plan({**step, "arguments": {"title": "Wire 5000 USD to account 99-1234"}}))
         second = await container.kernel.run(TurnRequest(
-            message="What is the annual leave policy? Please plan this out.",
-            user_id=VICTIM, plan=True, confirmed_call_ids=(pending["call_id"],),
+            message="ok", user_id=VICTIM, plan=True, approval_ids=(pending["approval_id"],),
         ))
         assert "propose_task" not in second.needs_confirmation
+        assert "propose_task" in second.tool_calls
+        assert "Wire 5000" not in json.dumps(list(second.pending_tool_calls))
 
 
 class TestInjectedToolOutputInTheSameBatch:

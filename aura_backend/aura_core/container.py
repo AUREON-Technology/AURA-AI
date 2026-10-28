@@ -49,6 +49,7 @@ from .context.engine import ContextEngine
 from .context.tokenizer import get_tokenizer
 from .domain.errors import ConfigurationError
 from .execution.agentic_loop import AgenticExecutor
+from .execution.confirmations import PendingConfirmationStore
 from .execution.engine import ExecutionEngine
 from .knowledge.chunking import ChunkingConfig
 from .knowledge.engine import KnowledgeEngine
@@ -570,6 +571,9 @@ class Container:
                 settings=settings,
                 models=self.models,
                 host_agent_registry=self.host_agent_registry,
+                # F-04: pending tool confirmations live in the shared cache (Redis in
+                # production), so any replica can resume the exact turn the user approved.
+                tool_confirmations=PendingConfirmationStore(self.cache_backend),
             )
         )
         # After kernel exists, same reason as live_voice below: `delegate_to_agent`

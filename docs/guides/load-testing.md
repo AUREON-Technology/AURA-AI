@@ -87,6 +87,9 @@ or a token in the repository or in the results file. There are three modes:
   token per virtual user, for synthetic users `loadtest-vu-001` … `loadtest-vu-100`. The claim
   shape is exactly what `services/jwt_auth.create_access_token` issues, and a default-suite test
   pins that against the real verifier. Tokens last an hour and are re-minted before they expire.
+  They carry the production gateway's `iss`/`aud` (`aura-production` / `aura-api-production`);
+  for another target, set `AURA_LOADTEST_JWT_ISSUER` and `AURA_LOADTEST_JWT_AUDIENCE` to the
+  values its gateway derives from its own `AURA_ENVIRONMENT` (or `AURA_JWT_ISSUER`/`_AUDIENCE`).
   The default role is `User`. `--mint-role Developer` is needed for the Engineer scenario, and
   only works if `Developer` is in the target's `AURA_ENGINEER_AGENT_ROLES`. Admin roles are
   refused. Minting grants nothing that holding the secret doesn't already grant.

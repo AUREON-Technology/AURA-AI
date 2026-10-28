@@ -73,12 +73,11 @@ class _ScriptedExecutor:
         )
 
     async def execute(
-        self, plan, *, context, capabilities=(), confirmed_tools=(), confirmed_call_ids=(),
-        on_event=None,
+        self, plan, *, context, capabilities=(), confirmations=None, on_event=None,
     ) -> ExecutionOutcome:
         return self._outcome_for(plan)
 
-    async def stream(self, plan, *, context, capabilities=(), confirmed_tools=(), confirmed_call_ids=()):
+    async def stream(self, plan, *, context, capabilities=(), confirmations=None):
         yield StepEvent(step_id="s1", kind="respond", status="succeeded", description="respond")
         yield self._outcome_for(plan)
 

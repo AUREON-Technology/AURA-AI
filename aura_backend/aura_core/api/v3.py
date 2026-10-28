@@ -174,8 +174,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         strategy: str | None = None
         routing_policy: str | None = None
         require_local: bool = False
-        confirmed_tools: list[str] = Field(default_factory=list)
-        confirmed_call_ids: list[str] = Field(default_factory=list)
+        #: F-04 (ADR-006): the `approval_id`s, from one turn's `pending_tool_calls`, of the held
+        #: calls the user approved. The request then resumes *that* turn -- its stored plan, its
+        #: own message -- and runs only calls identical to the approved ones, once. Unknown,
+        #: expired, reused, or someone else's ids are a 409 `confirmation_invalid`. The former
+        #: `confirmed_tools`/`confirmed_call_ids` fields confirmed by name or position; they are
+        #: no longer read (an old client's field is ignored, so its call is simply held again).
+        approval_ids: list[str] = Field(default_factory=list, max_length=32)
         max_output_tokens: int = Field(default=1024, ge=16, le=8192)
         temperature: float = Field(default=0.3, ge=0.0, le=2.0)
         #: D8 (Desktop IDE only): ask the paired desktop daemon to isolate this task's writes into
@@ -376,7 +381,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             if payload.session_id:
                 raise ValidationError("a service key cannot use a session; send each turn on its own")
             payload = payload.model_copy(update={
-                "use_memory": False, "use_tools": False, "confirmed_tools": [], "confirmed_call_ids": [],
+                "use_memory": False, "use_tools": False, "approval_ids": [],
             })
         if payload.response_schema is not None:
             check_output_schema(payload.response_schema)
@@ -407,8 +412,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             routing_policy=_parse_enum(RoutingPolicy, payload.routing_policy),
             require_local=payload.require_local,
             capabilities=granted(caller),
-            confirmed_tools=tuple(payload.confirmed_tools),
-            confirmed_call_ids=tuple(payload.confirmed_call_ids),
+            approval_ids=tuple(payload.approval_ids),
             max_output_tokens=payload.max_output_tokens,
             temperature=payload.temperature,
             desktop_task_isolation=payload.desktop_task_isolation,
@@ -456,6 +460,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             status = {"blocked": 400, "budget_exceeded": 429, "rate_limited": 429}.get(
                 result.telemetry.outcome.value, 503
             )
+            if result.telemetry.error_kind == "confirmation_invalid":
+                # F-04: a confirmation naming no pending call this caller may resume. One-shot,
+                # so not retryable as sent -- the turn has to be asked again.
+                status = 409
             # Admission refusals (P2.4) carry a Retry-After: 503 for a saturated pool, 429 for
             # a user over their concurrent-generation quota (outcome rate_limited above).
             retry_after = result.retry_after_s
@@ -1049,6 +1057,28 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         deleted = await container.memory.forget(MemoryId(memory_id), owner_id=caller.user_id)
         if not deleted:
             raise HTTPException(status_code=404, detail={"error": "not_found"})
+        return JSONResponse(content={"deleted": True})
+
+    # -- sessions ----------------------------------------------------------------------
+
+    @router.delete("/sessions/{session_id}", dependencies=idempotent)
+    async def delete_session(
+        request: Request, session_id: str, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """Forget the server's transcript of one conversation (audit F-07).
+
+        Deleting a chat on the client removed its local rows and tombstoned their sync copies, but
+        the episodic transcript the kernel injects into every later turn of that session (cache,
+        30-day TTL) stayed: the assistant kept "remembering" a conversation the user had deleted.
+        Owner-scoped like every episodic call, so naming another user's session id clears nothing
+        of theirs; idempotent, so a client retrying a delete it could not confirm gets 200 again.
+        """
+        await enforce_rate_limit(request, caller, "read")
+        try:
+            session = SessionId(session_id)
+        except ValueError as exc:
+            raise ValidationError("session id is not a valid identifier") from exc
+        await container.episodic.clear(session, caller.user_id)
         return JSONResponse(content={"deleted": True})
 
     # -- feedback ----------------------------------------------------------------------

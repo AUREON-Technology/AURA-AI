@@ -63,6 +63,12 @@ fi
 ensure_dev_domain
 ensure_superadmin_from_example
 
+# docker-compose.dev.yml mounts dev-only key files (dev_jwt_secret, dev_data_encryption_keys;
+# F-03) and Docker refuses to start a service whose secret file is missing. bootstrap-secrets.sh
+# only fills in files that do not exist yet, so this is safe on every run.
+say "Ensuring required secret files exist"
+bash "$DEPLOY/scripts/bootstrap-secrets.sh"
+
 if [ "$TLS" = "1" ]; then
   say "Dual-SAN TLS renewal"
   chmod +x scripts/renew-tls-dual-san.sh

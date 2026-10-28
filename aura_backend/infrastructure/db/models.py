@@ -1,8 +1,8 @@
 """V2 relational schema (Doc/V2_BLUEPRINT.md §6).
 
-Every syncable table shares the same (user_id, updated_at, deleted_at)
-pattern — that pair is the entire cursor-sync protocol implemented in
-api/v2/sync.py: `WHERE user_id = ? AND updated_at > ?`. This single
+Every syncable table shares the same (user_id, sync_txid, deleted_at)
+pattern — that is the entire cursor-sync protocol implemented in
+api/v2/sync.py: `WHERE user_id = ? AND sync_txid >= ?`. This single
 generic query replaces V1's five hand-written per-table Firestore
 listeners/LWW comparators.
 
@@ -24,12 +24,18 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    cast,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
+
+
+#: The writing transaction's id as a bigint -- the pull cursor's unit (see SyncableMixin).
+SYNC_TXID_SQL = "(pg_current_xact_id()::text)::bigint"
 
 
 def _uuid_pk() -> Mapped[uuid.UUID]:
@@ -58,11 +64,21 @@ class SyncableMixin:
     next pull instead of a separate pending-deletes table, unlike V1's Drift
     `PendingDeletes`.
 
-    **Two timestamps, two different clocks, two different jobs.**
+    **Three columns, three different jobs.**
 
-    `updated_at` is the *server's* clock and drives cursor pagination
-    (`WHERE updated_at > ?`). It has to be server-set: a cursor built from
-    client clocks would skip or repeat rows whenever devices disagreed.
+    `sync_txid` drives the pull cursor (`WHERE sync_txid >= ?`). It is the id
+    of the Postgres transaction that last wrote the row, assigned by the
+    database (`pg_current_xact_id()`), never by the application. It replaced
+    `updated_at` as the cursor because a clock cannot order commits: Postgres
+    `now()` is the *transaction start* time, so a push that began before a
+    concurrent pull and committed after it wrote rows stamped earlier than
+    that pull's cursor, and no later pull ever returned them (audit F-12).
+    Transaction ids pair with a snapshot's `xmin` instead: every transaction
+    below a snapshot's xmin has finished, so a cursor taken as that xmin can
+    never pass over a row still waiting to commit. See `api/v2/sync.py`.
+
+    `updated_at` is the *server's* wall clock: when the row was last written.
+    Informational only now; nothing orders by it.
 
     `client_updated_at` is the *client's* clock and drives conflict detection.
     It exists because those two questions were previously answered by the same
@@ -79,11 +95,23 @@ class SyncableMixin:
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     client_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Database-assigned on every INSERT (server default) and UPDATE (`onupdate`, which SQLAlchemy
+    # applies to ORM flushes and to Core `update()` alike). `xid8` has no direct cast to bigint;
+    # going through text is the documented route, and a 64-bit xid8 never wraps.
+    sync_txid: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        server_default=text(SYNC_TXID_SQL),
+        onupdate=cast(cast(func.pg_current_xact_id(), Text), BigInteger),
+    )
 
 
 class Task(Base, SyncableMixin):
     __tablename__ = "tasks"
-    __table_args__ = (Index("ix_tasks_user_updated", "user_id", "updated_at"),)
+    __table_args__ = (
+        Index("ix_tasks_user_updated", "user_id", "updated_at"),
+        Index("ix_tasks_user_sync_txid", "user_id", "sync_txid"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     # The Flutter client already encrypts task titles (see aura_client's
@@ -100,7 +128,10 @@ class Task(Base, SyncableMixin):
 
 class CalendarEvent(Base, SyncableMixin):
     __tablename__ = "calendar_events"
-    __table_args__ = (Index("ix_calendar_events_user_updated", "user_id", "updated_at"),)
+    __table_args__ = (
+        Index("ix_calendar_events_user_updated", "user_id", "updated_at"),
+        Index("ix_calendar_events_user_sync_txid", "user_id", "sync_txid"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     title_enc: Mapped[str] = mapped_column(Text)
@@ -113,7 +144,10 @@ class CalendarEvent(Base, SyncableMixin):
 
 class FinanceRecord(Base, SyncableMixin):
     __tablename__ = "finance_records"
-    __table_args__ = (Index("ix_finance_records_user_updated", "user_id", "updated_at"),)
+    __table_args__ = (
+        Index("ix_finance_records_user_updated", "user_id", "updated_at"),
+        Index("ix_finance_records_user_sync_txid", "user_id", "sync_txid"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     type: Mapped[str] = mapped_column(String(16))  # "income" | "expense"
@@ -127,6 +161,7 @@ class HealthRecord(Base, SyncableMixin):
     __tablename__ = "health_records"
     __table_args__ = (
         Index("ix_health_records_user_updated", "user_id", "updated_at"),
+        Index("ix_health_records_user_sync_txid", "user_id", "sync_txid"),
         UniqueConstraint("user_id", "record_date", name="uq_health_records_user_date"),
     )
 
@@ -146,7 +181,10 @@ class Project(Base, SyncableMixin):
     ``aura_core/domain/personal_os.py`` for why the same split exists there)."""
 
     __tablename__ = "projects"
-    __table_args__ = (Index("ix_projects_user_updated", "user_id", "updated_at"),)
+    __table_args__ = (
+        Index("ix_projects_user_updated", "user_id", "updated_at"),
+        Index("ix_projects_user_sync_txid", "user_id", "sync_txid"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     title_enc: Mapped[str] = mapped_column(Text)
@@ -162,7 +200,10 @@ class Goal(Base, SyncableMixin):
     tool (Phase D2/D3) can read without decrypting a goal's actual text."""
 
     __tablename__ = "goals"
-    __table_args__ = (Index("ix_goals_user_updated", "user_id", "updated_at"),)
+    __table_args__ = (
+        Index("ix_goals_user_updated", "user_id", "updated_at"),
+        Index("ix_goals_user_sync_txid", "user_id", "sync_txid"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     title_enc: Mapped[str] = mapped_column(Text)
@@ -210,7 +251,10 @@ class GitHubIdentity(Base):
 
 class Memory(Base, SyncableMixin):
     __tablename__ = "memories"
-    __table_args__ = (Index("ix_memories_user_updated", "user_id", "updated_at"),)
+    __table_args__ = (
+        Index("ix_memories_user_updated", "user_id", "updated_at"),
+        Index("ix_memories_user_sync_txid", "user_id", "sync_txid"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     fact_enc: Mapped[str] = mapped_column(Text)
@@ -229,6 +273,7 @@ class Message(Base, SyncableMixin):
     __tablename__ = "messages"
     __table_args__ = (
         Index("ix_messages_user_updated", "user_id", "updated_at"),
+        Index("ix_messages_user_sync_txid", "user_id", "sync_txid"),
         Index("ix_messages_user_conversation", "user_id", "conversation_id"),
     )
 

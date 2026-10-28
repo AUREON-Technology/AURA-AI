@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/ai/online_agents/sse_agent_client.dart';
+import 'package:aura_client/core/sync/remote_deletes.dart';
 import 'package:aura_client/core/sync/sync_payloads.dart';
 import 'package:aura_client/core/network/aura_api_error.dart';
 import 'agent_config_repository.dart';
@@ -45,6 +46,11 @@ class PendingConfirmation extends Notifier<List<PendingToolCall>> {
 
   void removeByCallId(String callId) =>
       state = state.where((c) => c.callId != callId).toList();
+
+  /// Call ids are positional per turn (`step_s1` recurs in every turn); an approval id is
+  /// unique, so this removes exactly one call.
+  void removeByApprovalId(String approvalId) =>
+      state = state.where((c) => c.approvalId != approvalId).toList();
 
   void removeByTurnId(String turnId) =>
       state = state.where((c) => c.turnId != turnId).toList();
@@ -145,8 +151,7 @@ class ChatRepository {
     bool useRag = true,
     bool useMemory = true,
     bool useTools = true,
-    List<String> confirmedTools = const [],
-    List<String> confirmedCallIds = const [],
+    List<String> approvalIds = const [],
     bool persistUserMessage = true,
   }) async {
     if (_ref.read(streamingMessageIdProvider) != null) {
@@ -157,7 +162,7 @@ class ChatRepository {
     _ref.read(pendingActionsProvider.notifier).clear();
     // Pending confirmations are turn-scoped (each `PendingToolCall.turnId`), not cleared wholesale
     // here -- a new message must not silently discard a still-unresolved earlier turn's pending
-    // calls. `confirmTaintedTools`/`rejectTools` remove entries individually as they resolve.
+    // calls. `confirmPendingCalls`/`rejectPendingCalls` remove entries as they resolve.
 
     if (persistUserMessage) {
       final userMsgId = _uuid.v4();
@@ -203,8 +208,7 @@ class ChatRepository {
         useRag: useRag,
         useMemory: useMemory,
         useTools: useTools,
-        confirmedTools: confirmedTools,
-        confirmedCallIds: confirmedCallIds,
+        approvalIds: approvalIds,
         assistantMsgId: assistantMsgId,
       );
 
@@ -250,46 +254,70 @@ class ChatRepository {
     );
   }
 
-  Future<void> confirmTaintedTools({
+  /// Approves [calls] -- held calls from ONE turn -- by their server-issued approval ids (F-04).
+  ///
+  /// The approval references the pending calls themselves, never "the latest message": the
+  /// backend resumes the turn it stored when it asked, and runs only calls identical to the
+  /// approved ones. The resend carries the user message of the bubble's own turn, so a later
+  /// message in the conversation can neither be replayed nor consume the approval.
+  ///
+  /// Returns false, changing nothing, while another stream is in flight (the send would be
+  /// dropped and the approval silently lost) or when [calls] have no approval id or span turns.
+  /// Pending entries are removed only after the request has been sent.
+  Future<bool> confirmPendingCalls({
     required String conversationId,
-    required List<String> confirmedTools,
-    List<String> confirmedCallIds = const [],
+    required List<PendingToolCall> calls,
   }) async {
+    if (_ref.read(streamingMessageIdProvider) != null) return false;
+    final approvable = calls.where((c) => c.canConfirm && c.turnId != null).toList();
+    if (approvable.isEmpty) return false;
+    final turnId = approvable.first.turnId!;
+    if (approvable.any((c) => c.turnId != turnId)) return false;
+
+    final userContent = await _userMessageForTurn(conversationId, turnId);
+    if (userContent == null) return false;
+    // Again after the await: `sendChatMessage` drops a send while a stream is in flight, and
+    // the entries below must not be removed for a send that never happened.
+    if (_ref.read(streamingMessageIdProvider) != null) return false;
+
+    await sendChatMessage(
+      conversationId: conversationId,
+      userContent: userContent,
+      approvalIds: approvable.map((c) => c.approvalId!).toList(),
+      persistUserMessage: false,
+    );
+    // The server consumed that whole held turn: the approved calls ran, and anything still
+    // needing approval came back under the new turn with fresh ids. The old entries are dead.
+    _ref.read(pendingConfirmationProvider.notifier).removeByTurnId(turnId);
+    return true;
+  }
+
+  /// The user message that produced the assistant bubble of [turnId] (its `turn_id`, or the
+  /// message id standing in for one), or null when that turn is no longer in the conversation.
+  Future<String?> _userMessageForTurn(String conversationId, String turnId) async {
     final messages = await (_db.select(_db.messages)
           ..where((m) => m.conversationId.equals(conversationId))
           ..orderBy([(m) => OrderingTerm(expression: m.createdAt, mode: OrderingMode.asc)]))
         .get();
-    final userMessages = messages.where((m) => m.role == 'user').toList();
-    if (userMessages.isEmpty) return;
-    for (final callId in confirmedCallIds) {
-      _ref.read(pendingConfirmationProvider.notifier).removeByCallId(callId);
+    final index = messages.indexWhere((m) =>
+        m.role == 'assistant' &&
+        (m.id == turnId || TurnMeta.decode(m.turnMetaJson).turnId == turnId));
+    for (var i = index - 1; i >= 0; i--) {
+      if (messages[i].role == 'user') return messages[i].content;
     }
-    if (confirmedCallIds.isEmpty) {
-      // Legacy all-or-nothing path: no call ids given, so every pending call sharing one of
-      // these tool names is being approved -- clear them all rather than leaving stale entries.
-      final notifier = _ref.read(pendingConfirmationProvider.notifier);
-      for (final call in _ref.read(pendingConfirmationProvider)) {
-        if (confirmedTools.contains(call.tool) && call.callId != null) {
-          notifier.removeByCallId(call.callId!);
-        }
-      }
-    }
-    await sendChatMessage(
-      conversationId: conversationId,
-      userContent: userMessages.last.content,
-      confirmedTools: confirmedTools,
-      confirmedCallIds: confirmedCallIds,
-      persistUserMessage: false,
-    );
+    return null;
   }
 
-  /// Rejects pending calls locally -- no request is sent; the backend simply never receives a
-  /// confirmation for these call ids, so they stay refused on the next turn like today's
-  /// "just don't confirm it" behavior, only now scoped to the specific calls the user declined.
-  void rejectPendingCalls(List<String> callIds) {
+  /// Rejects pending calls locally -- no request is sent. The backend never receives their
+  /// approval ids, so nothing runs and the held turn simply expires server-side.
+  void rejectPendingCalls(List<PendingToolCall> calls) {
     final notifier = _ref.read(pendingConfirmationProvider.notifier);
-    for (final callId in callIds) {
-      notifier.removeByCallId(callId);
+    for (final call in calls) {
+      if (call.approvalId != null) {
+        notifier.removeByApprovalId(call.approvalId!);
+      } else if (call.callId != null) {
+        notifier.removeByCallId(call.callId!);
+      }
     }
   }
 
@@ -300,8 +328,7 @@ class ChatRepository {
     required bool useRag,
     required bool useMemory,
     required bool useTools,
-    required List<String> confirmedTools,
-    List<String> confirmedCallIds = const [],
+    List<String> approvalIds = const [],
     required String assistantMsgId,
   }) async {
     final stopwatch = Stopwatch()..start();
@@ -321,8 +348,7 @@ class ChatRepository {
         useKnowledge: useRag,
         useMemory: useMemory,
         useTools: useTools,
-        confirmedTools: confirmedTools,
-        confirmedCallIds: confirmedCallIds,
+        approvalIds: approvalIds,
       );
 
       await for (final event in stream) {
@@ -410,19 +436,9 @@ class ChatRepository {
                         .map((p) => p.copyWith(turnId: meta.turnId))
                         .toList(),
                   );
-            } else if (meta.needsConfirmation) {
-              // Backward-compat fallback for a backend that hasn't been upgraded yet (no
-              // `pending_tool_calls` field): fall back to the old name-only guess so confirmation
-              // still round-trips, just without per-tool detail.
-              final names = toolCalls
-                  .map((c) => c['name']?.toString())
-                  .whereType<String>()
-                  .where((n) => n.isNotEmpty)
-                  .toList();
-              _ref.read(pendingConfirmationProvider.notifier).addPending(
-                    names.map((n) => PendingToolCall(tool: n, turnId: meta.turnId)).toList(),
-                  );
             }
+            // No name-only fallback any more: a tool name cannot approve anything (F-04), so a
+            // guessed entry from informational `tool_calls` frames could never be confirmed.
             break;
           case SseEventKind.unknown:
             debugPrint("[ChatRepository] ignoring unrecognised SSE frame type: ${event.unknownType}");
@@ -543,12 +559,19 @@ class ChatRepository {
   }
 
   // Delete Conversation session history
+  //
+  // Local rows, their sync copies (tombstones through the outbox), and the
+  // server's transcript of the session, which the assistant re-reads on every
+  // later turn of it. That last part used to be missing: a deleted chat's
+  // history kept being injected into new turns (audit F-07). It is retried by
+  // [RemoteDeletes] until the server confirms it.
   Future<void> clearConversation(String conversationId) async {
     final rows = await (_db.select(_db.messages)..where((m) => m.conversationId.equals(conversationId))).get();
     await (_db.delete(_db.messages)..where((m) => m.conversationId.equals(conversationId))).go();
     for (final row in rows) {
       await _enqueueDelete(row.id);
     }
+    await _ref.read(remoteDeletesProvider).request(RemoteDeleteKind.chatSession, conversationId);
   }
 }
 

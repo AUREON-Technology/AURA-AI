@@ -142,7 +142,7 @@ One complete turn.
 | `strategy` | string | auto | `direct`, `chain_of_thought`, `self_consistency`, `tree_of_thoughts` |
 | `routing_policy` | string | deployment default | `local_first`, `cheapest`, `fastest`, `quality_first`, `balanced` |
 | `require_local` | bool | `false` | Forces on-premise inference regardless of policy |
-| `confirmed_tools` | string[] | `[]` | Names the user has explicitly authorised for this turn — see `needs_confirmation` |
+| `approval_ids` | string[] | `[]` | The `approval_id`s, from one turn's `pending_tool_calls`, of the calls the user approved — see `needs_confirmation`. (`confirmed_tools`/`confirmed_call_ids` are no longer read.) |
 | `max_output_tokens` | int | 1024 | 16–8192 |
 | `temperature` | float | 0.3 | 0.0–2.0. Only `0.0` is cacheable. |
 | `context` | `{id, text, source}[]` | `[]` | Caller-supplied evidence, at most 16 entries. Carried on the DATA channel, never as instructions — see below |
@@ -172,9 +172,13 @@ Four fields are worth handling deliberately:
 difference; it is the difference between a quoted fact and a plausible one.
 
 **`needs_confirmation`** — a side-effecting tool was selected in a turn whose context contained
-quarantined content ([ADR-006](../architecture/006-safety-pipeline.md)). It did **not** run. Ask
-the user, then resend with the tool named in `confirmed_tools`. Auto-confirming defeats the
-control that breaks the prompt-injection chain.
+quarantined content ([ADR-006](../architecture/006-safety-pipeline.md)). It did **not** run.
+`pending_tool_calls` lists each held call (`call_id`, `tool`, `arguments`, `diff_preview`,
+`approval_id`). Show the user the arguments, then resend in the same `session_id` with the
+approved calls' ids in `approval_ids`. The server resumes the turn it stored — it does not
+re-plan — and runs only a call identical to an approved one, once. An unknown, expired, reused, or
+another session's id is a `409 confirmation_invalid`; ask the turn again. Auto-confirming defeats
+the control that breaks the prompt-injection chain.
 
 **`degraded`** — a list of what fell back this turn (`dense_retrieval`, `memory`, `reranker`, …).
 The answer is still usable; the list says what it was produced without.

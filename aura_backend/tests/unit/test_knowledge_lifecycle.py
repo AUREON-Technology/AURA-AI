@@ -315,3 +315,62 @@ class TestLexicalIndexRebuild:
         )
         await knowledge.rebuild_lexical_index()
         assert not (await knowledge.retrieve("AURA-4419", owner_id=bob)).chunks
+
+
+class TestLexicalIndexAcrossWorkers:
+    """The BM25 index is per process, so each gateway worker has its own, while the document
+    and vector stores are shared. A delete or a new version that lands on worker A updates only
+    A's index. Worker B must still never return the retired text (F-14). Two engines over one
+    pair of stores stand in for two uvicorn workers."""
+
+    @staticmethod
+    def _second_worker(documents, vectors, embedder, index_manager) -> KnowledgeEngine:
+        return KnowledgeEngine(
+            documents=documents, vectors=vectors, embedder=embedder,
+            index_manager=index_manager, score_threshold=0.15,
+        )
+
+    async def test_a_document_deleted_on_another_worker_is_not_retrieved(
+        self, knowledge, documents, vectors, embedder, index_manager, user, handbook
+    ) -> None:
+        worker_b = self._second_worker(documents, vectors, embedder, index_manager)
+        await knowledge.ingest(
+            content=handbook, title="Handbook",
+            document_id=DocumentId("handbook"), owner_id=user,
+        )
+        await knowledge.ingest(
+            content="The AURA-4419 escalation runbook says to page the on-call SRE.",
+            title="Runbook", document_id=DocumentId("runbook"), owner_id=user,
+        )
+        await worker_b.rebuild_lexical_index()
+        before = await worker_b.retrieve("AURA-4419 reimbursement", owner_id=user)
+        assert any(c.chunk.document_id.value == "handbook" for c in before.chunks)
+        indexed = worker_b.lexical_size
+
+        assert await knowledge.delete_document(DocumentId("handbook"), owner_id=user) > 0
+
+        after = await worker_b.retrieve("AURA-4419 reimbursement", owner_id=user)
+        assert all(c.chunk.document_id.value != "handbook" for c in after.chunks)
+        # The stale hits are evicted from B's index, and only those: the live document is
+        # still found on B.
+        assert worker_b.lexical_size < indexed
+        assert any(c.chunk.document_id.value == "runbook" for c in after.chunks)
+
+    async def test_a_version_superseded_on_another_worker_is_not_retrieved(
+        self, knowledge, documents, vectors, embedder, index_manager, user
+    ) -> None:
+        worker_b = self._second_worker(documents, vectors, embedder, index_manager)
+        await knowledge.ingest(
+            content="The expense cap is 250 dollars per claim.", title="Policy",
+            document_id=DocumentId("policy"), owner_id=user,
+        )
+        await worker_b.rebuild_lexical_index()
+        await knowledge.ingest(
+            content="The expense cap is 500 dollars per claim.", title="Policy",
+            document_id=DocumentId("policy"), owner_id=user,
+        )
+
+        result = await worker_b.retrieve("expense cap dollars per claim", owner_id=user)
+        contents = " ".join(c.chunk.content for c in result.chunks)
+        assert "250" not in contents
+        assert "500" in contents

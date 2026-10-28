@@ -169,7 +169,10 @@ void main() {
       } on RpcError catch (error) {
         // No stdbuf (Windows, or a host without coreutils): the original wrapping path.
         expect(error.message, contains(missing));
-        expect(error.message, contains(workspaceDir.path));
+        // The command runs in the root's canonical (symlink-resolved) path, which is not the
+        // spelling the temp directory was created under on every platform: Windows hands out an
+        // 8.3 short form (C:\Users\RUNNER~1\...) that resolves to the long one.
+        expect(error.message, contains(roots.all.single.canonicalPath));
         expect(error.message, contains('executable exists: false'));
         expect(error.message, contains('cwd exists: true'));
       }

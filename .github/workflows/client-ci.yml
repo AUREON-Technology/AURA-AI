@@ -57,6 +57,20 @@ jobs:
     runs-on: ubuntu-latest
     needs: analyze-and-test
     steps:
+      # The release APK build ran the runner out of disk at Gradle `mergeJavaRes` ("No space left
+      # on device", Client CI runs 142-143). The image carries toolchains this job never uses;
+      # removing them frees well over 20 GB. Kept: the Android SDK (/usr/local/lib/android) and
+      # the JDK, which this build needs. Inline rather than a third-party action, so nothing new
+      # runs with the job's token.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost \
+            /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/powershell \
+            /usr/local/lib/node_modules
+          sudo docker image prune --all --force > /dev/null || true
+          df -h /
+
       - uses: actions/checkout@v4
 
       # Pin Flutter to a version with Dart >= 3.11.4 (pubspec constraint: sdk: ^3.11.4).

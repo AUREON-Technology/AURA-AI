@@ -13,7 +13,8 @@ Three modes, none of which puts a secret in the repository or the results file:
   holds its JWT signing secret (``deploy/secrets/jwt_secret``); the harness reads it from an
   environment variable whose *name* is configured (default ``AURA_LOADTEST_JWT_SECRET``) and
   mints one short-lived HS256 access token per VU with exactly the claim shape
-  ``services/jwt_auth.create_access_token`` issues, for synthetic users ``<prefix>-001`` ... It
+  ``services/jwt_auth.create_access_token`` issues (``iss``/``aud`` included), for synthetic
+  users ``<prefix>-001`` ... It
   grants nothing an operator with that secret could not already do, and it is refused for the
   admin roles so a load run can never exercise admin-only paths by accident.
 """
@@ -31,6 +32,12 @@ MINTABLE_ROLES = ("User", "Premium", "Developer")
 #: Re-mint when a token has less than this left, so a long matrix never runs into expiry.
 _REMINT_MARGIN_S = 120
 
+#: The ``iss``/``aud`` a production gateway requires (``services/jwt_auth._issuer``/``_audience``
+#: with ``AURA_ENVIRONMENT=production``). ``minted_from_env`` uses these unless
+#: ``AURA_LOADTEST_JWT_ISSUER``/``AURA_LOADTEST_JWT_AUDIENCE`` name another target's values.
+DEFAULT_TARGET_ISSUER = "aura-production"
+DEFAULT_TARGET_AUDIENCE = "aura-api-production"
+
 
 class AuthError(RuntimeError):
     pass
@@ -44,6 +51,8 @@ class TokenSource:
     _secret: str | None = field(default=None, repr=False)
     role: str = "User"
     ttl_s: int = 3600
+    issuer: str | None = None
+    audience: str | None = None
     _minted: dict[int, tuple[str, float]] = field(default_factory=dict, repr=False)
 
     # -- construction ------------------------------------------------------------------
@@ -63,6 +72,7 @@ class TokenSource:
     @classmethod
     def minted(
         cls, *, secret: str, role: str = "User", user_prefix: str = "loadtest-vu", ttl_s: int = 3600,
+        issuer: str | None = None, audience: str | None = None,
     ) -> "TokenSource":
         if not secret:
             raise AuthError("mint mode needs a non-empty signing secret")
@@ -71,7 +81,10 @@ class TokenSource:
                 f"refusing to mint role {role!r}: load-test identities are limited to "
                 f"{', '.join(MINTABLE_ROLES)}"
             )
-        return cls(mode="mint", _secret=secret, role=role, user_prefix=user_prefix, ttl_s=ttl_s)
+        return cls(
+            mode="mint", _secret=secret, role=role, user_prefix=user_prefix, ttl_s=ttl_s,
+            issuer=issuer, audience=audience,
+        )
 
     @classmethod
     def minted_from_env(cls, env_name: str, **kwargs) -> "TokenSource":
@@ -81,6 +94,10 @@ class TokenSource:
                 f"mint mode reads the target's JWT secret from ${env_name}, which is not set "
                 "(see docs/guides/load-testing.md, 'Identities')"
             )
+        kwargs.setdefault("issuer", os.environ.get("AURA_LOADTEST_JWT_ISSUER") or DEFAULT_TARGET_ISSUER)
+        kwargs.setdefault(
+            "audience", os.environ.get("AURA_LOADTEST_JWT_AUDIENCE") or DEFAULT_TARGET_AUDIENCE,
+        )
         return cls.minted(secret=secret, **kwargs)
 
     # -- use ---------------------------------------------------------------------------
@@ -132,6 +149,12 @@ class TokenSource:
             "iat": int(now),
             "exp": int(now + self.ttl_s),
         }
+        # The gateway refuses a token bound to another deployment, and accepts an unbound one
+        # only during the legacy grace period (services/jwt_auth._decode_access_token).
+        if self.issuer:
+            payload["iss"] = self.issuer
+        if self.audience:
+            payload["aud"] = self.audience
         return jwt.encode(payload, self._secret, algorithm="HS256")
 
     def describe(self) -> str:

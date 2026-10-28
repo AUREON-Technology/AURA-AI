@@ -1,0 +1,110 @@
+{
+  "calendar_events": {
+    "columns": [
+      "all_day",
+      "description_enc",
+      "end_time",
+      "google_event_id",
+      "start_time",
+      "title_enc"
+    ],
+    "required": [
+      "end_time",
+      "start_time",
+      "title_enc"
+    ]
+  },
+  "finance_records": {
+    "columns": [
+      "amount",
+      "category",
+      "description_enc",
+      "occurred_at",
+      "type"
+    ],
+    "required": [
+      "amount",
+      "occurred_at",
+      "type"
+    ]
+  },
+  "goals": {
+    "columns": [
+      "category",
+      "description_enc",
+      "priority",
+      "progress_pct",
+      "project_id",
+      "status",
+      "target_date",
+      "title_enc"
+    ],
+    "required": [
+      "title_enc"
+    ]
+  },
+  "health_records": {
+    "columns": [
+      "calories",
+      "exercise_minutes",
+      "record_date",
+      "sleep_minutes",
+      "water_ml",
+      "weight"
+    ],
+    "required": [
+      "record_date"
+    ]
+  },
+  "memories": {
+    "columns": [
+      "fact_enc",
+      "qdrant_point_id"
+    ],
+    "required": [
+      "fact_enc"
+    ]
+  },
+  "messages": {
+    "columns": [
+      "citations_enc",
+      "content_enc",
+      "conversation_id",
+      "model_used",
+      "persona",
+      "role",
+      "tokens_used",
+      "tool_calls_enc"
+    ],
+    "required": [
+      "content_enc",
+      "conversation_id",
+      "role"
+    ]
+  },
+  "projects": {
+    "columns": [
+      "description_enc",
+      "status",
+      "target_date",
+      "title_enc"
+    ],
+    "required": [
+      "title_enc"
+    ]
+  },
+  "tasks": {
+    "columns": [
+      "category",
+      "completed_at",
+      "description_enc",
+      "due_date",
+      "google_task_id",
+      "priority",
+      "title_enc"
+    ],
+    "required": [
+      "title_enc"
+    ]
+  }
+}

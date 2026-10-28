@@ -96,6 +96,8 @@ COVERED = {
         "TestKnowledgeGraph::test_bob_cannot_read_alices_entity_by_key",
     ("DELETE", "/api/v3/memory/{memory_id}"):
         "TestMemory::test_bob_cannot_delete_alices_memory",
+    ("DELETE", "/api/v3/sessions/{session_id}"):
+        "TestConversations::test_bob_cannot_delete_alices_conversation_by_session_id",
     ("DELETE", "/api/v3/engineering/workspaces/{workspace_id}"):
         "TestEngineering::test_bob_cannot_delete_alices_workspace",
     ("GET", "/api/v3/agents/runs/{run_id}"):
@@ -496,3 +498,19 @@ class TestConversations:
         )
         bob_history, _ = await container.episodic.history(session, UserId(BOB))
         assert not any("14th" in m.content for m in bob_history)
+
+    def test_bob_cannot_delete_alices_conversation_by_session_id(self, container) -> None:
+        """`DELETE /api/v3/sessions/{id}` (F-07) clears the *caller's* transcript under that id."""
+        from fastapi.testclient import TestClient
+
+        from aura_core.domain.identifiers import SessionId
+
+        session = SessionId("shared-guessable-id")
+        asyncio.run(container.episodic.append(
+            session, UserId(ALICE), user_message="My flight is on the 14th.", assistant_message="Noted.",
+        ))
+        with TestClient(_app(container)) as client:
+            response = client.delete(f"/api/v3/sessions/{session.value}", headers=AUTH_B)
+        assert response.status_code == 200  # idempotent: Bob's (empty) session is cleared
+        history, _ = asyncio.run(container.episodic.history(session, UserId(ALICE)))
+        assert any("14th" in m.content for m in history), "Bob's delete erased Alice's conversation"

@@ -124,7 +124,7 @@ text was displayed, and ignoring it leaves unredacted content on screen.
 
 New behaviour with no v1 equivalent. When present, a side-effecting tool was selected in a turn
 whose context contained quarantined content, and it **did not run**. Prompt the user, then resend
-with the tool named in `confirmed_tools`.
+with that call's `approval_id` (from `pending_tool_calls`) in `approval_ids`, in the same session.
 
 Auto-confirming defeats the control that breaks the prompt-injection chain
 ([ADR-006](../architecture/006-safety-pipeline.md)). If a deployment genuinely wants tools to run
