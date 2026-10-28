@@ -10,6 +10,8 @@ export default function AccessPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [rows, setRows] = useState<Operator[]>([]);
   const [forgetSubject, setForgetSubject] = useState("");
+  const [grantEmail, setGrantEmail] = useState("");
+  const [grantRole, setGrantRole] = useState<OperatorRole>("Developer");
   const [counts, setCounts] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
@@ -29,13 +31,51 @@ export default function AccessPage() {
   return (
     <>
       <h1>Access</h1>
-      <p className="sub">Operator directory. Role changes and erasure are SuperAdmin only.</p>
+      <p className="sub">
+        Operator directory. Role changes and erasure are SuperAdmin only. A change applies at the
+        person&apos;s next sign-in or token refresh (within 15 minutes). A role granted by an env
+        list or roles.json can only be lowered there.
+      </p>
       {error ? <div className="banner">{error}</div> : null}
+      {me?.is_super_admin ? (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <h2>Grant a role</h2>
+          <p className="muted">The person must have signed in once.</p>
+          <input
+            value={grantEmail}
+            onChange={(e) => setGrantEmail(e.target.value)}
+            placeholder="email"
+          />
+          <select value={grantRole} onChange={(e) => setGrantRole(e.target.value as OperatorRole)}>
+            {(["Developer", "Admin", "SuperAdmin"] as OperatorRole[]).map((role) => (
+              <option key={role} value={role}>
+                {role}
+              </option>
+            ))}
+          </select>
+          <ConfirmDialog
+            title={`Set ${grantEmail || "this user"} to ${grantRole}`}
+            confirmText={grantRole}
+            disabled={!grantEmail.trim()}
+            onConfirm={async () => {
+              await api(`/admin/operators/${encodeURIComponent(grantEmail.trim())}/role`, {
+                method: "PATCH",
+                body: JSON.stringify({ role: grantRole }),
+              });
+              setGrantEmail("");
+              await load();
+            }}
+          >
+            Grant role
+          </ConfirmDialog>
+        </div>
+      ) : null}
       <table className="table">
         <thead>
           <tr>
             <th>Email</th>
             <th>Role</th>
+            <th>Granted by</th>
             <th></th>
           </tr>
         </thead>
@@ -44,6 +84,7 @@ export default function AccessPage() {
             <tr key={row.email}>
               <td>{row.email}</td>
               <td>{row.role}</td>
+              <td>{row.granted_by ?? ""}</td>
               <td>
                 {me?.is_super_admin ? (
                   <>
@@ -63,6 +104,20 @@ export default function AccessPage() {
                         {`Make ${role}`}
                       </ConfirmDialog>
                     ))}
+                    <ConfirmDialog
+                      danger
+                      title={`Remove ${row.email}'s Access-page role`}
+                      confirmText="User"
+                      onConfirm={async () => {
+                        await api(`/admin/operators/${encodeURIComponent(row.email)}/role`, {
+                          method: "PATCH",
+                          body: JSON.stringify({ role: "User" }),
+                        });
+                        await load();
+                      }}
+                    >
+                      Remove access
+                    </ConfirmDialog>
                     <ConfirmDialog
                       danger
                       title="Revoke sessions"

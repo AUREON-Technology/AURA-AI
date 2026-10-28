@@ -30,8 +30,20 @@ const tokens = {
 
 const state = {
   operators: [
-    { email: "ops@aura.ai", auth_subject: "a1", display_name: "Ops", role: "Developer" },
-    { email: "root@aura.ai", auth_subject: "s1", display_name: "Root", role: "SuperAdmin" },
+    {
+      email: "ops@aura.ai",
+      auth_subject: "a1",
+      display_name: "Ops",
+      role: "Developer",
+      granted_by: "Access page",
+    },
+    {
+      email: "root@aura.ai",
+      auth_subject: "s1",
+      display_name: "Root",
+      role: "SuperAdmin",
+      granted_by: "SUPERADMIN_EMAILS",
+    },
   ],
   approvals: [
     {
@@ -183,7 +195,8 @@ const server = http.createServer(async (request, response) => {
       return;
     }
     target.role = body.role;
-    json(response, 200, { email, role: body.role });
+    target.granted_by = "Access page";
+    json(response, 200, { email, role: body.role, granted_by: "Access page" });
     return;
   }
 
