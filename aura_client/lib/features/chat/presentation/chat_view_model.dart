@@ -130,26 +130,21 @@ class ChatViewModel extends Notifier<ChatUiState> {
     }
   }
 
-  /// Confirms the given pending calls (default: every pending call, preserving "Confirm All").
-  /// Confirms by call id when available -- precise even when two pending calls share a tool
-  /// name -- falling back to the tool name for any call an older backend didn't tag with one.
-  Future<void> confirmTools([List<PendingToolCall>? calls]) {
-    final List<PendingToolCall> pending = calls ?? ref.read(pendingConfirmationProvider);
-    final callIds = pending.map((p) => p.callId).whereType<String>().toList();
-    final tools = pending.map((p) => p.tool).toSet().toList();
+  /// Approves [calls] -- held calls of one turn, as one confirmation card shows them -- by their
+  /// server-issued approval ids, never by tool name or by "the latest message" (F-04). Returns
+  /// false, changing nothing, while another reply is still streaming.
+  Future<bool> confirmTools(List<PendingToolCall> calls) {
     final sessionId = ref.read(activeConversationIdProvider);
-    return ref.read(chatRepositoryProvider).confirmTaintedTools(
+    return ref.read(chatRepositoryProvider).confirmPendingCalls(
           conversationId: sessionId,
-          confirmedTools: tools,
-          confirmedCallIds: callIds,
+          calls: calls,
         );
   }
 
-  /// Declines the given pending calls without sending anything to the backend -- they simply
-  /// stay unconfirmed, same as never approving them today, just scoped to only these calls.
+  /// Declines the given pending calls without sending anything to the backend -- their approval
+  /// ids are never sent, so they never run, and the held turn expires server-side.
   void rejectTools(List<PendingToolCall> calls) {
-    final callIds = calls.map((p) => p.callId).whereType<String>().toList();
-    ref.read(chatRepositoryProvider).rejectPendingCalls(callIds);
+    ref.read(chatRepositoryProvider).rejectPendingCalls(calls);
   }
 
   void rejectPendingActions() {

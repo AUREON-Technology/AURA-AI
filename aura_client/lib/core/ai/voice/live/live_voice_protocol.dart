@@ -61,13 +61,15 @@ final class LiveCommitFrame extends LiveClientFrame {
   Map<String, dynamic> toJson() => {'type': 'commit'};
 }
 
+/// Approves the calls the session is holding, by the approval ids the server issued (F-04).
+/// Tool names are never sent: the server resumes exactly the turn it is holding.
 final class LiveConfirmFrame extends LiveClientFrame {
-  const LiveConfirmFrame({required this.tools});
+  const LiveConfirmFrame({this.approvalIds = const []});
 
-  final List<String> tools;
+  final List<String> approvalIds;
 
   @override
-  Map<String, dynamic> toJson() => {'type': 'confirm', 'tools': tools};
+  Map<String, dynamic> toJson() => {'type': 'confirm', 'approval_ids': approvalIds};
 }
 
 final class LiveRejectFrame extends LiveClientFrame {
@@ -132,6 +134,10 @@ sealed class LiveServerFrame {
         return LiveConfirmationFrame(
           tools: (map['tools'] as List? ?? const [])
               .map((e) => e.toString())
+              .toList(),
+          calls: (map['calls'] as List? ?? const [])
+              .whereType<Map>()
+              .map((c) => Map<String, dynamic>.from(c))
               .toList(),
           text: map['text']?.toString() ?? '',
         );
@@ -209,8 +215,11 @@ final class LiveTokenFrame extends LiveServerFrame {
 }
 
 final class LiveConfirmationFrame extends LiveServerFrame {
-  const LiveConfirmationFrame({required this.tools, required this.text});
+  const LiveConfirmationFrame({required this.tools, this.calls = const [], required this.text});
   final List<String> tools;
+
+  /// The held calls as the server sent them: `approval_id`, `call_id`, `tool`, `arguments`.
+  final List<Map<String, dynamic>> calls;
   final String text;
 }
 

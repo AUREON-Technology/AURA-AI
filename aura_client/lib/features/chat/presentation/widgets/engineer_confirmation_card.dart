@@ -18,18 +18,26 @@ import 'sandbox_terminal_view.dart';
 ///
 /// Scoped to one turn (per-message): when [turnId] is set, only pending calls whose
 /// [PendingToolCall.turnId] matches are shown here -- the single global card this replaced had
-/// no way to say which assistant bubble it belonged to. Pass `turnId: null` (as the live-voice
-/// screen does, which has no discrete message list) to show every pending call regardless of
-/// turn -- the old global behavior.
+/// no way to say which assistant bubble it belonged to. Pass `turnId: null` to show every chat
+/// pending call regardless of turn, or [calls] to show a list the caller owns (live voice keeps
+/// its own, separate from chat's).
+///
+/// Confirming sends the selected calls' server-issued approval ids, bound to this card's turn
+/// (F-04). A call without an approval id cannot be confirmed, and Confirm is disabled while
+/// another chat reply is still streaming -- a send then would be dropped, losing the approval.
 class EngineerConfirmationCard extends ConsumerStatefulWidget {
   const EngineerConfirmationCard({
     super.key,
     this.turnId,
+    this.calls,
     this.onConfirm,
     this.onCancel,
   });
 
   final String? turnId;
+
+  /// When set, the calls to show, instead of reading [pendingConfirmationProvider].
+  final List<PendingToolCall>? calls;
 
   /// When set, used instead of [chatViewModelProvider.confirmTools] and receives every pending
   /// call shown by this card (selection is not exposed to this callback -- callers using it,
@@ -46,21 +54,26 @@ class EngineerConfirmationCard extends ConsumerStatefulWidget {
 class _EngineerConfirmationCardState extends ConsumerState<EngineerConfirmationCard> {
   final Set<String> _deselected = {};
 
+  static String? _key(PendingToolCall call) => call.approvalId ?? call.callId;
+
   @override
   Widget build(BuildContext context) {
-    final all = ref.watch(pendingConfirmationProvider);
-    final pending = widget.turnId == null
+    final List<PendingToolCall> all = widget.calls ?? ref.watch(pendingConfirmationProvider);
+    final List<PendingToolCall> pending = widget.turnId == null
         ? all
         : all.where((c) => c.turnId == widget.turnId).toList();
     if (pending.isEmpty) return const SizedBox.shrink();
 
-    final selectable = pending.where((c) => c.callId != null).length;
-    final selected = pending
-        .where((c) => c.callId != null && !_deselected.contains(c.callId))
+    final ownsConfirm = widget.onConfirm != null;
+    final streaming = !ownsConfirm && ref.watch(streamingMessageIdProvider) != null;
+    // Only a call the server issued an approval id for can be approved from here; a caller with
+    // its own confirm path (live voice) approves server-side state and needs none.
+    final confirmable = ownsConfirm ? pending : pending.where((c) => c.canConfirm).toList();
+    final selectable = confirmable.where((c) => _key(c) != null).length;
+    final toConfirm = confirmable
+        .where((c) => _key(c) == null || !_deselected.contains(_key(c)))
         .toList();
-    // A call with no call_id (a legacy name-only fallback entry) can't be individually selected
-    // -- it is always included, matching the old all-or-nothing behavior for that one entry.
-    final toConfirm = [...selected, ...pending.where((c) => c.callId == null)];
+    final canPress = toConfirm.isNotEmpty && !streaming;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: AuraSpacing.sm),
@@ -77,11 +90,11 @@ class _EngineerConfirmationCardState extends ConsumerState<EngineerConfirmationC
               if (i > 0) const SizedBox(height: AuraSpacing.md),
               _PendingCallRow(
                 call: pending[i],
-                selected: pending[i].callId == null ||
-                    !_deselected.contains(pending[i].callId),
-                selectable: selectable > 1 && pending[i].callId != null,
+                selected: toConfirm.contains(pending[i]),
+                selectable: selectable > 1 && confirmable.contains(pending[i]) &&
+                    _key(pending[i]) != null,
                 onToggle: (value) => setState(() {
-                  final id = pending[i].callId;
+                  final id = _key(pending[i]);
                   if (id == null) return;
                   if (value) {
                     _deselected.remove(id);
@@ -106,7 +119,7 @@ class _EngineerConfirmationCardState extends ConsumerState<EngineerConfirmationC
                 Expanded(
                   child: AuraButton(
                     label: toConfirm.length < pending.length ? 'Confirm selected' : 'Confirm',
-                    onPressed: toConfirm.isEmpty
+                    onPressed: !canPress
                         ? null
                         : (widget.onConfirm ??
                             () => ref.read(chatViewModelProvider.notifier).confirmTools(toConfirm)),

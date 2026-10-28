@@ -242,6 +242,10 @@ class PendingToolCall {
   // `AIKernel._record_engineer_runs`'s sibling diff-attachment logic). Null means "no diff
   // available", not "no changes" -- callers should fall back to a content-only preview.
   final String? diffPreview;
+  // The server-issued, opaque id that approves exactly this call (F-04): the backend stores the
+  // held turn and runs only a call identical to this one, once, when this id comes back in
+  // `approval_ids`. A call without one (an older backend) cannot be confirmed from here.
+  final String? approvalId;
 
   const PendingToolCall({
     this.callId,
@@ -249,7 +253,10 @@ class PendingToolCall {
     this.arguments = const {},
     this.turnId,
     this.diffPreview,
+    this.approvalId,
   });
+
+  bool get canConfirm => approvalId != null && approvalId!.isNotEmpty;
 
   PendingToolCall copyWith({String? turnId}) => PendingToolCall(
         callId: callId,
@@ -257,6 +264,7 @@ class PendingToolCall {
         arguments: arguments,
         turnId: turnId ?? this.turnId,
         diffPreview: diffPreview,
+        approvalId: approvalId,
       );
 
   Map<String, dynamic> toJson() => {
@@ -265,6 +273,7 @@ class PendingToolCall {
         'arguments': arguments,
         'turn_id': turnId,
         'diff_preview': diffPreview,
+        'approval_id': approvalId,
       };
 
   factory PendingToolCall.fromJson(Map<String, dynamic> json) {
@@ -276,6 +285,7 @@ class PendingToolCall {
           : const {},
       turnId: json['turn_id']?.toString(),
       diffPreview: json['diff_preview']?.toString(),
+      approvalId: json['approval_id']?.toString(),
     );
   }
 }

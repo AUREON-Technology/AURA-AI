@@ -9,10 +9,10 @@ void main() {
         const LiveAuthFrame(token: 'abc', attestation: {'x-device': '1'}).toJson()['type'],
         'auth',
       );
-      expect(
-        const LiveConfirmFrame(tools: ['propose_task']).toJson()['tools'],
-        ['propose_task'],
-      );
+      // F-04: confirmation is by server-issued approval id; tool names are never sent.
+      final confirm = const LiveConfirmFrame(approvalIds: ['apr.t.n']).toJson();
+      expect(confirm['approval_ids'], ['apr.t.n']);
+      expect(confirm.containsKey('tools'), isFalse);
       expect(const LiveReauthFrame(token: 'xyz').toJson()['type'], 'reauth');
     });
 
@@ -35,6 +35,16 @@ void main() {
         'text': 'confirm?',
       });
       expect(conf, isA<LiveConfirmationFrame>());
+      final withCalls = LiveServerFrame.tryParse({
+        'type': 'confirmation',
+        'tools': ['propose_task'],
+        'calls': [
+          {'approval_id': 'apr.t.n', 'call_id': 'step_s1', 'tool': 'propose_task',
+           'arguments': {'title': 'x'}},
+        ],
+        'text': 'confirm?',
+      })! as LiveConfirmationFrame;
+      expect(withCalls.calls.single['approval_id'], 'apr.t.n');
       final done = LiveServerFrame.tryParse({
         'type': 'done',
         'needs_confirmation': ['propose_task'],
