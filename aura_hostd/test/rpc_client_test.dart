@@ -39,6 +39,18 @@ class _FakeServer {
   Future<void> close() => _httpServer.close(force: true);
 }
 
+/// The server side's upgrade completes before the client's own `WebSocket.connect` future does:
+/// the client still has to read the 101 response, which can take more than one event-loop turn
+/// when the machine is busy (the whole suite runs files in parallel). Waits for [condition] for up
+/// to 5s instead of a single zero-delay turn, which failed intermittently under load. The test's
+/// assertion that follows is unchanged; this only stops it running before the client could know.
+Future<void> _settle(bool Function() condition) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!condition() && DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+}
+
 void main() {
   late _FakeServer server;
 
@@ -223,7 +235,7 @@ void main() {
       addTearDown(client.stop);
 
       await server.clientSocket;
-      await Future<void>.delayed(Duration.zero);
+      await _settle(() => client.socketPingInterval != null);
       expect(client.socketPingInterval, const Duration(seconds: 7));
     });
   });
@@ -258,7 +270,7 @@ void main() {
       // The socket future resolves on the server side the instant it accepts the upgrade,
       // slightly before the client's own `_isConnected = true` assignment runs -- give the
       // client's event loop turn a chance to catch up rather than asserting in the same tick.
-      await Future<void>.delayed(Duration.zero);
+      await _settle(() => client.isConnected);
       expect(client.isConnected, isTrue);
     });
 
@@ -277,7 +289,7 @@ void main() {
       addTearDown(client.stop);
 
       final socket = await server.clientSocket;
-      await Future<void>.delayed(Duration.zero);
+      await _settle(() => client.isConnected);
       expect(client.isConnected, isTrue);
 
       await socket.close();
@@ -296,7 +308,7 @@ void main() {
       unawaited(client.run());
 
       await server.clientSocket;
-      await Future<void>.delayed(Duration.zero);
+      await _settle(() => client.isConnected);
       expect(client.isConnected, isTrue);
 
       client.stop();
