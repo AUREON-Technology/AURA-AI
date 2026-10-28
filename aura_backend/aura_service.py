@@ -164,6 +164,45 @@ def _warn_if_no_console_operator(settings) -> None:
     )
 
 
+#: Below this, HS256's key is shorter than its own output (RFC 7518 §3.2).
+_MIN_JWT_SECRET_BYTES = 32
+
+
+def _require_jwt_secret(settings) -> None:
+    """Refuse to serve staging/production without a configured JWT signing secret.
+
+    Without one, ``services/jwt_auth.py`` falls back to a random secret generated per process.
+    With ``--workers 4`` that is four different keys: a token issued by one worker is rejected
+    by the other three, so sign-in "works" and then fails at random, and every restart signs
+    everyone out. Unlike an unidentified release (see ``Settings.validate``), that is broken
+    authentication, not a diagnosability gap, so it stops the boot rather than warning.
+
+    A secret that is merely short is warned about, not refused: the deployed value cannot be
+    inspected from here, and taking a working deployment down over key length would trade a
+    weakness for an outage. ``bootstrap-secrets.sh`` generates 64 characters.
+
+    Called after ``hydrate_secrets_from_files``: the secret arrives as a Docker secret file.
+    """
+    if not settings.environment.is_production_like:
+        return
+    from services.jwt_auth import configured_secret
+
+    secret = configured_secret()
+    if not secret:
+        raise ConfigurationError(
+            "no JWT signing secret is configured (AURA_JWT_SECRET, JWT_SECRET, or "
+            "AURA_JWT_SECRET_FILE): staging/production refuses to start with the per-process "
+            "random fallback, which breaks sign-in across workers and restarts"
+        )
+    if len(secret.encode()) < _MIN_JWT_SECRET_BYTES:
+        logger.warning(
+            "the JWT signing secret is %d bytes; use at least %d (bootstrap-secrets.sh "
+            "generates 64 characters)",
+            len(secret.encode()),
+            _MIN_JWT_SECRET_BYTES,
+        )
+
+
 def _register_inference_budget_handler(app) -> None:
     from services.budget import InferenceBudgetExceededException
 
@@ -179,8 +218,20 @@ def _register_inference_budget_handler(app) -> None:
         )
 
 
-def _apply_http_limits(app) -> None:
-    app.add_middleware(PayloadSizeLimitMiddleware, max_bytes=5 * 1024 * 1024)
+#: Multipart framing (boundaries, part headers, the filename) on top of the document itself.
+_UPLOAD_FRAMING_BYTES = 1024 * 1024
+
+
+def _apply_http_limits(app, settings) -> None:
+    # Document upload has its own ceiling, ``knowledge.max_document_bytes`` (8MB by default); the
+    # flat 5MB cap used to refuse every document between the two with a 413 the knowledge
+    # engine would have accepted. nginx's ``client_max_body_size 20m`` stays above both.
+    upload_limit = settings.knowledge.max_document_bytes + _UPLOAD_FRAMING_BYTES
+    app.add_middleware(
+        PayloadSizeLimitMiddleware,
+        max_bytes=5 * 1024 * 1024,
+        route_limits={"/api/v3/knowledge/documents/upload": upload_limit},
+    )
     app.add_middleware(RateLimitMiddleware, requests_per_minute=100)
 
 
@@ -230,6 +281,7 @@ def create_app():
     """
     hydrate_secrets_from_files()
     settings = load_settings()
+    _require_jwt_secret(settings)
     container = build_container(settings)
     authenticator = _build_authenticator(settings, service_keys=container.service_keys)
 
@@ -255,7 +307,7 @@ def create_app():
     _mount_platform_routers(app)
     _warn_if_no_console_operator(settings)
     _register_inference_budget_handler(app)
-    _apply_http_limits(app)
+    _apply_http_limits(app, settings)
     _apply_cors(app)
 
     # Exposed so Celery tasks and the CLI can reach the same wired graph without rebuilding it.

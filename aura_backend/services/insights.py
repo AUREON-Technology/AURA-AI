@@ -39,6 +39,10 @@ logger = logging.getLogger("aura_backend.insights")
 # Business rules already established for V1 (PROJECT_KNOWLEDGE_BASE.md §6).
 WATER_GOAL_ML = 2000
 HIGH_SPEND_THRESHOLD = 100.0
+#: The insight kinds this module generates -- and therefore the only ones it may replace. Other
+#: producers share the ``insights`` table (``services/daily_briefing.py`` writes
+#: ``daily_briefing``), and an hourly run must not delete their rows.
+GENERATED_KINDS = ("overdue_tasks", "hydration", "high_spend")
 
 
 async def generate_insights_for_user(db: AsyncSession, user_id: uuid.UUID) -> list[Insight]:
@@ -117,7 +121,11 @@ async def generate_insights_for_user(db: AsyncSession, user_id: uuid.UUID) -> li
     # Replace this user's previously un-surfaced, un-dismissed insights
     # rather than accumulating duplicates across repeated generation runs.
     stale = await db.execute(
-        select(Insight).where(Insight.user_id == user_id, Insight.dismissed_at.is_(None))
+        select(Insight).where(
+            Insight.user_id == user_id,
+            Insight.kind.in_(GENERATED_KINDS),
+            Insight.dismissed_at.is_(None),
+        )
     )
     for row in stale.scalars().all():
         await db.delete(row)
