@@ -67,6 +67,86 @@ def _secret() -> str:
     )
 
 
+# --- Environment binding (F-03) -------------------------------------------------------------
+# The prod and dev stacks share a VPS. A token one of them mints must never authenticate on the
+# other, so every token carries `iss` (which deployment minted it) and `aud` (which API it is
+# for), and verification requires both to match this process's own values. Separate signing keys
+# per stack (deploy/docker-compose.dev.yml's dev_jwt_secret) are the primary control; these
+# claims are the second, and the only one left if the keys are ever shared again.
+
+#: Until when a token with neither `iss` nor `aud` -- one minted before this binding shipped --
+#: is still honoured. Mobile/web access tokens live 15 minutes and are re-minted with the claims on
+#: the next refresh, so in practice this window exists for DEVICE_ACCESS_TOKEN_TTL (30-day) desktop
+#: device tokens, which have no refresh path and would otherwise force every paired desktop to
+#: re-pair on deploy. Fixed rather than "deploy time + 30 days" because the process has no durable
+#: record of when it was first deployed; overridable via AURA_JWT_LEGACY_TOKENS_UNTIL.
+_DEFAULT_LEGACY_TOKENS_UNTIL = datetime(2026, 12, 15, tzinfo=timezone.utc)
+_warned_bad_legacy_cutoff = False
+
+
+def _environment() -> str:
+    raw = os.environ.get("AURA_ENVIRONMENT") or os.environ.get("ENVIRONMENT") or "local"
+    return raw.strip().lower() or "local"
+
+
+def _issuer() -> str:
+    # Call time, like _secret(): Settings() is constructed at import, before tests or secret
+    # hydration may have set the environment.
+    return settings.jwt_issuer or os.environ.get("AURA_JWT_ISSUER") or f"aura-{_environment()}"
+
+
+def _audience() -> str:
+    return settings.jwt_audience or os.environ.get("AURA_JWT_AUDIENCE") or f"aura-api-{_environment()}"
+
+
+def _legacy_tokens_until() -> datetime:
+    global _warned_bad_legacy_cutoff
+    raw = (settings.jwt_legacy_tokens_until or os.environ.get("AURA_JWT_LEGACY_TOKENS_UNTIL") or "").strip()
+    if not raw:
+        return _DEFAULT_LEGACY_TOKENS_UNTIL
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        # Fail closed: a typo must not silently extend acceptance of unbound tokens.
+        if not _warned_bad_legacy_cutoff:
+            logger.warning("AURA_JWT_LEGACY_TOKENS_UNTIL=%r is not ISO-8601; refusing legacy tokens.", raw)
+            _warned_bad_legacy_cutoff = True
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _decode_access_token(token: str) -> Dict[str, Any]:
+    """Signature, expiry, issuer and audience -- with one migration exception.
+
+    Rule for tokens minted before `iss`/`aud` existed: a token carrying NEITHER claim is accepted
+    as a legacy token until ``_legacy_tokens_until()`` and refused after it. A token carrying
+    either claim is held to both: present-and-wrong is refused, and so is a token with only one
+    of the two (nothing this server ever minted has that shape, so it can only be forged or from
+    another issuer). The legacy window cannot be used to replay a *dev* token on prod: dev now
+    signs with its own key, so such a token already fails the signature check above it. What the
+    window does concede is that a holder of a pre-split signing key can mint claimless tokens
+    until the cut-off -- which is why the cut-off is bounded and an operator can pull it forward.
+    """
+    try:
+        return jwt.decode(
+            token, _secret(), algorithms=[ALGORITHM],
+            issuer=_issuer(), audience=_audience(),
+            options={"require": ["iss", "aud"]},
+        )
+    except jwt.MissingRequiredClaimError as exc:
+        if exc.claim not in ("iss", "aud"):
+            raise
+        missing = exc
+    # Signature and expiry are still verified; only the audience check is off, because PyJWT
+    # refuses a token that has `aud` when no audience is expected -- handled explicitly below.
+    payload = jwt.decode(token, _secret(), algorithms=[ALGORITHM], options={"verify_aud": False})
+    if "iss" in payload or "aud" in payload:
+        raise missing
+    if datetime.now(timezone.utc) >= _legacy_tokens_until():
+        raise jwt.InvalidTokenError("token predates issuer/audience binding and its grace period has ended")
+    return payload
+
+
 # In-process fallback store for refresh tokens if Redis is unreachable.
 # Does not survive restart and isn't shared across the Dockerfile's 4
 # uvicorn workers — logged clearly so this limitation is visible in prod.
@@ -130,6 +210,9 @@ def create_access_token(
     }
     if extra_claims:
         payload.update(extra_claims)
+    # After extra_claims so a caller can never mint a token bound to another deployment (F-03).
+    payload["iss"] = _issuer()
+    payload["aud"] = _audience()
     return jwt.encode(payload, _secret(), algorithm=ALGORITHM)
 
 
@@ -288,7 +371,7 @@ async def verify_access_token(
 
     token = authorization.credentials
     try:
-        payload = jwt.decode(token, _secret(), algorithms=[ALGORITHM])
+        payload = _decode_access_token(token)
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Access token expired. Use /api/v3/auth/refresh.")
     except jwt.InvalidTokenError:

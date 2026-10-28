@@ -138,6 +138,27 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("JWT_SECRET", "AURA_JWT_SECRET"),
     )
+    # The `iss` / `aud` claims services/jwt_auth.py stamps on every token it mints and requires
+    # on every token it verifies (F-03). Empty means "derive from AURA_ENVIRONMENT":
+    # `aura-<environment>` / `aura-api-<environment>`, so the prod and dev stacks on the shared
+    # VPS disagree by default even before their signing keys differ. Set them explicitly only
+    # when two deployments of the *same* environment must not accept each other's tokens.
+    jwt_issuer: str = Field(
+        default="",
+        validation_alias=AliasChoices("JWT_ISSUER", "AURA_JWT_ISSUER"),
+    )
+    jwt_audience: str = Field(
+        default="",
+        validation_alias=AliasChoices("JWT_AUDIENCE", "AURA_JWT_AUDIENCE"),
+    )
+    # ISO-8601 instant until which a token carrying *neither* `iss` nor `aud` (one minted before
+    # those claims existed) is still honoured -- see services/jwt_auth.py::_decode_access_token.
+    # Empty means the built-in default there; set a past date (e.g. 1970-01-01T00:00:00Z) to stop
+    # accepting such tokens immediately.
+    jwt_legacy_tokens_until: str = Field(
+        default="",
+        validation_alias=AliasChoices("JWT_LEGACY_TOKENS_UNTIL", "AURA_JWT_LEGACY_TOKENS_UNTIL"),
+    )
 
     # Writable directory for the JSON-file state the learning pipeline keeps
     # (feedback logs, compiled LoRA datasets, telemetry). Defaults to the app

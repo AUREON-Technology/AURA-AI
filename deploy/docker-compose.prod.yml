@@ -444,6 +444,11 @@ services:
       AURA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
       AURA_QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
       AURA_JWT_SECRET_FILE: /run/secrets/jwt_secret
+      # Token environment binding (F-03; services/jwt_auth.py). Empty = derived from
+      # AURA_ENVIRONMENT (aura-<env> / aura-api-<env>), so prod and dev already differ.
+      AURA_JWT_ISSUER: ${AURA_JWT_ISSUER:-}
+      AURA_JWT_AUDIENCE: ${AURA_JWT_AUDIENCE:-}
+      AURA_JWT_LEGACY_TOKENS_UNTIL: ${AURA_JWT_LEGACY_TOKENS_UNTIL:-}
       # Same file-backed pattern as the secrets above, but generic: secret_hydration.py
       # resolves it via whatever name AURA_PROVIDER_HFSPACE_API_KEY_ENV points at, so this line
       # applies even if that env var name is changed. A no-op until that env var is set.
