@@ -556,7 +556,8 @@ class TestHostedOpenWeightIsGatedNotSilent:
     HOSTED = [
         ("https://api.groq.com/openai/v1", "openai/gpt-oss-120b"),
         ("https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1", "@cf/openai/gpt-oss-20b"),
-        ("https://openrouter.ai/api/v1", "google/gemma-4-31b-it:free"),
+        # A paid ID: a `:free` one also needs ALLOW_PROMPT_TRAINING (TestPromptTrainingConsent).
+        ("https://openrouter.ai/api/v1", "google/gemma-4-31b-it"),
         ("https://router.huggingface.co/v1", "Qwen/Qwen3-32B"),
         ("https://integrate.api.nvidia.com/v1", "meta/llama-3.3-70b-instruct"),
     ]

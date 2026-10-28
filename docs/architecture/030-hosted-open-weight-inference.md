@@ -77,12 +77,33 @@ normalises the ID first: lowercase, strip the `@cf/` / `@hf/` prefix, drop the `
 The check errs toward refusing. Admitting a new family is a reviewed edit to
 `OPEN_WEIGHT_MODEL_PATTERNS`.
 
-### 3. Providers that train on inputs are not admitted
+### 3. Providers that train on inputs are not admitted by default
 
 A host is listed only if its default or free tier does not train on API inputs. That excludes
 Mistral's Experiment plan and Google AI Studio's free tier, whose hosts stay banned. OpenRouter
 is admitted on the condition that the operator keeps prompt training **off** in its privacy
 settings. Free endpoints that require training then refuse the request upstream.
+
+**Amended 2026-10-28: training as an explicit, per-slot consent.** On that date, every free
+open-weight endpoint on OpenRouter ran under a "free model training" data policy. With training
+off, all of them refused (`404 No endpoints found matching your data policy`), so the condition
+above meant no free OpenRouter model at all. The owner chose to allow it, under these rules:
+
+- **A consent, per slot:** `AURA_PROVIDER_<SLOT>_ALLOW_PROMPT_TRAINING=true` (default `false`).
+  Boot refuses a model ID ending in `:free` without it, because aggregators serve free endpoints
+  under exactly this policy. Setting it on a self-hosted provider is refused as a mistake.
+- **Capped below `sensitive`:** a slot that may train cannot also be given
+  `MAX_DATA_CLASSIFICATION=sensitive`; boot refuses the pair. By default it receives `internal`
+  content only (the user's message and an untainted conversation), as every hosted slot does.
+- **Visible:** a warning names the consent on every boot. Every audited generation carries
+  `may_train_on_prompts`, and `router.stats()` exposes it.
+- **Not implied by anything else:** `AURA_ALLOW_HOSTED_INFERENCE` is still required. Closed
+  models stay banned with or without it; for example, OpenRouter's `openai/gpt-4o` is refused by
+  the open-weight check.
+
+Providers that do not train (Groq, or OpenRouter's paid endpoints pinned with
+`"provider": {"data_collection": "deny"}` in `EXTRA_BODY`) need none of this. The
+`deploy/.env.example` OpenRouter block shows both setups.
 
 ### 4. A hosted provider is never `is_local`
 

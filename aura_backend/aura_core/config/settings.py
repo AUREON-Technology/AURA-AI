@@ -314,6 +314,12 @@ class ProviderConfig:
     #: the request is, and a provider override there would make the router's capability checks
     #: untrue. AURA_PROVIDER_<NAME>_EXTRA_BODY.
     extra_body: str = ""
+    #: The operator accepts that this hosted provider may train on, or retain, the prompts it
+    #: receives (ADR-030 §3, as amended). Off by default, and required for a ``:free`` model ID:
+    #: aggregators serve free endpoints under a "free model training" data policy. A provider with
+    #: this consent is capped below ``sensitive`` and is named as such in every audit record.
+    #: AURA_PROVIDER_<NAME>_ALLOW_PROMPT_TRAINING.
+    allow_prompt_training: bool = False
 
     #: Request-body fields an ``extra_body`` may not set. See :attr:`extra_body`.
     _RESERVED_BODY_FIELDS: ClassVar[frozenset[str]] = frozenset({
@@ -354,6 +360,12 @@ class ProviderConfig:
                 details={"supported": sorted(known_classes)},
             )
         self._reject_external_base_url()
+        if self.allow_prompt_training and not self.third_party:
+            raise ConfigurationError(
+                f"provider {self.name!r} sets allow_prompt_training but is not a hosted "
+                f"open-weight API; the consent only means something for a third party.",
+                details={"provider": self.name, "base_url": self.base_url},
+            )
 
     def _validate_model_metadata(self) -> None:
         """Fail at boot on a pool or modality name that would otherwise silently never match."""
@@ -501,6 +513,27 @@ class ProviderConfig:
                 f"and let local-only routing send it data it must not see.",
                 details=details,
             )
+        if self.model.lower().endswith(":free") and not self.allow_prompt_training:
+            # An aggregator's free endpoints are served under a "free model training" data policy:
+            # the upstream may train on, or keep, what it is sent. ADR-030 §3 admits that only as
+            # an explicit, per-slot consent, never as a side effect of picking a free model.
+            raise ConfigurationError(
+                f"provider {self.name!r} names {self.model!r}, a free endpoint whose upstream may "
+                f"train on the prompts it receives. Set "
+                f"AURA_PROVIDER_{self.name.upper()}_ALLOW_PROMPT_TRAINING=true to accept that, or "
+                f"use a paid endpoint with a no-training data policy (ADR-030 §3).",
+                details=details,
+            )
+        if self.allow_prompt_training and (
+            self.data_classification_ceiling is DataClassification.SENSITIVE
+        ):
+            raise ConfigurationError(
+                f"provider {self.name!r} may train on its prompts and is also allowed SENSITIVE "
+                f"content. Documents, memory, tool output and Engineer workspaces must never reach "
+                f"a provider that may train on them: lower its MAX_DATA_CLASSIFICATION, or drop "
+                f"ALLOW_PROMPT_TRAINING (ADR-030 §3).",
+                details=details,
+            )
         # Warned on every boot, as the rented-compute opt-in is: whoever runs the system later
         # should see the trade-off without having been the person who accepted it.
         logger.warning(
@@ -508,6 +541,12 @@ class ProviderConfig:
             "retrieved content are sent to this provider",
             extra={**details, "max_data_classification": self.data_classification_ceiling.value},
         )
+        if self.allow_prompt_training:
+            logger.warning(
+                "hosted provider may train on the prompts it receives: "
+                "AURA_PROVIDER_<NAME>_ALLOW_PROMPT_TRAINING=true (ADR-030 §3)",
+                extra={**details, "max_data_classification": self.data_classification_ceiling.value},
+            )
         if self.data_classification_ceiling is DataClassification.SENSITIVE:
             # The default keeps documents, memory, tool output and Engineer workspaces local.
             # Raising it is allowed, and is the one setting that sends all of them out, so it
@@ -575,6 +614,7 @@ class ProviderConfig:
             max_data_classification=(_env(f"{p}_MAX_DATA_CLASSIFICATION", "") or "").lower(),
             tokens_per_second=_float(f"{p}_TOKENS_PER_SECOND", 0.0, minimum=0.0),
             extra_body=(_env(f"{p}_EXTRA_BODY", "") or "").strip(),
+            allow_prompt_training=_bool(f"{p}_ALLOW_PROMPT_TRAINING", False),
         )
 
 

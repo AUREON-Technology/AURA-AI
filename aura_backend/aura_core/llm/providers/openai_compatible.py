@@ -45,6 +45,18 @@ _FINISH_REASONS = {
 }
 
 
+def _is_copied_reasoning(content: str | None, reasoning: str | None) -> bool:
+    """Whether ``content`` is only the model's reasoning, copied over.
+
+    Some upstreams serving a reasoning model fill ``content`` with the reasoning text when the
+    output budget runs out mid-thought (``finish_reason: length``), in a completion and as the
+    last delta of a stream. That text is not an answer, and showing it would put the model's
+    chain of thought in front of the user as if it were one. Seen live on a hosted open-weight
+    API (``tests/fixtures/provider_wire/openrouter_*truncated_reasoning.json``).
+    """
+    return bool(content and reasoning and content.strip() == reasoning.strip())
+
+
 class OpenAICompatibleProvider(BaseProvider):
     def __init__(
         self,
@@ -242,6 +254,8 @@ class OpenAICompatibleProvider(BaseProvider):
         choice = choices[0]
         message = choice.get("message") or {}
         text = message.get("content") or ""
+        if _is_copied_reasoning(text, message.get("reasoning") or message.get("reasoning_content")):
+            text = ""
         tool_calls = self._parse_tool_calls(message.get("tool_calls"))
 
         usage = self._usage(self._event_usage(body))
@@ -286,6 +300,7 @@ class OpenAICompatibleProvider(BaseProvider):
             usage: TokenUsage | None = None
             finish: FinishReason | None = None
             completion_chars = 0
+            reasoning_so_far = ""
 
             async for line in response.aiter_lines():
                 if not line or not line.startswith("data:"):
@@ -306,7 +321,11 @@ class OpenAICompatibleProvider(BaseProvider):
 
                 for choice in event.get("choices") or []:
                     delta = choice.get("delta") or {}
+                    reasoning = delta.get("reasoning") or delta.get("reasoning_content")
+                    reasoning_so_far += reasoning or ""
                     content = delta.get("content")
+                    if not completion_chars and _is_copied_reasoning(content, reasoning_so_far):
+                        content = None
                     if content:
                         completion_chars += len(content)
                         yield StreamChunk(delta=content, provider=self.name, model=self._model)

@@ -67,6 +67,7 @@ def capabilities_from_config(config: ProviderConfig) -> ProviderCapabilities:
         capacity_group=config.capacity_group,
         max_data_classification=config.data_classification_ceiling,
         third_party=config.third_party,
+        may_train_on_prompts=config.allow_prompt_training,
         tokens_per_second=config.tokens_per_second,
     )
 

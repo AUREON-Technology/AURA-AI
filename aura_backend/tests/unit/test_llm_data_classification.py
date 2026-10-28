@@ -14,6 +14,7 @@ registry builds for a hosted base URL (asserted separately in ``TestConfiguratio
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 
 import pytest
 
@@ -188,6 +189,59 @@ class TestConfiguration:
             ProviderConfig(name="p", kind="echo", model="m", max_data_classification="secret")
 
 
+
+class TestPromptTrainingConsent:
+    """ADR-030 §3 as amended: a provider that may train on prompts is a per-slot, explicit consent."""
+
+    _FREE = "nvidia/nemotron-3-ultra-550b-a55b:free"
+
+    def _config(self, **overrides) -> ProviderConfig:
+        return ProviderConfig(**{
+            "name": "hosted1", "kind": "openai_compatible", "model": self._FREE,
+            "base_url": _HOSTED_URL, **overrides,
+        })
+
+    def test_a_free_endpoint_is_refused_without_consent(self, monkeypatch) -> None:
+        monkeypatch.setenv("AURA_ALLOW_HOSTED_INFERENCE", "true")
+        with pytest.raises(ConfigurationError, match="ALLOW_PROMPT_TRAINING"):
+            self._config()
+
+    def test_consent_admits_it_and_reaches_the_capabilities(self, monkeypatch) -> None:
+        monkeypatch.setenv("AURA_ALLOW_HOSTED_INFERENCE", "true")
+        caps = capabilities_from_config(self._config(allow_prompt_training=True))
+        assert caps.may_train_on_prompts is True
+        assert caps.max_data_classification is INTERNAL
+
+    def test_consent_is_read_from_the_environment(self, monkeypatch) -> None:
+        monkeypatch.setenv("AURA_ALLOW_HOSTED_INFERENCE", "true")
+        monkeypatch.setenv("AURA_PROVIDER_HOSTED1_BASE_URL", _HOSTED_URL)
+        monkeypatch.setenv("AURA_PROVIDER_HOSTED1_MODEL", self._FREE)
+        monkeypatch.setenv("AURA_PROVIDER_HOSTED1_ALLOW_PROMPT_TRAINING", "true")
+        assert ProviderConfig.from_env("hosted1").allow_prompt_training is True
+
+    def test_a_provider_that_may_train_never_receives_sensitive_content(self, monkeypatch) -> None:
+        monkeypatch.setenv("AURA_ALLOW_HOSTED_INFERENCE", "true")
+        with pytest.raises(ConfigurationError, match="SENSITIVE"):
+            self._config(allow_prompt_training=True, max_data_classification="sensitive")
+
+    def test_consent_does_not_bypass_the_hosted_opt_in(self, monkeypatch) -> None:
+        monkeypatch.delenv("AURA_ALLOW_HOSTED_INFERENCE", raising=False)
+        with pytest.raises(ConfigurationError, match="AURA_ALLOW_HOSTED_INFERENCE"):
+            self._config(allow_prompt_training=True)
+
+    def test_consent_on_a_self_hosted_provider_is_a_mistake(self) -> None:
+        with pytest.raises(ConfigurationError, match="not a hosted"):
+            ProviderConfig(
+                name="local", kind="openai_compatible", model="m",
+                base_url="http://ollama:11434/v1", allow_prompt_training=True,
+            )
+
+    def test_a_paid_endpoint_needs_no_consent(self, monkeypatch) -> None:
+        monkeypatch.setenv("AURA_ALLOW_HOSTED_INFERENCE", "true")
+        caps = capabilities_from_config(self._config(model="nvidia/nemotron-3-ultra-550b-a55b"))
+        assert caps.may_train_on_prompts is False
+
+
 # -- routing ---------------------------------------------------------------------------
 
 
@@ -260,7 +314,19 @@ class TestAudit:
             assert event.detail["model"] == "openai/gpt-oss-120b"
             assert event.detail["prompt_tokens"] is not None
             assert "hello there" not in repr(event.detail)
+            assert event.detail["may_train_on_prompts"] is False
         assert {e.detail["streamed"] for e in events} == {True, False}
+
+    async def test_a_provider_that_may_train_is_named_as_such(self) -> None:
+        audit = InMemoryAuditSink()
+        hosted = _hosted()
+        hosted._capabilities = dataclasses.replace(hosted.capabilities, may_train_on_prompts=True)
+        router = _router(hosted, _local(), audit=audit)
+        with data_scope(INTERNAL):
+            await router.complete(_request())
+        (event,) = await audit.query(action="llm.third_party_generation")
+        assert event.detail["may_train_on_prompts"] is True
+        assert router.stats()[0]["may_train_on_prompts"] is True
 
     async def test_self_hosted_generations_are_not_audited(self) -> None:
         audit = InMemoryAuditSink()

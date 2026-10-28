@@ -1,0 +1,31 @@
+{
+  "provenance": "captured 2026-10-28 (abridged: ids, timestamps and reasoning_details dropped)",
+  "note": "The same truncation in a stream: reasoning deltas, then one content delta repeating all of it.",
+  "status": 200,
+  "headers": {
+    "content-type": "text/event-stream"
+  },
+  "sse": [
+    ": OPENROUTER PROCESSING",
+    "",
+    "data: {\"model\": \"nvidia/nemotron-3-ultra-550b-a55b:free\", \"provider\": \"Nvidia\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"\", \"reasoning\": \"The\"}, \"finish_reason\": null}]}",
+    "",
+    "data: {\"model\": \"nvidia/nemotron-3-ultra-550b-a55b:free\", \"provider\": \"Nvidia\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"\", \"reasoning\": \" user is\"}, \"finish_reason\": null}]}",
+    "",
+    "data: {\"model\": \"nvidia/nemotron-3-ultra-550b-a55b:free\", \"provider\": \"Nvidia\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"\", \"reasoning\": \" asking me to reply\"}, \"finish_reason\": null}]}",
+    "",
+    "data: {\"model\": \"nvidia/nemotron-3-ultra-550b-a55b:free\", \"provider\": \"Nvidia\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"\", \"reasoning\": \" with a\"}, \"finish_reason\": null}]}",
+    "",
+    "data: {\"model\": \"nvidia/nemotron-3-ultra-550b-a55b:free\", \"provider\": \"Nvidia\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"\", \"reasoning\": \" single word \\\"ready\"}, \"finish_reason\": null}]}",
+    "",
+    "data: {\"model\": \"nvidia/nemotron-3-ultra-550b-a55b:free\", \"provider\": \"Nvidia\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"\", \"reasoning\": \"\\\". This appears\"}, \"finish_reason\": null}]}",
+    "",
+    "data: {\"model\": \"nvidia/nemotron-3-ultra-550b-a55b:free\", \"provider\": \"Nvidia\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"The user is asking me to reply with a single word \\\"ready\\\". This appears\"}, \"finish_reason\": null}]}",
+    "",
+    "data: {\"model\": \"nvidia/nemotron-3-ultra-550b-a55b:free\", \"provider\": \"Nvidia\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"\"}, \"finish_reason\": \"length\"}]}",
+    "",
+    "data: {\"model\": \"nvidia/nemotron-3-ultra-550b-a55b:free\", \"choices\": [], \"usage\": {\"prompt_tokens\": 29, \"completion_tokens\": 16, \"total_tokens\": 45}}",
+    "",
+    "data: [DONE]"
+  ]
+}

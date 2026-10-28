@@ -26,6 +26,9 @@ name: Verify Hosted Inference
 #   vars.AURA_HOSTED1_RPM / _RPD / _TPM / _TPD / _TOKENS_PER_SECOND / _CONTEXT_WINDOW
 #                                  optional; the provider's published free-tier limits
 #   vars.AURA_HOSTED1_EXTRA_BODY   optional JSON, e.g. {"reasoning_effort":"low"}
+#   vars.AURA_HOSTED1_ALLOW_PROMPT_TRAINING
+#                                  `true` only for a model whose upstream may train on prompts
+#                                  (any `:free` ID); boot refuses such a model without it
 # Plus the VPS_SSH_KEY / VPS_HOST / VPS_USER that Deploy VPS already uses.
 
 on:
@@ -146,6 +149,7 @@ jobs:
           HOSTED1_TPS: ${{ vars.AURA_HOSTED1_TOKENS_PER_SECOND }}
           HOSTED1_CONTEXT: ${{ vars.AURA_HOSTED1_CONTEXT_WINDOW }}
           HOSTED1_EXTRA_BODY: ${{ vars.AURA_HOSTED1_EXTRA_BODY }}
+          HOSTED1_ALLOW_TRAINING: ${{ vars.AURA_HOSTED1_ALLOW_PROMPT_TRAINING }}
         run: |
           test -n "$VPS_HOST" && test -n "$VPS_USER"
           SSH="ssh -i $HOME/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
@@ -167,7 +171,8 @@ jobs:
             "AURA_PROVIDER_HOSTED1_TPM=$HOSTED1_TPM" "AURA_PROVIDER_HOSTED1_TPD=$HOSTED1_TPD" \
             "AURA_PROVIDER_HOSTED1_TOKENS_PER_SECOND=$HOSTED1_TPS" \
             "AURA_PROVIDER_HOSTED1_CONTEXT_WINDOW=$HOSTED1_CONTEXT" \
-            "AURA_PROVIDER_HOSTED1_EXTRA_BODY=$HOSTED1_EXTRA_BODY")
+            "AURA_PROVIDER_HOSTED1_EXTRA_BODY=$HOSTED1_EXTRA_BODY" \
+            "AURA_PROVIDER_HOSTED1_ALLOW_PROMPT_TRAINING=$HOSTED1_ALLOW_TRAINING")
 
           set +e
           $SSH "${VPS_USER}@${VPS_HOST}" "env $REMOTE_ENV bash -s" <<'REMOTE'
@@ -190,7 +195,8 @@ jobs:
           SLOT_VARS=(AURA_PROVIDER_HOSTED1_BASE_URL AURA_PROVIDER_HOSTED1_MODEL
                      AURA_PROVIDER_HOSTED1_RPM AURA_PROVIDER_HOSTED1_RPD AURA_PROVIDER_HOSTED1_TPM
                      AURA_PROVIDER_HOSTED1_TPD AURA_PROVIDER_HOSTED1_TOKENS_PER_SECOND
-                     AURA_PROVIDER_HOSTED1_CONTEXT_WINDOW AURA_PROVIDER_HOSTED1_EXTRA_BODY)
+                     AURA_PROVIDER_HOSTED1_CONTEXT_WINDOW AURA_PROVIDER_HOSTED1_EXTRA_BODY
+                     AURA_PROVIDER_HOSTED1_ALLOW_PROMPT_TRAINING)
           OVERRIDES=(AURA_ALLOW_HOSTED_INFERENCE=true "AURA_LLM_PROVIDERS=$PROVIDERS"
                      AURA_LLM_ROUTING_POLICY=quality_first)
           for v in "${SLOT_VARS[@]}"; do
