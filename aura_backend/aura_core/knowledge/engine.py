@@ -540,6 +540,10 @@ class KnowledgeEngine:
             else self._empty()
         )
         dense_hits, lexical_hits = await asyncio.gather(dense_task, lexical_task)
+        if lexical_hits:
+            lexical_hits = await self._drop_inactive_lexical(
+                lexical_hits, {chunk_id for chunk_id, _score, _payload in dense_hits}
+            )
 
         if not dense_hits and not lexical_hits:
             if self._metrics is not None:
@@ -655,6 +659,37 @@ class KnowledgeEngine:
         if not allowed:
             return []
         return self._lexical.search(text, limit=self._candidate_k, allowed_ids=allowed)
+
+    async def _drop_inactive_lexical(
+        self, hits: Sequence[tuple[str, float]], live_ids: set[str]
+    ) -> list[tuple[str, float]]:
+        """Drop lexical hits whose chunk is not part of its document's active version.
+
+        The BM25 index is per process, and a delete or a new version only updates the index of
+        the gateway worker that served it. Every other worker keeps the old chunk ids until it
+        restarts, and ``chunks_for`` resolves them regardless of status, so a deleted document
+        stayed searchable there (F-14). The document store is shared, so it decides: a hit
+        whose document is tombstoned, or whose version has been superseded, is dropped and
+        evicted from this worker's index. Versions never become active again, so the eviction is
+        final. Hits the vector store also returned are live already, and skip the lookup.
+        """
+        active_versions: dict[str, int | None] = {}
+        kept: list[tuple[str, float]] = []
+        for chunk_id, score in hits:
+            if chunk_id in live_ids:
+                kept.append((chunk_id, score))
+                continue
+            document_id, version, _index = self._parse_chunk_id(chunk_id)
+            if document_id is not None:
+                if document_id not in active_versions:
+                    document = await self._documents.get(DocumentId(document_id))
+                    active_versions[document_id] = document.version if document else None
+                if active_versions[document_id] == version:
+                    kept.append((chunk_id, score))
+                    continue
+            self._lexical.remove(chunk_id)
+            self._lexical_owner.pop(chunk_id, None)
+        return kept
 
     async def _resolve_contents(
         self, chunk_ids: Sequence[str], payloads: Mapping[str, Mapping[str, Any]]
