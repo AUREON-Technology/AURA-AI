@@ -119,7 +119,7 @@ class ControlServer {
     _token = _randomToken();
     _controlFile = File(p.join(configDir.path, 'control.json'));
     _controlFile!.parent.createSync(recursive: true);
-    _controlFile!.writeAsStringSync(jsonEncode({'port': server.port, 'token': _token}));
+    writePrivateFile(_controlFile!, jsonEncode({'port': server.port, 'token': _token}));
     _logger('control server listening on 127.0.0.1:${server.port}');
     server.listen(_handle, onError: (Object e) => _logger('control server error: $e'));
   }

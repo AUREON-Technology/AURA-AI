@@ -116,6 +116,66 @@ void main() {
     });
   });
 
+  group('evaluateCommand: untrusted workspace never runs repo code or leaves the root', () {
+    // Each of these passes the shell-metacharacter floor and used to match an allowlist prefix,
+    // so it ran with no approval: they execute repository-supplied code, write a file anywhere,
+    // or read outside the workspace.
+    const escapes = [
+      'npm test',
+      'pytest . --collect-only',
+      'python -m pytest tests --collect-only',
+      'rg --pre ./x.sh pattern',
+      'rg pattern',
+      'git log --output=/tmp/x',
+      'git diff --output /tmp/x',
+      'git diff --ext-diff',
+      'git show --textconv HEAD',
+      'git diff --no-index a /etc/passwd',
+      'git branch evil',
+      'git branch -D main',
+      'git remote add origin https://example.com/x.git',
+      'cat /etc/passwd',
+      'cat ~/.ssh/id_rsa',
+      'cat ../../outside.txt',
+      'head "/etc/hosts"',
+      'grep -f/etc/patterns -r .',
+      'grep --file=/etc/patterns -r .',
+      r'cat C:\Users\me\secrets.txt',
+      'node --version script.js',
+    ];
+    for (final command in escapes) {
+      test('does not auto-allow `$command`', () {
+        final result = evaluateCommand(command, workspaceTrusted: false);
+        expect(result.decision, isNot(CommandDecision.allow));
+      });
+    }
+
+    test('still auto-allows in-workspace inspection', () {
+      for (final command in [
+        'git branch',
+        'git branch -a',
+        'git remote -v',
+        'git diff HEAD~1',
+        'git log main..feature',
+        'cat src/main.dart',
+        'grep -rn TODO lib',
+        'npm ls',
+        'node --version',
+      ]) {
+        expect(
+          evaluateCommand(command, workspaceTrusted: false).isAllowed,
+          isTrue,
+          reason: command,
+        );
+      }
+    });
+
+    test('an out-of-workspace path is queued for approval, not refused outright', () {
+      final result = evaluateCommand('grep -r "/api/v3" .', workspaceTrusted: false);
+      expect(result.decision, CommandDecision.needsApproval);
+    });
+  });
+
   group('evaluateCommand: trusted workspace', () {
     test('allows arbitrary commands once the workspace is trusted', () {
       final result = evaluateCommand('pytest -q', workspaceTrusted: true);
