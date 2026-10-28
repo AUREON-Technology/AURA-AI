@@ -11,8 +11,8 @@ for fetching the Flutter version `client-ci.yml` pins and running `analyze` + `t
 which is how every "awaiting CI" row below became a measured result instead of a hope.
 
 **Last local run** (Flutter 3.44.6 / Dart 3.12.2, the CI pin):
-`flutter analyze` → **No issues found!**; `flutter test` → **445 passed, 0 failed, 3 skipped**,
-including the 126 in `test/ux/`. The suite grew past the 381 this transformation last measured
+`flutter analyze` → **No issues found!**; `flutter test` → **452 passed, 0 failed, 3 skipped**,
+including the 133 in `test/ux/`. The suite grew past the 381 this transformation last measured
 because other work landed alongside it; the UX figure is the one this document is accountable
 for.
 
@@ -42,7 +42,7 @@ is actually available on demand.
 | 8 | Agent Workspace | **NOT STARTED** | |
 | 9 | Approval + Security UX | **BLOCKED** | F-03: the approval payload carries `command`, `root`, `paths`, `diff_preview` and nothing else. Reason, risk and reversibility are not transmitted, and inventing them client-side would be fabrication. Protocol change across backend + hostd + client is the prerequisite |
 | 10 | Host Management | **NOT STARTED** | |
-| 11 | Universal loading/error/empty/offline states | **COMPLETE** | Failures: `AuraFailure`/`AuraFailureView` classify the backend's ~30 `kind` slugs into 12 states, Retry only where it helps, a `compact` form for one-slot failures, adopted across 13 surfaces. Sync: `AuraSyncStatusView` folds `SyncState` and the parked-outbox count into five phases including `pendingRefused` — a change the server refused, which the engine reports as settled and which used to render as "Synced" |
+| 11 | Universal loading/error/empty/offline states | **COMPLETE** | Failures: `AuraFailure`/`AuraFailureView` classify the backend's ~30 `kind` slugs into 12 states, Retry only where it helps, a `compact` form for one-slot failures, adopted across 13 surfaces. Sync: `AuraSyncStatusView` folds `SyncState` and the parked count into five phases including `pendingRefused`, plus `SyncAlertBanner` in the app shell so an unsaved change is visible on every screen and not just in chat |
 | 12 | Mobile UX | **NOT STARTED** | Not audited yet — see audit §3 |
 | 13 | Accessibility | **PARTIALLY IMPLEMENTED** | Contrast gate extended; activity bar semantics, focus and non-colour badge counts added; Escape dismisses a floating panel. Keyboard traversal order, focus visuals and real screen-reader output all still unverified |
 | 14 | Themes + Personalization | **PARTIALLY PRE-EXISTING** | Light/dark via `AuraPalette`; desktop layout persistence already real |
@@ -63,14 +63,10 @@ is actually available on demand.
 
 In order, and each on its own commit:
 
-1. **Mount `AuraSyncStatusView` outside chat.** It is shared now, and chat is still the only
-   surface showing it — so on Tasks, Finance or Calendar a change the server refused is as
-   invisible as it ever was. The component is the easy half; deciding where the pill belongs on
-   each shell is the half worth doing deliberately.
-2. **Phase 2 proper** — promote the most-duplicated one-offs (tree item, toolbar, context menu)
+1. **Phase 2 proper** — promote the most-duplicated one-offs (tree item, toolbar, context menu)
    into the shared set, in duplication order. See `COMPONENT_GUIDE.md`.
-3. **Migrate the mobile command palette** onto `AuraCommandPalette`, behind tests written first.
-4. **F-04 / F-05** — the per-screen colour, type and monospace migration. Several of the screens
+2. **Migrate the mobile command palette** onto `AuraCommandPalette`, behind tests written first.
+3. **F-04 / F-05** — the per-screen colour, type and monospace migration. Several of the screens
    touched by the failure-state adoption are still on V1's `AuraTheme` constants, which is the
    next thing a reader of those files will notice.
 
@@ -95,3 +91,19 @@ status code, and that is equally consistent with a dead network and a dead serve
 render as one state worded not to claim either — saying "you are offline" when the server is down
 sends the user to check their wifi for nothing. Splitting them would need a reachability probe
 against a third party, which is a design decision (and a privacy one) rather than a UI change.
+
+## A constraint worth knowing before you mount anything in the shell
+
+`SyncEngine.build()` starts a `Timer.periodic(60s)` and fires a `synchronize()` microtask. Merely
+*observing* sync state therefore starts a timer, which fails any widget test that pumps the
+observer without overriding the provider — `overflow_layout_test` already carries such an override
+for `ChatHeader`, and `shell_ia_test` needed one once `SyncAlertBanner` went into `ShellLayout`.
+
+That is why the banner watches `parkedOutboxCountProvider` and not `syncEngineProvider`: a plain
+database watch rather than an engine with a lifecycle, and the signal that actually matters here.
+Even so, mounting it in the shell means a test that pumps *any* route now touches the database,
+which is what the two `shell_ia_test` overrides pay for.
+
+Making the engine lazy — no timer until something asks it to sync — would remove that tax for
+every future shell test. It is a change to `features/sync/`, not to UX, so it is recorded here
+rather than done here.

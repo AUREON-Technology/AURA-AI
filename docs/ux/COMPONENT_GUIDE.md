@@ -15,6 +15,7 @@ screen's folder gets copied into the next screen rather than reused.
 | Component | For | Notes |
 |---|---|---|
 | `AuraButton` | All four button variants | `primary` / `secondary` / `ghost` / `destructive`, plus `loading` and `expand`. Enforces the accessible minimum tap target so call sites can't forget it. |
+| `AuraBanner` | App-wide condition | Full-width strip in shared chrome, for something wrong with the *app* rather than the screen. Deliberately not dismissible: a banner whose condition is still true after dismissal is a problem the user has been invited to forget. |
 | `AuraCard` | A grouped surface | |
 | `AuraCommandPalette` | Searchable command list | Takes a plain `List<AuraCommandItem>`; knows nothing about the desktop or about routing. See below. |
 | `AuraDialog` | Modal with title + actions | `AuraDialog.show()` is the entry point. |
@@ -71,11 +72,11 @@ colours and 296 raw font sizes the baseline audit counted (F-04). Listed roughly
 often they are duplicated:
 
 ```text
-toast             banner           avatar
+toast             avatar           progress bar
 tree item         tabs             toolbar
-context menu      progress bar     dropdown
+context menu      dropdown         bottom sheet
 approval card     agent step       diff summary
-activity item     search field     bottom sheet
+activity item     search field
 ```
 
 (`status badge` came off this list with `AuraSyncStatusView` — the sync pill was the most
