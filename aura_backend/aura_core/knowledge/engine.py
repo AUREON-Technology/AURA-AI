@@ -501,6 +501,31 @@ class KnowledgeEngine:
             await self._graph_pipeline.purge(document_id=document_id.value, owner_id=owner_id)
         return await self._documents.tombstone(document_id, owner_id=owner_id)
 
+    async def erase_owner(self, owner_id: UserId) -> int:
+        """Erasure: everything ``owner_id`` ever ingested, gone from every index and the store.
+
+        Each active document goes through :meth:`delete_document` first -- that is what removes
+        its vectors, lexical entries and derived graph facts -- and then every row and chunk the
+        owner has is deleted outright, including versions and documents tombstoned earlier, whose
+        chunk text a tombstone keeps. Returns how many document rows were removed.
+        """
+        async def owned() -> list:
+            # ``list_active(owner)`` also returns global documents on the Postgres store; those are
+            # not the owner's to erase.
+            found = await self._documents.list_active(owner_id=owner_id, limit=100)
+            return [d for d in found if _owner_value(d.owner_id) == _owner_value(owner_id)]
+
+        while True:
+            active = await owned()
+            if not active:
+                break
+            for document in active:
+                await self.delete_document(document.id, owner_id=owner_id)
+            if {d.id.value for d in active} & {d.id.value for d in await owned()}:
+                # A document that survives its own delete would be returned again forever.
+                raise KnowledgeError(f"could not delete the documents of {owner_id.value!r}")
+        return await self._documents.purge_owner(owner_id)
+
     # -- retrieval ---------------------------------------------------------------------
 
     async def retrieve(

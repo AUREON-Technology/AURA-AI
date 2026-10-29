@@ -4,13 +4,14 @@ Lives outside ``aura_core`` because it talks to SQLAlchemy, JWT refresh
 storage, and Celery (ADR-002).
 """
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, select
 
-from services.jwt_auth import revoke_all_for_uid
+from services.jwt_auth import revoke_all_devices_for_uid, revoke_all_for_uid
 from services.rbac import (
     CONSOLE_MIN_ROLE,
     ROLE_HIERARCHY,
@@ -19,6 +20,8 @@ from services.rbac import (
     granted_role,
     require_role,
 )
+
+logger = logging.getLogger("aura.admin_platform")
 
 router = APIRouter(prefix="/api/v3/admin", tags=["admin-platform"])
 
@@ -198,7 +201,16 @@ async def assign_role(
             user.role_assigned_by = user_info.get("email")
         await db.commit()
         role, granted_by = effective_role(user)
-        return {"email": user.email, "role": role, "granted_by": granted_by}
+        revoked = {"sessions": 0, "devices": 0}
+        if ROLE_HIERARCHY[role] < ROLE_HIERARCHY[current]:
+            # A demotion otherwise waits for the next refresh, and a paired desktop's 30-day
+            # device token has none. Ending both makes it take effect at once, apart from the
+            # current 15-minute access token.
+            revoked = {
+                "sessions": revoke_all_for_uid(user.auth_subject),
+                "devices": revoke_all_devices_for_uid(user.auth_subject),
+            }
+        return {"email": user.email, "role": role, "granted_by": granted_by, "revoked": revoked}
 
 
 @router.post("/operators/{email}/revoke-sessions")
@@ -218,24 +230,96 @@ async def revoke_sessions(email: str, user_info: dict = Depends(require_role("Su
     return {"email": email, "revoked": revoked}
 
 
-@router.post("/users/{subject}/forget")
-async def forget_user(subject: str, user_info: dict = Depends(require_role("SuperAdmin"))):
-    """Erase a user. Returns counts only — never content."""
-    from infrastructure.db.base import get_session_factory, is_configured
-    from infrastructure.db.models import (
-        CalendarEvent,
-        FinanceRecord,
-        HealthRecord,
-        Memory,
-        Message,
-        Task,
-        User,
-    )
+#: What erasure does not reach yet, reported with every result rather than claimed as done.
+NOT_ERASED = (
+    "feedback records",
+    "turn telemetry",
+    "audit log",
+    "LLM response cache (expires within an hour)",
+    "agent run history",
+    "idempotency keys (expire within a day)",
+    "conversation transcripts never synced to this server (expire after 30 days)",
+)
 
-    counts = {"sessions": 0, "sync_rows": 0, "user": 0}
+
+async def _erase_core(container, owner: str, conversation_ids: set[str]) -> tuple[dict, list]:
+    """Erase ``owner`` from the aura_core stores: memories and their vectors, knowledge documents
+    with every chunk, vector, lexical entry and graph fact, agent-written personal-OS records,
+    and the server-side transcript of each known conversation. Returns counts and the stores
+    that failed, so a failure is reported instead of swallowed."""
+    from aura_core.domain.identifiers import SessionId, UserId
+
+    owner_id = UserId(owner)
+    counts: dict = {}
+    failed: list = []
+
+    async def step(name, run):
+        try:
+            counts[name] = await run()
+        except Exception:
+            logger.exception("erasure step failed", extra={"step": name})
+            failed.append(name)
+
+    async def personal_os():
+        store, removed = container.personal_os_store, 0
+        while records := await store.list_for_owner(owner_id, limit=100):
+            deleted = [await store.delete(r.id, owner_id=owner_id) for r in records]
+            if not any(deleted):
+                raise RuntimeError("personal-OS records could not be deleted")
+            removed += sum(deleted)
+        return removed
+
+    async def conversations():
+        sessions = conversation_ids | {"default_session"}
+        for session_id in sessions:
+            await container.episodic.clear(SessionId(session_id), owner_id)
+        return len(sessions)
+
+    await step("memories", lambda: container.memory.forget_owner(owner_id))
+    await step("documents", lambda: container.knowledge.erase_owner(owner_id))
+    await step("personal_os_records", personal_os)
+    await step("conversations", conversations)
+    return counts, failed
+
+
+@router.post("/users/{subject}/forget")
+async def forget_user(
+    subject: str, request: Request, user_info: dict = Depends(require_role("SuperAdmin")),
+):
+    """Erase a user. Returns counts only — never content.
+
+    Used to soft-delete six sync tables and answer ``forgotten: true`` while the user's memories
+    (and their vectors), knowledge documents, server-side transcripts, agent-written records,
+    projects and goals, device tokens and the ciphertext itself all stayed. Now:
+
+    1. the aura_core stores are erased (``_erase_core``);
+    2. refresh tokens and every paired device are revoked;
+    3. the ``users`` row is deleted, which removes every v2 row the user owns -- all synced
+       tables, insights, the GitHub link -- through the schema's ``ON DELETE CASCADE``.
+
+    If any store fails, the ``users`` row is kept so the same call can be retried, and the
+    response says ``forgotten: false`` and which stores failed. What erasure still does not
+    reach is listed in ``not_erased`` on every response.
+    """
+    from infrastructure.db.base import get_session_factory, is_configured
+    from infrastructure.db.models import Message, User
+
+    container = getattr(request.app.state, "aura", None)
+    counts: dict = {"sessions": 0, "devices": 0, "user": 0}
+    failed: list = []
+
+    async def erase_everything_but_the_row(auth_subject: str, conversation_ids: set) -> None:
+        if container is not None:
+            core, core_failed = await _erase_core(container, auth_subject, conversation_ids)
+            counts.update(core)
+            failed.extend(core_failed)
+        else:
+            failed.append("aura_core stores (no container on this app)")
+        counts["sessions"] = revoke_all_for_uid(auth_subject)
+        counts["devices"] = revoke_all_devices_for_uid(auth_subject)
+
     if is_configured():
-        factory = get_session_factory()
-        async with factory() as db:
+        async with get_session_factory()() as db:
             result = await db.execute(
                 select(User).where((User.auth_subject == subject) | (User.email == subject))
             )
@@ -244,33 +328,29 @@ async def forget_user(subject: str, user_info: dict = Depends(require_role("Supe
                 raise HTTPException(status_code=404, detail="user not found")
             current, _ = effective_role(user)
             if current == "SuperAdmin":
-                remaining = await _superadmin_count(db)
                 blocked = last_superadmin_block(
-                    target_role=current,
-                    remaining=remaining,
-                    action="forget",
+                    target_role=current, remaining=await _superadmin_count(db), action="forget",
                 )
                 if blocked:
                     raise _forbid(blocked)
-            now = datetime.now(timezone.utc)
-            sync_count = 0
-            for model in (Task, CalendarEvent, FinanceRecord, HealthRecord, Memory, Message):
-                outcome = await db.execute(
-                    update(model)
-                    .where(model.user_id == user.id, model.deleted_at.is_(None))
-                    .values(deleted_at=now)
-                )
-                sync_count += outcome.rowcount or 0
-            counts["sync_rows"] = sync_count
-            counts["sessions"] = revoke_all_for_uid(user.auth_subject)
-            user.role = "User"
-            user.role_assigned_at = None
-            user.role_assigned_by = None
-            counts["user"] = 1
-            await db.commit()
+            conversation_ids = set(
+                (await db.execute(
+                    select(Message.conversation_id).where(Message.user_id == user.id).distinct()
+                )).scalars()
+            )
+            await erase_everything_but_the_row(user.auth_subject, conversation_ids)
+            if not failed:
+                await db.delete(user)
+                await db.commit()
+                counts["user"] = 1
     else:
-        counts["sessions"] = revoke_all_for_uid(subject)
-    return {"forgotten": True, "counts": counts}
+        await erase_everything_but_the_row(subject, set())
+    return {
+        "forgotten": not failed,
+        "counts": counts,
+        "failed": failed,
+        "not_erased": list(NOT_ERASED),
+    }
 
 
 @router.get("/jobs/{task_id}")

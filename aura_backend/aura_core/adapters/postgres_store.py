@@ -625,6 +625,26 @@ class PostgresDocumentStore:
         except Exception as exc:
             raise _unavailable(f"could not supersede {document_id.value!r}: {exc}") from exc
 
+    async def purge_owner(self, owner_id: UserId) -> int:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        """
+                        DELETE FROM aura_chunks
+                        WHERE owner_id = $1
+                           OR document_id IN (SELECT id FROM aura_documents WHERE owner_id = $1)
+                        """,
+                        owner_id.value,
+                    )
+                    status = await conn.execute(
+                        "DELETE FROM aura_documents WHERE owner_id = $1", owner_id.value
+                    )
+        except Exception as exc:
+            raise _unavailable(f"could not purge documents of {owner_id.value!r}: {exc}") from exc
+        return int(status.split()[-1]) if status else 0
+
     async def tombstone(self, document_id: DocumentId, *, owner_id: UserId | None) -> int:
         """Tombstone every version and report how many chunks must leave the indexes.
 

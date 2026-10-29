@@ -332,6 +332,17 @@ class InMemoryDocumentStore:
         if document is not None:
             self._documents[key] = document.superseded()
 
+    async def purge_owner(self, owner_id: UserId) -> int:
+        async with self._lock:
+            keys = [
+                key for key, document in self._documents.items()
+                if document.owner_id is not None and document.owner_id.value == owner_id.value
+            ]
+            for key in keys:
+                self._documents.pop(key, None)
+                self._chunks.pop(key, None)
+        return len(keys)
+
     async def tombstone(self, document_id: DocumentId, *, owner_id: UserId | None) -> int:
         removed = 0
         owner = owner_id.value if owner_id else None

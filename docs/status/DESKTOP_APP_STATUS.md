@@ -68,12 +68,12 @@ all.
 
 ## Open issues (most severe first)
 
-1. **F-01 part 2 / CB-05.** The server still exempts `workspace_local` side effects from the
-   taint check (`aura_core/tools/policy.py:114-115`), and nothing blocks writes to `.git/hooks`.
-   The daemon half was fixed in `627a03d`.
-2. **F-21 (re-confirmed at HEAD).** Non-streaming `run` returns `''` / `-1`, because
-   `HostAgentSession.resolve()` takes the first `stream` frame as the result. Git diff, commit and
-   checkout break on a paired desktop.
+1. **F-01 part 2 / CB-05 and F-21: built and tested locally, not CI-run.**
+   - **F-01 part 2:** a host-routed `workspace_local` side effect in a tainted turn now needs
+     confirmation, and hostd refuses writes under `.git/hooks/` and to `.git/config` (ADR-014
+     amendment).
+   - **F-21:** non-streaming `run` now waits for the `result` frame past the `stream` frames.
+2. *(see 1)*
 3. **F-09 / AR-15.** Device tokens:
    - last 30 days and carry full power;
    - the host WebSocket has no `exp` deadline;

@@ -88,14 +88,16 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 - Ported in this change: an audience test for desktop login
   (`tests/unit/test_desktop_oauth_audience.py`, from closed PR #78; mutation-checked).
 
+- Audit phase R0/R1 remainder (built and tested locally against Postgres 16, not CI-run): F-01b
+  (host-routed `workspace_local` side effects in a tainted turn need confirmation; hostd refuses
+  `.git/hooks` and `.git/config` writes), F-21 (non-streaming hostd `run` waits for `result`),
+  F-20 (one event loop per Celery worker process), F-06 (erasure reaches memories, documents and
+  chunks, personal-OS records and transcripts, and deletes the `users` row; it lists what it does
+  not reach), F-02 remainder (demotion revokes refresh tokens and paired devices).
+
 **Still open (High)**
-- **F-01b / CB-05:** server-side `workspace_local` taint exemption (`tools/policy.py:114-115`).
-- **F-21:** hostd non-streaming `run` returns nothing.
-- **F-20:** Celery reuses one asyncpg pool across event loops.
-- **F-06:** admin erasure reports success while incomplete.
 - **F-22:** timeouts disagree between layers.
 - **F-27:** 16 tables have no migration.
-- **F-02 remainder:** demotion revokes no live sessions.
 - **GAP-011, GAP-041 (P0):** inference is single-slot and no load matrix exists.
 
 **Medium:** F-08 (GitHub OAuth CSRF), F-09, F-16–F-18, F-23–F-26, F-28, F-30, F-33–F-38.
@@ -118,9 +120,8 @@ That needs a check in the Firebase console.
 1. **Owner, now:** migrate the production database (CB-43) and confirm sign-in works.
 2. **Owner:** restore Actions (CB-44); re-run Backend CI on `main`; gate Railway deploys on CI.
 3. Enable branch protection with required checks (GAP-005 / CB-02).
-4. Finish R0 security: F-01b (routing-aware `workspace_local` exemption), F-02 session revocation
-   on demotion.
-5. Fix the remaining data-loss and lockout defects: F-20, F-21, F-06.
+4. Get CI to run the R0/R1 remainder (F-01b, F-02 revocation, F-20, F-21, F-06) and record it.
+5. Remaining R0: F-08 (GitHub OAuth CSRF), F-09 (device-token scope, WebSocket `exp` deadline).
 6. **ADR-030 Phase 6:** owner adds the `AURA_HOSTED1_API_KEY` secret, then runs Verify Hosted
    Inference with the `openrouter-free` preset and commits the report (GAP-064).
 7. Fix the F-22 timeout budgets and add metrics (GAP-036), then run the M5 load matrix (GAP-041).
