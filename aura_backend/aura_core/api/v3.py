@@ -14,6 +14,7 @@ a time behind a flag.
 # annotations with ``typing.get_type_hints``, which cannot see the request models defined inside
 # ``build_router``'s scope; with postponed evaluation every one of them would be misread as a
 # query parameter. Runtime annotations keep the models resolvable.
+import asyncio
 import json
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator, Mapping
@@ -81,6 +82,45 @@ def _connector_tokens(request: Any) -> dict[str, Credential]:
             if len(tokens) > _MAX_CONNECTOR_TOKENS:
                 raise ValidationError("too many connector tokens", details={"limit": _MAX_CONNECTOR_TOKENS})
     return tokens
+
+
+#: How often a quiet stream sends an SSE comment. nginx closes a proxied response after 300 s
+#: with no bytes (``proxy_read_timeout``), and planning plus time-to-first-token on the CPU stack
+#: can be silent for longer than that (audit F-22).
+SSE_KEEPALIVE_S = 15.0
+
+
+async def with_keepalive(frames: AsyncIterator[bytes], *, interval_s: float) -> AsyncIterator[bytes]:
+    """Re-yield ``frames``, inserting an SSE comment line whenever ``interval_s`` passes without
+    one. Comment lines (``: ...``) are part of the SSE format and ignored by every compliant
+    parser, the client's ``SseFrameParser`` included, so they keep the connection alive without
+    becoming events. The producer runs as its own task so a slow frame can be waited on with a
+    timeout without cancelling it; it is cancelled if the client goes away."""
+    queue: asyncio.Queue = asyncio.Queue()
+    done = object()
+
+    async def pump() -> None:
+        try:
+            async for frame in frames:
+                await queue.put(frame)
+        finally:
+            await queue.put(done)
+
+    producer = asyncio.create_task(pump())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=interval_s)
+            except asyncio.TimeoutError:
+                yield b": keepalive\n\n"
+                continue
+            if item is done:
+                break
+            yield item
+        await producer
+    finally:
+        if not producer.done():
+            producer.cancel()
 
 
 class Principal:
@@ -535,7 +575,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 yield f"event: error\ndata: {json.dumps(payload_)}\n\n".encode()
 
         return StreamingResponse(
-            events(),
+            with_keepalive(events(), interval_s=SSE_KEEPALIVE_S),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

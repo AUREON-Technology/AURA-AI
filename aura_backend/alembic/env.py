@@ -19,6 +19,20 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def include_object(object_, name, type_, reflected, compare_to):
+    """Keep autogenerate away from the ``aura_*`` tables.
+
+    They are created by raw-SQL migrations (and by the Postgres adapters' own DDL), not modelled
+    in ``Base.metadata``, so autogenerate saw every one as a table to drop -- documents, chunks,
+    memories, the audit log (audit F-27). Their migrations are written by hand.
+    """
+    if type_ == "table" and name and name.startswith("aura_"):
+        return False
+    if type_ == "index" and getattr(object_, "table", None) is not None:
+        return not str(object_.table.name).startswith("aura_")
+    return True
+
+
 def _database_url_from_secret_file() -> str | None:
     """Build the DSN from a Docker secret file, the way aura_service.py hydrates
     AURA_DATABASE_URL at app startup (SEC-08: the password never sits in an env var on
@@ -56,6 +70,7 @@ def run_migrations_offline() -> None:
     context.configure(
         url=url,
         target_metadata=target_metadata,
+        include_object=include_object,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -64,7 +79,9 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection):
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection, target_metadata=target_metadata, include_object=include_object
+    )
     with context.begin_transaction():
         context.run_migrations()
 

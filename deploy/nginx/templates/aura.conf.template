@@ -181,6 +181,23 @@ server {
         include /etc/nginx/conf.d/proxy_headers.inc;
     }
 
+    # ------------------------------------------------------------ non-streaming chat
+    # One turn may plan and then generate, each bounded by the gateway's request timeout (180 s
+    # on the CPU stack) after up to the admission-queue wait. Under /api/'s 120 s, nginx answered
+    # 504 while the gateway kept generating, and the client's retry with the same Idempotency-Key
+    # then got 409 until the first attempt finished (audit F-22).
+    location = /api/v3/chat {
+        limit_req zone=aura_chat burst=5 nodelay;
+
+        proxy_pass http://aura_gateway;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_read_timeout 600s;
+        proxy_send_timeout 120s;
+
+        include /etc/nginx/conf.d/proxy_headers.inc;
+    }
+
     # ------------------------------------------------------------ API
     location /api/ {
         limit_req zone=aura_general burst=20 nodelay;
@@ -392,6 +409,19 @@ server {
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
         chunked_transfer_encoding on;
+
+        include /etc/nginx/conf.d/proxy_headers.inc;
+    }
+
+    # Non-streaming chat: see the matching location in the prod server block above.
+    location = /api/v3/chat {
+        limit_req zone=aura_chat burst=5 nodelay;
+
+        proxy_pass http://$aura_dev_gateway;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_read_timeout 600s;
+        proxy_send_timeout 120s;
 
         include /etc/nginx/conf.d/proxy_headers.inc;
     }
