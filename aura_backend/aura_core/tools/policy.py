@@ -57,12 +57,18 @@ class ToolPolicy:
         context: ToolContext,
         capabilities: Sequence[str] = (),
         confirmed: bool = False,
+        host_routed: bool = False,
     ) -> ToolPolicyDecision:
+        """``host_routed`` says this call will run on the user's own machine through a paired
+        ``aura_hostd`` rather than in the server-side sandbox -- the routing
+        ``CompositeSandboxRunner`` performs. The registry works it out; it changes what
+        ``workspace_local`` can promise (see below)."""
         audit = {
             "tool": spec.name,
             "sensitivity": spec.sensitivity.name,
             "side_effecting": spec.side_effecting,
             "tainted": context.tainted,
+            "host_routed": host_routed,
         }
 
         if spec.name in self._denylist:
@@ -111,7 +117,20 @@ class ToolPolicy:
         # A gate asked dozens of times per task is one people learn to click through, so the
         # exemption protects the prompts that matter by removing the ones that do not. ADR-014
         # records the reasoning; tests/architecture/test_workspace_local_tools.py pins the set.
+        #
+        # The confinement only exists in the sandbox. Routed to a paired desktop, the same
+        # run_command or write_file acts on the user's real files as their OS account: nothing is
+        # destroyed on expiry, and the daemon's own allowlist is the only other check. So on the
+        # user's machine a tainted turn is held for confirmation like any other side effect --
+        # injected content must not be able to run commands there unasked -- whatever
+        # block_side_effects_when_tainted says, since that setting was never meant to cover
+        # someone's own computer. An untainted turn keeps the exemption: the user asked for the
+        # work, and the daemon still gates untrusted folders itself.
         if spec.workspace_local and spec.side_effecting:
+            if host_routed and context.tainted:
+                return ToolPolicyDecision.confirm(
+                    "side_effect_on_user_machine_in_tainted_context", **audit
+                )
             return ToolPolicyDecision.allow("workspace_local_side_effect", **audit)
 
         if context.tainted and spec.side_effecting and self._block_when_tainted:

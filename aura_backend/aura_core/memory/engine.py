@@ -411,6 +411,24 @@ class MemoryEngine:
             await self._vectors.delete(self._identity, point_ids=[memory_id.value])
         return deleted
 
+    async def forget_owner(self, owner_id: UserId) -> int:
+        """Erasure: every memory ``owner_id`` has, superseded ones included, from the store and
+        the vector index. Returns how many were deleted."""
+        removed = 0
+        while True:
+            records = await self._store.list_for_owner(
+                owner_id, include_superseded=True, limit=200
+            )
+            if not records:
+                return removed
+            before = removed
+            for record in records:
+                if await self.forget(record.id, owner_id=owner_id):
+                    removed += 1
+            if removed == before:
+                # Nothing in this page could be deleted; asking again would return the same page.
+                raise MemoryStoreError(f"could not delete the memories of {owner_id.value!r}")
+
     async def forget_source(self, *, owner_id: UserId, source: str) -> int:
         """"Forget everything you learned from X."
 

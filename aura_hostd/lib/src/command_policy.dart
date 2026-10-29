@@ -213,3 +213,28 @@ CommandVerdict evaluateWrite({required bool workspaceTrusted}) {
     'workspace is not trusted -- queued for interactive approval in the Desktop IDE',
   );
 }
+
+/// Why a write to [absolutePath] is refused outright, in every workspace, or null when it isn't.
+///
+/// A file under `.git/hooks/` is a program git runs on the next commit, checkout or push, and
+/// `.git/config` can point `core.hooksPath`, a `core.fsmonitor` command or a filter driver at
+/// one. Either turns an ordinary-looking file write into code execution the moment the user (or
+/// the agent) next runs git -- in an untrusted folder behind an approval that shows only a diff,
+/// in a trusted one with no prompt at all. Neither is something an editing task needs, so no
+/// consent tier lifts this, the same as [hardDenylistPatterns] for commands.
+String? protectedGitWriteReason(String absolutePath) {
+  final parts = absolutePath.split(RegExp(r'[/\\]')).where((s) => s.isNotEmpty).toList();
+  for (var i = 0; i < parts.length - 1; i++) {
+    if (parts[i] != '.git') continue;
+    final next = parts[i + 1];
+    if (next == 'hooks') {
+      return 'writes under .git/hooks are refused: a hook is a program git runs on the next '
+          'commit, checkout or push';
+    }
+    if (next == 'config' && i + 2 == parts.length) {
+      return 'writes to .git/config are refused: it can point git at a program to run '
+          '(core.hooksPath, core.fsmonitor, filter drivers)';
+    }
+  }
+  return null;
+}

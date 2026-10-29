@@ -95,3 +95,27 @@ Because this relaxes a security rule, three things hold it in place:
 A full multi-turn session — clone, edit, run tests, push — produces **exactly one** confirmation
 prompt, at `git_push`. That number is the test of whether this decision achieved what it set out
 to, and it is step 10 of the on-VPS verification.
+
+## Amendment (2026-10-29): the exemption follows the routing, not the tool
+
+The exemption's justification is the confinement: a scratch checkout destroyed on expiry. That
+holds in the server-side sandbox. It does not hold when the same tool is routed to the user's own
+machine through a paired `aura_hostd` (ADR-011), where `write_file` and `run_command` act on real
+files as the user's OS account. The audit (F-01, CB-05) found the exemption applied unchanged
+there, so injected content could run commands on the user's computer without a prompt.
+
+Now:
+
+- `ToolRegistry` asks whether the call is host-routed. It uses the same predicate
+  `CompositeSandboxRunner` routes on, a live host-agent session for the user (`container._host_routed`).
+  It passes the answer to `ToolPolicy.evaluate(host_routed=...)`.
+- A host-routed `workspace_local` side effect in a **tainted** turn is held for confirmation
+  (`side_effect_on_user_machine_in_tainted_context`), whatever `block_side_effects_when_tainted`
+  says.
+- An untainted host-routed call keeps the exemption. The user asked for the work, and the
+  daemon's own command policy still gates untrusted folders.
+- The daemon refuses writes under `.git/hooks/` and to `.git/config` in every workspace
+  (`protectedGitWriteReason`). Either one turns a file write into code that git runs.
+
+Pinned by `tests/unit/test_host_routed_policy.py` and `aura_hostd/test/task_handler_test.dart`.
+The acceptance criterion above is unchanged for sandbox sessions.

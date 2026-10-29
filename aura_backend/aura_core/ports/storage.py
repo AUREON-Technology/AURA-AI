@@ -169,6 +169,12 @@ class DocumentStore(Protocol):
     async def chunks_for(self, document_id: DocumentId, version: int) -> Sequence[Chunk]:
         ...
 
+    async def purge_owner(self, owner_id: UserId) -> int:
+        """Erasure: delete every document row and chunk ``owner_id`` owns, every version and
+        status included -- a tombstone keeps chunk text, which an erasure must not. Returns how
+        many document rows were removed. Never touches global (owner-less) content."""
+        ...
+
     async def list_active(
         self, *, owner_id: UserId | None, limit: int = 100, offset: int = 0
     ) -> Sequence[Document]:

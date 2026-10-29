@@ -310,6 +310,36 @@ class TestHostAgentSandboxRunner:
             await runner.create_task()
 
     @pytest.mark.anyio
+    async def test_non_streaming_run_waits_for_the_result_past_stream_frames(self) -> None:
+        """The real daemon streams every `run`'s output (aura_hostd/lib/src/rpc_client.dart) and
+        then sends the aggregated output in `result`. A single-shot `run` used to settle on the
+        first `stream` frame: empty stdout and exit -1 for every command that printed anything,
+        which broke git diff/commit/checkout on a paired desktop."""
+        registry = HostAgentRegistry()
+
+        async def send(frame):
+            call_id = frame["id"]
+            if frame["method"] == "create_task":
+                session.resolve({"type": "result", "id": call_id, "result": {"task_id": "t1"}})
+                return
+            for chunk in ("diff --git a/x b/x\n", "+added\n"):
+                session.resolve({"type": "stream", "id": call_id, "stream": "stdout", "data": chunk})
+            session.resolve({
+                "type": "result", "id": call_id,
+                "result": {"stdout": "diff --git a/x b/x\n+added\n", "stderr": "", "exit_code": 0},
+            })
+
+        session = HostAgentSession(UserId("u1"), send)
+        await registry.register(session)
+        runner = HostAgentSandboxRunner(registry)
+        handle = await runner.create_task(user_id=UserId("u1"))
+
+        result = await runner.run(handle, ["git", "diff"], timeout_s=5)
+
+        assert result.exit_code == 0
+        assert result.stdout == "diff --git a/x b/x\n+added\n"
+
+    @pytest.mark.anyio
     async def test_full_roundtrip_against_a_fake_daemon(self) -> None:
         """Drives create_task/write_file/read_file/run through a session whose `send` answers
         each call itself -- a minimal, real (not mocked) stand-in daemon."""

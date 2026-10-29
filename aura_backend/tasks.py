@@ -8,6 +8,27 @@ from services.learning_pipeline import learning_pipeline, _atomic_write
 
 logger = logging.getLogger("aura_backend.tasks")
 
+#: One event loop for the life of this worker process.
+_worker_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _run_async(coro):
+    """Run ``coro`` to completion on this worker process's one long-lived event loop.
+
+    Every task used to call ``asyncio.run``, which builds a fresh loop and closes it afterwards.
+    But the container below (``_ensure_worker_container``), and with it the asyncpg pool and the
+    SQLAlchemy engine, is cached per process, and both bind to the loop of the first task that
+    used them. From the second task on, every query hit a pool attached to a closed loop and the
+    task failed -- the outbox drain every 60 s, nightly consolidation, the hourly insights -- with
+    the error swallowed into ``{"status": "error"}``. Celery's prefork workers run one task at a
+    time per process, so one loop per process is safe to reuse.
+    """
+    global _worker_loop
+    if _worker_loop is None or _worker_loop.is_closed():
+        _worker_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_worker_loop)
+    return _worker_loop.run_until_complete(coro)
+
 @celery_app.task(name="tasks.ingest_document_task")
 def ingest_document_task(doc_id: str, content: str, metadata: dict) -> bool:
     """Task to ingest plain text document into Qdrant vector store in the background."""
@@ -92,7 +113,7 @@ def finetune_job_task(job_id: str) -> dict:
     """Run an approved Loop B fine-tune job on the learning worker."""
     logger.info("Celery task: Running fine-tune job %s", job_id)
     try:
-        return asyncio.run(_run_finetune_job(job_id))
+        return _run_async(_run_finetune_job(job_id))
     except Exception as e:
         logger.error("Fine-tune job task failed: %s", e, exc_info=True)
         return {"status": "error", "error": type(e).__name__, "message": str(e)}
@@ -103,7 +124,7 @@ def drain_finetune_queue_task() -> dict:
     """Pick up QUEUED Loop B jobs left by the gateway (ADR-002: aura_core never imports tasks)."""
     logger.info("Celery task: Draining fine-tune queue...")
     try:
-        return asyncio.run(_drain_finetune_queue())
+        return _run_async(_drain_finetune_queue())
     except Exception as e:
         logger.error("Fine-tune drain failed: %s", e, exc_info=True)
         return {"status": "error", "error": type(e).__name__}
@@ -165,7 +186,7 @@ def generate_insights_for_all_users_task() -> dict:
     integration."""
     logger.info("Celery task: Generating insights for all users...")
     try:
-        count = asyncio.run(_generate_insights_for_all_users())
+        count = _run_async(_generate_insights_for_all_users())
         return {"status": "success", "users_processed": count}
     except Exception as e:
         logger.error(f"Failed to generate insights for all users: {e}")
@@ -202,7 +223,7 @@ def generate_daily_briefings_task() -> dict:
     bridging as generate_insights_for_all_users_task."""
     logger.info("Celery task: Generating daily briefings for all users...")
     try:
-        count = asyncio.run(_generate_daily_briefings_for_all_users())
+        count = _run_async(_generate_daily_briefings_for_all_users())
         return {"status": "success", "users_processed": count}
     except Exception as e:
         logger.error(f"Failed to generate daily briefings for all users: {e}")
@@ -280,7 +301,7 @@ def knowledge_refresh_task() -> dict:
     """02:00 UTC knowledge refresh (ADR-008). Empty registry is a successful no-op."""
     logger.info("Celery task: Running knowledge refresh...")
     try:
-        return asyncio.run(_run_knowledge_refresh())
+        return _run_async(_run_knowledge_refresh())
     except Exception as e:
         logger.error("Knowledge refresh task failed: %s", e, exc_info=True)
         return {"status": "error", "error": type(e).__name__}
@@ -291,7 +312,7 @@ def memory_consolidate_task() -> dict:
     """Daily memory consolidation at 02:30 UTC, after refresh."""
     logger.info("Celery task: Consolidating memories...")
     try:
-        return asyncio.run(_run_memory_consolidate())
+        return _run_async(_run_memory_consolidate())
     except Exception as e:
         logger.error("Memory consolidate task failed: %s", e, exc_info=True)
         return {"status": "error", "error": type(e).__name__}
@@ -315,7 +336,7 @@ def drain_event_outbox_task() -> dict:
     schedule) since delivery latency here is this trigger's whole user-visible lag."""
     logger.info("Celery task: Draining event outbox...")
     try:
-        return asyncio.run(_run_outbox_drain())
+        return _run_async(_run_outbox_drain())
     except Exception as e:
         logger.error("Outbox drain task failed: %s", e, exc_info=True)
         return {"status": "error", "error": type(e).__name__}
@@ -347,7 +368,7 @@ def reap_agent_workspaces_task() -> dict:
     """
     logger.info("Celery task: Reaping agent workspaces...")
     try:
-        return asyncio.run(_run_workspace_reap())
+        return _run_async(_run_workspace_reap())
     except Exception as e:
         logger.error("Workspace reap task failed: %s", e, exc_info=True)
         return {"status": "error", "error": type(e).__name__}
@@ -372,7 +393,7 @@ def purge_idempotency_keys_task() -> dict:
     """
     logger.info("Celery task: Purging expired idempotency keys...")
     try:
-        return asyncio.run(_run_idempotency_purge())
+        return _run_async(_run_idempotency_purge())
     except Exception as e:
         logger.error("Idempotency purge task failed: %s", e, exc_info=True)
         return {"status": "error", "error": type(e).__name__}
