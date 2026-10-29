@@ -171,6 +171,7 @@ class ProviderRouter:
         user_max_concurrent: int = 0,
         quota: QuotaTracker | None = None,
         audit: Any = None,
+        default_timeout_s: float = 60.0,
     ) -> None:
         """``default_max_queue``/``default_queue_timeout_s``/``user_max_concurrent`` default to
         the pre-P2.4 behaviour (unbounded wait, no per-user quota). Each capacity group's slot
@@ -180,6 +181,8 @@ class ProviderRouter:
         breaker."""
         if not providers:
             raise ValidationError("ProviderRouter requires at least one provider")
+        #: The deadline for a request that names none (``CompletionRequest.timeout_s=None``).
+        self._default_timeout_s = default_timeout_s
         self._providers: dict[str, LLMProvider] = {p.name: p for p in providers}
         if len(self._providers) != len(providers):
             raise ValidationError("provider names must be unique")
@@ -360,12 +363,20 @@ class ProviderRouter:
             + 0.05 * min(resource / 10.0, 1.0)
         )
 
+    def _with_timeout(self, request: CompletionRequest) -> CompletionRequest:
+        """``request`` with its deadline filled in: a request that names none gets this
+        router's configured one, never a constant buried in the dataclass."""
+        if request.timeout_s is not None:
+            return request
+        return replace(request, timeout_s=self._default_timeout_s)
+
     def plan(self, request: CompletionRequest) -> RoutingDecision:
         """Compute the candidate ordering without executing anything.
 
         Exposed separately so the admin API can answer "what would you do with this request?"
         and so routing can be tested without a provider call.
         """
+        request = self._with_timeout(request)
         policy = request.policy or self._default_policy
         hint = effective_workload(request)
         classification = effective_classification(request)
@@ -614,6 +625,7 @@ class ProviderRouter:
         if budget is not None:
             budget.check()
 
+        request = self._with_timeout(request)
         await self._quota.ensure_hydrated()
         decision = self.plan(request)
         if not decision.candidates:
@@ -754,6 +766,7 @@ class ProviderRouter:
         if budget is not None:
             budget.check()
 
+        request = self._with_timeout(request)
         await self._quota.ensure_hydrated()
         decision = self.plan(request)
         if not decision.candidates:

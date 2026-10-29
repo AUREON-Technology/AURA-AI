@@ -242,7 +242,7 @@ class BaseProvider:
         return self._capabilities.output_budget(
             request.sampling.max_output_tokens,
             request.preferred_max_output_tokens,
-            min(request.timeout_s, self._timeout_s),
+            min(request.timeout_s or self._timeout_s, self._timeout_s),
         )
 
     def _tool_declarations(self, request: CompletionRequest) -> Sequence[Mapping[str, Any]]:
