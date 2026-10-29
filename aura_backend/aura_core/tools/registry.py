@@ -23,7 +23,7 @@ import asyncio
 import hashlib
 import json
 import time
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Awaitable, Callable, Iterable, Mapping, Sequence
 
 from ..domain.errors import (
     ToolExecutionError,
@@ -107,6 +107,7 @@ class ToolRegistry:
         metrics: Any = None,
         event_bus: Any = None,
         audit: Any = None,
+        host_routed: Callable[[ToolContext], Awaitable[bool]] | None = None,
     ) -> None:
         self._tools: dict[str, Tool] = {}
         self._policy = policy or ToolPolicy()
@@ -118,6 +119,10 @@ class ToolRegistry:
         self._metrics = metrics
         self._events = event_bus
         self._audit = audit
+        # Whether a call for this context runs on the user's paired desktop rather than in the
+        # sandbox; None when no desktop routing exists. Only asked for workspace_local side
+        # effects, the one place the answer changes the policy (ToolPolicy.evaluate).
+        self._host_routed = host_routed
 
     # -- registration ------------------------------------------------------------------
 
@@ -306,8 +311,16 @@ class ToolRegistry:
             )
 
         # 3. Policy
+        host_routed = bool(
+            self._host_routed is not None
+            and spec.workspace_local
+            and spec.side_effecting
+            and not confirmed
+            and await self._host_routed(context)
+        )
         decision: ToolPolicyDecision = self._policy.evaluate(
-            spec, context=context, capabilities=capabilities, confirmed=confirmed
+            spec, context=context, capabilities=capabilities, confirmed=confirmed,
+            host_routed=host_routed,
         )
         if not decision.allowed:
             self._observe(name, outcome="denied", denied_reason=decision.reason)

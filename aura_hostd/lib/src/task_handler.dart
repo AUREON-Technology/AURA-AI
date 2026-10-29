@@ -104,6 +104,8 @@ class TaskHandler {
       );
     }
     final resolved = _roots.requireContained(root, path);
+    final protectedReason = protectedGitWriteReason(resolved);
+    if (protectedReason != null) throw RpcError(protectedReason);
 
     final verdict = evaluateWrite(workspaceTrusted: root.trusted);
     if (verdict.decision == CommandDecision.needsApproval) {
@@ -161,6 +163,8 @@ class TaskHandler {
         );
       }
       final absolute = _roots.requireContained(root, path);
+      final protectedReason = protectedGitWriteReason(absolute);
+      if (protectedReason != null) throw RpcError(protectedReason);
 
       final String finalContent;
       if (op.containsKey('content')) {

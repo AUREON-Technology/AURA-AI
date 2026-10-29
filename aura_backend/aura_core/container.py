@@ -1290,6 +1290,11 @@ class Container:
 
         return InMemorySourceRegistry()
 
+    async def _host_routed(self, context) -> bool:
+        """Whether this caller's sandbox calls go to their paired desktop: the same predicate
+        ``CompositeSandboxRunner.create_task`` routes on (a live ``aura_hostd`` session)."""
+        return await self.host_agent_registry.resolve(context.user_id) is not None
+
     def _build_tools(self) -> ToolRegistry:
         registry = ToolRegistry(
             policy=ToolPolicy.from_settings(self.settings.tools),
@@ -1300,6 +1305,7 @@ class Container:
             metrics=self.metrics,
             event_bus=self.events,
             audit=self.audit,
+            host_routed=self._host_routed,
         )
         github_default_repo = ""
         if self.settings.github.default_owner and self.settings.github.default_repo:
