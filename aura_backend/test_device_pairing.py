@@ -224,12 +224,25 @@ class TestDesktopPairingEndpoints(unittest.TestCase):
         self.assertIn("access_token", poll_body)
         self.assertEqual(poll_body["token_type"], "bearer")
 
-        # The issued token actually authenticates a v3-shaped call: verify_access_token accepts
-        # it and reports the approving user's own identity (this is *their* device, not a new
+        # The issued token authenticates the host-agent socket -- the one thing a paired daemon
+        # does -- as the approving user's own identity (this is *their* device, not a new
         # unrelated account).
-        claims = _verify(poll_body["access_token"])
+        from aura_core.api.host_agent import _HeaderCarrier
+
+        token = poll_body["access_token"]
+        claims = asyncio.run(verify_access_token(
+            _HeaderCarrier({"authorization": f"Bearer {token}"}), FakeCredentials(token)
+        ))
         self.assertEqual(claims["uid"], "approver-1")
         self.assertEqual(claims["device_id"], device_id)
+
+        # ...and nothing else (F-09): approving a pairing code must not hand out a full session
+        # for the whole API, so an ordinary route refuses it.
+        from fastapi import HTTPException
+
+        with self.assertRaises(HTTPException) as refused:
+            _verify(token)
+        self.assertEqual(refused.exception.status_code, 401)
 
     def test_approve_without_a_bearer_token_is_rejected(self):
         start = self.client.post("/api/v3/auth/desktop/pair/start")

@@ -62,6 +62,30 @@ void main() {
     await server.close();
   });
 
+  test('stops reconnecting when the server refuses the credentials (4401)', () async {
+    var connections = 0;
+    final httpServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => httpServer.close(force: true));
+    httpServer.listen((request) async {
+      connections++;
+      final socket = await WebSocketTransformer.upgrade(request);
+      await socket.first; // the auth frame
+      await socket.close(4401);
+    });
+    final client = HostAgentClient(
+      wsUrl: 'ws://127.0.0.1:${httpServer.port}/api/v3/host/agent',
+      authToken: 'revoked-token',
+      taskHandler: TaskHandler(WorkspaceRoots(const [])),
+      logger: (_) {},
+      minBackoff: const Duration(milliseconds: 10),
+    );
+    addTearDown(client.stop);
+
+    await client.run().timeout(const Duration(seconds: 5));
+
+    expect(connections, 1);
+  });
+
   test('sends an auth frame with the configured token immediately on connect', () async {
     final handler = TaskHandler(WorkspaceRoots(const []));
     final client = HostAgentClient(

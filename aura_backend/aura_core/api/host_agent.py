@@ -23,6 +23,8 @@ from typing import Any, Callable, Mapping
 from ..adapters.host_agent import HostAgentSession
 from ..domain.errors import AuthenticationError
 from ..observability.logging import get_logger
+from . import ws_auth
+from .ws_auth import LiveCredential
 
 logger = get_logger("api.v3.host_agent")
 
@@ -39,12 +41,23 @@ class _HeaderCarrier:
     voice_live.py's -- kept local rather than shared, matching this codebase's existing pattern of
     each `api/` module owning its own small WS-auth plumbing (see also `admin.py`, `v3.py`)."""
 
+    #: Device tokens minted by pairing carry ``scope: host_agent`` and are refused everywhere
+    #: except this socket (``services/jwt_auth.verify_access_token``).
+    allowed_token_scopes = ("host_agent",)
+
     def __init__(self, headers: Mapping[str, str]) -> None:
         self.headers = {k.lower(): v for k, v in headers.items()}
         self.client = None
 
 
-def register_host_agent(router: Any, container: Any, *, authenticator: Callable) -> None:
+def _may_host(principal: Any) -> bool:
+    return "engineer_agent" in principal.capabilities
+
+
+def register_host_agent(
+    router: Any, container: Any, *, authenticator: Callable,
+    recheck_s: float | None = None,
+) -> None:
     from fastapi import WebSocket
     from starlette.websockets import WebSocketDisconnect
 
@@ -62,7 +75,7 @@ def register_host_agent(router: Any, container: Any, *, authenticator: Callable)
             return
 
         try:
-            principal = await _authenticate_ws(websocket, authenticator)
+            principal, token = await _authenticate_ws(websocket, authenticator)
         except AuthenticationError:
             await websocket.close(code=_CLOSE_UNAUTHORIZED)
             return
@@ -71,7 +84,7 @@ def register_host_agent(router: Any, container: Any, *, authenticator: Callable)
             await websocket.close(code=_CLOSE_UNAUTHORIZED)
             return
 
-        if "engineer_agent" not in principal.capabilities:
+        if not _may_host(principal):
             # A daemon can only ever be usefully paired to an account the server would actually
             # route engineer-agent tool calls to -- refuse it here rather than registering a
             # session nothing will ever call.
@@ -82,11 +95,27 @@ def register_host_agent(router: Any, container: Any, *, authenticator: Callable)
             await websocket.send_json(dict(frame))
 
         session = HostAgentSession(principal.user_id, send)
+        credential = LiveCredential(
+            token=token, principal=principal, recheck_s=recheck_s or ws_auth.DEFAULT_RECHECK_S,
+            check=lambda t: _authenticate_frame({"token": t}, authenticator),
+        )
         await registry.register(session)
         logger.info("host agent connected", extra={"user_id": principal.user_id.value})
         try:
             while True:
-                message = await websocket.receive()
+                try:
+                    message = await asyncio.wait_for(
+                        websocket.receive(), timeout=credential.seconds_until_due() or 0.001
+                    )
+                except asyncio.TimeoutError:
+                    message = None
+                if not await credential.still_valid(_may_host):
+                    # Expired, device revoked, or the account no longer may host: the same
+                    # answer an HTTP request with this token would now get.
+                    await websocket.close(code=_CLOSE_UNAUTHORIZED)
+                    break
+                if message is None:
+                    continue
                 if message.get("type") == "websocket.disconnect":
                     break
                 text = message.get("text")
@@ -115,8 +144,9 @@ def register_host_agent(router: Any, container: Any, *, authenticator: Callable)
                         # The session is registered under the original user; a token for anyone
                         # else must end it, not quietly extend it (same rule as voice_live.py).
                         break
-                    if "engineer_agent" not in renewed.capabilities:
+                    if not _may_host(renewed):
                         break
+                    credential.renew(str(frame.get("token") or ""), renewed)
                 # Any other frame type is ignored -- forward compatible with a newer daemon that
                 # sends frames this version does not understand, rather than dropping the session.
         except WebSocketDisconnect:
@@ -132,11 +162,11 @@ def register_host_agent(router: Any, container: Any, *, authenticator: Callable)
             logger.info("host agent disconnected", extra={"user_id": principal.user_id.value})
 
 
-async def _authenticate_ws(websocket: Any, authenticator: Callable) -> Any:
+async def _authenticate_ws(websocket: Any, authenticator: Callable) -> tuple[Any, str]:
     frame = await _recv_json(websocket, timeout=_AUTH_TIMEOUT_S)
     if not frame or frame.get("type") != "auth":
         raise AuthenticationError("auth frame required")
-    return await _authenticate_frame(frame, authenticator)
+    return await _authenticate_frame(frame, authenticator), str(frame.get("token") or "").strip()
 
 
 async def _authenticate_frame(frame: Mapping[str, Any], authenticator: Callable) -> Any:

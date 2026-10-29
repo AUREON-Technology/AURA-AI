@@ -74,18 +74,21 @@ all.
      amendment).
    - **F-21:** non-streaming `run` now waits for the `result` frame past the `stream` frames.
 2. *(see 1)*
-3. **F-09 / AR-15.** Device tokens:
-   - last 30 days and carry full power;
-   - the host WebSocket has no `exp` deadline;
-   - hostd never re-authenticates;
-   - the session registry is per process while `AURA_WORKERS=4`.
+3. **F-09 / AR-15: mostly built and tested locally, not CI-run.**
+   - Pairing now issues a token scoped to the host-agent socket, and every HTTP route refuses it.
+   - The host and voice sockets re-check their token every 60 s, so expiry, device revocation or
+     a lost `engineer_agent` closes them with 4401.
+   - On 4401, hostd stops and asks to be paired again.
+   - Still open:
+     - the desktop app's own sign-in token is still a full 30-day session;
+     - the session registry is still per process while `AURA_WORKERS=4`.
 4. **Windows defects found by CI (new).**
    - Drive roots other than `C:\` can be granted as workspace roots.
    - 8.3 short-name path mismatches, in the client and in hostd.
    - The hostd Linux PTY test hang.
 5. **macOS (new, code-read).** The network entitlement is missing.
 6. **Others.**
-   - F-26: reconnect backoff resets on server close; close codes are ignored.
+   - F-26: built (see 3); backoff now resets only after a connection that stayed up 30 s.
    - UX-09 / UX-17: forced `/today` → `/ide` redirect, and `/ide` renders nothing off Windows.
    - F-29 / GAP-010: tracked binaries.
    - CB-26: no restart-on-crash, no signed bundle, no installer.
@@ -116,8 +119,8 @@ all.
    write denylist, plus an amendment to ADR-014.
 4. Fix the Windows failures (deny every drive root, canonicalize 8.3 paths), then make the Windows
    jobs gating.
-5. F-09 / F-26: a token scope claim, a WebSocket `exp` deadline, hostd re-authentication, and
-   close-code handling.
+5. F-09 remainder: scope or shorten the desktop app's own token, and share the host-agent
+   registry across workers.
 6. Untrack the binaries and build hostd in CI with a checksum. Add the macOS entitlement, or
    declare macOS unsupported.
 7. Record the GAP-026 end-to-end session on real Windows and Linux machines, then close #78 and
