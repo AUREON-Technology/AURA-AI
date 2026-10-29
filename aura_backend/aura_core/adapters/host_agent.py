@@ -129,6 +129,13 @@ class HostAgentSession:
         future = self._pending.get(call_id)
         if future is None or future.done():
             return
+        if frame.get("type") == "stream":
+            # The daemon streams output for `run` whether or not this side asked for it
+            # (aura_hostd/lib/src/rpc_client.dart), then sends the aggregated output in its
+            # `result`. A single-shot call waits for that `result`: settling on the first
+            # `stream` frame instead resolved the call with that frame's (absent) `result` --
+            # empty stdout and exit -1 for every command that printed anything.
+            return
         if frame.get("type") == "error":
             future.set_exception(SandboxError(str(frame.get("message") or "host agent error")))
         else:
