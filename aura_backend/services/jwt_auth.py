@@ -256,13 +256,25 @@ def _device_owner(device_id: str) -> Optional[str]:
     return _local_device_owners.get(device_id)
 
 
-def issue_device_token(user_info: dict, *, device_id: str) -> Dict[str, Any]:
+#: The only scope a token may carry today: the host-agent WebSocket and nothing else.
+HOST_AGENT_SCOPE = "host_agent"
+
+
+def issue_device_token(
+    user_info: dict, *, device_id: str, scope: Optional[str] = None,
+) -> Dict[str, Any]:
     """A single long-lived access token for a paired desktop device -- no refresh token, see
-    DEVICE_ACCESS_TOKEN_TTL's doc comment. Called only from services/device_pairing.py once a
-    pairing has been approved by the user on an already-authenticated client."""
-    access_token = create_access_token(
-        user_info, ttl=DEVICE_ACCESS_TOKEN_TTL, extra_claims={"platform": "desktop", "device_id": device_id},
-    )
+    DEVICE_ACCESS_TOKEN_TTL's doc comment. Called once a pairing has been approved by the user on
+    an already-authenticated client (``scope=HOST_AGENT_SCOPE``: the daemon needs only its
+    socket), and by the desktop app's own sign-in (no scope: the app uses the whole API).
+
+    A scoped token is refused by every route that does not name its scope (F-09). A paired
+    daemon's token used to be a full 30-day session -- chat, sync, admin for an admin -- obtained
+    by approving a pairing code, which made a phished code worth the whole account."""
+    extra: Dict[str, Any] = {"platform": "desktop", "device_id": device_id}
+    if scope:
+        extra["scope"] = scope
+    access_token = create_access_token(user_info, ttl=DEVICE_ACCESS_TOKEN_TTL, extra_claims=extra)
     _register_device_owner(device_id, str(user_info["uid"]))
     return {
         "access_token": access_token,
@@ -419,6 +431,15 @@ async def verify_access_token(
         # comment) -- this check is the entire revocation mechanism for it, so it must run on
         # every call, not just at issue time.
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Device access has been revoked.")
+
+    scope = payload.get("scope")
+    if scope and scope not in getattr(request, "allowed_token_scopes", ()):
+        # A scoped token is good only where the caller explicitly accepts that scope -- the
+        # host-agent socket's header carrier does; no HTTP route does.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"This token is limited to {scope} and cannot be used here.",
+        )
 
     return {
         "uid": payload.get("sub"),

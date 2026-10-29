@@ -75,12 +75,25 @@ class HostAgentClient {
   /// fails or drops backs off with jitter-free exponential backoff, capped at [maxBackoff] --
   /// simple and predictable rather than clever, since this only ever has one peer (the backend)
   /// and no thundering-herd concern to jitter against.
+  ///
+  /// A close with [closeUnauthorized] ends the loop instead: the server is saying this daemon's
+  /// token is expired, revoked or no longer permitted, and reconnecting with the same token can
+  /// only be refused again. Retrying used to hammer the server once a second forever, because a
+  /// server-initiated close counted as a "clean" connection and reset the backoff.
   Future<void> run() async {
     var backoff = minBackoff;
     while (!_stopRequested) {
       try {
-        await _connectAndServe();
-        backoff = minBackoff; // a clean connection resets backoff
+        final connectedAt = DateTime.now();
+        final closeCode = await _connectAndServe();
+        if (closeCode == closeUnauthorized) {
+          logger('the server refused this daemon\'s credentials (expired, revoked, or not '
+              'permitted) -- pair it again with `aura_hostd auth pair`');
+          break;
+        }
+        // Only a connection that actually stayed up resets the backoff; one the server drops
+        // straight away is a failure to back off from, not a success.
+        if (DateTime.now().difference(connectedAt) >= healthyConnection) backoff = minBackoff;
       } catch (error) {
         logger('connection error: $error');
       }
@@ -97,7 +110,15 @@ class HostAgentClient {
     _isConnected = false;
   }
 
-  Future<void> _connectAndServe() async {
+  /// The server's close code for a refused or no-longer-valid credential (`_CLOSE_UNAUTHORIZED`
+  /// in aura_backend/aura_core/api/host_agent.py).
+  static const closeUnauthorized = 4401;
+
+  /// How long a connection must last before its end counts as a clean disconnect.
+  static const healthyConnection = Duration(seconds: 30);
+
+  /// Connects and serves until the socket closes; returns the socket's close code.
+  Future<int?> _connectAndServe() async {
     logger('connecting to $wsUrl');
     final socket = await WebSocket.connect(wsUrl);
     socket.pingInterval = pingInterval;
@@ -129,6 +150,7 @@ class HostAgentClient {
       _isConnected = false;
     }
     logger('disconnected');
+    return socket.closeCode;
   }
 
   Future<void> _handleCall(WebSocket socket, Map<String, dynamic> frame) async {

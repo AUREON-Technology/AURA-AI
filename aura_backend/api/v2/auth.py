@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from infrastructure.db.user_repo import get_or_create_user
 from services import device_pairing
 from services.jwt_auth import (
+    HOST_AGENT_SCOPE,
     issue_device_token,
     issue_token_pair,
     consume_refresh_token,
@@ -223,7 +224,8 @@ async def poll_desktop_pairing(body: PairingPollRequest):
     user_info = dict(outcome["user_info"])
     await stamp_role(user_info)
     await _persist_user(user_info)
-    token = issue_device_token(user_info, device_id=outcome["device_id"])
+    # The daemon needs only its socket; a pairing code must not be worth the whole account.
+    token = issue_device_token(user_info, device_id=outcome["device_id"], scope=HOST_AGENT_SCOPE)
     return {"status": "approved", **token}
 
 

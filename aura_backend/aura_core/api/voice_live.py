@@ -15,6 +15,8 @@ from ..domain.errors import AuthenticationError
 from ..domain.identifiers import SessionId
 from ..observability.logging import get_logger
 from ..voice import LiveVoiceConfig, LiveVoiceSession
+from . import ws_auth
+from .ws_auth import LiveCredential
 
 logger = get_logger("api.v3.voice_live")
 
@@ -96,6 +98,7 @@ def register_voice_live(
     *,
     authenticator: Callable,
     rate_limiter: Any,
+    recheck_s: float | None = None,
 ) -> None:
     from fastapi import WebSocket
     from starlette.websockets import WebSocketDisconnect
@@ -114,7 +117,7 @@ def register_voice_live(
             return
 
         try:
-            principal = await _authenticate_ws(websocket, authenticator)
+            principal, token = await _authenticate_ws(websocket, authenticator)
         except AuthenticationError:
             await websocket.close(code=_CLOSE_UNAUTHORIZED)
             return
@@ -183,8 +186,24 @@ def register_voice_live(
             await session.start()
             pump = asyncio.create_task(_pump_outbound(websocket, session))
 
+            credential = LiveCredential(
+                token=token, principal=principal, recheck_s=recheck_s or ws_auth.DEFAULT_RECHECK_S,
+                check=lambda t: _authenticate_frame({"token": t}, authenticator),
+            )
             while True:
-                message = await websocket.receive()
+                try:
+                    message = await asyncio.wait_for(
+                        websocket.receive(), timeout=credential.seconds_until_due() or 0.001
+                    )
+                except asyncio.TimeoutError:
+                    message = None
+                if not await credential.still_valid(lambda _p: True):
+                    # The token has expired or been revoked and no reauth renewed it. The client
+                    # sends one after every turn, so this ends idle sessions, not live ones.
+                    await websocket.close(code=_CLOSE_UNAUTHORIZED)
+                    return
+                if message is None:
+                    continue
                 if message.get("type") == "websocket.disconnect":
                     break
                 if "bytes" in message and message["bytes"] is not None:
@@ -238,6 +257,7 @@ def register_voice_live(
                         await websocket.close(code=_CLOSE_UNAUTHORIZED)
                         return
                     principal = renewed
+                    credential.renew(str(frame.get("token") or "").strip(), renewed)
         except WebSocketDisconnect:
             pass
         except Exception:
@@ -274,11 +294,11 @@ async def _pump_outbound(websocket: Any, session: LiveVoiceSession) -> None:
             await websocket.send_json(dict(item))
 
 
-async def _authenticate_ws(websocket: Any, authenticator: Callable) -> Any:
+async def _authenticate_ws(websocket: Any, authenticator: Callable) -> tuple[Any, str]:
     frame = await _recv_json(websocket, timeout=_AUTH_TIMEOUT_S)
     if not frame or frame.get("type") != "auth":
         raise AuthenticationError("auth frame required")
-    return await _authenticate_frame(frame, authenticator)
+    return await _authenticate_frame(frame, authenticator), str(frame.get("token") or "").strip()
 
 
 async def _authenticate_frame(frame: Mapping[str, Any], authenticator: Callable) -> Any:

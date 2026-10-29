@@ -100,7 +100,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 - **F-27:** 16 tables have no migration.
 - **GAP-011, GAP-041 (P0):** inference is single-slot and no load matrix exists.
 
-**Medium:** F-08 (GitHub OAuth CSRF), F-09, F-16–F-18, F-23–F-26, F-28, F-30, F-33–F-38.
+**Medium:** F-16–F-18, F-23–F-26, F-28, F-30, F-33–F-38.
 
 **Conditional:** SEC-08 / F-38 becomes Critical if Firebase email/password sign-in is enabled.
 That needs a check in the Firebase console.
@@ -121,7 +121,10 @@ That needs a check in the Firebase console.
 2. **Owner:** restore Actions (CB-44); re-run Backend CI on `main`; gate Railway deploys on CI.
 3. Enable branch protection with required checks (GAP-005 / CB-02).
 4. Get CI to run the R0/R1 remainder (F-01b, F-02 revocation, F-20, F-21, F-06) and record it.
-5. Remaining R0: F-08 (GitHub OAuth CSRF), F-09 (device-token scope, WebSocket `exp` deadline).
+5. CI-run F-08 and F-09 (built and tested locally). For F-08, the GitHub callback now shows a
+   confirmation page naming the AURA account, and a GitHub account already linked to another
+   user is refused. For F-09, pairing tokens are scoped to the host-agent socket, and open
+   sockets re-check their credential every 60 s.
 6. **ADR-030 Phase 6:** owner adds the `AURA_HOSTED1_API_KEY` secret, then runs Verify Hosted
    Inference with the `openrouter-free` preset and commits the report (GAP-064).
 7. Fix the F-22 timeout budgets and add metrics (GAP-036), then run the M5 load matrix (GAP-041).

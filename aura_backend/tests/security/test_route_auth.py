@@ -48,7 +48,9 @@ PUBLIC = {
     ("POST", "/api/v3/auth/desktop/pair/start"): "RFC 8628 device flow: daemon has no identity yet",
     ("POST", "/api/v3/auth/desktop/pair/poll"): "RFC 8628 device flow: bound to an unguessable id",
     ("GET", "/api/v3/integrations/github/callback"): "browser redirect; authenticated by the "
-        "single-use OAuth `state` (tests/unit/test_github_oauth_state.py)",
+        "single-use OAuth `state` (tests/unit/test_github_oauth_state.py); links nothing itself",
+    ("POST", "/api/v3/integrations/github/callback/confirm"): "the callback page's confirmation; "
+        "spends the single-use OAuth `state` (tests/unit/test_github_link_confirmation.py)",
 }
 
 #: Take an *external* identity proof (Google/Firebase ID token) and mint a session.
