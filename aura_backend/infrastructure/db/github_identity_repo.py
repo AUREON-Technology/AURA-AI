@@ -20,6 +20,13 @@ async def get_by_user(db: AsyncSession, user: User) -> GitHubIdentity | None:
     return result.scalar_one_or_none()
 
 
+async def get_by_github_user_id(db: AsyncSession, github_user_id: int) -> GitHubIdentity | None:
+    result = await db.execute(
+        select(GitHubIdentity).where(GitHubIdentity.github_user_id == github_user_id)
+    )
+    return result.scalars().first()
+
+
 async def upsert(
     db: AsyncSession,
     user: User,

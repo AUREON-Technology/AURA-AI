@@ -44,6 +44,23 @@ def store_state(state: str, user_id: str, *, ttl_seconds: int = 600) -> None:
     _local_store[state] = (user_id, time.monotonic() + ttl_seconds)
 
 
+def peek_state(state: str) -> str | None:
+    """The user a live ``state`` belongs to, without spending it. The callback page uses this
+    to name the AURA account before the user confirms; only the confirmation consumes it."""
+    client = get_redis_client()
+    if client is not None:
+        raw = client.get(f"{_PREFIX}{state}")
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)["user_id"]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return None
+    _purge_expired()
+    entry = _local_store.get(state)
+    return entry[0] if entry is not None else None
+
+
 def consume_state(state: str) -> str | None:
     """Single-use: a state value is deleted the first time it is read, whether or not it was
     found. A replayed ``state`` (a captured callback URL retried by an attacker) must not
