@@ -155,9 +155,30 @@ class TestRoleAssignmentIntegration(unittest.TestCase):
             row = next(o for o in listed if o["email"] == email)
             self.assertEqual((row["role"], row["granted_by"]), ("Developer", "Access page"))
 
-            self.assertEqual(self._assign(client, root, email, "User").status_code, 200)
-            pair = self._refresh(client, pair)
-            self.assertEqual(self._role(pair), "User")
+            # Demotion ends the session rather than waiting for its next refresh...
+            from services.jwt_auth import is_device_revoked, issue_device_token
+
+            device = issue_device_token({"uid": f"uid-{email}", "email": email}, device_id="d-1")
+            response = self._assign(client, root, email, "User")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["revoked"], {"sessions": 1, "devices": 1})
+            stale = client.post(
+                "/api/v3/auth/refresh", json={"refresh_token": pair["refresh_token"]}
+            )
+            self.assertEqual(stale.status_code, 401)
+            self.assertTrue(is_device_revoked(device["device_id"]))
+
+            # ...and signing in again resolves the lowered role.
+            self.assertEqual(self._role(self._sign_in(client, email)), "User")
+
+    def test_promotion_keeps_the_session(self):
+        email = f"promo-{uuid.uuid4().hex[:6]}@example.com"
+        with self._client() as client:
+            root = self._sign_in(client, ROOT)
+            pair = self._sign_in(client, email)
+            response = self._assign(client, root, email, "Admin")
+            self.assertEqual(response.json()["revoked"], {"sessions": 0, "devices": 0})
+            self.assertEqual(self._role(self._refresh(client, pair)), "Admin")
 
     def test_a_role_an_old_sign_in_copied_into_the_row_is_not_a_grant(self):
         """Rows written before migration 0015 hold env-derived roles with no assignment stamp."""

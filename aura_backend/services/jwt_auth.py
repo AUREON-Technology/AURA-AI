@@ -304,6 +304,23 @@ def revoke_device(device_id: str, *, requesting_uid: str) -> bool:
     return True
 
 
+def revoke_all_devices_for_uid(uid: str) -> int:
+    """Revoke every paired device ``uid`` owns. Returns how many.
+
+    A device token is a 30-day access token with no refresh (see DEVICE_ACCESS_TOKEN_TTL), so
+    revoking someone's refresh tokens alone leaves a paired desktop signed in -- with whatever role
+    it was issued under -- for the rest of that month. Demotion and erasure call this too.
+    """
+    owned: list[str] = []
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        for key in redis_client.scan_iter(f"{_DEVICE_OWNER_PREFIX}*"):
+            if redis_client.get(key) == uid:
+                owned.append(str(key)[len(_DEVICE_OWNER_PREFIX):])
+    owned += [device for device, owner in _local_device_owners.items() if owner == uid]
+    return sum(1 for device_id in dict.fromkeys(owned) if revoke_device(device_id, requesting_uid=uid))
+
+
 def is_device_revoked(device_id: str) -> bool:
     redis_client = get_redis_client()
     if redis_client is not None:
