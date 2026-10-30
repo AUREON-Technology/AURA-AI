@@ -244,9 +244,9 @@ class _ActivityItem extends StatelessWidget {
                       color: iconColor,
                     ),
                     if (badgeCount > 0)
-                      Positioned(
+                      PositionedDirectional(
                         top: -4,
-                        right: -8,
+                        end: -8,
                         // The count itself is the signal, not the colour --
                         // a badge that is only a coloured dot tells a
                         // colour-blind user nothing it doesn't tell everyone.

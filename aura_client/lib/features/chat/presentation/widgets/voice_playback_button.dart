@@ -5,6 +5,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 
 import '../../../../core/ai/voice/voice_client.dart';
 import '../voice_playback_view_model.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Speaker icon on an assistant message (Phase F2): fetches `POST /api/v3/voice/speak` on
 /// first tap and plays the WAV response back; a second tap stops playback. Self-contained --
@@ -65,7 +66,7 @@ class _VoicePlaybackButtonState extends ConsumerState<VoicePlaybackButton> {
 
     final playing = status == VoicePlaybackStatus.playing;
     return IconButton(
-      tooltip: playing ? 'Stop' : 'Listen to this reply',
+      tooltip: playing ? context.l10n.voiceStopPlayback : context.l10n.voiceListen,
       visualDensity: VisualDensity.compact,
       icon: Icon(
         playing ? Icons.stop_circle_outlined : Icons.volume_up_outlined,

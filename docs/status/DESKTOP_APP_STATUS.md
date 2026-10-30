@@ -93,6 +93,11 @@ all.
    - The hostd Linux PTY test hang.
 5. **macOS (new, code-read).** The network entitlement is missing.
 6. **Others.**
+   - F-36 (2026-10-30, TESTED locally on Linux, not run on Windows): the IDE's explorer indent,
+     tab-bar and debug-console padding, git panel and floating shell panels now use directional
+     (start/end) layout, so an RTL locale mirrors the IDE. The hostd page's Browse and Save
+     icon buttons have tooltips. No one has looked at the IDE under RTL, because no widget
+     test pumps the IDE shell that way.
    - F-26: built (see 3); backoff now resets only after a connection that stayed up 30 s.
    - UX-09 / UX-17: `/ide` renders nothing off Windows. The forced `/today` → `/ide` redirect
      is fixed on 2026-10-30 (F-34, TESTED locally, not run on Windows): the IDE preference only

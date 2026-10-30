@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 
 import 'chat_header_action_button.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 bool chatHeaderShowsLiveVoice() {
   return !kIsWeb &&
@@ -24,7 +25,7 @@ class ChatHeaderOverflowMenu extends StatelessWidget {
         return ChatHeaderActionButton(
           icon: Icons.more_vert,
           color: palette.textPrimary,
-          tooltip: 'More',
+          tooltip: context.l10n.moreOptions,
           onPressed: () {
             if (controller.isOpen) {
               controller.close();
@@ -37,12 +38,12 @@ class ChatHeaderOverflowMenu extends StatelessWidget {
       menuChildren: [
         MenuItemButton(
           onPressed: () => context.go('/memory'),
-          child: const Text('Memory'),
+          child: Text(context.l10n.memoryTitle),
         ),
         if (chatHeaderShowsLiveVoice())
           MenuItemButton(
             onPressed: () => context.push('/voice'),
-            child: const Text('Live voice'),
+            child: Text(context.l10n.chatLiveVoice),
           ),
       ],
     );

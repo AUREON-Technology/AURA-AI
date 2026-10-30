@@ -104,8 +104,8 @@ class NotificationBellIcon extends ConsumerWidget {
             children: [
               Icon(Icons.notifications_outlined, color: palette.textSecondary),
               if (unread > 0)
-                Positioned(
-                  right: -2,
+                PositionedDirectional(
+                  end: -2,
                   top: -2,
                   child: Container(
                     padding: const EdgeInsets.symmetric(
@@ -175,7 +175,7 @@ class _NotificationSheet extends ConsumerWidget {
                   Padding(
                     padding: const EdgeInsets.all(AuraSpacing.lg),
                     child: Align(
-                      alignment: Alignment.centerLeft,
+                      alignment: AlignmentDirectional.centerStart,
                       child: Text(
                         'Notifications',
                         maxLines: 1,

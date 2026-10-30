@@ -45,7 +45,7 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
 | Auth and sign-out | TESTED | `5153394`: revoke and wipe on sign-out. F-33 and F-34 fixed on 2026-10-30 (TESTED locally, not proven): a 401 followed by a refused refresh ends the session and the router shows login, keeping local data (`test/ux/session_expiry_test.dart`); sign-out asks first. Switching backend (`setEnvironment()`) clears tokens without revoking them or wiping data. |
 | Device attestation | TESTED (unit); can be bypassed | Play Integrity (`IntegrityAttestationPlugin.kt`) and App Attest (`AppAttestPlugin.swift`), with backend tests green. F-09 / SEC-05: any account can skip attestation through `/desktop/login`. |
 | Push notifications | OPEN | No `firebase_messaging`; a failed `Firebase.initializeApp()` is ignored (`main.dart:26`); iOS has no `GoogleService-Info.plist`; in-app notification centre only |
-| Accessibility / i18n | BUILT; partly TESTED | `design_system_contrast_test.dart`, `test/ux/`. F-36: 21 of 64 icon buttons are unlabeled, including Send. 34 l10n keys; no RTL. |
+| Accessibility / i18n | BUILT; TESTED locally (F-36 foundation, 2026-10-30) | `design_system_contrast_test.dart`, `test/ux/`. F-36: every `IconButton` under `lib/` now has a tooltip, pinned by `test/ux/icon_button_tooltip_test.dart` (Send already had one; the 18 real gaps were in tasks, calendar, finance, memory bank, hostd page, live voice, analytics, GitHub tab, plus the chat header menu button). Strings for chat, sign-in, You/settings and the design-system components moved to `app_en.arb` (34 → 203 keys) and are read via `context.l10n` (`lib/l10n/l10n.dart`, English fallback when no delegate is present). Other features still hold 209 hard-coded `Text('...')` literals, held by `test/ux/hardcoded_text_ratchet_test.dart`. RTL: layout code uses directional APIs (`test/ux/rtl_layout_test.dart` guard), and the chat composer, empty chat, You and sign-in screens render under `TextDirection.rtl` at 360 px with no exception. No Arabic locale yet. Screen-reader output and Arabic glyph shaping have not been checked on a device. |
 | Android release (APK/AAB) | BUILT; not currently built in CI | See below |
 | iOS release (IPA) | OPEN | No CI, no team ID, Google sign-in config missing (below) |
 
@@ -79,7 +79,10 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
 4. **F-31 (High).** Fixed on 2026-10-30 (TESTED locally). It is not proven until someone runs it against the live keepalive stream.
 5. **F-32 (High).** Light-theme contrast: the task and health cards are fixed. The rest is held by a ratchet test.
 6. **F-09 (Medium).** Attestation bypass.
-7. **F-36 (Medium).** Unlabeled controls. **F-33 and F-34** fixed on 2026-10-30, TESTED locally
+7. **F-36 (Medium).** Foundation built on 2026-10-30 and TESTED locally (analyze clean, 513 passed /
+   3 skipped). It is not proven. Still open: a screen-reader pass on a real device (R4.6 acceptance),
+   extracting the remaining features' strings (ratchet at 209), and an Arabic locale.
+   **F-33 and F-34** fixed on 2026-10-30, TESTED locally
    only (CI has no runners, CB-44), not proven on a device:
    - F-33: an expired session ends and routes to login; the Memory page shows its error state
      and failed or unconfirmed deletes; screens render failures through `AuraFailure`, pinned by

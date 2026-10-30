@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 void showTaskSyncLogsSheet(BuildContext context, List<String> logs) {
   showModalBottomSheet(
@@ -34,6 +35,7 @@ void showTaskSyncLogsSheet(BuildContext context, List<String> logs) {
                     ),
                   ),
                   IconButton(
+                    tooltip: context.l10n.close,
                     icon: const Icon(Icons.close, color: Colors.white),
                     onPressed: () => Navigator.pop(context),
                   ),

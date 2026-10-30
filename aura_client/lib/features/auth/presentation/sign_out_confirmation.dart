@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 
 import 'auth_provider.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Asks before signing out, then signs out. Returns whether it did.
 ///
@@ -13,16 +14,15 @@ import 'auth_provider.dart';
 Future<bool> confirmAndSignOut(BuildContext context, WidgetRef ref) async {
   final confirmed = await AuraDialog.show<bool>(
     context: context,
-    title: 'Sign out?',
-    confirmLabel: 'Sign out',
-    cancelLabel: 'Cancel',
+    title: context.l10n.signOutConfirmTitle,
+    confirmLabel: context.l10n.signOut,
+    cancelLabel: context.l10n.cancel,
     confirmDestructive: true,
     // showDialog pushes onto the root navigator; the caller's context may sit
     // under a ShellRoute's nested one, whose pop would close the page instead.
     onConfirm: () => Navigator.of(context, rootNavigator: true).pop(true),
     child: Text(
-      'AURA uploads unsynced changes first when it can reach the server, then '
-      'clears its data from this device. Changes it cannot upload are lost.',
+      context.l10n.signOutConfirmBody,
       style: Theme.of(context).textTheme.bodyMedium,
     ),
   );

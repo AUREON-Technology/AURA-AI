@@ -106,7 +106,7 @@ class _WorkspaceCard extends ConsumerWidget {
           ],
           const SizedBox(height: AuraSpacing.md),
           Align(
-            alignment: Alignment.centerRight,
+            alignment: AlignmentDirectional.centerEnd,
             child: AuraButton(
               label: 'Delete',
               icon: Icons.delete_outline,

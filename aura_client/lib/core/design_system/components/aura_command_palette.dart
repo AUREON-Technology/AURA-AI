@@ -6,6 +6,7 @@ import '../tokens.dart';
 import '../typography.dart';
 import 'aura_empty_state.dart';
 import 'aura_text_field.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// One entry in [AuraCommandPalette].
 ///
@@ -95,22 +96,24 @@ int firstSelectableIndex(List<AuraCommandItem> items) {
 Future<void> showAuraCommandPalette(
   BuildContext context, {
   required List<AuraCommandItem> commands,
-  String hintText = 'Type a command...',
+  String? hintText,
 }) {
   return showDialog<void>(
     context: context,
     // Escape pops through the barrier's own DismissIntent; no binding needed.
     barrierDismissible: true,
-    barrierLabel: 'Command palette',
+    barrierLabel: context.l10n.commandPaletteLabel,
     builder: (_) => AuraCommandPalette(commands: commands, hintText: hintText),
   );
 }
 
 class AuraCommandPalette extends StatefulWidget {
-  const AuraCommandPalette({super.key, required this.commands, this.hintText = 'Type a command...'});
+  const AuraCommandPalette({super.key, required this.commands, this.hintText});
 
   final List<AuraCommandItem> commands;
-  final String hintText;
+
+  /// Placeholder of the search field; defaults to the localized `commandPaletteHint`.
+  final String? hintText;
 
   @override
   State<AuraCommandPalette> createState() => _AuraCommandPaletteState();
@@ -191,7 +194,7 @@ class _AuraCommandPaletteState extends State<AuraCommandPalette> {
                   child: AuraTextField(
                     controller: _controller,
                     autofocus: true,
-                    hintText: widget.hintText,
+                    hintText: widget.hintText ?? context.l10n.commandPaletteHint,
                     prefixIcon: Icons.search,
                     onChanged: _onQueryChanged,
                   ),
@@ -209,10 +212,9 @@ class _AuraCommandPaletteState extends State<AuraCommandPalette> {
   Widget _noMatches(BuildContext context) {
     return AuraEmptyState(
       icon: Icons.search_off_outlined,
-      title: 'No matching commands',
-      message: 'Nothing here matches "${_controller.text.trim()}". '
-          'Try a shorter word, or clear the search to see everything.',
-      actionLabel: 'Clear search',
+      title: context.l10n.commandPaletteNoMatchesTitle,
+      message: context.l10n.commandPaletteNoMatchesBody(_controller.text.trim()),
+      actionLabel: context.l10n.commandPaletteClearSearch,
       onAction: () {
         _controller.clear();
         _onQueryChanged('');

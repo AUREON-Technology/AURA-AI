@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Renders a real unified diff (`+`/`-`/context lines) with the usual green/red/neutral
 /// coloring. Used for the sandbox `git_diff` tool's output and for a pending commit
@@ -62,7 +63,7 @@ class SandboxDiffView extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (visible.isEmpty)
-                Text('(no changes)', style: TextStyle(color: palette.textSecondary, fontSize: 12))
+                Text(context.l10n.sandboxNoChanges, style: TextStyle(color: palette.textSecondary, fontSize: 12))
               else
                 for (final line in visible)
                   Text(

@@ -57,7 +57,7 @@ class LifeHubPage extends ConsumerWidget {
                 children: [
                   for (final value in LifeHubFilter.values)
                     Padding(
-                      padding: const EdgeInsets.only(right: AuraSpacing.sm),
+                      padding: const EdgeInsetsDirectional.only(end: AuraSpacing.sm),
                       child: FilterChip(
                         label: Text(_label(value)),
                         selected: filter == value,

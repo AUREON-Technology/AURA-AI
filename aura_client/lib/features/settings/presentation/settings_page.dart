@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/platform/aura_platform.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// "You" — account, knowledge, memory, feedback, and appearance.
 class SettingsPage extends ConsumerWidget {
@@ -13,40 +14,41 @@ class SettingsPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final palette = AuraPalette.of(context);
+    final l10n = context.l10n;
 
     return Scaffold(
       backgroundColor: palette.background,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: Text('You', style: Theme.of(context).textTheme.headlineMedium),
+        title: Text(l10n.youTitle, style: Theme.of(context).textTheme.headlineMedium),
       ),
       body: ListView(
         padding: const EdgeInsets.all(AuraSpacing.lg),
         children: [
-          _SectionLabel('Account'),
+          _SectionLabel(l10n.settingsSectionAccount),
           AuraCard(
             padding: EdgeInsets.zero,
             child: Column(
               children: [
                 AuraListTile(
                   icon: Icons.person_outline,
-                  title: 'Profile',
-                  subtitle: 'Signed-in account and security',
+                  title: l10n.settingsProfileTitle,
+                  subtitle: l10n.settingsProfileSubtitle,
                   onTap: () => context.push('/profile'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.palette_outlined,
-                  title: 'Appearance',
-                  subtitle: 'System, light, or dark',
+                  title: l10n.appearanceTitle,
+                  subtitle: l10n.settingsAppearanceSubtitle,
                   onTap: () => context.push('/appearance'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.dns_outlined,
-                  title: 'Server environment',
-                  subtitle: 'Production or development backend',
+                  title: l10n.serverEnvironmentTitle,
+                  subtitle: l10n.settingsServerEnvironmentSubtitle,
                   onTap: () => context.push('/server-environment'),
                 ),
               ],
@@ -54,81 +56,81 @@ class SettingsPage extends ConsumerWidget {
           ),
           if (canRunDesktopIde) ...[
             const SizedBox(height: AuraSpacing.xl),
-            _SectionLabel('Desktop'),
+            _SectionLabel(l10n.settingsSectionDesktop),
             const AuraCard(
               padding: EdgeInsets.zero,
               child: _DesktopIdeToggleTile(),
             ),
           ],
           const SizedBox(height: AuraSpacing.xl),
-          _SectionLabel('Your AURA'),
+          _SectionLabel(l10n.settingsSectionYourAura),
           AuraCard(
             padding: EdgeInsets.zero,
             child: Column(
               children: [
                 AuraListTile(
                   icon: Icons.folder_shared_outlined,
-                  title: 'Knowledge',
-                  subtitle: 'Documents Copilot can search',
+                  title: l10n.knowledgeTitle,
+                  subtitle: l10n.settingsKnowledgeSubtitle,
                   onTap: () => context.push('/knowledge'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.psychology_outlined,
-                  title: 'Memory',
-                  subtitle: 'Typed facts AURA remembers',
+                  title: l10n.memoryTitle,
+                  subtitle: l10n.settingsMemorySubtitle,
                   onTap: () => context.push('/memory'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.rate_review_outlined,
-                  title: 'Feedback',
-                  subtitle: 'Corrections you’ve sent',
+                  title: l10n.feedbackTitle,
+                  subtitle: l10n.settingsFeedbackSubtitle,
                   onTap: () => context.push('/feedback'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.code_outlined,
-                  title: 'Engineer',
-                  subtitle: 'Workspaces, PRs, and sandbox runs',
+                  title: l10n.settingsEngineerTitle,
+                  subtitle: l10n.settingsEngineerSubtitle,
                   onTap: () => context.push('/engineer-history'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.hub_outlined,
-                  title: 'GitHub Connection',
-                  subtitle: 'Connect your own GitHub account',
+                  title: l10n.settingsGithubTitle,
+                  subtitle: l10n.settingsGithubSubtitle,
                   onTap: () => context.push('/github-connect'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.cloud_outlined,
                   iconColor: AuraPalette.of(context).info,
-                  title: 'Engine status',
-                  subtitle: 'Whether AURA’s server is reachable',
+                  title: l10n.engineStatusTitle,
+                  subtitle: l10n.settingsEngineStatusSubtitle,
                   onTap: () => context.push('/models'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.bolt_outlined,
                   iconColor: AuraPalette.of(context).warning,
-                  title: 'Automations',
-                  subtitle: 'Gmail, GitHub, and Drive helpers',
+                  title: l10n.settingsAutomationsTitle,
+                  subtitle: l10n.settingsAutomationsSubtitle,
                   onTap: () => context.push('/automations'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.phone_iphone_outlined,
                   iconColor: AuraPalette.of(context).success,
-                  title: 'Usage on this device',
-                  subtitle: 'Local latency and request counts',
+                  title: l10n.settingsUsageTitle,
+                  subtitle: l10n.settingsUsageSubtitle,
                   onTap: () => context.push('/analytics'),
                 ),
               ],
             ),
           ),
           const SizedBox(height: AuraSpacing.xl),
-          _SectionLabel('About'),
+          _SectionLabel(l10n.settingsSectionAbout),
           const AuraCard(
             child: _AboutCard(),
           ),
@@ -215,10 +217,10 @@ class _DesktopIdeToggleTileState extends State<_DesktopIdeToggleTile> {
   Widget build(BuildContext context) {
     return AuraListTile(
       icon: Icons.dashboard_customize_outlined,
-      title: 'Desktop IDE',
+      title: context.l10n.settingsDesktopIdeTitle,
       subtitle: _useIde
-          ? 'AURA opens the IDE shell on this machine'
-          : 'AURA opens the regular Home screen on this machine',
+          ? context.l10n.settingsDesktopIdeOn
+          : context.l10n.settingsDesktopIdeOff,
       trailing: _loading
           ? const SizedBox(
               width: 20,
@@ -238,11 +240,10 @@ class _AboutCard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Where AURA runs', style: Theme.of(context).textTheme.titleSmall),
+        Text(context.l10n.settingsAboutTitle, style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: AuraSpacing.sm),
         Text(
-          'Requests are processed on AURA’s own servers. They are never sent to a '
-          'third-party AI service, and never processed on this device.',
+          context.l10n.settingsAboutBody,
           style: Theme.of(context).textTheme.bodySmall,
         ),
       ],

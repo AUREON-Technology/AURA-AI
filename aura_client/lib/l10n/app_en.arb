@@ -1,108 +1,901 @@
 {
   "@@locale": "en",
-
   "greetingMorning": "Good morning",
-  "@greetingMorning": {"description": "Today screen header, shown before noon"},
-
+  "@greetingMorning": {
+    "description": "Today screen header, shown before noon"
+  },
   "greetingAfternoon": "Good afternoon",
-  "@greetingAfternoon": {"description": "Today screen header, shown 12pm-6pm"},
-
+  "@greetingAfternoon": {
+    "description": "Today screen header, shown 12pm-6pm"
+  },
   "greetingEvening": "Good evening",
-  "@greetingEvening": {"description": "Today screen header, shown after 6pm"},
-
+  "@greetingEvening": {
+    "description": "Today screen header, shown after 6pm"
+  },
   "captureBarHint": "Ask AURA anything, or capture a task…",
-  "@captureBarHint": {"description": "Placeholder text in the Today screen's AI capture bar"},
-
+  "@captureBarHint": {
+    "description": "Placeholder text in the Today screen's AI capture bar"
+  },
   "dueToday": "Due today",
-  "@dueToday": {"description": "Section header for the unified tasks+events list"},
-
+  "@dueToday": {
+    "description": "Section header for the unified tasks+events list"
+  },
   "viewAll": "View all",
-  "@viewAll": {"description": "Link to see the full task list"},
-
+  "@viewAll": {
+    "description": "Link to see the full task list"
+  },
   "nothingDueToday": "Nothing due today",
-  "@nothingDueToday": {"description": "Empty state title for the due-today list"},
-
+  "@nothingDueToday": {
+    "description": "Empty state title for the due-today list"
+  },
   "allCaughtUp": "You're all caught up.",
-  "@allCaughtUp": {"description": "Empty state subtitle for the due-today list"},
-
+  "@allCaughtUp": {
+    "description": "Empty state subtitle for the due-today list"
+  },
   "couldNotLoadDueToday": "Couldn't load today's items",
-  "@couldNotLoadDueToday": {"description": "Error state for the due-today list"},
-
+  "@couldNotLoadDueToday": {
+    "description": "Error state for the due-today list"
+  },
   "activeTasks": "Active tasks",
-  "@activeTasks": {"description": "Stat tile label"},
-
+  "@activeTasks": {
+    "description": "Stat tile label"
+  },
   "waterToday": "Water today",
-  "@waterToday": {"description": "Stat tile label"},
-
+  "@waterToday": {
+    "description": "Stat tile label"
+  },
   "spentThisPeriod": "Spent this period",
-  "@spentThisPeriod": {"description": "Stat tile label"},
-
+  "@spentThisPeriod": {
+    "description": "Stat tile label"
+  },
   "aiSystemStatus": "AI system status",
-  "@aiSystemStatus": {"description": "Section header for the system status card"},
-
+  "@aiSystemStatus": {
+    "description": "Section header for the system status card"
+  },
   "serverInference": "AURA AI service",
-  "@serverInference": {"description": "Status row label for backend reachability"},
-
+  "@serverInference": {
+    "description": "Status row label for backend reachability"
+  },
   "statusReady": "Ready",
-  "@statusReady": {"description": "Status value when the AI service is reachable"},
-
+  "@statusReady": {
+    "description": "Status value when the AI service is reachable"
+  },
   "statusUnavailable": "Unavailable",
-  "@statusUnavailable": {"description": "Status value when the on-device model failed to load"},
-
+  "@statusUnavailable": {
+    "description": "Status value when the on-device model failed to load"
+  },
   "localData": "Local data",
-  "@localData": {"description": "Status row label"},
-
+  "@localData": {
+    "description": "Status row label"
+  },
   "encryptedAesGcm": "Encrypted (AES-256-GCM)",
-  "@encryptedAesGcm": {"description": "Status row value describing local storage encryption"},
-
+  "@encryptedAesGcm": {
+    "description": "Status row value describing local storage encryption"
+  },
   "settingsTooltip": "You",
-  "@settingsTooltip": {"description": "Icon button tooltip for the You destination"},
-
+  "@settingsTooltip": {
+    "description": "Icon button tooltip for the You destination"
+  },
   "navToday": "Today",
-  "@navToday": {"description": "Bottom navigation label"},
-
+  "@navToday": {
+    "description": "Bottom navigation label"
+  },
   "navCopilot": "Copilot",
-  "@navCopilot": {"description": "Bottom navigation label"},
-
+  "@navCopilot": {
+    "description": "Bottom navigation label"
+  },
   "navLifeHub": "Life Hub",
-  "@navLifeHub": {"description": "Bottom navigation label"},
-
+  "@navLifeHub": {
+    "description": "Bottom navigation label"
+  },
   "navYou": "You",
-  "@navYou": {"description": "Bottom navigation label"},
-
+  "@navYou": {
+    "description": "Bottom navigation label"
+  },
   "lifeHubTitle": "Life Hub",
-  "@lifeHubTitle": {"description": "Life Hub screen title"},
-
+  "@lifeHubTitle": {
+    "description": "Life Hub screen title"
+  },
   "youTitle": "You",
-  "@youTitle": {"description": "You screen title"},
-
+  "@youTitle": {
+    "description": "You screen title"
+  },
   "knowledgeTitle": "Knowledge",
-  "@knowledgeTitle": {"description": "Knowledge library title"},
-
+  "@knowledgeTitle": {
+    "description": "Knowledge library title"
+  },
   "memoryTitle": "Memory",
-  "@memoryTitle": {"description": "Memory screen title"},
-
+  "@memoryTitle": {
+    "description": "Memory screen title"
+  },
   "feedbackTitle": "Feedback",
-  "@feedbackTitle": {"description": "Feedback screen title"},
-
+  "@feedbackTitle": {
+    "description": "Feedback screen title"
+  },
   "appearanceTitle": "Appearance",
-  "@appearanceTitle": {"description": "Appearance screen title"},
-
+  "@appearanceTitle": {
+    "description": "Appearance screen title"
+  },
   "engineStatusTitle": "Engine status",
-  "@engineStatusTitle": {"description": "Engine status screen title"},
-
+  "@engineStatusTitle": {
+    "description": "Engine status screen title"
+  },
   "onboardingNext": "Next",
-  "@onboardingNext": {"description": "Onboarding next button"},
-
+  "@onboardingNext": {
+    "description": "Onboarding next button"
+  },
   "onboardingGetStarted": "Get started",
-  "@onboardingGetStarted": {"description": "Onboarding finish button"},
-
+  "@onboardingGetStarted": {
+    "description": "Onboarding finish button"
+  },
   "notificationsTooltip": "Notifications",
-  "@notificationsTooltip": {"description": "Bell icon tooltip when there are no unread items"},
-
+  "@notificationsTooltip": {
+    "description": "Bell icon tooltip when there are no unread items"
+  },
   "unreadNotifications": "{count} unread notifications",
   "@unreadNotifications": {
     "description": "Bell icon tooltip/semantic label when there are unread items",
-    "placeholders": {"count": {"type": "int"}}
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsSectionAccount": "Account",
+  "@settingsSectionAccount": {
+    "description": "You screen section label"
+  },
+  "settingsSectionDesktop": "Desktop",
+  "@settingsSectionDesktop": {
+    "description": "You screen section label"
+  },
+  "settingsSectionYourAura": "Your AURA",
+  "@settingsSectionYourAura": {
+    "description": "You screen section label"
+  },
+  "settingsSectionAbout": "About",
+  "@settingsSectionAbout": {
+    "description": "You screen section label"
+  },
+  "settingsProfileTitle": "Profile",
+  "@settingsProfileTitle": {
+    "description": "You screen row title"
+  },
+  "settingsProfileSubtitle": "Signed-in account and security",
+  "@settingsProfileSubtitle": {
+    "description": "You screen row subtitle"
+  },
+  "settingsAppearanceSubtitle": "System, light, or dark",
+  "@settingsAppearanceSubtitle": {
+    "description": "You screen row subtitle"
+  },
+  "serverEnvironmentTitle": "Server environment",
+  "@serverEnvironmentTitle": {
+    "description": "Server environment screen title and You row title"
+  },
+  "settingsServerEnvironmentSubtitle": "Production or development backend",
+  "@settingsServerEnvironmentSubtitle": {
+    "description": "You screen row subtitle"
+  },
+  "settingsKnowledgeSubtitle": "Documents Copilot can search",
+  "@settingsKnowledgeSubtitle": {
+    "description": "You screen row subtitle"
+  },
+  "settingsMemorySubtitle": "Typed facts AURA remembers",
+  "@settingsMemorySubtitle": {
+    "description": "You screen row subtitle"
+  },
+  "settingsFeedbackSubtitle": "Corrections you’ve sent",
+  "@settingsFeedbackSubtitle": {
+    "description": "You screen row subtitle"
+  },
+  "settingsEngineerTitle": "Engineer",
+  "@settingsEngineerTitle": {
+    "description": "You screen row title"
+  },
+  "settingsEngineerSubtitle": "Workspaces, PRs, and sandbox runs",
+  "@settingsEngineerSubtitle": {
+    "description": "You screen row subtitle"
+  },
+  "settingsGithubTitle": "GitHub Connection",
+  "@settingsGithubTitle": {
+    "description": "You screen row title"
+  },
+  "settingsGithubSubtitle": "Connect your own GitHub account",
+  "@settingsGithubSubtitle": {
+    "description": "You screen row subtitle"
+  },
+  "settingsEngineStatusSubtitle": "Whether AURA’s server is reachable",
+  "@settingsEngineStatusSubtitle": {
+    "description": "You screen row subtitle"
+  },
+  "settingsAutomationsTitle": "Automations",
+  "@settingsAutomationsTitle": {
+    "description": "You screen row title"
+  },
+  "settingsAutomationsSubtitle": "Gmail, GitHub, and Drive helpers",
+  "@settingsAutomationsSubtitle": {
+    "description": "You screen row subtitle"
+  },
+  "settingsUsageTitle": "Usage on this device",
+  "@settingsUsageTitle": {
+    "description": "You screen row title"
+  },
+  "settingsUsageSubtitle": "Local latency and request counts",
+  "@settingsUsageSubtitle": {
+    "description": "You screen row subtitle"
+  },
+  "settingsDesktopIdeTitle": "Desktop IDE",
+  "@settingsDesktopIdeTitle": {
+    "description": "Desktop IDE toggle title"
+  },
+  "settingsDesktopIdeOn": "AURA opens the IDE shell on this machine",
+  "@settingsDesktopIdeOn": {
+    "description": "Desktop IDE toggle subtitle when on"
+  },
+  "settingsDesktopIdeOff": "AURA opens the regular Home screen on this machine",
+  "@settingsDesktopIdeOff": {
+    "description": "Desktop IDE toggle subtitle when off"
+  },
+  "settingsAboutTitle": "Where AURA runs",
+  "@settingsAboutTitle": {
+    "description": "About card title"
+  },
+  "settingsAboutBody": "Requests are processed on AURA’s own servers. They are never sent to a third-party AI service, and never processed on this device.",
+  "@settingsAboutBody": {
+    "description": "About card body"
+  },
+  "themeSystem": "System",
+  "@themeSystem": {
+    "description": "Theme mode option"
+  },
+  "themeLight": "Light",
+  "@themeLight": {
+    "description": "Theme mode option"
+  },
+  "themeDark": "Dark",
+  "@themeDark": {
+    "description": "Theme mode option"
+  },
+  "themeSystemSubtitle": "Match the device setting",
+  "@themeSystemSubtitle": {
+    "description": "Theme mode option subtitle"
+  },
+  "themeLightSubtitle": "Always light",
+  "@themeLightSubtitle": {
+    "description": "Theme mode option subtitle"
+  },
+  "themeDarkSubtitle": "Always dark",
+  "@themeDarkSubtitle": {
+    "description": "Theme mode option subtitle"
+  },
+  "serverSwitchedSignInAgain": "Sign in again to continue.",
+  "@serverSwitchedSignInAgain": {
+    "description": "Snackbar after switching backend environment"
+  },
+  "serverCurrent": "Current server",
+  "@serverCurrent": {
+    "description": "Server environment card title"
+  },
+  "serverReachable": "Reachable",
+  "@serverReachable": {
+    "description": "Backend reachability status"
+  },
+  "serverUnreachable": "Unreachable",
+  "@serverUnreachable": {
+    "description": "Backend reachability status"
+  },
+  "serverChecking": "Checking…",
+  "@serverChecking": {
+    "description": "Backend reachability status while probing"
+  },
+  "serverReachabilityError": "Could not check reachability",
+  "@serverReachabilityError": {
+    "description": "Backend reachability probe failed"
+  },
+  "serverSwitchExplainer": "Switching servers clears your session on this device. Sign in again after changing environments.",
+  "@serverSwitchExplainer": {
+    "description": "Footnote on the server environment screen"
+  },
+  "appName": "AURA AI",
+  "@appName": {
+    "description": "Product name shown on the sign-in screen"
+  },
+  "cancel": "Cancel",
+  "@cancel": {
+    "description": "Generic cancel action"
+  },
+  "signOut": "Sign out",
+  "@signOut": {
+    "description": "Sign-out action"
+  },
+  "signOutConfirmTitle": "Sign out?",
+  "@signOutConfirmTitle": {
+    "description": "Sign-out confirmation dialog title"
+  },
+  "signOutConfirmBody": "AURA uploads unsynced changes first when it can reach the server, then clears its data from this device. Changes it cannot upload are lost.",
+  "@signOutConfirmBody": {
+    "description": "Sign-out confirmation dialog body"
+  },
+  "loginBiometricReason": "Authenticate to unlock your AURA AI profile",
+  "@loginBiometricReason": {
+    "description": "OS biometric prompt reason"
+  },
+  "loginTagline": "Personal AI Operating System",
+  "@loginTagline": {
+    "description": "Sign-in screen tagline"
+  },
+  "loginWelcomeBack": "Welcome back",
+  "@loginWelcomeBack": {
+    "description": "Sign-in card title"
+  },
+  "loginSubtitle": "Sign in to sync your schedules, studies, workspace, and agents.",
+  "@loginSubtitle": {
+    "description": "Sign-in card subtitle"
+  },
+  "loginSessionExpired": "Your session expired. Sign in again to pick up where you left off — everything on this device is still here.",
+  "@loginSessionExpired": {
+    "description": "Banner shown after the session expired"
+  },
+  "loginGoogle": "Sign in with Google",
+  "@loginGoogle": {
+    "description": "Native Google sign-in button"
+  },
+  "loginGoogleBrowser": "Sign in with Google (browser)",
+  "@loginGoogleBrowser": {
+    "description": "Browser-based Google sign-in button (desktop)"
+  },
+  "loginUnlockBiometrics": "Unlock with biometrics",
+  "@loginUnlockBiometrics": {
+    "description": "Biometric unlock button"
+  },
+  "loginShowDeveloperPanel": "Developer / offline access",
+  "@loginShowDeveloperPanel": {
+    "description": "Debug-only toggle to show the developer sign-in panel"
+  },
+  "loginHideDeveloperPanel": "Hide developer panel",
+  "@loginHideDeveloperPanel": {
+    "description": "Debug-only toggle to hide the developer sign-in panel"
+  },
+  "loginDeveloperName": "Developer name",
+  "@loginDeveloperName": {
+    "description": "Debug-only developer sign-in field label"
+  },
+  "loginDeveloperNameHint": "Enter name",
+  "@loginDeveloperNameHint": {
+    "description": "Debug-only developer sign-in field hint"
+  },
+  "loginDeveloperEmail": "Developer email",
+  "@loginDeveloperEmail": {
+    "description": "Debug-only developer sign-in field label"
+  },
+  "loginDeveloperEmailHint": "Enter email",
+  "@loginDeveloperEmailHint": {
+    "description": "Debug-only developer sign-in field hint"
+  },
+  "loginDeveloperAccess": "Access developer environment",
+  "@loginDeveloperAccess": {
+    "description": "Debug-only developer sign-in button"
+  },
+  "profileTitle": "User Profile & Security",
+  "@profileTitle": {
+    "description": "Profile screen title"
+  },
+  "profileNotSignedIn": "Not signed in",
+  "@profileNotSignedIn": {
+    "description": "Profile screen when no user is signed in"
+  },
+  "profileShowAttestation": "Show Attestation Status",
+  "@profileShowAttestation": {
+    "description": "Button that reveals device attestation details"
+  },
+  "add": "Add",
+  "@add": {
+    "description": "Generic add action"
+  },
+  "close": "Close",
+  "@close": {
+    "description": "Generic close action / tooltip"
+  },
+  "retry": "Retry",
+  "@retry": {
+    "description": "Generic retry action"
+  },
+  "moreOptions": "More",
+  "@moreOptions": {
+    "description": "Overflow menu button tooltip"
+  },
+  "chatLoadEarlier": "Load earlier messages",
+  "@chatLoadEarlier": {
+    "description": "Chat: loads older messages"
+  },
+  "captureTitle": "Ask Copilot",
+  "@captureTitle": {
+    "description": "Quick capture sheet title"
+  },
+  "captureHint": "Capture a thought, task, or question…",
+  "@captureHint": {
+    "description": "Quick capture field hint"
+  },
+  "captureSend": "Send to Copilot",
+  "@captureSend": {
+    "description": "Quick capture send button"
+  },
+  "chatToggleKnowledge": "Knowledge",
+  "@chatToggleKnowledge": {
+    "description": "Composer chip: use knowledge retrieval"
+  },
+  "chatToggleMemory": "Memory",
+  "@chatToggleMemory": {
+    "description": "Composer chip: use memory"
+  },
+  "chatToggleTools": "Tools",
+  "@chatToggleTools": {
+    "description": "Composer chip: allow tools"
+  },
+  "chatComposerWaiting": "Waiting for {persona}...",
+  "@chatComposerWaiting": {
+    "description": "Composer hint while a reply is pending",
+    "placeholders": {
+      "persona": {
+        "type": "String"
+      }
+    }
+  },
+  "chatComposerHintShort": "Ask {persona}...",
+  "@chatComposerHintShort": {
+    "description": "Composer hint on narrow screens",
+    "placeholders": {
+      "persona": {
+        "type": "String"
+      }
+    }
+  },
+  "chatComposerHint": "Ask {persona} anything...",
+  "@chatComposerHint": {
+    "description": "Composer hint on wide screens",
+    "placeholders": {
+      "persona": {
+        "type": "String"
+      }
+    }
+  },
+  "chatStopGenerating": "Stop generating",
+  "@chatStopGenerating": {
+    "description": "Composer Stop button tooltip/label (mirrors kStopGeneratingLabel)"
+  },
+  "chatSend": "Send",
+  "@chatSend": {
+    "description": "Composer Send button tooltip/label"
+  },
+  "chatOpenSessions": "Chat sessions",
+  "@chatOpenSessions": {
+    "description": "Chat header menu button tooltip (opens the session drawer)"
+  },
+  "chatLiveVoice": "Live voice",
+  "@chatLiveVoice": {
+    "description": "Chat header: opens live voice"
+  },
+  "chatImageLimitReached": "Image limit reached",
+  "@chatImageLimitReached": {
+    "description": "Attach image button tooltip when full"
+  },
+  "chatAttachImage": "Attach image",
+  "@chatAttachImage": {
+    "description": "Attach image button tooltip"
+  },
+  "chatAttachedImageLabel": "Attached image {index} of {count}: {name}",
+  "@chatAttachedImageLabel": {
+    "description": "Screen-reader label of a pending image",
+    "placeholders": {
+      "index": {
+        "type": "int"
+      },
+      "count": {
+        "type": "int"
+      },
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chatRemoveImage": "Remove image {index}",
+  "@chatRemoveImage": {
+    "description": "Tooltip of the remove-image button",
+    "placeholders": {
+      "index": {
+        "type": "int"
+      }
+    }
+  },
+  "chatSentImageLabel": "Sent image {index} of {count}: {name}. Open preview",
+  "@chatSentImageLabel": {
+    "description": "Screen-reader label of a sent image",
+    "placeholders": {
+      "index": {
+        "type": "int"
+      },
+      "count": {
+        "type": "int"
+      },
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chatClosePreview": "Close preview",
+  "@chatClosePreview": {
+    "description": "Image preview close tooltip"
+  },
+  "chatNewSession": "New Session",
+  "@chatNewSession": {
+    "description": "Chat sidebar: start a new session"
+  },
+  "chatSessionsHeader": "CHAT SESSIONS",
+  "@chatSessionsHeader": {
+    "description": "Chat sidebar section header"
+  },
+  "chatDefaultSession": "Default Workspace",
+  "@chatDefaultSession": {
+    "description": "Name of the default chat session"
+  },
+  "chatSessionLabel": "Session {id}",
+  "@chatSessionLabel": {
+    "description": "Name of a non-default chat session",
+    "placeholders": {
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "chatDeleteConversation": "Delete conversation",
+  "@chatDeleteConversation": {
+    "description": "Delete conversation tooltip"
+  },
+  "chatConversationDeleted": "Conversation deleted",
+  "@chatConversationDeleted": {
+    "description": "Snackbar after deleting a conversation"
+  },
+  "chatNoReplyTitle": "No reply this turn",
+  "@chatNoReplyTitle": {
+    "description": "Empty-answer card title"
+  },
+  "chatNoReplyBody": "AURA finished without an answer. Retry to send your last message again.",
+  "@chatNoReplyBody": {
+    "description": "Empty-answer card body"
+  },
+  "chatEmptyTitle": "Ask Copilot Anything",
+  "@chatEmptyTitle": {
+    "description": "Empty chat title"
+  },
+  "chatEmptyMessage": "Programming questions, academic inquiries, or coordinating your tasks.",
+  "@chatEmptyMessage": {
+    "description": "Empty chat message"
+  },
+  "chatSuggestExplainTitle": "Explain a Concept",
+  "@chatSuggestExplainTitle": {
+    "description": "Empty chat suggestion title"
+  },
+  "chatSuggestExplainSubtitle": "Ask a programming or academic question",
+  "@chatSuggestExplainSubtitle": {
+    "description": "Empty chat suggestion subtitle"
+  },
+  "chatSuggestExplainPrompt": "Explain how dependency injection works",
+  "@chatSuggestExplainPrompt": {
+    "description": "Prompt sent when the suggestion is tapped"
+  },
+  "chatSuggestHealthTitle": "Log Health",
+  "@chatSuggestHealthTitle": {
+    "description": "Empty chat suggestion title"
+  },
+  "chatSuggestHealthSubtitle": "Log water intake and exercise duration for today",
+  "@chatSuggestHealthSubtitle": {
+    "description": "Empty chat suggestion subtitle"
+  },
+  "chatSuggestHealthPrompt": "Log 500ml of water and 30 minutes of exercise",
+  "@chatSuggestHealthPrompt": {
+    "description": "Prompt sent when the suggestion is tapped"
+  },
+  "chatSuggestFinanceTitle": "Financial Health",
+  "@chatSuggestFinanceTitle": {
+    "description": "Empty chat suggestion title"
+  },
+  "chatSuggestFinanceSubtitle": "Show my current balance and expense distribution",
+  "@chatSuggestFinanceSubtitle": {
+    "description": "Empty chat suggestion subtitle"
+  },
+  "chatSuggestFinancePrompt": "How are my expenses this month?",
+  "@chatSuggestFinancePrompt": {
+    "description": "Prompt sent when the suggestion is tapped"
+  },
+  "chatSuggestMemoryTitle": "Agent Memory",
+  "@chatSuggestMemoryTitle": {
+    "description": "Empty chat suggestion title"
+  },
+  "chatSuggestMemorySubtitle": "View facts the system has remembered about me",
+  "@chatSuggestMemorySubtitle": {
+    "description": "Empty chat suggestion subtitle"
+  },
+  "chatSuggestMemoryPrompt": "What do you remember about me?",
+  "@chatSuggestMemoryPrompt": {
+    "description": "Prompt sent when the suggestion is tapped"
+  },
+  "chatRateAnswer": "Rate this answer",
+  "@chatRateAnswer": {
+    "description": "Feedback sheet title and rate button tooltip"
+  },
+  "chatRatingStar": "{value} of {max}",
+  "@chatRatingStar": {
+    "description": "Star rating button tooltip",
+    "placeholders": {
+      "value": {
+        "type": "int"
+      },
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "chatFeedbackCorrection": "Optional correction",
+  "@chatFeedbackCorrection": {
+    "description": "Feedback sheet correction field label"
+  },
+  "chatFeedbackSend": "Send feedback",
+  "@chatFeedbackSend": {
+    "description": "Feedback sheet submit button"
+  },
+  "chatFeedbackSent": "Thanks — feedback sent.",
+  "@chatFeedbackSent": {
+    "description": "Snackbar after sending feedback"
+  },
+  "memoryBankTitle": "User Memory Bank",
+  "@memoryBankTitle": {
+    "description": "Memory bank dialog title"
+  },
+  "memoryBankExplainer": "These are facts and preferences AURA has learned about you. They are injected as system prompts to personalize reasoning.",
+  "@memoryBankExplainer": {
+    "description": "Memory bank dialog explainer"
+  },
+  "memoryBankAddHint": "Add a custom fact manually...",
+  "@memoryBankAddHint": {
+    "description": "Memory bank add field hint"
+  },
+  "memoryBankEmpty": "No memories stored yet. AURA extracts them automatically from conversations, or you can add one above.",
+  "@memoryBankEmpty": {
+    "description": "Memory bank empty state"
+  },
+  "memoryBankDelete": "Delete memory",
+  "@memoryBankDelete": {
+    "description": "Memory bank delete button tooltip"
+  },
+  "chatCloudUnavailableTitle": "Cloud AI is currently unavailable",
+  "@chatCloudUnavailableTitle": {
+    "description": "Connection error card title"
+  },
+  "chatCloudUnavailableBody": "AURA could not connect to the cloud assistant. You can retry or report this issue.",
+  "@chatCloudUnavailableBody": {
+    "description": "Connection error card body"
+  },
+  "chatReportIssue": "Report Issue",
+  "@chatReportIssue": {
+    "description": "Connection error card report button"
+  },
+  "pendingActionsTitle": "AURA Proposes Actions",
+  "@pendingActionsTitle": {
+    "description": "Pending actions card title"
+  },
+  "pendingActionsReject": "Reject",
+  "@pendingActionsReject": {
+    "description": "Pending actions reject button"
+  },
+  "pendingActionsApprove": "Approve Actions",
+  "@pendingActionsApprove": {
+    "description": "Pending actions approve button"
+  },
+  "pendingActionsAllSucceeded": "Proposed actions successfully executed!",
+  "@pendingActionsAllSucceeded": {
+    "description": "Snackbar when every proposed action ran"
+  },
+  "pendingActionsAllFailed": "All actions failed: {labels}",
+  "@pendingActionsAllFailed": {
+    "description": "Snackbar when every proposed action failed",
+    "placeholders": {
+      "labels": {
+        "type": "String"
+      }
+    }
+  },
+  "pendingActionsSomeFailed": "{count} action(s) failed: {labels}",
+  "@pendingActionsSomeFailed": {
+    "description": "Snackbar when some proposed actions failed",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "labels": {
+        "type": "String"
+      }
+    }
+  },
+  "voiceMicPermission": "Microphone permission is needed to record a voice note.",
+  "@voiceMicPermission": {
+    "description": "Voice note error"
+  },
+  "voiceRecordingUnavailable": "Voice recording is not available on this device.",
+  "@voiceRecordingUnavailable": {
+    "description": "Voice note error"
+  },
+  "voiceTranscribeFailed": "Could not transcribe that voice note.",
+  "@voiceTranscribeFailed": {
+    "description": "Voice note error"
+  },
+  "voiceReadFailed": "Could not read that recording.",
+  "@voiceReadFailed": {
+    "description": "Voice note error"
+  },
+  "voiceStopRecording": "Stop recording",
+  "@voiceStopRecording": {
+    "description": "Voice note button tooltip while recording"
+  },
+  "voiceRecordNote": "Record a voice note",
+  "@voiceRecordNote": {
+    "description": "Voice note button tooltip"
+  },
+  "voiceStopPlayback": "Stop",
+  "@voiceStopPlayback": {
+    "description": "Reply playback button tooltip while playing"
+  },
+  "voiceListen": "Listen to this reply",
+  "@voiceListen": {
+    "description": "Reply playback button tooltip"
+  },
+  "engineerTaskHistory": "Engineer Task History",
+  "@engineerTaskHistory": {
+    "description": "Persona picker: Engineer history button tooltip"
+  },
+  "sandboxNoChanges": "(no changes)",
+  "@sandboxNoChanges": {
+    "description": "Sandbox diff view when the diff is empty"
+  },
+  "stateToneError": "Error",
+  "@stateToneError": {
+    "description": "Screen-reader prefix of an error state view"
+  },
+  "stateToneWarning": "Warning",
+  "@stateToneWarning": {
+    "description": "Screen-reader prefix of a warning state view"
+  },
+  "stateToneOffline": "Offline",
+  "@stateToneOffline": {
+    "description": "Screen-reader prefix of an offline state view"
+  },
+  "commandPaletteLabel": "Command palette",
+  "@commandPaletteLabel": {
+    "description": "Command palette barrier label"
+  },
+  "commandPaletteHint": "Type a command...",
+  "@commandPaletteHint": {
+    "description": "Command palette search hint"
+  },
+  "commandPaletteNoMatchesTitle": "No matching commands",
+  "@commandPaletteNoMatchesTitle": {
+    "description": "Command palette empty result title"
+  },
+  "commandPaletteNoMatchesBody": "Nothing here matches \"{query}\". Try a shorter word, or clear the search to see everything.",
+  "@commandPaletteNoMatchesBody": {
+    "description": "Command palette empty result body",
+    "placeholders": {
+      "query": {
+        "type": "String"
+      }
+    }
+  },
+  "commandPaletteClearSearch": "Clear search",
+  "@commandPaletteClearSearch": {
+    "description": "Command palette clear-search action"
+  },
+  "refresh": "Refresh",
+  "@refresh": {
+    "description": "Generic refresh tooltip"
+  },
+  "changeDate": "Change date",
+  "@changeDate": {
+    "description": "Tooltip of a date-picker button"
+  },
+  "clearDueDate": "Clear due date",
+  "@clearDueDate": {
+    "description": "Tooltip of the button that removes a task due date"
+  },
+  "taskMarkDone": "Mark as done",
+  "@taskMarkDone": {
+    "description": "Task completion toggle tooltip"
+  },
+  "taskMarkNotDone": "Mark as not done",
+  "@taskMarkNotDone": {
+    "description": "Task completion toggle tooltip when already completed"
+  },
+  "hostdBrowseExecutable": "Browse for the daemon executable",
+  "@hostdBrowseExecutable": {
+    "description": "Host daemon page: file browse button tooltip"
+  },
+  "hostdSaveExecutable": "Save executable path",
+  "@hostdSaveExecutable": {
+    "description": "Host daemon page: save path button tooltip"
+  },
+  "liveVoiceEnd": "End live voice",
+  "@liveVoiceEnd": {
+    "description": "Live voice page close button tooltip"
+  },
+  "eventChangeStart": "Change start time",
+  "@eventChangeStart": {
+    "description": "Add event dialog: start time picker tooltip"
+  },
+  "eventChangeEnd": "Change end time",
+  "@eventChangeEnd": {
+    "description": "Add event dialog: end time picker tooltip"
+  },
+  "eventAdd": "Add event",
+  "@eventAdd": {
+    "description": "Calendar: add event button tooltip"
+  },
+  "eventDelete": "Delete event",
+  "@eventDelete": {
+    "description": "Calendar: delete event button tooltip"
+  },
+  "calendarPreviousMonth": "Previous month",
+  "@calendarPreviousMonth": {
+    "description": "Calendar month navigation tooltip"
+  },
+  "calendarNextMonth": "Next month",
+  "@calendarNextMonth": {
+    "description": "Calendar month navigation tooltip"
+  },
+  "githubImportSubtask": "Import as coding task",
+  "@githubImportSubtask": {
+    "description": "GitHub automation: import subtask button tooltip"
+  },
+  "chatActivePersonaHeader": "ACTIVE PERSONA",
+  "@chatActivePersonaHeader": {
+    "description": "Chat sidebar section header"
+  },
+  "chatUseKnowledge": "Use Knowledge (RAG)",
+  "@chatUseKnowledge": {
+    "description": "Chat sidebar knowledge toggle"
+  },
+  "chatRoutingHeader": "AI ROUTING",
+  "@chatRoutingHeader": {
+    "description": "Chat sidebar section header"
+  },
+  "chatAiEngine": "AI engine",
+  "@chatAiEngine": {
+    "description": "Chat sidebar routing row label"
+  },
+  "chatIssueRecorded": "Issue recorded in local telemetry.",
+  "@chatIssueRecorded": {
+    "description": "Snackbar after reporting a connection issue"
+  },
+  "chatPersonaFallback": "This request was handled by {resolved}, not {requested} -- your account may not have access to {requested}.",
+  "@chatPersonaFallback": {
+    "description": "Notice when the backend served a different persona than requested",
+    "placeholders": {
+      "resolved": {
+        "type": "String"
+      },
+      "requested": {
+        "type": "String"
+      }
+    }
+  },
+  "chatAwaitingConfirmation": "Confirm the action above to continue.",
+  "@chatAwaitingConfirmation": {
+    "description": "Hint when a turn waits on a tool confirmation"
+  },
+  "personaPickerTitle": "Choose a persona",
+  "@personaPickerTitle": {
+    "description": "Persona picker sheet title"
+  },
+  "loginDeveloperTip": "Tip: Google Sign-In failed. To test locally without registering SHA-1 fingerprints in the Google Console, use the \"Access Developer Environment\" bypass option above.",
+  "@loginDeveloperTip": {
+    "description": "Debug-only hint after a failed Google sign-in"
   }
 }

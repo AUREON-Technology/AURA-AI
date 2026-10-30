@@ -24,7 +24,7 @@ class LiveTranscriptPanel extends StatelessWidget {
         final line = items[index];
         final isUser = line.role == 'user';
         return Align(
-          alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+          alignment: isUser ? AlignmentDirectional.centerEnd : AlignmentDirectional.centerStart,
           child: Container(
             margin: const EdgeInsets.only(bottom: AuraSpacing.sm),
             padding: const EdgeInsets.symmetric(

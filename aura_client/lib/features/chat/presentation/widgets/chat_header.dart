@@ -9,6 +9,7 @@ import 'chat_header_action_button.dart';
 import 'chat_header_overflow_menu.dart';
 import 'chat_sync_indicator.dart';
 import 'persona_picker.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class ChatHeader extends ConsumerWidget {
   final bool isMobile;
@@ -36,6 +37,7 @@ class ChatHeader extends ConsumerWidget {
             ChatHeaderActionButton(
               icon: Icons.menu,
               color: palette.textPrimary,
+              tooltip: context.l10n.chatOpenSessions,
               onPressed: onOpenDrawer,
             ),
             const SizedBox(width: AuraSpacing.xs),
@@ -45,7 +47,7 @@ class ChatHeader extends ConsumerWidget {
           if (isMobile)
             const Flexible(
               child: Align(
-                alignment: Alignment.centerLeft,
+                alignment: AlignmentDirectional.centerStart,
                 child: PersonaChip(shrink: true),
               ),
             )
@@ -63,7 +65,7 @@ class ChatHeader extends ConsumerWidget {
             ChatHeaderActionButton(
               icon: Icons.psychology_outlined,
               color: palette.warning,
-              tooltip: 'Memory',
+              tooltip: context.l10n.memoryTitle,
               onPressed: () => context.go('/memory'),
             ),
             if (chatHeaderShowsLiveVoice()) ...[
@@ -71,7 +73,7 @@ class ChatHeader extends ConsumerWidget {
               ChatHeaderActionButton(
                 icon: Icons.graphic_eq,
                 color: palette.brand,
-                tooltip: 'Live voice',
+                tooltip: context.l10n.chatLiveVoice,
                 onPressed: () => context.push('/voice'),
               ),
             ],
@@ -125,7 +127,7 @@ class _DesktopTitle extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Copilot',
+          context.l10n.navCopilot,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: palette.textPrimary),

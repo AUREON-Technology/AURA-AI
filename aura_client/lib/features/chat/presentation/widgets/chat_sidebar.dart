@@ -9,6 +9,7 @@ import '../chat_view_model.dart';
 import 'persona_picker.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class ChatSidebar extends ConsumerWidget {
   final String activeSessionId;
@@ -39,7 +40,7 @@ class ChatSidebar extends ConsumerWidget {
         padding: EdgeInsets.zero,
         children: [
           AuraButton(
-            label: 'New Session',
+            label: context.l10n.chatNewSession,
             icon: Icons.add,
             expand: true,
             onPressed: () {
@@ -49,7 +50,7 @@ class ChatSidebar extends ConsumerWidget {
           ),
           const SizedBox(height: AuraSpacing.xl),
           Text(
-            'CHAT SESSIONS',
+            context.l10n.chatSessionsHeader,
             style: TextStyle(
               color: palette.textSecondary,
               fontSize: 11,
@@ -72,8 +73,8 @@ class ChatSidebar extends ConsumerWidget {
                   final session = allSessions[index];
                   final isActive = session == activeSessionId;
                   final label = session == 'default_session'
-                      ? 'Default Workspace'
-                      : 'Session ${session.split('_').last.substring(0, 5)}';
+                      ? context.l10n.chatDefaultSession
+                      : context.l10n.chatSessionLabel(session.split('_').last.substring(0, 5));
 
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 6.0),
@@ -88,7 +89,7 @@ class ChatSidebar extends ConsumerWidget {
                                 size: 16,
                                 color: palette.textDisabled,
                               ),
-                              tooltip: 'Delete conversation',
+                              tooltip: context.l10n.chatDeleteConversation,
                               onPressed: () {
                                 // Off the session at once (the button only
                                 // shows on the active one); the delete itself
@@ -98,7 +99,7 @@ class ChatSidebar extends ConsumerWidget {
                                   context,
                                   ref,
                                   key: chatSessionUndoKey(session),
-                                  message: 'Conversation deleted',
+                                  message: context.l10n.chatConversationDeleted,
                                   commit: () => vm.deleteSession(session),
                                   onUndo: () => vm.selectSession(session),
                                 );
@@ -128,7 +129,7 @@ class ChatSidebar extends ConsumerWidget {
           if (isMobile) ...[
             Divider(color: palette.border, height: 32),
             Text(
-              'ACTIVE PERSONA',
+              context.l10n.chatActivePersonaHeader,
               style: TextStyle(
                 color: palette.textSecondary,
                 fontSize: 11,
@@ -143,7 +144,7 @@ class ChatSidebar extends ConsumerWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Use Knowledge (RAG)',
+                    context.l10n.chatUseKnowledge,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -162,7 +163,7 @@ class ChatSidebar extends ConsumerWidget {
           ],
           Divider(color: palette.border, height: 32),
           Text(
-            'AI ROUTING',
+            context.l10n.chatRoutingHeader,
             style: TextStyle(
               color: palette.textSecondary,
               fontSize: 11,
@@ -174,7 +175,7 @@ class ChatSidebar extends ConsumerWidget {
           Row(
             children: [
               Text(
-                'AI engine',
+                context.l10n.chatAiEngine,
                 style: TextStyle(fontSize: 12, color: palette.textSecondary),
               ),
               const SizedBox(width: AuraSpacing.sm),

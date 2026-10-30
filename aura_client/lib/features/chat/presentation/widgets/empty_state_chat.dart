@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class EmptyStateChat extends StatelessWidget {
   final Function(String) onSuggestionSelected;
@@ -8,15 +9,16 @@ class EmptyStateChat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Center(
       child: SingleChildScrollView(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const AuraEmptyState(
+            AuraEmptyState(
               icon: Icons.auto_awesome,
-              title: 'Ask Copilot Anything',
-              message: 'Programming questions, academic inquiries, or coordinating your tasks.',
+              title: l10n.chatEmptyTitle,
+              message: l10n.chatEmptyMessage,
             ),
             const SizedBox(height: AuraSpacing.lg),
             ConstrainedBox(
@@ -30,27 +32,27 @@ class EmptyStateChat extends StatelessWidget {
                 physics: const NeverScrollableScrollPhysics(),
                 children: [
                   _SuggestionCard(
-                    title: 'Explain a Concept',
-                    subtitle: 'Ask a programming or academic question',
-                    prompt: 'Explain how dependency injection works',
+                    title: l10n.chatSuggestExplainTitle,
+                    subtitle: l10n.chatSuggestExplainSubtitle,
+                    prompt: l10n.chatSuggestExplainPrompt,
                     onSelected: onSuggestionSelected,
                   ),
                   _SuggestionCard(
-                    title: 'Log Health',
-                    subtitle: 'Log water intake and exercise duration for today',
-                    prompt: 'Log 500ml of water and 30 minutes of exercise',
+                    title: l10n.chatSuggestHealthTitle,
+                    subtitle: l10n.chatSuggestHealthSubtitle,
+                    prompt: l10n.chatSuggestHealthPrompt,
                     onSelected: onSuggestionSelected,
                   ),
                   _SuggestionCard(
-                    title: 'Financial Health',
-                    subtitle: 'Show my current balance and expense distribution',
-                    prompt: 'How are my expenses this month?',
+                    title: l10n.chatSuggestFinanceTitle,
+                    subtitle: l10n.chatSuggestFinanceSubtitle,
+                    prompt: l10n.chatSuggestFinancePrompt,
                     onSelected: onSuggestionSelected,
                   ),
                   _SuggestionCard(
-                    title: 'Agent Memory',
-                    subtitle: 'View facts the system has remembered about me',
-                    prompt: 'What do you remember about me?',
+                    title: l10n.chatSuggestMemoryTitle,
+                    subtitle: l10n.chatSuggestMemorySubtitle,
+                    prompt: l10n.chatSuggestMemoryPrompt,
                     onSelected: onSuggestionSelected,
                   ),
                 ],

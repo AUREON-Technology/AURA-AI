@@ -6,6 +6,7 @@ import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/undo/undoable_deletes.dart';
 import '../tasks_view_model.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class TaskItemCard extends ConsumerWidget {
   final Task task;
@@ -43,6 +44,7 @@ class TaskItemCard extends ConsumerWidget {
         child: Row(
           children: [
             IconButton(
+              tooltip: task.isCompleted ? context.l10n.taskMarkNotDone : context.l10n.taskMarkDone,
               icon: Icon(
                 task.isCompleted ? Icons.check_circle : Icons.radio_button_unchecked,
                 color: task.isCompleted ? palette.success : palette.textSecondary,

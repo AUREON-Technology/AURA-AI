@@ -97,8 +97,8 @@ class _HistoryBody extends ConsumerWidget {
               key: Key(tx.id),
               direction: DismissDirection.endToStart,
               background: Container(
-                alignment: Alignment.centerRight,
-                padding: const EdgeInsets.only(right: 20),
+                alignment: AlignmentDirectional.centerEnd,
+                padding: const EdgeInsetsDirectional.only(end: 20),
                 decoration: BoxDecoration(
                   color: Colors.redAccent.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(12),

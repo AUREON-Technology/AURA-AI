@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import '../../data/automation_repository.dart';
 import '../github_view_model.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class GitHubTab extends ConsumerStatefulWidget {
   const GitHubTab({super.key});
@@ -244,6 +245,7 @@ class GitHubAnalysisPanel extends ConsumerWidget {
                 children: [
                   Expanded(child: Text(task, style: const TextStyle(fontSize: 13))),
                   IconButton(
+                    tooltip: context.l10n.githubImportSubtask,
                     icon: const Icon(Icons.add_task, color: AuraTheme.accentTeal),
                     onPressed: () async {
                       final messenger = ScaffoldMessenger.of(context);

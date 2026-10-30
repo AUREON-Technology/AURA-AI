@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../aura_palette.dart';
 import '../tokens.dart';
 import 'aura_button.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// What kind of nothing this is.
 ///
@@ -69,17 +70,17 @@ class AuraEmptyState extends StatelessWidget {
   /// Prefixed to the announced label so a screen reader hears the kind of
   /// state, not just its title — the icon's colour carries that for everyone
   /// else, and colour alone is not a signal.
-  String? get _tonePrefix => switch (tone) {
+  String? _tonePrefix(BuildContext context) => switch (tone) {
         AuraStateTone.neutral => null,
-        AuraStateTone.error => 'Error',
-        AuraStateTone.warning => 'Warning',
-        AuraStateTone.offline => 'Offline',
+        AuraStateTone.error => context.l10n.stateToneError,
+        AuraStateTone.warning => context.l10n.stateToneWarning,
+        AuraStateTone.offline => context.l10n.stateToneOffline,
       };
 
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
-    final prefix = _tonePrefix;
+    final prefix = _tonePrefix(context);
 
     return Semantics(
       // A state view replaces content that was there a moment ago, so its

@@ -6,6 +6,7 @@ import 'auth_provider.dart';
 import 'package:aura_client/core/auth/platform_login_support.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// V2 rebuild (Doc/V2_BLUEPRINT.md §4) — same auth flows as V1, restyled
 /// on the design system (light+dark-ready, contrast-checked palette,
@@ -51,7 +52,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   Future<void> _authenticateBiometrically() async {
     try {
       final authenticated = await _localAuth.authenticate(
-        localizedReason: 'Authenticate to unlock your AURA AI profile',
+        localizedReason: context.l10n.loginBiometricReason,
         options: const AuthenticationOptions(stickyAuth: true, biometricOnly: true),
       );
       if (!mounted) return;
@@ -89,6 +90,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   Widget _buildBody(BuildContext context) {
     final palette = AuraPalette.of(context);
     final authState = ref.watch(authProvider);
+    final l10n = context.l10n;
 
     return Scaffold(
       body: Container(
@@ -123,9 +125,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                     ),
                   ),
                   const SizedBox(height: AuraSpacing.xl),
-                  Text('AURA AI', style: Theme.of(context).textTheme.displayLarge?.copyWith(letterSpacing: 2.0)),
+                  Text(l10n.appName, style: Theme.of(context).textTheme.displayLarge?.copyWith(letterSpacing: 2.0)),
                   const SizedBox(height: AuraSpacing.xs),
-                  Text('Personal AI Operating System', style: Theme.of(context).textTheme.bodyMedium?.copyWith(letterSpacing: 1.0)),
+                  Text(l10n.loginTagline, style: Theme.of(context).textTheme.bodyMedium?.copyWith(letterSpacing: 1.0)),
                   const SizedBox(height: AuraSpacing.xxxl),
                   SizedBox(
                     width: 450,
@@ -134,19 +136,18 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Text('Welcome back', style: Theme.of(context).textTheme.titleLarge, textAlign: TextAlign.center),
+                          Text(l10n.loginWelcomeBack, style: Theme.of(context).textTheme.titleLarge, textAlign: TextAlign.center),
                           const SizedBox(height: AuraSpacing.sm),
                           Text(
-                            'Sign in to sync your schedules, studies, workspace, and agents.',
+                            l10n.loginSubtitle,
                             textAlign: TextAlign.center,
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                           if (ref.watch(sessionExpiredProvider)) ...[
                             const SizedBox(height: AuraSpacing.lg),
-                            const AuraBanner(
+                            AuraBanner(
                               icon: Icons.lock_clock_outlined,
-                              message: 'Your session expired. Sign in again to pick up where '
-                                  'you left off — everything on this device is still here.',
+                              message: l10n.loginSessionExpired,
                             ),
                           ],
                           const SizedBox(height: AuraSpacing.xxl),
@@ -157,7 +158,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                               _GoogleSignInButton(onPressed: () => ref.read(authProvider.notifier).signInWithGoogle())
                             else
                               AuraButton(
-                                label: 'Sign in with Google (browser)',
+                                label: l10n.loginGoogleBrowser,
                                 icon: Icons.open_in_browser,
                                 expand: true,
                                 onPressed: () => ref.read(authProvider.notifier).signInWithDesktopOAuth(),
@@ -165,7 +166,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                             const SizedBox(height: AuraSpacing.md),
                             if (_canCheckBiometrics && _hasCachedCredentials) ...[
                               AuraButton(
-                                label: 'Unlock with biometrics',
+                                label: l10n.loginUnlockBiometrics,
                                 icon: Icons.fingerprint,
                                 onPressed: _authenticateBiometrically,
                                 expand: true,
@@ -176,7 +177,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                               TextButton(
                                 onPressed: () => setState(() => _showDeveloperPanel = !_showDeveloperPanel),
                                 child: Text(
-                                  _showDeveloperPanel ? 'Hide developer panel' : 'Developer / offline access',
+                                  _showDeveloperPanel ? l10n.loginHideDeveloperPanel : l10n.loginShowDeveloperPanel,
                                   style: TextStyle(color: palette.textSecondary, fontSize: 13),
                                 ),
                               ),
@@ -184,16 +185,16 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 Divider(color: palette.border, height: AuraSpacing.xxl),
                                 TextField(
                                   controller: _nameController,
-                                  decoration: const InputDecoration(labelText: 'Developer name', hintText: 'Enter name'),
+                                  decoration: InputDecoration(labelText: l10n.loginDeveloperName, hintText: l10n.loginDeveloperNameHint),
                                 ),
                                 const SizedBox(height: AuraSpacing.md),
                                 TextField(
                                   controller: _emailController,
-                                  decoration: const InputDecoration(labelText: 'Developer email', hintText: 'Enter email'),
+                                  decoration: InputDecoration(labelText: l10n.loginDeveloperEmail, hintText: l10n.loginDeveloperEmailHint),
                                 ),
                                 const SizedBox(height: AuraSpacing.lg),
                                 AuraButton(
-                                  label: 'Access developer environment',
+                                  label: l10n.loginDeveloperAccess,
                                   expand: true,
                                   onPressed: () => ref.read(authProvider.notifier).signInMock(
                                         _nameController.text.trim(),
@@ -232,7 +233,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                     ],
                                     const SizedBox(height: AuraSpacing.sm),
                                     Text(
-                                      'Tip: Google Sign-In failed. To test locally without registering SHA-1 fingerprints in the Google Console, use the "Access Developer Environment" bypass option above.',
+                                      l10n.loginDeveloperTip,
                                       style: TextStyle(color: palette.textSecondary, fontSize: 11),
                                       textAlign: TextAlign.center,
                                     ),
@@ -273,7 +274,7 @@ class _GoogleSignInButton extends StatelessWidget {
           width: 18,
           errorBuilder: (context, error, stackTrace) => const Icon(Icons.login, color: Colors.black87),
         ),
-        label: const Text('Sign in with Google'),
+        label: Text(context.l10n.loginGoogle),
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.white,
           foregroundColor: Colors.black87,

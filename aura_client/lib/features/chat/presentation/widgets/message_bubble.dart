@@ -26,6 +26,7 @@ import 'tool_call_chip.dart';
 import 'turn_status_row.dart';
 import 'user_facing_citations.dart';
 import 'voice_playback_button.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class MessageBubble extends ConsumerWidget {
   final Message message;
@@ -70,7 +71,7 @@ class MessageBubble extends ConsumerWidget {
 
     if (!isUser && isChatConnectionErrorText(message.content)) {
       return Align(
-        alignment: Alignment.centerLeft,
+        alignment: AlignmentDirectional.centerStart,
         child: Container(
           margin: const EdgeInsets.only(bottom: AuraSpacing.lg),
           constraints: BoxConstraints(
@@ -86,7 +87,7 @@ class MessageBubble extends ConsumerWidget {
                     const SizedBox(width: AuraSpacing.sm),
                     Expanded(
                       child: Text(
-                        'Cloud AI is currently unavailable',
+                        context.l10n.chatCloudUnavailableTitle,
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: palette.textPrimary,
@@ -98,7 +99,7 @@ class MessageBubble extends ConsumerWidget {
                 ),
                 const SizedBox(height: AuraSpacing.sm),
                 Text(
-                  'AURA could not connect to the cloud assistant. You can retry or report this issue.',
+                  context.l10n.chatCloudUnavailableBody,
                   style: TextStyle(
                     color: palette.textSecondary,
                     fontSize: 13,
@@ -111,7 +112,7 @@ class MessageBubble extends ConsumerWidget {
                   runSpacing: AuraSpacing.sm,
                   children: [
                     AuraButton(
-                      label: 'Retry',
+                      label: context.l10n.retry,
                       icon: Icons.refresh,
                       onPressed: () {
                         final repo = ref.read(chatRepositoryProvider);
@@ -124,11 +125,12 @@ class MessageBubble extends ConsumerWidget {
                       },
                     ),
                     AuraButton(
-                      label: 'Report Issue',
+                      label: context.l10n.chatReportIssue,
                       icon: Icons.bug_report_outlined,
                       variant: AuraButtonVariant.secondary,
                       onPressed: () async {
                         final messenger = ScaffoldMessenger.of(context);
+                        final recorded = context.l10n.chatIssueRecorded;
                         await ref
                             .read(chatRepositoryProvider)
                             .reportConnectionIssue(
@@ -137,9 +139,7 @@ class MessageBubble extends ConsumerWidget {
                             );
                         messenger.showSnackBar(
                           SnackBar(
-                            content: const Text(
-                              'Issue recorded in local telemetry.',
-                            ),
+                            content: Text(recorded),
                             backgroundColor: palette.success,
                           ),
                         );
@@ -173,7 +173,7 @@ class MessageBubble extends ConsumerWidget {
         : (text: message.content, imageCount: 0);
 
     return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      alignment: isUser ? AlignmentDirectional.centerEnd : AlignmentDirectional.centerStart,
       child: Container(
         margin: const EdgeInsets.only(bottom: AuraSpacing.lg),
         constraints: BoxConstraints(
@@ -186,11 +186,12 @@ class MessageBubble extends ConsumerWidget {
                 padding: const EdgeInsets.all(AuraSpacing.lg),
                 decoration: BoxDecoration(
                   gradient: palette.brandGradient,
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(AuraRadius.lg),
-                    topRight: Radius.circular(AuraRadius.lg),
-                    bottomLeft: Radius.circular(AuraRadius.lg),
-                    bottomRight: Radius.circular(0),
+                  // The square "tail" corner sits on the side the bubble is aligned to (end).
+                  borderRadius: const BorderRadiusDirectional.only(
+                    topStart: Radius.circular(AuraRadius.lg),
+                    topEnd: Radius.circular(AuraRadius.lg),
+                    bottomStart: Radius.circular(AuraRadius.lg),
+                    bottomEnd: Radius.circular(0),
                   ),
                 ),
                 child: Column(
@@ -214,7 +215,7 @@ class MessageBubble extends ConsumerWidget {
                     ),
                     const SizedBox(height: AuraSpacing.sm),
                     Align(
-                      alignment: Alignment.bottomRight,
+                      alignment: AlignmentDirectional.bottomEnd,
                       child: Text(
                         formattedTime,
                         style: TextStyle(
@@ -309,7 +310,7 @@ class MessageBubble extends ConsumerWidget {
                       children: [
                         if (turnMeta.turnId != null && !isStreaming)
                           IconButton(
-                            tooltip: 'Rate this answer',
+                            tooltip: context.l10n.chatRateAnswer,
                             visualDensity: VisualDensity.compact,
                             icon: Icon(Icons.thumb_up_outlined, size: 18, color: palette.textSecondary),
                             onPressed: () => showFeedbackSheet(
@@ -370,8 +371,7 @@ class _ResolvedAgentMismatchBanner extends StatelessWidget {
           const SizedBox(width: AuraSpacing.xs),
           Expanded(
             child: Text(
-              'This request was handled by $resolvedLabel, not $requestedLabel -- your account '
-              'may not have access to $requestedLabel.',
+              context.l10n.chatPersonaFallback(resolvedLabel, requestedLabel),
               style: TextStyle(color: palette.textSecondary, fontSize: 12, height: 1.4),
             ),
           ),
@@ -397,7 +397,7 @@ class _AwaitingConfirmationHint extends StatelessWidget {
         const SizedBox(width: 6),
         Expanded(
           child: Text(
-            'Confirm the action above to continue.',
+            context.l10n.chatAwaitingConfirmation,
             style: TextStyle(color: palette.textSecondary, fontSize: 13, height: 1.4),
           ),
         ),

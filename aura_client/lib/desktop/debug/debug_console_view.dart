@@ -159,7 +159,7 @@ class _DebugConsoleViewState extends ConsumerState<DebugConsoleView> {
             ),
           ],
           Padding(
-            padding: const EdgeInsets.only(left: AuraSpacing.sm),
+            padding: const EdgeInsetsDirectional.only(start: AuraSpacing.sm),
             child: Text(_statusLabel(debug), style: TextStyle(fontSize: 11, color: palette.textDisabled)),
           ),
         ],
@@ -251,7 +251,7 @@ class _DebugConsoleViewState extends ConsumerState<DebugConsoleView> {
             Text(scopeEntry.key, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: palette.textSecondary)),
             for (final variable in scopeEntry.value)
               Padding(
-                padding: const EdgeInsets.only(left: AuraSpacing.sm, bottom: 1),
+                padding: const EdgeInsetsDirectional.only(start: AuraSpacing.sm, bottom: 1),
                 child: Text(
                   '${variable['name']} = ${variable['value']}',
                   style: TextStyle(fontSize: 11, color: palette.textPrimary, fontFamily: 'Courier'),

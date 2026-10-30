@@ -6,6 +6,7 @@ import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 final telemetryLogsFutureProvider = FutureProvider.autoDispose<List<TelemetryLog>>((ref) async {
   final db = ref.watch(databaseProvider);
@@ -31,6 +32,7 @@ class AnalyticsPage extends ConsumerWidget {
         ),
         actions: [
           IconButton(
+            tooltip: context.l10n.refresh,
             icon: const Icon(Icons.refresh, color: Colors.white),
             onPressed: () => ref.refresh(telemetryLogsFutureProvider),
           ),

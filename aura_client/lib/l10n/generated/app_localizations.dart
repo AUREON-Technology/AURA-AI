@@ -297,6 +297,1020 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count} unread notifications'**
   String unreadNotifications(int count);
+
+  /// You screen section label
+  ///
+  /// In en, this message translates to:
+  /// **'Account'**
+  String get settingsSectionAccount;
+
+  /// You screen section label
+  ///
+  /// In en, this message translates to:
+  /// **'Desktop'**
+  String get settingsSectionDesktop;
+
+  /// You screen section label
+  ///
+  /// In en, this message translates to:
+  /// **'Your AURA'**
+  String get settingsSectionYourAura;
+
+  /// You screen section label
+  ///
+  /// In en, this message translates to:
+  /// **'About'**
+  String get settingsSectionAbout;
+
+  /// You screen row title
+  ///
+  /// In en, this message translates to:
+  /// **'Profile'**
+  String get settingsProfileTitle;
+
+  /// You screen row subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Signed-in account and security'**
+  String get settingsProfileSubtitle;
+
+  /// You screen row subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'System, light, or dark'**
+  String get settingsAppearanceSubtitle;
+
+  /// Server environment screen title and You row title
+  ///
+  /// In en, this message translates to:
+  /// **'Server environment'**
+  String get serverEnvironmentTitle;
+
+  /// You screen row subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Production or development backend'**
+  String get settingsServerEnvironmentSubtitle;
+
+  /// You screen row subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Documents Copilot can search'**
+  String get settingsKnowledgeSubtitle;
+
+  /// You screen row subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Typed facts AURA remembers'**
+  String get settingsMemorySubtitle;
+
+  /// You screen row subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Corrections you’ve sent'**
+  String get settingsFeedbackSubtitle;
+
+  /// You screen row title
+  ///
+  /// In en, this message translates to:
+  /// **'Engineer'**
+  String get settingsEngineerTitle;
+
+  /// You screen row subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Workspaces, PRs, and sandbox runs'**
+  String get settingsEngineerSubtitle;
+
+  /// You screen row title
+  ///
+  /// In en, this message translates to:
+  /// **'GitHub Connection'**
+  String get settingsGithubTitle;
+
+  /// You screen row subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Connect your own GitHub account'**
+  String get settingsGithubSubtitle;
+
+  /// You screen row subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Whether AURA’s server is reachable'**
+  String get settingsEngineStatusSubtitle;
+
+  /// You screen row title
+  ///
+  /// In en, this message translates to:
+  /// **'Automations'**
+  String get settingsAutomationsTitle;
+
+  /// You screen row subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Gmail, GitHub, and Drive helpers'**
+  String get settingsAutomationsSubtitle;
+
+  /// You screen row title
+  ///
+  /// In en, this message translates to:
+  /// **'Usage on this device'**
+  String get settingsUsageTitle;
+
+  /// You screen row subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Local latency and request counts'**
+  String get settingsUsageSubtitle;
+
+  /// Desktop IDE toggle title
+  ///
+  /// In en, this message translates to:
+  /// **'Desktop IDE'**
+  String get settingsDesktopIdeTitle;
+
+  /// Desktop IDE toggle subtitle when on
+  ///
+  /// In en, this message translates to:
+  /// **'AURA opens the IDE shell on this machine'**
+  String get settingsDesktopIdeOn;
+
+  /// Desktop IDE toggle subtitle when off
+  ///
+  /// In en, this message translates to:
+  /// **'AURA opens the regular Home screen on this machine'**
+  String get settingsDesktopIdeOff;
+
+  /// About card title
+  ///
+  /// In en, this message translates to:
+  /// **'Where AURA runs'**
+  String get settingsAboutTitle;
+
+  /// About card body
+  ///
+  /// In en, this message translates to:
+  /// **'Requests are processed on AURA’s own servers. They are never sent to a third-party AI service, and never processed on this device.'**
+  String get settingsAboutBody;
+
+  /// Theme mode option
+  ///
+  /// In en, this message translates to:
+  /// **'System'**
+  String get themeSystem;
+
+  /// Theme mode option
+  ///
+  /// In en, this message translates to:
+  /// **'Light'**
+  String get themeLight;
+
+  /// Theme mode option
+  ///
+  /// In en, this message translates to:
+  /// **'Dark'**
+  String get themeDark;
+
+  /// Theme mode option subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Match the device setting'**
+  String get themeSystemSubtitle;
+
+  /// Theme mode option subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Always light'**
+  String get themeLightSubtitle;
+
+  /// Theme mode option subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Always dark'**
+  String get themeDarkSubtitle;
+
+  /// Snackbar after switching backend environment
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in again to continue.'**
+  String get serverSwitchedSignInAgain;
+
+  /// Server environment card title
+  ///
+  /// In en, this message translates to:
+  /// **'Current server'**
+  String get serverCurrent;
+
+  /// Backend reachability status
+  ///
+  /// In en, this message translates to:
+  /// **'Reachable'**
+  String get serverReachable;
+
+  /// Backend reachability status
+  ///
+  /// In en, this message translates to:
+  /// **'Unreachable'**
+  String get serverUnreachable;
+
+  /// Backend reachability status while probing
+  ///
+  /// In en, this message translates to:
+  /// **'Checking…'**
+  String get serverChecking;
+
+  /// Backend reachability probe failed
+  ///
+  /// In en, this message translates to:
+  /// **'Could not check reachability'**
+  String get serverReachabilityError;
+
+  /// Footnote on the server environment screen
+  ///
+  /// In en, this message translates to:
+  /// **'Switching servers clears your session on this device. Sign in again after changing environments.'**
+  String get serverSwitchExplainer;
+
+  /// Product name shown on the sign-in screen
+  ///
+  /// In en, this message translates to:
+  /// **'AURA AI'**
+  String get appName;
+
+  /// Generic cancel action
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get cancel;
+
+  /// Sign-out action
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out'**
+  String get signOut;
+
+  /// Sign-out confirmation dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out?'**
+  String get signOutConfirmTitle;
+
+  /// Sign-out confirmation dialog body
+  ///
+  /// In en, this message translates to:
+  /// **'AURA uploads unsynced changes first when it can reach the server, then clears its data from this device. Changes it cannot upload are lost.'**
+  String get signOutConfirmBody;
+
+  /// OS biometric prompt reason
+  ///
+  /// In en, this message translates to:
+  /// **'Authenticate to unlock your AURA AI profile'**
+  String get loginBiometricReason;
+
+  /// Sign-in screen tagline
+  ///
+  /// In en, this message translates to:
+  /// **'Personal AI Operating System'**
+  String get loginTagline;
+
+  /// Sign-in card title
+  ///
+  /// In en, this message translates to:
+  /// **'Welcome back'**
+  String get loginWelcomeBack;
+
+  /// Sign-in card subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in to sync your schedules, studies, workspace, and agents.'**
+  String get loginSubtitle;
+
+  /// Banner shown after the session expired
+  ///
+  /// In en, this message translates to:
+  /// **'Your session expired. Sign in again to pick up where you left off — everything on this device is still here.'**
+  String get loginSessionExpired;
+
+  /// Native Google sign-in button
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with Google'**
+  String get loginGoogle;
+
+  /// Browser-based Google sign-in button (desktop)
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with Google (browser)'**
+  String get loginGoogleBrowser;
+
+  /// Biometric unlock button
+  ///
+  /// In en, this message translates to:
+  /// **'Unlock with biometrics'**
+  String get loginUnlockBiometrics;
+
+  /// Debug-only toggle to show the developer sign-in panel
+  ///
+  /// In en, this message translates to:
+  /// **'Developer / offline access'**
+  String get loginShowDeveloperPanel;
+
+  /// Debug-only toggle to hide the developer sign-in panel
+  ///
+  /// In en, this message translates to:
+  /// **'Hide developer panel'**
+  String get loginHideDeveloperPanel;
+
+  /// Debug-only developer sign-in field label
+  ///
+  /// In en, this message translates to:
+  /// **'Developer name'**
+  String get loginDeveloperName;
+
+  /// Debug-only developer sign-in field hint
+  ///
+  /// In en, this message translates to:
+  /// **'Enter name'**
+  String get loginDeveloperNameHint;
+
+  /// Debug-only developer sign-in field label
+  ///
+  /// In en, this message translates to:
+  /// **'Developer email'**
+  String get loginDeveloperEmail;
+
+  /// Debug-only developer sign-in field hint
+  ///
+  /// In en, this message translates to:
+  /// **'Enter email'**
+  String get loginDeveloperEmailHint;
+
+  /// Debug-only developer sign-in button
+  ///
+  /// In en, this message translates to:
+  /// **'Access developer environment'**
+  String get loginDeveloperAccess;
+
+  /// Profile screen title
+  ///
+  /// In en, this message translates to:
+  /// **'User Profile & Security'**
+  String get profileTitle;
+
+  /// Profile screen when no user is signed in
+  ///
+  /// In en, this message translates to:
+  /// **'Not signed in'**
+  String get profileNotSignedIn;
+
+  /// Button that reveals device attestation details
+  ///
+  /// In en, this message translates to:
+  /// **'Show Attestation Status'**
+  String get profileShowAttestation;
+
+  /// Generic add action
+  ///
+  /// In en, this message translates to:
+  /// **'Add'**
+  String get add;
+
+  /// Generic close action / tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Close'**
+  String get close;
+
+  /// Generic retry action
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get retry;
+
+  /// Overflow menu button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'More'**
+  String get moreOptions;
+
+  /// Chat: loads older messages
+  ///
+  /// In en, this message translates to:
+  /// **'Load earlier messages'**
+  String get chatLoadEarlier;
+
+  /// Quick capture sheet title
+  ///
+  /// In en, this message translates to:
+  /// **'Ask Copilot'**
+  String get captureTitle;
+
+  /// Quick capture field hint
+  ///
+  /// In en, this message translates to:
+  /// **'Capture a thought, task, or question…'**
+  String get captureHint;
+
+  /// Quick capture send button
+  ///
+  /// In en, this message translates to:
+  /// **'Send to Copilot'**
+  String get captureSend;
+
+  /// Composer chip: use knowledge retrieval
+  ///
+  /// In en, this message translates to:
+  /// **'Knowledge'**
+  String get chatToggleKnowledge;
+
+  /// Composer chip: use memory
+  ///
+  /// In en, this message translates to:
+  /// **'Memory'**
+  String get chatToggleMemory;
+
+  /// Composer chip: allow tools
+  ///
+  /// In en, this message translates to:
+  /// **'Tools'**
+  String get chatToggleTools;
+
+  /// Composer hint while a reply is pending
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for {persona}...'**
+  String chatComposerWaiting(String persona);
+
+  /// Composer hint on narrow screens
+  ///
+  /// In en, this message translates to:
+  /// **'Ask {persona}...'**
+  String chatComposerHintShort(String persona);
+
+  /// Composer hint on wide screens
+  ///
+  /// In en, this message translates to:
+  /// **'Ask {persona} anything...'**
+  String chatComposerHint(String persona);
+
+  /// Composer Stop button tooltip/label (mirrors kStopGeneratingLabel)
+  ///
+  /// In en, this message translates to:
+  /// **'Stop generating'**
+  String get chatStopGenerating;
+
+  /// Composer Send button tooltip/label
+  ///
+  /// In en, this message translates to:
+  /// **'Send'**
+  String get chatSend;
+
+  /// Chat header menu button tooltip (opens the session drawer)
+  ///
+  /// In en, this message translates to:
+  /// **'Chat sessions'**
+  String get chatOpenSessions;
+
+  /// Chat header: opens live voice
+  ///
+  /// In en, this message translates to:
+  /// **'Live voice'**
+  String get chatLiveVoice;
+
+  /// Attach image button tooltip when full
+  ///
+  /// In en, this message translates to:
+  /// **'Image limit reached'**
+  String get chatImageLimitReached;
+
+  /// Attach image button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Attach image'**
+  String get chatAttachImage;
+
+  /// Screen-reader label of a pending image
+  ///
+  /// In en, this message translates to:
+  /// **'Attached image {index} of {count}: {name}'**
+  String chatAttachedImageLabel(int index, int count, String name);
+
+  /// Tooltip of the remove-image button
+  ///
+  /// In en, this message translates to:
+  /// **'Remove image {index}'**
+  String chatRemoveImage(int index);
+
+  /// Screen-reader label of a sent image
+  ///
+  /// In en, this message translates to:
+  /// **'Sent image {index} of {count}: {name}. Open preview'**
+  String chatSentImageLabel(int index, int count, String name);
+
+  /// Image preview close tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Close preview'**
+  String get chatClosePreview;
+
+  /// Chat sidebar: start a new session
+  ///
+  /// In en, this message translates to:
+  /// **'New Session'**
+  String get chatNewSession;
+
+  /// Chat sidebar section header
+  ///
+  /// In en, this message translates to:
+  /// **'CHAT SESSIONS'**
+  String get chatSessionsHeader;
+
+  /// Name of the default chat session
+  ///
+  /// In en, this message translates to:
+  /// **'Default Workspace'**
+  String get chatDefaultSession;
+
+  /// Name of a non-default chat session
+  ///
+  /// In en, this message translates to:
+  /// **'Session {id}'**
+  String chatSessionLabel(String id);
+
+  /// Delete conversation tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Delete conversation'**
+  String get chatDeleteConversation;
+
+  /// Snackbar after deleting a conversation
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation deleted'**
+  String get chatConversationDeleted;
+
+  /// Empty-answer card title
+  ///
+  /// In en, this message translates to:
+  /// **'No reply this turn'**
+  String get chatNoReplyTitle;
+
+  /// Empty-answer card body
+  ///
+  /// In en, this message translates to:
+  /// **'AURA finished without an answer. Retry to send your last message again.'**
+  String get chatNoReplyBody;
+
+  /// Empty chat title
+  ///
+  /// In en, this message translates to:
+  /// **'Ask Copilot Anything'**
+  String get chatEmptyTitle;
+
+  /// Empty chat message
+  ///
+  /// In en, this message translates to:
+  /// **'Programming questions, academic inquiries, or coordinating your tasks.'**
+  String get chatEmptyMessage;
+
+  /// Empty chat suggestion title
+  ///
+  /// In en, this message translates to:
+  /// **'Explain a Concept'**
+  String get chatSuggestExplainTitle;
+
+  /// Empty chat suggestion subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Ask a programming or academic question'**
+  String get chatSuggestExplainSubtitle;
+
+  /// Prompt sent when the suggestion is tapped
+  ///
+  /// In en, this message translates to:
+  /// **'Explain how dependency injection works'**
+  String get chatSuggestExplainPrompt;
+
+  /// Empty chat suggestion title
+  ///
+  /// In en, this message translates to:
+  /// **'Log Health'**
+  String get chatSuggestHealthTitle;
+
+  /// Empty chat suggestion subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Log water intake and exercise duration for today'**
+  String get chatSuggestHealthSubtitle;
+
+  /// Prompt sent when the suggestion is tapped
+  ///
+  /// In en, this message translates to:
+  /// **'Log 500ml of water and 30 minutes of exercise'**
+  String get chatSuggestHealthPrompt;
+
+  /// Empty chat suggestion title
+  ///
+  /// In en, this message translates to:
+  /// **'Financial Health'**
+  String get chatSuggestFinanceTitle;
+
+  /// Empty chat suggestion subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'Show my current balance and expense distribution'**
+  String get chatSuggestFinanceSubtitle;
+
+  /// Prompt sent when the suggestion is tapped
+  ///
+  /// In en, this message translates to:
+  /// **'How are my expenses this month?'**
+  String get chatSuggestFinancePrompt;
+
+  /// Empty chat suggestion title
+  ///
+  /// In en, this message translates to:
+  /// **'Agent Memory'**
+  String get chatSuggestMemoryTitle;
+
+  /// Empty chat suggestion subtitle
+  ///
+  /// In en, this message translates to:
+  /// **'View facts the system has remembered about me'**
+  String get chatSuggestMemorySubtitle;
+
+  /// Prompt sent when the suggestion is tapped
+  ///
+  /// In en, this message translates to:
+  /// **'What do you remember about me?'**
+  String get chatSuggestMemoryPrompt;
+
+  /// Feedback sheet title and rate button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Rate this answer'**
+  String get chatRateAnswer;
+
+  /// Star rating button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'{value} of {max}'**
+  String chatRatingStar(int value, int max);
+
+  /// Feedback sheet correction field label
+  ///
+  /// In en, this message translates to:
+  /// **'Optional correction'**
+  String get chatFeedbackCorrection;
+
+  /// Feedback sheet submit button
+  ///
+  /// In en, this message translates to:
+  /// **'Send feedback'**
+  String get chatFeedbackSend;
+
+  /// Snackbar after sending feedback
+  ///
+  /// In en, this message translates to:
+  /// **'Thanks — feedback sent.'**
+  String get chatFeedbackSent;
+
+  /// Memory bank dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'User Memory Bank'**
+  String get memoryBankTitle;
+
+  /// Memory bank dialog explainer
+  ///
+  /// In en, this message translates to:
+  /// **'These are facts and preferences AURA has learned about you. They are injected as system prompts to personalize reasoning.'**
+  String get memoryBankExplainer;
+
+  /// Memory bank add field hint
+  ///
+  /// In en, this message translates to:
+  /// **'Add a custom fact manually...'**
+  String get memoryBankAddHint;
+
+  /// Memory bank empty state
+  ///
+  /// In en, this message translates to:
+  /// **'No memories stored yet. AURA extracts them automatically from conversations, or you can add one above.'**
+  String get memoryBankEmpty;
+
+  /// Memory bank delete button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Delete memory'**
+  String get memoryBankDelete;
+
+  /// Connection error card title
+  ///
+  /// In en, this message translates to:
+  /// **'Cloud AI is currently unavailable'**
+  String get chatCloudUnavailableTitle;
+
+  /// Connection error card body
+  ///
+  /// In en, this message translates to:
+  /// **'AURA could not connect to the cloud assistant. You can retry or report this issue.'**
+  String get chatCloudUnavailableBody;
+
+  /// Connection error card report button
+  ///
+  /// In en, this message translates to:
+  /// **'Report Issue'**
+  String get chatReportIssue;
+
+  /// Pending actions card title
+  ///
+  /// In en, this message translates to:
+  /// **'AURA Proposes Actions'**
+  String get pendingActionsTitle;
+
+  /// Pending actions reject button
+  ///
+  /// In en, this message translates to:
+  /// **'Reject'**
+  String get pendingActionsReject;
+
+  /// Pending actions approve button
+  ///
+  /// In en, this message translates to:
+  /// **'Approve Actions'**
+  String get pendingActionsApprove;
+
+  /// Snackbar when every proposed action ran
+  ///
+  /// In en, this message translates to:
+  /// **'Proposed actions successfully executed!'**
+  String get pendingActionsAllSucceeded;
+
+  /// Snackbar when every proposed action failed
+  ///
+  /// In en, this message translates to:
+  /// **'All actions failed: {labels}'**
+  String pendingActionsAllFailed(String labels);
+
+  /// Snackbar when some proposed actions failed
+  ///
+  /// In en, this message translates to:
+  /// **'{count} action(s) failed: {labels}'**
+  String pendingActionsSomeFailed(int count, String labels);
+
+  /// Voice note error
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone permission is needed to record a voice note.'**
+  String get voiceMicPermission;
+
+  /// Voice note error
+  ///
+  /// In en, this message translates to:
+  /// **'Voice recording is not available on this device.'**
+  String get voiceRecordingUnavailable;
+
+  /// Voice note error
+  ///
+  /// In en, this message translates to:
+  /// **'Could not transcribe that voice note.'**
+  String get voiceTranscribeFailed;
+
+  /// Voice note error
+  ///
+  /// In en, this message translates to:
+  /// **'Could not read that recording.'**
+  String get voiceReadFailed;
+
+  /// Voice note button tooltip while recording
+  ///
+  /// In en, this message translates to:
+  /// **'Stop recording'**
+  String get voiceStopRecording;
+
+  /// Voice note button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Record a voice note'**
+  String get voiceRecordNote;
+
+  /// Reply playback button tooltip while playing
+  ///
+  /// In en, this message translates to:
+  /// **'Stop'**
+  String get voiceStopPlayback;
+
+  /// Reply playback button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Listen to this reply'**
+  String get voiceListen;
+
+  /// Persona picker: Engineer history button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Engineer Task History'**
+  String get engineerTaskHistory;
+
+  /// Sandbox diff view when the diff is empty
+  ///
+  /// In en, this message translates to:
+  /// **'(no changes)'**
+  String get sandboxNoChanges;
+
+  /// Screen-reader prefix of an error state view
+  ///
+  /// In en, this message translates to:
+  /// **'Error'**
+  String get stateToneError;
+
+  /// Screen-reader prefix of a warning state view
+  ///
+  /// In en, this message translates to:
+  /// **'Warning'**
+  String get stateToneWarning;
+
+  /// Screen-reader prefix of an offline state view
+  ///
+  /// In en, this message translates to:
+  /// **'Offline'**
+  String get stateToneOffline;
+
+  /// Command palette barrier label
+  ///
+  /// In en, this message translates to:
+  /// **'Command palette'**
+  String get commandPaletteLabel;
+
+  /// Command palette search hint
+  ///
+  /// In en, this message translates to:
+  /// **'Type a command...'**
+  String get commandPaletteHint;
+
+  /// Command palette empty result title
+  ///
+  /// In en, this message translates to:
+  /// **'No matching commands'**
+  String get commandPaletteNoMatchesTitle;
+
+  /// Command palette empty result body
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing here matches \"{query}\". Try a shorter word, or clear the search to see everything.'**
+  String commandPaletteNoMatchesBody(String query);
+
+  /// Command palette clear-search action
+  ///
+  /// In en, this message translates to:
+  /// **'Clear search'**
+  String get commandPaletteClearSearch;
+
+  /// Generic refresh tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get refresh;
+
+  /// Tooltip of a date-picker button
+  ///
+  /// In en, this message translates to:
+  /// **'Change date'**
+  String get changeDate;
+
+  /// Tooltip of the button that removes a task due date
+  ///
+  /// In en, this message translates to:
+  /// **'Clear due date'**
+  String get clearDueDate;
+
+  /// Task completion toggle tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Mark as done'**
+  String get taskMarkDone;
+
+  /// Task completion toggle tooltip when already completed
+  ///
+  /// In en, this message translates to:
+  /// **'Mark as not done'**
+  String get taskMarkNotDone;
+
+  /// Host daemon page: file browse button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Browse for the daemon executable'**
+  String get hostdBrowseExecutable;
+
+  /// Host daemon page: save path button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Save executable path'**
+  String get hostdSaveExecutable;
+
+  /// Live voice page close button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'End live voice'**
+  String get liveVoiceEnd;
+
+  /// Add event dialog: start time picker tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Change start time'**
+  String get eventChangeStart;
+
+  /// Add event dialog: end time picker tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Change end time'**
+  String get eventChangeEnd;
+
+  /// Calendar: add event button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Add event'**
+  String get eventAdd;
+
+  /// Calendar: delete event button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Delete event'**
+  String get eventDelete;
+
+  /// Calendar month navigation tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Previous month'**
+  String get calendarPreviousMonth;
+
+  /// Calendar month navigation tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Next month'**
+  String get calendarNextMonth;
+
+  /// GitHub automation: import subtask button tooltip
+  ///
+  /// In en, this message translates to:
+  /// **'Import as coding task'**
+  String get githubImportSubtask;
+
+  /// Chat sidebar section header
+  ///
+  /// In en, this message translates to:
+  /// **'ACTIVE PERSONA'**
+  String get chatActivePersonaHeader;
+
+  /// Chat sidebar knowledge toggle
+  ///
+  /// In en, this message translates to:
+  /// **'Use Knowledge (RAG)'**
+  String get chatUseKnowledge;
+
+  /// Chat sidebar section header
+  ///
+  /// In en, this message translates to:
+  /// **'AI ROUTING'**
+  String get chatRoutingHeader;
+
+  /// Chat sidebar routing row label
+  ///
+  /// In en, this message translates to:
+  /// **'AI engine'**
+  String get chatAiEngine;
+
+  /// Snackbar after reporting a connection issue
+  ///
+  /// In en, this message translates to:
+  /// **'Issue recorded in local telemetry.'**
+  String get chatIssueRecorded;
+
+  /// Notice when the backend served a different persona than requested
+  ///
+  /// In en, this message translates to:
+  /// **'This request was handled by {resolved}, not {requested} -- your account may not have access to {requested}.'**
+  String chatPersonaFallback(String resolved, String requested);
+
+  /// Hint when a turn waits on a tool confirmation
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm the action above to continue.'**
+  String get chatAwaitingConfirmation;
+
+  /// Persona picker sheet title
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a persona'**
+  String get personaPickerTitle;
+
+  /// Debug-only hint after a failed Google sign-in
+  ///
+  /// In en, this message translates to:
+  /// **'Tip: Google Sign-In failed. To test locally without registering SHA-1 fingerprints in the Google Console, use the \"Access Developer Environment\" bypass option above.'**
+  String get loginDeveloperTip;
 }
 
 class _AppLocalizationsDelegate

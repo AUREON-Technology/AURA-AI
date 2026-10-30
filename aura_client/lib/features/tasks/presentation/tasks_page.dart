@@ -187,7 +187,7 @@ class TasksPage extends ConsumerWidget {
                     children: ['All', 'Personal', 'Academic', 'Client', 'Project'].map((category) {
                       final isSelected = currentFilter == category;
                       return Padding(
-                        padding: const EdgeInsets.only(right: 8.0),
+                        padding: const EdgeInsetsDirectional.only(end: 8.0),
                         child: InkWell(
                           onTap: () => vm.setCategoryFilter(category),
                           borderRadius: BorderRadius.circular(20),
