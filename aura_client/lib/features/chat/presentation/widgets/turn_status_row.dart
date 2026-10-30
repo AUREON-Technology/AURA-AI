@@ -17,6 +17,7 @@ class TurnStatusRow extends StatelessWidget {
       'Searched your library — nothing relevant was found.';
   static const reducedModeCopy = 'AURA ran this turn in a reduced mode.';
   static const ungroundedCopy = 'Ungrounded — no sources attached.';
+  static const interruptedCopy = 'Interrupted — this answer is incomplete.';
 
   @override
   Widget build(BuildContext context) {
@@ -24,6 +25,12 @@ class TurnStatusRow extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (meta.interrupted)
+          _Note(
+            icon: Icons.stop_circle_outlined,
+            color: palette.warning,
+            text: interruptedCopy,
+          ),
         if (meta.revised)
           _Note(
             icon: Icons.shield_outlined,

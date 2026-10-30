@@ -12,6 +12,16 @@ List<SseChatEvent> feedAll(List<String> chunks) {
 
 void main() {
   group('SseFrameParser', () {
+    test('ignores SSE comment frames such as the server keepalive', () {
+      final events = feedAll([
+        ': keepalive\n\n',
+        'event: token\ndata: {"text": "Hi"}\n\n',
+        ': keepalive\n\n',
+      ]);
+      expect(events.map((e) => e.kind).toList(), [SseEventKind.token]);
+      expect(events.single.text, 'Hi');
+    });
+
     test('parses a single complete token frame', () {
       final events = feedAll(['event: token\ndata: {"text": "Hello"}\n\n']);
       expect(events.length, 1);

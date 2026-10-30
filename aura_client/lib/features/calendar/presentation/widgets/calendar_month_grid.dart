@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:aura_client/core/database/database.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import '../calendar_view_model.dart';
 
@@ -12,6 +13,7 @@ class CalendarMonthGrid extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final palette = AuraPalette.of(context);
     final ui = ref.watch(calendarViewModelProvider);
     final vm = ref.read(calendarViewModelProvider.notifier);
     final monthDays = daysInMonth(ui.currentMonthDate);
@@ -102,7 +104,7 @@ class CalendarMonthGrid extends ConsumerWidget {
                                 Text(
                                   '$dayNum',
                                   style: TextStyle(
-                                    color: isSelected ? Colors.white : AuraTheme.textPrimary,
+                                    color: isSelected ? Colors.white : palette.textPrimary,
                                     fontWeight: isSelected || isToday ? FontWeight.bold : FontWeight.normal,
                                     fontSize: 14,
                                   ),

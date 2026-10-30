@@ -1580,11 +1580,17 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     return router
 
 
-def build_app(container: Any, *, authenticator: Any, rate_limiter: Any = None) -> Any:
+def build_app(
+    container: Any, *, authenticator: Any, rate_limiter: Any = None, http_metrics: bool = True
+) -> Any:
     """Standalone FastAPI app exposing v3 plus health and metrics.
 
     Used by the CLI, tests, and any deployment that runs the AI gateway as its own service. The
     integrated deployment mounts :func:`build_router` on the existing app instead (ADR-002).
+
+    ``http_metrics=False`` leaves the per-route request metrics to the caller, which must then
+    add :class:`~aura_core.api.http_metrics.HttpMetricsMiddleware` *last* (outermost) itself --
+    ``aura_service`` does, so the requests its own outer middlewares refuse are counted too.
     """
     from fastapi import FastAPI, Request
     from fastapi.responses import JSONResponse, Response
@@ -1612,6 +1618,10 @@ def build_app(container: Any, *, authenticator: Any, rate_limiter: Any = None) -
         app.add_middleware(
             SecurityHeadersMiddleware, csp=container.settings.security.content_security_policy
         )
+    if http_metrics:
+        from .http_metrics import HttpMetricsMiddleware
+
+        app.add_middleware(HttpMetricsMiddleware, metrics=container.metrics)
 
     @app.exception_handler(AuraError)
     async def domain_error_handler(request: Request, exc: AuraError) -> JSONResponse:
@@ -1661,6 +1671,7 @@ def build_app(container: Any, *, authenticator: Any, rate_limiter: Any = None) -
 
     @app.get(container.settings.observability.metrics_path)
     async def metrics() -> Response:
+        await refresh_scrape_gauges(container)
         return Response(
             content=container.metrics.render(), media_type=container.metrics.content_type
         )
@@ -1674,6 +1685,33 @@ def build_app(container: Any, *, authenticator: Any, rate_limiter: Any = None) -
         await container.shutdown()
 
     return app
+
+
+#: A scrape must answer even when the outbox's database is slow or down; the gauges then keep
+#: their previous values for one more interval, which is the honest reading.
+SCRAPE_REFRESH_TIMEOUT_S = 2.0
+
+
+async def refresh_scrape_gauges(container: Any) -> None:
+    """Gauges read from storage when Prometheus scrapes, rather than pushed by a worker.
+
+    The outbox is drained by the Celery worker, a different process (on the VPS, a different
+    container) from the gateway Prometheus scrapes, so a gauge the worker set would not be in
+    this process's exposition. The backlog is a fact of the database, so it is read here.
+    """
+    outbox = getattr(container, "event_outbox", None)
+    stats = getattr(outbox, "stats", None)
+    if not callable(stats):
+        return
+    try:
+        snapshot = await asyncio.wait_for(stats(), timeout=SCRAPE_REFRESH_TIMEOUT_S)
+        container.metrics.set_outbox(
+            pending=int(snapshot["pending"]),
+            dead_lettered=int(snapshot["dead_lettered"]),
+            oldest_age_s=float(snapshot["oldest_age_s"]),
+        )
+    except Exception:
+        logger.debug("outbox gauge refresh failed", exc_info=True)
 
 
 def _strip_data_url(value: str) -> str:

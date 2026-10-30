@@ -35,6 +35,47 @@ groups:
         annotations:
           summary: "More than 5% of turns are failing"
 
+      # CB-14: a planner timeout used to become a plain "success" answered without tools.
+      # Those turns are now counted; a sustained rate means action requests ("add a task")
+      # are being answered with an apology instead of being done.
+      - alert: AuraPlanningFailing
+        expr: |
+          sum(rate(aura_turn_degraded_total{reason="planning_failed"}[10m]))
+            / clamp_min(sum(rate(aura_turns_total[10m])), 0.001) > 0.10
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 10% of turns could not plan and ran no tools"
+          description: >
+            Usually the planner generation timing out on the model host. Check
+            aura_llm_generation_total_seconds and the provider's queue before raising timeouts.
+
+      - alert: AuraHttp5xxRate
+        expr: |
+          sum(rate(aura_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(aura_http_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 5% of HTTP requests return 5xx"
+          description: "Break it down by route with sum by (route) (rate(aura_http_requests_total{status=~\"5..\"}[5m]))."
+
+      - alert: AuraOutboxBacklog
+        expr: max(aura_outbox_oldest_pending_age_seconds) > 900
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "A durable event has waited more than 15 minutes for delivery"
+          description: "The outbox drain (Celery beat + worker) is not running or is failing. Check the worker logs."
+
+      - alert: AuraOutboxDeadLetters
+        expr: max(aura_outbox_dead_lettered) > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Durable events exhausted their delivery attempts"
+          description: "SELECT id, event_name, last_error FROM aura_event_outbox WHERE dead_lettered;"
+
   - name: aura-security
     rules:
       # SEC-05 was invisible partly because nothing reported it. This is the one-line rule

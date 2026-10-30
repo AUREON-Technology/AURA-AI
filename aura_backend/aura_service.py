@@ -303,12 +303,18 @@ def create_app():
 
     container.status_extras = _status_extras
 
-    app = build_app(container, authenticator=authenticator, rate_limiter=rate_limiter)
+    app = build_app(
+        container, authenticator=authenticator, rate_limiter=rate_limiter, http_metrics=False
+    )
     _mount_platform_routers(app)
     _warn_if_no_console_operator(settings)
     _register_inference_budget_handler(app)
     _apply_http_limits(app, settings)
     _apply_cors(app)
+    # Last, so outermost: a request the size limit, rate limiter or CORS refuses is counted too.
+    from aura_core.api.http_metrics import HttpMetricsMiddleware
+
+    app.add_middleware(HttpMetricsMiddleware, metrics=container.metrics)
 
     # Exposed so Celery tasks and the CLI can reach the same wired graph without rebuilding it.
     app.state.aura = container

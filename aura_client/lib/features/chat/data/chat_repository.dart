@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
@@ -14,7 +15,9 @@ import 'agent_config_repository.dart';
 import 'chat_connection_error.dart';
 import 'turn_meta.dart';
 
-enum _SseSendOutcome { succeeded, failed }
+// `interrupted`: the stream ended early (Stop, a drop, or the idle timeout) and whatever text had
+// arrived was kept, marked [TurnMeta.interrupted] -- never replaced by the error bubble.
+enum _SseSendOutcome { succeeded, failed, interrupted }
 
 class _SseResult {
   final _SseSendOutcome outcome;
@@ -82,7 +85,25 @@ class ChatRepository {
   final Ref _ref;
   final _uuid = const Uuid();
 
+  // The in-flight turn's event stream, kept so [stopStreaming] can cancel it, and the assistant
+  // message that Stop was pressed for.
+  StreamIterator<SseChatEvent>? _activeStream;
+  String? _stoppedMessageId;
+
   ChatRepository(this._db, this._ref);
+
+  /// Stops the in-flight response (the composer's Stop button). The chat unlocks at once -- the
+  /// streaming id is cleared here, not when the network notices -- and the text received so far
+  /// stays in the bubble, marked interrupted, when [sendChatMessage] finishes the turn.
+  void stopStreaming() {
+    final streamingId = _ref.read(streamingMessageIdProvider);
+    if (streamingId == null) return;
+    _stoppedMessageId = streamingId;
+    _ref.read(streamingMessageIdProvider.notifier).set(null);
+    // A pending `moveNext` completes with false on cancel, so the turn loop ends right away.
+    final active = _activeStream;
+    if (active != null) unawaited(active.cancel().catchError((_) {}));
+  }
 
   // Watch messages for a specific conversation session.
   //
@@ -221,7 +242,9 @@ class ChatRepository {
         images: images,
       );
 
-      if (sseOutcome.message != null) {
+      if (sseOutcome.outcome == _SseSendOutcome.interrupted) {
+        // Partial text, already saved and marked by `_sendViaSse`.
+      } else if (sseOutcome.message != null) {
         await _updateMessageText(
           assistantMsgId,
           '$kChatConnectionErrorPrefix: ${sseOutcome.message}',
@@ -230,6 +253,7 @@ class ChatRepository {
         await _updateMessageText(assistantMsgId, kChatConnectionErrorMessage);
       }
     } finally {
+      if (_stoppedMessageId == assistantMsgId) _stoppedMessageId = null;
       if (_ref.read(streamingMessageIdProvider) == assistantMsgId) {
         _ref.read(streamingMessageIdProvider.notifier).set(null);
       }
@@ -354,6 +378,25 @@ class ChatRepository {
     var meta = const TurnMeta();
     final steps = <TurnStep>[];
 
+    // Keeps what already arrived instead of swapping it for the error bubble: the user has read
+    // it, and a dropped connection does not make it wrong (F-31).
+    Future<_SseResult> keepPartial(String reason, {String? error}) async {
+      await _updateMessageText(assistantMsgId, displayText);
+      await _updateMessageTurnMeta(
+        assistantMsgId,
+        meta.copyWith(steps: List.of(steps), interrupted: true),
+      );
+      await _logTelemetry(
+        eventType: "interrupted",
+        isOffline: false,
+        latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
+        modelUsed: "server-sse",
+        errorMessage: error == null ? reason : '$reason: $error',
+      );
+      return const _SseResult(_SseSendOutcome.interrupted);
+    }
+
+    StreamIterator<SseChatEvent>? events;
     try {
       final client = _ref.read(sseAgentClientProvider);
       final stream = client.streamAgentEvents(
@@ -367,7 +410,13 @@ class ChatRepository {
         images: images,
       );
 
-      await for (final event in stream) {
+      events = StreamIterator(stream);
+      _activeStream = events;
+      // Stop pressed while this turn was still saving its placeholder: nothing to wait for.
+      if (_stoppedMessageId == assistantMsgId) unawaited(events.cancel().catchError((_) {}));
+
+      while (await events.moveNext()) {
+        final event = events.current;
         switch (event.kind) {
           case SseEventKind.token:
             displayText += event.text ?? "";
@@ -411,6 +460,9 @@ class ChatRepository {
             debugPrint("[ChatRepository] SSE stream error event: ${event.message}");
             if (event.details != null) {
               debugPrint("[ChatRepository] SSE stream error details: ${event.details}");
+            }
+            if (displayText.isNotEmpty) {
+              return keepPartial("stream_error", error: event.message);
             }
             await _logTelemetry(
               eventType: "error",
@@ -462,11 +514,15 @@ class ChatRepository {
         }
       }
 
+      if (_stoppedMessageId == assistantMsgId) return keepPartial("stopped_by_user");
       await _updateMessageText(assistantMsgId, displayText);
       await _logTelemetry(eventType: "request", isOffline: false, latencyMs: stopwatch.elapsedMilliseconds.toDouble(), modelUsed: "server-sse");
       return const _SseResult(_SseSendOutcome.succeeded);
     } on AuraApiError catch (e) {
       debugPrint("[ChatRepository] SSE path failed: $e");
+      if (displayText.isNotEmpty || _stoppedMessageId == assistantMsgId) {
+        return keepPartial("stream_failed", error: e.message);
+      }
       await _logTelemetry(
         eventType: "failover",
         isOffline: false,
@@ -477,6 +533,10 @@ class ChatRepository {
       return _SseResult(_SseSendOutcome.failed, e.message);
     } catch (e) {
       debugPrint("[ChatRepository] SSE path failed: $e");
+      // Includes the idle timeout (`ChatStreamIdleTimeoutException`) after a partial answer.
+      if (displayText.isNotEmpty || _stoppedMessageId == assistantMsgId) {
+        return keepPartial("stream_failed", error: e.toString());
+      }
       await _logTelemetry(
         eventType: "failover",
         isOffline: false,
@@ -485,6 +545,11 @@ class ChatRepository {
         errorMessage: e.toString(),
       );
       return const _SseResult(_SseSendOutcome.failed);
+    } finally {
+      if (identical(_activeStream, events)) _activeStream = null;
+      // Ends the generator (and its connection) on every early return above; a no-op once the
+      // stream has finished on its own.
+      if (events != null) unawaited(events.cancel().catchError((_) {}));
     }
   }
 

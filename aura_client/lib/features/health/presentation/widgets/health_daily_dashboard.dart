@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/database/database.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import '../health_view_model.dart';
 import 'health_progress_bar.dart';
@@ -18,6 +19,8 @@ class HealthDailyDashboard extends ConsumerWidget {
     final calories = record?.caloriesConsumed ?? 0;
     final weight = record?.weight;
     final vm = ref.read(healthViewModelProvider.notifier);
+    // Theme-aware text: hardcoded white was near-invisible on the light theme's white card (F-32).
+    final palette = AuraPalette.of(context);
 
     return SingleChildScrollView(
       child: Column(
@@ -37,21 +40,21 @@ class HealthDailyDashboard extends ConsumerWidget {
                       spacing: 12,
                       runSpacing: 8,
                       children: [
-                        const Text(
+                        Text(
                           'Daily Goals Progress',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: palette.textPrimary),
                         ),
                         if (weight != null)
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                             decoration: BoxDecoration(
-                              color: AuraTheme.accentIndigo.withValues(alpha: 0.15),
+                              color: palette.brand.withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: AuraTheme.accentIndigo.withValues(alpha: 0.3)),
+                              border: Border.all(color: palette.brand.withValues(alpha: 0.3)),
                             ),
                             child: Text(
                               'Weight: ${weight.toStringAsFixed(1)} kg',
-                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: palette.textPrimary),
                             ),
                           ),
                       ],
@@ -72,7 +75,7 @@ class HealthDailyDashboard extends ConsumerWidget {
                     current: sleep,
                     target: HealthGoals.sleepGoalMins,
                     unit: 'mins',
-                    color: AuraTheme.accentIndigo,
+                    color: palette.brand,
                     icon: Icons.nightlight_round_outlined,
                     customSubtitle: '${(sleep / 60).toStringAsFixed(1)} / 8.0 hrs',
                   ),
@@ -82,7 +85,7 @@ class HealthDailyDashboard extends ConsumerWidget {
                     current: exercise,
                     target: HealthGoals.exerciseGoalMins,
                     unit: 'mins',
-                    color: AuraTheme.accentAmber,
+                    color: palette.warning,
                     icon: Icons.fitness_center_outlined,
                   ),
                   const SizedBox(height: 16),
@@ -105,9 +108,9 @@ class HealthDailyDashboard extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     'Quick Logger Panel',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: palette.textPrimary),
                   ),
                   const SizedBox(height: 16),
                   Wrap(
@@ -149,7 +152,7 @@ class HealthDailyDashboard extends ConsumerWidget {
                         icon: const Icon(Icons.nightlight_outlined, size: 16),
                         label: const Text('Log Sleep'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: AuraTheme.accentIndigo,
+                          backgroundColor: palette.brand,
                           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                         ),
                       ),

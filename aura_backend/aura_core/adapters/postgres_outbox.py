@@ -131,6 +131,31 @@ class PostgresEventOutbox:
         except Exception as exc:
             raise _unavailable(f"could not mark outbox entry {entry_id} processed: {exc}") from exc
 
+    async def stats(self) -> dict[str, float]:
+        """Backlog shape for the outbox gauges (F-24), in one indexed scan."""
+        await self._ensure_schema()
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT
+                        count(*) FILTER (WHERE NOT dead_lettered) AS pending,
+                        count(*) FILTER (WHERE dead_lettered) AS dead_lettered,
+                        COALESCE(EXTRACT(EPOCH FROM now() - min(created_at)
+                            FILTER (WHERE NOT dead_lettered)), 0) AS oldest_age_s
+                    FROM aura_event_outbox
+                    """
+                )
+        except Exception as exc:
+            raise _unavailable(f"could not read outbox stats: {exc}") from exc
+        # EXTRACT returns numeric, which asyncpg maps to Decimal.
+        return {
+            "pending": int(row["pending"]),
+            "dead_lettered": int(row["dead_lettered"]),
+            "oldest_age_s": float(row["oldest_age_s"]),
+        }
+
     async def mark_failed(self, entry_id: str, *, error: str, max_attempts: int = 5) -> None:
         await self._ensure_schema()
         pool = await self._pool._get_pool()

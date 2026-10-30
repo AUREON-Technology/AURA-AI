@@ -20,6 +20,9 @@ class TurnMeta {
   // AgentRegistry.resolve() silently fell back to the orchestrator -- absent (null) against an
   // un-upgraded backend that doesn't send this field yet.
   final String? resolvedAgent;
+  // Client-side only: the stream ended before `done` -- the user pressed Stop, the connection
+  // dropped, or it went idle -- and [Message.content] holds only the partial answer (F-31).
+  final bool interrupted;
 
   const TurnMeta({
     this.turnId,
@@ -36,6 +39,7 @@ class TurnMeta {
     this.pendingToolCalls = const [],
     this.plan = const [],
     this.resolvedAgent,
+    this.interrupted = false,
   });
 
   bool get showLowConfidence => confidence != null && confidence! < 0.45;
@@ -55,6 +59,7 @@ class TurnMeta {
     List<PendingToolCall>? pendingToolCalls,
     List<PlanStep>? plan,
     String? resolvedAgent,
+    bool? interrupted,
   }) {
     return TurnMeta(
       turnId: turnId ?? this.turnId,
@@ -71,6 +76,7 @@ class TurnMeta {
       pendingToolCalls: pendingToolCalls ?? this.pendingToolCalls,
       plan: plan ?? this.plan,
       resolvedAgent: resolvedAgent ?? this.resolvedAgent,
+      interrupted: interrupted ?? this.interrupted,
     );
   }
 
@@ -89,6 +95,7 @@ class TurnMeta {
         'pending_tool_calls': pendingToolCalls.map((p) => p.toJson()).toList(),
         'plan': plan.map((p) => p.toJson()).toList(),
         'resolved_agent': resolvedAgent,
+        'interrupted': interrupted,
       };
 
   String encode() => jsonEncode(toJson());
@@ -128,6 +135,7 @@ class TurnMeta {
               .toList()
           : const [],
       resolvedAgent: json['resolved_agent']?.toString(),
+      interrupted: json['interrupted'] == true,
     );
   }
 

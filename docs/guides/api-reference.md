@@ -280,7 +280,7 @@ data: {"type":"done","tainted":false,"guards_complete":true,"citations":[…],"t
 | `step` | `step_id`, `status`, `description` | Plan progress on an agentic turn |
 | `actions` | `actions` | Personal-OS proposals (`add_task`, `add_event`, …) for client confirmation |
 | `revision` | `reason`, `text` | The answer was redacted *after* streaming — replace what you displayed |
-| `done` | `tainted`, `guards_complete`, `citations`, `needs_confirmation`, `turn_id`, `correlation_id`, `confidence`, `degraded`, `usage` | Terminal, success. `confidence` is null on the stream path (the reasoner does not run). Use `turn_id` for `POST /feedback`. |
+| `done` | `tainted`, `guards_complete`, `citations`, `needs_confirmation`, `turn_id`, `correlation_id`, `confidence`, `degraded`, `degraded_reasons`, `usage` | Terminal, success. `confidence` is null on the stream path (the reasoner does not run). `degraded_reasons` lists why `degraded` is true, from a fixed set: `provider_fallback`, `tainted_context`, `empty_retrieval`, `tool_failure`, `planning_failed` (planning or tool execution failed and no tool ran), `empty_generation_fallback`. Use `turn_id` for `POST /feedback`. |
 | `error` | `error`, `message`, `retryable`, `post_hoc` | Terminal, failure |
 
 > **A limitation stated in the contract, not hidden.** Guards that need the complete answer —

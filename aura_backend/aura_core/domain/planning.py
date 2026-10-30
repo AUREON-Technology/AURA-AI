@@ -187,6 +187,10 @@ class Plan:
     #: :meth:`revised` resets it, so an agent loop summing it across revisions never double
     #: counts (``AgenticExecutor``'s token budget, GAP-024).
     generation_tokens: int = 0
+    #: Set when the planner could not plan at all (its generation raised or timed out) and this
+    #: is the single-RESPOND stand-in. ``None`` for a real plan, including one where the model
+    #: chose to just answer. The kernel reads it to mark the turn degraded (CB-14).
+    fallback_reason: str | None = None
 
     def __post_init__(self) -> None:
         ids = [s.id for s in self.steps]
