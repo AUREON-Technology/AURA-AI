@@ -1,5 +1,6 @@
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/routing/router.dart';
+import 'package:aura_client/core/sync/sync_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -28,6 +29,14 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
+        // ShellLayout now carries SyncAlertBanner, which reads the parked
+        // outbox count from the database. Left to the real provider that opens
+        // sqlite and leaves a pending timer behind, which fails this test at
+        // teardown; this test is about shell IA, so the count is stubbed —
+        // same reason overflow_layout_test stubs it for ChatHeader.
+        overrides: [
+          parkedOutboxCountProvider.overrideWith((ref) => Stream.value(0)),
+        ],
         child: MaterialApp.router(
           theme: AuraThemeV2.light,
           darkTheme: AuraThemeV2.dark,
@@ -68,6 +77,14 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
+        // ShellLayout now carries SyncAlertBanner, which reads the parked
+        // outbox count from the database. Left to the real provider that opens
+        // sqlite and leaves a pending timer behind, which fails this test at
+        // teardown; this test is about shell IA, so the count is stubbed —
+        // same reason overflow_layout_test stubs it for ChatHeader.
+        overrides: [
+          parkedOutboxCountProvider.overrideWith((ref) => Stream.value(0)),
+        ],
         child: MaterialApp.router(
           theme: AuraThemeV2.light,
           darkTheme: AuraThemeV2.dark,

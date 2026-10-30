@@ -133,6 +133,14 @@ label on a narrow surface still leaves the status in a live-region announcement,
 shows a spinner and no button at all rather than a disabled one, and that the view is read-only
 when given no callback.
 
+### `test/ux/sync_alert_banner_test.dart` — Phase 11
+
+The shell banner: silent at zero parked changes (and zero-sized, so it is not permanent chrome),
+counting correctly with singular and plural, saying *where* the work is rather than only raising
+an alarm, announcing full sentences rather than the contractions the visible copy uses, and
+offering `Review` only when given something to do. Plus `AuraBanner` itself — that it has no
+dismiss affordance, and that a declared action with no callback renders nothing.
+
 ### `test/ux/editor_commands_test.dart` — Phase 4 (F-08)
 
 Format / GoToDefinition / FindReferences / RenameSymbol / CodeAction throw `UnimplementedError`;
@@ -167,7 +175,7 @@ Listed so the gaps are explicit:
 | Streaming / agent-activity rendering | **NOT COVERED.** Phases 7–8. |
 | Approval UX | **NOT COVERED**, and blocked: the approval payload does not carry reason, risk or reversibility, so there is nothing truthful to assert yet (F-03). |
 | State restoration end to end | **NOT COVERED.** `test/desktop/layout_notifier_test.dart` covers layout persistence at the notifier level; nothing covers restore-after-restart as a user-visible flow. |
-| `syncing` / `stale` | **COVERED** — built on the signals the sync layer already exposed (`SyncState`, `parkedOutboxCountProvider`) rather than on invented ones. Adopted in chat's header; other surfaces can now mount `AuraSyncStatusView` but none do yet. |
+| `syncing` / `stale` | **COVERED** — built on signals the sync layer already exposed rather than invented ones. The pill is in chat's header; the shell banner covers every other screen for the state that matters (work not on the server). The pill is still not mounted anywhere else, which is now a presentation choice rather than a gap. |
 | Internet vs Control Plane unavailable | **NOT DISTINGUISHABLE**, by design rather than by omission — see the note at the end of `TRANSFORMATION_STATUS.md`. |
 | Per-screen adoption of `AuraFailureView` | **DONE for `AsyncValue.error`** — 13 surfaces. Covered by the classifier's own tests plus an overflow assertion on the compact form; there is no per-screen widget test, since each is the same two-line swap. |
 | Every runtime performance metric in the transformation brief | **UNKNOWN — needs instrumentation on a real device.** No number in this repository should be quoted for any of them until it is measured. |

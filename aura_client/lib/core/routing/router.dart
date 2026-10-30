@@ -13,6 +13,7 @@ import '../../features/chat/presentation/chat_page.dart';
 import '../../features/chat/presentation/chat_route_extra.dart';
 import '../../features/chat/presentation/widgets/capture_sheet.dart';
 import '../../features/command_palette/command_palette.dart';
+import '../sync/sync_alert_banner.dart';
 import '../../features/engineering/presentation/engineer_history_page.dart';
 import '../../features/engineering/presentation/github_connection_page.dart';
 import '../../features/engineering/presentation/host_daemon_page.dart';
@@ -112,7 +113,17 @@ class ShellLayout extends ConsumerWidget {
           autofocus: true,
           child: Scaffold(
             floatingActionButton: fab,
-            body: SafeArea(child: child),
+            // The banner sits above the routed screen rather than inside any
+            // one of them, so an unsaved change is visible wherever the user
+            // happens to be. It renders nothing when there is nothing to say.
+            body: SafeArea(
+              child: Column(
+                children: [
+                  const SyncAlertBanner(),
+                  Expanded(child: child),
+                ],
+              ),
+            ),
             bottomNavigationBar: NavigationBar(
               selectedIndex: selectedIndex,
               onDestinationSelected: (index) =>
@@ -206,7 +217,14 @@ class ShellLayout extends ConsumerWidget {
                 ],
               ),
               VerticalDivider(thickness: 1, width: 1, color: palette.border),
-              Expanded(child: child),
+              Expanded(
+                child: Column(
+                  children: [
+                    const SyncAlertBanner(),
+                    Expanded(child: child),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
