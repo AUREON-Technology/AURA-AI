@@ -10,6 +10,7 @@ import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:aura_client/core/ai/vision/chat_images.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
@@ -67,7 +68,8 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
     final text = _controller.text;
     final chat = ref.read(chatViewModelProvider);
     final isStreaming = ref.read(streamingMessageIdProvider) != null;
-    if (!chat.canSend(text, isStreaming: isStreaming)) return;
+    final hasImages = ref.read(pendingChatImagesProvider).isNotEmpty;
+    if (!chat.canSend(text, isStreaming: isStreaming, hasImages: hasImages)) return;
 
     _controller.clear();
     final sent = await ref.read(chatViewModelProvider.notifier).sendMessage(text);

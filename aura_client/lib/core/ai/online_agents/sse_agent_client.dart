@@ -6,6 +6,7 @@ import '../../auth/token_manager.dart';
 import '../../config/backend_url_provider.dart';
 import '../../network/aura_api_error.dart';
 import '../../security/device_validation_service.dart';
+import '../vision/chat_images.dart';
 import '../../../features/chat/data/turn_meta.dart';
 import 'llm_timeouts.dart';
 
@@ -109,6 +110,34 @@ class SseFrameParser {
   }
 }
 
+/// The `/api/v3/chat/stream` request body. `images` is omitted when empty, so a text turn is
+/// exactly the body it was before images existed.
+Map<String, dynamic> chatStreamBody({
+  required String message,
+  required String sessionId,
+  required String agentId,
+  bool useKnowledge = true,
+  bool useMemory = true,
+  bool useTools = true,
+  List<String> approvalIds = const [],
+  int maxOutputTokens = 1024,
+  double temperature = 0.3,
+  List<ChatImageAttachment> images = const [],
+}) {
+  return {
+    "message": message,
+    "session_id": sessionId,
+    "agent": agentId,
+    "use_knowledge": useKnowledge,
+    "use_memory": useMemory,
+    "use_tools": useTools,
+    "approval_ids": approvalIds,
+    "max_output_tokens": maxOutputTokens,
+    "temperature": temperature,
+    if (images.isNotEmpty) "images": [for (final image in images) image.toWire()],
+  };
+}
+
 class SseAgentClient {
   final Ref _ref;
   final _uuid = const Uuid();
@@ -131,6 +160,8 @@ class SseAgentClient {
     String? correlationId,
     int maxOutputTokens = 1024,
     double temperature = 0.3,
+    // ADR-031: images for this turn only. Sent as base64 and never persisted on either side.
+    List<ChatImageAttachment> images = const [],
   }) async* {
     final client = http.Client();
     final cid = correlationId ?? _uuid.v4();
@@ -147,17 +178,18 @@ class SseAgentClient {
       }
 
       await applyAuth(request);
-      request.body = jsonEncode({
-        "message": message,
-        "session_id": sessionId,
-        "agent": agentId,
-        "use_knowledge": useKnowledge,
-        "use_memory": useMemory,
-        "use_tools": useTools,
-        "approval_ids": approvalIds,
-        "max_output_tokens": maxOutputTokens,
-        "temperature": temperature,
-      });
+      request.body = jsonEncode(chatStreamBody(
+        message: message,
+        sessionId: sessionId,
+        agentId: agentId,
+        useKnowledge: useKnowledge,
+        useMemory: useMemory,
+        useTools: useTools,
+        approvalIds: approvalIds,
+        maxOutputTokens: maxOutputTokens,
+        temperature: temperature,
+        images: images,
+      ));
 
       var response = await client.send(request).timeout(kLlmConnectTimeout);
       if (response.statusCode == 401) {

@@ -43,6 +43,8 @@ unauthenticated vLLM server is free GPU generation for anyone who finds the URL,
 | `VLLM_MODEL` | `Qwen/Qwen2.5-7B-Instruct-AWQ` | any repo vLLM can serve; must match `AURA_PROVIDER_HFSPACE_MODEL` on the gateway |
 | `VLLM_MAX_MODEL_LEN` | `8192` | keep in step with `AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW` on the gateway |
 | `VLLM_GPU_MEMORY_UTILIZATION` | `0.90` | fraction of GPU memory vLLM is allowed to reserve |
+| `VLLM_MODEL_REVISION` | *(unset)* | Hub commit SHA to pin the weights; strongly recommended |
+| `VLLM_MAX_IMAGES_PER_PROMPT` | `0` | `0` = text only. A positive value enables image input for a vision-language `VLLM_MODEL` (e.g. `Qwen/Qwen3-VL-8B-Instruct`) and refuses every remote media URL. See `docs/deployment/inference-plane.md` §8 in the AURA-AI repo for the full vision configuration |
 
 If the chosen model repo is gated on the Hub, also set an `HF_TOKEN` secret (authenticates the
 weight *download*, not inference calls — a different thing from `VLLM_API_KEY`).

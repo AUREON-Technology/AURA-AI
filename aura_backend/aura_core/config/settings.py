@@ -55,6 +55,7 @@ __all__ = [
     "InfrastructureSettings",
     "LearningSettings",
     "VoiceSettings",
+    "VisionSettings",
     "McpServerConfig",
     "McpSettings",
     "GitHubSettings",
@@ -652,8 +653,11 @@ class LLMSettings:
 
     #: Used when nothing is configured, so ``aura_core`` is importable and testable out of the
     #: box. ``validate()`` refuses to let it run in staging/production.
+    #: Declares the image modality (ADR-031) because echo is a pure function of its input, images
+    #: included: it is what lets the default test suite exercise image turns with no model.
     ECHO_PROVIDER = ProviderConfig(
-        name="echo", kind="echo", model="echo-1", context_window=8192, max_output_tokens=2048
+        name="echo", kind="echo", model="echo-1", context_window=8192, max_output_tokens=2048,
+        modalities=("text", "image"),
     )
 
     @classmethod
@@ -1574,6 +1578,58 @@ class VoiceSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class VisionSettings:
+    """Image understanding (ADR-031). Off unless an operator turns it on.
+
+    ``enabled`` is necessary, not sufficient: an image turn also needs a provider declaring
+    ``AURA_PROVIDER_<NAME>_MODALITIES=text,image`` (or the OCR fallback), or it fails with a 503
+    ``dependency_unavailable`` rather than answering as if the image had been seen.
+
+    The byte limits are checked twice, in order: ``max_request_image_bytes`` against the decoded
+    total before any image is opened, then ``max_image_bytes`` per image. With the defaults, four
+    images in base64 stay under nginx's 20 MB body cap (``deploy/nginx/templates``). Raising
+    them past that needs nginx raised too, in both compose stacks.
+
+    ``perception_max_tokens`` bounds the description the vision model writes per turn. At the
+    CPU stack's 5-10 tok/s, 400 tokens finish inside ``perception_timeout_s``; see
+    ``PlanningEngine.plan()`` for why that sizing matters.
+    """
+
+    enabled: bool = False
+    max_images: int = 4
+    max_image_bytes: int = 10 * 1024 * 1024
+    max_request_image_bytes: int = 12 * 1024 * 1024
+    max_pixels: int = 50_000_000
+    max_edge_px: int = 1536
+    perception_max_tokens: int = 400
+    perception_timeout_s: float = 120.0
+    ocr_fallback: bool = True
+
+    @classmethod
+    def from_env(cls) -> "VisionSettings":
+        return cls(
+            enabled=_bool("VISION_ENABLED", False),
+            max_images=_int("VISION_MAX_IMAGES", 4, minimum=1, maximum=8),
+            max_image_bytes=_int(
+                "VISION_MAX_IMAGE_BYTES", 10 * 1024 * 1024, minimum=64 * 1024, maximum=20 * 1024 * 1024,
+            ),
+            max_request_image_bytes=_int(
+                "VISION_MAX_REQUEST_IMAGE_BYTES", 12 * 1024 * 1024,
+                minimum=64 * 1024, maximum=14 * 1024 * 1024,
+            ),
+            max_pixels=_int("VISION_MAX_PIXELS", 50_000_000, minimum=1_000_000, maximum=200_000_000),
+            max_edge_px=_int("VISION_MAX_EDGE_PX", 1536, minimum=256, maximum=4096),
+            perception_max_tokens=_int(
+                "VISION_PERCEPTION_MAX_TOKENS", 400, minimum=64, maximum=2048,
+            ),
+            perception_timeout_s=_float(
+                "VISION_PERCEPTION_TIMEOUT_S", 120.0, minimum=5.0, maximum=600.0,
+            ),
+            ocr_fallback=_bool("VISION_OCR_FALLBACK", True),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ReleaseSettings:
     """Which build this process actually is (BLOCK-03).
 
@@ -1710,6 +1766,7 @@ class AuraSettings:
     infrastructure: InfrastructureSettings = field(default_factory=InfrastructureSettings)
     learning: LearningSettings = field(default_factory=LearningSettings)
     voice: VoiceSettings = field(default_factory=VoiceSettings)
+    vision: VisionSettings = field(default_factory=VisionSettings)
     mcp: McpSettings = field(default_factory=McpSettings)
     adaptation: AdaptationSettings = field(default_factory=AdaptationSettings)
     github: GitHubSettings = field(default_factory=GitHubSettings)
@@ -1745,6 +1802,7 @@ class AuraSettings:
             infrastructure=InfrastructureSettings.from_env(),
             learning=LearningSettings.from_env(),
             voice=VoiceSettings.from_env(),
+            vision=VisionSettings.from_env(),
             mcp=McpSettings.from_env(),
             adaptation=AdaptationSettings.from_env(),
             github=GitHubSettings.from_env(),

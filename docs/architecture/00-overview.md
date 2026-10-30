@@ -135,6 +135,7 @@ aura_backend/aura_core/
 | [028](028-project-zero.md) | *(Proposed)* Personal AURA becomes Project 0; zero-knowledge tables never discovered | A staged parity/shadow migration, in exchange for one code path |
 | [029](029-service-principals-and-caller-context.md) | Service keys scoped to named routes; caller evidence on the DATA channel tainting the turn; structured output repaired once then failing closed | A second principal class every caller-identity check must consider, in exchange for system-to-system integration without a person's token |
 | [030](030-hosted-open-weight-inference.md) | *(Proposed; Phase 1 built)* Hosted open-weight APIs become a third host category, gated by `AURA_ALLOW_HOSTED_INFERENCE`, open-weight model IDs only, never `is_local` | Prompts and retrieved content leave our infrastructure when enabled, in exchange for large models at no cost within free quotas |
+| [031](031-image-understanding.md) | *(Proposed; Phases 1–6 built)* Attached images are described by a self-hosted model in the `vision` pool and enter the turn as DATA caller evidence; never sent to a third party, never persisted | One extra generation per image turn and some loss of pixel-level detail, in exchange for keeping ADR-006 trust semantics and `Message` unchanged |
 
 ---
 

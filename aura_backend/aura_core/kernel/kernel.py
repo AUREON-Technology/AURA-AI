@@ -37,6 +37,7 @@ from ..domain.errors import (
     AllProvidersFailedError,
     AuraError,
     BudgetExceededError,
+    DependencyUnavailableError,
     OutputInvalidError,
     OverloadedError,
     SafetyViolationError,
@@ -44,6 +45,7 @@ from ..domain.errors import (
 )
 from ..domain.events import TurnCompleted, TurnFailed, TurnStarted
 from ..domain.caller_context import CallerContext
+from ..domain.images import ImageInput
 from ..domain.connectors import Credential, connector_token_key
 from ..domain.context import user_facing_citations
 from ..domain.engineering import EngineerRun, EngineerRunStatus
@@ -153,6 +155,11 @@ class TurnRequest:
     #: Evidence the calling system supplied for this turn (AR-5). DATA channel only: guarded
     #: like retrieved chunks, fenced, and its presence taints the turn.
     caller_context: tuple[CallerContext, ...] = ()
+    #: Normalized images the user attached (ADR-031). Never sent to the answering model: the
+    #: kernel has ``deps.vision`` describe them first, and the description joins
+    #: ``caller_context`` -- DATA, guarded, fenced and tainting -- before anything else runs.
+    #: Non-empty makes the turn SENSITIVE. Never persisted.
+    images: tuple[ImageInput, ...] = ()
     #: Structured output (AR-6): the answer must be JSON matching this schema (the subset in
     #: ``domain/output_schema.py``), repaired at most once, or the turn fails ``output_invalid``.
     response_schema: Mapping[str, Any] | None = None
@@ -197,6 +204,9 @@ class TurnResult:
     #: Machine-readable detail of a failed turn that is safe to return (``output_invalid``'s
     #: error paths). ``None`` for every other failure.
     error_details: Mapping[str, Any] | None = None
+    #: How attached images were understood (``VisionEngine.Perception.as_dict``), or ``None``
+    #: for a turn without images.
+    vision: Mapping[str, Any] | None = None
 
     @property
     def degraded(self) -> bool:
@@ -254,6 +264,9 @@ class KernelDependencies:
     #: until the user approves them. `None` falls back to a process-local store, which is
     #: correct for one process; the container wires one over the shared cache (Redis).
     tool_confirmations: Any = None
+    #: `VisionEngine` (`vision/engine.py`, ADR-031). `None` means image turns fail with
+    #: `dependency_unavailable`; text turns are unaffected.
+    vision: Any = None
 
 
 class AIKernel:
@@ -349,6 +362,9 @@ class AIKernel:
             message = decision.text
             guard_records.extend(decision.report.summary())
             timings["guards_in"] = (time.perf_counter() - stage_start) * 1000.0
+
+        # 1b. Images become DATA evidence before anything reads the turn (ADR-031) ----
+        request, perception = await self._perceive_images(request, message)
 
         # 2-4. Memory, retrieval, and history concurrently ---------------------------
         stage_start = time.perf_counter()
@@ -513,7 +529,7 @@ class AIKernel:
             try:
                 await deps.episodic.append(
                     request.session_id, request.user_id,
-                    user_message=request.message, assistant_message=answer,
+                    user_message=self._history_message(request), assistant_message=answer,
                 )
             except Exception:
                 # Losing session persistence degrades the next turn; failing this one would be
@@ -570,6 +586,7 @@ class AIKernel:
             resolved_agent=resolved_agent,
             agent_run_id=agent_run_id,
             data=data,
+            vision=perception.as_dict() if perception is not None else None,
         )
 
     # -- streaming ---------------------------------------------------------------------
@@ -608,6 +625,23 @@ class AIKernel:
                         message, user_id=request.user_id, turn_id=turn_id
                     )
                     message = decision.text
+
+                perception = None
+                if request.images:
+                    # The vision call can take tens of seconds on a CPU host; say what is
+                    # happening rather than leaving the stream silent.
+                    yield {
+                        "type": "step", "step_id": "vision", "kind": "vision",
+                        "status": "running", "description": "Looking at the image(s)",
+                        "detail": {"images": len(request.images)}, "elapsed_ms": 0.0,
+                    }
+                    request, perception = await self._perceive_images(request, message)
+                    yield {
+                        "type": "step", "step_id": "vision", "kind": "vision",
+                        "status": "done", "description": "Looked at the image(s)",
+                        "detail": perception.as_dict(),
+                        "elapsed_ms": round(perception.duration_ms, 2),
+                    }
 
                 memories, retrieval, history, history_summary, goals, cag_prefix = await self._gather_context(
                     request, message
@@ -797,7 +831,8 @@ class AIKernel:
                     try:
                         await deps.episodic.append(
                             request.session_id, request.user_id,
-                            user_message=request.message, assistant_message=answer,
+                            user_message=self._history_message(request),
+                            assistant_message=answer,
                         )
                     except Exception:
                         logger.warning("failed to persist session state")
@@ -829,6 +864,7 @@ class AIKernel:
                     "degraded": bool(tainted or searched_empty or empty_generation_fallback),
                     "searched_but_empty": searched_empty,
                     "empty_generation_fallback": empty_generation_fallback,
+                    "vision": perception.as_dict() if perception is not None else None,
                     "usage": {
                         "prompt_tokens": last_usage.prompt_tokens if last_usage else 0,
                         "completion_tokens": (
@@ -940,6 +976,38 @@ class AIKernel:
 
     # -- data classification (ADR-030 Phase 4) ----------------------------------------------
 
+    # -- images (ADR-031) -----------------------------------------------------------------
+
+    async def _perceive_images(self, request: TurnRequest, message: str) -> tuple[TurnRequest, Any]:
+        """Describe the turn's images and add the description to its caller evidence.
+
+        Returns the request with ``caller_context`` extended, so the guard, the fence, the taint
+        and the SENSITIVE baseline that already apply to caller evidence (AR-5) apply to what
+        the images contain. ``message`` is the guarded user text, given to the vision model so
+        its description focuses on what was asked.
+        """
+        if not request.images:
+            return request, None
+        vision = self._deps.vision
+        if vision is None:
+            raise DependencyUnavailableError(
+                "image understanding is not configured on this deployment", dependency="vision"
+            )
+        perception = await vision.perceive(request.images, message)
+        return replace(request, caller_context=request.caller_context + perception.entries), perception
+
+    @staticmethod
+    def _history_message(request: TurnRequest) -> str:
+        """The user turn as session history keeps it: the text, plus a marker for images.
+
+        Neither the bytes nor the description are kept. The description is DATA; writing it
+        into history would launder it into the USER channel on the next turn.
+        """
+        if not request.images:
+            return request.message
+        count = len(request.images)
+        return f"{request.message}\n[{count} image{'s' if count != 1 else ''} attached]"
+
     def _baseline_classification(self, request: TurnRequest) -> tuple[DataClassification, str]:
         """What a turn is before any context is gathered.
 
@@ -952,6 +1020,8 @@ class AIKernel:
             return DataClassification.SENSITIVE, "engineer_workspace"
         if request.caller_context:
             return DataClassification.SENSITIVE, "caller_evidence"
+        if request.images:
+            return DataClassification.SENSITIVE, "image_input"
         return DataClassification.INTERNAL, ""
 
     async def _classify_context(
@@ -1840,6 +1910,10 @@ class AIKernel:
     ) -> tuple[str, str | None, str | None, Any, float, bool, str | None, int, Any, float | None]:
         deps = self._deps
         namespace = request.user_id.value
+        # An image turn's answer rests on pixels the cache key never sees: the semantic tier
+        # matches on the user's text alone, so "what is in this picture?" would be answered from
+        # a different picture (ADR-031). Such turns neither read nor write the cache.
+        cache = None if request.images else deps.cache
 
         assigned = await self._assigned_model(request)
         completion = CompletionRequest(
@@ -1855,8 +1929,8 @@ class AIKernel:
             response_schema=self._json_mode_hint(request.response_schema),
         )
 
-        if deps.cache is not None:
-            hit = await deps.cache.lookup(completion, namespace=namespace)
+        if cache is not None:
+            hit = await cache.lookup(completion, namespace=namespace)
             if hit is not None:
                 return (
                     hit.response.text, hit.response.provider, hit.response.model,
@@ -1880,8 +1954,8 @@ class AIKernel:
                 )
             )
             confidence = result.confidence.score if result.confidence else None
-            if deps.cache is not None:
-                await deps.cache.store(
+            if cache is not None:
+                await cache.store(
                     completion,
                     CompletionResponse(
                         text=result.text,
@@ -1901,8 +1975,8 @@ class AIKernel:
         except AllProvidersFailedError:
             raise
 
-        if deps.cache is not None:
-            await deps.cache.store(completion, response, namespace=namespace)
+        if cache is not None:
+            await cache.store(completion, response, namespace=namespace)
 
         return (
             response.text, response.provider, response.model, response.usage,

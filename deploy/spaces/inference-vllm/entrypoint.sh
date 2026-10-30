@@ -19,6 +19,13 @@ VLLM_MODEL="${VLLM_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}"
 PORT="${PORT:-7860}"
 MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-8192}"
 GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.90}"
+# Pin the weights (a Hub commit SHA). Empty serves whatever the repo's main branch is today,
+# which is how an unannounced upstream push silently changes what answers.
+MODEL_REVISION="${VLLM_MODEL_REVISION:-}"
+# ADR-031 image understanding. 0 (the default) keeps this a text-only server whatever model it
+# runs. A positive value is the per-prompt image cap, which must be >= the gateway's
+# AURA_VISION_MAX_IMAGES, and needs a vision-language VLLM_MODEL (e.g. Qwen/Qwen3-VL-8B-Instruct).
+MAX_IMAGES="${VLLM_MAX_IMAGES_PER_PROMPT:-0}"
 
 # If the Space's disk is not persistent, this download repeats on every cold start after the
 # Space sleeps -- the same argument the sibling Space makes against a free/sleeping tier, and
@@ -42,13 +49,36 @@ ERR
     exit 1
 fi
 
-echo "==> Serving $VLLM_MODEL  (max_model_len=$MAX_MODEL_LEN port=$PORT)"
+case "$MAX_IMAGES" in
+    ''|*[!0-9]*) echo "FATAL: VLLM_MAX_IMAGES_PER_PROMPT must be a whole number, got '$MAX_IMAGES'" >&2; exit 1 ;;
+esac
 
-exec python3 -m vllm.entrypoints.openai.api_server \
-    --model "$VLLM_MODEL" \
-    --served-model-name "$VLLM_MODEL" \
-    --host 0.0.0.0 \
-    --port "$PORT" \
-    --api-key "$VLLM_API_KEY" \
-    --max-model-len "$MAX_MODEL_LEN" \
+args=(
+    --model "$VLLM_MODEL"
+    --served-model-name "$VLLM_MODEL"
+    --host 0.0.0.0
+    --port "$PORT"
+    --api-key "$VLLM_API_KEY"
+    --max-model-len "$MAX_MODEL_LEN"
     --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
+)
+if [ -n "$MODEL_REVISION" ]; then
+    args+=(--revision "$MODEL_REVISION")
+fi
+if [ "$MAX_IMAGES" -gt 0 ]; then
+    # The gateway sends images only as base64 data: URLs (ADR-031). vLLM would otherwise fetch
+    # any http(s) image URL a caller names, from inside this container, which is a server-side
+    # request forgery primitive for anyone holding the key. Allowing one domain that can never
+    # resolve (RFC 2606 .invalid) refuses every remote fetch, and redirects stay off in case a
+    # future default widens it. Local file:// media stays off (no --allowed-local-media-path),
+    # and per-request processor kwargs stay refused (no --trust-request-mm-kwargs).
+    export VLLM_MEDIA_URL_ALLOW_REDIRECTS=0
+    args+=(
+        --limit-mm-per-prompt "{\"image\": $MAX_IMAGES}"
+        --allowed-media-domains media.invalid
+    )
+fi
+
+echo "==> Serving $VLLM_MODEL${MODEL_REVISION:+@$MODEL_REVISION}  (max_model_len=$MAX_MODEL_LEN images_per_prompt=$MAX_IMAGES port=$PORT)"
+
+exec python3 -m vllm.entrypoints.openai.api_server "${args[@]}"

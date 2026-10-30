@@ -85,6 +85,11 @@ AURA_PROVIDER_HFSPACE_TIMEOUT_S=45
 AURA_PROVIDER_HFSPACE_HEALTH_TIMEOUT_S=30   # not 5 — a Space sleeps; see below
 AURA_PROVIDER_HFSPACE_MAX_CONCURRENCY=8
 AURA_LLM_TIMEOUT_S=60
+# Image understanding (ADR-031): only once the Space serves a vision-language model -- see
+# inference-plane.md §8 for the matching Space variables and the order to change them in.
+# AURA_PROVIDER_HFSPACE_MODALITIES=text,image
+# AURA_PROVIDER_HFSPACE_MODEL_REVISION=<the Space's VLLM_MODEL_REVISION>
+# AURA_VISION_ENABLED=true
 
 AURA_DOMAIN=<railway-issued or custom domain>
 ALLOWED_ORIGINS=https://<AURA_DOMAIN>

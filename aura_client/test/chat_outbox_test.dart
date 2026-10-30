@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:aura_client/core/ai/online_agents/sse_agent_client.dart';
+import 'package:aura_client/core/ai/vision/chat_images.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/security/encryption_service.dart';
@@ -27,6 +28,7 @@ class _FailingSseClient extends SseAgentClient {
     String? correlationId,
     int maxOutputTokens = 1024,
     double temperature = 0.3,
+    List<ChatImageAttachment> images = const [],
   }) async* {
     throw http.ClientException(
       'Connection refused',

@@ -29,6 +29,7 @@ from ...domain.llm import (
     CompletionRequest,
     CompletionResponse,
     FinishReason,
+    Modality,
     ProviderCapabilities,
     StreamChunk,
     TokenUsage,
@@ -83,6 +84,9 @@ class EchoProvider(BaseProvider):
             is_local=True,
             quality_tier=1,
             max_concurrency=32,
+            # Image-capable by default: echo is a test/dev provider and a pure function of its
+            # input, images included. A test that needs a text-only model passes capabilities.
+            modalities=(Modality.TEXT, Modality.IMAGE),
         )
         super().__init__(name=name, capabilities=caps, timeout_s=5.0)
         self._model = model
@@ -125,7 +129,14 @@ class EchoProvider(BaseProvider):
         # Collapse fenced untrusted blocks so echoed output stays readable in test failures.
         body = re.sub(r"<<<AURA-DATA:[0-9a-f]+[^>]*>>>", "[data]", body)
         body = re.sub(r"<<<END-AURA-DATA:[0-9a-f]+>>>", "", body)
-        return f"{self._prefix}{' '.join(body.split())}".strip()
+        text = f"{self._prefix}{' '.join(body.split())}".strip()
+        # Images (ADR-031) echo as a deterministic description, so a test can assert which
+        # images reached the model without any model at all.
+        seen = " ".join(
+            f"[image {n}: {i.width}x{i.height} {i.media_type} sha256:{i.sha256[:12]}]"
+            for n, i in enumerate(request.images, start=1)
+        )
+        return f"{text} {seen}".strip() if seen else text
 
     # -- provider surface --------------------------------------------------------------
 

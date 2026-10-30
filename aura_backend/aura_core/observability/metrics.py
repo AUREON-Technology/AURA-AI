@@ -171,6 +171,20 @@ class Metrics:
         )
         self.turns_in_flight = self._gauge("turns_in_flight", "Turns currently executing.")
 
+        # -- vision (ADR-031) ----------------------------------------------------------
+        # Labels are bounded enums only: ``outcome`` is vlm/ocr_fallback/unavailable and
+        # ``reason`` a normalizer refusal (unsupported_type, image_too_large, ...). Never a
+        # digest, a size or anything else about a particular image.
+        self.vision_requests = self._counter(
+            "vision_requests_total", "Image perception attempts by outcome.", ("outcome",)
+        )
+        self.vision_latency = self._histogram(
+            "vision_latency_seconds", "Image perception duration.", ("mode",), _TURN_BUCKETS
+        )
+        self.vision_rejections = self._counter(
+            "vision_rejections_total", "Attached images refused before perception.", ("reason",)
+        )
+
         # -- llm -----------------------------------------------------------------------
         self.llm_requests_total = self._counter(
             "llm_requests_total", "Provider calls by outcome.", ("provider", "model", "outcome")

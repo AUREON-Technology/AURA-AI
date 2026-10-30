@@ -116,11 +116,13 @@ class MultimodalRAG(BaseStrategy):
     produces ``pdf_page``, ``table`` and ``image`` chunks with their page numbers attached, so "what
     does the table on page 4 say" selects page 4's table and nothing else.
 
-    **What is not built.** There is no OCR and no vision model. A page with images and no text layer
-    is indexed as an ``image`` chunk whose text *states* that the page could not be read and that OCR
-    is unconfigured -- so a question about it retrieves an honest account of a gap instead of a
-    confident answer drawn from the previous page. Recognising the text in that page needs an
-    :class:`~aura_core.ports.documents.OcrEngine` adapter, of which none ships.
+    **What is not built here.** Ingestion reads scanned pages only through OCR
+    (:class:`~aura_core.adapters.tesseract_ocr.TesseractOcrEngine`, opt-in), and only for text.
+    Where OCR is not configured, a page with images and no text layer is indexed as an ``image``
+    chunk whose text *states* that the page could not be read -- so a question about it retrieves an
+    honest account of a gap instead of a confident answer drawn from the previous page. Images a
+    user attaches to a chat turn are understood by a vision model (ADR-031, ``aura_core/vision``);
+    indexed document images are not.
 
     That distinction is the whole design. Reporting a capability the platform lacks would be worse
     than reporting the lack: the first person to ask about a scanned invoice would get an answer

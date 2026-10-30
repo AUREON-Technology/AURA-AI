@@ -1,4 +1,5 @@
 import 'package:aura_client/core/ai/online_agents/sse_agent_client.dart';
+import 'package:aura_client/core/ai/vision/chat_images.dart';
 import 'package:aura_client/core/ai/orchestrator/agent_orchestrator.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
@@ -24,6 +25,7 @@ class _ActionsSseClient extends SseAgentClient {
     String? correlationId,
     int maxOutputTokens = 1024,
     double temperature = 0.3,
+    List<ChatImageAttachment> images = const [],
   }) async* {
     yield SseChatEvent.fromWire('token', {'text': 'I can add that.'});
     yield SseChatEvent.fromWire('actions', {
@@ -53,6 +55,7 @@ class _Status500SseClient extends SseAgentClient {
     String? correlationId,
     int maxOutputTokens = 1024,
     double temperature = 0.3,
+    List<ChatImageAttachment> images = const [],
   }) async* {
     throw Exception('SSE chat request failed with status 500: internal error');
   }

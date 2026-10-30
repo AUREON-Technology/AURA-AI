@@ -30,7 +30,7 @@ from ...domain.llm import (
     TokenUsage,
 )
 from ...ports.llm import HealthStatus
-from .base import BaseProvider, flatten_conversation
+from .base import BaseProvider, attach_images, flatten_conversation
 
 __all__ = ["OllamaProvider", "LocalModelInfo"]
 
@@ -97,6 +97,7 @@ class OllamaProvider(BaseProvider):
 
     def _payload(self, request: CompletionRequest, *, stream: bool) -> dict[str, Any]:
         _, messages = flatten_conversation(request.conversation)
+        attach_images(messages, request.images, style="ollama")
         sampling = request.sampling
         payload: dict[str, Any] = {
             "model": request.model or self._model,

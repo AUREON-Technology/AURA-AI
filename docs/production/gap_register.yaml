@@ -531,17 +531,40 @@ gaps:
     component: multimodal/vision-video
     severity: P2
     current_state: >-
-      No vision or video understanding. Only a capability flag exists
-      (aura_core/domain/llm.py:148 supports_vision, :178-188 needs_vision filter); no adapter,
-      no endpoint, no client path. OCR (Tesseract) extracts text only.
-      aura_core/rag/agentic.py:119 still says "There is no OCR" -- stale since Phase F1.
+      Image understanding is built through the kernel but has never run against a real vision
+      model (ADR-031, docs/plans/image-understanding-implementation-plan.md). `/api/v3/chat` and
+      `/chat/stream` accept `images`; aura_core/adapters/pillow_images.py sniffs, bounds, strips
+      metadata and downscales them; aura_core/vision/engine.py has a provider in the `vision` pool
+      describe them, and the description joins the turn as DATA caller evidence (fenced, guarded,
+      tainting, SENSITIVE). The router refuses text-only and third-party providers for any request
+      carrying images. Off by default (AURA_VISION_ENABLED). No vision pool is deployed (GAP-012),
+      no client attaches images yet, and no eval exists. No video.
     target_state: Self-hosted VLM pool (e.g. Qwen3-VL-8B-Instruct) behind the router; image upload/understanding through the kernel.
     owner: ml
     dependencies: [GAP-012]
     test: e2e test with a real image through a pinned VLM (opt-in load/bench)
-    metric: vision eval suite accuracy (to be defined)
+    metric: accuracy and per-category accuracy from evaluation/vision_eval.py (thresholds to be set by the owner after a first run)
     exit_condition: Vision turn served end to end with a pinned model and an eval report.
-    status: open
+    status: in_progress
+    reverified_2026_10_30: >-
+      Phases 1-4 of the image understanding plan landed on the default suite (echo plays the
+      vision model): tests/unit/test_image_normalizer.py, tests/unit/test_vision_routing.py,
+      tests/security/test_image_turns.py. Remaining before built_not_proven: client attach UI
+      (Phase 5) and a pinned vision pool (Phase 6, blocked on GAP-012); before proven: the
+      Phase 7 eval report.
+    reverified_2026_10_30_phase6: >-
+      Client attach UI landed (aura_client test/chat_images_test.dart). Phase 6 is built for the
+      HF Space Inference Plane: deploy/spaces/inference-vllm/entrypoint.sh takes
+      VLLM_MODEL_REVISION and VLLM_MAX_IMAGES_PER_PROMPT (image cap, remote media URLs
+      refused), pinned by tests/deployment/test_inference_contract.py; runbook in
+      docs/deployment/inference-plane.md section 8; evidence driver deploy/scripts/verify_vision.py.
+      Not run: no Space has served a vision model and no phase-6-vision report is committed.
+    reverified_2026_10_30_phase7: >-
+      Eval harness built: evaluation/vision_eval.py over evaluation/suites/vision_cases.py (240
+      generated, exactly labelled cases in 12 categories, seeded; targets space, gateway, kernel,
+      oracle; RegressionGate baselines; bake-off compare), self-tested by
+      tests/unit/test_vision_eval.py. No model has been scored, so the metric is still undefined
+      in practice and the exit condition (an eval report with a pinned model) is not met.
 
   - gap_id: GAP-020
     component: voice/stt-language

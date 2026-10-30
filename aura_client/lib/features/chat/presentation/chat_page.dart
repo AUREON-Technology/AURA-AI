@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:aura_client/core/ai/vision/chat_images.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/database/database.dart';
 
@@ -76,7 +77,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final text = _messageController.text;
     final chat = ref.read(chatViewModelProvider);
     final isStreaming = ref.read(streamingMessageIdProvider) != null;
-    if (!chat.canSend(text, isStreaming: isStreaming)) return;
+    final hasImages = ref.read(pendingChatImagesProvider).isNotEmpty;
+    if (!chat.canSend(text, isStreaming: isStreaming, hasImages: hasImages)) return;
 
     _messageController.clear();
     if (mounted) FocusScope.of(context).unfocus();

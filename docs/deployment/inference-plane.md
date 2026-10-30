@@ -106,3 +106,91 @@ build. The Control Plane's own `/health` endpoint's `dependencies` block reports
 `main`, only when `HF_TOKEN`/`HF_SPACE_ID` secrets are configured — pushes the directory to the
 Space with `huggingface_hub`'s `upload_folder`. It never touches the Control Plane's Railway
 deploy.
+
+## 8. Vision: serving image understanding from this Space (ADR-031 Phase 6)
+
+The gateway's image understanding (ADR-031) needs one provider that declares the image modality.
+This Space is that provider: it serves one vision-language model for **both** chat and image
+perception. That is decision D2 in `docs/plans/image-understanding-implementation-plan.md`: one
+GPU instead of two, at the cost that text quality now depends on a VLM. That cost stays
+unmeasured until the plan's P7-4 regression eval runs.
+
+**Inference Plane side** (Space → Settings → Variables and secrets). `VLLM_API_KEY` is unchanged.
+
+| Variable | Value | Why |
+|---|---|---|
+| `VLLM_MODEL` | `Qwen/Qwen3-VL-8B-Instruct` on the L40S (48 GB, BF16 fits with room for KV cache); `Qwen/Qwen3-VL-8B-Instruct-FP8` on a 24 GB Ada/Hopper card (L4) | Apache-2.0, first-class vLLM architecture, the GAP-019 candidate. Qwen2.5-VL-3B is excluded (`qwen-research` license). |
+| `VLLM_MODEL_REVISION` | the commit SHA from the model repo's *Files and versions* history | Without it, an upstream push silently changes what answers |
+| `VLLM_MAX_MODEL_LEN` | `16384` | The gateway shrinks images to a 1536 px long edge, about 2,300 vision tokens each for a square image. Four images exceed 8192 on their own, and the router then excludes this provider (`context_window_too_small`) |
+| `VLLM_MAX_IMAGES_PER_PROMPT` | `4` | Must be ≥ `AURA_VISION_MAX_IMAGES`. Any value > 0 also makes the entrypoint refuse remote media URLs (`--allowed-media-domains media.invalid`, redirects off). The gateway only ever sends base64 |
+
+The entrypoint never passes `--allowed-local-media-path`, `--trust-request-mm-kwargs` or
+`--enable-mm-embeds`. `tests/deployment/test_inference_contract.py` pins that.
+
+**Control Plane side** (Railway variables, or `deploy/.env` for the VPS stack):
+
+```bash
+AURA_PROVIDER_HFSPACE_MODEL=<exactly VLLM_MODEL>
+AURA_PROVIDER_HFSPACE_MODEL_REVISION=<exactly VLLM_MODEL_REVISION>
+AURA_PROVIDER_HFSPACE_MODALITIES=text,image
+AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW=16384      # exactly VLLM_MAX_MODEL_LEN
+AURA_VISION_ENABLED=true
+AURA_VISION_MAX_IMAGES=4                        # <= VLLM_MAX_IMAGES_PER_PROMPT
+```
+
+Declare no pool. A generalist provider carrying the image modality is chosen for image turns
+(the `vision` pool falls back to generalists), and text turns route to it exactly as before. A
+hosted slot (`hosted1`) never receives an image, whatever it declares. The router refuses every
+`third_party` provider for image requests, and image turns are SENSITIVE. `hfspace` is rented
+compute running our own weights, so it is not third-party, and its ceiling is SENSITIVE.
+
+**Order of operations:**
+1. Change the Space variables and wait for `/v1/models` to list the new model.
+2. Then change the Control Plane.
+3. Only then set `AURA_VISION_ENABLED=true`.
+
+Reversed, the gateway offers attachments to a text-only server, and image turns fail with
+`AllProvidersFailedError` → 503.
+
+**Evidence** (Phase 6 exit). Run from anywhere that can reach both:
+
+```bash
+AURA_VERIFY_GATEWAY=https://aureon-ai.tech AURA_VERIFY_TOKEN=<a user's access token> \
+AURA_VERIFY_SPACE_URL=https://<owner>-<space>.hf.space AURA_VERIFY_SPACE_KEY=<VLLM_API_KEY> \
+    python deploy/scripts/verify_vision.py
+```
+
+It writes `docs/reports/phase-6-vision-<timestamp>.txt`; commit that file. It checks:
+- the gateway reports vision available;
+- the Space refuses unauthenticated calls;
+- the Space reads a base64 image;
+- the Space refuses to fetch a remote URL;
+- a `/chat` turn reads a randomly chosen number through `hfspace`;
+- the stream reports the vision step;
+- an image that says "create a task" cannot run a side-effecting tool;
+- SVG and too many images are 422s.
+
+It also records latency. Until a report with zero failures is committed, Phase 6 is built, not
+proven.
+
+**Quality** (plan Phase 7). Score the model itself on the 240-case labelled set. Then score
+the whole gateway path, and for a bake-off compare the two runs. From `aura_backend/`:
+
+```bash
+export SPACE_KEY=<VLLM_API_KEY>
+python -m evaluation.vision_eval run --target space --base-url https://<owner>-<space>.hf.space/v1 \
+    --api-key-env SPACE_KEY --model <VLLM_MODEL> --revision <VLLM_MODEL_REVISION> \
+    --label qwen3-vl-8b --hardware "HF L40S"
+AURA_EVAL_TOKEN=<user access token> python -m evaluation.vision_eval run --target gateway \
+    --base-url https://aureon-ai.tech --label prod-gateway
+python -m evaluation.vision_eval compare ../docs/reports/vision-eval-*.json
+```
+
+Commit the `vision-eval-*.md`/`.json` pair. Pass `--save-baseline evaluation/suites/vision_baseline.json`
+on the run the owner accepts, and `--baseline` on later runs, to gate against it.
+
+**Rollback:**
+- Set `AURA_VISION_ENABLED=false` on the Control Plane. Image turns then 503 and the client hides
+  the attach button.
+- To also revert the Space, set `VLLM_MODEL` back, `VLLM_MAX_IMAGES_PER_PROMPT=0`, and
+  `VLLM_MAX_MODEL_LEN` / `AURA_PROVIDER_HFSPACE_CONTEXT_WINDOW` back to `8192`.
