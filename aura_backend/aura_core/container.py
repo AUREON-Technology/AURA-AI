@@ -300,6 +300,11 @@ class Container:
         # directly from `api/v3.py`'s `/voice/*` routes.
         self.stt_engine = self._build_stt_engine()
         self.tts_engine = self._build_tts_engine()
+        # ADR-031: image understanding. The normalizer is what `/chat` runs every attached image
+        # through; the engine is what the kernel asks to describe them. Both `None` with vision
+        # off, so a text-only deployment builds nothing new.
+        self.image_normalizer = self._build_image_normalizer()
+        self.vision = self._build_vision_engine()
         # Phase I: pure text NLP (normalize / shallow intent). Always on; no binary gate.
         from .nlp import NlpEngine
 
@@ -575,6 +580,7 @@ class Container:
                 # F-04: pending tool confirmations live in the shared cache (Redis in
                 # production), so any replica can resume the exact turn the user approved.
                 tool_confirmations=PendingConfirmationStore(self.cache_backend),
+                vision=self.vision,
             )
         )
         # After kernel exists, same reason as live_voice below: `delegate_to_agent`
@@ -1038,6 +1044,35 @@ class Container:
         if not tesseract_available():
             return None
         return TesseractOcrEngine(lang=self.settings.knowledge.ocr_lang)
+
+    def _build_image_normalizer(self) -> Any:
+        """`None` unless vision is on and Pillow is importable (it is a declared dependency, so
+        the second condition only fails on a broken install, and then loudly at startup)."""
+        vision = self.settings.vision
+        if not vision.enabled:
+            return None
+        from .adapters.pillow_images import PillowImageNormalizer
+
+        return PillowImageNormalizer(
+            max_bytes=vision.max_image_bytes,
+            max_pixels=vision.max_pixels,
+            max_edge_px=vision.max_edge_px,
+        )
+
+    def _build_vision_engine(self) -> Any:
+        """The kernel's image perception step (ADR-031), or `None` with vision off. Built even
+        when no provider declares the image modality: the engine then falls back to OCR or
+        reports `dependency_unavailable`, which is the honest answer, rather than vanishing."""
+        if not self.settings.vision.enabled:
+            return None
+        from .vision.engine import VisionEngine
+
+        return VisionEngine(
+            router=self.router,
+            settings=self.settings.vision,
+            ocr=self.ocr_engine,
+            metrics=self.metrics,
+        )
 
     def _build_stt_engine(self) -> Any:
         """`None` unless both opted in (`voice.stt_enabled`) and the `faster-whisper` package is

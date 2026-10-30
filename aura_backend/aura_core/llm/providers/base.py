@@ -12,10 +12,12 @@ legacy service opens a connection at module import.
 
 from __future__ import annotations
 
+import base64
 import json
 from typing import Any, AsyncIterator, Mapping, Sequence
 
 from ...domain.errors import ProviderError, TimeoutError as AuraTimeoutError
+from ...domain.images import ImageInput
 from ...domain.llm import (
     CompletionRequest,
     CompletionResponse,
@@ -27,7 +29,7 @@ from ...domain.messages import Conversation, Message, Role, TrustChannel
 from ...ports.llm import HealthStatus
 from ..quota import retry_after_seconds
 
-__all__ = ["BaseProvider", "http_client", "WireMessage", "flatten_conversation"]
+__all__ = ["BaseProvider", "http_client", "WireMessage", "flatten_conversation", "attach_images"]
 
 
 class WireMessage(dict):
@@ -78,6 +80,39 @@ def flatten_conversation(
     if system_prompt and system_as_message:
         messages.insert(0, WireMessage(role="system", content=system_prompt))
     return system_prompt, messages
+
+
+def attach_images(messages: list[WireMessage], images: Sequence[ImageInput], *, style: str) -> None:
+    """Put ``images`` on the last user wire message, in the shape ``style`` names (ADR-031).
+
+    * ``"openai"`` -- ``content`` becomes the OpenAI vision parts list: the text first, then one
+      ``image_url`` part per image as a ``data:`` URL. Never an ``http(s)`` URL: AURA does not
+      ask a model server to fetch anything, which keeps vLLM's media fetcher out of reach
+      (SSRF), and Ollama's OpenAI endpoint accepts base64 only anyway.
+    * ``"ollama"`` -- Ollama's native ``/api/chat`` shape: ``images`` beside the text, as bare
+      base64.
+
+    No images leaves ``messages`` untouched, so a text-only request is byte-identical to one made
+    before images existed.
+    """
+    if not images:
+        return
+    target = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+    if target is None:
+        target = WireMessage(role="user", content="")
+        messages.append(target)
+    encoded = [base64.b64encode(image.data).decode("ascii") for image in images]
+    if style == "openai":
+        parts: list[dict[str, Any]] = [{"type": "text", "text": target.get("content") or ""}]
+        parts.extend(
+            {"type": "image_url", "image_url": {"url": f"data:{image.media_type};base64,{data}"}}
+            for image, data in zip(images, encoded)
+        )
+        target["content"] = parts
+    elif style == "ollama":
+        target["images"] = encoded
+    else:  # pragma: no cover - programming error
+        raise ValueError(f"unknown image wire style: {style}")
 
 
 def http_client(*, base_url: str = "", timeout_s: float = 60.0, headers: Mapping[str, str] | None = None):

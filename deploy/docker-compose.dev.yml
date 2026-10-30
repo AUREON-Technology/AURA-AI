@@ -320,6 +320,10 @@ services:
       DATA_DIR: /var/lib/aura/workspace
       AURA_VOICE_LIVE_ENABLED: ${AURA_VOICE_LIVE_ENABLED:-true}
       AURA_VOICE_LIVE_MAX_SESSIONS: ${AURA_VOICE_LIVE_MAX_SESSIONS:-4}
+      # ADR-031 image understanding. Off until a provider declares
+      # AURA_PROVIDER_<NAME>_MODALITIES=text,image (no vision pool ships yet: GAP-012).
+      AURA_VISION_ENABLED: ${AURA_VISION_ENABLED:-false}
+      AURA_VISION_MAX_IMAGES: ${AURA_VISION_MAX_IMAGES:-4}
       AURA_LEARNING_DATASET_DIR: /var/lib/aura/datasets
       LEARNING_FINETUNE_MIN_EXAMPLES: ${LEARNING_FINETUNE_MIN_EXAMPLES:-12}
       LEARNING_FINETUNE_MIN_USERS: ${LEARNING_FINETUNE_MIN_USERS:-5}

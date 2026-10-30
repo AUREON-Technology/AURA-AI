@@ -531,17 +531,27 @@ gaps:
     component: multimodal/vision-video
     severity: P2
     current_state: >-
-      No vision or video understanding. Only a capability flag exists
-      (aura_core/domain/llm.py:148 supports_vision, :178-188 needs_vision filter); no adapter,
-      no endpoint, no client path. OCR (Tesseract) extracts text only.
-      aura_core/rag/agentic.py:119 still says "There is no OCR" -- stale since Phase F1.
+      Image understanding is built through the kernel but has never run against a real vision
+      model (ADR-031, docs/plans/image-understanding-implementation-plan.md). `/api/v3/chat` and
+      `/chat/stream` accept `images`; aura_core/adapters/pillow_images.py sniffs, bounds, strips
+      metadata and downscales them; aura_core/vision/engine.py has a provider in the `vision` pool
+      describe them, and the description joins the turn as DATA caller evidence (fenced, guarded,
+      tainting, SENSITIVE). The router refuses text-only and third-party providers for any request
+      carrying images. Off by default (AURA_VISION_ENABLED). No vision pool is deployed (GAP-012),
+      no client attaches images yet, and no eval exists. No video.
     target_state: Self-hosted VLM pool (e.g. Qwen3-VL-8B-Instruct) behind the router; image upload/understanding through the kernel.
     owner: ml
     dependencies: [GAP-012]
     test: e2e test with a real image through a pinned VLM (opt-in load/bench)
     metric: vision eval suite accuracy (to be defined)
     exit_condition: Vision turn served end to end with a pinned model and an eval report.
-    status: open
+    status: in_progress
+    reverified_2026_10_30: >-
+      Phases 1-4 of the image understanding plan landed on the default suite (echo plays the
+      vision model): tests/unit/test_image_normalizer.py, tests/unit/test_vision_routing.py,
+      tests/security/test_image_turns.py. Remaining before built_not_proven: client attach UI
+      (Phase 5) and a pinned vision pool (Phase 6, blocked on GAP-012); before proven: the
+      Phase 7 eval report.
 
   - gap_id: GAP-020
     component: voice/stt-language

@@ -31,7 +31,7 @@ from ...domain.llm import (
 )
 from ...domain.messages import ToolCall
 from ...ports.llm import HealthStatus
-from .base import BaseProvider, flatten_conversation
+from .base import BaseProvider, attach_images, flatten_conversation
 
 __all__ = ["OpenAICompatibleProvider"]
 
@@ -106,6 +106,7 @@ class OpenAICompatibleProvider(BaseProvider):
 
     def _payload(self, request: CompletionRequest, *, stream: bool) -> dict[str, Any]:
         _, messages = flatten_conversation(request.conversation)
+        attach_images(messages, request.images, style="openai")
         sampling = request.sampling
         payload: dict[str, Any] = {
             **self._extra_body,

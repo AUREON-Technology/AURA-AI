@@ -11,6 +11,7 @@ import enum
 from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Sequence
 
+from .images import ImageInput
 from .messages import Conversation, ToolCall
 
 __all__ = [
@@ -567,6 +568,11 @@ class CompletionRequest:
     #: classification the kernel sets for the turn, and the stricter of the two wins; with
     #: neither, the request counts as ``SENSITIVE``. See ``aura_core.llm.sensitivity``.
     data_classification: DataClassification | None = None
+    #: Normalized images for the last user message (ADR-031). Non-empty means the router only
+    #: considers providers declaring the ``image`` modality, never a ``third_party`` one, and
+    #: providers attach them to the final user wire message. Empty is the text-only request
+    #: every caller made before images existed.
+    images: tuple[ImageInput, ...] = ()
 
     def with_conversation(self, conversation: Conversation) -> "CompletionRequest":
         return replace(self, conversation=conversation)

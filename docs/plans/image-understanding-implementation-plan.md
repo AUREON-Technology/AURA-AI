@@ -1,8 +1,27 @@
 # Image Understanding: Implementation Plan
 
-**Status:** PROPOSED. Planning only. No code, config, dependency or infrastructure is changed by
-this document. Per `docs/AURA_UPGRADE_ROADMAP.md`, a phase counts as done only with the evidence
-its exit criteria name: "built" is not "proven".
+**Status:** IN PROGRESS. Phases 0–5 are built and tested on the default suites. Phases 6–7
+(serving and evaluation) are blocked on GAP-012. Per `docs/AURA_UPGRADE_ROADMAP.md`, a phase
+counts as done only with the evidence its exit criteria name: "built" is not "proven".
+
+## Progress (2026-10-30)
+
+| Phase | State | Evidence |
+|---|---|---|
+| 0: decisions, ADR | Built | ADR-031 (Proposed); GAP-019 → `in_progress`; stale `rag/agentic.py` note fixed. D1/D2/D6 still open (§15). |
+| 1: domain, port, adapter, settings | Built, tested | `domain/images.py`, `ports/images.py`, `adapters/pillow_images.py`, `VisionSettings`; `tests/unit/test_image_normalizer.py` |
+| 2: provider path | Built, tested | `CompletionRequest.images`, router `third_party_image` / modality rules, `attach_images` for OpenAI-compatible and Ollama, image-aware echo; `tests/unit/test_vision_routing.py` |
+| 3: kernel and `VisionEngine` | Built, tested | `vision/engine.py`; kernel perception on `run()` and `stream()`, SENSITIVE baseline, cache bypass, history marker, OCR fallback; `tests/security/test_image_turns.py` |
+| 4: API | Built, tested, except P4-2 | `ChatRequest.images`, `GET /api/v3/capabilities`, `vision` in `/admin/status`. P4-2 is narrowed: service keys are **refused** images until a per-key grant exists. |
+| 5: client | Built, tested (P5-4 thumbnails in sent bubbles not done) | attach button + thumbnail strip gated on `/capabilities`; `images` on `/chat/stream`; `test/chat_images_test.dart` |
+| 6: serving | **Blocked** (GAP-012) | Only the default-off `AURA_VISION_ENABLED` pass-through is in both compose files. No vision pool. |
+| 7: eval and rollout | Not started | Needs Phase 6 |
+
+Decisions taken as the plan proposed, reversible:
+- **D3:** inline base64.
+- **D4:** the description is not kept; history stores a marker only.
+- **D5:** a new `GET /api/v3/capabilities` with a global flag.
+- **D7:** one vision call for all images.
 
 | | |
 |---|---|
@@ -601,6 +620,9 @@ GPU cost is `UNKNOWN`. It depends on the D1/D2 choices and on Space sleep settin
 | 2026-10-29 | Image turns are `SENSITIVE`, so never sent to third-party hosted slots | ADR-030; personal photos are among the most sensitive inputs |
 | 2026-10-29 | Exclude Qwen2.5-VL-3B (license `qwen-research`). Gemma 3 only after a legal review. | License fit |
 | 2026-10-29 | No persistence of image bytes in v1 | Privacy, abuse exposure (T9), no migration |
+| 2026-10-30 | D3 inline base64, D4 no description in history, D5 `GET /api/v3/capabilities`, D7 one call for all images | The proposed defaults. Each can be changed without a migration. |
+| 2026-10-30 | Service keys may not attach images (narrowing P4-2) | A per-key grant needs a change to the service-key route model. Refusing is the safe default until someone needs it. |
+| 2026-10-30 | The default `echo` provider declares the image modality | It is the test/dev provider (refused in staging and production). This lets the default suite exercise image turns end to end with no model. |
 
 ## 15. Unresolved decisions (REQUIRES DECISION)
 

@@ -498,6 +498,10 @@ services:
       # AuraSettings still default live_enabled=false unless this env is set.
       AURA_VOICE_LIVE_ENABLED: ${AURA_VOICE_LIVE_ENABLED:-true}
       AURA_VOICE_LIVE_MAX_SESSIONS: ${AURA_VOICE_LIVE_MAX_SESSIONS:-8}
+      # ADR-031 image understanding. Off until a provider declares
+      # AURA_PROVIDER_<NAME>_MODALITIES=text,image (no vision pool ships yet: GAP-012).
+      AURA_VISION_ENABLED: ${AURA_VISION_ENABLED:-false}
+      AURA_VISION_MAX_IMAGES: ${AURA_VISION_MAX_IMAGES:-4}
       # Loop B: digest-addressed ChatML artefacts shared with learning workers.
       AURA_LEARNING_DATASET_DIR: /var/lib/aura/datasets
       # The gateway never trains (GAP-017/018): `scripted` records every launched job as

@@ -61,6 +61,7 @@ from ..domain.llm import (
     CompletionResponse,
     DataClassification,
     GenerationTiming,
+    Modality,
     RoutingPolicy,
     StreamChunk,
     TokenUsage,
@@ -74,6 +75,12 @@ from .sensitivity import effective_classification
 from .workload import effective_workload
 
 __all__ = ["ProviderRouter", "RoutingDecision", "TurnBudget"]
+
+
+def _prompt_tokens(request: CompletionRequest) -> int:
+    """Text plus a coarse per-image estimate, so an image request is not routed to a provider
+    whose context window the encoded image alone would fill."""
+    return request.conversation.approx_tokens() + sum(i.approx_tokens for i in request.images)
 
 # Prior used to rank a provider with no latency history. Deliberately mid-range: a new provider
 # should neither win by default (unknown == 0) nor be excluded (unknown == infinity). Scaled by the
@@ -299,6 +306,14 @@ class ProviderRouter:
             return "not_generative"
         if hint.modalities and not set(hint.modalities) <= caps.effective_modalities:
             return "modality_unsupported"
+        if request.images:
+            # Derived from the request itself, not the hint: a caller that attaches images and
+            # forgets the hint must still never reach a text-only model (ADR-031).
+            if Modality.IMAGE not in caps.effective_modalities:
+                return "modality_unsupported"
+            # A user's photos never go to a third party, whatever ceiling it was configured with.
+            if caps.third_party:
+                return "third_party_image"
         if hint.needs_reasoning and caps.pools and not caps.supports_reasoning:
             return "no_reasoning_support"
         if not caps.serves_language(hint.language):
@@ -316,7 +331,7 @@ class ProviderRouter:
             return "no_json_mode"
         if caps.quality_tier < request.min_quality_tier:
             return "quality_tier_too_low"
-        prompt_tokens = request.conversation.approx_tokens()
+        prompt_tokens = _prompt_tokens(request)
         needed = prompt_tokens + (request.sampling.max_output_tokens or 512)
         if caps.context_window < needed:
             return "context_window_too_small"
@@ -334,7 +349,7 @@ class ProviderRouter:
         caps = provider.capabilities
         prior = _LATENCY_PRIOR_MS * _SPEED_TIER_PRIOR.get(caps.speed_tier, 1.0)
         latency = stats.latency.estimate_ms(prior)
-        prompt_tokens = request.conversation.approx_tokens()
+        prompt_tokens = _prompt_tokens(request)
         cost = caps.projected_cost_usd(prompt_tokens, request.sampling.max_output_tokens or 512)
         resource = caps.resource_cost
         # Saturation matters as much as raw speed: a fast provider with a full queue is slow.
@@ -436,7 +451,7 @@ class ProviderRouter:
         output), so a budget check never admits a request the provider could then bill past it.
         """
         caps = provider.capabilities
-        return request.conversation.approx_tokens() + caps.output_budget(
+        return _prompt_tokens(request) + caps.output_budget(
             request.sampling.max_output_tokens,
             request.preferred_max_output_tokens,
             request.timeout_s,

@@ -15,6 +15,8 @@ a time behind a flag.
 # ``build_router``'s scope; with postponed evaluation every one of them would be misread as a
 # query parameter. Runtime annotations keep the models resolvable.
 import asyncio
+import base64
+import binascii
 import json
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator, Mapping
@@ -203,6 +205,12 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         text: str = Field(min_length=1, max_length=MAX_UNTRUSTED_CHARS)
         source: str = Field(default="", max_length=128)
 
+    class ImageAttachment(BaseModel):
+        #: ADR-031: one attached image, base64 (a ``data:...;base64,`` prefix is tolerated).
+        #: ``media_type`` is the client's claim and is not trusted: the normalizer sniffs bytes.
+        media_type: str = Field(default="", max_length=64)
+        data_base64: str = Field(min_length=4)
+
     class ChatRequest(BaseModel):
         message: str = Field(min_length=1, max_length=32_000)
         session_id: str | None = None
@@ -233,6 +241,10 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         #: AR-6: ask for one JSON value matching this schema (the ADR-025 subset; top level an
         #: object). Validated, repaired at most once, else 422 `output_invalid`. `/chat` only.
         response_schema: dict[str, Any] | None = None
+        #: ADR-031: images to understand alongside `message`. Described by the vision pool and
+        #: given to the answer as DATA evidence (never USER text); never stored. The count and
+        #: size limits are `AURA_VISION_*` settings, checked before anything is decoded.
+        images: list[ImageAttachment] = Field(default_factory=list, max_length=8)
 
     class IngestRequest(BaseModel):
         title: str = Field(min_length=1, max_length=500)
@@ -436,6 +448,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         caller_context = tuple(CallerContext.of(id=e.id, text=e.text, source=e.source) for e in payload.context)
         if len({e.id for e in caller_context}) != len(caller_context):
             raise ValidationError("context ids must be unique within a turn")
+        images = await normalize_images(payload.images, caller) if payload.images else ()
         return TurnRequest(
             message=message,
             user_id=caller.user_id,
@@ -461,7 +474,61 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             caller_context=caller_context,
             response_schema=payload.response_schema,
             connector_tokens=connector_tokens or None,
+            images=images,
         )
+
+    def vision_status() -> dict[str, bool]:
+        engine = getattr(container, "vision", None)
+        return {
+            "enabled": engine is not None and engine.enabled,
+            "available": engine is not None and engine.available,
+        }
+
+    def reject(reason: str) -> None:
+        if container.metrics is not None:
+            container.metrics.vision_rejections.labels(reason=reason).inc()
+
+    async def normalize_images(attachments: list[Any], caller: Principal) -> tuple[Any, ...]:
+        """Decode and normalize a turn's images (ADR-031), refusing before decoding when it can.
+
+        Order matters: availability first (no point decoding for a 503), then the count and the
+        *estimated* decoded total from the base64 length, so an oversized body costs no decode.
+        """
+        vision = settings.vision
+        normalizer = getattr(container, "image_normalizer", None)
+        engine = getattr(container, "vision", None)
+        if engine is None or normalizer is None:
+            raise DependencyUnavailableError(
+                "image understanding is not enabled on this deployment", dependency="vision"
+            )
+        if caller.is_service:
+            # A key with the chat route would otherwise turn the vision pool into a free OCR
+            # service for whoever holds it; a per-key image grant is a deliberate follow-up.
+            raise ValidationError("a service key cannot attach images",
+                                  details={"reason": "service_images_not_allowed"})
+        if len(attachments) > vision.max_images:
+            raise ValidationError("too many images in one turn",
+                                  details={"reason": "too_many_images", "limit": vision.max_images})
+        payloads = [_strip_data_url(a.data_base64) for a in attachments]
+        estimated = sum(len(p) * 3 // 4 for p in payloads)
+        if estimated > vision.max_request_image_bytes:
+            raise ValidationError("the attached images exceed the size limit",
+                                  details={"reason": "request_too_large",
+                                           "limit_bytes": vision.max_request_image_bytes})
+        images = []
+        for index, (attachment, data) in enumerate(zip(attachments, payloads)):
+            try:
+                raw = base64.b64decode(data, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                reject("invalid_base64")
+                raise ValidationError("an image is not valid base64",
+                                      details={"reason": "invalid_base64", "index": index}) from exc
+            try:
+                images.append(await normalizer.normalize(raw, declared_type=attachment.media_type or None))
+            except ValidationError as exc:
+                reject(str(exc.details.get("reason", "invalid")))
+                raise ValidationError(exc.message, details={**exc.details, "index": index}) from exc
+        return tuple(images)
 
     # -- chat --------------------------------------------------------------------------
 
@@ -473,7 +540,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     ) -> JSONResponse:
         """One complete turn. Use ``/chat/stream`` for incremental output."""
         await enforce_rate_limit(request, caller, "chat")
-        result = await container.kernel.run(await to_turn(payload, caller, request))
+        turn = await to_turn(payload, caller, request)
+        result = await container.kernel.run(turn)
         if caller.is_service:
             # Chat turns are not audited for people; a service's are, so one interpretation can be
             # traced from the calling system's correlation id to the turn that produced it.
@@ -542,9 +610,22 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "cached": result.telemetry.cache.hit,
                 "degraded": result.degraded,
                 **({"data": result.data} if payload.response_schema is not None else {}),
+                **({"vision": result.vision,
+                    "images_used": [{k: v for k, v in i.describe().items() if k != "bytes"}
+                                    for i in turn.images]} if turn.images else {}),
             },
             headers={"X-Correlation-Id": result.telemetry.correlation_id.value},
         )
+
+    @router.get("/capabilities")
+    async def capabilities(caller: Principal = Depends(principal)) -> JSONResponse:
+        """What optional features this deployment can serve right now, for any signed-in
+        caller -- the client hides an attach-image button rather than offering one that 503s
+        (ADR-031). ``available`` reflects configuration and provider declarations, not a probe.
+        """
+        return JSONResponse(content={"vision": {**vision_status(),
+                                                "max_images": settings.vision.max_images,
+                                                "max_image_bytes": settings.vision.max_image_bytes}})
 
     @router.post("/chat/stream")
     async def chat_stream(
@@ -1377,6 +1458,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 "settings": container.settings.as_dict(),
                 "learning": extra_payload.get("learning") or {},
                 "refresh": report.as_dict() if report else None,
+                "vision": vision_status(),
             }
         )
 
@@ -1592,6 +1674,14 @@ def build_app(container: Any, *, authenticator: Any, rate_limiter: Any = None) -
         await container.shutdown()
 
     return app
+
+
+def _strip_data_url(value: str) -> str:
+    """The base64 payload of ``value``, tolerating a ``data:<type>;base64,`` prefix and the
+    whitespace some encoders wrap lines with."""
+    if value.startswith("data:"):
+        _, _, value = value.partition(",")
+    return "".join(value.split())
 
 
 def _parse_enum(enum_type: Any, value: str | None) -> Any:

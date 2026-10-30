@@ -219,9 +219,10 @@ permanent platform adapters mounted outside `aura_core` (ADR-002), not legacy co
 removal.
 
 Full ADR list and the ten essential decisions are in `docs/architecture/00-overview.md` and
-`docs/architecture/001-*.md`–`030-*.md` (there is no 012 or 017; 018–028 are Track AP drafts, Proposed); read the relevant one before touching
+`docs/architecture/001-*.md`–`031-*.md` (there is no 012 or 017; 018–028 are Track AP drafts, Proposed); read the relevant one before touching
 retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer workspaces
-(013/014), or service keys / caller context / structured output on `/chat` (029) — each encodes a reason something is shaped the way it is, not just what it does.
+(013/014), service keys / caller context / structured output on `/chat` (029), or images on
+`/chat` (031) — each encodes a reason something is shaped the way it is, not just what it does.
 
 ## Client architecture — the parts that span files
 
