@@ -53,6 +53,9 @@ logger = get_logger("knowledge")
 #: owner, and echoing those back into metadata would duplicate them on every retrieved chunk.
 _PROVENANCE_KEYS = ("modality", "page", "needs_ocr")
 
+# Scores relevance when the configured reranker is disabled or fails (see `_rerank`). Stateless.
+_FALLBACK_SCORER = HeuristicReranker()
+
 
 def derive_document_id(title: str, owner_id: UserId | None) -> DocumentId:
     """The id a document gets when the caller does not name one.
@@ -746,22 +749,55 @@ class KnowledgeEngine:
     async def _rerank(
         self, query: str, candidate_ids: Sequence[str], contents: Mapping[str, str]
     ) -> list[tuple[str, float]]:
+        """Order the candidates and give each the score the relevance threshold is applied to.
+
+        That score has to measure how well *this* chunk matches *this* query, on the scale the
+        threshold is calibrated for. It used to be derived from rank (``1 - i/n``) whenever the
+        reranker was disabled or raised, which made the threshold meaningless on exactly those
+        paths: the top candidate scored 1.0 and always passed however irrelevant it was, the
+        bottom third was always cut however relevant, and ``searched_but_empty`` could never be
+        true (audit F-30 / AR-14).
+
+        The threshold is calibrated against :class:`HeuristicReranker` scores -- the default
+        provider, and what the cross-encoder itself degrades to -- so without a working
+        configured reranker that is what supplies the score. Neither fallback is a rank:
+
+        - reranking disabled: the fusion order is kept, as configured, but each candidate is
+          *gated* on its heuristic relevance;
+        - the reranker raised: the candidates are reranked by the heuristic instead, the same
+          degradation ``CrossEncoderReranker`` applies to its own failures.
+
+        Dense cosine is deliberately not used as the gate: its distribution depends on the
+        embedding model (``bge-small`` puts unrelated passages well above 0.35), so the same
+        floor would mean something different per deployment. If even the heuristic fails, every
+        candidate scores 0.0 -- an honest "nothing passed" rather than a fabricated pass.
+        """
         usable = [(cid, contents[cid]) for cid in candidate_ids if cid in contents]
         if not usable:
             return []
+        texts = [text for _cid, text in usable]
+
         if not self._rerank_enabled:
-            # Preserve fusion order, mapping rank to a descending pseudo-score so the threshold
-            # comparison downstream still behaves sensibly.
-            return [(cid, 1.0 - i / max(1, len(usable))) for i, (cid, _) in enumerate(usable)]
+            relevance = await self._fallback_relevance(query, texts)
+            return [(cid, relevance.get(i, 0.0)) for i, (cid, _) in enumerate(usable)]
 
         try:
-            ranked = await self._reranker.rerank(
-                query, [text for _cid, text in usable], top_k=self._candidate_k
-            )
+            ranked = await self._reranker.rerank(query, texts, top_k=self._candidate_k)
         except Exception:
-            logger.warning("reranker failed; falling back to fusion order")
-            return [(cid, 1.0 - i / max(1, len(usable))) for i, (cid, _) in enumerate(usable)]
+            logger.warning("reranker failed; scoring with the heuristic reranker instead")
+            relevance = await self._fallback_relevance(query, texts)
+            ranked = sorted(relevance.items(), key=lambda item: item[1], reverse=True)
+            if len(ranked) < len(usable):
+                ranked.extend((i, 0.0) for i in range(len(usable)) if i not in relevance)
         return [(usable[index][0], score) for index, score in ranked if index < len(usable)]
+
+    async def _fallback_relevance(self, query: str, texts: Sequence[str]) -> dict[int, float]:
+        """Heuristic relevance per candidate index; empty (so everything fails) if it raises."""
+        try:
+            return dict(await _FALLBACK_SCORER.rerank(query, texts))
+        except Exception:  # pragma: no cover - the heuristic is pure Python over strings
+            logger.warning("heuristic relevance scoring failed; no candidate can pass the threshold")
+            return {}
 
     def _diversify(self, results: Sequence[RetrievedChunk], top_k: int) -> list[RetrievedChunk]:
         """Drop near-duplicate chunks.
