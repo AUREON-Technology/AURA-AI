@@ -1,3 +1,5 @@
+import { apiOrigin } from "./session";
+
 export type RotatedTokens = {
   access_token: string;
   refresh_token: string;
@@ -16,10 +18,24 @@ export type RotatedTokens = {
 // the first response landed -- reuses the result instead of replaying a spent token. This only
 // dedupes within one server process, which is how the console is deployed (one standalone
 // Next.js process behind nginx).
+//
+// Two callers share it: the /api/v3 proxy route and middleware.ts (the session gate for page
+// renders). Each is bundled separately, so module-level Maps would give each its own copy and
+// let a page navigation and a proxied fetch both spend the same token. The state therefore
+// lives on globalThis, which both see because middleware runs on the Node.js runtime in the
+// same process (middleware.ts, `runtime: "nodejs"`); on the Edge runtime it would be a
+// separate sandbox and this sharing would silently stop.
 export const REUSE_WINDOW_MS = 10_000;
 
-const inflight = new Map<string, Promise<RotatedTokens | null>>();
-const recent = new Map<string, { tokens: RotatedTokens; until: number }>();
+type RefreshState = {
+  inflight: Map<string, Promise<RotatedTokens | null>>;
+  recent: Map<string, { tokens: RotatedTokens; until: number }>;
+};
+
+const STATE_KEY = Symbol.for("aura_admin.singleFlightRefresh");
+const holder = globalThis as typeof globalThis & { [STATE_KEY]?: RefreshState };
+const state: RefreshState = (holder[STATE_KEY] ??= { inflight: new Map(), recent: new Map() });
+const { inflight, recent } = state;
 
 export function singleFlightRefresh(
   refreshToken: string,
@@ -52,4 +68,19 @@ export function singleFlightRefresh(
     });
   inflight.set(refreshToken, promise);
   return promise;
+}
+
+// The one call to the gateway's refresh endpoint, used by both the proxy and the middleware so
+// the two cannot drift apart.
+export async function refreshAtGateway(refreshToken: string): Promise<RotatedTokens | null> {
+  const upstream = await fetch(`${apiOrigin()}/api/v3/auth/refresh`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+    cache: "no-store",
+  });
+  if (!upstream.ok) {
+    return null;
+  }
+  return (await upstream.json()) as RotatedTokens;
 }
