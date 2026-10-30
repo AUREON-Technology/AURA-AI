@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
@@ -96,6 +97,9 @@ class SseFrameParser {
     String? eventType;
     String? dataLine;
     for (final line in frame.split('\n')) {
+      // An SSE comment, e.g. the server's `: keepalive` heartbeat. It exists only to keep bytes
+      // flowing (and so the client's idle timeout from firing); it carries no event.
+      if (line.startsWith(':')) continue;
       if (line.startsWith('event: ')) eventType = line.substring(7).trim();
       if (line.startsWith('data: ')) dataLine = line.substring(6);
     }
@@ -138,11 +142,26 @@ Map<String, dynamic> chatStreamBody({
   };
 }
 
+/// The open chat stream went silent for longer than its idle timeout -- no frame and no
+/// keepalive -- so the connection is treated as dead.
+class ChatStreamIdleTimeoutException extends TimeoutException {
+  ChatStreamIdleTimeoutException(Duration idle)
+      : super('No data from the chat stream for ${idle.inMilliseconds}ms', idle);
+}
+
 class SseAgentClient {
   final Ref _ref;
   final _uuid = const Uuid();
+  // Injected in tests; null means a fresh client per stream, closed when the stream ends.
+  final http.Client? _httpClient;
+  final Duration _idleTimeout;
 
-  SseAgentClient(this._ref);
+  SseAgentClient(
+    this._ref, {
+    http.Client? httpClient,
+    Duration idleTimeout = kChatStreamIdleTimeout,
+  })  : _httpClient = httpClient,
+        _idleTimeout = idleTimeout;
 
   String get _url => '${_ref.read(backendUrlProvider)}/api/v3/chat/stream';
   String get _backendUrl => _ref.read(backendUrlProvider);
@@ -162,8 +181,59 @@ class SseAgentClient {
     double temperature = 0.3,
     // ADR-031: images for this turn only. Sent as base64 and never persisted on either side.
     List<ChatImageAttachment> images = const [],
+  }) {
+    final ownsClient = _httpClient == null;
+    final client = _httpClient ?? http.Client();
+    StreamSubscription<SseChatEvent>? inner;
+    late final StreamController<SseChatEvent> controller;
+    controller = StreamController<SseChatEvent>(
+      onListen: () {
+        inner = _events(
+          client: client,
+          ownsClient: ownsClient,
+          message: message,
+          sessionId: sessionId,
+          agentId: agentId,
+          useKnowledge: useKnowledge,
+          useMemory: useMemory,
+          useTools: useTools,
+          approvalIds: approvalIds,
+          correlationId: correlationId,
+          maxOutputTokens: maxOutputTokens,
+          temperature: temperature,
+          images: images,
+        ).listen(controller.add, onError: controller.addError, onDone: controller.close);
+      },
+      onPause: () => inner?.pause(),
+      onResume: () => inner?.resume(),
+      onCancel: () {
+        // A cancelled stream (the user pressed Stop) must drop the connection now. The generator
+        // below would otherwise only notice at its next `yield`, i.e. whenever the server next
+        // sends something -- possibly never, on exactly the stalled stream Stop exists for.
+        if (ownsClient) client.close();
+        final sub = inner;
+        inner = null;
+        unawaited(sub?.cancel().catchError((_) {}));
+      },
+    );
+    return controller.stream;
+  }
+
+  Stream<SseChatEvent> _events({
+    required http.Client client,
+    required bool ownsClient,
+    required String message,
+    required String sessionId,
+    required String agentId,
+    required bool useKnowledge,
+    required bool useMemory,
+    required bool useTools,
+    required List<String> approvalIds,
+    required String? correlationId,
+    required int maxOutputTokens,
+    required double temperature,
+    required List<ChatImageAttachment> images,
   }) async* {
-    final client = http.Client();
     final cid = correlationId ?? _uuid.v4();
     try {
       final request = http.Request('POST', Uri.parse(_url));
@@ -210,13 +280,22 @@ class SseAgentClient {
       }
 
       final parser = SseFrameParser();
-      await for (final chunk in response.stream.transform(utf8.decoder)) {
+      // The connect timeout above only covers the headers. This one covers the body: a gap
+      // between chunks longer than [_idleTimeout] ends the stream with an error instead of
+      // leaving the chat locked on a connection that will never deliver again. Keepalive
+      // comments count as chunks, so a slow-but-alive turn never trips it.
+      final body = response.stream.timeout(_idleTimeout, onTimeout: (sink) {
+        sink
+          ..addError(ChatStreamIdleTimeoutException(_idleTimeout))
+          ..close();
+      });
+      await for (final chunk in body.transform(utf8.decoder)) {
         for (final event in parser.feed(chunk)) {
           yield event;
         }
       }
     } finally {
-      client.close();
+      if (ownsClient) client.close();
     }
   }
 }

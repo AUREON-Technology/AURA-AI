@@ -10,6 +10,9 @@ import '../chat_view_model.dart';
 import 'chat_image_attachments.dart';
 import 'voice_recorder_button.dart';
 
+/// Tooltip and screen-reader label of the composer's Stop button.
+const kStopGeneratingLabel = 'Stop generating';
+
 class ChatComposer extends ConsumerWidget {
   final TextEditingController controller;
   final bool isMobile;
@@ -91,10 +94,20 @@ class ChatComposer extends ConsumerWidget {
               const SizedBox(width: AuraSpacing.lg),
               Container(
                 decoration: BoxDecoration(gradient: palette.brandGradient, borderRadius: BorderRadius.circular(AuraRadius.md)),
-                child: IconButton(
-                  icon: Icon(Icons.send, color: palette.onBrand),
-                  onPressed: locked ? null : onSend,
-                ),
+                // While a response streams, Send becomes Stop: it unlocks the chat at once and
+                // keeps whatever text already arrived (F-31).
+                child: isStreaming
+                    ? IconButton(
+                        key: const ValueKey('chat-stop-button'),
+                        tooltip: kStopGeneratingLabel,
+                        icon: Icon(Icons.stop_rounded, color: palette.onBrand),
+                        onPressed: () => ref.read(chatRepositoryProvider).stopStreaming(),
+                      )
+                    : IconButton(
+                        tooltip: 'Send',
+                        icon: Icon(Icons.send, color: palette.onBrand),
+                        onPressed: locked ? null : onSend,
+                      ),
               ),
             ],
           ),
