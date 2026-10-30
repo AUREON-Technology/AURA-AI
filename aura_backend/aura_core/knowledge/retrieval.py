@@ -17,11 +17,12 @@ Four stages, each independently disable-able:
 
 from __future__ import annotations
 
+import heapq
 import math
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import Iterable, Mapping, Sequence
+from typing import Container, Iterable, Mapping, Sequence
 
 __all__ = [
     "BM25Index",
@@ -55,12 +56,23 @@ def tokenize(text: str, *, keep_stopwords: bool = False) -> list[str]:
 
 
 class BM25Index:
-    """Okapi BM25 over an in-process corpus.
+    """Okapi BM25 over an in-process corpus, as an inverted index sharded by group.
 
-    ~120 lines, no Elasticsearch. At the corpus size a single-VPS deployment holds (tens of
-    thousands of chunks) an in-process inverted index is milliseconds per query, and adding a
-    second heavyweight datastore for that would be a poor trade (ADR-005). Postgres full-text
-    search is the documented drop-in for Stage 2.
+    No Elasticsearch: at the corpus size a single-VPS deployment holds (tens of thousands of
+    chunks) an in-process index is fine, and adding a second heavyweight datastore for it would
+    be a poor trade (ADR-005). Postgres full-text search is the documented drop-in for Stage 2;
+    ``docs/reports/LEXICAL_RETRIEVAL_BENCHMARK.md`` has the measurements behind that decision.
+
+    The postings are ``group -> term -> {doc_id: term frequency}``. A query therefore touches
+    only the postings of its own terms inside the groups it may read -- ``O(Σ postings(q))``
+    within the caller's tenant -- rather than every document's term counts, which is what the
+    forward index this replaced did on every query (audit F-30 / AR-13: ~50 ms per query at 50k
+    chunks, synchronous on the event loop). A group is the knowledge engine's owner key, so the
+    tenant filter is a choice of shards, not a pass over the corpus.
+
+    Document frequencies, the document count and the average length stay **corpus-wide**, not
+    per group, so scores are exactly what the forward index produced: grouping prunes which
+    documents are scored, never how.
 
     ``k1`` controls term-frequency saturation and ``b`` length normalisation; the values here
     are the standard defaults, which are well behaved across corpora.
@@ -69,38 +81,50 @@ class BM25Index:
     def __init__(self, *, k1: float = 1.5, b: float = 0.75) -> None:
         self._k1 = k1
         self._b = b
-        self._documents: dict[str, list[str]] = {}
-        self._frequencies: dict[str, Counter[str]] = {}
+        # group -> term -> doc_id -> term frequency
+        self._postings: dict[str, dict[str, dict[str, int]]] = {}
+        # doc_id -> (group, its distinct terms, token count): what removal and scoring need.
+        # The token lists themselves are not kept; scoring never needed them.
+        self._documents: dict[str, tuple[str, tuple[str, ...], int]] = {}
         self._document_frequency: Counter[str] = Counter()
         self._length_sum = 0
 
-    def add(self, doc_id: str, text: str) -> None:
+    def add(self, doc_id: str, text: str, *, group: str = "") -> None:
         if doc_id in self._documents:
             self.remove(doc_id)
         tokens = tokenize(text)
         if not tokens:
             return
         counts = Counter(tokens)
-        self._documents[doc_id] = tokens
-        self._frequencies[doc_id] = counts
-        for term in counts:
+        shard = self._postings.setdefault(group, {})
+        for term, frequency in counts.items():
+            shard.setdefault(term, {})[doc_id] = frequency
             self._document_frequency[term] += 1
+        self._documents[doc_id] = (group, tuple(counts), len(tokens))
         self._length_sum += len(tokens)
 
-    def add_many(self, items: Iterable[tuple[str, str]]) -> None:
+    def add_many(self, items: Iterable[tuple[str, str]], *, group: str = "") -> None:
         for doc_id, text in items:
-            self.add(doc_id, text)
+            self.add(doc_id, text, group=group)
 
     def remove(self, doc_id: str) -> None:
-        tokens = self._documents.pop(doc_id, None)
-        if tokens is None:
+        entry = self._documents.pop(doc_id, None)
+        if entry is None:
             return
-        counts = self._frequencies.pop(doc_id, Counter())
-        for term in counts:
+        group, terms, length = entry
+        shard = self._postings.get(group, {})
+        for term in terms:
+            postings = shard.get(term)
+            if postings is not None:
+                postings.pop(doc_id, None)
+                if not postings:
+                    del shard[term]
             self._document_frequency[term] -= 1
             if self._document_frequency[term] <= 0:
                 del self._document_frequency[term]
-        self._length_sum -= len(tokens)
+        if not shard:
+            self._postings.pop(group, None)
+        self._length_sum -= length
 
     @property
     def size(self) -> int:
@@ -109,6 +133,11 @@ class BM25Index:
     @property
     def average_length(self) -> float:
         return self._length_sum / len(self._documents) if self._documents else 0.0
+
+    def group_of(self, doc_id: str) -> str | None:
+        """The group ``doc_id`` was added under, or ``None`` if it is not indexed."""
+        entry = self._documents.get(doc_id)
+        return entry[0] if entry is not None else None
 
     def _idf(self, term: str) -> float:
         """Robertson-Sparck-Jones IDF with the standard +0.5 smoothing.
@@ -121,34 +150,58 @@ class BM25Index:
         df = self._document_frequency.get(term, 0)
         return max(math.log((n - df + 0.5) / (df + 0.5) + 1.0), 0.0)
 
-    def search(self, query: str, *, limit: int = 20, allowed_ids: set[str] | None = None
-               ) -> list[tuple[str, float]]:
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 20,
+        allowed_ids: Container[str] | None = None,
+        groups: Iterable[str] | None = None,
+    ) -> list[tuple[str, float]]:
+        """Top ``limit`` documents by BM25, best first; equal scores are ordered by ``doc_id``.
+
+        ``groups`` restricts the search to those shards (``None`` searches every shard), and
+        ``allowed_ids`` further restricts it to an explicit id set. Both only prune: neither
+        changes the score of a document that is searched.
+        """
         terms = tokenize(query)
-        if not terms or not self._documents:
+        if not terms or not self._documents or limit <= 0:
             return []
 
+        shards = (
+            list(self._postings.values())
+            if groups is None
+            else [self._postings[g] for g in dict.fromkeys(groups) if g in self._postings]
+        )
+        if not shards:
+            return []
+
+        k1, b = self._k1, self._b
         average = self.average_length or 1.0
+        documents = self._documents
         scores: dict[str, float] = {}
         for term in set(terms):
             idf = self._idf(term)
             if idf <= 0.0:
                 continue
-            for doc_id, counts in self._frequencies.items():
-                if allowed_ids is not None and doc_id not in allowed_ids:
+            for shard in shards:
+                postings = shard.get(term)
+                if not postings:
                     continue
-                frequency = counts.get(term, 0)
-                if not frequency:
-                    continue
-                length = len(self._documents[doc_id])
-                denominator = frequency + self._k1 * (1 - self._b + self._b * length / average)
-                scores[doc_id] = scores.get(doc_id, 0.0) + idf * (frequency * (self._k1 + 1)) / denominator
+                for doc_id, frequency in postings.items():
+                    if allowed_ids is not None and doc_id not in allowed_ids:
+                        continue
+                    length = documents[doc_id][2]
+                    denominator = frequency + k1 * (1 - b + b * length / average)
+                    scores[doc_id] = scores.get(doc_id, 0.0) + idf * (frequency * (k1 + 1)) / denominator
 
-        ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
-        return ranked[:limit]
+        # Partial selection, O(matches · log limit), instead of sorting every match. The doc_id
+        # tie-break makes the order independent of insertion and shard order.
+        return heapq.nsmallest(limit, scores.items(), key=lambda item: (-item[1], item[0]))
 
     def clear(self) -> None:
+        self._postings.clear()
         self._documents.clear()
-        self._frequencies.clear()
         self._document_frequency.clear()
         self._length_sum = 0
 

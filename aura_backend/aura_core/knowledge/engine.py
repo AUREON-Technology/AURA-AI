@@ -98,6 +98,11 @@ def _owner_value(owner_id: UserId | None) -> str | None:
     return owner_id.value if owner_id is not None else None
 
 
+def _owner_key(owner_id: UserId | None) -> str:
+    """The lexical index group a chunk lives in: its owner, or the shared global group."""
+    return owner_id.value if owner_id is not None else GLOBAL_OWNER
+
+
 class IngestionResult:
     __slots__ = ("document", "chunks", "created", "quarantined", "duration_ms", "skipped_reason")
 
@@ -175,9 +180,9 @@ class KnowledgeEngine:
         self._events = event_bus
 
         # In-process lexical index. Rebuilt from the document store on startup; the Postgres FTS
-        # adapter replaces this when a deployment outgrows it (ADR-005).
+        # adapter replaces this when a deployment outgrows it (ADR-005). Chunks are grouped by
+        # owner key (`_owner_key`), so a query reads only its tenant's and the global postings.
         self._lexical = BM25Index()
-        self._lexical_owner: dict[str, str] = {}
 
         # Serialises the check-then-write section of `ingest` per content hash and per document
         # id. Without it, concurrent duplicate submissions (a double tap, a client retry racing its
@@ -352,10 +357,7 @@ class KnowledgeEngine:
             )
 
         for chunk in chunks:
-            self._lexical.add(chunk.id.value, chunk.content)
-            self._lexical_owner[chunk.id.value] = (
-                chunk.owner_id.value if chunk.owner_id else GLOBAL_OWNER
-            )
+            self._lexical.add(chunk.id.value, chunk.content, group=_owner_key(chunk.owner_id))
 
         if self._graph_pipeline is not None:
             # Extract from what survived the context guard, not the raw upload: a quarantined
@@ -452,7 +454,6 @@ class KnowledgeEngine:
         await self._vectors.delete(identity, point_ids=ids)
         for chunk_id in ids:
             self._lexical.remove(chunk_id)
-            self._lexical_owner.pop(chunk_id, None)
 
     async def _extract_graph(
         self, document: Document, text: str, owner_id: UserId | None, *, superseded: bool
@@ -496,7 +497,6 @@ class KnowledgeEngine:
         await self._vectors.delete(identity, point_ids=[c.id.value for c in chunks])
         for chunk in chunks:
             self._lexical.remove(chunk.id.value)
-            self._lexical_owner.pop(chunk.id.value, None)
         if self._graph_pipeline is not None:
             # Before the tombstone and allowed to raise: "delete my data" must include the facts
             # derived from it, and a failure here leaves the document un-tombstoned so a retried
@@ -678,15 +678,15 @@ class KnowledgeEngine:
     ) -> list[tuple[str, float]]:
         if self._lexical.size == 0:
             return []
-        owner_value = owner_id.value if owner_id else None
-        allowed = {
-            chunk_id
-            for chunk_id, owner in self._lexical_owner.items()
-            if owner == owner_value or (include_global and owner == GLOBAL_OWNER)
-        }
-        if not allowed:
+        # Tenant isolation is the choice of groups: the caller's own chunks and, if asked, the
+        # global ones. No identity reads only the global group. Selecting shards replaces the
+        # per-query pass over every chunk's owner that used to build an allow-list (F-30).
+        groups = [owner_id.value] if owner_id else []
+        if include_global:
+            groups.append(GLOBAL_OWNER)
+        if not groups:
             return []
-        return self._lexical.search(text, limit=self._candidate_k, allowed_ids=allowed)
+        return self._lexical.search(text, limit=self._candidate_k, groups=groups)
 
     async def _drop_inactive_lexical(
         self, hits: Sequence[tuple[str, float]], live_ids: set[str]
@@ -716,7 +716,6 @@ class KnowledgeEngine:
                     kept.append((chunk_id, score))
                     continue
             self._lexical.remove(chunk_id)
-            self._lexical_owner.pop(chunk_id, None)
         return kept
 
     async def _resolve_contents(
@@ -875,14 +874,10 @@ class KnowledgeEngine:
         starts with an empty one, and hybrid retrieval would silently degrade to dense-only.
         """
         self._lexical.clear()
-        self._lexical_owner.clear()
         count = 0
         async for batch in self._documents.iter_all_chunks(batch_size=500):
             for chunk in batch:
-                self._lexical.add(chunk.id.value, chunk.content)
-                self._lexical_owner[chunk.id.value] = (
-                    chunk.owner_id.value if chunk.owner_id else GLOBAL_OWNER
-                )
+                self._lexical.add(chunk.id.value, chunk.content, group=_owner_key(chunk.owner_id))
                 count += 1
         logger.info("lexical index rebuilt", extra={"chunks": count})
         return count

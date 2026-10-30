@@ -50,7 +50,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 | Self-hosted LLM (qwen2.5:3b, CPU Ollama) | TESTED in a sandbox only | A4 sandbox p50 56 s / p95 71 s (`docs/reports/phase-a4-load-test.md`); not on the current production target |
 | Hosted open-weight inference, ADR-030 Phases 1–5 | TESTED | GAP-064; inert unless `AURA_ALLOW_HOSTED_INFERENCE=true` |
 | ADR-030 Phase 6, live | BUILT (`built_not_proven`) | In-process run against live OpenRouter (`nvidia/nemotron-3-ultra-550b-a55b:free`, `ALLOW_PROMPT_TRAINING=true`): 9/10 checks pass, the 429 burst was skipped (`docs/reports/phase-6-hosted-inference-openrouter-inprocess-20261028.txt`). The Verify Hosted Inference workflow has never run. |
-| Hybrid retrieval / knowledge | TESTED (hash embedder) | A3 recall@5 0.65; F-14 fixed (`c415a52`, not CI-run) |
+| Hybrid retrieval / knowledge | TESTED (hash embedder) | A3 recall@5 0.65; F-14 fixed (`c415a52`, not CI-run); F-30 built and benchmarked locally, not CI-run: the threshold no longer passes a rank pseudo-score, and the owner-sharded inverted BM25 brings the lexical stage at 50k chunks from 54.7 to 4.8 ms p50, with identical scores (`docs/reports/LEXICAL_RETRIEVAL_BENCHMARK.md`; the 200k point and Postgres FTS are open) |
 | Memory engine | TESTED | F-15 fixed (`19244e6`); F-16 write races open |
 | v2 sync protocol | BUILT (fixes merged, not CI-run); **broken live until 0014 applies** | F-11 (`31608f9`), F-12 (`19c64f9`, migration `0014`), F-13 (`c5b1924`), F-07 (`98143ff`) |
 | Auth / RBAC / JWT | BUILT (fixes merged, not CI-run); **at risk live until 0015 applies** | F-02: refresh re-resolves role (`2d42388`) and Access-page assignments now take effect (`3e4e0f5`, migration `0015`); F-03 (`a3fa5c2`: dev keys, `iss`/`aud`); F-10 (`039865e`: no JWT secret → no start in production). Demotion still revokes no sessions. |
@@ -101,6 +101,12 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
   F-20 (one event loop per Celery worker process), F-06 (erasure reaches memories, documents and
   chunks, personal-OS records and transcripts, and deletes the `users` row; it lists what it does
   not reach), F-02 remainder (demotion revokes refresh tokens and paired devices).
+- F-30 (built, tested and benchmarked locally, not CI-run). With reranking disabled or a
+  reranker that raises, the relevance floor is now gated on heuristic relevance, not on
+  `1 - rank/n`, so an unrelated query is `searched_but_empty` (`2307bc4`). `BM25Index` is an
+  owner-sharded inverted index with float-identical scores and unchanged A3 metrics. Results and
+  the Postgres FTS recommendation are in `docs/reports/LEXICAL_RETRIEVAL_BENCHMARK.md`. F-14's
+  cross-worker half (uploads invisible on other workers) is unchanged.
 
 **Still open (High)**
 - F-22 and F-27 are built and tested locally, not CI-run:
@@ -109,7 +115,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
   - F-27: migration `0016` baselines the 16 runtime-only tables.
 - **GAP-011, GAP-041 (P0):** inference is single-slot and no load matrix exists.
 
-**Medium:** F-16–F-18, F-23–F-26, F-28, F-30, F-33–F-38.
+**Medium:** F-16–F-18, F-23–F-26, F-28, F-33–F-38 (F-30 built, see above).
 
 **Conditional:** SEC-08 / F-38 becomes Critical if Firebase email/password sign-in is enabled.
 That needs a check in the Firebase console.
