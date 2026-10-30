@@ -552,6 +552,13 @@ gaps:
       tests/security/test_image_turns.py. Remaining before built_not_proven: client attach UI
       (Phase 5) and a pinned vision pool (Phase 6, blocked on GAP-012); before proven: the
       Phase 7 eval report.
+    reverified_2026_10_30_phase6: >-
+      Client attach UI landed (aura_client test/chat_images_test.dart). Phase 6 is built for the
+      HF Space Inference Plane: deploy/spaces/inference-vllm/entrypoint.sh takes
+      VLLM_MODEL_REVISION and VLLM_MAX_IMAGES_PER_PROMPT (image cap, remote media URLs
+      refused), pinned by tests/deployment/test_inference_contract.py; runbook in
+      docs/deployment/inference-plane.md section 8; evidence driver deploy/scripts/verify_vision.py.
+      Not run: no Space has served a vision model and no phase-6-vision report is committed.
 
   - gap_id: GAP-020
     component: voice/stt-language

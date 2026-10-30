@@ -14,7 +14,7 @@ counts as done only with the evidence its exit criteria name: "built" is not "pr
 | 3: kernel and `VisionEngine` | Built, tested | `vision/engine.py`; kernel perception on `run()` and `stream()`, SENSITIVE baseline, cache bypass, history marker, OCR fallback; `tests/security/test_image_turns.py` |
 | 4: API | Built, tested, except P4-2 | `ChatRequest.images`, `GET /api/v3/capabilities`, `vision` in `/admin/status`. P4-2 is narrowed: service keys are **refused** images until a per-key grant exists. |
 | 5: client | Built, tested (P5-4 thumbnails in sent bubbles not done) | attach button + thumbnail strip gated on `/capabilities`; `images` on `/chat/stream`; `test/chat_images_test.dart` |
-| 6: serving | **Blocked** (GAP-012) | Only the default-off `AURA_VISION_ENABLED` pass-through is in both compose files. No vision pool. |
+| 6: serving | **Built for the HF Space; not run** | D1 = the HF Space and D2 = one VLM serving chat and vision, both chosen by the owner on 2026-10-30. The Space entrypoint adds `VLLM_MODEL_REVISION` and `VLLM_MAX_IMAGES_PER_PROMPT`, which caps images per prompt and refuses remote media URLs. Contract tests pin both. The runbook is `docs/deployment/inference-plane.md` §8. The evidence driver `deploy/scripts/verify_vision.py` was smoke-tested against a local gateway and a stub vLLM, never against the real Space. Changing the Space and Railway variables and running the driver are operator steps. |
 | 7: eval and rollout | Not started | Needs Phase 6 |
 
 Decisions taken as the plan proposed, reversible:
@@ -22,6 +22,7 @@ Decisions taken as the plan proposed, reversible:
 - **D4:** the description is not kept; history stores a marker only.
 - **D5:** a new `GET /api/v3/capabilities` with a global flag.
 - **D7:** one vision call for all images.
+- **D1 / D2 (2026-10-30, owner):** serve from the existing HF Space, one VLM for chat and vision.
 
 | | |
 |---|---|

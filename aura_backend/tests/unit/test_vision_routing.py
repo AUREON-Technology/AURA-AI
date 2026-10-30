@@ -15,7 +15,7 @@ import pytest
 from aura_core.domain import CompletionRequest, Conversation, Message, ProviderCapabilities
 from aura_core.domain.errors import AllProvidersFailedError
 from aura_core.domain.images import ImageInput
-from aura_core.domain.llm import DataClassification, Modality, ModelPool, SamplingParams
+from aura_core.domain.llm import DataClassification, Modality, ModelPool, SamplingParams, WorkloadHint
 from aura_core.llm import ProviderRouter
 from aura_core.llm.providers.echo import EchoProvider
 from aura_core.llm.providers.ollama import OllamaProvider
@@ -123,3 +123,44 @@ class TestEcho:
     async def test_echo_describes_the_images_it_was_shown(self) -> None:
         response = await EchoProvider().complete(_request(PNG))
         assert f"[image 1: 640x480 image/png sha256:{PNG.sha256[:12]}]" in response.text
+
+
+class TestSpaceTopology:
+    """The Phase 6 topology (docs/deployment/inference-plane.md, "Vision"): the Space declares the
+    image modality in its env config, a hosted slot sits beside it, and image turns must reach the
+    Space while text turns still may use either."""
+
+    def test_the_space_serves_images_and_a_hosted_slot_never_does(self, monkeypatch) -> None:
+        from aura_core.config.external_inference import HOSTED_OPEN_WEIGHT_HOSTS
+        from aura_core.config.settings import ProviderConfig
+        from aura_core.llm.registry import capabilities_from_config
+
+        monkeypatch.setenv("AURA_ALLOW_REMOTE_INFERENCE", "true")
+        monkeypatch.setenv("AURA_ALLOW_HOSTED_INFERENCE", "true")
+        for key, value in {
+            "BASE_URL": "https://me-aura-inference.hf.space/v1",
+            "MODEL": "Qwen/Qwen3-VL-8B-Instruct-FP8",
+            "MODALITIES": "text,image",
+            "CONTEXT_WINDOW": "16384",
+            "MAX_OUTPUT_TOKENS": "2048",
+        }.items():
+            monkeypatch.setenv(f"AURA_PROVIDER_HFSPACE_{key}", value)
+        space = capabilities_from_config(ProviderConfig.from_env("hfspace"))
+        hosted = capabilities_from_config(ProviderConfig(
+            name="hosted1", kind="openai_compatible", model="openai/gpt-oss-120b",
+            base_url=f"https://{HOSTED_OPEN_WEIGHT_HOSTS[0]}/openai/v1", modalities=("text", "image"),
+        ))
+        assert Modality.IMAGE in space.effective_modalities and not space.third_party
+        assert space.max_data_classification is DataClassification.SENSITIVE
+
+        router = ProviderRouter([
+            EchoProvider(name="hfspace", capabilities=space),
+            EchoProvider(name="hosted1", capabilities=hosted),
+        ])
+        hint = WorkloadHint(pool=ModelPool.VISION, modalities=(Modality.IMAGE,))
+
+        plan = router.plan(_request(PNG, PNG, PNG, PNG, workload=hint))
+        assert plan.candidates == ("hfspace",)
+        assert plan.excluded["hosted1"] in {"third_party_image", "data_classification"}
+        assert set(router.plan(_request(data_classification=DataClassification.INTERNAL)).candidates) == {
+            "hfspace", "hosted1"}

@@ -1,6 +1,6 @@
 # ADR-031 — Image understanding as a kernel perception step
 
-**Status:** Proposed (Phases 1–4 built, not proven) · **Date:** 2026-10-30 · **Closes when
+**Status:** Proposed (Phases 1–6 built, not proven) · **Date:** 2026-10-30 · **Closes when
 proven:** GAP-019, the vision half of roadmap M12 · **Plan:**
 `docs/plans/image-understanding-implementation-plan.md` · **Related:** ADR-003 (routing),
 ADR-006 (trust channels), ADR-029 (caller context), ADR-030 (hosted inference and data
@@ -88,5 +88,8 @@ photo is exactly the content ADR-030 says must never reach a third party.
 - Every image turn is tainted, so it reports `degraded`, as a caller-context turn does.
 - Fine spatial questions can lose detail in the description. The Phase 7 eval measures this, and
   native multimodal is the documented remedy.
-- **Not proven.** No vision pool is deployed (GAP-012), no client attaches images yet, and no
-  model has been evaluated. This ADR moves to Accepted when the plan's Phase 7 report exists.
+- **Serving:** the HF Space Inference Plane serves one VLM for chat and vision
+  (`docs/deployment/inference-plane.md` §8). Its entrypoint caps images per prompt and refuses
+  every remote media URL, so the model server cannot be made to fetch anything.
+- **Not proven.** No Space has served a vision model yet, and no `phase-6-vision` report or
+  Phase 7 eval exists. This ADR moves to Accepted when they do.

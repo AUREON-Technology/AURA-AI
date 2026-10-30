@@ -53,3 +53,24 @@ def test_entrypoint_still_refuses_to_boot_unauthenticated() -> None:
     text = ENTRYPOINT_FILE.read_text(encoding="utf-8")
     assert 'VLLM_API_KEY:-' not in text or "FATAL: VLLM_API_KEY is not set" in text
     assert "--api-key" in text
+
+
+def test_vision_is_opt_in_and_never_widens_what_the_space_will_fetch() -> None:
+    """ADR-031 on the Inference Plane: image input is off unless VLLM_MAX_IMAGES_PER_PROMPT is
+    set, and turning it on never lets vLLM read local files, take per-request processor
+    overrides or raw embeddings, or fetch remote URLs -- the gateway sends base64 only, so any of
+    those would be attack surface with no caller."""
+    text = ENTRYPOINT_FILE.read_text(encoding="utf-8")
+    assert re.search(r'VLLM_MAX_IMAGES_PER_PROMPT:-0\}', text), "image input must default to off"
+    for flag in ("--allowed-local-media-path", "--trust-request-mm-kwargs", "--enable-mm-embeds"):
+        assert flag not in text.replace(f"(no {flag})", ""), f"{flag} must never be passed"
+    images_block = text[text.index('if [ "$MAX_IMAGES" -gt 0 ]'):]
+    assert "--allowed-media-domains media.invalid" in images_block
+    assert "VLLM_MEDIA_URL_ALLOW_REDIRECTS=0" in images_block
+    assert "--limit-mm-per-prompt" in images_block
+
+
+def test_the_weights_can_be_pinned() -> None:
+    """A Space serving whatever `main` is today answers with weights nobody reviewed."""
+    text = ENTRYPOINT_FILE.read_text(encoding="utf-8")
+    assert "VLLM_MODEL_REVISION" in text and '--revision "$MODEL_REVISION"' in text
