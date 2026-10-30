@@ -11,8 +11,8 @@ for fetching the Flutter version `client-ci.yml` pins and running `analyze` + `t
 which is how every "awaiting CI" row below became a measured result instead of a hope.
 
 **Last local run** (Flutter 3.44.6 / Dart 3.12.2, the CI pin):
-`flutter analyze` → **No issues found!**; `flutter test` → **452 passed, 0 failed, 3 skipped**,
-including the 133 in `test/ux/`. The suite grew past the 381 this transformation last measured
+`flutter analyze` → **No issues found!**; `flutter test` → **477 passed, 0 failed, 3 skipped**,
+including the 138 in `test/ux/`. The suite grew past the 381 this transformation last measured
 because other work landed alongside it; the UX figure is the one this document is accountable
 for.
 
@@ -38,8 +38,8 @@ is actually available on demand.
 | 4 | Explorer + Editor | **PARTIALLY IMPLEMENTED** | F-08 closed (unimplemented editor commands now throw). Explorer search/filter, editor breadcrumbs, symbols and the selection→AURA actions NOT STARTED |
 | 5 | Command system, Terminal, Git, Diff | **PARTIALLY IMPLEMENTED** | F-07 closed — Ctrl/Cmd+Shift+P over a shared palette component, 28 tests. Terminal, Git and Diff UX untouched; mobile's palette not yet migrated onto the shared component |
 | 6 | Problems + Tests + Debug | **PARTIALLY IMPLEMENTED** | F-09 closed — the problem count is now visible with the panel collapsed. Test Explorer and the unified diagnostics experience NOT STARTED |
-| 7 | AURA AI interaction | **NOT STARTED** | |
-| 8 | Agent Workspace | **NOT STARTED** | |
+| 7 | AURA AI interaction | **PARTIALLY IMPLEMENTED — not by this transformation** | Much of rule 12's progressive disclosure exists in `features/chat/presentation/widgets/`: `step_log_panel.dart` renders the plan/tool steps from the backend's `step` SSE frames, `tool_call_chip.dart` and `turn_status_row.dart` the execution, `citation_chip.dart` / `user_facing_citations.dart` the sources, `streaming_message_skeleton.dart` the wait. This transformation added the one trust signal that was arriving and rendering nowhere: `TurnMeta.tainted`, i.e. the turn's context was quarantined (ADR-006). Still missing: **context inspection** — what AURA *knows* for this turn (current file, relevant files, diagnostics, git state) — and rule 13's structured response sections |
+| 8 | Agent Workspace | **PARTIALLY IMPLEMENTED — not by this transformation** | The pieces exist as message-level widgets: `sandbox_diff_view.dart`, `sandbox_file_view.dart`, `sandbox_terminal_view.dart`, `pending_actions_card.dart`, `engineer_confirmation_card.dart`, `github_branch_summary.dart`. What rule 15 asks for and does not exist is the **run as a first-class view**: task, plan with a current step, changed-file set, test status and security state as regions you can look at, rather than fragments scattered down a transcript you have to scroll |
 | 9 | Approval + Security UX | **BLOCKED** | F-03: the approval payload carries `command`, `root`, `paths`, `diff_preview` and nothing else. Reason, risk and reversibility are not transmitted, and inventing them client-side would be fabrication. Protocol change across backend + hostd + client is the prerequisite |
 | 10 | Host Management | **NOT STARTED** | |
 | 11 | Universal loading/error/empty/offline states | **COMPLETE** | Failures: `AuraFailure`/`AuraFailureView` classify the backend's ~30 `kind` slugs into 12 states, Retry only where it helps, a `compact` form for one-slot failures, adopted across 13 surfaces. Sync: `AuraSyncStatusView` folds `SyncState` and the parked count into five phases including `pendingRefused`, plus `SyncAlertBanner` in the app shell so an unsaved change is visible on every screen and not just in chat |
@@ -91,6 +91,37 @@ status code, and that is equally consistent with a dead network and a dead serve
 render as one state worded not to claim either — saying "you are offline" when the server is down
 sends the user to check their wifi for nothing. Splitting them would need a reachability probe
 against a third party, which is a design decision (and a privacy one) rather than a UI change.
+
+## Why two phases say "not by this transformation"
+
+A parallel workstream has been changing the client throughout this period (156 commits on `main`
+between 2026-09-28 and 2026-10-28 alone). Two phases this document had recorded as NOT STARTED
+were in fact substantially built by it — `step_log_panel.dart`'s own docstring notes the very
+thing a Phase 7 audit would have found, that the `step` frames "have flowed from the backend
+since the turn feature shipped" with nothing rendering them, and then renders them.
+
+Recorded this way rather than quietly flipped to IMPLEMENTED for two reasons. The next person
+reading this needs to know those surfaces exist so they extend them instead of rebuilding them.
+And a status this document did not earn should not read as if it had.
+
+The lesson for this file: a status table is only worth the date of its last measurement. Both
+phases above were re-checked against the tree on 2026-10-30, by reading the widgets and their
+mount points — not inferred from the roadmap.
+
+## One trust signal that cannot be rendered yet
+
+`TurnMeta.guardsComplete` parses as `json['guards_complete'] == true`. A backend that never sends
+the field is therefore indistinguishable from one reporting guards that did not finish, and
+warning on `!guardsComplete` would fire on every turn from an older backend. A false alarm about
+safety checks is worse than the silence it replaces, so nothing renders it, and
+`turn_trust_notes_test.dart` pins that restraint rather than leaving it to be rediscovered.
+
+Making the field nullable — the shape `resolvedAgent` already uses, where absent and false are
+different answers — is the prerequisite. It is a change to `turn_meta.dart` and the backend's
+`done` frame, so it is recorded here rather than done here.
+
+`tainted` has the opposite shape and so *is* rendered: `json['tainted'] == true` is only ever set
+by an affirmative statement from the backend, which `kernel.py` makes on every `done` frame.
 
 ## A constraint worth knowing before you mount anything in the shell
 

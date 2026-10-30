@@ -133,6 +133,16 @@ label on a narrow surface still leaves the status in a live-region announcement,
 shows a spinner and no button at all rather than a disabled one, and that the view is read-only
 when given no callback.
 
+### `test/ux/turn_trust_notes_test.dart` — Phase 7 (rules 14 and 46)
+
+That a quarantined turn is reported at all, that an ordinary one stays silent, that the copy names
+what is *prevented* rather than only that something is off, and that the note leads the others
+because it bounds what the answer may do rather than rating how good it is.
+
+Plus one test for restraint: that an absent `guards_complete` is **not** reported as a failed
+guard. That is the test most likely to look pointless and be deleted, so its reasoning is written
+into it.
+
 ### `test/ux/sync_alert_banner_test.dart` — Phase 11
 
 The shell banner: silent at zero parked changes (and zero-sized, so it is not permanent chrome),
