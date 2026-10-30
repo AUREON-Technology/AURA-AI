@@ -15,6 +15,15 @@ on:
     paths:
       - "aura_hostd/**"
 
+permissions:
+  contents: read
+
+# A newer push to the same PR supersedes the run in flight; runs on main are never cancelled, so
+# every merge keeps its own record.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   analyze-and-test:
     runs-on: ubuntu-latest
@@ -26,17 +35,18 @@ jobs:
       run:
         working-directory: aura_hostd
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      # Pin Dart to match aura_hostd/pubspec.yaml SDK constraint (^3.11.4).
-      - uses: dart-lang/setup-dart@v1
+      # Dart 3.12.2 is the SDK Flutter 3.44.6 ships (client-ci.yml's pin), so the daemon and the
+      # desktop client are analyzed by the same toolchain. Satisfies pubspec.yaml's ^3.11.4.
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
         with:
-          sdk: "3.11.4"
+          sdk: "3.12.2"
 
       # control_server_test's debug-console case spawns a real `python -m debugpy` (the DAP
       # server debug_session_manager.dart tunnels); without it the case fails with
       # process_exited rather than exercising the tunnel.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 
@@ -66,16 +76,16 @@ jobs:
       run:
         working-directory: aura_hostd
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: dart-lang/setup-dart@v1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
         with:
-          sdk: "3.11.4"
+          sdk: "3.12.2"
 
       # control_server_test's debug-console case spawns a real `python -m debugpy` (the DAP
       # server debug_session_manager.dart tunnels); without it the case fails with
       # process_exited rather than exercising the tunnel.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
 

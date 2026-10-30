@@ -41,12 +41,13 @@ and both nginx server blocks. None of it is proven:
   test (2026-09-27, `AURA_REAL_PRODUCTION_TEST_REPORT.md` §28) found `/console` unreachable.
 - **Dev stack:** `aura-dev-console` is defined (`docker-compose.dev.yml`). `dev.aureon-ai.tech` no
   longer resolves in DNS. The VPS Dev Ops workflow (`console_only` option) has never run.
-- **Admin CI** (`admin-ci.yml`): has never run.
-  - **Triggers:** only `workflow_run` of VPS Dev Ops (never run) and `workflow_dispatch`. There is
-    no PR trigger (GAP-007, F-37, CB-30).
-  - **Lint:** a no-op. There is no ESLint config, so `next lint` exits at its setup prompt.
-  - **e2e:** its `workflow_run` path points Playwright at the dev domain rather than the mock
-    gateway the specs expect.
+- **Admin CI** (`admin-ci.yml`): has never run. **Rewired 2026-10-30 (F-37), not CI-run (CB-44).**
+  - **Triggers:** `pull_request` and `push` to `main` on `aura_admin/**`, plus `workflow_dispatch`
+    with an optional `base_url`. The dead `workflow_run`-of-VPS-Dev-Ops path (dev domain) is gone.
+  - **Steps:** `npm ci`, `tsc --noEmit`, `npm run build`, `playwright install --with-deps
+    chromium`, `npm run test:e2e` against the mock gateway the config starts itself.
+  - **Lint:** deliberately not a step. There is no ESLint config, so `next lint` stops at its setup
+    prompt; it gets wired in once a config is committed.
 - **Playwright:** 4 e2e specs (`admin.spec.ts`, `superadmin.spec.ts`, `refresh.spec.ts`,
   `session-gate.spec.ts`) against `tests/e2e/mock-gateway.mjs`, plus `tests/unit/refresh.spec.ts`.
   They cover about 6 of 10 pages. Run locally on 2026-10-30 (`CI=1 npx playwright test`): 10
@@ -61,8 +62,9 @@ and both nginx server blocks. None of it is proven:
    is on Railway.
 2. **AP9 / GAP-058 / CB-39: no Project Factory UI.** This is the critical-path blocker for Track AP
    MVP-1; every adaptation route is reachable only through the raw API.
-3. **GAP-007 / CB-30 / F-37: Admin CI never runs.** Lint checks nothing, and the e2e target is
-   misconfigured.
+3. **GAP-007 / CB-30 / F-37: Admin CI has never run.** It now triggers on PRs and runs e2e against
+   the mock gateway (2026-10-30), but no runner has executed it (CB-44). Locally the suite is green.
+   Lint is still absent (no ESLint config).
 4. **F-38 / SEC-08:** role grants from the email lists never check `email_verified`, and console
    login trusts those lists. This becomes Critical if Firebase email/password sign-in is enabled.
 5. **Session refresh is tested only locally.** F-35 (the proxy) and the session gate's
@@ -85,12 +87,10 @@ and both nginx server blocks. None of it is proven:
 
 1. Decide where the console is served (Railway service, the VPS once deploys work, or both), and
    confirm `/console/login` returns 200 there.
-2. **Fix Admin CI.**
-   - Add `pull_request` and `push` triggers on `aura_admin/**`.
-   - Run e2e against the mock gateway.
-   - Add an ESLint config.
-   - Gate the `workflow_run` path on success.
-   - Link one green run (GAP-007, the M0 exit).
+2. **Finish Admin CI.** PR/push triggers and mock-gateway e2e are in (2026-10-30). Still to do:
+   - fix the `admin.spec.ts` heading locator so the gate can go green;
+   - add an ESLint config, then a lint step;
+   - link one green run (GAP-007, the M0 exit).
 3. Do the Firebase email/password check, then add the `email_verified` and `sign_in_provider`
    gate (F-38).
 4. Build AP9 `/console/adaptation`:
@@ -105,5 +105,5 @@ and both nginx server blocks. None of it is proven:
 - Whether any console container is running on the VPS.
 - Whether `npm run build` and the Playwright specs pass in CI (only run locally, 2026-10-30:
   build and `tsc --noEmit` clean; Playwright as above).
-- How Admin CI's dev-URL e2e path would actually behave (inferred from code).
+- Whether the rewired Admin CI behaves on a real runner as it does locally (CB-44: no runners).
 - The Firebase sign-in providers (SEC-08).

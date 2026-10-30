@@ -56,12 +56,15 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
   - `build-android`: fails with "No space left on device" at Gradle `mergeJavaRes` (runs #142,
     #143).
   - `build-windows`: red, but non-gating.
-- **`release-apk.yml`:** run by hand, on a floating Flutter `stable` (GAP-044), defaulting to
-  `https://aureon-ai.tech`. It has succeeded once, on 2026-08-19, and that artifact has expired.
+- **`release-apk.yml`:** run by hand, defaulting to `https://aureon-ai.tech`. Pinned to Flutter
+  3.44.6 on 2026-10-30, the same as Client CI (it floated on `stable`; GAP-044); not run since. It has succeeded once, on 2026-08-19, and that artifact has expired.
   Without the `AURA_RELEASE_*` secrets the AAB falls back to debug signing.
-- **Committed APK** (`aura_client/releases/aura-copilot-release.apk`, 72 MB): stale. It predates
-  `5153394` and has `https://169.58.188.43.nip.io` baked in (F-29 / CB-13). Three 5 MB
-  `scratch_test_*.tmp` files are also tracked.
+- **Committed APK: removed from the index on 2026-10-30** (F-29 / CB-13 / F-37). It was 72 MB,
+  predated `5153394` and had `https://169.58.188.43.nip.io` baked in. The three 5 MB
+  `scratch_test_*.tmp` files went with it. Both stay in git history (shrinking clones needs a
+  history rewrite, an owner decision). Install builds come from the `release-apk.yml` artifact;
+  `aura_client/releases/` and `*.apk` are now ignored, and `repo-hygiene.yml` fails a PR that
+  tracks one again.
 - **Backend URL:** fixed at build time, plus a runtime switch between allowlisted presets
   (`aureon-ai.tech`, `dev.aureon-ai.tech`). `dev.aureon-ai.tech` no longer resolves in DNS.
 - **iOS:** no CI job and no IPA workflow. `scripts/deploy_client.sh` builds an IPA on macOS only.
