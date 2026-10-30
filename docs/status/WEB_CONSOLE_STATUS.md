@@ -20,8 +20,8 @@ and both nginx server blocks. None of it is proven:
 | Area / page | Status | Evidence |
 | --- | --- | --- |
 | Login (Google ID token → `POST /api/v3/auth/web/token`, Developer+, httpOnly SameSite=strict cookies) | TESTED (backend side only) | `app/api/auth/login/route.ts`; `tests/unit/test_web_token.py`, `test_console_operator_bootstrap.py` |
-| `/api/v3/*` proxy and refresh rotation | BUILT; defect | F-35 / UX-10: parallel 401s each spend the single-use refresh token, so the admin is logged out after about 15 minutes |
-| Session gate (layout, plus nginx `auth_request` for Grafana) | BUILT | `app/(console)/layout.tsx` → `/api/v3/admin/me` |
+| `/api/v3/*` proxy and refresh rotation | BUILT; F-35 fix TESTED locally (2026-10-30), not CI-run | Single-flight refresh keyed by refresh token (`src/lib/refresh.ts`); `tests/e2e/refresh.spec.ts` against a mock gateway that enforces single-use refresh tokens fails without it (`[200, 401, 401]`); `tests/unit/refresh.spec.ts`. Dedupes within one server process only |
+| Session gate (layout, plus nginx `auth_request` for Grafana) | BUILT; defect | `app/(console)/layout.tsx` → `/api/v3/admin/me`. It never refreshes: a page render after the access token expired redirects to `/login` (seen locally in dev, 2026-10-30) |
 | Overview / Settings | BUILT; heading asserted in e2e | `tests/e2e/admin.spec.ts` |
 | Providers (breaker state, circuit reset) | BUILT; e2e spec, never run in CI | `providers/page.tsx` |
 | Providers: ADR-030 ceiling, `third_party`, `may_train_on_prompts` | OPEN | `router.stats()` emits them, but `src/lib/types.ts` `ProviderRow` lacks the fields |
@@ -47,8 +47,10 @@ and both nginx server blocks. None of it is proven:
   - **Lint:** a no-op. There is no ESLint config, so `next lint` exits at its setup prompt.
   - **e2e:** its `workflow_run` path points Playwright at the dev domain rather than the mock
     gateway the specs expect.
-- **Playwright:** 2 specs (`admin.spec.ts`, `superadmin.spec.ts`) against
-  `tests/e2e/mock-gateway.mjs`. They cover about 5 of 10 pages.
+- **Playwright:** 3 e2e specs (`admin.spec.ts`, `superadmin.spec.ts`, `refresh.spec.ts`) against
+  `tests/e2e/mock-gateway.mjs`, plus `tests/unit/refresh.spec.ts`. They cover about 5 of 10 pages.
+  Run locally on 2026-10-30: 5 passed, 1 failed — `admin.spec.ts` fails on clean `main` too
+  (`getByRole("heading", { name: "Overview" })` matches both an `h1` and an `h2`).
 
 ## Open issues (most severe first)
 
@@ -61,8 +63,10 @@ and both nginx server blocks. None of it is proven:
    misconfigured.
 4. **F-38 / SEC-08:** role grants from the email lists never check `email_verified`, and console
    login trusts those lists. This becomes Critical if Firebase email/password sign-in is enabled.
-5. **F-35 / UX-10:** the refresh token is spent by parallel 401s. Affected pages: Models (5
-   parallel loads), Access, Knowledge, Learning.
+5. **Session gate never refreshes.** The console layout checks the access cookie alone, so a page
+   render after its 15 minutes redirects to `/login` even with a valid refresh cookie. A fix needs
+   middleware (a server component cannot set cookies). F-35 (parallel 401s spending the single-use
+   refresh token) is fixed in the proxy but built and tested only locally.
 6. **ADR-030 §8:** provider data ceiling and training consent are not displayed.
 7. **Others.**
    - A postcss advisory whose fix needs Next 16.
@@ -87,7 +91,8 @@ and both nginx server blocks. None of it is proven:
    - Link one green run (GAP-007, the M0 exit).
 3. Do the Firebase email/password check, then add the `email_verified` and `sign_in_provider`
    gate (F-38).
-4. Make the refresh single-flight, with a regression spec (F-35).
+4. Refresh in the session gate too (middleware), with a spec that reloads after expiry. Fix the
+   `admin.spec.ts` heading locator.
 5. Build AP9 `/console/adaptation`:
    - connectors, twin, and blueprint evaluate / approve / deploy / rollback;
    - typed-confirm dialogs;
@@ -98,6 +103,7 @@ and both nginx server blocks. None of it is proven:
 ## Unverified
 
 - Whether any console container is running on the VPS.
-- Whether `npm run build` and the Playwright specs pass at `dc87beb` (not run).
+- Whether `npm run build` and the Playwright specs pass in CI (only run locally, 2026-10-30:
+  build and `tsc --noEmit` clean; Playwright as above).
 - How Admin CI's dev-URL e2e path would actually behave (inferred from code).
 - The Firebase sign-in providers (SEC-08).
