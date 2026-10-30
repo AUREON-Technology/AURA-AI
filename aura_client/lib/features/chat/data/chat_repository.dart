@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/ai/online_agents/sse_agent_client.dart';
+import 'package:aura_client/core/ai/vision/chat_images.dart';
 import 'package:aura_client/core/sync/remote_deletes.dart';
 import 'package:aura_client/core/sync/sync_payloads.dart';
 import 'package:aura_client/core/network/aura_api_error.dart';
@@ -153,6 +154,7 @@ class ChatRepository {
     bool useTools = true,
     List<String> approvalIds = const [],
     bool persistUserMessage = true,
+    List<ChatImageAttachment> images = const [],
   }) async {
     if (_ref.read(streamingMessageIdProvider) != null) {
       debugPrint("[ChatRepository] ignoring send while a stream is already in flight");
@@ -171,7 +173,11 @@ class ChatRepository {
           id: userMsgId,
           conversationId: conversationId,
           role: "user",
-          content: userContent,
+          // The bytes stay in memory for this one request (ADR-031); the transcript keeps the
+          // same marker the server's session history does.
+          content: images.isEmpty
+              ? userContent
+              : '$userContent\n${imagesAttachedNote(images.length)}',
           createdAt: DateTime.now(),
           updatedAt: Value(DateTime.now()),
         ),
@@ -210,6 +216,7 @@ class ChatRepository {
         useTools: useTools,
         approvalIds: approvalIds,
         assistantMsgId: assistantMsgId,
+        images: images,
       );
 
       if (sseOutcome.message != null) {
@@ -330,6 +337,7 @@ class ChatRepository {
     required bool useTools,
     List<String> approvalIds = const [],
     required String assistantMsgId,
+    List<ChatImageAttachment> images = const [],
   }) async {
     final stopwatch = Stopwatch()..start();
     String displayText = "";
@@ -349,6 +357,7 @@ class ChatRepository {
         useMemory: useMemory,
         useTools: useTools,
         approvalIds: approvalIds,
+        images: images,
       );
 
       await for (final event in stream) {

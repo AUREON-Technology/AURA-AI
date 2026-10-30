@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:aura_client/core/ai/vision/chat_images.dart';
+
 import '../../calendar/data/calendar_repository.dart';
 import '../../finance/data/finance_repository.dart';
 import '../../health/data/health_repository.dart';
@@ -9,6 +11,9 @@ import '../../tasks/data/task_repository.dart';
 import '../data/chat_repository.dart';
 import '../data/turn_meta.dart';
 import 'pending_actions_executor.dart';
+
+/// What an image-only message asks.
+const kDefaultImageQuestion = 'What is in this image?';
 
 @immutable
 class ChatUiState {
@@ -28,9 +33,10 @@ class ChatUiState {
 
   bool composerLocked({required bool isStreaming}) => sendInFlight || isStreaming;
 
-  bool canSend(String text, {required bool isStreaming}) {
+  /// Text, or at least one attached image, and nothing already in flight.
+  bool canSend(String text, {required bool isStreaming, bool hasImages = false}) {
     if (composerLocked(isStreaming: isStreaming)) return false;
-    return text.trim().isNotEmpty;
+    return text.trim().isNotEmpty || hasImages;
   }
 
   bool canConsumeInitialQuery(String? query) {
@@ -114,20 +120,28 @@ class ChatViewModel extends Notifier<ChatUiState> {
     }
   }
 
-  /// Send-in-flight lock: ignores empty text and overlapping streams.
+  /// Send-in-flight lock: ignores empty text and overlapping streams. Attached images
+  /// (`pendingChatImagesProvider`) go with this message and are cleared once it is sent; with
+  /// images and no text, the question defaults to [kDefaultImageQuestion].
   Future<bool> sendMessage(String text) async {
     final isStreaming = ref.read(streamingMessageIdProvider) != null;
-    if (!state.canSend(text, isStreaming: isStreaming)) return false;
+    final images = ref.read(pendingChatImagesProvider);
+    if (!state.canSend(text, isStreaming: isStreaming, hasImages: images.isNotEmpty)) {
+      return false;
+    }
 
     state = state.copyWith(sendInFlight: true);
     try {
       final sessionId = ref.read(activeConversationIdProvider);
+      final trimmed = text.trim();
+      ref.read(pendingChatImagesProvider.notifier).clear();
       await ref.read(chatRepositoryProvider).sendChatMessage(
             conversationId: sessionId,
-            userContent: text.trim(),
+            userContent: trimmed.isEmpty ? kDefaultImageQuestion : trimmed,
             useRag: state.useRag,
             useMemory: state.useMemory,
             useTools: state.useTools,
+            images: images,
           );
       return true;
     } finally {

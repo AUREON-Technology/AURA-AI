@@ -7,6 +7,7 @@ import '../../data/agent_config_repository.dart';
 import '../../data/agents_repository.dart';
 import '../../data/chat_repository.dart';
 import '../chat_view_model.dart';
+import 'chat_image_attachments.dart';
 import 'voice_recorder_button.dart';
 
 class ChatComposer extends ConsumerWidget {
@@ -61,9 +62,11 @@ class ChatComposer extends ConsumerWidget {
               ),
             ],
           ),
+          PendingImagesStrip(enabled: !locked),
           const SizedBox(height: AuraSpacing.md),
           Row(
             children: [
+              AttachImageButton(enabled: !locked),
               Expanded(
                 child: TextField(
                   controller: controller,

@@ -1,6 +1,7 @@
 // F-04: approving a held tool call references that pending call -- its server-issued approval id
 // and its own turn -- never "the last user message" or a tool name.
 import 'package:aura_client/core/ai/online_agents/sse_agent_client.dart';
+import 'package:aura_client/core/ai/vision/chat_images.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
@@ -32,6 +33,7 @@ class _RecordingSseClient extends SseAgentClient {
     String? correlationId,
     int maxOutputTokens = 1024,
     double temperature = 0.3,
+    List<ChatImageAttachment> images = const [],
   }) async* {
     requests.add((message: message, approvalIds: List.of(approvalIds)));
     yield SseChatEvent.fromWire('token', {'text': 'Done.'});
