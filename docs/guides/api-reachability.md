@@ -87,13 +87,13 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/automation/analyze-email` | `aura_client/lib/features/automations/data/automation_repository.dart:218` | — | — | called |  |
 | POST | `/api/v3/automation/analyze-issue` | `aura_client/lib/features/automations/data/automation_repository.dart:256` | — | — | called |  |
 | GET | `/api/v3/capabilities` | `aura_client/lib/core/ai/vision/chat_images.dart:40`, `aura_client/lib/core/ai/vision/chat_images.dart:74` (+2) | — | — | called |  |
-| POST | `/api/v3/chat` | `aura_client/lib/core/routing/router.dart:47`, `aura_client/lib/core/routing/router.dart:70` (+7) | — | — | called |  |
-| POST | `/api/v3/chat/stream` | `aura_client/lib/core/ai/online_agents/sse_agent_client.dart:15`, `aura_client/lib/core/ai/online_agents/sse_agent_client.dart:113` (+4) | — | — | called |  |
+| POST | `/api/v3/chat` | `aura_client/lib/core/routing/router.dart:48`, `aura_client/lib/core/routing/router.dart:71` (+7) | — | — | called |  |
+| POST | `/api/v3/chat/stream` | `aura_client/lib/core/ai/online_agents/llm_timeouts.dart:10`, `aura_client/lib/core/ai/online_agents/sse_agent_client.dart:16` (+5) | — | — | called |  |
 | POST | `/api/v3/complete` | `aura_client/lib/core/ai/inline_completion_client.dart:9`, `aura_client/lib/core/ai/inline_completion_client.dart:25` (+1) | — | — | called |  |
 | GET | `/api/v3/engineering/runs` | `aura_client/lib/features/engineering/data/engineer_run_repository.dart:7`, `aura_client/lib/features/engineering/data/engineer_run_repository.dart:69` | — | — | called |  |
 | GET | `/api/v3/engineering/workspaces` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:53`, `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:76` (+1) | — | — | called |  |
 | DELETE | `/api/v3/engineering/workspaces/{workspace_id}` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:132` | — | — | called |  |
-| POST | `/api/v3/feedback` | `aura_client/lib/core/routing/router.dart:53`, `aura_client/lib/core/routing/router.dart:288` (+4) | — | — | called |  |
+| POST | `/api/v3/feedback` | `aura_client/lib/core/routing/router.dart:54`, `aura_client/lib/core/routing/router.dart:306` (+4) | — | — | called |  |
 | WS | `/api/v3/host/agent` | — | — | `aura_hostd/lib/src/config.dart:21`, `aura_hostd/lib/src/config.dart:26` (+3) | called |  |
 | GET | `/api/v3/insights` | `aura_client/lib/core/insights/insights_client.dart:10`, `aura_client/lib/core/insights/insights_client.dart:43` | — | — | called |  |
 | POST | `/api/v3/insights/generate` | `aura_client/lib/core/insights/insights_client.dart:82` | — | — | called |  |
@@ -117,8 +117,8 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/learning/evaluate` | — | — | — | none | to wire or remove: learning surface with no caller (GAP-013) |
 | GET | `/api/v3/learning/export` | — | — | — | none | to wire or remove: learning surface with no caller (GAP-013) |
 | POST | `/api/v3/learning/log` | — | — | — | none | to wire or remove: learning surface with no caller (GAP-013) |
-| GET | `/api/v3/memory` | `aura_client/lib/core/routing/router.dart:52`, `aura_client/lib/core/routing/router.dart:327` (+6) | — | — | called |  |
-| POST | `/api/v3/memory` | `aura_client/lib/core/routing/router.dart:52`, `aura_client/lib/core/routing/router.dart:327` (+6) | — | — | called |  |
+| GET | `/api/v3/memory` | `aura_client/lib/core/routing/router.dart:53`, `aura_client/lib/core/routing/router.dart:345` (+6) | — | — | called |  |
+| POST | `/api/v3/memory` | `aura_client/lib/core/routing/router.dart:53`, `aura_client/lib/core/routing/router.dart:345` (+6) | — | — | called |  |
 | DELETE | `/api/v3/memory/{memory_id}` | `aura_client/lib/core/sync/remote_deletes.dart:89`, `aura_client/lib/features/chat/data/memory_repository.dart:164` | — | — | called |  |
 | DELETE | `/api/v3/sessions/{session_id}` | `aura_client/lib/core/sync/remote_deletes.dart:90` | — | — | called |  |
 | GET | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:227`, `aura_client/lib/core/database/database.dart:254` (+2) | — | — | called |  |
