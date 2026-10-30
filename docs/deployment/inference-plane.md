@@ -173,6 +173,22 @@ It writes `docs/reports/phase-6-vision-<timestamp>.txt`; commit that file. It ch
 It also records latency. Until a report with zero failures is committed, Phase 6 is built, not
 proven.
 
+**Quality** (plan Phase 7). Score the model itself on the 240-case labelled set. Then score
+the whole gateway path, and for a bake-off compare the two runs. From `aura_backend/`:
+
+```bash
+export SPACE_KEY=<VLLM_API_KEY>
+python -m evaluation.vision_eval run --target space --base-url https://<owner>-<space>.hf.space/v1 \
+    --api-key-env SPACE_KEY --model <VLLM_MODEL> --revision <VLLM_MODEL_REVISION> \
+    --label qwen3-vl-8b --hardware "HF L40S"
+AURA_EVAL_TOKEN=<user access token> python -m evaluation.vision_eval run --target gateway \
+    --base-url https://aureon-ai.tech --label prod-gateway
+python -m evaluation.vision_eval compare ../docs/reports/vision-eval-*.json
+```
+
+Commit the `vision-eval-*.md`/`.json` pair. Pass `--save-baseline evaluation/suites/vision_baseline.json`
+on the run the owner accepts, and `--baseline` on later runs, to gate against it.
+
 **Rollback:**
 - Set `AURA_VISION_ENABLED=false` on the Control Plane. Image turns then 503 and the client hides
   the attach button.

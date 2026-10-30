@@ -543,7 +543,7 @@ gaps:
     owner: ml
     dependencies: [GAP-012]
     test: e2e test with a real image through a pinned VLM (opt-in load/bench)
-    metric: vision eval suite accuracy (to be defined)
+    metric: accuracy and per-category accuracy from evaluation/vision_eval.py (thresholds to be set by the owner after a first run)
     exit_condition: Vision turn served end to end with a pinned model and an eval report.
     status: in_progress
     reverified_2026_10_30: >-
@@ -559,6 +559,12 @@ gaps:
       refused), pinned by tests/deployment/test_inference_contract.py; runbook in
       docs/deployment/inference-plane.md section 8; evidence driver deploy/scripts/verify_vision.py.
       Not run: no Space has served a vision model and no phase-6-vision report is committed.
+    reverified_2026_10_30_phase7: >-
+      Eval harness built: evaluation/vision_eval.py over evaluation/suites/vision_cases.py (240
+      generated, exactly labelled cases in 12 categories, seeded; targets space, gateway, kernel,
+      oracle; RegressionGate baselines; bake-off compare), self-tested by
+      tests/unit/test_vision_eval.py. No model has been scored, so the metric is still undefined
+      in practice and the exit condition (an eval report with a pinned model) is not met.
 
   - gap_id: GAP-020
     component: voice/stt-language
