@@ -28,6 +28,21 @@ const tokens = {
   "super-access": principals.mock_token_super,
 };
 
+// Refresh tokens are single use, as on the real gateway (jwt_auth._refresh_store_take): the
+// first /auth/refresh deletes the token, and any replay of it is refused with 401.
+const refreshTokens = {};
+const refreshReplays = {};
+let issued = 0;
+
+function issuePair(principal) {
+  issued += 1;
+  const access = `${principal.access_token}-${issued}`;
+  const refresh = `${principal.access_token}-refresh-${issued}`;
+  tokens[access] = principal;
+  refreshTokens[refresh] = principal;
+  return { token_type: "bearer", access_token: access, refresh_token: refresh, expires_in: 900 };
+}
+
 const state = {
   operators: [
     {
@@ -102,12 +117,34 @@ const server = http.createServer(async (request, response) => {
       json(response, 403, { detail: "operator_required" });
       return;
     }
-    json(response, 200, {
-      token_type: "bearer",
-      access_token: principal.access_token,
-      refresh_token: `${principal.access_token}-refresh`,
-      expires_in: 900,
-    });
+    json(response, 200, issuePair(principal));
+    return;
+  }
+
+  if (method === "POST" && path === "/api/v3/auth/refresh") {
+    const body = await readBody(request);
+    const principal = refreshTokens[body.refresh_token];
+    if (!principal) {
+      refreshReplays[body.refresh_token] = (refreshReplays[body.refresh_token] || 0) + 1;
+      json(response, 401, { detail: "Invalid or expired refresh token" });
+      return;
+    }
+    delete refreshTokens[body.refresh_token];
+    json(response, 200, issuePair(principal));
+    return;
+  }
+
+  // Test hooks: expire one access token (as if its 15 minutes ran out) and report how many
+  // times a spent refresh token was replayed.
+  if (method === "POST" && path === "/__test/expire-access") {
+    const body = await readBody(request);
+    delete tokens[body.access_token];
+    json(response, 200, { expired: body.access_token });
+    return;
+  }
+
+  if (method === "GET" && path === "/__test/refresh-replays") {
+    json(response, 200, { replays: Object.values(refreshReplays).reduce((a, b) => a + b, 0) });
     return;
   }
 
@@ -162,6 +199,11 @@ const server = http.createServer(async (request, response) => {
 
   if (method === "POST" && path === "/api/v3/admin/prompts/system.orchestrator/pin") {
     json(response, 200, { pinned: "system.orchestrator@1.0.0" });
+    return;
+  }
+
+  if (method === "GET" && (path === "/api/v3/admin/models" || path === "/api/v3/admin/local-models")) {
+    json(response, 200, { models: [] });
     return;
   }
 

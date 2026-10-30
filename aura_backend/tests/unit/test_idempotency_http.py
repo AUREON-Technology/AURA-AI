@@ -256,6 +256,65 @@ class TestFailures:
         assert "idempotent-replayed" not in again.headers
 
 
+class TestReturnedTurnFailures:
+    """``/chat`` returns turn failures as JSON rather than raising them, so the route class sees a
+    response under 500 -- which it used to store and replay for the whole TTL. A service caller
+    (Flame) retrying a refusal with the same key then got the refusal back instead of a turn."""
+
+    @staticmethod
+    def _refuse_first(container, monkeypatch, *, outcome: str, error_kind: str | None):
+        import dataclasses
+
+        from aura_core.domain.telemetry import TurnOutcome
+
+        real = container.kernel.run
+        calls = {"n": 0}
+
+        async def run(turn):
+            calls["n"] += 1
+            result = await real(turn)
+            if calls["n"] == 1:
+                telemetry = dataclasses.replace(
+                    result.telemetry, outcome=TurnOutcome(outcome), error_kind=error_kind
+                )
+                return dataclasses.replace(result, telemetry=telemetry, retry_after_s=3)
+            return result
+
+        monkeypatch.setattr(container.kernel, "run", run)
+        return calls
+
+    async def test_a_returned_429_is_not_replayed_and_the_retry_runs(
+        self, client, container, monkeypatch
+    ) -> None:
+        calls = self._refuse_first(container, monkeypatch, outcome="rate_limited", error_kind="rate_limited")
+        body = {"message": "What is the leave policy?", "use_tools": False}
+
+        refused = client.post("/api/v3/chat", json=body, headers=_key("turn-429"))
+        retry = client.post("/api/v3/chat", json=body, headers=_key("turn-429"))
+
+        assert refused.status_code == 429 and refused.json()["retryable"] is True
+        assert retry.status_code == 200, retry.text
+        assert "idempotent-replayed" not in retry.headers
+        assert calls["n"] == 2
+        replay = client.post("/api/v3/chat", json=body, headers=_key("turn-429"))
+        assert replay.headers["idempotent-replayed"] == "true"  # the success is what is kept
+        assert calls["n"] == 2
+
+    async def test_a_deterministic_refusal_is_still_replayed(self, client, container, monkeypatch) -> None:
+        """``retryable: false`` (here a safety block, 400) is a final answer: replaying it is what
+        keeps a turn that may have done work from running twice."""
+        calls = self._refuse_first(container, monkeypatch, outcome="blocked", error_kind="blocked")
+        body = {"message": "What is the leave policy?", "use_tools": False}
+
+        blocked = client.post("/api/v3/chat", json=body, headers=_key("turn-400"))
+        retry = client.post("/api/v3/chat", json=body, headers=_key("turn-400"))
+
+        assert blocked.status_code == retry.status_code == 400
+        assert blocked.json()["retryable"] is False
+        assert retry.headers["idempotent-replayed"] == "true"
+        assert calls["n"] == 1
+
+
 class TestConcurrentDuplicates:
     async def test_concurrent_requests_with_one_key_execute_exactly_once(
         self, container, monkeypatch

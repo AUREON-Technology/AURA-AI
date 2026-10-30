@@ -6,6 +6,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 
 import '../data/github_integration_repository.dart';
 
@@ -36,12 +38,9 @@ class GithubConnectionPage extends ConsumerWidget {
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (err, _) => ListView(
             children: [
-              AuraEmptyState(
-                icon: Icons.error_outline,
-                title: 'Could not load GitHub connection',
-                message: '$err',
-                actionLabel: 'Retry',
-                onAction: () => ref.invalidate(githubConnectionStatusProvider),
+              AuraFailureView(
+                failure: AuraFailure.from(err),
+                onRetry: () => ref.invalidate(githubConnectionStatusProvider),
               ),
             ],
           ),
@@ -85,7 +84,7 @@ class _StatusViewState extends ConsumerState<_StatusView> {
       }
     } catch (e) {
       if (mounted) {
-        AuraSnackbar.show(context, message: '$e', kind: AuraSnackbarKind.error);
+        AuraSnackbar.show(context, message: AuraFailure.from(e).title, kind: AuraSnackbarKind.error);
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -104,7 +103,7 @@ class _StatusViewState extends ConsumerState<_StatusView> {
       }
     } catch (e) {
       if (mounted) {
-        AuraSnackbar.show(context, message: '$e', kind: AuraSnackbarKind.error);
+        AuraSnackbar.show(context, message: AuraFailure.from(e).title, kind: AuraSnackbarKind.error);
       }
     } finally {
       if (mounted) setState(() => _busy = false);

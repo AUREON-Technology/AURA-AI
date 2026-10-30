@@ -7,6 +7,8 @@ import 'package:intl/intl.dart';
 import 'package:aura_client/core/ai/engineer/workspaces_panel.dart';
 import 'package:aura_client/core/ai/engineer/engineer_workspaces.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_diff_view.dart';
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_terminal_view.dart';
 
@@ -90,12 +92,9 @@ class EngineerHistoryPage extends ConsumerWidget {
                   ),
                 ),
                 error: (err, _) => SliverToBoxAdapter(
-                  child: AuraEmptyState(
-                    icon: Icons.error_outline,
-                    title: 'Could not load history',
-                    message: '$err',
-                    actionLabel: 'Retry',
-                    onAction: () => ref.invalidate(engineerRunsProvider),
+                  child: AuraFailureView(
+                    failure: AuraFailure.from(err),
+                    onRetry: () => ref.invalidate(engineerRunsProvider),
                   ),
                 ),
               ),

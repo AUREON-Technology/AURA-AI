@@ -89,7 +89,10 @@ all.
 5. **macOS (new, code-read).** The network entitlement is missing.
 6. **Others.**
    - F-26: built (see 3); backoff now resets only after a connection that stayed up 30 s.
-   - UX-09 / UX-17: forced `/today` → `/ide` redirect, and `/ide` renders nothing off Windows.
+   - UX-09 / UX-17: `/ide` renders nothing off Windows. The forced `/today` → `/ide` redirect
+     is fixed on 2026-10-30 (F-34, TESTED locally, not run on Windows): the IDE preference only
+     picks the landing screen after sign-in, the IDE palette has "Leave IDE (Open Today)", and
+     the Home palette has "Open Desktop IDE".
    - F-29 / GAP-010: tracked binaries.
    - CB-26: no restart-on-crash, no signed bundle, no installer.
 7. **Stale PRs #78 and #88.** Open drafts last touched in 2026-09, with no merge base with `main`.

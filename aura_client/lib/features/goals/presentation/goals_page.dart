@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import '../../auth/presentation/auth_provider.dart';
+import '../../auth/presentation/sign_out_confirmation.dart';
 import '../data/goal_providers.dart';
 import 'goals_view_model.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
@@ -75,7 +76,7 @@ class GoalsPage extends ConsumerWidget {
                     IconButton(
                       icon: const Icon(Icons.logout, color: Colors.redAccent),
                       tooltip: 'Sign Out',
-                      onPressed: () => ref.read(authProvider.notifier).signOut(),
+                      onPressed: () => confirmAndSignOut(context, ref),
                     ),
                   ],
                 ),

@@ -33,21 +33,21 @@ class SettingsPage extends ConsumerWidget {
                   icon: Icons.person_outline,
                   title: 'Profile',
                   subtitle: 'Signed-in account and security',
-                  onTap: () => context.go('/profile'),
+                  onTap: () => context.push('/profile'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.palette_outlined,
                   title: 'Appearance',
                   subtitle: 'System, light, or dark',
-                  onTap: () => context.go('/appearance'),
+                  onTap: () => context.push('/appearance'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.dns_outlined,
                   title: 'Server environment',
                   subtitle: 'Production or development backend',
-                  onTap: () => context.go('/server-environment'),
+                  onTap: () => context.push('/server-environment'),
                 ),
               ],
             ),
@@ -70,35 +70,35 @@ class SettingsPage extends ConsumerWidget {
                   icon: Icons.folder_shared_outlined,
                   title: 'Knowledge',
                   subtitle: 'Documents Copilot can search',
-                  onTap: () => context.go('/knowledge'),
+                  onTap: () => context.push('/knowledge'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.psychology_outlined,
                   title: 'Memory',
                   subtitle: 'Typed facts AURA remembers',
-                  onTap: () => context.go('/memory'),
+                  onTap: () => context.push('/memory'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.rate_review_outlined,
                   title: 'Feedback',
                   subtitle: 'Corrections you’ve sent',
-                  onTap: () => context.go('/feedback'),
+                  onTap: () => context.push('/feedback'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.code_outlined,
                   title: 'Engineer',
                   subtitle: 'Workspaces, PRs, and sandbox runs',
-                  onTap: () => context.go('/engineer-history'),
+                  onTap: () => context.push('/engineer-history'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.hub_outlined,
                   title: 'GitHub Connection',
                   subtitle: 'Connect your own GitHub account',
-                  onTap: () => context.go('/github-connect'),
+                  onTap: () => context.push('/github-connect'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
@@ -106,7 +106,7 @@ class SettingsPage extends ConsumerWidget {
                   iconColor: AuraPalette.of(context).info,
                   title: 'Engine status',
                   subtitle: 'Whether AURA’s server is reachable',
-                  onTap: () => context.go('/models'),
+                  onTap: () => context.push('/models'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
@@ -114,7 +114,7 @@ class SettingsPage extends ConsumerWidget {
                   iconColor: AuraPalette.of(context).warning,
                   title: 'Automations',
                   subtitle: 'Gmail, GitHub, and Drive helpers',
-                  onTap: () => context.go('/automations'),
+                  onTap: () => context.push('/automations'),
                 ),
                 const _RowDivider(),
                 AuraListTile(
@@ -122,7 +122,7 @@ class SettingsPage extends ConsumerWidget {
                   iconColor: AuraPalette.of(context).success,
                   title: 'Usage on this device',
                   subtitle: 'Local latency and request counts',
-                  onTap: () => context.go('/analytics'),
+                  onTap: () => context.push('/analytics'),
                 ),
               ],
             ),
@@ -169,8 +169,8 @@ class _RowDivider extends StatelessWidget {
 
 /// Toggles the `desktop_use_ide` SharedPreferences flag the router checks
 /// (`core/routing/router.dart`) to decide whether a Windows user lands on
-/// AURA Home (`/today`) or the Desktop IDE (`/ide`) — never a forced
-/// redirect, per ADR-015. Without this control the IDE built under
+/// AURA Home (`/today`) or the Desktop IDE (`/ide`) after signing in — never
+/// a forced redirect, per ADR-015. Without this control the IDE built under
 /// `desktop/` was unreachable: nothing else in the app ever wrote that key.
 class _DesktopIdeToggleTile extends StatefulWidget {
   const _DesktopIdeToggleTile();
@@ -204,9 +204,10 @@ class _DesktopIdeToggleTileState extends State<_DesktopIdeToggleTile> {
     if (!mounted) return;
     setState(() => _useIde = value);
     if (value) {
-      // Re-run the router's redirect logic now, rather than waiting for the
-      // next natural navigation to /today.
-      GoRouter.of(context).go('/today');
+      // Open the IDE now. The preference itself only picks where AURA lands
+      // after sign-in; it no longer traps `/today` (audit F-34), and the IDE
+      // palette's "Leave IDE" command comes back here.
+      GoRouter.of(context).go('/ide');
     }
   }
 

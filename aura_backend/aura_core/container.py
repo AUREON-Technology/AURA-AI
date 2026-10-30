@@ -1661,6 +1661,10 @@ class Container:
             },
             "environment": str(self.settings.environment),
             "healthy": healthy,
+            # Informational, never gates readiness: `healthy` needs any provider, but a turn sent
+            # with `require_local` (service callers such as Flame default to it) can only use a
+            # local one, so it fails while `healthy` is true unless this is too.
+            "local_healthy": any(p["healthy"] and p.get("is_local") for p in providers.values()),
         }
         if checks:
             payload["checks"] = checks

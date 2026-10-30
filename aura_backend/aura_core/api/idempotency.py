@@ -8,8 +8,9 @@ same way ``v3.py`` does it:
   verified twice), fingerprints the request, and claims the key. A completed key short-circuits
   into a replay; a running one is a 409; a reused one is a 422.
 * **a route class** that sees the endpoint's final ``Response`` -- which no dependency can -- and
-  settles the claim: a stored response for anything under 500, ``failed`` for a 5xx or a raised
-  exception, so a failure stays retryable instead of being replayed forever.
+  settles the claim: a stored response for anything under 500, ``failed`` for a 5xx, a raised
+  exception, or a returned answer that says to try again (429, or a body with
+  ``"retryable": true``), so a failure stays retryable instead of being replayed forever.
 
 The header is optional. Without it, or on a deployment whose container has no idempotency store,
 every route behaves exactly as it did before this module existed -- the Flutter client does not
@@ -61,6 +62,24 @@ REPLAYED_HEADER = "Idempotent-Replayed"
 _REPLAYED_RESPONSE_HEADERS = ("content-type", "x-correlation-id")
 
 _STATE_ATTR = "aura_idempotency_claim"
+
+
+def _asks_for_retry(status_code: int, body: bytes) -> bool:
+    """Whether a returned (not raised) answer tells the caller to try again later.
+
+    ``/chat`` returns its turn failures as JSON instead of raising them -- a 429 for a budget or
+    concurrency refusal, ``"retryable": true`` on transient outcomes. Storing one of those would
+    replay "try again later" for the whole TTL to the very retry it invites. Deterministic answers
+    stay stored: ``output_invalid`` and ``confirmation_invalid`` say ``"retryable": false``, and a
+    turn that ran tools before failing must not run them a second time.
+    """
+    if status_code == 429:
+        return True
+    try:
+        decoded = json.loads(body)
+    except ValueError:
+        return False
+    return isinstance(decoded, dict) and decoded.get("retryable") is True
 
 
 def parse_idempotency_key(raw: str) -> str:
@@ -145,9 +164,13 @@ class _Claim:
     async def settle(self, response: Any) -> None:
         body = getattr(response, "body", None)
         try:
-            if response.status_code >= 500 or not isinstance(body, (bytes, bytearray)):
+            if (
+                response.status_code >= 500
+                or not isinstance(body, (bytes, bytearray))
+                or _asks_for_retry(response.status_code, bytes(body))
+            ):
                 # A 5xx is the server's failure and must stay retryable; a streaming response has
-                # no body to store. Either way nothing is replayed.
+                # no body to store; an answer that asks for a retry must not be replayed to it.
                 await self.fail()
                 return
             headers = {
