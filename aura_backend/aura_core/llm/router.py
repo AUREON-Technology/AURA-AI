@@ -985,15 +985,20 @@ class ProviderRouter:
     async def health(self) -> dict[str, Any]:
         """Probe every provider concurrently, updating the health gauge."""
         async def probe(name: str, provider: LLMProvider) -> tuple[str, dict[str, Any]]:
+            # `is_local` is what `require_local` filters on, so a caller that needs a local
+            # provider can tell from readiness whether one is up.
+            is_local = provider.capabilities.is_local
             try:
                 status = await asyncio.wait_for(provider.health(), timeout=10.0)
                 return name, {
                     "healthy": status.healthy,
                     "detail": status.detail,
                     "latency_ms": round(status.latency_ms, 1),
+                    "is_local": is_local,
                 }
             except Exception as exc:
-                return name, {"healthy": False, "detail": type(exc).__name__, "latency_ms": None}
+                return name, {"healthy": False, "detail": type(exc).__name__, "latency_ms": None,
+                              "is_local": is_local}
 
         results = await asyncio.gather(*(probe(n, p) for n, p in self._providers.items()))
         report = dict(results)

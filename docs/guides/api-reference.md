@@ -37,6 +37,10 @@ every log line and every audit record for that turn.
 `retryable` is the field to branch on. A `false` means the same request will fail the same way;
 retrying wastes a round trip and, on a metered provider, money.
 
+Errors raised while authenticating or admitting a request (401, 403, a service key's 429,
+idempotency's 409/422) carry the same fields at the top level plus a `detail` object holding a
+copy of them. `detail` is kept for older clients that read it; new code reads the top level.
+
 | Status | When |
 | --- | --- |
 | 400 | The turn was blocked by a safety guard |
@@ -68,6 +72,7 @@ curl -X POST "$AURA/api/v3/memory" -H "$AUTH" \
 | --- | --- |
 | First request with this key | Runs normally |
 | Retry, same key and same request, first one finished | The first response, replayed byte for byte (same status and body) with `Idempotent-Replayed: true`. The operation does **not** run again |
+| Retry after a failure the server says to retry (any 5xx, a `429`, or a body with `retryable: true`) | Nothing was stored: the retry runs again. Deterministic refusals (`retryable: false`, e.g. `422 output_invalid` or a safety block) are stored and replayed |
 | Retry while the first is still running | `409 idempotency_key_in_progress`, `retryable: true`, `Retry-After: 1`. Retry and you get the replay |
 | Same key, different request | `422 idempotency_key_reused`, `retryable: false` — a client bug; generate a new key |
 | Malformed key (empty, over 255 chars, spaces or non-ASCII) | `400` |
@@ -479,7 +484,7 @@ an operator must not be able to believe a circuit was reset while the outage con
 | Route | Auth | Purpose |
 | --- | --- | --- |
 | `GET /health/live` | none | Process liveness only. Deliberately checks nothing else — a liveness probe that fails during a dependency outage makes the orchestrator restart a healthy process. |
-| `GET /health/ready` | none | Dependency readiness; 503 when not ready. **This** is what a load balancer should gate on. |
+| `GET /health/ready` | none | Dependency readiness; 503 when not ready. **This** is what a load balancer should gate on. Each `providers.<name>` entry carries `is_local`, and `local_healthy` says whether any local provider is up. A caller that sends `require_local: true` can only be served when `local_healthy` is true; it never gates readiness. |
 | `GET /metrics` | none, but never publicly routed | Prometheus exposition. Nginx returns 404 for it; Prometheus scrapes the gateway directly over the internal network. |
 
 Health endpoints are never rate limited. A limiter that can starve the readiness probe turns load
