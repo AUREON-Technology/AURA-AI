@@ -71,8 +71,11 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 
 **Operational**
 1. **Pre-deploy migration fix unproven on a live deploy (CB-43 follow-up).** The database is at
-   `0016` and readiness is green. The next deploy that adds a migration must show
-   `revision before/after` and `=== MIGRATION OK ===` in its pre-deploy log.
+   `0016` and readiness is green. The first deploy of the script (8bc8d4c) logged only
+   `MIGRATION START`, and the step ended about a second later, so the outcome was invisible.
+   The script now flushes its log before exiting. The next deploy must show `revision
+   before/after` and `=== MIGRATION OK ===`. Only `MIGRATION START` means the script itself
+   stops early.
 2. **CI not executing (CB-44)**, and Railway deploys without it. Restore Actions; gate Railway on
    CI (turn off its GitHub auto-deploy or enable "Wait for CI").
 3. **The VPS deploy path is dead** (host-key change; CB-03). The owner must confirm whether the
