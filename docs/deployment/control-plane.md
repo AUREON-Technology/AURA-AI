@@ -200,8 +200,19 @@ Railway does **not** evaluate that field in a shell. An inline chain such as
 `echo … && alembic upgrade head` runs only its first command and still counts as passed, which
 left production at `0013` across every deploy until 2026-10-30 (CB-43). Keep the field one plain
 argv and put any logic in `scripts/railway-predeploy.sh`, which `TestRailwayPreDeployMigration`
-pins. The script logs `revision before/after` and `=== MIGRATION OK|FAILED ===`, and gives up
-after `AURA_MIGRATION_TIMEOUT_S` (240 s, below the 300 s pre-deploy limit).
+pins. The script logs `revision before/after` and `=== MIGRATION OK|FAILED ===`, each with a UTC
+timestamp, and a `database url: set|UNSET` line (never the value). alembic's own errors go to the
+same log. It gives up after `AURA_MIGRATION_TIMEOUT_S` (200 s) for the upgrade and
+`AURA_MIGRATION_CURRENT_TIMEOUT_S` (30 s) for each `alembic current`. It then pauses
+`AURA_PREDEPLOY_LOG_FLUSH_S` (5 s) on every exit, so Railway reads the last lines before the
+container stops. The whole budget stays under the 300 s pre-deploy limit.
+
+**Reading a deploy's pre-deploy log:**
+- `revision before … after` and `=== MIGRATION OK ===`: it worked.
+- `=== MIGRATION FAILED (…) ===`: the deploy is refused, and the line says why.
+- `=== MIGRATION START ===` and nothing else: the script never got past its first line. That was
+  the case on 8bc8d4c, the first deploy of the script, before the flush pause existed. Check
+  `/health/ready`'s `schema` block, and migrate by hand as below.
 
 To migrate by hand (what resolved CB-43):
 

@@ -262,15 +262,25 @@ class TestRailwayPreDeployMigration:
         """A CRLF checkout (this repo is edited on Windows) would make `sh` fail on `set -eu\\r`."""
         assert b"\r\n" not in self._SCRIPT.read_bytes()
 
-    def test_the_timeout_stays_under_railways(self) -> None:
+    def test_the_whole_budget_stays_under_railways(self) -> None:
+        """Two `alembic current` calls, the upgrade and the flush pause must all finish before
+        Railway's own limit, or the step is killed with nothing logged -- the failure this
+        script exists to make visible."""
         import json
         import re
 
         config = json.loads((_BACKEND / "railway.json").read_text(encoding="utf-8"))
-        default = int(re.search(r"AURA_MIGRATION_TIMEOUT_S:-(\d+)", self._SCRIPT.read_text()).group(1))
-        assert default < config["deploy"]["preDeployTimeoutSeconds"]
+        text = self._SCRIPT.read_text()
 
-    def _run(self, tmp_path, alembic_body: str, timeout_s: str = "30"):
+        def default(name: str) -> int:
+            return int(re.search(rf"{name}:-(\d+)", text).group(1))
+
+        budget = (2 * default("AURA_MIGRATION_CURRENT_TIMEOUT_S") + default("AURA_MIGRATION_TIMEOUT_S")
+                  + default("AURA_PREDEPLOY_LOG_FLUSH_S"))
+        assert budget < config["deploy"]["preDeployTimeoutSeconds"]
+        assert default("AURA_PREDEPLOY_LOG_FLUSH_S") > 0, "the flush pause is what keeps the last lines"
+
+    def _run(self, tmp_path, alembic_body: str, timeout_s: str = "30", **extra_env: str):
         import os
         import shutil
         import subprocess
@@ -283,7 +293,9 @@ class TestRailwayPreDeployMigration:
         alembic = fake / "alembic"
         alembic.write_text(f'#!/bin/sh\necho "$@" >> "{log}"\n{alembic_body}\n')
         alembic.chmod(0o755)
-        env = {**os.environ, "PATH": f"{fake}{os.pathsep}{os.environ['PATH']}", "AURA_MIGRATION_TIMEOUT_S": timeout_s}
+        env = {**os.environ, "PATH": f"{fake}{os.pathsep}{os.environ['PATH']}", "AURA_MIGRATION_TIMEOUT_S": timeout_s,
+               "AURA_PREDEPLOY_LOG_FLUSH_S": "0", "AURA_DATABASE_URL": "postgresql://u:hunter2@db/aura",
+               **extra_env}
         result = subprocess.run(["sh", str(self._SCRIPT)], env=env, capture_output=True, text=True, timeout=60)
         calls = log.read_text().splitlines() if log.exists() else []
         return result, calls
@@ -308,6 +320,46 @@ class TestRailwayPreDeployMigration:
 
         assert result.returncode == 1
         assert "timed out after 1s" in result.stdout
+
+    def test_alembic_errors_reach_the_log_not_dev_null(self, tmp_path) -> None:
+        result, _ = self._run(tmp_path, '[ "$1" = upgrade ] && { echo "connection refused: db:5432" >&2; exit 2; }; echo 0016')
+
+        assert result.returncode == 1
+        assert "connection refused: db:5432" in result.stdout
+        assert "MIGRATION FAILED (alembic exit 2)" in result.stdout
+
+    def test_a_database_that_does_not_answer_ends_in_failed(self, tmp_path) -> None:
+        """`alembic current` hanging (an unreachable database) must not stall the step until
+        Railway kills it silently: the revision is reported unknown and the upgrade then times
+        out with a FAILED marker."""
+        result, _ = self._run(tmp_path, "sleep 30", timeout_s="1", AURA_MIGRATION_CURRENT_TIMEOUT_S="1")
+
+        assert result.returncode == 1
+        assert "revision before: unknown (alembic current timed out after 1s)" in result.stdout
+        assert "MIGRATION FAILED (timed out after 1s" in result.stdout
+
+    def test_markers_are_timestamped_and_the_url_is_never_printed(self, tmp_path) -> None:
+        import re
+
+        result, _ = self._run(tmp_path, 'case "$1" in current) echo 0016 ;; esac')
+
+        assert re.search(r"^\[\d{2}:\d{2}:\d{2}Z\] === MIGRATION OK ===$", result.stdout, re.M)
+        assert "database url: set" in result.stdout
+        assert "hunter2" not in result.stdout
+
+    def test_an_unset_database_url_is_named(self, tmp_path) -> None:
+        result, _ = self._run(tmp_path, 'case "$1" in current) echo 0016 ;; esac', AURA_DATABASE_URL="")
+
+        assert "database url: UNSET" in result.stdout
+
+    def test_the_flush_pause_runs_even_when_the_migration_fails(self, tmp_path) -> None:
+        import time
+
+        started = time.monotonic()
+        result, _ = self._run(tmp_path, '[ "$1" = upgrade ] && exit 3; exit 0', AURA_PREDEPLOY_LOG_FLUSH_S="1")
+
+        assert result.returncode == 1
+        assert time.monotonic() - started >= 1.0
 
 
 class TestVersionEndpoint:
