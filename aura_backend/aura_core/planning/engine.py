@@ -178,6 +178,7 @@ class PlanningEngine:
         started = time.perf_counter()
         limit = min(max_steps or self._max_steps, self._max_steps)
         generation_tokens = 0
+        fallback_reason: str | None = None
 
         tool_lines = "\n".join(_render_tool_line(t) for t in available_tools)
         rendered = self._prompts.render(
@@ -228,6 +229,7 @@ class PlanningEngine:
             logger.warning("planning failed; falling back to a direct response",
                            extra={"error": type(exc).__name__})
             steps = []
+            fallback_reason = "planner_error"
 
         if not steps:
             steps = [
@@ -241,7 +243,7 @@ class PlanningEngine:
 
         plan = Plan(
             id=PlanId.new(), goal=goal, steps=tuple(steps[:limit]), max_steps=self._max_steps,
-            generation_tokens=generation_tokens,
+            generation_tokens=generation_tokens, fallback_reason=fallback_reason,
         )
         if self._metrics is not None:
             self._metrics.plans_created_total.labels(agent="planner").inc()

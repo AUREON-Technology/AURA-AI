@@ -148,6 +148,20 @@ class InMemoryEventOutbox:
             if row["attempts"] >= max_attempts:
                 row["dead_lettered"] = True
 
+    async def stats(self) -> dict[str, float]:
+        """Backlog shape for the outbox gauges: pending, dead-lettered, oldest pending age."""
+        async with self._lock:
+            pending = [row for row in self._entries.values() if not row["dead_lettered"]]
+            oldest = min((row["created_at"] for row in pending), default=None)
+            return {
+                "pending": len(pending),
+                "dead_lettered": len(self._entries) - len(pending),
+                "oldest_age_s": (
+                    max(0.0, (datetime.now(timezone.utc) - oldest).total_seconds())
+                    if oldest is not None else 0.0
+                ),
+            }
+
     def __len__(self) -> int:
         """Pending (claimable or claimed, not yet processed/dead-lettered) entry count."""
         return sum(1 for row in self._entries.values() if not row["dead_lettered"])

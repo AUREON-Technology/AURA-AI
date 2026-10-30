@@ -38,7 +38,8 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 | Backend CI gate (test, pip-audit, docker-build) | PROVEN at `dc87beb`; **not executing since** | GAP-043; run 40719101969 green on `dc87beb`; runs #392–#397 died in 2–4 s with no runner (CB-44) |
 | Hexagonal layering fitness tests | TESTED | `tests/architecture/`; F-28: narrower than CLAUDE.md claims (misses absolute and vendor-SDK imports) |
 | Self-hosting invariant / ADR-030 host categories | TESTED | `tests/architecture/test_no_external_inference.py` |
-| AIKernel plan → execute → generate | TESTED (scripted/echo providers) | GAP-021 open; F-24: planner failure silently becomes "answered directly" |
+| AIKernel plan → execute → generate | TESTED (scripted/echo providers) | GAP-021 open; F-24/CB-14 built (not CI-run): a planner failure is now a degraded turn with a reason, and the stream path records telemetry |
+| Request metrics / outbox gauges (F-24, CB-15) | BUILT, not proven | Per-route HTTP histogram and status counter, buckets to 600 s, outbox backlog gauges and alerts. Needs a scrape on a live target and the M5 load run |
 | Tool confirmation / taint (ADR-006) | BUILT (fix merged, not CI-run) | F-04 fixed (`d6ced5a`): single-use `approval_id` bound to stored turn + call digest; GAP-014 |
 | ProviderRouter, breakers, failover | TESTED; F-19 fix not CI-run | F-19 fixed (`42af1be`): `release_probe()` frees the half-open slot |
 | Self-hosted LLM (qwen2.5:3b, CPU Ollama) | TESTED in a sandbox only | A4 sandbox p50 56 s / p95 71 s (`docs/reports/phase-a4-load-test.md`); not on the current production target |
@@ -129,7 +130,8 @@ That needs a check in the Firebase console.
    sockets re-check their credential every 60 s.
 6. **ADR-030 Phase 6:** owner adds the `AURA_HOSTED1_API_KEY` secret, then runs Verify Hosted
    Inference with the `openrouter-free` preset and commits the report (GAP-064).
-7. Add metrics (GAP-036, F-24), then run the M5 load matrix (GAP-041) to measure what the F-22
+7. Metrics are built (F-24). Next, confirm that a live `/metrics` scrape shows `aura_http_*`
+   and the outbox gauges, then run the M5 load matrix (GAP-041) to measure what the F-22
    budgets assume.
 8. **Owner:** decide the VPS's future (CB-03).
 

@@ -40,6 +40,7 @@ from ..domain.errors import (
     DependencyUnavailableError,
     OutputInvalidError,
     OverloadedError,
+    PlanningError,
     SafetyViolationError,
     UserConcurrencyLimitError,
 )
@@ -269,6 +270,26 @@ class KernelDependencies:
     vision: Any = None
 
 
+#: Told to the model when planning or tool execution failed (CB-14). Without it the model saw
+#: only the user's request and would answer "Done, I created the task" when nothing had run.
+PLANNING_FAILED_NOTE = (
+    "Tool planning failed for this turn, so no tool ran and no action was taken. Do not say "
+    "that anything was created, changed, sent or scheduled; tell the user it could not be done "
+    "right now and that they can try again."
+)
+
+
+def _stream_error_outcome(exc: AuraError) -> TurnOutcome:
+    """The telemetry outcome for an error ending a streamed turn, as ``run`` maps them."""
+    if isinstance(exc, UserConcurrencyLimitError):
+        return TurnOutcome.RATE_LIMITED
+    if isinstance(exc, SafetyViolationError):
+        return TurnOutcome.BLOCKED
+    if isinstance(exc, BudgetExceededError):
+        return TurnOutcome.BUDGET_EXCEEDED
+    return TurnOutcome.ERROR
+
+
 class AIKernel:
     """Runs one turn through the pipeline."""
 
@@ -413,14 +434,21 @@ class AIKernel:
         plan_summary: list[Mapping[str, Any]] = []
         plan_steps = plan_revisions = 0
         agent_run_id: str | None = None
+        planning_failed = False
 
         tool_declarations = await self._tool_declarations(request)
         if resume is not None or self._should_plan(request, tool_declarations):
             stage_start = time.perf_counter()
-            outcome = await self._plan_and_execute(
-                request, message, tool_declarations, tainted,
-                turn_id=turn_id, correlation=correlation, resume=resume,
-            )
+            try:
+                outcome = await self._plan_and_execute(
+                    request, message, tool_declarations, tainted,
+                    turn_id=turn_id, correlation=correlation, resume=resume,
+                )
+            except Exception:
+                logger.warning("planning or execution failed; answering directly", exc_info=True)
+                outcome = None
+                planning_failed = True
+                execution_notes.append(PLANNING_FAILED_NOTE)
             timings["planning"] = (time.perf_counter() - stage_start) * 1000.0
             if outcome is not None:
                 agent_run_id = getattr(outcome, "run_id", None)
@@ -566,6 +594,7 @@ class AIKernel:
             tools=tuple(tool_telemetry),
             plan_steps=plan_steps,
             plan_revisions=plan_revisions,
+            planning_failed=planning_failed,
             confidence=confidence,
             groundedness=groundedness,
         )
@@ -608,12 +637,31 @@ class AIKernel:
         """
         correlation = request.correlation_id or CorrelationId.new()
         turn_id = TurnId.new()
+        started = time.perf_counter()
+        # The stream is the client's only chat path, so it carries the same lifecycle as
+        # ``run``: in-flight gauge, TurnStarted, a TurnBudget, and a recorded TurnTelemetry
+        # (F-24). Before this, admin quality dashboards saw none of the real users' turns.
+        if self._metrics is not None:
+            self._metrics.turns_in_flight.inc()
+        await self._publish(
+            TurnStarted(
+                correlation_id=correlation, turn_id=turn_id,
+                session_id=request.session_id, user_id=request.user_id, route=request.route,
+            )
+        )
 
         with LogContext(correlation_id=correlation.value, route=request.route), workload_scope(
             self._workload_hint(request)
         ), data_scope(*self._baseline_classification(request)) as scope:
             try:
                 deps = self._deps
+                budget = TurnBudget(
+                    max_generations=getattr(
+                        getattr(deps.settings, "llm", None), "max_generations_per_turn", 8
+                    )
+                )
+                timings: dict[str, float] = {}
+                guard_records: list[Mapping[str, Any]] = []
                 resume = await self._claim_confirmation(request)
                 if resume is not None:
                     request = self._resumed_request(request, resume)
@@ -621,10 +669,13 @@ class AIKernel:
                 resolved_agent = resolved_spec.id if resolved_spec is not None else request.agent
                 message = request.message
                 if deps.safety is not None:
+                    stage_start = time.perf_counter()
                     decision = await deps.safety.guard_input(
                         message, user_id=request.user_id, turn_id=turn_id
                     )
                     message = decision.text
+                    guard_records.extend(decision.report.summary())
+                    timings["guards_in"] = (time.perf_counter() - stage_start) * 1000.0
 
                 perception = None
                 if request.images:
@@ -643,19 +694,25 @@ class AIKernel:
                         "elapsed_ms": round(perception.duration_ms, 2),
                     }
 
+                stage_start = time.perf_counter()
                 memories, retrieval, history, history_summary, goals, cag_prefix = await self._gather_context(
                     request, message
                 )
+                timings["memory"] = timings["retrieval"] = (
+                    time.perf_counter() - stage_start
+                ) * 1000.0
                 await self._classify_context(
                     request, memories, retrieval, history, goals, cag_prefix
                 )
 
                 tainted = False
+                quarantined_count = 0
                 if deps.safety is not None and retrieval is not None and retrieval.chunks:
                     items = [(c.citation(), c.chunk.content) for c in retrieval.chunks]
                     accepted, _quarantined, tainted = await deps.safety.guard_context_items(
                         items, user_id=request.user_id, turn_id=turn_id
                     )
+                    quarantined_count = len(_quarantined)
                     accepted_citations = {citation for citation, _ in accepted}
                     retrieval = RetrievalResult(
                         chunks=tuple(
@@ -670,7 +727,10 @@ class AIKernel:
                         strategy=retrieval.strategy,
                         duration_ms=retrieval.duration_ms,
                     )
-                caller_context, _ = await self._guard_caller_context(request, turn_id)
+                caller_context, context_quarantined = await self._guard_caller_context(
+                    request, turn_id
+                )
+                quarantined_count += context_quarantined
                 tainted = (
                     tainted or bool(request.caller_context) or bool(resume and resume.tainted)
                 )
@@ -680,8 +740,12 @@ class AIKernel:
                 needs_confirmation: list[str] = []
                 pending_tool_calls: list[Mapping[str, Any]] = []
                 plan_summary: list[Mapping[str, Any]] = []
+                tool_telemetry: list[ToolTelemetry] = []
+                execution_notes: list[str] = []
+                planning_failed = False
                 outcome: ExecutionOutcome | None = None
                 if resume is not None or self._should_plan(request, tool_declarations):
+                    stage_start = time.perf_counter()
                     try:
                         async for item in self._iter_execution(
                             request, message, tool_declarations, tainted,
@@ -692,8 +756,13 @@ class AIKernel:
                             elif isinstance(item, ExecutionOutcome):
                                 outcome = item
                     except Exception:
-                        logger.warning("planning or execution failed; answering directly")
+                        logger.warning(
+                            "planning or execution failed; answering directly", exc_info=True
+                        )
                         outcome = None
+                        planning_failed = True
+                        execution_notes.append(PLANNING_FAILED_NOTE)
+                    timings["planning"] = (time.perf_counter() - stage_start) * 1000.0
                 if outcome is not None:
                     tool_results = outcome.summary_for_context()
                     plan_summary = [
@@ -702,6 +771,13 @@ class AIKernel:
                         for s in outcome.plan.steps
                     ]
                     for report in outcome.tool_reports:
+                        tool_telemetry.append(
+                            ToolTelemetry(
+                                name=report.tool, ok=report.ok,
+                                duration_ms=report.duration_ms,
+                                error_kind=report.error_kind, allowed=report.allowed,
+                            )
+                        )
                         if report.needs_confirmation:
                             needs_confirmation.append(report.tool)
                     pending_tool_calls = await self._hold_for_confirmation(
@@ -715,6 +791,7 @@ class AIKernel:
                 if actions:
                     yield {"type": "actions", "actions": actions}
 
+                stage_start = time.perf_counter()
                 assembled = deps.context.assemble(
                     ContextRequest(
                         system_prompt=await self._render_system_prompt(request, tool_declarations),
@@ -725,6 +802,7 @@ class AIKernel:
                         retrieval=retrieval,
                         cag_prefix=cag_prefix,
                         tool_results=tool_results,
+                        scratchpad=execution_notes,
                         history_summary=history_summary,
                         context_window=self._context_window(),
                         max_output_tokens=request.max_output_tokens,
@@ -733,6 +811,7 @@ class AIKernel:
                     )
                 )
 
+                timings["context"] = (time.perf_counter() - stage_start) * 1000.0
                 visible_citations = list(
                     self._resolve_citations(assembled, retrieval, user_facing=True)
                 )
@@ -759,10 +838,17 @@ class AIKernel:
                     timeout_s=self._completion_timeout_s(),
                 )
 
-                async for chunk in deps.router.stream(completion):
+                provider = model = None
+                ttft_ms: float | None = None
+                stage_start = time.perf_counter()
+                async for chunk in deps.router.stream(completion, budget=budget):
                     if chunk.usage is not None:
                         last_usage = chunk.usage
+                    provider = chunk.provider or provider
+                    model = chunk.model or model
                     if chunk.delta:
+                        if ttft_ms is None:
+                            ttft_ms = (time.perf_counter() - started) * 1000.0
                         collected.append(chunk.delta)
                         yield {"type": "token", "text": chunk.delta}
                     if chunk.tool_calls:
@@ -797,8 +883,10 @@ class AIKernel:
                     )
                     yield {"type": "token", "text": answer}
 
+                timings["generation"] = (time.perf_counter() - stage_start) * 1000.0
                 guards_complete = False
                 if deps.safety is not None:
+                    stage_start = time.perf_counter()
                     try:
                         decision = await deps.safety.guard_output(
                             answer,
@@ -810,6 +898,8 @@ class AIKernel:
                             turn_id=turn_id,
                         )
                         guards_complete = True
+                        guard_records.extend(decision.report.summary())
+                        timings["guards_out"] = (time.perf_counter() - stage_start) * 1000.0
                         if decision.text != answer:
                             # The answer was redacted after streaming. Say so explicitly rather
                             # than leaving the client showing unredacted text.
@@ -819,6 +909,9 @@ class AIKernel:
                                 "text": decision.text,
                             }
                     except SafetyViolationError as exc:
+                        self._error_result(
+                            request, correlation, turn_id, started, exc, TurnOutcome.BLOCKED
+                        )
                         yield {
                             "type": "error",
                             "error": exc.kind,
@@ -847,6 +940,46 @@ class AIKernel:
                     retrieval is not None and retrieval.is_empty_but_searched
                 )
                 await self._remember_session_classification(request, scope)
+                prompt_tokens = last_usage.prompt_tokens if last_usage else assembled.prompt_tokens
+                completion_tokens = (
+                    last_usage.completion_tokens if last_usage else len(collected)
+                )
+                telemetry = TurnTelemetry(
+                    correlation_id=correlation,
+                    turn_id=turn_id,
+                    session_id=request.session_id,
+                    route=request.route,
+                    agent=request.agent,
+                    outcome=TurnOutcome.SUCCESS,
+                    provider=provider,
+                    model=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cost_usd=budget.cost_used_usd,
+                    total_ms=(time.perf_counter() - started) * 1000.0,
+                    ttft_ms=ttft_ms,
+                    timings=StageTiming(**timings),
+                    retrieval=self._retrieval_telemetry(retrieval, quarantined_count),
+                    memories_recalled=len(memories),
+                    cag_tokens=cag_prefix.tokens if cag_prefix is not None else 0,
+                    cag_docs=len(cag_prefix.docs) if cag_prefix is not None else 0,
+                    cag_identity=cag_prefix.identity.value if cag_prefix is not None else None,
+                    cag_cache_hit=bool(cag_prefix.cache_hit) if cag_prefix is not None else False,
+                    context_tokens=assembled.prompt_tokens,
+                    context_dropped=assembled.dropped,
+                    guards=tuple(guard_records),
+                    tainted=tainted,
+                    tools=tuple(tool_telemetry),
+                    plan_steps=len(outcome.plan.steps) if outcome is not None else 0,
+                    plan_revisions=len(outcome.plan.revisions) if outcome is not None else 0,
+                    planning_failed=planning_failed,
+                )
+                await self._record(telemetry)
+                degraded_reasons = list(telemetry.degraded_reasons)
+                if searched_empty and "empty_retrieval" not in degraded_reasons:
+                    degraded_reasons.append("empty_retrieval")
+                if empty_generation_fallback:
+                    degraded_reasons.append("empty_generation_fallback")
                 yield {
                     "type": "done",
                     "tainted": tainted,
@@ -861,19 +994,23 @@ class AIKernel:
                     "correlation_id": correlation.value,
                     # Stream does not run the reasoner; null is honest, not a fake score.
                     "confidence": None,
-                    "degraded": bool(tainted or searched_empty or empty_generation_fallback),
+                    "degraded": bool(degraded_reasons),
+                    # Bounded slugs (``planning_failed``, ``tool_failure``, ...), the same ones
+                    # ``aura_turn_degraded_total`` is labelled by, so a client can say *why*.
+                    "degraded_reasons": degraded_reasons,
                     "searched_but_empty": searched_empty,
                     "empty_generation_fallback": empty_generation_fallback,
                     "vision": perception.as_dict() if perception is not None else None,
                     "usage": {
                         "prompt_tokens": last_usage.prompt_tokens if last_usage else 0,
-                        "completion_tokens": (
-                            last_usage.completion_tokens if last_usage else len(collected)
-                        ),
-                        "cost_usd": 0.0,
+                        "completion_tokens": completion_tokens,
+                        "cost_usd": round(budget.cost_used_usd, 6),
                     },
                 }
             except AuraError as exc:
+                self._error_result(
+                    request, correlation, turn_id, started, exc, _stream_error_outcome(exc)
+                )
                 frame: dict[str, Any] = {
                     "type": "error",
                     "error": exc.kind,
@@ -885,8 +1022,15 @@ class AIKernel:
                 yield frame
             except Exception as exc:  # pragma: no cover - defensive
                 logger.exception("unhandled error during stream")
+                self._error_result(
+                    request, correlation, turn_id, started,
+                    AuraError("unhandled error during stream"), TurnOutcome.ERROR,
+                )
                 yield {"type": "error", "error": "internal_error",
                        "message": type(exc).__name__, "retryable": False}
+            finally:
+                if self._metrics is not None:
+                    self._metrics.turns_in_flight.dec()
 
     # -- stages ------------------------------------------------------------------------
 
@@ -1391,19 +1535,26 @@ class AIKernel:
         tools: Sequence[Mapping[str, Any]],
     ) -> Any:
         deps = self._deps
-        try:
-            goal = deps.planner.goal_from_message(message)
-            plan = await deps.planner.plan(goal, available_tools=tools)
-            if not plan.steps:
-                return None
-            if len(plan.steps) <= 1 and plan.steps[0].kind is StepKind.RESPOND:
-                # A one-step "just answer" plan is what the direct path already does; running the
-                # executor for it costs latency and buys nothing.
-                return None
-            return plan
-        except Exception:
-            logger.warning("planning failed; answering directly")
+        # A planner failure propagates: the caller answers directly *and* marks the turn
+        # degraded (CB-14). Swallowing it here made "no plan was needed" and "planning broke"
+        # the same ``None``, so the turn reported plain success either way.
+        goal = deps.planner.goal_from_message(message)
+        plan = await deps.planner.plan(goal, available_tools=tools)
+        if plan.fallback_reason:
+            # The planner already answered "respond directly" for us, but only because its own
+            # generation failed (a timeout, on the CPU host). That is a degraded turn, not a
+            # turn that needed no tools.
+            raise PlanningError(
+                "the planner could not plan this turn",
+                details={"reason": plan.fallback_reason},
+            )
+        if not plan.steps:
             return None
+        if len(plan.steps) <= 1 and plan.steps[0].kind is StepKind.RESPOND:
+            # A one-step "just answer" plan is what the direct path already does; running the
+            # executor for it costs latency and buys nothing.
+            return None
+        return plan
 
     def _agentic_loop_deadline_s(self) -> float:
         return float(
@@ -1457,31 +1608,29 @@ class AIKernel:
         correlation: CorrelationId | None = None,
         resume: ResumedTurn | None = None,
     ) -> Any:
+        """The execution outcome, or ``None`` when the turn needs no plan. Raises when planning
+        or execution fails; ``_run_turn`` turns that into a degraded direct answer."""
         deps = self._deps
-        try:
-            plan, confirmations = await self._plan_for(request, message, tools, resume)
-            if plan is None:
-                return None
-            context = self._tool_context(request, tainted)
-            loop = self._loop_arguments(request, message, tools, tainted, turn_id, correlation)
-            if loop is not None:
-                return await deps.agentic_executor.run(
-                    plan,
-                    context=context,
-                    capabilities=request.capabilities,
-                    confirmations=confirmations,
-                    available_tools=tools,
-                    **loop,
-                )
-            return await deps.executor.execute(
+        plan, confirmations = await self._plan_for(request, message, tools, resume)
+        if plan is None:
+            return None
+        context = self._tool_context(request, tainted)
+        loop = self._loop_arguments(request, message, tools, tainted, turn_id, correlation)
+        if loop is not None:
+            return await deps.agentic_executor.run(
                 plan,
                 context=context,
                 capabilities=request.capabilities,
                 confirmations=confirmations,
+                available_tools=tools,
+                **loop,
             )
-        except Exception:
-            logger.warning("planning or execution failed; answering directly")
-            return None
+        return await deps.executor.execute(
+            plan,
+            context=context,
+            capabilities=request.capabilities,
+            confirmations=confirmations,
+        )
 
     async def _iter_execution(
         self,

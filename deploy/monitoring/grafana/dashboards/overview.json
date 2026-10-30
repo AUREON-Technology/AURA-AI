@@ -556,6 +556,144 @@
         },
         "overrides": []
       }
+    },
+    {
+      "id": 19,
+      "title": "HTTP & event outbox (F-24)",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 57
+      },
+      "panels": []
+    },
+    {
+      "id": 20,
+      "title": "HTTP request duration p95 by route",
+      "type": "timeseries",
+      "description": "To the last body byte, so /api/v3/chat/stream is the whole stream. Route is the template, never the raw path.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 58
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aura_http_request_duration_seconds_bucket[5m])) by (le, route))",
+          "legendFormat": "{{route}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 21,
+      "title": "HTTP requests by status class",
+      "type": "timeseries",
+      "description": "Includes requests refused before the kernel (auth, rate limit, validation).",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 58
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(aura_http_requests_total[5m])) by (status)",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 22,
+      "title": "Event outbox backlog",
+      "type": "timeseries",
+      "description": "Read from the outbox when Prometheus scrapes. Pending should drain to 0 every beat interval.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 65
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "max(aura_outbox_pending)",
+          "legendFormat": "pending",
+          "refId": "A"
+        },
+        {
+          "expr": "max(aura_outbox_dead_lettered)",
+          "legendFormat": "dead-lettered",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 23,
+      "title": "Oldest pending outbox event",
+      "type": "timeseries",
+      "description": "Age of the oldest undelivered durable event; AuraOutboxBacklog fires above 15 minutes.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 65
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "max(aura_outbox_oldest_pending_age_seconds)",
+          "legendFormat": "oldest",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {}
+        },
+        "overrides": []
+      }
     }
   ],
   "schemaVersion": 39,

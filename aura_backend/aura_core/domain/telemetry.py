@@ -160,6 +160,9 @@ class TurnTelemetry:
 
     plan_steps: int = 0
     plan_revisions: int = 0
+    #: Planning or tool execution raised and the turn answered without tools (CB-14). Without
+    #: this the turn reported plain success, and "create a task" read as done when nothing ran.
+    planning_failed: bool = False
     confidence: float | None = None
     groundedness: float | None = None
 
@@ -183,7 +186,20 @@ class TurnTelemetry:
             or self.tainted
             or self.retrieval.returned_nothing
             or any(not t.ok for t in self.tools)
+            or self.planning_failed
         )
+
+    @property
+    def degraded_reasons(self) -> tuple[str, ...]:
+        """Why :attr:`degraded` is true, as the same bounded slugs the counter is labelled by."""
+        reasons = (
+            ("provider_fallback", self.fallback_count),
+            ("tainted_context", self.tainted),
+            ("empty_retrieval", self.retrieval.returned_nothing),
+            ("tool_failure", any(not t.ok for t in self.tools)),
+            ("planning_failed", self.planning_failed),
+        )
+        return tuple(reason for reason, hit in reasons if hit)
 
     def with_timing(self, **stages: float) -> "TurnTelemetry":
         return replace(self, timings=replace(self.timings, **stages))
@@ -239,10 +255,12 @@ class TurnTelemetry:
                  "error_kind": t.error_kind, "allowed": t.allowed}
                 for t in self.tools
             ],
-            "plan": {"steps": self.plan_steps, "revisions": self.plan_revisions},
+            "plan": {"steps": self.plan_steps, "revisions": self.plan_revisions,
+                     "failed": self.planning_failed},
             "confidence": self.confidence,
             "groundedness": self.groundedness,
             "prompt": {"template": self.prompt_template, "version": self.prompt_version},
             "degraded": self.degraded,
+            "degraded_reasons": list(self.degraded_reasons),
             "started_at": self.started_at.isoformat(),
         }

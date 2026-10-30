@@ -42,8 +42,17 @@ except ImportError:  # pragma: no cover
 # Pipeline overhead is sub-second and its interesting range is 1-250 ms; end-to-end turns and
 # time-to-first-token live in seconds.
 _MS_BUCKETS = (0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5)
-_TURN_BUCKETS = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0, 60.0)
-_TTFT_BUCKETS = (0.05, 0.1, 0.2, 0.4, 0.8, 1.5, 3.0, 6.0, 12.0)
+# Turns, TTFT and HTTP requests reach 600 s / 300 s for the same reason (F-24): a CPU-hosted
+# turn routinely runs past 60 s and a queued request can wait minutes for its first token, so
+# buckets that stopped at 60 s and 12 s put the production p95 in +Inf, where no quantile can be
+# read from it. 600 s is the nginx read timeout on /api/v3/chat, so nothing slower can complete.
+_TURN_BUCKETS = (
+    0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0, 60.0, 120.0, 180.0, 300.0, 600.0,
+)
+_TTFT_BUCKETS = (0.05, 0.1, 0.2, 0.4, 0.8, 1.5, 3.0, 6.0, 12.0, 30.0, 60.0, 120.0, 300.0)
+_HTTP_BUCKETS = (
+    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0,
+)
 _TOKEN_BUCKETS = (64, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768)
 _SCORE_BUCKETS = (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
 # Generation-phase buckets reach 240 s because CPU inference really does take that long (Phase A4
@@ -170,6 +179,36 @@ class Metrics:
             ("reason",),
         )
         self.turns_in_flight = self._gauge("turns_in_flight", "Turns currently executing.")
+
+        # -- http (F-24) ---------------------------------------------------------------
+        # ``route`` is the matched route *template* (``/api/v3/sessions/{session_id}``), never
+        # the raw path, and ``unmatched`` for a 404 -- so a scanner cannot mint series.
+        self.http_requests_total = self._counter(
+            "http_requests_total", "HTTP requests by route and status.",
+            ("method", "route", "status"),
+        )
+        self.http_request_duration = self._histogram(
+            "http_request_duration_seconds",
+            "HTTP request duration, to the last body byte (a whole stream, for SSE).",
+            ("method", "route"),
+            _HTTP_BUCKETS,
+        )
+
+        # -- event outbox (F-24) -------------------------------------------------------
+        # Read from the outbox at scrape time, not pushed by the drain worker: the worker is a
+        # different process (often a different host) from the one Prometheus scrapes.
+        self.outbox_pending = self._gauge(
+            "outbox_pending", "Durable events waiting for delivery.", multiprocess_mode="livemax"
+        )
+        self.outbox_dead_lettered = self._gauge(
+            "outbox_dead_lettered", "Durable events that exhausted their delivery attempts.",
+            multiprocess_mode="livemax",
+        )
+        self.outbox_oldest_age = self._gauge(
+            "outbox_oldest_pending_age_seconds",
+            "Age of the oldest event waiting for delivery (0 when none is).",
+            multiprocess_mode="livemax",
+        )
 
         # -- vision (ADR-031) ----------------------------------------------------------
         # Labels are bounded enums only: ``outcome`` is vlm/ocr_fallback/unavailable and
@@ -668,6 +707,8 @@ class Metrics:
             self.turn_degraded_total.labels(reason="empty_retrieval").inc()
         if any(not t.ok for t in telemetry.tools):
             self.turn_degraded_total.labels(reason="tool_failure").inc()
+        if telemetry.planning_failed:
+            self.turn_degraded_total.labels(reason="planning_failed").inc()
 
     def observe_generation(self, timing: Any) -> None:
         """Fan one :class:`~aura_core.domain.llm.GenerationTiming` out to the catalogue.
@@ -697,6 +738,15 @@ class Metrics:
         tps = timing.tokens_per_second
         if tps is not None:
             self.llm_generation_tokens_per_second.labels(**labels).observe(tps)
+
+    def observe_http(self, method: str, route: str, status: int, seconds: float) -> None:
+        self.http_requests_total.labels(method=method, route=route, status=str(status)).inc()
+        self.http_request_duration.labels(method=method, route=route).observe(seconds)
+
+    def set_outbox(self, *, pending: int, dead_lettered: int, oldest_age_s: float) -> None:
+        self.outbox_pending.set(pending)
+        self.outbox_dead_lettered.set(dead_lettered)
+        self.outbox_oldest_age.set(oldest_age_s)
 
     def set_insecure_modes(self, bypasses: Mapping[str, bool]) -> None:
         """Publish which security bypasses are active.

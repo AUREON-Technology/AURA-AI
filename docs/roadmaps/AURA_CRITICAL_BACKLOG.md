@@ -157,12 +157,19 @@ Severity: **Critical** (blocks everything / live exposure) · **High** (blocks a
 - **Actual state:** `_plan_and_execute` swallows all exceptions and answers directly (`kernel.py:1171-1173`).
 - **Required action:** typed degraded outcome + metric + alert.
 - **Roadmap phase:** M1.
+- **2026-10-30: BUILT, tested locally, not CI-run** (CI has no runner, CB-44). A planner that
+  fails (including the planner's own swallowed timeout, now `Plan.fallback_reason`) or an
+  execution that raises sets `TurnTelemetry.planning_failed`; both `run` and `stream` mark the
+  turn degraded with `degraded_reasons: ["planning_failed"]`, increment
+  `aura_turn_degraded_total{reason="planning_failed"}`, and tell the model no tool ran so it
+  cannot claim success. Alert: `AuraPlanningFailing`. Test:
+  `tests/unit/test_degraded_turns_and_stream_telemetry.py`.
 
 ## Tier 2 — production foundation (M3/M4/M5/M6)
 
 | ID | Sev | Area | Actual state (evidence) | Required action | Verification | Phase |
 | --- | --- | --- | --- | --- | --- | --- |
-| CB-15 | High | Observability | No HTTP request metrics; buckets stop at 60 s/12 s (`observability/metrics.py:45-46`) | Route histogram + status counter; widen buckets; outbox/queue gauges | Grafana p95 matches load p95 | M3 |
+| CB-15 | High | Observability | No HTTP request metrics; buckets stop at 60 s/12 s (`observability/metrics.py:45-46`) | Route histogram + status counter; widen buckets; outbox/queue gauges | Grafana p95 matches load p95 | M3 · **2026-10-30: BUILT, not proven.** `aura_http_request_*` by route template, turn/TTFT buckets to 600 s/300 s, outbox gauges read at scrape time (Postgres query verified on PG 16), `kernel.stream` now recorded. The verification needs the M5 load run. No Celery worker gauge yet. |
 | CB-16 | High | Inference decision | Rented HF Space as sole provider (`docs/deployment/control-plane.md:75-76`) vs GAP-034 | ADR-017; never a sole remote provider | ADR merged | M4 |
 | CB-17 | High | Inference capacity | `NUM_PARALLEL=1`, CPU, p95 70.5 s (A4) | Pinned GPU pool + failover | Cutover + failure reports | M4 |
 | CB-18 | High | Supply chain | LLM by tag; embedder/STT no revision; HF Space `vllm:latest`; licenses unrecorded (GAP-030/031/042) | Pin + startup check + license table | Test + MODEL_REGISTRY | M4 |
