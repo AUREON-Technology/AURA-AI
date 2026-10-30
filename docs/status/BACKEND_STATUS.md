@@ -108,6 +108,30 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
   the Postgres FTS recommendation are in `docs/reports/LEXICAL_RETRIEVAL_BENCHMARK.md`. F-14's
   cross-worker half (uploads invisible on other workers) is unchanged.
 
+- F-25 deploy and runtime robustness (R2.7). BUILT and tested locally (pytest, legacy unittest,
+  `docker compose config -q` on both files, the Celery healthcheck run against a local Redis
+  worker and beat). Not CI-run and not proven: only a VPS deploy (VPS path still blocked, CB-03)
+  or a Railway deploy can prove it.
+  - The edge no longer waits for readiness. nginx and console depend on the gateway only being
+    *started*, and the gateway healthcheck uses `/health/live` (prod and dev).
+  - `vps-update.sh` now fails the deploy on three checks, each after a bounded wait: edge
+    liveness (`/health/live`, HTTP 200 exactly), the revision check, and readiness (`healthy:
+    true` plus a verified `schema` block, waiting up to `AURA_READY_TIMEOUT_S`, default 300 s).
+    The old `https://$domain/health` probe passed on nginx's 301.
+  - In-flight work now drains on shutdown. The gateway gets `stop_grace_period: 180s` and uvicorn
+    `--timeout-graceful-shutdown 150`. Workers get 120 s and beat 30 s. On Railway, the
+    Dockerfile CMD `exec`s uvicorn with the same timeout and `railway.json` sets
+    `drainingSeconds: 180`.
+  - Celery tasks now have soft and hard time limits per task family and `acks_late` with
+    `reject_on_worker_lost`. Training tasks are opted out of `acks_late`, and ingestion tasks are
+    not requeued after a crash. Prefetch is 1, and the Redis visibility timeout (2 h) is longer
+    than any late-acked task's hard limit. A soft limit no longer leaves its coroutine on the
+    reused worker loop.
+  - Every worker and beat now has a healthcheck (`scripts/celery_healthcheck.py`).
+  - Pinned by `tests/unit/test_deploy_robustness.py`.
+  - Not done here: R2.7's `container.shutdown()` closing the PG, Redis and Qdrant clients (in
+    `aura_core/`, outside this change), and the R2.7 drill report.
+
 **Still open (High)**
 - F-22 and F-27 are built and tested locally, not CI-run:
   - F-22: one configured LLM deadline, an SSE keep-alive every 15 s, and `/api/v3/chat` given
@@ -115,7 +139,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
   - F-27: migration `0016` baselines the 16 runtime-only tables.
 - **GAP-011, GAP-041 (P0):** inference is single-slot and no load matrix exists.
 
-**Medium:** F-16–F-18, F-23–F-26, F-28, F-33–F-38 (F-30 built, see above).
+**Medium:** F-16–F-18, F-23, F-24, F-26, F-28, F-33–F-38. F-25 and F-30 are built (above), not proven.
 
 **Conditional:** SEC-08 / F-38 becomes Critical if Firebase email/password sign-in is enabled.
 That needs a check in the Firebase console.
@@ -146,6 +170,10 @@ That needs a check in the Firebase console.
    and the outbox gauges, then run the M5 load matrix (GAP-041) to measure what the F-22
    budgets assume.
 8. **Owner:** decide the VPS's future (CB-03).
+9. Prove F-25 with the R2.7 drill on a live stack and file the report in `docs/reports/`. The
+   drill has two halves: stop Ollama, recreate nginx, and the edge must still serve
+   `/health/live`; a deploy with readiness broken must fail the workflow. On Railway, check that
+   a deploy during a streamed turn lets the stream finish (`drainingSeconds`).
 
 ## Unverified
 
@@ -155,4 +183,11 @@ That needs a check in the Firebase console.
 - F-20 at runtime (needs worker logs). F-03 secret paths on the VPS. The Firebase providers
   (SEC-08).
 - Whether sign-in works live after the 2026-10-30 migration (no real account has probed it).
+- F-25 at runtime. Four things are unverified:
+  - that uvicorn drains under Docker/Railway SIGTERM as configured;
+  - the beat healthcheck's schedule-file freshness with the image's Python 3.11 `dbm` backend
+    (it was run only against 3.13's sqlite backend);
+  - that `drainingSeconds` is honoured on this Railway plan;
+  - whether a deploy that fails readiness because inference is down is the trade the owner
+    wants (it is intended: such a release cannot answer a chat turn).
 - Whether `scripts/railway-predeploy.sh` runs as intended on Railway. The cause of the old failure is known (no shell, so only the `echo` ran), but the fix has not been through a deploy yet.

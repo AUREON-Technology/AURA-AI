@@ -51,6 +51,83 @@ celery_app = Celery(
     backend=_redis_url,
 )
 
+def _seconds(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+# -- Runtime robustness (audit F-25) --------------------------------------------------------
+# Before this, a task had no time limit at all, was acknowledged the moment a worker *received*
+# it, and every pool process prefetched four. A hung provider call held a worker slot forever,
+# and a deploy (SIGKILL after the grace period) or an OOM silently dropped whatever was running
+# plus everything prefetched behind it.
+#
+# Time limits. The soft limit raises SoftTimeLimitExceeded inside the task; every task in
+# tasks.py catches Exception and returns an error dict, so a soft limit ends as a logged,
+# acknowledged failure (and tasks._run_async cancels the coroutine it abandons). The hard limit
+# (SIGKILL of the pool child) is the backstop for a task stuck where the signal cannot reach it.
+# The default is sized for the realtime queue: the outbox drain can dispatch a trigger that makes
+# a provider call, and one call may take the deployed 180 s request timeout (CLAUDE.md), so ten
+# minutes is three of those with room to spare.
+TASK_SOFT_TIME_LIMIT_S = _seconds("AURA_CELERY_TASK_SOFT_TIME_LIMIT_S", 600)
+TASK_TIME_LIMIT_S = max(
+    _seconds("AURA_CELERY_TASK_TIME_LIMIT_S", 660), TASK_SOFT_TIME_LIMIT_S + 30
+)
+
+# Per-family overrides. soft < hard always, and the hard limit of an acks_late task must stay
+# below the broker's visibility timeout (below), or Redis redelivers a task that is still running.
+_INGESTION_LIMITS = {"soft_time_limit": 1500, "time_limit": 1800}  # CPU embedding of a big PDF
+_LEARNING_LIMITS = {"soft_time_limit": 3300, "time_limit": 3600}  # nightly refresh/consolidate
+# Loop B LoRA training on a CPU host takes hours: a runaway backstop, not a budget.
+_TRAINING_HARD_S = _seconds("AURA_CELERY_TRAINING_TIME_LIMIT_S", 6 * 3600)
+_TRAINING_LIMITS = {
+    "soft_time_limit": max(_TRAINING_HARD_S - 600, 60),
+    "time_limit": _TRAINING_HARD_S,
+}
+
+# Late acks: a message is acknowledged only after its task returns, so a worker killed mid-task
+# (deploy, OOM, host reboot) leaves it unacked and Redis redelivers it -- after
+# `visibility_timeout` when the whole container died, or at once (task_reject_on_worker_lost)
+# when only the pool child died. That is only safe for a task that tolerates running twice.
+# Each task left on the default below does, for its own reason:
+#   ingest_document / ingest_pdf  Qdrant upsert keyed by doc_id: a rerun overwrites the same points
+#   build_lora_dataset            atomic rewrite of one file
+#   insights / daily briefings    each run replaces that user's rows for the period
+#   knowledge_refresh             content-hash dedup in the refresh pipeline (ADR-008)
+#   memory_consolidate            merges memories; a rerun finds them already merged
+#   drain_event_outbox            the outbox is at-least-once by design (Phase E1); a rerun
+#                                 re-claims entries, it does not replay ones marked done
+#   reap / purge                  pause-if-idle, delete-if-expired: convergent
+# Opted out:
+#   finetune_job / drain_finetune_queue  a redelivery would retrain for hours. The job store keeps
+#                                 the job, and relaunching it is an operator's decision.
+# reject_on_worker_lost is switched back off for the ingestion-queue tasks: their pool child most
+# likely dies to the container memory limit on one oversized input, and requeueing that message
+# would kill the next child the same way, forever (Redis has no redelivery cap).
+_NO_LATE_ACK = {"acks_late": False, "reject_on_worker_lost": False}
+_NO_REQUEUE_ON_CRASH = {"reject_on_worker_lost": False}
+
+TASK_ANNOTATIONS: dict[str, dict] = {
+    "tasks.ingest_document_task": {**_INGESTION_LIMITS, **_NO_REQUEUE_ON_CRASH},
+    "tasks.ingest_pdf_task": {**_INGESTION_LIMITS, **_NO_REQUEUE_ON_CRASH},
+    "tasks.build_lora_dataset_task": {**_INGESTION_LIMITS, **_NO_REQUEUE_ON_CRASH},
+    "tasks.knowledge_refresh_task": dict(_LEARNING_LIMITS),
+    "tasks.memory_consolidate_task": dict(_LEARNING_LIMITS),
+    "tasks.finetune_job_task": {**_TRAINING_LIMITS, **_NO_LATE_ACK},
+    "tasks.drain_finetune_queue_task": {**_TRAINING_LIMITS, **_NO_LATE_ACK},
+}
+
+# Must exceed the longest hard limit of any acks_late task, or Redis hands a still-running task
+# to a second worker. It is also how long a message orphaned by a killed container waits before
+# it is redelivered, so it is not set higher than that requires.
+BROKER_VISIBILITY_TIMEOUT_S = 7200
+
 celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
@@ -58,6 +135,17 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,
+    task_soft_time_limit=TASK_SOFT_TIME_LIMIT_S,
+    task_time_limit=TASK_TIME_LIMIT_S,
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    task_annotations=TASK_ANNOTATIONS,
+    # One message per pool process. With late acks a prefetched message sits unacked behind a
+    # busy process while an idle one could have run it, and a long ingestion job would hold
+    # three more hostage behind it.
+    worker_prefetch_multiplier=1,
+    broker_transport_options={"visibility_timeout": BROKER_VISIBILITY_TIMEOUT_S},
+    broker_connection_retry_on_startup=True,
 )
 
 # AURA Insights (Doc/V2_BLUEPRINT.md §8): periodic background refresh, on
