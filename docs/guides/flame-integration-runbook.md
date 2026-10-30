@@ -1,8 +1,8 @@
 # Flame in Freefall integration runbook
 
 How to connect AURA to Flame in Freefall (`FCDS-College/Nasa`) and produce the evidence that each
-link works. Flame's side of the contract is `docs/AURA_INTEGRATION_REQUIREMENTS.md` in that
-repository; the AURA requirements it names (AR-1…AR-8) are built in this repository:
+link works. Flame's side of the contract is `docs/integration/AURA_INTEGRATION_REQUIREMENTS.md` in
+that repository, and its current endpoint reference is `docs/integration/API_INTEGRATION_REFERENCE.md`; the AURA requirements it names (AR-1…AR-8) are built in this repository:
 
 | AR | What | Where |
 | --- | --- | --- |
@@ -34,9 +34,11 @@ All admin calls need a Super Admin token: `ADMIN="Authorization: Bearer $SUPERAD
 **Flame:**
 
 - The read endpoints (FR-1) and `GET /api/openapi.json` must be reachable from the AURA gateway's
-  network.
-- Until a read-only Flame token exists, serve the read API anonymously, on the private network
-  only (FR-5).
+  network, **over https**: the connector sends its credential only on https.
+- Flame requires a bearer token on every `/api/*` call except `GET /api/openapi.json`
+  (`FLAME_API_AUTH_ENABLED` defaults to true). Use Flame's **read** token (`FLAME_READ_API_TOKEN`)
+  as the connector `secret` (§2.1). Never give AURA the write token. Do not turn Flame's auth off
+  to make the connector work.
 
 **Offline check first.** From a Flame checkout, run the dry run against the AURA revision you
 will deploy:
@@ -45,7 +47,8 @@ will deploy:
 AURA_BACKEND=/path/to/AURA-AI/aura_backend python tests/integration/aura_blueprint_dryrun.py
 ```
 
-It must exit 0 with all 8 tools `ACCEPTED`, and print no `not reachable by AURA` lines.
+It must exit 0 with all 10 tools `ACCEPTED`, report 3 operations excluded by `x-aura-exclude`, and
+print no `not reachable by AURA` lines. Checked against Flame contract 0.3.0 and AURA `6417c43`.
 
 ## 2. Link 2: AURA reads Flame (AR-7)
 
@@ -62,7 +65,7 @@ curl -X POST "$AURA/api/v3/admin/connectors" -H "$ADMIN" -H "Content-Type: appli
 
 - `allow_private_network` is needed when Flame resolves to a private address. Loopback,
   link-local and metadata ranges stay refused even with it.
-- **With a Flame read-only token:**
+- **Add Flame's read token** (required, see §1):
   - add `"secret": "<token>"` to the body, and `"read_only_attested": true` to `options`;
   - the token is vaulted and never echoed;
   - the attestation is shown to the approver and bound into the approval digest.
@@ -90,7 +93,7 @@ curl -X POST "$AURA/api/v3/admin/twin/versions/$TWIN/compile" -H "$ADMIN"
 curl -X POST "$AURA/api/v3/admin/blueprints/$BP/evaluate" -H "$ADMIN"
 ```
 
-- The compiled blueprint should hold the same 8 tools as the dry run. `api_search` should take
+- The compiled blueprint should hold the same 10 tools as the dry run. `api_search` should take
   `q` plus the optional `type`, `source_id`, `experiment_id`, `domain`, `page` and `page_size`.
 - A `tool_contract` case that cannot reach a replica is `not_run`, never a pass. Record the gate
   report as it is.
@@ -106,8 +109,10 @@ exclusion appears in the discovery report and the twin diff rather than vanishin
 
 The reason is that Flame's `/api/chat` itself calls AURA's `/api/v3/chat` (Link 1). A tool compiled
 from it would let AURA call back into its own caller. Expect one `operation_excluded` issue per
-marked operation. The compiled read tools are the 8 above plus `api_list_documents` and
-`api_list_experiments`.
+marked operation. The 10 compiled read tools are `api_get_health`, `api_get_dashboard_counts`,
+`api_search`, `api_list_documents`, `api_get_document`, `api_list_experiments`,
+`api_get_experiment`, `api_get_evidence`, `api_list_analyses` and `api_get_analysis`. From
+contract 0.3.0, `api_get_analysis` also returns video analyses (`analysis_type: flame_video`).
 
 ### 2.4 Approve and deploy
 
@@ -157,7 +162,8 @@ digests and the full gate report. Until a run records all of them, Link 2 is bui
 curl -X POST "$AURA/api/v3/admin/service-keys" -H "$ADMIN" -d '{"name": "svc-flame", "rate_per_minute": 6}'
 ```
 
-- Store the returned `token` in Flame's secret store as `FLAME_AURA_TOKEN`. It is shown once.
+- Store the returned `token` in Flame's secret store as `FLAME_AURA_SERVICE_TOKEN`, and set
+  `FLAME_AURA_ENABLED=true` on both the Flame API and worker. The token is shown once.
 - The key reaches `POST /api/v3/chat` only. Add `"routes": ["POST /api/v3/chat",
   "POST /api/v3/knowledge/documents"]` only if you choose the corpus-mirror option.
 
@@ -188,10 +194,20 @@ curl -X POST "$AURA/api/v3/admin/service-keys" -H "$ADMIN" -d '{"name": "svc-fla
 | AURA | Flame |
 | --- | --- |
 | 200 with `data` | validate (FR-7), then store |
-| 422 `output_invalid` | `interpretation.status="unavailable"`, warning `INTERPRETATION_UNAVAILABLE`; do not retry the same request |
+| 422 `output_invalid` | From Flame PR #21 (FCDS-College/Nasa), Flame's router falls back to its local model; if none answers, `interpretation.status="unavailable"` with `INTERPRETATION_UNAVAILABLE`. Not retried at AURA |
 | 429 | `retryable=true`; honour `Retry-After` |
 | 401 | key revoked or wrong; page an operator |
 | 503 | `INTERPRETATION_UNAVAILABLE` |
+
+Idempotency. Flame sends `Idempotency-Key: <analysis or request id>:<16 hex of the body's SHA-256>`
+and `X-Correlation-Id: <id>`. An exact retry is deduplicated; a re-run with new evidence is a new
+request rather than `422 idempotency_key_reused`. AURA does not store a 429 or a `retryable: true`
+answer, so a retry after a refusal runs the turn again.
+
+`require_local`. Flame sends `require_local: true` by default. `/health/ready` reports
+`local_healthy`; when it is false every Flame call fails with 503 while `healthy` is still true.
+Either run a provider marked local, or set Flame's `FLAME_AURA_REQUIRE_LOCAL=false` where AURA's
+model is remote by design.
 
 On the CPU deployment, 400 tokens at 5–10 tok/s plus one possible repair is roughly 40–160 s. That
 is why Flame's 120 s timeout must stay off the dashboard path (NR-1).
@@ -217,7 +233,7 @@ The key's next request gets a 401, on every worker.
 
 Until AP11 (drift and impact) exists, contract drift is handled by hand:
 
-1. **On every change to Flame's `docs/openapi.json`,** run the offline dry run (§1) against the
+1. **On every change to Flame's `docs/api/openapi.json`,** run the offline dry run (§1) against the
    deployed AURA revision.
    - A breaking change needs a semver bump of `info.version` (CR-4).
 2. **When `info.version` changes,** run `POST /admin/twin/snapshot`, then `GET /admin/twin/diff`,

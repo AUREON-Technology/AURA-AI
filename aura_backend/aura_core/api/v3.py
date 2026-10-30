@@ -1639,6 +1639,27 @@ def build_app(
             headers={"Retry-After": str(retry_after)} if retry_after else None,
         )
 
+    from fastapi.exception_handlers import http_exception_handler
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+
+    @app.exception_handler(StarletteHTTPException)
+    async def wrapped_domain_error_handler(request: Request, exc: StarletteHTTPException) -> Response:
+        """One error envelope for errors raised from dependencies (auth, service-key scope, rate
+        limit, idempotency), which carry ``AuraError.to_dict()`` in ``HTTPException.detail``.
+
+        The domain fields go at the top level, as ``domain_error_handler`` and ``/chat`` already
+        send them, so a caller reads ``error``/``retryable`` in one place. ``detail`` keeps the same
+        dict because the Flutter client and the console read it there today (both accept either).
+        Any other ``HTTPException`` keeps FastAPI's own body.
+        """
+        detail = exc.detail
+        if isinstance(detail, dict) and isinstance(detail.get("error"), str):
+            return JSONResponse(
+                status_code=exc.status_code, content={**detail, "detail": detail},
+                headers=getattr(exc, "headers", None),
+            )
+        return await http_exception_handler(request, exc)
+
     @app.get("/health/live")
     async def liveness() -> JSONResponse:
         """Process is running. Deliberately checks nothing else -- a liveness probe that fails

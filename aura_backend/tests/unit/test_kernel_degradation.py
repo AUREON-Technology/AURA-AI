@@ -328,6 +328,29 @@ class TestRouterFailover:
         health = await router.health()
         assert set(health) == {"a", "b"}
 
+    async def test_health_says_which_providers_are_local(self, clock) -> None:
+        """`require_local` drops non-local providers, so readiness has to say which are local:
+        otherwise a gateway whose only healthy provider is remote reads as ready to a caller that
+        can only use a local one."""
+        router = ProviderRouter(
+            [self._provider("box"), self._provider("remote", is_local=False)], clock=clock.monotonic
+        )
+        health = await router.health()
+        assert health["box"]["is_local"] is True
+        assert health["remote"]["is_local"] is False
+
+    async def test_readiness_reports_local_health_without_gating_on_it(self, container) -> None:
+        health = await container.health()
+        providers = health["providers"]
+        assert health["local_healthy"] is any(p["healthy"] and p["is_local"] for p in providers.values())
+
+        for status in providers.values():
+            status["is_local"] = False
+        container.router.health = _returning(providers)
+        remote_only = await container.health()
+        assert remote_only["local_healthy"] is False
+        assert remote_only["healthy"] is any(p["healthy"] for p in providers.values())
+
 
 class _FixedPlanner:
     def __init__(self, plan) -> None:
@@ -720,3 +743,9 @@ class TestStreamToolExecution:
         assert result.telemetry.outcome is TurnOutcome.BLOCKED
         assert result.text == ""
 
+
+def _returning(value):
+    async def health():
+        return value
+
+    return health

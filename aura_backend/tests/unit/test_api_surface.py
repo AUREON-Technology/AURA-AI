@@ -65,6 +65,26 @@ class TestAuthentication:
         assert response.json()["detail"]["error"] == "authentication_error"
         assert response.json()["detail"]["retryable"] is False
 
+    def test_a_dependency_error_uses_the_same_top_level_envelope(self, container) -> None:
+        """Errors raised from a dependency read like the ones ``/chat`` returns (``error`` and
+        ``retryable`` at the top level); ``detail`` stays for clients that read it there."""
+
+        async def refusing(request):
+            raise AuthenticationError("token has expired")
+
+        with _client(container, authenticator=refusing) as client:
+            body = client.post("/api/v3/chat", json={"message": "hi"}).json()
+        assert body["error"] == "authentication_error"
+        assert body["retryable"] is False
+        assert body["message"] == "token has expired"
+        assert body["detail"] == {key: body[key] for key in ("error", "message", "retryable", "details")}
+
+    def test_an_unknown_route_keeps_fastapis_own_body(self, container) -> None:
+        with _client(container) as client:
+            response = client.get("/api/v3/does-not-exist")
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Not Found"}
+
     def test_health_endpoints_do_not_require_authentication(self, container) -> None:
         """A probe that needs a credential is a probe that fails during an auth outage."""
 
