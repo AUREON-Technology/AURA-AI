@@ -1729,11 +1729,12 @@ class AIKernel:
     def _completion_timeout_s(self) -> float:
         """Router first-token deadline. Must match ``AURA_LLM_TIMEOUT_S``.
 
-        ``CompletionRequest.timeout_s`` defaults to 60s. The CPU Ollama stack is configured
-        for 180s (``AURA_PROVIDER_LOCAL_TIMEOUT_S``), but that only covers the HTTP client.
-        The router wraps the first streamed chunk in ``asyncio.wait_for(..., timeout=request.timeout_s)``,
-        so leaving the dataclass default in place kills a cold 3B prefill and surfaces as
-        ``all 1 provider attempt(s) failed before streaming began``.
+        ``CompletionRequest.timeout_s`` used to default to 60s while the CPU Ollama stack is
+        configured for 180s (``AURA_PROVIDER_LOCAL_TIMEOUT_S``). The router wraps the first
+        streamed chunk in ``asyncio.wait_for(..., timeout=request.timeout_s)``, so the default
+        killed a cold 3B prefill (``all 1 provider attempt(s) failed before streaming began``).
+        The dataclass now defaults to ``None`` -- the router's configured timeout -- and this
+        stays explicit so a turn's deadline is visible where the turn is built.
         """
         llm = getattr(self._deps.settings, "llm", None) if self._deps.settings is not None else None
         raw = getattr(llm, "request_timeout_s", 60.0) if llm is not None else 60.0

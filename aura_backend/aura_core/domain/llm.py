@@ -542,7 +542,12 @@ class CompletionRequest:
     policy: RoutingPolicy | None = None
     min_quality_tier: int = 1
     require_local: bool = False
-    timeout_s: float = 60.0
+    #: Seconds the whole call may take. ``None`` means the router's configured request timeout
+    #: (``AURA_LLM_TIMEOUT_S``, 180 s on the CPU stack). This used to default to a hard-coded
+    #: 60 s, which every caller that did not set it silently got -- the reasoner, the session
+    #: summariser, entity extraction, query expansion -- so a 1024-token answer that needs
+    #: 100-200 s at 5-10 tok/s was cancelled at 60 s (audit F-22).
+    timeout_s: float | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     #: Token count of a stable prompt prefix (CAG). Unused until a provider with
     #: ``supports_prefix_cache`` is wired; kept so adapters need no domain change.
