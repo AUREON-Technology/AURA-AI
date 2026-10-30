@@ -168,6 +168,8 @@ class ChatRepository {
 
     if (persistUserMessage) {
       final userMsgId = _uuid.v4();
+      // Before the insert, so the bubble's first frame already has its thumbnails.
+      _ref.read(sentChatImagesProvider.notifier).remember(userMsgId, images);
       await _db.into(_db.messages).insert(
         MessagesCompanion.insert(
           id: userMsgId,
@@ -250,6 +252,9 @@ class ChatRepository {
     if (userMessages.isEmpty) return;
 
     final lastUserMsg = userMessages.last;
+    // The stored text carries the image marker, not the images (ADR-031): resend the text alone,
+    // with the images themselves while this session still holds them.
+    final images = _ref.read(sentChatImagesProvider)[lastUserMsg.id] ?? const <ChatImageAttachment>[];
     await (_db.delete(_db.messages)..where((m) => m.id.equals(errorMessageId))).go();
     await _enqueueDelete(errorMessageId);
     await (_db.delete(_db.messages)..where((m) => m.id.equals(lastUserMsg.id))).go();
@@ -257,7 +262,8 @@ class ChatRepository {
 
     await sendChatMessage(
       conversationId: conversationId,
-      userContent: lastUserMsg.content,
+      userContent: splitImagesNote(lastUserMsg.content).text,
+      images: images,
     );
   }
 
@@ -310,7 +316,8 @@ class ChatRepository {
         m.role == 'assistant' &&
         (m.id == turnId || TurnMeta.decode(m.turnMetaJson).turnId == turnId));
     for (var i = index - 1; i >= 0; i--) {
-      if (messages[i].role == 'user') return messages[i].content;
+      // The server resumes the stored turn (F-04); its images were already understood then.
+      if (messages[i].role == 'user') return splitImagesNote(messages[i].content).text;
     }
     return null;
   }

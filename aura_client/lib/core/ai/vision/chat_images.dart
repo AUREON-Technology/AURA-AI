@@ -142,3 +142,39 @@ final pendingChatImagesProvider =
 /// The note a user turn carries in the local transcript, mirroring the server's history marker.
 String imagesAttachedNote(int count) =>
     count == 1 ? '[1 image attached]' : '[$count images attached]';
+
+/// Images of messages already sent, for their bubbles' thumbnails (ADR-031 P5-4).
+///
+/// Memory only, for this app session: the bytes are never written to Drift or synced, the same
+/// rule the server keeps. After a restart, or on another device, a bubble has only the
+/// [imagesAttachedNote] marker in its text, and shows a chip instead of thumbnails. Bounded to
+/// the [kSentImageMessages] most recent messages so a long session cannot hold every photo.
+class SentChatImages extends Notifier<Map<String, List<ChatImageAttachment>>> {
+  @override
+  Map<String, List<ChatImageAttachment>> build() => const {};
+
+  void remember(String messageId, List<ChatImageAttachment> images) {
+    if (images.isEmpty) return;
+    final next = Map<String, List<ChatImageAttachment>>.of(state)
+      ..remove(messageId)
+      ..[messageId] = List.unmodifiable(images);
+    while (next.length > kSentImageMessages) {
+      next.remove(next.keys.first);
+    }
+    state = next;
+  }
+}
+
+const kSentImageMessages = 30;
+
+final sentChatImagesProvider =
+    NotifierProvider<SentChatImages, Map<String, List<ChatImageAttachment>>>(SentChatImages.new);
+
+final _imagesNote = RegExp(r'\n?\[(\d+) images? attached\]\s*$');
+
+/// Splits a stored user message into its text and the number of images its marker records.
+({String text, int imageCount}) splitImagesNote(String content) {
+  final match = _imagesNote.firstMatch(content);
+  if (match == null) return (text: content, imageCount: 0);
+  return (text: content.substring(0, match.start), imageCount: int.parse(match.group(1)!));
+}

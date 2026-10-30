@@ -6,6 +6,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:aura_client/core/ai/vision/chat_images.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 
@@ -13,6 +14,7 @@ import '../../data/agents_repository.dart';
 import '../../data/chat_connection_error.dart';
 import '../../data/chat_repository.dart';
 import '../../data/turn_meta.dart';
+import 'chat_image_attachments.dart';
 import 'citation_chip.dart';
 import 'empty_answer_retry_card.dart';
 import 'engineer_confirmation_card.dart';
@@ -164,6 +166,11 @@ class MessageBubble extends ConsumerWidget {
     final agentId = message.agentId;
     final personaInfo = agentId != null ? personaDisplay(agentId) : null;
     final turnMeta = TurnMeta.decode(message.turnMetaJson);
+    // ADR-031: the stored text ends in the "[N images attached]" marker; the bubble shows the
+    // images (or a count) instead of the marker itself.
+    final userImages = isUser
+        ? splitImagesNote(message.content)
+        : (text: message.content, imageCount: 0);
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -189,8 +196,16 @@ class MessageBubble extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (userImages.imageCount > 0) ...[
+                      SentImagesView(
+                        messageId: message.id,
+                        imageCount: userImages.imageCount,
+                        foreground: palette.onBrand,
+                      ),
+                      const SizedBox(height: AuraSpacing.sm),
+                    ],
                     Text(
-                      message.content,
+                      userImages.text,
                       style: TextStyle(
                         color: palette.onBrand,
                         fontSize: 15,

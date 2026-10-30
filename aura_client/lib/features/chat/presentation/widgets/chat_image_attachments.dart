@@ -129,3 +129,105 @@ class PendingImagesStrip extends ConsumerWidget {
     );
   }
 }
+
+/// What a sent user message shows for its images (ADR-031 P5-4): thumbnails while this session
+/// still holds them, each opening a full-size preview, otherwise a chip saying how many were
+/// attached. The images themselves are never stored, so a reloaded conversation has only the
+/// count.
+class SentImagesView extends ConsumerWidget {
+  final String messageId;
+  final int imageCount;
+  final Color foreground;
+
+  const SentImagesView({
+    super.key,
+    required this.messageId,
+    required this.imageCount,
+    required this.foreground,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final images = ref.watch(sentChatImagesProvider)[messageId] ?? const <ChatImageAttachment>[];
+    if (images.isEmpty) {
+      if (imageCount == 0) return const SizedBox.shrink();
+      final label = imageCount == 1 ? '1 image attached' : '$imageCount images attached';
+      return Semantics(
+        label: label,
+        excludeSemantics: true,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.image_outlined, size: 16, color: foreground.withValues(alpha: 0.85)),
+            const SizedBox(width: AuraSpacing.xs),
+            Text(label, style: TextStyle(fontSize: 12, color: foreground.withValues(alpha: 0.85))),
+          ],
+        ),
+      );
+    }
+
+    return Wrap(
+      spacing: AuraSpacing.sm,
+      runSpacing: AuraSpacing.sm,
+      children: [
+        for (var i = 0; i < images.length; i++)
+          Semantics(
+            button: true,
+            label: 'Sent image ${i + 1} of ${images.length}: ${images[i].name}. Open preview',
+            excludeSemantics: true,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(AuraRadius.sm),
+              onTap: () => _preview(context, images[i]),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(AuraRadius.sm),
+                child: Image.memory(
+                  images[i].bytes,
+                  width: 96,
+                  height: 96,
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                  errorBuilder: (_, _, _) => SizedBox(
+                    width: 96,
+                    height: 96,
+                    child: Icon(Icons.broken_image_outlined, color: foreground),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  static Future<void> _preview(BuildContext context, ChatImageAttachment image) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        insetPadding: const EdgeInsets.all(AuraSpacing.lg),
+        clipBehavior: Clip.antiAlias,
+        // The close button sits in its own row rather than over the image: a dialog sized to a
+        // small image would otherwise clip it out of reach.
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            IconButton(
+              tooltip: 'Close preview',
+              icon: const Icon(Icons.close),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+            ),
+            Flexible(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 240, minHeight: 160),
+                child: InteractiveViewer(
+                  maxScale: 5,
+                  child: Image.memory(image.bytes, fit: BoxFit.contain, semanticLabel: image.name),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
