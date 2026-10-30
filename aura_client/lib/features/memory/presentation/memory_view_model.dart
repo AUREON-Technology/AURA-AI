@@ -14,7 +14,10 @@ const kMemoryKinds = [
 class MemoryUiState {
   final String? kindFilter;
   final bool loading;
-  final String? error;
+
+  /// The failure itself, not its `toString()`, so the page can render it
+  /// through `AuraFailure` (audit F-33).
+  final Object? error;
   final List<MemoryItem> items;
 
   const MemoryUiState({
@@ -34,7 +37,7 @@ class MemoryUiState {
     String? kindFilter,
     bool clearFilter = false,
     bool? loading,
-    String? error,
+    Object? error,
     bool clearError = false,
     List<MemoryItem>? items,
   }) {
@@ -56,11 +59,17 @@ class MemoryViewModel extends Notifier<MemoryUiState> {
 
   Future<void> refresh() async {
     state = state.copyWith(loading: true, clearError: true);
+    final repository = ref.read(memoryRepositoryProvider);
     try {
-      final items = await ref.read(memoryRepositoryProvider).syncMemories();
+      final items = await repository.syncMemories(throwOnFailure: true);
       state = state.copyWith(loading: false, items: items);
     } catch (e) {
-      state = state.copyWith(loading: false, error: e.toString());
+      // Still show what this device has, but say the list may be stale.
+      List<MemoryItem>? cached;
+      try {
+        cached = await repository.loadLocalMemories();
+      } catch (_) {}
+      state = state.copyWith(loading: false, items: cached, error: e);
     }
   }
 
@@ -83,9 +92,13 @@ class MemoryViewModel extends Notifier<MemoryUiState> {
     await refresh();
   }
 
-  Future<void> remove(String id) async {
-    await ref.read(memoryRepositoryProvider).deleteMemory(id);
+  /// Forgets a memory. Returns whether the server confirmed it; throws when
+  /// the delete could not even be recorded on this device. Either way the
+  /// page tells the user -- a failed delete used to vanish silently.
+  Future<bool> remove(String id) async {
+    final confirmed = await ref.read(memoryRepositoryProvider).deleteMemory(id);
     await refresh();
+    return confirmed;
   }
 }
 

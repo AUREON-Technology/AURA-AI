@@ -7,6 +7,7 @@ import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
+import 'package:aura_client/core/network/aura_api_error.dart';
 import 'package:aura_client/core/security/device_validation_service.dart';
 import 'package:aura_client/core/sync/remote_deletes.dart';
 import 'package:aura_client/core/sync/sync_payloads.dart';
@@ -110,7 +111,15 @@ class MemoryRepository {
   /// back (F-07); pending deletes are retried first. When the server's answer
   /// is the complete list (fewer than [limit]), synced local rows it no
   /// longer has were deleted elsewhere and are dropped here too.
-  Future<List<MemoryItem>> syncMemories({int limit = 100, int offset = 0}) async {
+  ///
+  /// A failed fetch falls back to the local cache. With [throwOnFailure] it
+  /// throws instead, for a caller that has to *say* the list may be stale
+  /// (the Memory page, audit F-33) rather than quietly show the cache.
+  Future<List<MemoryItem>> syncMemories({
+    int limit = 100,
+    int offset = 0,
+    bool throwOnFailure = false,
+  }) async {
     try {
       await _remoteDeletes.flush();
       final forgotten = await _remoteDeletes.pendingIds(RemoteDeleteKind.memory);
@@ -149,9 +158,15 @@ class MemoryRepository {
 
         return items;
       } else {
-        throw Exception("Failed to fetch memories from server: ${response.statusCode}");
+        throw AuraApiError.fromResponse(
+          statusCode: response.statusCode,
+          body: response.body,
+          retryAfterHeader: response.headers['retry-after'],
+          correlationId: response.headers['x-correlation-id'],
+        );
       }
     } catch (e) {
+      if (throwOnFailure) rethrow;
       debugPrint("Memory sync failed: $e. Falling back to local cache.");
       final cached = await _db.select(_db.userMemories).get();
       return cached.map((c) => MemoryItem(id: c.id, content: c.fact)).toList();
@@ -167,10 +182,14 @@ class MemoryRepository {
   /// server's own id, which [saveMemory] adopts -- the client used to delete
   /// by a local hash the server had never heard of, got 404, and the memory
   /// kept being recalled in every turn (F-07).
-  Future<void> deleteMemory(String memoryId) async {
+  ///
+  /// Returns whether the server confirmed the delete. False means it is
+  /// gone here and queued for the server, which the caller should say rather
+  /// than imply it is done everywhere (audit F-33).
+  Future<bool> deleteMemory(String memoryId) async {
     await (_db.delete(_db.userMemories)..where((m) => m.id.equals(memoryId))).go();
     await _db.enqueueOutbox(table: 'memories', recordId: memoryId, operation: 'delete');
-    await _remoteDeletes.request(RemoteDeleteKind.memory, memoryId);
+    return _remoteDeletes.request(RemoteDeleteKind.memory, memoryId);
   }
 
   /// Saves a memory to the server's memory store and the local cache.

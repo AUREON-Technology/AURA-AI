@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/database/database.dart';
 import '../../core/database/database_provider.dart';
 import '../../core/design_system/design_system.dart';
+import '../../core/platform/aura_platform.dart';
 
 /// Global command palette (Doc/V2_BLUEPRINT.md §3) — reachable from any
 /// screen via Ctrl/Cmd+K or the floating trigger in [ShellLayout], instead
@@ -94,10 +95,19 @@ class _CommandPaletteDialogState extends ConsumerState<_CommandPaletteDialog> {
     });
   }
 
+  /// ADR-015's "Open Desktop IDE" command: with the landing preference no
+  /// longer redirecting `/today`, this and the IDE's own "Leave IDE" are how
+  /// a Windows user moves between the two shells (audit F-34).
+  List<_Destination> get _allDestinations => [
+        ..._destinations,
+        if (canRunDesktopIde)
+          const _Destination('Open Desktop IDE', Icons.dashboard_customize_outlined, '/ide'),
+      ];
+
   List<_Destination> get _matchingDestinations {
-    if (_query.trim().isEmpty) return _destinations;
+    if (_query.trim().isEmpty) return _allDestinations;
     final lower = _query.trim().toLowerCase();
-    return _destinations
+    return _allDestinations
         .where((d) => d.label.toLowerCase().contains(lower))
         .toList();
   }

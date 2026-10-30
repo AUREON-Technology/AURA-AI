@@ -60,6 +60,15 @@ class TokenManager {
   /// refresh token is not spent twice (AURA-010).
   Future<String?>? _inFlightAccessToken;
 
+  /// Set by [invalidateAccessToken]: the server has just answered 401, so the
+  /// renewal that follows is the one that decides whether the session lives.
+  bool _renewingAfterRejection = false;
+
+  /// Whether the last renewal ended in a *refusal* -- `/refresh` or `/token`
+  /// answered and said no, or there was nothing left to try with -- as
+  /// opposed to a network failure, which says nothing about the session.
+  bool _renewalRefused = false;
+
   Future<void> _loadCachedRefreshToken() async {
     _refreshToken ??= await _store.read();
   }
@@ -108,13 +117,31 @@ class TokenManager {
   Future<String?> _refreshOrExchange() async {
     if (_hasFreshAccessToken()) return _accessToken;
 
+    final afterRejection = _renewingAfterRejection;
+    _renewingAfterRejection = false;
+    _renewalRefused = false;
+
+    // A refresh that failed without being refused (network, 5xx) leaves the
+    // session's fate unknown, whatever the exchange after it says.
+    var refreshInconclusive = false;
     await _loadCachedRefreshToken();
     if (_refreshToken != null) {
       final refreshed = await _tryRefresh();
       if (refreshed) return _accessToken;
+      refreshInconclusive = !_renewalRefused;
     }
 
-    return _tryExchange();
+    final token = await _tryExchange();
+    // A 401, then a renewal the server refused: this session is over, and no
+    // retry from here will bring it back. End it, so the router shows the
+    // login page instead of every screen saying "Sign in again" with nothing
+    // to press (audit F-33). A renewal that failed on the network does not
+    // count -- that is "offline", not "signed out".
+    if (token == null && afterRejection && _renewalRefused && !refreshInconclusive) {
+      debugPrint("[TokenManager] session refused after a 401 -- ending it");
+      await _ref.read(authProvider.notifier).expireSession();
+    }
+    return token;
   }
 
   /// Drop the in-memory access token so the next [getValidAccessToken]
@@ -122,10 +149,14 @@ class TokenManager {
   /// "Invalid access token" — otherwise the same rejected JWT is reused
   /// until its local expiry (up to 15 minutes). Does not touch the refresh
   /// token; rotation only happens when `/refresh` itself fails.
+  ///
+  /// It also marks the next renewal as following a rejection: if that renewal
+  /// is refused as well, the session is ended ([_refreshOrExchange]).
   void invalidateAccessToken() {
     debugPrint("[TokenManager] clearing rejected access token");
     _accessToken = null;
     _accessTokenExpiry = null;
+    _renewingAfterRejection = true;
   }
 
   Future<http.Response> _post(String url, {Map<String, String>? headers, Object? body}) {
@@ -151,8 +182,11 @@ class TokenManager {
         );
         // Refresh token rejected (expired/revoked/already rotated) —
         // clear it so the next call falls through to a fresh exchange
-        // instead of retrying the same dead token forever.
-        await _clearRefreshToken();
+        // instead of retrying the same dead token forever. A 5xx/429 is the
+        // server failing to answer, not a verdict on the token: keep it, or
+        // one bad minute upstream would cost the user their session.
+        _renewalRefused = _isRefusal(response.statusCode);
+        if (_renewalRefused) await _clearRefreshToken();
         return false;
       }
       await _applyTokenResponse(jsonDecode(response.body) as Map<String, dynamic>);
@@ -169,6 +203,9 @@ class TokenManager {
       final idToken = await _ref.read(authProvider.notifier).getIdToken();
       if (idToken == null) {
         debugPrint("[TokenManager] token exchange skipped: no Google ID token");
+        // Nothing left to renew with: no refresh token got us here, and
+        // there is no identity token to exchange.
+        _renewalRefused = true;
         return null;
       }
 
@@ -193,6 +230,10 @@ class TokenManager {
         // tell a user "this device could not be verified" instead of
         // silently degrading to "sync/chat unavailable" forever.
         _ref.read(authExchangeFailureProvider.notifier).set(failure);
+        // An attestation 403 is about this device, not the session: signing
+        // in again cannot fix it, so it must not bounce the user to login.
+        _renewalRefused = failure != AuthExchangeFailure.deviceAttestationRejected &&
+            _isRefusal(response.statusCode);
         return null;
       }
 
@@ -203,6 +244,8 @@ class TokenManager {
     } catch (e) {
       debugPrint("[TokenManager] exchange failed: $e");
       _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.other);
+      // A thrown exchange is a network failure, not an answer.
+      _renewalRefused = false;
       return null;
     }
   }
@@ -286,6 +329,11 @@ class TokenManager {
     }
     return AuthExchangeFailure.other;
   }
+
+  /// An answer that says "no" to these credentials. A 5xx or 429 says the
+  /// server could not answer, which is not the same thing.
+  static bool _isRefusal(int statusCode) =>
+      statusCode == 400 || statusCode == 401 || statusCode == 403;
 
   Future<void> _applyTokenResponse(Map<String, dynamic> body) async {
     _accessToken = body['access_token'] as String;

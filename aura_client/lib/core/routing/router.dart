@@ -57,6 +57,9 @@ class ShellLayout extends ConsumerWidget {
         path.startsWith('/automations') ||
         path.startsWith('/appearance') ||
         path.startsWith('/server-environment') ||
+        path.startsWith('/engineer-history') ||
+        path.startsWith('/github-connect') ||
+        path.startsWith('/engineer-daemon') ||
         path.startsWith('/settings')) {
       return 3;
     }
@@ -246,6 +249,48 @@ class RouterTransitionNotifier extends ChangeNotifier {
   }
 }
 
+/// Whether this Windows user chose the Desktop IDE as their landing screen
+/// (Settings → Desktop IDE). Always false off Windows.
+Future<bool> _prefersDesktopIde() async {
+  if (!isDesktopIde) return false;
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getBool('desktop_use_ide') ?? false;
+}
+
+/// The app's redirect rules, apart from GoRouter so they can be tested.
+///
+/// Signed out, everything goes to `/login` -- including a session the backend
+/// refused to renew, which `AuthNotifier.expireSession` ends so that this is
+/// where the user lands (audit F-33).
+///
+/// The Desktop IDE preference picks where AURA *lands* -- the screen after
+/// sign-in or onboarding -- and nothing more. It used to redirect every visit
+/// to `/today` to `/ide`, so with the IDE on there was no way back to Home at
+/// all, against ADR-015's "no forced redirect" (audit F-34).
+Future<String?> resolveAppRedirect({
+  required bool isLoggedIn,
+  required bool? onboarded,
+  required String location,
+  required Future<bool> Function() prefersDesktopIde,
+}) async {
+  final isLoggingIn = location == '/login';
+  final isOnboarding = location == '/onboarding';
+
+  Future<String> landing() async => await prefersDesktopIde() ? '/ide' : '/today';
+
+  if (!isLoggedIn && !isLoggingIn) return '/login';
+  if (isLoggedIn && isLoggingIn) {
+    return onboarded == false ? '/onboarding' : landing();
+  }
+  if (isLoggedIn && onboarded == false && !isOnboarding) {
+    return '/onboarding';
+  }
+  if (isLoggedIn && onboarded == true && isOnboarding) {
+    return landing();
+  }
+  return null;
+}
+
 final routerProvider = Provider<GoRouter>((ref) {
   final notifier = RouterTransitionNotifier(ref);
 
@@ -253,34 +298,12 @@ final routerProvider = Provider<GoRouter>((ref) {
     initialLocation: '/today',
     refreshListenable: notifier,
     redirect: (context, state) async {
-      final authState = ref.read(authProvider);
-      final isLoggedIn = authState.value != null;
-      final location = state.matchedLocation;
-      final isLoggingIn = location == '/login';
-      final isOnboarding = location == '/onboarding';
-      final onboarded = ref.read(onboardingGateProvider);
-
-      if (!isLoggedIn && !isLoggingIn) return '/login';
-      if (isLoggedIn && isLoggingIn) {
-        return onboarded == false ? '/onboarding' : '/today';
-      }
-      if (isLoggedIn && onboarded == false && !isOnboarding) {
-        return '/onboarding';
-      }
-      if (isLoggedIn && onboarded == true && isOnboarding) {
-        return '/today';
-      }
-
-      // Desktop IDE preference handling (Windows only)
-      if (isLoggedIn && isDesktopIde && location == '/today') {
-        final prefs = await SharedPreferences.getInstance();
-        final useIde = prefs.getBool('desktop_use_ide') ?? false;
-        if (useIde && !location.startsWith('/ide')) {
-          return '/ide';
-        }
-      }
-
-      return null;
+      return resolveAppRedirect(
+        isLoggedIn: ref.read(authProvider).value != null,
+        onboarded: ref.read(onboardingGateProvider),
+        location: state.matchedLocation,
+        prefersDesktopIde: _prefersDesktopIde,
+      );
     },
     routes: [
       GoRoute(

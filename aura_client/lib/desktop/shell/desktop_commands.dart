@@ -34,7 +34,15 @@ String modifierLabel(TargetPlatform platform) =>
 /// Rebuilt per open rather than held as a provider: a command's *enabled*
 /// state is a snapshot of the moment the palette was summoned, and the palette
 /// does not outlive that moment.
-List<AuraCommandItem> buildDesktopCommands(WidgetRef ref, {required TargetPlatform platform}) {
+///
+/// [onLeaveIde] adds "Leave IDE", the way back to AURA Home (ADR-015: the
+/// IDE is a choice, not a place the app keeps you -- audit F-34). It is a
+/// callback because leaving is navigation, which needs the shell's context.
+List<AuraCommandItem> buildDesktopCommands(
+  WidgetRef ref, {
+  required TargetPlatform platform,
+  VoidCallback? onLeaveIde,
+}) {
   final mod = modifierLabel(platform);
   final layout = ref.read(layoutNotifierProvider);
   final layoutNotifier = ref.read(layoutNotifierProvider.notifier);
@@ -166,5 +174,13 @@ List<AuraCommandItem> buildDesktopCommands(WidgetRef ref, {required TargetPlatfo
             }
           : null,
     ),
+    if (onLeaveIde != null)
+      AuraCommandItem(
+        id: 'aura.leaveIde',
+        group: 'AURA',
+        title: 'Leave IDE (Open Today)',
+        icon: Icons.today_outlined,
+        onInvoke: onLeaveIde,
+      ),
   ];
 }

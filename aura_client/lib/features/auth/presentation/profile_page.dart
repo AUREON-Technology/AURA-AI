@@ -6,6 +6,7 @@ import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/security/device_validation_service.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import 'auth_provider.dart';
+import 'sign_out_confirmation.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
 
@@ -249,8 +250,8 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
             ),
             TextButton.icon(
               onPressed: () async {
-                await ref.read(authProvider.notifier).signOut();
-                if (mounted) {
+                final signedOut = await confirmAndSignOut(context, ref);
+                if (signedOut && mounted) {
                   context.go('/login');
                 }
               },

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/ai/ai_router/aura_ai_router.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/undo/undoable_deletes.dart';
 
 import '../chat_view_model.dart';
 import 'persona_picker.dart';
@@ -87,7 +88,21 @@ class ChatSidebar extends ConsumerWidget {
                                 size: 16,
                                 color: palette.textDisabled,
                               ),
-                              onPressed: () => vm.deleteSession(session),
+                              tooltip: 'Delete conversation',
+                              onPressed: () {
+                                // Off the session at once (the button only
+                                // shows on the active one); the delete itself
+                                // waits out the Undo window (F-34).
+                                vm.startNewSession();
+                                deleteWithUndo(
+                                  context,
+                                  ref,
+                                  key: chatSessionUndoKey(session),
+                                  message: 'Conversation deleted',
+                                  commit: () => vm.deleteSession(session),
+                                  onUndo: () => vm.selectSession(session),
+                                );
+                              },
                             )
                           : null,
                       onTap: () {

@@ -42,7 +42,7 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
 | Memory | TESTED, but broken against the server | F-07: the client id (`getDeterministicId`, `memory_repository.dart:171`) does not match the server's. F-13: `sync_payloads.dart` sends `content_enc`. |
 | Tasks / calendar / finance / health | BUILT (finance tested) | F-11: health "today" rows collide across devices. F-18 / CB-28: tasks the agent creates are invisible in the app. F-32 fixed on 2026-10-30 for the task card and the health card (`life_hub_contrast_test.dart`, at least 4.5:1 under `AuraThemeV2.light`; `legacy_theme_color_ratchet_test.dart` stops legacy `AuraTheme` colours under `lib/features/` from growing). About 177 legacy uses remain, so other Life Hub screens are not yet checked on the light theme. F-17: backend uses the UTC day. |
 | Offline sync (data only; no model on device) | TESTED (outbox); broken end to end | Outbox tests are green. F-11: pull is skipped when push fails. F-12: the cursor comes from the app clock. F-13: memory rows are rejected forever. |
-| Auth and sign-out | TESTED | `5153394`: revoke and wipe on sign-out. F-33: an expired session dead-ends. F-34: sign-out has no confirmation. Switching backend (`setEnvironment()`) clears tokens without revoking them or wiping data. |
+| Auth and sign-out | TESTED | `5153394`: revoke and wipe on sign-out. F-33 and F-34 fixed on 2026-10-30 (TESTED locally, not proven): a 401 followed by a refused refresh ends the session and the router shows login, keeping local data (`test/ux/session_expiry_test.dart`); sign-out asks first. Switching backend (`setEnvironment()`) clears tokens without revoking them or wiping data. |
 | Device attestation | TESTED (unit); can be bypassed | Play Integrity (`IntegrityAttestationPlugin.kt`) and App Attest (`AppAttestPlugin.swift`), with backend tests green. F-09 / SEC-05: any account can skip attestation through `/desktop/login`. |
 | Push notifications | OPEN | No `firebase_messaging`; a failed `Firebase.initializeApp()` is ignored (`main.dart:26`); iOS has no `GoogleService-Info.plist`; in-app notification centre only |
 | Accessibility / i18n | BUILT; partly TESTED | `design_system_contrast_test.dart`, `test/ux/`. F-36: 21 of 64 icon buttons are unlabeled, including Send. 34 l10n keys; no RTL. |
@@ -76,8 +76,14 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
 4. **F-31 (High).** Fixed on 2026-10-30 (TESTED locally). It is not proven until someone runs it against the live keepalive stream.
 5. **F-32 (High).** Light-theme contrast: the task and health cards are fixed. The rest is held by a ratchet test.
 6. **F-09 (Medium).** Attestation bypass.
-7. **F-33, F-34, F-36 (Medium).** Error dead-ends; settings sub-pages use `context.go`, so Android
-   back exits the app; unlabeled controls. PR #143 covers part of F-33.
+7. **F-36 (Medium).** Unlabeled controls. **F-33 and F-34** fixed on 2026-10-30, TESTED locally
+   only (CI has no runners, CB-44), not proven on a device:
+   - F-33: an expired session ends and routes to login; the Memory page shows its error state
+     and failed or unconfirmed deletes; screens render failures through `AuraFailure`, pinned by
+     `test/ux/no_raw_error_text_test.dart`.
+   - F-34: settings sub-pages are pushed (back returns to You); task and conversation deletes
+     have Undo (the delete is deferred until the snackbar closes, so nothing reaches the sync
+     outbox or the server for an undone delete); sign-out asks for confirmation.
 8. **Release hygiene.** GAP-044, the `build-android` disk space, the stale tracked APK.
 9. **iOS, new (code-read only).**
    - No `GIDClientID` or Google URL scheme, while `clientId: null` is passed. Google sign-in on
@@ -108,7 +114,8 @@ cleanly, but its CI runs died during the old runner outage, and it has not been 
 
 1. Free disk in `client-ci.yml` `build-android` so Client CI is fully green. Then enable branch
    protection (CB-02).
-2. Re-run CI on PR #143 and merge it. Then fix session-expiry routing (F-33).
+2. Re-run CI on PR #143 and merge it. Check F-33 session-expiry routing on a device against a
+   revoked refresh token.
 3. Fix the memory id and the `fact_enc` key together, then make sync push per-mutation and let
    pull run even when push fails (F-13, F-11). Then F-07.
 4. The client half of F-04. F-31's Stop button and idle timeout are done.
