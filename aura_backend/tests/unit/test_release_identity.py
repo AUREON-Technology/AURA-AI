@@ -236,6 +236,80 @@ class TestRailwayDeployGate:
         assert config["deploy"]["healthcheckPath"] == "/health/live"
 
 
+class TestRailwayPreDeployMigration:
+    """CB-43: Railway does not run `preDeployCommand` in a shell. The inline
+    `echo ... && alembic upgrade head && ...` it used to hold ran only the echo, passed, and left
+    production two migrations behind the code across every deploy. These pin the fix."""
+
+    _SCRIPT = _BACKEND / "scripts" / "railway-predeploy.sh"
+
+    def _command(self) -> str:
+        import json
+
+        config = json.loads((_BACKEND / "railway.json").read_text(encoding="utf-8"))
+        return config["deploy"]["preDeployCommand"]
+
+    def test_the_command_has_no_shell_syntax(self) -> None:
+        command = self._command()
+        for operator in ("&&", "||", ";", "|", "(", ")", "$", "`", ">", "<"):
+            assert operator not in command, f"{operator!r} in preDeployCommand is not evaluated on Railway"
+
+    def test_the_command_runs_the_script_from_the_image_workdir(self) -> None:
+        assert self._command() == "sh /app/scripts/railway-predeploy.sh"
+        assert self._SCRIPT.is_file()
+
+    def test_the_script_has_unix_line_endings(self) -> None:
+        """A CRLF checkout (this repo is edited on Windows) would make `sh` fail on `set -eu\\r`."""
+        assert b"\r\n" not in self._SCRIPT.read_bytes()
+
+    def test_the_timeout_stays_under_railways(self) -> None:
+        import json
+        import re
+
+        config = json.loads((_BACKEND / "railway.json").read_text(encoding="utf-8"))
+        default = int(re.search(r"AURA_MIGRATION_TIMEOUT_S:-(\d+)", self._SCRIPT.read_text()).group(1))
+        assert default < config["deploy"]["preDeployTimeoutSeconds"]
+
+    def _run(self, tmp_path, alembic_body: str, timeout_s: str = "30"):
+        import os
+        import shutil
+        import subprocess
+
+        if shutil.which("sh") is None or shutil.which("timeout") is None:
+            pytest.skip("needs a POSIX sh and coreutils timeout")
+        fake = tmp_path / "bin"
+        fake.mkdir()
+        log = tmp_path / "calls"
+        alembic = fake / "alembic"
+        alembic.write_text(f'#!/bin/sh\necho "$@" >> "{log}"\n{alembic_body}\n')
+        alembic.chmod(0o755)
+        env = {**os.environ, "PATH": f"{fake}{os.pathsep}{os.environ['PATH']}", "AURA_MIGRATION_TIMEOUT_S": timeout_s}
+        result = subprocess.run(["sh", str(self._SCRIPT)], env=env, capture_output=True, text=True, timeout=60)
+        calls = log.read_text().splitlines() if log.exists() else []
+        return result, calls
+
+    def test_it_actually_runs_the_upgrade(self, tmp_path) -> None:
+        result, calls = self._run(tmp_path, 'case "$1" in current) echo 0016 ;; esac')
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "upgrade head" in calls
+        assert "=== MIGRATION OK ===" in result.stdout
+        assert "revision after: 0016" in result.stdout
+
+    def test_a_failed_upgrade_fails_the_deploy(self, tmp_path) -> None:
+        result, _ = self._run(tmp_path, '[ "$1" = upgrade ] && exit 3; exit 0')
+
+        assert result.returncode == 1
+        assert "=== MIGRATION FAILED (alembic exit 3) ===" in result.stdout
+        assert "MIGRATION OK" not in result.stdout
+
+    def test_a_hung_upgrade_fails_loudly_instead_of_being_killed_silently(self, tmp_path) -> None:
+        result, _ = self._run(tmp_path, '[ "$1" = upgrade ] && sleep 30; exit 0', timeout_s="1")
+
+        assert result.returncode == 1
+        assert "timed out after 1s" in result.stdout
+
+
 class TestVersionEndpoint:
     async def test_reports_the_build_it_is_running(self, container) -> None:
         await container.startup()

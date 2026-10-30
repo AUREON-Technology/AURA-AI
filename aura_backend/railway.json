@@ -9,8 +9,9 @@
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 5,
-    "preDeployCommand": "echo '=== MIGRATION START ===' && alembic upgrade head && echo '=== MIGRATION OK ===' || (echo '=== MIGRATION FAILED ==='; exit 1)",
+    "preDeployCommand": "sh /app/scripts/railway-predeploy.sh",
     "preDeployTimeoutSeconds": 300,
+    "_comment_predeploy": "One argv, no shell operators. Railway does not evaluate preDeployCommand in a shell: the earlier inline `echo ... && alembic upgrade head && ...` ran only the echo and still passed, so no deploy ever migrated (CB-43). The chain lives in scripts/railway-predeploy.sh; tests/unit/test_release_identity.py pins this.",
     "_comment_healthcheck": "Liveness, not readiness. Railway gates a deploy on this path, and /health/ready returns 503 whenever any dependency is unhealthy -- so while the inference provider is down (as it was on 2026-09-27), no deploy could ever pass and a good build could not replace a bad one. Readiness is for a load balancer deciding whether to send traffic; a deploy gate needs to know the process came up. Dependency health is still visible on /health/ready and /metrics."
   }
 }

@@ -49,10 +49,14 @@ from it change how the paragraph above reads (checked live on 2026-10-28, `main`
 - `aureon-ai.tech` is now served by **Railway** (`server: railway-hikari`), running current
   `main`, with providers `hosted1` (healthy) and `hfspace` (503), and no Ollama.
   `dev.aureon-ai.tech` no longer resolves.
-- **Its database is behind the code** (CB-43): `/health/ready` reports schema `0013`, expected
-  `0015`, and the ORM maps the columns `0014`/`0015` add — so `User` and sync queries fail live
-  until `alembic upgrade head` runs against it. Check `/health/ready`'s `schema` block after any
-  merge that adds a migration; `railway.json`'s `preDeployCommand` did not apply these two.
+- **Its database was behind the code until 2026-10-30** (CB-43, resolved): it sat at `0013` while
+  the code expected `0015`. The owner ran `alembic upgrade head` over `railway ssh` (`0013 → 0016`).
+  Live `/health/ready` then showed `healthy: true`, `schema.revision 0016` at `6417c43`. The cause:
+  Railway does not run `preDeployCommand` in a shell, so the old inline `echo … && alembic upgrade
+  head && …` ran only the `echo` and still passed. It now calls `scripts/railway-predeploy.sh`
+  (one argv; pinned by `tests/unit/test_release_identity.py`). Never put `&&`, `||` or `;` back
+  into that field. Still check `/health/ready`'s `schema` block after any merge that adds a
+  migration, because the fixed step has not yet been seen running on a real deploy.
 - **Railway auto-deploys every `main` push itself, CI or not**, and **CI stopped getting runners
   again around 19:50 UTC on 2026-10-28** (CB-44: jobs end in 2–4 s with no log). Until that is
   fixed, a merge ships to production with no CI, and a PR's "CI green" cannot be had — run the

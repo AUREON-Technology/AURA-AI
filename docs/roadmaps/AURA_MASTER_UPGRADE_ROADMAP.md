@@ -502,7 +502,7 @@ M3 + M5 + M6 + M7 + M9 + M10 (+ M8.13) ─► M15 Certification ─► canary �
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | M0 | Evidence pipeline & governance | Critical | — | Low | Low (account action) | Regressed 2026-10-28: runners restored 10-01 (GAP-043), lost again ~19:50 UTC 10-28 (CB-44); no protection | `.github/`, repo settings | Green CI + protection |
 | M1 | Security & correctness blockers | Critical | M0 (exit) | Medium | Medium | Mostly fixed in code, not CI-run: F-01 (daemon), F-02, F-03, F-04, F-05, F-10 merged; F-01b open | tools/policy, execution, client chat, hostd, compose | All fixes + failing-first tests green |
-| M2 | Production reconciliation | Critical | M0, M1 | Medium | High (first deploy after 25 merges) | Railway live SHA == `main` (`2337577`) but DB schema `0013` < `0015` (CB-43); VPS dead (CB-03) | deploy/, VPS, Railway | Live SHA == main and `/health/ready` healthy |
+| M2 | Production reconciliation | Critical | M0, M1 | Medium | High (first deploy after 25 merges) | Railway live SHA == `main` (`6417c43`), DB at `0016`, `/health/ready` healthy (CB-43 resolved 2026-10-30); VPS dead (CB-03) | deploy/, VPS, Railway | Live SHA == main and `/health/ready` healthy |
 | M3 | Observability foundation | High | M0, M2 | Medium | Low | Partial (turn metrics) | observability/, deploy/prometheus | All SLOs measurable |
 | M4 | Inference platform | Critical | M1, M3, ADR-017 | High | High | Built (config), unproven | llm/, deploy/spaces, compose gpu | Pinned GPU pool in prod + failure report |
 | M5 | Capacity evidence | Critical | M3, M4 | Medium | Medium | Harness built | tests/load | 50-user SLO report |
@@ -530,8 +530,10 @@ The table above is the long-run shape; this is the order of work from today's ac
 (`docs/status/`). Each step names its exit evidence; none is "done" without it.
 
 **Phase N0 — stop the bleeding (owner actions, today)**
-1. CB-43: migrate the Railway production database to `0015`; find why `preDeployCommand` did not.
-   *Exit:* `/health/ready` schema revision == expected; a real sign-in succeeds.
+1. ~~CB-43: migrate the Railway production database; find why `preDeployCommand` did not.~~ Done
+   2026-10-30: migrated to `0016`, `/health/ready` healthy. Cause: no shell for `preDeployCommand`,
+   so only its `echo` ran; it now calls `scripts/railway-predeploy.sh`. *Remaining exit:* a real
+   sign-in succeeds, and the next migration-carrying deploy logs `=== MIGRATION OK ===`.
 2. CB-44: restore GitHub Actions runners. *Exit:* Backend, Client and Host Daemon CI execute on
    `main`; their results replace the "not CI-run" caveats in `docs/status/`.
 3. CB-44: gate Railway on CI (disable its GitHub auto-deploy, or "Wait for CI").
