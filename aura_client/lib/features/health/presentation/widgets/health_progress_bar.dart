@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import '../health_view_model.dart';
 
@@ -27,6 +28,7 @@ class HealthProgressBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final pct = goalProgress(current, target);
     final pctText = (pct * 100).toStringAsFixed(0);
+    final palette = AuraPalette.of(context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -41,7 +43,7 @@ class HealthProgressBar extends StatelessWidget {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: palette.textPrimary),
               ),
             ),
             const SizedBox(width: 8),
@@ -52,7 +54,7 @@ class HealthProgressBar extends StatelessWidget {
                 children: [
                   Text(
                     customSubtitle ?? '$current / $target $unit',
-                    style: const TextStyle(color: AuraTheme.textSecondary, fontSize: 12),
+                    style: TextStyle(color: palette.textSecondary, fontSize: 12),
                   ),
                   const SizedBox(width: 8),
                   Text('$pctText%', style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 13)),

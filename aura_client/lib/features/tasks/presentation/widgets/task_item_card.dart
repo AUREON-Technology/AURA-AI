@@ -3,27 +3,31 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:aura_client/core/database/database.dart';
-import 'package:aura_client/core/theme/theme.dart';
+import 'package:aura_client/core/design_system/design_system.dart';
 import '../tasks_view_model.dart';
 
 class TaskItemCard extends ConsumerWidget {
   final Task task;
   const TaskItemCard({super.key, required this.task});
 
-  Color _getPriorityColor(String priority) {
+  Color _getPriorityColor(AuraPalette palette, String priority) {
     switch (priority.toLowerCase()) {
       case 'high':
-        return Colors.redAccent;
+        return palette.danger;
       case 'medium':
-        return AuraTheme.accentAmber;
+        return palette.warning;
       case 'low':
       default:
-        return AuraTheme.accentTeal;
+        return palette.success;
     }
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Theme-aware: the legacy `AuraTheme` text colours are dark-theme-only and rendered the
+    // title at ~1.05:1 on the light theme's white card (audit F-32).
+    final palette = AuraPalette.of(context);
+    final priorityColor = _getPriorityColor(palette, task.priority);
     final hasDueDate = task.dueDate != null;
     final formattedDate = hasDueDate ? DateFormat('MMM d, y').format(task.dueDate!) : null;
     final isOverdue = hasDueDate &&
@@ -40,7 +44,7 @@ class TaskItemCard extends ConsumerWidget {
             IconButton(
               icon: Icon(
                 task.isCompleted ? Icons.check_circle : Icons.radio_button_unchecked,
-                color: task.isCompleted ? AuraTheme.accentTeal : AuraTheme.textSecondary,
+                color: task.isCompleted ? palette.success : palette.textSecondary,
                 size: 26,
               ),
               onPressed: () => vm.toggleComplete(task.id, task.isCompleted),
@@ -57,7 +61,7 @@ class TaskItemCard extends ConsumerWidget {
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
-                      color: task.isCompleted ? AuraTheme.textSecondary.withValues(alpha: 0.6) : AuraTheme.textPrimary,
+                      color: task.isCompleted ? palette.textDisabled : palette.textPrimary,
                       decoration: task.isCompleted ? TextDecoration.lineThrough : null,
                     ),
                   ),
@@ -69,7 +73,7 @@ class TaskItemCard extends ConsumerWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 13,
-                        color: task.isCompleted ? AuraTheme.textSecondary.withValues(alpha: 0.4) : AuraTheme.textSecondary,
+                        color: task.isCompleted ? palette.textDisabled : palette.textSecondary,
                       ),
                     ),
                   ],
@@ -81,25 +85,25 @@ class TaskItemCard extends ConsumerWidget {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: const Color(0x0DFFFFFF),
+                          color: palette.surfaceVariant,
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
                           task.category.toUpperCase(),
-                          style: const TextStyle(fontSize: 10, color: AuraTheme.textSecondary, fontWeight: FontWeight.bold),
+                          style: TextStyle(fontSize: 10, color: palette.textSecondary, fontWeight: FontWeight.bold),
                         ),
                       ),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: _getPriorityColor(task.priority).withValues(alpha: 0.15),
+                          color: priorityColor.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
                           task.priority.toUpperCase(),
                           style: TextStyle(
                             fontSize: 10,
-                            color: _getPriorityColor(task.priority),
+                            color: priorityColor,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -108,7 +112,7 @@ class TaskItemCard extends ConsumerWidget {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            color: isOverdue ? Colors.redAccent.withValues(alpha: 0.15) : const Color(0x0DFFFFFF),
+                            color: isOverdue ? palette.danger.withValues(alpha: 0.15) : palette.surfaceVariant,
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Row(
@@ -117,14 +121,14 @@ class TaskItemCard extends ConsumerWidget {
                               Icon(
                                 Icons.calendar_today,
                                 size: 10,
-                                color: isOverdue ? Colors.redAccent : AuraTheme.textSecondary,
+                                color: isOverdue ? palette.danger : palette.textSecondary,
                               ),
                               const SizedBox(width: 4),
                               Text(
                                 formattedDate!,
                                 style: TextStyle(
                                   fontSize: 10,
-                                  color: isOverdue ? Colors.redAccent : AuraTheme.textSecondary,
+                                  color: isOverdue ? palette.danger : palette.textSecondary,
                                   fontWeight: isOverdue ? FontWeight.bold : FontWeight.normal,
                                 ),
                               ),
@@ -138,8 +142,8 @@ class TaskItemCard extends ConsumerWidget {
             ),
             const SizedBox(width: 8),
             IconButton(
-              icon: const Icon(Icons.delete_outline, color: Colors.white24, size: 20),
-              hoverColor: Colors.redAccent.withValues(alpha: 0.1),
+              icon: Icon(Icons.delete_outline, color: palette.textSecondary, size: 20),
+              hoverColor: palette.danger.withValues(alpha: 0.1),
               onPressed: () => vm.deleteTask(task.id),
             ),
           ],

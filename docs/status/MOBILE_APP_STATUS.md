@@ -36,11 +36,11 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
 
 | Area | Status | Evidence |
 | --- | --- | --- |
-| Chat | TESTED; defects open | `chat_cutover_test.dart`, `sse_frame_parser_test.dart` are green. F-31: no Stop button or idle timeout. F-04: an approval replays `userMessages.last`. |
+| Chat | TESTED; defects open | `chat_cutover_test.dart`, `sse_frame_parser_test.dart` are green. F-31 fixed on 2026-10-30 (Stop button, 45s idle timeout, partial answer kept and marked interrupted; `chat_stream_stop_test.dart`, run locally — CI has no runners, CB-44). F-04: an approval replays `userMessages.last`. |
 | Voice | TESTED (protocol); BUILT (live, on device) | `live_voice_protocol_test.dart`, `voice_client_test.dart`. GAP-020: speech-to-text is English-only. Live voice on a real device is roadmap M12. |
 | Knowledge / documents | TESTED (client) | `knowledge_center_test.dart`. Backend F-14: deleted docs stay searchable. |
 | Memory | TESTED, but broken against the server | F-07: the client id (`getDeterministicId`, `memory_repository.dart:171`) does not match the server's. F-13: `sync_payloads.dart` sends `content_enc`. |
-| Tasks / calendar / finance / health | BUILT (finance tested) | F-11: health "today" rows collide across devices. F-18 / CB-28: tasks the agent creates are invisible in the app. F-32: light-theme text is near-white on white. F-17: backend uses the UTC day. |
+| Tasks / calendar / finance / health | BUILT (finance tested) | F-11: health "today" rows collide across devices. F-18 / CB-28: tasks the agent creates are invisible in the app. F-32 fixed on 2026-10-30 for the task card and the health card (`life_hub_contrast_test.dart`, at least 4.5:1 under `AuraThemeV2.light`; `legacy_theme_color_ratchet_test.dart` stops legacy `AuraTheme` colours under `lib/features/` from growing). About 177 legacy uses remain, so other Life Hub screens are not yet checked on the light theme. F-17: backend uses the UTC day. |
 | Offline sync (data only; no model on device) | TESTED (outbox); broken end to end | Outbox tests are green. F-11: pull is skipped when push fails. F-12: the cursor comes from the app clock. F-13: memory rows are rejected forever. |
 | Auth and sign-out | TESTED | `5153394`: revoke and wipe on sign-out. F-33: an expired session dead-ends. F-34: sign-out has no confirmation. Switching backend (`setEnvironment()`) clears tokens without revoking them or wiping data. |
 | Device attestation | TESTED (unit); can be bypassed | Play Integrity (`IntegrityAttestationPlugin.kt`) and App Attest (`AppAttestPlugin.swift`), with backend tests green. F-09 / SEC-05: any account can skip attestation through `/desktop/login`. |
@@ -73,8 +73,8 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
    wrong; the cursor can skip rows.
 2. **F-04 (High).** Approving a tool call replays the wrong message.
 3. **F-07 (High).** Memory forget and chat delete never reach the server.
-4. **F-31 (High).** A stalled stream locks chat; there is no Stop button.
-5. **F-32 (High).** Light-theme contrast.
+4. **F-31 (High).** Fixed on 2026-10-30 (TESTED locally). It is not proven until someone runs it against the live keepalive stream.
+5. **F-32 (High).** Light-theme contrast: the task and health cards are fixed. The rest is held by a ratchet test.
 6. **F-09 (Medium).** Attestation bypass.
 7. **F-33, F-34, F-36 (Medium).** Error dead-ends; settings sub-pages use `context.go`, so Android
    back exits the app; unlabeled controls. PR #143 covers part of F-33.
@@ -111,7 +111,7 @@ cleanly, but its CI runs died during the old runner outage, and it has not been 
 2. Re-run CI on PR #143 and merge it. Then fix session-expiry routing (F-33).
 3. Fix the memory id and the `fact_enc` key together, then make sync push per-mutation and let
    pull run even when push fails (F-13, F-11). Then F-07.
-4. Add the Stop button and an idle timeout (F-31), and the client half of F-04.
+4. The client half of F-04. F-31's Stop button and idle timeout are done.
 5. Pin Flutter in `release-apk.yml` (GAP-044) and run it. Delete the stale APK and `.tmp` files.
    Make `setEnvironment()` revoke and wipe.
 6. **iOS:** `GIDClientID` / URL scheme, `NSFaceIDUsageDescription`, a team ID, and a macOS CI job
