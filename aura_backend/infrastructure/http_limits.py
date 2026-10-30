@@ -12,6 +12,7 @@ from typing import Dict, List
 
 from fastapi import Request, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from infrastructure.redis_client import get_redis_client
@@ -67,7 +68,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         if _rate_limit_redis is not None:
             try:
-                limited = self._is_rate_limited_redis(client_ip)
+                # The client is synchronous; called inline, every request's INCR ran on the event
+                # loop, so a slow Redis stalled every request on the worker -- live SSE streams
+                # included (F-23). In the threadpool it costs one thread for at most the client's
+                # socket_timeout.
+                limited = await run_in_threadpool(self._is_rate_limited_redis, client_ip)
             except Exception as e:
                 logger.warning(f"Redis rate limit check failed, falling back to in-process: {e}")
                 limited = self._is_rate_limited_local(client_ip)

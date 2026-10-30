@@ -1,9 +1,10 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
+import { type RotatedTokens, singleFlightRefresh } from "@/lib/refresh";
 import { ACCESS_COOKIE, REFRESH_COOKIE, apiOrigin, cookieBase } from "@/lib/session";
 
-async function refreshAccess(refreshToken: string) {
+async function refreshAccess(refreshToken: string): Promise<RotatedTokens | null> {
   const upstream = await fetch(`${apiOrigin()}/api/v3/auth/refresh`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -12,11 +13,7 @@ async function refreshAccess(refreshToken: string) {
   if (!upstream.ok) {
     return null;
   }
-  return (await upstream.json()) as {
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
-  };
+  return (await upstream.json()) as RotatedTokens;
 }
 
 async function proxy(request: Request, path: string[]) {
@@ -41,9 +38,11 @@ async function proxy(request: Request, path: string[]) {
   };
 
   let upstream = await fetch(target, init);
-  let rotated: Awaited<ReturnType<typeof refreshAccess>> | null = null;
+  let rotated: RotatedTokens | null = null;
   if (upstream.status === 401 && refresh) {
-    rotated = await refreshAccess(refresh);
+    // Concurrent 401s carrying the same single-use refresh token share one refresh (F-35); each
+    // of them then sets the new cookies below, whichever response the browser applies last.
+    rotated = await singleFlightRefresh(refresh, refreshAccess);
     if (rotated) {
       headers.set("authorization", `Bearer ${rotated.access_token}`);
       upstream = await fetch(target, { ...init, headers });

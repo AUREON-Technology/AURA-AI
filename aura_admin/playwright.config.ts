@@ -3,9 +3,13 @@ import { defineConfig } from "@playwright/test";
 const apiUrl = process.env.AURA_API_URL || "http://127.0.0.1:8010";
 
 export default defineConfig({
-  testDir: "tests/e2e",
+  testDir: "tests",
   timeout: 60_000,
-  use: { baseURL: process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000" },
+  use: {
+    baseURL: process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000",
+    // For a host whose preinstalled Chromium is a different revision from this @playwright/test.
+    launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined },
+  },
   webServer: [
     {
       command: "node tests/e2e/mock-gateway.mjs",

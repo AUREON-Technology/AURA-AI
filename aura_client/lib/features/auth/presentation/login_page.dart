@@ -5,6 +5,7 @@ import 'package:local_auth/local_auth.dart';
 import 'auth_provider.dart';
 import 'package:aura_client/core/auth/platform_login_support.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
 
 /// V2 rebuild (Doc/V2_BLUEPRINT.md §4) — same auth flows as V1, restyled
 /// on the design system (light+dark-ready, contrast-checked palette,
@@ -140,6 +141,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                             textAlign: TextAlign.center,
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
+                          if (ref.watch(sessionExpiredProvider)) ...[
+                            const SizedBox(height: AuraSpacing.lg),
+                            const AuraBanner(
+                              icon: Icons.lock_clock_outlined,
+                              message: 'Your session expired. Sign in again to pick up where '
+                                  'you left off — everything on this device is still here.',
+                            ),
+                          ],
                           const SizedBox(height: AuraSpacing.xxl),
                           if (authState.isLoading)
                             Center(child: CircularProgressIndicator(color: palette.brand))
@@ -205,8 +214,22 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                               ),
                               child: Column(
                                 children: [
-                                  Text('Error: ${authState.error}', style: TextStyle(color: palette.danger, fontSize: 12), textAlign: TextAlign.center),
+                                  // Through AuraFailure, not the raw exception (audit F-33); the
+                                  // exception itself is only shown to developers.
+                                  Text(
+                                    _signInFailureText(authState.error),
+                                    style: TextStyle(color: palette.danger, fontSize: 12),
+                                    textAlign: TextAlign.center,
+                                  ),
                                   if (kDebugMode) ...[
+                                    if (AuraFailure.from(authState.error).detail != null) ...[
+                                      const SizedBox(height: AuraSpacing.sm),
+                                      Text(
+                                        AuraFailure.from(authState.error).detail!,
+                                        style: TextStyle(color: palette.textSecondary, fontSize: 11),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ],
                                     const SizedBox(height: AuraSpacing.sm),
                                     Text(
                                       'Tip: Google Sign-In failed. To test locally without registering SHA-1 fingerprints in the Google Console, use the "Access Developer Environment" bypass option above.',
@@ -260,4 +283,11 @@ class _GoogleSignInButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// What a failed sign-in says to the user: [AuraFailure]'s words, never the
+/// exception's `toString()`.
+String _signInFailureText(Object? error) {
+  final failure = AuraFailure.from(error);
+  return '${failure.title}. ${failure.message}';
 }

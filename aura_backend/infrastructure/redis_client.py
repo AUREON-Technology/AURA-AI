@@ -30,6 +30,13 @@ def _redis_password() -> str | None:
     return os.environ.get("AURA_REDIS_PASSWORD")
 
 
+#: Per-command timeout (F-23). Without it a Redis that accepts the connection and then stalls
+#: blocks every caller indefinitely -- the rate limiter runs on every request, so one slow Redis
+#: stalled the whole gateway. A timed-out command raises: the rate limiter falls back to its
+#: in-process window, and the token-store callers fail that one request instead of hanging it.
+_COMMAND_TIMEOUT_S = 2.0
+
+
 def get_redis_client() -> "redis.Redis | None":
     """Returns a connected client, or None if Redis is unreachable — every
     caller must handle the None case by degrading gracefully (in-process
@@ -58,14 +65,14 @@ def get_redis_client() -> "redis.Redis | None":
         url = os.getenv("AURA_REDIS_URL") or os.getenv("REDIS_URL")
         if url:
             candidate = redis.Redis.from_url(
-                url, decode_responses=True, socket_connect_timeout=2,
+                url, decode_responses=True, socket_connect_timeout=2, socket_timeout=_COMMAND_TIMEOUT_S,
             )
         else:
             host = os.getenv("REDIS_HOST", "localhost")
             password = _redis_password()
             candidate = redis.Redis(
                 host=host, port=6379, db=0, password=password,
-                decode_responses=True, socket_connect_timeout=2,
+                decode_responses=True, socket_connect_timeout=2, socket_timeout=_COMMAND_TIMEOUT_S,
             )
         candidate.ping()
         _client = candidate

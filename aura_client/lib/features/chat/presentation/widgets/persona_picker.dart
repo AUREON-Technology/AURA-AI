@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 
 import '../../data/agent_config_repository.dart';
 import '../../data/agents_repository.dart';
@@ -168,9 +170,9 @@ class PersonaPickerSheet extends ConsumerWidget {
                     ),
                     error: (e, _) => Padding(
                       padding: const EdgeInsets.all(AuraSpacing.xl),
-                      child: Text(
-                        'Could not load personas: $e',
-                        style: TextStyle(color: palette.danger),
+                      child: AuraFailureView(
+                        failure: AuraFailure.from(e),
+                        compact: true,
                       ),
                     ),
                   ),

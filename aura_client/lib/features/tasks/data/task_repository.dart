@@ -7,6 +7,7 @@ import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sig
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/sync/sync_payloads.dart';
+import 'package:aura_client/core/undo/undoable_deletes.dart';
 
 class TaskRepository {
   final AppDatabase _db;
@@ -325,9 +326,16 @@ final taskCategoryFilterProvider = NotifierProvider<TaskCategoryFilter, String>(
   return TaskCategoryFilter();
 });
 
-// Stream Provider for tasks
+// Stream Provider for tasks. A task whose delete is still inside its undo
+// window is left out here, so every list built on this hides it at once
+// without the row being deleted yet (see undoable_deletes.dart).
 final tasksStreamProvider = StreamProvider.autoDispose<List<Task>>((ref) {
   final repository = ref.watch(taskRepositoryProvider);
   final filter = ref.watch(taskCategoryFilterProvider);
-  return repository.watchTasks(categoryFilter: filter);
+  final pendingDeletes = ref.watch(undoableDeletesProvider);
+  final tasks = repository.watchTasks(categoryFilter: filter);
+  if (pendingDeletes.isEmpty) return tasks;
+  return tasks.map(
+    (list) => list.where((t) => !pendingDeletes.contains(taskUndoKey(t.id))).toList(),
+  );
 });

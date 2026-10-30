@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 
 import 'memory_view_model.dart';
 
@@ -62,10 +64,26 @@ class MemoryPage extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: AuraSpacing.md),
+          // Above the list when there is one, so a failed refresh is said
+          // even while older memories are still on screen.
+          if (!state.loading && state.error != null && state.visible.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.lg),
+              child: AuraFailureView(
+                failure: AuraFailure.from(state.error),
+                compact: true,
+                onRetry: () => ref.read(memoryViewModelProvider.notifier).refresh(),
+              ),
+            ),
           Expanded(
             child: state.loading
                 ? const Center(child: CircularProgressIndicator())
-                : state.visible.isEmpty
+                : state.error != null && state.visible.isEmpty
+                    ? AuraFailureView(
+                        failure: AuraFailure.from(state.error),
+                        onRetry: () => ref.read(memoryViewModelProvider.notifier).refresh(),
+                      )
+                    : state.visible.isEmpty
                     ? const AuraEmptyState(
                         icon: Icons.psychology_outlined,
                         title: 'No memories yet',
@@ -97,9 +115,7 @@ class MemoryPage extends ConsumerWidget {
                               trailing: IconButton(
                                 tooltip: 'Delete',
                                 icon: const Icon(Icons.delete_outline),
-                                onPressed: () => ref
-                                    .read(memoryViewModelProvider.notifier)
-                                    .remove(item.id),
+                                onPressed: () => _remove(context, ref, item.id),
                               ),
                             ),
                           );
@@ -109,6 +125,29 @@ class MemoryPage extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _remove(BuildContext context, WidgetRef ref, String id) async {
+    try {
+      final confirmed = await ref.read(memoryViewModelProvider.notifier).remove(id);
+      if (!context.mounted) return;
+      AuraSnackbar.show(
+        context,
+        message: confirmed
+            ? 'Memory forgotten'
+            : 'Forgotten on this device. AURA will finish removing it from the '
+                'server the next time it can reach it.',
+        kind: confirmed ? AuraSnackbarKind.success : AuraSnackbarKind.info,
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      final failure = AuraFailure.from(e);
+      AuraSnackbar.show(
+        context,
+        message: 'Could not forget this memory. ${failure.message}',
+        kind: AuraSnackbarKind.error,
+      );
+    }
   }
 
   Future<void> _showAdd(BuildContext context, WidgetRef ref) async {

@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 
 import '../../calendar/data/calendar_repository.dart';
 import '../../calendar/presentation/widgets/add_event_dialog.dart';
@@ -211,10 +213,9 @@ class _TasksPane extends ConsumerWidget {
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => AuraEmptyState(
-        icon: Icons.error_outline,
-        title: 'Could not load tasks',
-        message: e.toString(),
+      error: (e, _) => AuraFailureView(
+        failure: AuraFailure.from(e),
+        onRetry: () => ref.invalidate(tasksStreamProvider),
       ),
     );
   }
@@ -253,10 +254,9 @@ class _CalendarPane extends ConsumerWidget {
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => AuraEmptyState(
-        icon: Icons.error_outline,
-        title: 'Could not load calendar',
-        message: e.toString(),
+      error: (e, _) => AuraFailureView(
+        failure: AuraFailure.from(e),
+        onRetry: () => ref.invalidate(calendarEventsStreamProvider),
       ),
     );
   }
@@ -275,7 +275,11 @@ class _FinancePane extends ConsumerWidget {
         statsAsync.when(
           data: (stats) => FinanceSummaryCards(stats: stats),
           loading: () => const AuraSkeletonCard(),
-          error: (e, _) => Text('$e'),
+          error: (e, _) => AuraFailureView(
+            failure: AuraFailure.from(e),
+            compact: true,
+            onRetry: () => ref.invalidate(financeStatsProvider),
+          ),
         ),
         const SizedBox(height: AuraSpacing.lg),
         FinanceTransactionHistory(transactionsAsync: txAsync),
@@ -296,10 +300,9 @@ class _HealthPane extends ConsumerWidget {
         child: HealthDailyDashboard(record: record),
       ),
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => AuraEmptyState(
-        icon: Icons.error_outline,
-        title: 'Could not load health',
-        message: e.toString(),
+      error: (e, _) => AuraFailureView(
+        failure: AuraFailure.from(e),
+        onRetry: () => ref.invalidate(dailyHealthStreamProvider),
       ),
     );
   }
@@ -341,10 +344,9 @@ class _ProjectsPane extends ConsumerWidget {
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => AuraEmptyState(
-        icon: Icons.error_outline,
-        title: 'Could not load projects',
-        message: e.toString(),
+      error: (e, _) => AuraFailureView(
+        failure: AuraFailure.from(e),
+        onRetry: () => ref.invalidate(projectsStreamProvider),
       ),
     );
   }
@@ -412,10 +414,9 @@ class _GoalsPane extends ConsumerWidget {
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => AuraEmptyState(
-        icon: Icons.error_outline,
-        title: 'Could not load goals',
-        message: e.toString(),
+      error: (e, _) => AuraFailureView(
+        failure: AuraFailure.from(e),
+        onRetry: () => ref.invalidate(goalsStreamProvider),
       ),
     );
   }

@@ -10,6 +10,7 @@ import 'package:aura_client/core/ai/online_agents/sse_agent_client.dart';
 import 'package:aura_client/core/ai/vision/chat_images.dart';
 import 'package:aura_client/core/sync/remote_deletes.dart';
 import 'package:aura_client/core/sync/sync_payloads.dart';
+import 'package:aura_client/core/undo/undoable_deletes.dart';
 import 'package:aura_client/core/network/aura_api_error.dart';
 import 'agent_config_repository.dart';
 import 'chat_connection_error.dart';
@@ -698,15 +699,25 @@ final chatMessagesStreamProvider = StreamProvider.family.autoDispose<List<Messag
   return repository.watchMessages(conversationId, limit: limit);
 });
 
+/// Leaves out sessions whose delete is still inside its undo window -- see
+/// undoable_deletes.dart for why the delete itself waits.
+Stream<List<String>> _withoutPendingDeletes(Ref ref, Stream<List<String>> sessions) {
+  final pendingDeletes = ref.watch(undoableDeletesProvider);
+  if (pendingDeletes.isEmpty) return sessions;
+  return sessions.map(
+    (list) => list.where((s) => !pendingDeletes.contains(chatSessionUndoKey(s))).toList(),
+  );
+}
+
 // Conversations list stream provider
 final conversationsStreamProvider = StreamProvider.autoDispose<List<String>>((ref) {
   final repository = ref.watch(chatRepositoryProvider);
-  return repository.watchConversations();
+  return _withoutPendingDeletes(ref, repository.watchConversations());
 });
 
 /// Conversations involving one specific persona -- see [ChatRepository.watchConversationsForAgent].
 final agentConversationsStreamProvider =
     StreamProvider.family.autoDispose<List<String>, String>((ref, agentId) {
   final repository = ref.watch(chatRepositoryProvider);
-  return repository.watchConversationsForAgent(agentId);
+  return _withoutPendingDeletes(ref, repository.watchConversationsForAgent(agentId));
 });

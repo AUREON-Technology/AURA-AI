@@ -10,6 +10,7 @@ import 'package:aura_client/core/config/config.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/security/aura_secure_storage.dart';
 import 'package:aura_client/core/sync/sync_client.dart';
+import 'package:aura_client/core/undo/undoable_deletes.dart';
 
 /// Reads the display-only claims (name/email/picture) out of a Google ID token's payload without
 /// verifying its signature -- safe here because it's only for populating [UserProfile] in the
@@ -157,6 +158,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         }
       }
 
+      ref.read(sessionExpiredProvider.notifier).set(false);
       state = AsyncValue.data(UserProfile(
         id: restored?.id ?? cachedId,
         email: restored?.email ?? cachedEmail,
@@ -168,6 +170,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     }
   }
 
+  static const _mockUserId = 'mock_user_123';
   static const _desktopTokenKey = 'desktop_device_access_token';
   static const _desktopTokenExpiryKey = 'desktop_device_token_expiry';
 
@@ -208,6 +211,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         displayName: (claims['name'] as String?) ?? 'Google User',
         photoUrl: claims['picture'] as String?,
       );
+      await _forgetDataOfOtherAccount(profile.id);
 
       await _storage.write(key: 'user_id', value: profile.id);
       await _storage.write(key: 'user_email', value: profile.email);
@@ -241,6 +245,7 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         displayName: googleUser.displayName ?? 'Google User',
         photoUrl: googleUser.photoUrl,
       );
+      await _forgetDataOfOtherAccount(profile.id);
 
       // Cache details
       await _storage.write(key: 'user_id', value: profile.id);
@@ -264,11 +269,12 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     state = const AsyncValue.loading();
     try {
       final profile = UserProfile(
-        id: 'mock_user_123',
+        id: _mockUserId,
         email: email,
         displayName: name,
         photoUrl: 'https://api.dicebear.com/7.x/bottts/png?seed=$name',
       );
+      await _forgetDataOfOtherAccount(profile.id);
 
       await _storage.write(key: 'user_id', value: profile.id);
       await _storage.write(key: 'user_email', value: profile.email);
@@ -282,8 +288,52 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     }
   }
 
+  /// The backend refused to renew this session: a request was answered 401,
+  /// and the refresh (or re-exchange) that followed was refused too
+  /// ([TokenManager] decides that and calls this). Until this existed the
+  /// user stayed "signed in" on a dead session, and every screen said "Sign in
+  /// again" with nothing to press (audit F-33).
+  ///
+  /// Ends the session only -- signing out is the router's cue to show the
+  /// login page. Unlike [signOut] it keeps this device's data and unsynced
+  /// outbox: an expiry is not a choice to leave, and signing back in picks up
+  /// where the user was, which is what the "Sign in again" copy promises. The
+  /// cached profile id stays too, so a *different* account signing in next
+  /// still gets a clean device ([_forgetDataOfOtherAccount]).
+  Future<void> expireSession() async {
+    final current = state.value;
+    // The developer bypass never had a backend session to lose.
+    if (current == null || current.id == _mockUserId) return;
+    await ref.read(tokenManagerProvider).clear();
+    // The credentials signInCached would otherwise revive the dead session
+    // from without a real sign-in.
+    await _storage.delete(key: 'auth_token');
+    await _storage.delete(key: _desktopTokenKey);
+    await _storage.delete(key: _desktopTokenExpiryKey);
+    ref.read(sessionExpiredProvider.notifier).set(true);
+    state = const AsyncValue.data(null);
+  }
+
+  /// [expireSession] keeps the local data for the account that was signed
+  /// in. The local DB has no user column, so if someone else signs in next,
+  /// that data must go first -- the same reason [signOut] wipes it.
+  Future<void> _forgetDataOfOtherAccount(String newUserId) async {
+    ref.read(sessionExpiredProvider.notifier).set(false);
+    final previous = await _storage.read(key: 'user_id');
+    if (previous != null && previous.isNotEmpty && previous != newUserId) {
+      await ref.read(databaseProvider).wipeUserData();
+    }
+  }
+
   Future<void> signOut() async {
     state = const AsyncValue.loading();
+    // A delete still inside its Undo window has not run yet; run it now so
+    // it reaches the final push below instead of being wiped unsent.
+    try {
+      await ref.read(undoableDeletesProvider.notifier).commitAll();
+    } catch (e) {
+      debugPrint("[Auth] pending deletes before sign-out failed (continuing): $e");
+    }
     try {
       await _googleSignIn.signOut();
     } catch (_) {} // Might fail if never logged into google
@@ -356,3 +406,16 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
 final authProvider = AsyncNotifierProvider<AuthNotifier, UserProfile?>(() {
   return AuthNotifier();
 });
+
+/// Set when the session ended because the backend refused to renew it
+/// ([AuthNotifier.expireSession]), so the login page can say why the user is
+/// looking at it. Cleared by the next sign-in.
+class SessionExpiredNotifier extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void set(bool value) => state = value;
+}
+
+final sessionExpiredProvider =
+    NotifierProvider<SessionExpiredNotifier, bool>(SessionExpiredNotifier.new);

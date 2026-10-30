@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/network/aura_failure.dart';
+import 'package:aura_client/core/network/aura_failure_view.dart';
 import 'package:aura_client/features/chat/data/feedback_repository.dart';
 
 class FeedbackPage extends ConsumerWidget {
@@ -63,10 +65,9 @@ class FeedbackPage extends ConsumerWidget {
           );
         },
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => AuraEmptyState(
-          icon: Icons.error_outline,
-          title: 'Could not load feedback',
-          message: e.toString(),
+        error: (e, _) => AuraFailureView(
+          failure: AuraFailure.from(e),
+          onRetry: () => ref.invalidate(localFeedbackStreamProvider),
         ),
       ),
     );

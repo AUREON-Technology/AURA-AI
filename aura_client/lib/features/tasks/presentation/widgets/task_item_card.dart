@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/core/undo/undoable_deletes.dart';
 import '../tasks_view_model.dart';
 
 class TaskItemCard extends ConsumerWidget {
@@ -144,7 +145,15 @@ class TaskItemCard extends ConsumerWidget {
             IconButton(
               icon: Icon(Icons.delete_outline, color: palette.textSecondary, size: 20),
               hoverColor: palette.danger.withValues(alpha: 0.1),
-              onPressed: () => vm.deleteTask(task.id),
+              tooltip: 'Delete task',
+              // Hidden now, deleted once the Undo window closes (F-34).
+              onPressed: () => deleteWithUndo(
+                context,
+                ref,
+                key: taskUndoKey(task.id),
+                message: 'Task deleted',
+                commit: () => vm.deleteTask(task.id),
+              ),
             ),
           ],
         ),
