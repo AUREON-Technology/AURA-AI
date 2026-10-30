@@ -188,15 +188,27 @@ blocks — the code path is already inert-by-default even on the VPS.
 
 ## 6. Migrations
 
-Railway does not run a Compose `depends_on` gate. Use Railway's **pre-deploy command** (or a
-one-off `railway run` before the first deploy) to run:
+Railway does not run a Compose `depends_on` gate. Instead, `aura_backend/railway.json`'s
+**pre-deploy command** runs `alembic upgrade head` against the service's `DATABASE_URL` before the
+new release receives traffic:
 
-```bash
-cd aura_backend && alembic upgrade head
+```json
+"preDeployCommand": "sh /app/scripts/railway-predeploy.sh"
 ```
 
-against `AURA_DATABASE_URL`, before the `gateway` service's new release receives traffic. This
-is the same command CLAUDE.md documents for every other environment — no new migration tooling.
+Railway does **not** evaluate that field in a shell. An inline chain such as
+`echo … && alembic upgrade head` runs only its first command and still counts as passed, which
+left production at `0013` across every deploy until 2026-10-30 (CB-43). Keep the field one plain
+argv and put any logic in `scripts/railway-predeploy.sh`, which `TestRailwayPreDeployMigration`
+pins. The script logs `revision before/after` and `=== MIGRATION OK|FAILED ===`, and gives up
+after `AURA_MIGRATION_TIMEOUT_S` (240 s, below the 300 s pre-deploy limit).
+
+To migrate by hand (what resolved CB-43):
+
+```bash
+railway ssh --project=<id> --environment=<id> --service=<gateway>
+cd /app && alembic current && alembic upgrade head && alembic current
+```
 
 ## 7. Graceful startup/shutdown, logging, health
 

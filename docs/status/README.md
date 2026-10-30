@@ -7,7 +7,7 @@ corrected in the same change.
 
 | Component | File | One line |
 | --- | --- | --- |
-| Backend (`aura_backend/`, `deploy/`) | [BACKEND_STATUS.md](BACKEND_STATUS.md) | Live on Railway at `main` but **not ready: DB schema `0013`, code needs `0015`**; CI not executing; VPS deploy blocked |
+| Backend (`aura_backend/`, `deploy/`) | [BACKEND_STATUS.md](BACKEND_STATUS.md) | Live on Railway at `main` (`6417c43`), **ready since 2026-10-30**: DB migrated to `0016` (CB-43 resolved); `hfspace` 503; CI not executing; VPS deploy blocked |
 | Desktop app (`aura_client` desktop + `aura_hostd`) | [DESKTOP_APP_STATUS.md](DESKTOP_APP_STATUS.md) | Linux built in CI at `dc87beb`; Windows/hostd fixes merged but never CI-run; nothing packaged |
 | Mobile app (`aura_client` Android/iOS) | [MOBILE_APP_STATUS.md](MOBILE_APP_STATUS.md) | 381 tests green at `dc87beb`; sync/approval fixes merged since, not CI-run; no iOS pipeline |
 | Web console (`aura_admin/`) | [WEB_CONSOLE_STATUS.md](WEB_CONSOLE_STATUS.md) | Built and wired into both stacks; not served anywhere reachable; CI never ran |
@@ -24,18 +24,15 @@ uses the strongest evidence that exists:
 
 ## System-wide facts (checked live on 2026-10-28, ~21:20 UTC)
 
-- **Production is running code its database does not match.** `aureon-ai.tech` (Railway,
-  `server: railway-hikari`) serves `2337577` — current `main` — but `/health/ready` reports
-  `healthy: false`: `schema: expected 0015, revision 0013 — database schema is behind the code in
-  this image`. Migrations `0014` (`sync_txid` on every syncable table) and `0015`
-  (`users.role_assigned_at/_by`) were never applied. Both columns are mapped on the ORM models
-  (`infrastructure/db/models.py`), so any query that loads a `User` row or a syncable row fails
-  until they exist — sign-in and `/api/v3/sync` are very likely failing for every user right now
-  (inferred from the code; not probed with a real account). Both migrations apply cleanly
-  `0013 → 0015` on a fresh Postgres 16 (checked locally this session), so the code is not the
-  problem: `railway.json`'s `preDeployCommand: alembic upgrade head` either did not run or ran
-  against a different database. Only the owner can see the Railway deploy logs. **This is the most
-  urgent item in the repository** (CB-43).
+- **Update 2026-10-30: the production database matches the code again (CB-43 resolved).** The
+  owner ran `alembic upgrade head` over `railway ssh` (`0013 → 0014 → 0015 → 0016`, clean). Live
+  `/health/ready` showed `healthy: true`, `schema.revision 0016`, release `6417c43`, deployment
+  `11e5d66b`; only `hfspace` returns 503. Why every deploy had skipped it: Railway does not run
+  `preDeployCommand` in a shell, so the inline `echo … && alembic upgrade head && …` ran only the
+  echo (the deploy log shows `MIGRATION START` then `Starting Container` 0.19 s later) and still
+  passed. `railway.json` now calls `scripts/railway-predeploy.sh`. That step is BUILT and TESTED
+  against a stand-in `alembic`, not yet seen on a real deploy. *Was (2026-10-28):* live at
+  `2337577` with schema `0013` against an expected `0015`.
 - **CI has not executed since ~19:50 UTC on 2026-10-28.** Every job of every workflow on `main`
   for #187, #185, #188 and #143 (Backend CI #392–#397, Client CI #150–#151, Host Daemon CI #60,
   Agent Evaluation #166, both deploy workflows) completed in 2–4 s with no log — the

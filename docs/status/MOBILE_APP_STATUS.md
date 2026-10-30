@@ -22,9 +22,9 @@ Client CI has runners again:
 iOS has no build pipeline. The APK committed to the repo is stale and points at the old
 `nip.io` host.
 
-The production backend the app talks to (`aureon-ai.tech`) runs on Railway at current `main`, but
-its database is at schema `0013` while the code needs `0015` (CB-43): sign-in and sync very likely
-fail for every user until it is migrated.
+The production backend the app talks to (`aureon-ai.tech`) runs on Railway at current `main`. Its
+database was migrated to `0016` on 2026-10-30 (CB-43 resolved), and `/health/ready` is healthy, so
+the schema no longer blocks sign-in or sync. No real account has probed either since.
 
 Merged since `dc87beb`, not yet CI-run (CB-44): F-04 client half (approve by `approval_id`,
 `a0c1b38`); sync F-07/F-11/F-12/F-13 (`98143ff`, `31608f9`, `19c64f9`, `c5b1924`); the Android

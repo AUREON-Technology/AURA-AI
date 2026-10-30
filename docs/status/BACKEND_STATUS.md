@@ -5,10 +5,13 @@
 
 ## Summary
 
-**Production is up but not ready.** Railway serves current `main` (`2337577`), and its database is
-two migrations behind (`0013`; the code expects `0015`). The ORM maps columns those migrations add,
-so sign-in and sync very likely fail for every user until `alembic upgrade head` runs against the
-production database (CB-43). The migrations themselves apply cleanly on Postgres 16.
+**Production is up and ready (update 2026-10-30).** Railway serves `main` at `6417c43`. On
+2026-10-28 its database sat two migrations behind (`0013`, code expected `0015`; CB-43). On
+2026-10-30 the owner ran `alembic upgrade head` over `railway ssh` (`0013 → 0016`, clean), and live
+`/health/ready` then showed `healthy: true` and `schema.revision 0016`. The pre-deploy step that
+should have done this ran only its leading `echo`, because Railway does not evaluate
+`preDeployCommand` in a shell. It now calls `scripts/railway-predeploy.sh` (TESTED against a
+stand-in `alembic`; not yet seen on a live deploy).
 
 **CI stopped executing again** around 19:50 UTC (no runner assigned; CB-44). The last Backend CI
 that ran was green at `dc87beb` (3848 passed, 56 skipped; unittest 100 OK; pip-audit; docker-build).
@@ -66,8 +69,9 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 ## Open issues (most severe first)
 
 **Operational**
-1. **Production DB schema behind the code (CB-43).** Run `alembic upgrade head` on the Railway
-   database and find out why the pre-deploy migration did not.
+1. **Pre-deploy migration fix unproven on a live deploy (CB-43 follow-up).** The database is at
+   `0016` and readiness is green. The next deploy that adds a migration must show
+   `revision before/after` and `=== MIGRATION OK ===` in its pre-deploy log.
 2. **CI not executing (CB-44)**, and Railway deploys without it. Restore Actions; gate Railway on
    CI (turn off its GitHub auto-deploy or enable "Wait for CI").
 3. **The VPS deploy path is dead** (host-key change; CB-03). The owner must confirm whether the
@@ -119,7 +123,7 @@ That needs a check in the Firebase console.
 
 ## Next steps
 
-1. **Owner, now:** migrate the production database (CB-43) and confirm sign-in works.
+1. **Owner:** confirm a real sign-in works on `aureon-ai.tech` now that the schema is `0016` (CB-43 migrated 2026-10-30).
 2. **Owner:** restore Actions (CB-44); re-run Backend CI on `main`; gate Railway deploys on CI.
 3. Enable branch protection with required checks (GAP-005 / CB-02).
 4. Get CI to run the R0/R1 remainder (F-01b, F-02 revocation, F-20, F-21, F-06) and record it.
@@ -140,6 +144,5 @@ That needs a check in the Firebase console.
 - The "5–10 tok/s" figure for qwen2.5:3b. No measurement on a live target is committed.
 - F-20 at runtime (needs worker logs). F-03 secret paths on the VPS. The Firebase providers
   (SEC-08).
-- Whether sign-in actually fails live (CB-43 impact is inferred from the ORM mapping; no real
-  account was used to probe it).
-- Why Railway's pre-deploy migration left the database at `0013`.
+- Whether sign-in works live after the 2026-10-30 migration (no real account has probed it).
+- Whether `scripts/railway-predeploy.sh` runs as intended on Railway. The cause of the old failure is known (no shell, so only the `echo` ran), but the fix has not been through a deploy yet.

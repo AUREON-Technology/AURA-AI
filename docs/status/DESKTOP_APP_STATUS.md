@@ -26,8 +26,8 @@ superseded: `main` already carries both, reworked (Unit 7 `desktop_oauth_client_
 `isolated_task_registry.dart` with the Agent Review panel, which keeps the worktree on disk as the
 durable record instead of #88's backend `HostTaskStore` + `reopen_task` RPC).
 
-Desktop sign-in on the live backend is likely failing until the production database is migrated
-to `0015` (CB-43, see the Backend file).
+The live backend's database was migrated to `0016` on 2026-10-30 (CB-43 resolved; see the Backend
+file), so the schema no longer blocks desktop sign-in. No real sign-in has been probed since.
 
 Nothing is packaged, signed or released for any desktop platform, and macOS is not built in CI at
 all.
