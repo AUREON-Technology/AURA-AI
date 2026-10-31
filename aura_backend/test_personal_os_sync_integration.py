@@ -1,7 +1,7 @@
 """ADR-032 against a REAL Postgres: one personal-OS store for the agent and the app.
 
 The schema here is built by ``alembic upgrade head`` (after a ``downgrade -1`` / ``upgrade head``
-round trip of migration 0017), not ``create_all``, because what is under test depends on things
+round trip of migration 0019), not ``create_all``, because what is under test depends on things
 only the migrations carry: the column server defaults the agent's inserts rely on, the
 ``aura_user_data_keys`` foreign key to ``users(auth_subject)`` and its one-primary index.
 
@@ -168,11 +168,11 @@ class TestPersonalOsSyncIntegration(unittest.TestCase):
 
     # -- tests ------------------------------------------------------------------------
 
-    def test_migration_0017_downgrades_and_upgrades(self):
-        self.assertIn("0017", self.migration_log[0])
-        self.assertIn("0016", self.migration_log[1])
+    def test_migration_0019_downgrades_and_upgrades(self):
+        self.assertIn("0019", self.migration_log[0])
+        self.assertIn("0018", self.migration_log[1])
         self.assertFalse(self.table_after_downgrade)
-        self.assertIn("0017", self.migration_log[2])
+        self.assertIn("0019", self.migration_log[2])
         self.assertTrue(asyncio.run(self._scalar(
             "SELECT to_regclass('aura_user_data_keys') IS NOT NULL"
         )))

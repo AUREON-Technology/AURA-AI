@@ -169,13 +169,6 @@ class DocumentStore(Protocol):
         ...
 
     async def chunks_for(self, document_id: DocumentId, version: int) -> Sequence[Chunk]:
-        """The chunks of ``version`` while it is the document's *active* version.
-
-        Empty once that version is superseded or tombstoned. Retrieval resolves chunk ids from a
-        per-process lexical index through here, and another worker's index may still name a
-        retired version; this filter is what keeps that text out of context (audit F-14). A
-        caller retiring a version reads its chunks *before* superseding it.
-        """
         ...
 
     async def purge_owner(self, owner_id: UserId) -> int:
@@ -221,6 +214,32 @@ class DocumentStore(Protocol):
         """Mark deleted and return the number of chunks to purge from indexes."""
         ...
 
+    # -- convergence of per-process derived indexes (F-14) ---------------------------------
+    #
+    # An *owner key* is an owner's id, or :data:`GLOBAL_OWNER` for owner-less content -- the same
+    # partition the vector payloads and the lexical index use.
+
+    async def corpus_revisions(self, owner_keys: Sequence[str]) -> Mapping[str, int]:
+        """A counter per owner key that changes whenever that owner's set of active chunks may
+        have changed: every ``put``, ``supersede``, ``tombstone`` and ``purge_owner`` advances
+        it, in the same transaction as the change itself. It never goes backwards, including
+        across an erasure. Keys never written are absent, which callers read as 0.
+
+        This is what lets a process holding a derived in-memory index (the per-worker BM25
+        index) learn cheaply -- one keyed read -- that another process changed the corpus, and
+        refresh only the owner whose content moved.
+        """
+        ...
+
+    async def active_chunk_ids(self, owner_key: str) -> Sequence[str]:
+        """The ids of every chunk of every active document version this owner key owns."""
+        ...
+
+    async def active_chunks(self, chunk_ids: Sequence[str]) -> Sequence[Chunk]:
+        """Those of ``chunk_ids`` that belong to an active document version, in no set order.
+        Unknown, superseded and tombstoned ids are simply absent."""
+        ...
+
 
 @runtime_checkable
 class MemoryStore(Protocol):
@@ -257,23 +276,17 @@ class MemoryStore(Protocol):
         ...
 
     async def touch_many(
-        self,
-        memory_ids: Sequence[MemoryId],
-        *,
-        now: datetime,
-        confidence_floor: float | None = None,
+        self, memory_ids: Sequence[MemoryId], *, owner_id: UserId, at: datetime
     ) -> int:
-        """Reinforce records in place, field by field; return how many rows were touched.
+        """Record one access on each of ``owner_id``'s rows in ``memory_ids``: atomically add one
+        to ``access_count`` and move ``last_accessed_at`` forward to ``at`` (never backwards).
 
-        Increments ``access_count``, moves ``last_accessed_at`` forward (never back), and, when
-        ``confidence_floor`` is given, raises ``confidence`` to at least that value (capped at 1).
-        It must not write any other column, and it must skip superseded records.
-
-        This exists because reinforcement used to be ``update(record.touched())`` -- a
-        whole-row write from the snapshot a recall read seconds earlier. A supersede, decay or
-        edit that landed in between was silently undone: a superseded memory came back to life
-        (audit F-16 / AR-06). Each implementation makes this one atomic statement (or one
-        critical section), so it cannot interleave with a concurrent whole-row write.
+        A field-level update of the *current* row, never a write of a record the caller read
+        earlier. Recall reinforces what it returned, and between its read and this write the
+        row may have been superseded, edited or deleted; writing the snapshot back reverted all
+        three -- a superseded memory came back to life, a deleted one was re-created -- and two
+        overlapping recalls lost an increment (F-16). An id that no longer exists, or belongs to
+        another owner, is skipped, never created. Returns how many rows were touched.
         """
         ...
 

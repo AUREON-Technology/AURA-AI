@@ -829,16 +829,7 @@ gaps:
     test: CI installs from a lock
     metric: n/a
     exit_condition: requirements-dev.lock generated and used by CI.
-    status: built_not_proven
-    reverified_2026_10_31: >-
-      Built under audit F-38/SEC-10. aura_backend/requirements-dev.lock (and
-      requirements-train.lock) are hashed uv compiles constrained to the runtime lock, and every
-      CI install (backend-ci.yml test + postgres jobs, eval-ci.yml gate + dispatch-run,
-      inference-plane-deploy.yml validate) now runs `pip install --require-hashes
-      --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock -r
-      requirements-dev.lock`; tests/architecture/test_supply_chain.py pins it. That exact
-      command succeeded locally in a fresh Python 3.11 venv with pip 24.0. Not proven: no CI run
-      has executed it (CB-44, no runners).
+    status: open
 
   - gap_id: GAP-034
     component: inference/remote-failover-policy

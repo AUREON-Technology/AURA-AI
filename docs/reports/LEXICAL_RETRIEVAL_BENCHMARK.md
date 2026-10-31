@@ -10,8 +10,7 @@ AR-14) and F-14; remediation roadmap R2.4 and R3.4.
 | --- | --- | --- |
 | The relevance threshold is applied to a real score when the reranker is disabled or raises (AR-14) | `2307bc4` | TESTED locally, not CI-run |
 | `BM25Index` is now an inverted index sharded by owner; scores are unchanged (AR-13) | the `perf(retrieval)` commit that adds this report | TESTED and benchmarked locally, not CI-run |
-| F-14 cross-worker sync (R2.4 Option A: a change feed in the shared cache) and active-only `chunks_for` | the `fix(retrieval)` commit that adds section 7 | TESTED locally, including against real Postgres 16 and Redis 7; not CI-run, not deployed |
-| Postgres FTS (R2.4 Option B) | — | Not built. The recommendation is in section 6 |
+| Postgres FTS (R2.4 Option B) | — | Not built. The recommendation is at the end of this report |
 
 CI is not getting runners (CB-44), so none of this has had a CI run.
 
@@ -169,7 +168,14 @@ The default suite has the gate as well.
 
 ## 5. Effect on F-14 (per-worker divergence)
 
-*Superseded by section 7, which fixes F-14's cross-worker half. Kept as written for the record.*
+> **Update (2026-10-31).** F-14's cross-worker half has since been fixed separately. A per-owner
+> revision in `aura_corpus_revisions` (migration 0017) is advanced with every corpus change.
+> Each worker checks it before a lexical search and diff-refreshes only the shards that moved.
+> The benchmark was re-run on that change, and every figure in §3 stayed within run-to-run noise.
+> At 50k chunks, `lexical_stage` was p50 4.65 / p95 7.69 ms and `retrieve` was 9.29 / 12.50 ms.
+> The in-memory store answers the revision check without I/O. Against Postgres the check is one
+> extra primary-key round trip per search, and that has not been measured here. The rest of this
+> section describes the inverted-index change as it stood.
 
 The change neither fixes F-14 nor makes it worse:
 
@@ -213,122 +219,3 @@ The suggested order:
 2. Option B behind a flag, evaluated against these numbers: p95 at 10k, 50k and 200k chunks, plus
    phase-a3 nDCG.
 3. Retire the in-process index only once Option B passes.
-
-## 7. F-14 fixed: a cross-worker change feed (R2.4 Option A), run 2026-10-31
-
-Built without a migration, as the owner asked. Option B (section 6) is still the long-term answer
-for memory and startup cost. This change fixes only correctness and visibility.
-
-### What changed
-
-1. **`chunks_for` resolves only active versions.** On Postgres it now joins `aura_documents` with
-   `status = 'active'`, like `iter_all_chunks`. The in-memory store matches it. The port docstring
-   states the contract. A lexical hit from a stale index now resolves to no content on every
-   path:
-   - in `_resolve_contents`, it is dropped before reranking;
-   - in `_chunk_from`, it becomes `None`;
-   - before both, `_drop_inactive_lexical` checks it against the shared store.
-
-   Dense hits come with their payload from the vector store (Qdrant or in-memory). Both delete
-   paths remove those points before the tombstone or after the supersede, so dense hits are not
-   re-checked. Ingest now reads the old version's chunks *before* superseding it, because
-   afterwards `chunks_for` hides them and the old vectors would never be retired.
-2. **A change feed in the shared `Cache` port** (`aura_core/knowledge/lexical_sync.py`).
-   - **Publishing.** Every ingest, new version and delete runs `INCR`s on
-     `knowledge:lexical:generation` and writes the changed document ids to
-     `knowledge:lexical:change:{n}` with a 1 h TTL.
-   - **Catching up.** Each engine keeps a cursor. Before a lexical search it reads the counter,
-     at most once every 250 ms. If the counter has moved, it fetches the entries in `MGET`
-     batches and *refreshes* each named document: it drops that document's entries and indexes
-     the active version's chunks from the shared store.
-   - **Why refreshes are safe.** A refresh is idempotent and does not depend on order, so
-     replaying an entry, applying it twice, or applying it after a later change all give the
-     same result.
-   - **Fallbacks.** Three cases trigger a full rebuild:
-     - the counter went backwards (Redis was flushed);
-     - the worker is more than 5,000 entries behind;
-     - an entry is still missing after a 5 s grace (its writer died between `INCR` and `SET`, or
-       the entry expired).
-   - **Rebuilds.** A rebuild now builds a new index off to the side and swaps it in, so queries
-     never read a half-built index. Changes this process makes during the scan are re-applied
-     after the swap.
-   - **Cache down.** Reads report a miss, so the worker stops catching up. Deletes are still
-     enforced on read. The writer's `INCR` raises, so its ids stay pending and are sent with its
-     next publish or sync. The write itself never fails.
-   - **Pub/sub was not used.** The port has no subscribe, a subscription is a long-lived
-     connection that does not fit the lazy-adapter pattern, and a reconnecting subscriber drops
-     messages. The counter would still be needed to detect the gap.
-3. **Wiring.** `Container` passes `lexical_feed=LexicalChangeFeed(self.cache_backend)`. That is
-   Redis in production and the in-memory cache otherwise; a single process works unchanged.
-   Celery workers share the same Redis, so documents they ingest now become lexically
-   searchable on the gateway workers too. Before this change, nothing ever told the gateway
-   workers about them.
-
-### Evidence
-
-- **Default suite.** `tests/unit/test_lexical_cross_worker.py` has 18 cases. Two engines over
-  one document store, one vector store and one cache stand in for two workers. The cases cover:
-  - the audit's `repro_lexical.py` scenario (delete on A: B's results *and* B's index are empty);
-  - an upload on A found lexically on B, with a control case: without the feed, B never finds
-    it;
-  - a new version, tenant scoping and erasure;
-  - the check interval;
-  - a reset counter, a lost entry with its grace period, entries after a gap, falling too far
-    behind, an `INCR` that raises (write succeeds, then a retry), and deletes with the cache
-    fully down;
-  - an ingest during a rebuild not being lost, and queries during a rebuild reading the old
-    index;
-  - the container wiring;
-  - active-only `chunks_for`, and old vectors still retired.
-- **Real Postgres 16 + Redis 7** (Docker `postgres:16-alpine` and `redis:7-alpine`, locally):
-  - `tests/load/test_lexical_cross_worker_postgres_redis.py` (opt-in `-m load`, with
-    `AURA_TEST_DATABASE_URL` and `AURA_TEST_REDIS_URL`) passes 4 of 4. It covers: the audit
-    scenario, including R2.4's acceptance check that the upload is visible on worker B within
-    1 s; a new version replacing the old one on B; `chunks_for` returning nothing for a
-    superseded or tombstoned version, with the old vectors retired; and a `FLUSHDB` forcing a
-    rebuild. `tests/load/test_erasure_postgres.py` still passes.
-  - **Two OS processes**, each with its own asyncpg pool and Redis client, at production
-    defaults (250 ms interval):
-    - B saw A's upload lexically about 19 ms after A started the ingest.
-    - B's index dropped the document about 49 ms after A started the delete.
-    - B's index ended empty.
-
-### Overhead (`bench_lexical.py`, new `feed_check` and `lexical_stage_feed` columns, ms)
-
-`feed_check` is the worst case: the interval forced to 0, so every query reads the counter and
-nothing has changed. `lexical_stage_feed` is the lexical stage with that check included.
-
-| Chunks | Feed on | `feed_check` p50 / p95 | `lexical_stage` p50 / p95 | `lexical_stage_feed` p50 / p95 |
-| ---: | --- | ---: | ---: | ---: |
-| 1,000 | in-memory cache | 0.007 / 0.011 | 0.095 / 0.182 | 0.112 / 0.210 |
-| 10,000 | in-memory cache | 0.010 / 0.015 | 0.776 / 1.339 | 0.865 / 1.458 |
-| 1,000 | Redis 7 (Docker, loopback) | 0.422 / 0.667 | 0.141 / 0.257 | 0.480 / 0.724 |
-| 10,000 | Redis 7 | 0.524 / 0.855 | 0.773 / 1.354 | 1.235 / 1.894 |
-| 50,000 | Redis 7 | 0.673 / 0.976 | 4.849 / 7.805 | 5.078 / 8.094 |
-
-What this means in production:
-
-- **Worst case.** Every query pays one Redis `GET`: about 0.4–0.7 ms p50, under 1 ms p95.
-- **At the shipped 250 ms interval.** Each worker does at most 4 `GET`s a second. Every other
-  query pays a clock read (about 0.01 ms). The check also runs inside the lexical task, which
-  overlaps the dense search, so the `GET` mostly hides behind the query embedding.
-- **Catching up.** Measured on real Postgres and Redis (scratch script, 40 documents of 41
-  chunks each, while the full test suites ran on the same host): an idle check took 0.45 / 1.58
-  ms (p50 / p95), and applying one changed document took 6.8 / 13.7 ms. That cost is two queries
-  (`get` and `chunks_for`) plus re-indexing the document, and only the first query after a
-  change pays it.
-
-The other columns of this run match section 3: inverted 50k `lexical_stage` p50 4.85 ms, build
-9.27 s, 516.6 MiB. Same machine, and it was shared with other workloads during the run.
-
-### Still open
-
-- **Memory and startup cost per worker.** Option B is what removes these.
-- **No CI run (CB-44), and not deployed.** Production proof is an upload made through one worker
-  that is lexically searchable from the others, and a delete that disappears from all of them.
-  In the gateway, that means requests landing on different `--workers`.
-- **Dense hits are trusted, not re-checked.** On a new version, the old version's vectors are
-  deleted *after* the supersede. If that delete fails, those points stay searchable until a
-  reindex. That is unchanged by this work, and it is narrower than F-14: the ingest raises, so
-  the caller sees it. A document delete removes its vectors *before* the tombstone, so a failure
-  there leaves the document active and the delete can be retried.

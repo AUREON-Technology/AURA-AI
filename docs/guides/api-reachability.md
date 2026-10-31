@@ -95,9 +95,9 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | DELETE | `/api/v3/engineering/workspaces/{workspace_id}` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:132` | — | — | called |  |
 | POST | `/api/v3/feedback` | `aura_client/lib/core/routing/router.dart:54`, `aura_client/lib/core/routing/router.dart:329` (+4) | — | — | called |  |
 | WS | `/api/v3/host/agent` | — | — | `aura_hostd/lib/src/config.dart:21`, `aura_hostd/lib/src/config.dart:26` (+3) | called |  |
-| GET | `/api/v3/insights` | `aura_client/lib/core/insights/insights_client.dart:10`, `aura_client/lib/core/insights/insights_client.dart:61` | — | — | called |  |
-| POST | `/api/v3/insights/generate` | `aura_client/lib/core/insights/insights_client.dart:103` | — | — | called |  |
-| POST | `/api/v3/insights/{insight_id}/dismiss` | `aura_client/lib/core/insights/insights_client.dart:116` | — | — | called |  |
+| GET | `/api/v3/insights` | `aura_client/lib/core/insights/insights_client.dart:11`, `aura_client/lib/core/insights/insights_client.dart:48` | — | — | called |  |
+| POST | `/api/v3/insights/generate` | `aura_client/lib/core/insights/insights_client.dart:100` | — | — | called |  |
+| POST | `/api/v3/insights/{insight_id}/dismiss` | `aura_client/lib/core/insights/insights_client.dart:113` | — | — | called |  |
 | GET | `/api/v3/integrations/github/callback` | — | — | — | none | server-only: OAuth redirect target, reached by the browser |
 | POST | `/api/v3/integrations/github/callback/confirm` | — | — | — | none | server-only: OAuth redirect target, reached by the browser |
 | GET | `/api/v3/integrations/github/connect` | `aura_client/lib/features/engineering/data/github_integration_repository.dart:52`, `aura_client/lib/features/engineering/data/github_integration_repository.dart:62` | — | — | called |  |

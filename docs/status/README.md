@@ -24,9 +24,9 @@ uses the strongest evidence that exists:
 
 ## System-wide facts (checked live on 2026-10-28, ~21:20 UTC)
 
-- **Pending, 2026-10-31: ADR-032 adds migration `0017` (`aura_user_data_keys`).** It is not on
+- **Pending, 2026-10-31: ADR-032 adds migration `0019` (`aura_user_data_keys`).** It is not on
   `main` yet. After the merge that carries it, the Railway pre-deploy step must take production to
-  `0017`, and `/health/ready` must show `schema.revision 0017`. Until it does, the key endpoint and
+  `0019`, and `/health/ready` must show `schema.revision 0019`. Until it does, the key endpoint and
   the agent's personal-OS tools fail. ADR-032 also ends zero-knowledge for the synced personal-OS
   fields: the server now holds each user's data key, wrapped by `AURA_DATA_ENCRYPTION_KEYS`.
 - **Update 2026-10-30: the production database matches the code again (CB-43 resolved).** The
@@ -35,8 +35,11 @@ uses the strongest evidence that exists:
   `11e5d66b`; only `hfspace` returns 503. Why every deploy had skipped it: Railway does not run
   `preDeployCommand` in a shell, so the inline `echo … && alembic upgrade head && …` ran only the
   echo (the deploy log shows `MIGRATION START` then `Starting Container` 0.19 s later) and still
-  passed. `railway.json` now calls `scripts/railway-predeploy.sh`. That step is BUILT and TESTED
-  against a stand-in `alembic`, not yet seen on a real deploy. *Was (2026-10-28):* live at
+  passed. `railway.json` now calls `scripts/railway-predeploy.sh`, BUILT and TESTED against a
+  stand-in `alembic`. Railway ignores `railway.json` for this service (no config file linked), so on
+  2026-10-31 the owner set the same command in the dashboard. Seen running on a live deploy
+  (deploy `4afdd9a8` at `9bfaa22`, 2026-10-31 08:40 UTC): `MIGRATION OK` at `0016 (head)`. Applying an actual pending revision is still
+  unobserved (BACKEND_STATUS.md, Open issues 1). *Was (2026-10-28):* live at
   `2337577` with schema `0013` against an expected `0015`.
 - **CI has not executed since ~19:50 UTC on 2026-10-28.** Every job of every workflow on `main`
   for #187, #185, #188 and #143 (Backend CI #392–#397, Client CI #150–#151, Host Daemon CI #60,

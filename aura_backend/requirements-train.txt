@@ -9,11 +9,16 @@
 # them); the constraint line below holds them, and every other shared package, at exactly the
 # lockfile's versions so the training image cannot drift from the gateway's.
 #
-#     pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu \
-#         -r requirements.lock -r requirements-train.lock
+# This file is the input; what gets installed is requirements-train.lock, compiled from it with
+# hashes (audit F-38) -- a hash-pinned constraints file switches pip into hash-checking mode, so
+# this file cannot be installed directly any more. Regenerate after editing it (or the lock):
 #
-# Installs go through requirements-train.lock, the hashed compile of this file (command in
-# requirements-dev.txt); edit this file, then regenerate that lock.
+#     uv pip compile --python-version 3.11 --python-platform linux --strip-extras --torch-backend cpu --generate-hashes --output-file requirements-train.lock requirements-train.txt
+#
+# and install it on top of the runtime lock:
+#
+#     pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
+#     pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-train.lock
 #
 # Verified (2026-09-25) in a separate venv with Python 3.11 against
 # hf-internal-testing/tiny-random-gpt2 on CPU -- see tests/training/test_lora_weights_change.py

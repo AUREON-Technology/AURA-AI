@@ -54,7 +54,7 @@ The arrow never reverses. `container.py` is the single wiring point — every ad
 | `generate-insights-hourly` | Every hour | realtime |
 | `memory-consolidate-daily` | 02:30 daily | realtime |
 | `drain-event-outbox` | Every 60s | realtime |
-| `daily-briefing` | 06:00 daily | realtime |
+| `daily-briefing` | Every hour; each user is briefed once, 06:00–12:00 their local time | realtime |
 | `reap-agent-workspaces` | Every 30 min | realtime |
 | `drain-finetune-queue` | Every 120s | learning |
 | `knowledge-refresh-nightly` | 02:00 daily (configurable via `AURA_LEARNING_REFRESH_CRON`) | learning |
@@ -74,7 +74,8 @@ Alembic with 5 migrations (`alembic/versions/0001_initial_schema.py` through `00
 
 ```bash
 cd aura_backend
-pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock -r requirements-dev.lock
+pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock   # hash-pinned (F-38)
+pip install -r requirements-dev.txt                       # separately: unhashed
 
 # Default suite (no Docker, no network, no model)
 pytest

@@ -1,7 +1,7 @@
 """per-user data keys for the synced personal-OS fields (ADR-032)
 
-Revision ID: 0017
-Revises: 0016
+Revision ID: 0019
+Revises: 0018
 Create Date: 2026-10-31
 
 The owner chose envelope encryption for the synced tables' ``*_enc`` fields (ADR-032, option A):
@@ -21,8 +21,8 @@ from typing import Sequence, Union
 
 from alembic import op
 
-revision: str = "0017"
-down_revision: Union[str, None] = "0016"
+revision: str = "0019"
+down_revision: Union[str, None] = "0018"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

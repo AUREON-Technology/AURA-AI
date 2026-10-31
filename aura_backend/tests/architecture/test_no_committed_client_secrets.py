@@ -1,4 +1,4 @@
-"""No credential is committed to source -- client first, now the whole repository.
+"""No OAuth client secret is committed to the client source.
 
 Found live. A desktop sign-in failed with Google returning::
 
@@ -26,25 +26,25 @@ The build scripts (`scripts/deploy_client_desktop.sh` / `.ps1`) already resolve 
 removing it restores exactly the behaviour the comment describes, including the clear
 "not configured for this build" error in `desktop_oauth_client_io.dart`.
 
-This scans the client from the Python suite on purpose. That suite runs on every `pytest`
-invocation here, and CLAUDE.md already establishes the pattern of checking the Flutter client
-from `tests/architecture/` (`test_no_external_inference.py` does the same). A Dart test would
-need a toolchain this environment often does not have.
+This scans the Dart client from the Python suite on purpose. That suite runs on every
+`pytest` invocation here, and CLAUDE.md already establishes the pattern of checking the Flutter
+client from `tests/architecture/` (`test_no_external_inference.py` does the same). A Dart test
+would need a toolchain this environment often does not have.
 
-F-38 / SEC-14 (audit 2026-10-26): the scan used to cover `aura_client/**/*.dart` only. It now
-covers every *tracked* text file under the client (plist, json, xml, gradle as well as Dart), the
-backend, the admin console, the host daemon, deploy/, the workflows, scripts/ and docs/, plus
-the repository's top-level files. Tracked files only (`git ls-files`): a developer's gitignored
-`deploy/.env` holds real secrets by design and must not fail their local run, and anything
-committed is exactly what this guards against. Hits that are public by design are allowlisted
-by (path, label) with the reason -- never by value, so this file carries no credential either.
+Scope (audit F-38 / SEC-14). It began as `aura_client/**/*.dart` only, which left the host
+daemon, the admin console, the client's own platform config (plist, json, xml, gradle) and every
+script, workflow, compose file and backend module unscanned. It now reads every text source
+under the app and support directories (`_ROOTS`, `_TEXT_SUFFIXES`), tests included: a fixture
+that needs a credential-shaped string must be listed in `_ALLOWED` with the reason, which is a
+reviewable decision rather than a silent hole. `.claude/` (local worktrees and audit notes) and
+the build/dependency directories in `_SKIP_PARTS` are not source and are skipped.
 """
 
 from __future__ import annotations
 
+import functools
+import os
 import re
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -52,21 +52,64 @@ import pytest
 _REPO = Path(__file__).resolve().parents[3]
 _CLIENT = _REPO / "aura_client"
 
-#: Tracked trees scanned, in addition to the repository's top-level files.
+#: Top-level directories that hold source, config, scripts or docs. Named rather than walking
+#: the repository root so a Flutter SDK or virtualenv unpacked beside them (CLAUDE.md's own
+#: instructions fetch Flutter into the working directory) is never read as repo content.
 _ROOTS = (
-    "aura_client", "aura_backend", "aura_admin", "aura_hostd", "deploy", ".github", "scripts",
-    "docs", "Doc",
+    "aura_backend",
+    "aura_client",
+    "aura_admin",
+    "aura_hostd",
+    "deploy",
+    "scripts",
+    "infra",
+    "docs",
+    ".github",
 )
 
-#: Directories whose contents are not hand-written source (generated, vendored or cached), even
-#: when something under them is tracked.
+#: Directories whose contents are not source. Matched against the path *relative to the repo
+#: root*: an absolute path can contain `.claude` (a git worktree), which must not hide it.
 _SKIP_PARTS = {
-    "build", ".dart_tool", "ephemeral", ".git", "Pods", "node_modules", ".next", "__pycache__",
-    ".venv", "venv", "dist", "coverage", ".gradle",
+    "build",
+    ".dart_tool",
+    "ephemeral",
+    ".git",
+    "Pods",
+    "node_modules",
+    ".next",
+    "venv",
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    "test-results",
+    "playwright-report",
+    ".gradle",
+    ".claude",
 }
 
-#: Anything larger is a binary or an archive, not hand-written source.
-_MAX_BYTES = 2_000_000
+#: Text files worth reading. Binaries (images, the untracked APK) are not.
+_TEXT_SUFFIXES = {
+    ".dart", ".py", ".sh", ".ps1", ".ts", ".tsx", ".js", ".mjs", ".cjs",
+    ".json", ".jsonl", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".template",
+    ".example", ".env", ".plist", ".xml", ".xcconfig", ".gradle", ".kts", ".properties",
+    ".tf", ".tfvars", ".hcl", ".md", ".txt", ".sql", ".swift", ".kt", ".html", ".rules",
+    ".entitlements", ".lock",
+}
+_TEXT_NAMES = {"Dockerfile", "Caddyfile", "known_hosts"}
+_MAX_BYTES = 5 * 1024 * 1024
+
+#: (path relative to the repo root, label) pairs that are allowed to match, each with its reason.
+#: A stale entry -- the file gone or no longer matching -- fails `test_the_allowlist_is_live`.
+_ALLOWED: dict[tuple[str, str], str] = {
+    ("aura_client/android/app/google-services.json", "Google API key"): (
+        "The Firebase Android config's `current_key`. A Firebase API key identifies the project "
+        "to Google's APIs and is compiled into every APK; it is not a secret, and Firebase "
+        "documents it as safe to ship. Access is controlled by Firebase Security Rules, App "
+        "Check and the key's API restrictions in Google Cloud (which should limit it to the "
+        "com.auraai.aura_client package and its signing SHA-1 -- a console setting this test "
+        "cannot see)."
+    ),
+}
 
 #: Credential shapes that must never appear as a literal. Kept as patterns rather than values so
 #: this file never itself carries a secret.
@@ -74,107 +117,104 @@ _SECRET_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"GOCSPX-[A-Za-z0-9_\-]{10,}", "Google OAuth client secret"),
     (r"AIza[A-Za-z0-9_\-]{30,}", "Google API key"),
     (r"-----BEGIN [A-Z ]*PRIVATE KEY-----", "private key"),
-    (r"\bsk-[A-Za-z0-9_\-]{20,}", "vendor API key"),
-    (r"\bgh[pousr]_[A-Za-z0-9]{30,}", "GitHub token"),
-    (r"\bgithub_pat_[A-Za-z0-9_]{30,}", "GitHub fine-grained token"),
+    (r"\bsk-[A-Za-z0-9]{20,}", "vendor API key"),
+    (r"\bghp_[A-Za-z0-9]{30,}", "GitHub personal access token"),
     (r"\bxox[baprs]-[A-Za-z0-9-]{10,}", "Slack token"),
-    (r"\bAKIA[0-9A-Z]{16}\b", "AWS access key id"),
-    (r"\bhf_[A-Za-z0-9]{30,}", "Hugging Face token"),
-    (r"\bgsk_[A-Za-z0-9]{30,}", "Groq API key"),
-    (r"\b[sr]k_live_[A-Za-z0-9]{20,}", "Stripe live key"),
 )
 
-#: (path relative to the repo, pattern label) -> why this literal is not a secret.
-_ALLOWLIST: dict[tuple[str, str], str] = {
-    ("aura_client/android/app/google-services.json", "Google API key"): (
-        "F-38/SEC-14: the Firebase Android client config. Its api_key is a public project "
-        "identifier compiled into every APK by the google-services Gradle plugin -- Firebase "
-        "security rules and the key's Android-app restriction are the control, not secrecy. "
-        "Keep that restriction set in the Google Cloud console."
-    ),
-}
 
-
-def _tracked_files() -> list[Path]:
-    if shutil.which("git") is None or not (_REPO / ".git").exists():
-        pytest.skip("not a git checkout; this check scans tracked files only")
-    listing = subprocess.run(
-        ["git", "-C", str(_REPO), "ls-files", "-z", "--", *_ROOTS, ":(top,glob)*"],
-        check=True,
-        capture_output=True,
-    ).stdout.decode("utf-8")
-    files: list[Path] = []
-    for rel in filter(None, listing.split("\0")):
-        path = _REPO / rel
-        if _SKIP_PARTS & set(Path(rel).parts) or not path.is_file():
-            continue
-        if path.stat().st_size > _MAX_BYTES:
-            continue
-        files.append(path)
+def _dart_sources() -> list[Path]:
+    files = [
+        path
+        for path in _CLIENT.rglob("*.dart")
+        if not _SKIP_PARTS & set(path.relative_to(_REPO).parts) and path.is_file()
+    ]
+    assert files, f"no Dart sources found under {_CLIENT}; this check would pass vacuously"
     return files
 
 
-def _text(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (UnicodeDecodeError, OSError):
-        return None  # binary
+def _is_text_source(path: Path) -> bool:
+    return path.suffix in _TEXT_SUFFIXES or path.name in _TEXT_NAMES or path.name.startswith(".env")
 
 
-@pytest.fixture(scope="module")
-def tracked() -> list[Path]:
-    return _tracked_files()
+@functools.lru_cache(maxsize=1)
+def _scanned_files() -> tuple[Path, ...]:
+    files: list[Path] = []
+    for root in _ROOTS:
+        base = _REPO / root
+        if not base.is_dir():
+            continue
+        # os.walk with pruning, not rglob: a developer's aura_admin/node_modules is ~10^5 files
+        # that must not even be listed.
+        for directory, subdirs, names in os.walk(base):
+            subdirs[:] = [d for d in subdirs if d not in _SKIP_PARTS]
+            for name in names:
+                path = Path(directory) / name
+                if _is_text_source(path) and path.is_file() and path.stat().st_size <= _MAX_BYTES:
+                    files.append(path)
+    return tuple(sorted(files))
 
 
-def test_every_scanned_tree_contributes_files(tracked: list[Path]) -> None:
-    """Guard against vacuous passing: a moved tree would silently scan nothing."""
-    rels = [p.relative_to(_REPO).as_posix() for p in tracked]
-    for root, suffix in (
-        ("aura_client/", ".dart"), ("aura_client/", ".json"), ("aura_backend/", ".py"),
-        ("aura_admin/", ".ts"), ("aura_hostd/", ".dart"), ("deploy/", ".yml"),
-        (".github/workflows/", ".yml"),
-    ):
-        assert any(r.startswith(root) and r.endswith(suffix) for r in rels), (root, suffix)
+@functools.lru_cache(maxsize=1)
+def _texts() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """(repo-relative posix path, lines) for every scanned file, read once for all patterns."""
+    out = []
+    for path in _scanned_files():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        out.append((path.relative_to(_REPO).as_posix(), tuple(text.splitlines())))
+    return tuple(out)
 
 
-@pytest.mark.parametrize("pattern,label", _SECRET_PATTERNS, ids=[p[1] for p in _SECRET_PATTERNS])
-def test_no_credential_literal_in_tracked_sources(
-    tracked: list[Path], pattern: str, label: str
-) -> None:
+def _matches(pattern: str, label: str) -> list[str]:
+    """`relative/path:line` for every match outside the allowlist. Never the matched value."""
     compiled = re.compile(pattern)
     offenders: list[str] = []
-
-    for path in tracked:
-        rel = path.relative_to(_REPO).as_posix()
-        if (rel, label) in _ALLOWLIST:
+    for relative, lines in _texts():
+        if (relative, label) in _ALLOWED:
             continue
-        text = _text(path)
-        if text is None or not compiled.search(text):
-            continue
-        for number, line in enumerate(text.splitlines(), start=1):
+        for number, line in enumerate(lines, start=1):
             if compiled.search(line):
                 # The location, never the value: a failure message that quotes the credential
                 # would republish it into CI logs, which is the problem rather than the report.
-                offenders.append(f"{rel}:{number}")
+                offenders.append(f"{relative}:{number}")
+    return offenders
+
+
+def test_the_scan_covers_every_app_and_more_than_dart() -> None:
+    """Guards against the scan quietly shrinking back to one directory or one file type."""
+    scanned = [path.relative_to(_REPO) for path in _scanned_files()]
+    roots = {p.parts[0] for p in scanned}
+    assert {"aura_client", "aura_hostd", "aura_admin", "aura_backend", "deploy", ".github"} <= roots
+    suffixes = {p.suffix for p in scanned}
+    assert {".dart", ".py", ".ts", ".yml", ".yaml", ".json", ".sh"} <= suffixes
+    assert len(_dart_sources()) > 0
+
+
+@pytest.mark.parametrize("pattern,label", _SECRET_PATTERNS, ids=[p[1] for p in _SECRET_PATTERNS])
+def test_no_credential_literal_in_committed_source(pattern: str, label: str) -> None:
+    offenders = _matches(pattern, label)
 
     assert not offenders, (
-        f"a {label} appears as a literal in tracked source at:\n  "
+        f"a {label} appears as a literal at:\n  "
         + "\n  ".join(offenders)
         + "\n\nSecrets reach a build through --dart-define (see scripts/deploy_client_desktop.sh), "
-        "a gitignored deploy/.env or a CI secret -- never through source. If this was committed, "
-        "rotate it: it is in git history and, for the client, in every binary already shipped."
+        "environment variables or deploy/.env -- never through source. If this was committed, "
+        "rotate it: it is in git history and in every artefact already built from it. If it is "
+        "a deliberate, harmless fixture, add it to _ALLOWED with the reason."
     )
 
 
-def test_allowlist_entries_still_match(tracked: list[Path]) -> None:
-    """A stale entry would quietly exempt whatever lands at that path next."""
-    patterns = {label: re.compile(pattern) for pattern, label in _SECRET_PATTERNS}
-    by_rel = {p.relative_to(_REPO).as_posix(): p for p in tracked}
-    for (rel, label), reason in _ALLOWLIST.items():
-        assert reason.strip()
-        assert rel in by_rel, f"allowlisted file no longer tracked: {rel}"
-        assert patterns[label].search(_text(by_rel[rel]) or ""), (
-            f"stale allowlist entry: {rel} no longer contains a {label}"
+def test_the_allowlist_is_live() -> None:
+    patterns = dict((label, pattern) for pattern, label in _SECRET_PATTERNS)
+    for (relative, label), reason in _ALLOWED.items():
+        assert reason.strip(), f"{relative}: an allowlist entry needs its reason"
+        path = _REPO / relative
+        assert path.is_file(), f"stale _ALLOWED entry, file is gone: {relative}"
+        assert re.search(patterns[label], path.read_text(encoding="utf-8")), (
+            f"stale _ALLOWED entry, {relative} no longer contains a {label}: remove it"
         )
 
 

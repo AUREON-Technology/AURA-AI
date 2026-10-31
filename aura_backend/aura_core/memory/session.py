@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import weakref
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from typing import Any, AsyncIterator, Mapping, Sequence
@@ -91,6 +92,10 @@ class SessionState:
     summary: str = ""
     turn_count: int = 0
     updated_at: float = 0.0
+    #: How many messages have been folded into ``summary`` over the session's life. It only
+    #: grows, so it versions the summary: a summary computed against one value applies only if
+    #: no other summary landed while the model was writing it (see ``EpisodicMemory.append``).
+    folded: int = 0
 
     def to_json(self) -> str:
         return json.dumps(
@@ -100,6 +105,7 @@ class SessionState:
                 "summary": self.summary,
                 "turn_count": self.turn_count,
                 "updated_at": self.updated_at,
+                "folded": self.folded,
                 "messages": [
                     {"role": str(m.role), "content": m.content} for m in self.messages
                 ],
@@ -116,6 +122,7 @@ class SessionState:
                 summary=data.get("summary", ""),
                 turn_count=int(data.get("turn_count", 0)),
                 updated_at=float(data.get("updated_at", 0.0)),
+                folded=int(data.get("folded", 0)),
                 messages=tuple(
                     Message(role=Role(m["role"]), content=m["content"])
                     for m in data.get("messages", [])
@@ -131,6 +138,16 @@ class SessionState:
             return None
 
 
+def _same_prefix(messages: Sequence[Message], prefix: Sequence[Message]) -> bool:
+    """Whether ``messages`` begins with ``prefix``, by role and content -- the only fields
+    session state persists (``created_at`` is re-stamped on every load)."""
+    if len(messages) < len(prefix):
+        return False
+    return all(
+        (a.role, a.content) == (b.role, b.content) for a, b in zip(messages, prefix)
+    )
+
+
 class EpisodicMemory:
     """Rolling conversation window plus a running summary, backed by the cache port.
 
@@ -141,13 +158,26 @@ class EpisodicMemory:
     The summariser is injected rather than called directly so this class stays testable without
     a model, and so a deployment can choose to summarise with a small local model while chatting
     with a large cloud one.
+
+    **Writes are serialised per (owner, session), and the model is never called while holding
+    that.** Append used to load the state, await the summariser, and write back what it had
+    loaded -- so every exchange another turn appended while the model was thinking (seconds to
+    minutes on a CPU-only model) was silently overwritten (F-16). Now a short critical section
+    does load-append-write, the summary is computed outside it, and a second critical section
+    applies it only if the state is still the one it was computed from (see :meth:`append`).
+
+    The critical section is an in-process ``asyncio.Lock`` plus, for other workers and replicas,
+    a lease taken with the cache port's atomic ``incr`` (a real ``INCR`` on Redis). Both are
+    held for two cache round trips, never for a model call. If the cache cannot arbitrate
+    (Redis down, or a lease still held after ``lease_wait_s``) the write proceeds under the
+    in-process lock alone: recording the user's exchange matters more than the rare cross-worker
+    race that degrades to, and with Redis down there is no shared state to race over anyway.
     """
 
     _PREFIX = "session:"
-    # Distinct prefixes rather than a suffix on the state key: "<state key>:lease" could be the
-    # state key of a session whose id happens to end in ":lease".
+    # Deliberately not under _PREFIX: no session id can make its data key equal a lease key,
+    # so releasing a lease can never delete a conversation.
     _LEASE_PREFIX = "session-lease:"
-    _COMPACT_PREFIX = "session-compact:"
 
     def __init__(
         self,
@@ -157,18 +187,27 @@ class EpisodicMemory:
         summarise_after: int = 20,
         ttl_s: int = 30 * 24 * 3600,
         summariser: Any = None,
-        lease_ttl_s: int = 15,
-        lease_wait_s: float = 5.0,
-        compaction_ttl_s: int = 300,
+        lease_ttl_s: int = 10,
+        lease_wait_s: float = 12.0,
     ) -> None:
         self._cache = cache
         self._window = window
         self._summarise_after = summarise_after
         self._ttl = ttl_s
         self._summariser = summariser
+        # The lease outlives a crashed holder by at most its TTL; waiting a little longer than
+        # that means a stuck lease expires before a waiter gives up on it.
         self._lease_ttl = lease_ttl_s
         self._lease_wait = lease_wait_s
-        self._compaction_ttl = compaction_ttl_s
+        # Weak values: a lock exists only while some append holds or awaits it, so one entry
+        # per session ever seen cannot accumulate for the life of the process.
+        self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
+        # Sessions this process is already summarising. A turn that overflows while a summary
+        # is in flight just appends; the in-flight one trims what it covers and the next turn
+        # summarises any remainder -- rather than paying the model twice for the same prefix.
+        self._summarising: set[str] = set()
 
     def _key(self, session_id: SessionId, owner_id: UserId | None = None) -> str:
         """The cache key for a session.
@@ -216,129 +255,105 @@ class EpisodicMemory:
     ) -> SessionState:
         """Record one exchange, summarising older turns when the window overflows.
 
-        **Concurrency (audit F-16).** This used to be load -> LLM summarise -> set with nothing
-        held: two turns of one session (two tabs, a retry, a voice turn racing a text turn)
-        each loaded the same state and the later ``set`` erased the other's exchange -- and
-        summarisation, which can take a minute on the deployed CPU model, held that window open
-        for its whole duration. Now:
+        Three steps, so that no concurrent append is lost and none waits on the model:
 
-        * the read-modify-write of the append itself runs under a per-(owner, session) lease
-          taken through the shared cache (``incr`` is atomic in Redis, so it holds across
-          workers and replicas), and that critical section contains no model call;
-        * summarisation runs *outside* the lease on a snapshot of the oldest messages, then
-          commits with a compare-and-set: under the lease again, it re-reads the state and only
-          if those messages are still its prefix (and the summary is still the one it extended)
-          does it drop that prefix and install the new summary -- keeping every message
-          appended meanwhile.
+        1. Under the per-session lock: load, append the exchange, write. The exchange is durable
+           before any summarisation starts.
+        2. Unlocked: summarise the overflow (everything but the last ``window`` messages).
+        3. Under the lock again, compare-and-set: re-load, and apply the summary only if no
+           other summary landed meanwhile (``folded`` unchanged) and the state still begins with
+           the messages that were summarised. Then drop exactly those from the front, keeping
+           every message appended since step 1. Otherwise the summary is stale -- another worker
+           folded first, or the session was cleared -- and is discarded rather than written over
+           newer state; the messages stay verbatim and the next turn summarises them.
         """
         key = self._key(session_id, owner_id)
-        async with self._lease(key):
-            state = await self.load(session_id, owner_id)
+        async with self._exclusive(key):
+            loaded = await self.load(session_id, owner_id)
             state = SessionState(
                 session_id=session_id,
                 owner_id=owner_id,
                 messages=(
-                    *state.messages,
+                    *loaded.messages,
                     Message.user(user_message),
                     Message.assistant(assistant_message),
                 ),
-                summary=state.summary,
-                turn_count=state.turn_count + 1,
+                summary=loaded.summary,
+                turn_count=loaded.turn_count + 1,
                 updated_at=time.time(),
+                folded=loaded.folded,
             )
-            await self._save(key, state)
+            await self._write(key, state)
 
-        if len(state.messages) > self._summarise_after:
-            state = await self._compact(session_id, owner_id, state)
-        return state
+        if len(state.messages) <= self._summarise_after or key in self._summarising:
+            return state
 
-    async def _save(self, key: str, state: SessionState) -> None:
-        await self._cache.set(key, state.to_json().encode("utf-8"), ttl_s=self._ttl)
-
-    @staticmethod
-    def _same_messages(a: Sequence[Message], b: Sequence[Message]) -> bool:
-        # Role and content are all that is persisted; `created_at` differs between a message
-        # built in this process and the same message read back from the cache.
-        return len(a) == len(b) and all(
-            x.role == y.role and x.content == y.content for x, y in zip(a, b)
-        )
-
-    async def _compact(
-        self, session_id: SessionId, owner_id: UserId, state: SessionState
-    ) -> SessionState:
-        """Fold the overflow into the summary without holding the session while the model runs."""
-        key = self._key(session_id, owner_id)
-        # Single flight: a second turn arriving while a summary is being written would only
-        # summarise the same prefix again and lose the compare-and-set below. Skipping is safe:
-        # the window simply stays a little longer until the next append compacts it.
-        flight = f"{self._COMPACT_PREFIX}{key}"
-        try:
-            if await self._cache.incr(flight, ttl_s=self._compaction_ttl) != 1:
-                return state
-        except Exception:
-            flight = ""  # no shared counter: still correct, just not deduplicated
+        self._summarising.add(key)
         try:
             overflow = state.messages[: len(state.messages) - self._window]
-            previous = state.summary
-            summary = await self._summarise(overflow, previous)
+            summary = await self._summarise(overflow, state.summary)
 
-            async with self._lease(key):
+            async with self._exclusive(key):
                 current = await self.load(session_id, owner_id)
-                if current.summary != previous or not self._same_messages(
-                    current.messages[: len(overflow)], overflow
-                ):
-                    # The session moved on under us (cleared, or compacted by a worker whose
-                    # single-flight marker had expired). Our summary describes a prefix that is
-                    # no longer there; installing it would duplicate or drop turns.
+                if current.folded != state.folded or not _same_prefix(current.messages, overflow):
                     logger.info(
-                        "session changed during summarisation; discarding the summary",
+                        "discarding a stale session summary",
                         extra={"session": session_id.value},
                     )
                     return current
-                compacted = replace(
+                applied = replace(
                     current,
                     messages=current.messages[len(overflow):],
                     summary=summary,
+                    folded=current.folded + len(overflow),
                     updated_at=time.time(),
                 )
-                await self._save(key, compacted)
-                return compacted
+                await self._write(key, applied)
+                return applied
         finally:
-            if flight:
-                await self._cache.delete(flight)
+            self._summarising.discard(key)
+
+    async def _write(self, key: str, state: SessionState) -> None:
+        await self._cache.set(key, state.to_json().encode("utf-8"), ttl_s=self._ttl)
 
     @asynccontextmanager
-    async def _lease(self, key: str) -> AsyncIterator[None]:
-        """A short per-session mutual-exclusion lease over the shared cache.
+    async def _exclusive(self, key: str) -> AsyncIterator[None]:
+        """Hold the session's write lock: in-process first, then the cross-process lease."""
+        lock = self._locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[key] = lock
+        async with lock:
+            lease = await self._acquire_lease(key)
+            try:
+                yield
+            finally:
+                if lease is not None:
+                    await self._cache.delete(lease)
 
-        ``incr`` returning 1 means this caller created the counter and holds the lease; the TTL
-        bounds how long a crashed holder can block the session. The protected section is two
-        cache round trips, so waiting is brief; if the lease still cannot be had in
-        ``lease_wait_s`` (or the cache cannot count at all) the write goes ahead unprotected --
-        degrading to the old behaviour is better than failing the user's turn.
+    async def _acquire_lease(self, key: str) -> str | None:
+        """Take the cross-process lease for ``key``; ``None`` if the cache cannot arbitrate.
+
+        ``incr`` is atomic across replicas and creates the counter with a TTL, so exactly one
+        caller sees 1 and holds it until it deletes the key -- or until the TTL frees it, if the
+        holder died. Waiters' increments do not extend the TTL.
         """
         lease = f"{self._LEASE_PREFIX}{key}"
-        held = False
-        deadline = time.monotonic() + self._lease_wait
-        delay = 0.005
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._lease_wait
+        delay = 0.01
         while True:
             try:
-                held = await self._cache.incr(lease, ttl_s=self._lease_ttl) == 1
+                if await self._cache.incr(lease, ttl_s=self._lease_ttl) == 1:
+                    return lease
             except Exception:
-                logger.warning("session lease unavailable; writing without it")
-                break
-            if held:
-                break
-            if time.monotonic() >= deadline:
-                logger.warning("session lease not acquired in time; writing without it")
-                break
+                logger.warning("session lease unavailable; serialising in-process only")
+                return None
+            if loop.time() >= deadline:
+                logger.warning("session lease not acquired in time; proceeding without it")
+                return None
             await asyncio.sleep(delay)
-            delay = min(delay * 2, 0.1)
-        try:
-            yield
-        finally:
-            if held:
-                await self._cache.delete(lease)
+            delay = min(delay * 2, 0.2)
 
     async def history(self, session_id: SessionId, owner_id: UserId) -> tuple[Conversation, str]:
         state = await self.load(session_id, owner_id)
@@ -347,13 +362,18 @@ class EpisodicMemory:
     async def clear(self, session_id: SessionId, owner_id: UserId) -> None:
         """Forget the owner's state for this session (and any legacy un-namespaced state it
         owned). Takes the owner for the same reason :meth:`load` does: a session id alone must
-        not let one user clear another's conversation."""
-        await self._cache.delete(self._key(session_id, owner_id))
-        legacy = await self._cache.get(self._key(session_id))
-        if legacy is not None:
-            state = SessionState.from_json(legacy)
-            if state is None or state.owner_id == owner_id:
-                await self._cache.delete(self._key(session_id))
+        not let one user clear another's conversation.
+
+        Under the same per-session lock as :meth:`append`, so a clear cannot interleave with an
+        append's load-and-write and be undone by it."""
+        key = self._key(session_id, owner_id)
+        async with self._exclusive(key):
+            await self._cache.delete(key)
+            legacy = await self._cache.get(self._key(session_id))
+            if legacy is not None:
+                state = SessionState.from_json(legacy)
+                if state is None or state.owner_id == owner_id:
+                    await self._cache.delete(self._key(session_id))
 
     async def _summarise(self, overflow: Sequence[Message], previous: str) -> str:
         """Fold overflow turns into the running summary.

@@ -36,7 +36,7 @@ ADR-032 (2026-10-31; built and tested locally, not deployed or CI-run) applies t
 too, because the code is shared. On its next sync after upgrading, the app fetches the account
 data key, moves local data off the per-device key, and then shares that key with the user's other
 devices. This fixes the multi-device key-loss wipe. It also means the server can read the synced
-personal-OS fields, which are no longer zero-knowledge. Production needs migration `0017` before
+personal-OS fields, which are no longer zero-knowledge. Production needs migration `0019` before
 any of this works.
 
 ## Capabilities

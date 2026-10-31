@@ -14,33 +14,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Pin the runtime set. requirements.lock is compiled from requirements.txt with the
-# command recorded in its own header. Test/dev extras stay in requirements-dev.lock and
+# command recorded in its own header. Test/dev extras stay in requirements-dev.txt and
 # never land here.
 #
-# Every pin carries --hash entries and the install runs with --require-hashes (F-38/SEC-10):
-# an artefact that does not match the hash recorded at lock time fails the build, whichever
-# index served it. torch is resolved from PyTorch's CPU index (uv's --torch-backend cpu routes
-# only the PyTorch packages there; everything else comes from PyPI alone), so this install
-# needs that index as an extra. uv does not write the --torch-backend index into the lockfile,
-# and the file must not carry an --index-url line either (pip lets it replace command-line
-# extras), so the index is passed here. A PyPI upload cannot satisfy a hash taken from
-# download.pytorch.org, so the extra index is not a dependency-confusion path. Keep the CPU index: the default Linux torch wheel drags in the nvidia-*, cuda-* and triton packages,
-# which is 6.5 GB of CUDA runtime that a CPU-only host can never execute. Four services build
-# from this context, so the cost is paid four times over.
+# The lock pins torch to PyTorch's CPU wheel (torch==2.13.0+cpu). That is deliberate and
+# worth keeping: the default Linux torch wheel drags in the nvidia-*, cuda-* and triton
+# packages, which is 6.5 GB of CUDA runtime that a CPU-only host can never execute. Four
+# services build from this context, so the cost is paid four times over.
+#
+# Hash-checked (audit F-38 / SEC-10). Every file pip downloads must match a sha256 recorded
+# in the lock, so neither index can substitute a package -- the dependency-confusion pattern
+# of the 2022 torchtriton incident. The lock is compiled with `--torch-backend cpu`, which
+# resolves only the PyTorch packages against the CPU index and everything else against PyPI,
+# and it names no index itself (a requirements-file --index-url would discard the flag
+# below), so the CPU index is named here. Without it the install fails outright -- it cannot
+# silently fall back to the CUDA build, because those hashes are not in the lock.
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 COPY requirements.lock requirements-train.lock ./
 
 RUN pip install --no-cache-dir --user --require-hashes \
-        --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
+        --extra-index-url "$TORCH_INDEX_URL" -r requirements.lock
 
 # Optional LoRA training dependencies (peft; ADR-008 Loop B, GAP-017). Off by default so the
 # gateway and every other service never carry them; only `worker-training` builds with
 # AURA_TRAINING_DEPS=true. requirements-train.lock is compiled from requirements-train.txt,
 # which constrains itself to requirements.lock, so this cannot move torch/transformers away
-# from the gateway's pins -- and it is hash-locked the same way.
+# from the gateway's pins; it is hash-checked the same way.
 ARG AURA_TRAINING_DEPS=false
 RUN if [ "$AURA_TRAINING_DEPS" = "true" ]; then \
         pip install --no-cache-dir --user --require-hashes \
-            --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-train.lock; \
+            --extra-index-url "$TORCH_INDEX_URL" -r requirements-train.lock; \
     fi
 
 # ==========================================

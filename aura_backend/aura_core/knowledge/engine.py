@@ -20,7 +20,7 @@ import asyncio
 import hashlib
 import time
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Callable, Hashable, Iterable, Mapping, Sequence
+from typing import Any, AsyncIterator, Hashable, Mapping, Sequence
 
 from ..domain.errors import ConflictError, EmbeddingError, KnowledgeError, ValidationError
 from ..domain.events import DocumentIngested, DocumentSuperseded
@@ -42,7 +42,6 @@ from .chunking import ChunkingConfig, chunk_with_headings
 from .documents import ExtractedBlock
 from .graph_pipeline import KnowledgeGraphPipeline
 from .index_manager import IndexManager
-from .lexical_sync import LexicalChangeFeed
 from .retrieval import BM25Index, HeuristicReranker, reciprocal_rank_fusion
 
 __all__ = ["KnowledgeEngine", "IngestionResult", "derive_document_id"]
@@ -152,8 +151,6 @@ class KnowledgeEngine:
         metrics: Any = None,
         event_bus: Any = None,
         graph_pipeline: KnowledgeGraphPipeline | None = None,
-        lexical_feed: LexicalChangeFeed | None = None,
-        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._documents = documents
         self._vectors = vectors
@@ -186,27 +183,13 @@ class KnowledgeEngine:
         # adapter replaces this when a deployment outgrows it (ADR-005). Chunks are grouped by
         # owner key (`_owner_key`), so a query reads only its tenant's and the global postings.
         self._lexical = BM25Index()
-        # document id -> the chunk ids this process indexed for it, whatever their version. What
-        # lets a change-feed refresh drop a document's entries without knowing which version this
-        # worker last saw.
-        self._lexical_docs: dict[str, set[str]] = {}
-
-        # Cross-worker consistency of the index above (F-14, `lexical_sync`). With no feed -- a
-        # single process, or an engine built without a cache -- the index only ever reflects this
-        # process's own writes plus the startup rebuild, which is what it always did.
-        self._feed = lexical_feed
-        self._monotonic = monotonic
-        # The last feed generation applied. 0, not "unknown", until a rebuild reads the head: an
-        # engine that never rebuilt replays whatever the feed still holds, which is idempotent.
-        self._lexical_cursor = 0
-        self._lexical_next_check = 0.0
-        self._lexical_missing_since: tuple[int, float] | None = None
-        self._lexical_unpublished: set[str] = set()
-        self._lexical_sync_lock = asyncio.Lock()
-        # Documents this process changed while a rebuild was reading the store; refreshed once
-        # the rebuilt index is swapped in, so the swap cannot lose them.
-        self._lexical_rebuilding = False
-        self._lexical_dirty: set[str] = set()
+        # Owner key -> the store's corpus revision this worker's shard for it last matched. Each
+        # gateway worker holds its own index over one shared store, so a write served by another
+        # worker reaches this one only through these revisions (F-14): `_converge_lexical`
+        # compares them before every lexical search and refreshes the shards that moved. A key
+        # that is absent has never been checked, which always triggers a refresh.
+        self._lexical_revisions: dict[str, int] = {}
+        self._lexical_refresh_locks = _KeyedLocks()
 
         # Serialises the check-then-write section of `ingest` per content hash and per document
         # id. Without it, concurrent duplicate submissions (a double tap, a client retry racing its
@@ -370,13 +353,10 @@ class KnowledgeEngine:
 
         await self._documents.put(document, chunks)
         if previous is not None:
-            # Read before superseding: `chunks_for` resolves only active versions, so once the
-            # old version is superseded its chunks can no longer be listed for retirement.
-            old_chunks = await self._documents.chunks_for(previous.id, previous.version)
             await self._documents.supersede(
                 doc_id, old_version=previous.version, new_version=document.version
             )
-            await self._retire_chunks(old_chunks, identity)
+            await self._retire_chunks(previous, identity)
             await self._publish(
                 DocumentSuperseded(
                     document_id=doc_id, old_version=previous.version, new_version=document.version
@@ -384,8 +364,7 @@ class KnowledgeEngine:
             )
 
         for chunk in chunks:
-            self._index_chunk(chunk)
-        await self._record_lexical_change([doc_id.value])
+            self._lexical.add(chunk.id.value, chunk.content, group=_owner_key(chunk.owner_id))
 
         if self._graph_pipeline is not None:
             # Extract from what survived the context guard, not the raw upload: a quarantined
@@ -469,19 +448,19 @@ class KnowledgeEngine:
             if self._metrics is not None:
                 self._metrics.chunks_indexed_total.inc(len(batch))
 
-    async def _retire_chunks(self, old_chunks: Sequence[Chunk], identity: IndexIdentity) -> None:
+    async def _retire_chunks(self, previous: Document, identity: IndexIdentity) -> None:
         """Remove the superseded version's chunks from both indexes.
 
         Skipping this is how stale and fresh content end up mixed in one result set, with no way
-        for the model or the user to tell which is which. Only this process's lexical index is
-        updated here; the other workers learn of it through the change feed (F-14).
+        for the model or the user to tell which is which.
         """
+        old_chunks = await self._documents.chunks_for(previous.id, previous.version)
         if not old_chunks:
             return
         ids = [c.id.value for c in old_chunks]
         await self._vectors.delete(identity, point_ids=ids)
         for chunk_id in ids:
-            self._unindex_chunk_id(chunk_id)
+            self._lexical.remove(chunk_id)
 
     async def _extract_graph(
         self, document: Document, text: str, owner_id: UserId | None, *, superseded: bool
@@ -523,18 +502,14 @@ class KnowledgeEngine:
         identity = await self._indexes.resolve_for_read()
         chunks = await self._documents.chunks_for(document_id, document.version)
         await self._vectors.delete(identity, point_ids=[c.id.value for c in chunks])
-        self._unindex_document(document_id.value)
         for chunk in chunks:
-            self._unindex_chunk_id(chunk.id.value)
+            self._lexical.remove(chunk.id.value)
         if self._graph_pipeline is not None:
             # Before the tombstone and allowed to raise: "delete my data" must include the facts
             # derived from it, and a failure here leaves the document un-tombstoned so a retried
             # delete does the whole job rather than reporting success over orphaned facts.
             await self._graph_pipeline.purge(document_id=document_id.value, owner_id=owner_id)
-        removed = await self._documents.tombstone(document_id, owner_id=owner_id)
-        # After the tombstone, so a worker that refreshes on this entry already reads "deleted".
-        await self._record_lexical_change([document_id.value])
-        return removed
+        return await self._documents.tombstone(document_id, owner_id=owner_id)
 
     async def erase_owner(self, owner_id: UserId) -> int:
         """Erasure: everything ``owner_id`` ever ingested, gone from every index and the store.
@@ -708,11 +683,6 @@ class KnowledgeEngine:
     async def _lexical_search(
         self, text: str, owner_id: UserId | None, include_global: bool
     ) -> list[tuple[str, float]]:
-        # Catch up with what other workers changed first (F-14). Inside the lexical task, so it
-        # overlaps the dense search rather than adding to it; between checks it is a clock read.
-        await self._sync_lexical()
-        if self._lexical.size == 0:
-            return []
         # Tenant isolation is the choice of groups: the caller's own chunks and, if asked, the
         # global ones. No identity reads only the global group. Selecting shards replaces the
         # per-query pass over every chunk's owner that used to build an allow-list (F-30).
@@ -721,23 +691,91 @@ class KnowledgeEngine:
             groups.append(GLOBAL_OWNER)
         if not groups:
             return []
+        await self._converge_lexical(groups)
+        if self._lexical.size == 0:
+            return []
         return self._lexical.search(text, limit=self._candidate_k, groups=groups)
+
+    async def _converge_lexical(self, groups: Sequence[str]) -> None:
+        """Bring the shards this search reads up to date with the shared document store.
+
+        One keyed read of the store's corpus revisions per search. A shard whose revision has
+        not moved since this worker last matched it costs nothing more; one that has moved --
+        an upload, a new version, a delete or an erasure served by any worker -- is refreshed
+        on its own (`_refresh_lexical_group`), so a busy tenant never makes another tenant's
+        search rebuild anything.
+
+        Never raises. If the store cannot answer, the search runs on the index this worker
+        already has: the read-time active-version check in `retrieve` still keeps retired chunks
+        out of the results, and the next search tries again.
+        """
+        try:
+            revisions = await self._documents.corpus_revisions(groups)
+        except Exception as exc:
+            logger.warning(
+                "lexical index freshness check failed; searching the local index",
+                extra={"error": type(exc).__name__},
+            )
+            return
+        for group in groups:
+            current = revisions.get(group, 0)
+            if self._lexical_revisions.get(group, -1) >= current:
+                continue
+            async with self._lexical_refresh_locks.hold(group):
+                # Re-checked under the lock: a concurrent search may have refreshed the shard to
+                # this revision or a later one while this one waited.
+                if self._lexical_revisions.get(group, -1) >= current:
+                    continue
+                try:
+                    await self._refresh_lexical_group(group)
+                except Exception as exc:
+                    logger.warning(
+                        "lexical shard refresh failed; searching the local index",
+                        extra={"error": type(exc).__name__},
+                    )
+                    continue
+                # `current` was read before the refresh listed the shard, so anything committed
+                # after that listing carries a later revision and is picked up next time.
+                self._lexical_revisions[group] = current
+
+    async def _refresh_lexical_group(self, group: str) -> None:
+        """Make one shard hold exactly the active chunks the store has for this owner key.
+
+        A diff, not a rebuild: the store lists the shard's active chunk ids, ids this worker
+        holds that are no longer listed are removed, and only the listed ids it lacks are
+        fetched and tokenised. The cost is one id listing plus the content of what changed.
+        """
+        active = set(await self._documents.active_chunk_ids(group))
+        # Computed straight after the listing returns, with no await in between, so no local
+        # write can interleave between the listing and the diff taken against it.
+        held = self._lexical.ids_in(group)
+        stale = held - active
+        missing = active - held
+        for chunk_id in stale:
+            self._lexical.remove(chunk_id)
+        if missing:
+            for chunk in await self._documents.active_chunks(sorted(missing)):
+                self._lexical.add(chunk.id.value, chunk.content, group=group)
+        if stale or missing:
+            logger.info(
+                "lexical shard refreshed from the document store",
+                extra={"added": len(missing), "removed": len(stale)},
+            )
 
     async def _drop_inactive_lexical(
         self, hits: Sequence[tuple[str, float]], live_ids: set[str]
     ) -> list[tuple[str, float]]:
         """Drop lexical hits whose chunk is not part of its document's active version.
 
-        The BM25 index is per process, and a delete or a new version only updates the index of
-        the gateway worker that served it. The change feed (``lexical_sync``) brings the other
-        workers up to date within its check interval, but only while the cache is reachable
-        (F-14). This check does not depend on the feed: the document store is shared, so it
-        decides. A hit whose document is tombstoned, or whose version has been superseded, is
-        dropped and evicted from this worker's index. Versions never become active again, so the
-        eviction is final. Hits the vector store also returned are live already, and skip the
-        lookup. Content resolution (``chunks_for``) resolves only active versions as well, so a
-        hit that slipped past this check would still resolve to nothing and be dropped before
-        reranking.
+        The BM25 index is per process, and a delete or a new version updates directly only the
+        index of the gateway worker that served it. `_converge_lexical` brings the other workers
+        along before each search, but a write can still land between that check and this
+        search, or the check can fail, and ``chunks_for`` resolves chunk ids regardless of
+        status -- which is how a deleted document stayed searchable (F-14). So this stays as the
+        guard: the shared document store decides, and a hit whose document is tombstoned, or
+        whose version has been superseded, is dropped and evicted from this worker's index.
+        Versions never become active again, so the eviction is final. Hits the vector store also
+        returned are live already, and skip the lookup.
         """
         active_versions: dict[str, int | None] = {}
         kept: list[tuple[str, float]] = []
@@ -753,7 +791,7 @@ class KnowledgeEngine:
                 if active_versions[document_id] == version:
                     kept.append((chunk_id, score))
                     continue
-            self._unindex_chunk_id(chunk_id)
+            self._lexical.remove(chunk_id)
         return kept
 
     async def _resolve_contents(
@@ -909,181 +947,21 @@ class KnowledgeEngine:
         """Repopulate the in-process BM25 index from the document store.
 
         Called at startup: the lexical index is process-local, so a restart or a new replica
-        starts with an empty one, and hybrid retrieval would silently degrade to dense-only. Also
-        the change feed's fallback when it cannot say what changed (see ``lexical_sync``).
-        """
-        async with self._lexical_sync_lock:
-            return await self._rebuild_lexical_locked()
+        starts with an empty one, and hybrid retrieval would silently degrade to dense-only.
 
-    async def _rebuild_lexical_locked(self) -> int:
-        """Build a new index off to the side and swap it in; the caller holds the sync lock.
-
-        Off to the side so a rebuild while serving -- the feed's fallback -- never leaves queries
-        reading a half-filled index. The feed head is read *before* the store is scanned, so a
-        change published during the scan is replayed afterwards rather than skipped; replaying a
-        change the scan already saw is harmless, because a refresh is idempotent. A change this
-        process makes during the scan lands in the old index and is re-applied after the swap.
+        The recorded corpus revisions are forgotten with it, so each shard is checked against the
+        store on its first search: whatever another worker wrote while this stream was running
+        is reconciled then rather than missed.
         """
-        head = await self._feed_head()
-        fresh = BM25Index()
-        documents: dict[str, set[str]] = {}
-        self._lexical_dirty = set()
-        self._lexical_rebuilding = True
+        self._lexical.clear()
+        self._lexical_revisions.clear()
         count = 0
-        try:
-            async for batch in self._documents.iter_all_chunks(batch_size=500):
-                for chunk in batch:
-                    fresh.add(chunk.id.value, chunk.content, group=_owner_key(chunk.owner_id))
-                    documents.setdefault(chunk.document_id.value, set()).add(chunk.id.value)
-                    count += 1
-        finally:
-            self._lexical_rebuilding = False
-        dirty, self._lexical_dirty = self._lexical_dirty, set()
-        self._lexical, self._lexical_docs = fresh, documents
-        for document_id in sorted(dirty):
-            await self._refresh_lexical_document(document_id)
-        self._lexical_cursor = head if head is not None else 0
-        self._lexical_missing_since = None
+        async for batch in self._documents.iter_all_chunks(batch_size=500):
+            for chunk in batch:
+                self._lexical.add(chunk.id.value, chunk.content, group=_owner_key(chunk.owner_id))
+                count += 1
         logger.info("lexical index rebuilt", extra={"chunks": count})
         return count
-
-    # -- lexical bookkeeping and the cross-worker change feed (F-14) ----------------------
-
-    def _index_chunk(self, chunk: Chunk) -> None:
-        self._lexical.add(chunk.id.value, chunk.content, group=_owner_key(chunk.owner_id))
-        self._lexical_docs.setdefault(chunk.document_id.value, set()).add(chunk.id.value)
-        if self._lexical_rebuilding:
-            self._lexical_dirty.add(chunk.document_id.value)
-
-    def _unindex_chunk_id(self, chunk_id: str) -> None:
-        self._lexical.remove(chunk_id)
-        document_id, _version, _index = self._parse_chunk_id(chunk_id)
-        if document_id is None:
-            return
-        indexed = self._lexical_docs.get(document_id)
-        if indexed is not None:
-            indexed.discard(chunk_id)
-            if not indexed:
-                del self._lexical_docs[document_id]
-        if self._lexical_rebuilding:
-            self._lexical_dirty.add(document_id)
-
-    def _unindex_document(self, document_id: str) -> None:
-        for chunk_id in self._lexical_docs.pop(document_id, ()):
-            self._lexical.remove(chunk_id)
-        if self._lexical_rebuilding:
-            self._lexical_dirty.add(document_id)
-
-    async def _refresh_lexical_document(self, document_id: str) -> None:
-        """Make this process's entries for one document match the shared store.
-
-        Drop whatever is indexed for it, then index its active version's chunks, if it still has
-        an active version. Idempotent and independent of order, which is what lets the feed be
-        replayed, applied twice, or applied after a later change to the same document.
-        """
-        document = await self._documents.get(DocumentId(document_id))
-        chunks: Sequence[Chunk] = (
-            await self._documents.chunks_for(document.id, document.version)
-            if document is not None
-            else ()
-        )
-        # No await from here on, so the swap of this document's entries is atomic on the loop.
-        self._unindex_document(document_id)
-        for chunk in chunks:
-            self._index_chunk(chunk)
-
-    async def _feed_head(self) -> int | None:
-        if self._feed is None:
-            return None
-        try:
-            return await self._feed.head()
-        except Exception:
-            logger.warning("lexical change feed unreadable", exc_info=True)
-            return None
-
-    async def _record_lexical_change(self, document_ids: Iterable[str]) -> None:
-        """Tell the other workers these documents changed. Never fails the caller's write."""
-        if self._feed is None:
-            return
-        self._lexical_unpublished.update(document_ids)
-        await self._flush_lexical_changes()
-
-    async def _flush_lexical_changes(self) -> None:
-        if self._feed is None or not self._lexical_unpublished:
-            return
-        pending = set(self._lexical_unpublished)
-        try:
-            await self._feed.publish(pending)
-        except Exception as exc:
-            # The write itself is durable; only the other workers' lexical view lags. Deletes
-            # are still enforced on their reads (`_drop_inactive_lexical`). The ids stay pending
-            # and go out with the next publish or sync.
-            logger.warning(
-                "lexical change not published; will retry",
-                extra={"documents": len(pending), "error": type(exc).__name__},
-            )
-            return
-        self._lexical_unpublished -= pending
-
-    async def _sync_lexical(self) -> None:
-        """Apply what other workers changed since this one last looked (see ``lexical_sync``).
-
-        Rate-limited to one feed read per ``check_interval_s``. Never raises: failing to catch up
-        leaves the index as it was, which is the behaviour before the feed, not a wrong answer.
-        """
-        feed = self._feed
-        if feed is None or self._monotonic() < self._lexical_next_check:
-            return
-        async with self._lexical_sync_lock:
-            now = self._monotonic()
-            if now < self._lexical_next_check:
-                return  # another query caught up while this one waited for the lock
-            self._lexical_next_check = now + feed.check_interval_s
-            try:
-                await self._catch_up(feed, now)
-            except Exception:
-                logger.warning("lexical index catch-up failed", exc_info=True)
-
-    async def _catch_up(self, feed: LexicalChangeFeed, now: float) -> None:
-        await self._flush_lexical_changes()
-        head = await self._feed_head()
-        cursor = self._lexical_cursor
-        if head is None or head == cursor:
-            return
-        if head < cursor:
-            # The counter went backwards: the cache lost it, and the entries with it.
-            logger.warning(
-                "lexical change feed reset; rebuilding", extra={"head": head, "cursor": cursor}
-            )
-            await self._rebuild_lexical_locked()
-            return
-        if head - cursor > feed.max_replay:
-            logger.info(
-                "lexical index too far behind the change feed; rebuilding",
-                extra={"behind": head - cursor},
-            )
-            await self._rebuild_lexical_locked()
-            return
-
-        window = await feed.window(cursor, head)
-        for document_id in dict.fromkeys(window.document_ids):
-            await self._refresh_lexical_document(document_id)
-        self._lexical_cursor = window.applied_upto
-        if window.first_missing is None:
-            self._lexical_missing_since = None
-            return
-        # An entry the counter says exists is not there. Either its writer has not stored it yet
-        # (it increments first), or it never will (it died in between, or the entry expired).
-        # Give it the grace period, then stop waiting and rebuild.
-        missing = self._lexical_missing_since
-        if missing is None or missing[0] != window.first_missing:
-            self._lexical_missing_since = (window.first_missing, now)
-        elif now - missing[1] >= feed.missing_grace_s:
-            logger.warning(
-                "lexical change feed entry lost; rebuilding",
-                extra={"generation": window.first_missing},
-            )
-            await self._rebuild_lexical_locked()
 
     async def _publish(self, event: Any) -> None:
         if self._events is None:

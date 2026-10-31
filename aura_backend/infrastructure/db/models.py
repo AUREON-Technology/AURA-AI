@@ -64,6 +64,10 @@ class User(Base):
         DateTime(timezone=True), nullable=True
     )
     role_assigned_by: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    # The user's IANA zone ("Asia/Riyadh"), sent by the client in X-Client-Timezone. Day and hour
+    # boundaries in insights and the daily briefing are computed in it (services/user_time.py);
+    # NULL, or anything that no longer resolves, means UTC. Migration 0018.
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

@@ -181,6 +181,18 @@ class DockerSandboxRunner:
             self._client = docker.from_env()
         return self._client
 
+    async def close(self) -> None:
+        """Release the Docker API client (its HTTP session to the socket proxy).
+
+        Only the client: containers and checkouts are deliberately left alone, because a durable
+        workspace outlives this process (startup reconciliation finds it again by its label) and
+        an ephemeral handle belongs to its caller. Safe when no client was ever made.
+        """
+        client, self._client = self._client, None
+        if client is not None:
+            # docker-py is synchronous; closing its session is quick but is still socket I/O.
+            await asyncio.to_thread(client.close)
+
     def _make_scratch(self, task_id: str) -> Path:
         """Create this task's workspace directory at a path the *daemon* can also resolve.
 

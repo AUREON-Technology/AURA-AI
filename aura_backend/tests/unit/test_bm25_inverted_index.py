@@ -147,6 +147,23 @@ class TestShards:
         assert index.search("annual", groups=["alice"]) == []
         assert [d for d, _ in index.search("annual", groups=["bob"])] == ["a"]
 
+    def test_group_membership_is_what_a_shard_refresh_diffs_against(self) -> None:
+        """Membership includes documents with no indexable tokens, so a cross-worker refresh
+        does not see them as missing and fetch them again every time (F-14)."""
+        index = BM25Index()
+        index.add("a", "annual leave", group="alice")
+        index.add("t", "!!! ---", group="alice")  # nothing the tokenizer keeps
+        index.add("b", "annual leave", group="bob")
+
+        assert index.ids_in("alice") == {"a", "t"}
+        assert index.size == 2  # the tokenless document does not count towards BM25's N
+        index.remove("t")
+        index.add("a", "annual leave", group="bob")
+        assert index.ids_in("alice") == frozenset()
+        assert index.ids_in("bob") == {"a", "b"}
+        index.clear()
+        assert index.ids_in("bob") == frozenset()
+
 
 class TestEngineGroupsByOwner:
     async def test_no_identity_reads_only_global_chunks(self, knowledge) -> None:

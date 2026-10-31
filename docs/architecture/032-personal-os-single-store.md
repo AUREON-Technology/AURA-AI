@@ -170,7 +170,7 @@ delete_<noun>` tools read and write the same `tasks`, `calendar_events`, `financ
   - Staging and production already refuse to start without this setting.
   - In local development without it, a DEK is stored unwrapped. That is what the field cipher
     already does there.
-- **Storage.** The keys live in `aura_user_data_keys`, created by migration `0017`.
+- **Storage.** The keys live in `aura_user_data_keys`, created by migration `0019`.
 
   | Column | Holds |
   |---|---|
@@ -379,6 +379,6 @@ that said so were changed in the same change as this decision.
 The design above is built. It is tested by the unit tests, the client tests and a real-Postgres
 integration test (`test_personal_os_sync_integration.py`).
 
-It is **not yet proven in production.** Migration `0017` reaches production through
+It is **not yet proven in production.** Migration `0019` reaches production through
 `scripts/railway-predeploy.sh`. After the merge, `/health/ready` must report `schema.revision
-0017`; until it does, the key endpoint and the agent's personal-OS tools fail there.
+0019`; until it does, the key endpoint and the agent's personal-OS tools fail there.

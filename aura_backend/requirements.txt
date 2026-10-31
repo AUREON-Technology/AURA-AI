@@ -1,5 +1,5 @@
 # Runtime dependencies. The production image and CI install the compiled pin set
-# in requirements.lock (hash-locked uv compile of this file; command in its header). Do not add test-only packages;
+# in requirements.lock (pip-compile from this file). Do not add test-only packages;
 # those belong in requirements-dev.txt (AURA-020).
 fastapi>=0.110.0
 uvicorn[standard]>=0.28.0

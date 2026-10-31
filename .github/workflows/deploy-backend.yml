@@ -46,18 +46,19 @@ permissions:
   contents: read
 
 jobs:
-  # Trust gate (F-38/SEC-11). `branches: [main]` on a workflow_run trigger matches the *head
-  # branch name* of the upstream run, and a fork PR whose branch is called `main` produces exactly
-  # that: a Backend CI run with head_branch == 'main' that can conclude `success`. Only a push to
-  # main in this repository is a deploy; a pull_request run, or any run whose head repository is
-  # a fork, must not reach the `production` environment or its secrets.
+  # Only a push to main in this repository may deploy (audit F-38 / SEC-11). `branches: [main]`
+  # above filters on the *head branch name* alone, and a pull request from a fork whose branch is
+  # also called `main` matches it: Backend CI runs on that PR, and its completion would otherwise
+  # start this job in the base repository with the production environment and its secrets. The
+  # three workflow_run checks below pin the triggering run to a push, to this repository, and to
+  # main. workflow_dispatch needs write access, so it is trusted as before.
   deploy:
-    if: |
-      github.event_name == 'workflow_dispatch' || (
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository)
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.event == 'push' &&
+           github.event.workflow_run.head_branch == 'main' &&
+           github.event.workflow_run.head_repository.full_name == github.repository) }}
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 60
@@ -133,14 +134,15 @@ jobs:
   # success on the Actions home page, and pages nobody. Production served a 2026-09-13 image for
   # two weeks while every subsequent merge looked fine, because "did not deploy" and "deployed"
   # were rendered identically. This job makes the first one red and says what is wrong.
-  # Same trust gate as `deploy`: a failed fork-PR run is not a blocked deploy.
+  # Gated on the same trusted-push checks as `deploy`: a fork PR that fails CI is not a blocked
+  # production deploy, and must not turn this workflow red.
   blocked:
-    if: |
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.conclusion != 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+    if: >-
+      ${{ github.event_name == 'workflow_run' &&
+          github.event.workflow_run.conclusion != 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

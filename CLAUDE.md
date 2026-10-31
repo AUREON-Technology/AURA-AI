@@ -53,10 +53,22 @@ from it change how the paragraph above reads (checked live on 2026-10-28, `main`
   the code expected `0015`. The owner ran `alembic upgrade head` over `railway ssh` (`0013 → 0016`).
   Live `/health/ready` then showed `healthy: true`, `schema.revision 0016` at `6417c43`. The cause:
   Railway does not run `preDeployCommand` in a shell, so the old inline `echo … && alembic upgrade
-  head && …` ran only the `echo` and still passed. It now calls `scripts/railway-predeploy.sh`
-  (one argv; pinned by `tests/unit/test_release_identity.py`). Never put `&&`, `||` or `;` back
-  into that field. Still check `/health/ready`'s `schema` block after any merge that adds a
-  migration, because the fixed step has not yet been seen running on a real deploy.
+  head && …` ran only the `echo` and still passed. `aura_backend/railway.json` now says
+  `sh /app/scripts/railway-predeploy.sh` (one argv; pinned by `tests/unit/test_release_identity.py`).
+  **Railway does not read `railway.json` for this service**: no config file is linked, so its
+  dashboard settings win. On 2026-10-31 the owner set the dashboard's pre-deploy command
+  (Settings → Deploy) to `sh /app/scripts/railway-predeploy.sh`. It has since run on a real
+  deploy (`4afdd9a8` at `9bfaa22`). The log showed `[HH:MM:SSZ] database url: set`,
+  `revision before: 0016 (head)`, alembic's own output, `revision after: 0016 (head)` and
+  `=== MIGRATION OK ===`, all before the app container started.
+
+  What still holds:
+  - **Edit the dashboard, not just the file.** A change to `railway.json` alone changes nothing
+    live. Its health check (`/health/live`) and builder settings are not applied either.
+  - Never put `&&`, `||` or `;` into that field.
+  - An unprefixed `=== MIGRATION START ===` in a deploy log means the old command is back.
+  - That deploy had nothing to apply. Check `/health/ready`'s `schema` block after the first merge
+    that adds a migration.
 - **Railway auto-deploys every `main` push itself, CI or not**, and **CI stopped getting runners
   again around 19:50 UTC on 2026-10-28** (CB-44: jobs end in 2–4 s with no log). Until that is
   fixed, a merge ships to production with no CI, and a PR's "CI green" cannot be had — run the
@@ -91,9 +103,8 @@ evidence its exit criteria name** — "built" and "tested" are not "proven."
 ### Backend (`cd aura_backend` first)
 
 ```bash
-# Hash-locked (F-38): one pip call, both locks, PyTorch CPU index on the command line
-pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu \
-  -r requirements.lock -r requirements-dev.lock
+pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
+pip install -r requirements-dev.txt     # separate: the lock is hash-pinned, dev deps are not (GAP-033)
 
 pytest                                   # aura_core suite — no Docker, no network, no model
 pytest tests/some_test.py::TestClass::test_name   # single test
@@ -110,12 +121,8 @@ alembic upgrade head                     # migrations, against AURA_DATABASE_URL
 Both suites (`pytest` and the legacy `unittest`) run in CI and both must pass — they cover
 different trees (ADR-002 strangler migration) and neither substitutes for the other.
 
-Regenerate the lockfiles with the exact commands in their own header comments (`uv pip compile
---torch-backend cpu --generate-hashes`; `requirements-dev.lock` and `requirements-train.lock` are
-constrained to `requirements.lock`) — don't hand-edit pins. Every lock is hashed, so pip runs in
-hash mode for the whole call: `-r requirements-dev.txt` (unhashed) can no longer be mixed in, and the
-PyTorch index stays on the command line because an `--index-url` inside a requirements file makes
-pip drop a command-line `--extra-index-url`.
+Regenerate the lockfile with the exact command in `requirements.lock`'s own header comment (uses
+`uv pip compile` with a CPU-only PyTorch index — don't hand-edit pins).
 
 ### Client (`cd aura_client` first)
 

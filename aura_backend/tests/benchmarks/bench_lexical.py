@@ -28,16 +28,6 @@ What is measured, per corpus size (p50 and p95 over every query, after a warm-up
   chunk fetches), the heuristic rerank and the threshold.
 - ``*_index_mib`` -- Python heap held by a fully built index of each kind (tracemalloc, on a
   separate build so its overhead never touches a timing).
-- ``feed_check`` -- what the cross-worker change feed (F-14, ``knowledge/lexical_sync.py``) adds
-  to a query in its *worst* steady state: the check interval forced to 0, so every query reads
-  the generation counter, and nothing has changed. Production checks at most every 250 ms per
-  worker, so most queries pay only a clock read.
-- ``lexical_stage_feed`` -- ``lexical_stage`` on an engine with that feed, same index, same
-  worst-case interval. The difference to ``lexical_stage`` is the per-query overhead.
-
-``AURA_BENCH_REDIS_URL`` (optional) points the feed at a real Redis instead of the in-memory
-cache, so ``feed_check`` includes the network round trip production pays. The bench writes only
-``knowledge:lexical:*`` keys there.
 
 The corpus is synthetic and deterministic (seeded): a Zipf-distributed (s=1.07) 30k-word
 vocabulary, 150-250 words per chunk (near the 320-token chunk target), 20 chunks per document,
@@ -69,8 +59,6 @@ from aura_core.adapters.memory_stores import InMemoryDocumentStore, InMemoryVect
 from aura_core.domain import Chunk, Document, DocumentId, UserId
 from aura_core.knowledge import BM25Index, KnowledgeEngine
 from aura_core.knowledge.index_manager import IndexManager
-from aura_core.knowledge.lexical_sync import LexicalChangeFeed
-from aura_core.llm.cache import InMemoryCache
 from aura_core.llm.embeddings import HashEmbeddingProvider
 from aura_core.ports.storage import GLOBAL_OWNER
 
@@ -231,35 +219,9 @@ def _summary(samples: list[float]) -> dict[str, float]:
     }
 
 
-def _feed_cache():
-    url = os.environ.get("AURA_BENCH_REDIS_URL")
-    if not url:
-        return InMemoryCache(max_entries=1024), "memory"
-    from aura_core.adapters.redis_cache import RedisCache
-
-    return RedisCache(url), "redis"
-
-
-async def _with_feed(engine: KnowledgeEngine, cache) -> KnowledgeEngine:
-    """A second engine over the same stores *and the same built index*, with a change feed
-    whose interval is 0: every lexical search reads the generation counter (the worst case)."""
-    feed = LexicalChangeFeed(cache, check_interval_s=0.0)
-    synced = KnowledgeEngine(
-        documents=engine._documents, vectors=engine._vectors,  # noqa: SLF001
-        embedder=engine._embedder, index_manager=engine._indexes,  # noqa: SLF001
-        score_threshold=0.35, lexical_feed=feed,
-    )
-    synced._lexical = engine._lexical  # noqa: SLF001 -- share the index, do not rebuild it
-    # Caught up with a counter that exists, so each check is one GET that finds nothing new.
-    synced._lexical_cursor = await feed.publish(["bench-no-such-document"])  # noqa: SLF001
-    return synced
-
-
 async def _measure(size: int, *, repeats: int) -> dict:
     engine, queries, build_s, count = await _build(size)
     index = engine._lexical  # noqa: SLF001 -- the benchmark measures the private index directly
-    feed_cache, feed_backend = _feed_cache()
-    synced = await _with_feed(engine, feed_cache)
     reference, owners = await _forward_reference(engine)
 
     # Same answers before timing anything. Equal scores are ordered by doc_id in the inverted
@@ -279,7 +241,6 @@ async def _measure(size: int, *, repeats: int) -> dict:
 
     timings: dict[str, list[float]] = {
         "forward_stage": [], "inverted_search": [], "lexical_stage": [], "retrieve": [],
-        "feed_check": [], "lexical_stage_feed": [],
     }
     hits = 0
     for _ in range(repeats):
@@ -301,27 +262,16 @@ async def _measure(size: int, *, repeats: int) -> dict:
             await engine.retrieve(text, owner_id=owner)
             timings["retrieve"].append((time.perf_counter() - started) * 1000)
 
-            started = time.perf_counter()
-            await synced._sync_lexical()  # noqa: SLF001
-            timings["feed_check"].append((time.perf_counter() - started) * 1000)
-
-            started = time.perf_counter()
-            await synced._lexical_search(text, owner, True)  # noqa: SLF001
-            timings["lexical_stage_feed"].append((time.perf_counter() - started) * 1000)
-
     del reference, owners
-    if feed_backend == "redis":
-        await feed_cache.close()
     result = {
         "chunks": count,
-        "feed_backend": feed_backend,
         "build_s": round(build_s, 2),
         "inverted_index_mib": round(await _footprint_mib(engine, grouped=True), 1),
         "forward_index_mib": round(await _footprint_mib(engine, grouped=False), 1),
         "queries_with_hits": hits / (repeats * len(queries)),
         **{name: _summary(samples) for name, samples in timings.items()},
     }
-    del engine, index, synced
+    del engine, index
     gc.collect()
     return result
 
@@ -357,8 +307,7 @@ class TestLexicalScaling:
                 f"{measured['forward_index_mib']:6.1f}  "
                 + "  ".join(
                     f"{name} p50={measured[name]['p50_ms']:.3f} p95={measured[name]['p95_ms']:.3f}"
-                    for name in ("forward_stage", "inverted_search", "lexical_stage", "retrieve",
-                                 "feed_check", "lexical_stage_feed")
+                    for name in ("forward_stage", "inverted_search", "lexical_stage", "retrieve")
                 )
             )
             assert measured["queries_with_hits"] > 0.9

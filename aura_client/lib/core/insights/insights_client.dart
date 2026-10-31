@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import '../auth/token_manager.dart';
 import '../config/backend_url_provider.dart';
+import '../platform/device_timezone.dart';
 import '../security/device_validation_service.dart';
 
 /// AURA Insights client (Doc/V2_BLUEPRINT.md §8) — talks to the backend's
@@ -36,42 +37,38 @@ class AppInsight {
       );
 }
 
-/// The device's current UTC offset as `+HH:MM`, sent as `X-Timezone`.
-///
-/// The backend computes "today" (water logged today, tasks due today) in the
-/// user's day, not the UTC day (audit F-17): the health record for a day is
-/// stored at local midnight, so for anyone outside UTC the UTC day and the
-/// local day disagree for part of every day. An IANA name would be better
-/// across DST changes, but Dart has no source for one without a native
-/// plugin, and `timeZoneName` is an ambiguous abbreviation ("IST"). The
-/// offset is exact for today and is re-sent on every insights request.
-String formatUtcOffset(Duration offset) {
-  final minutes = offset.inMinutes;
-  final sign = minutes < 0 ? '-' : '+';
-  final abs = minutes.abs();
-  final hh = (abs ~/ 60).toString().padLeft(2, '0');
-  final mm = (abs % 60).toString().padLeft(2, '0');
-  return '$sign$hh:$mm';
-}
-
 class InsightsClient {
   final Ref _ref;
-  InsightsClient(this._ref);
+  final http.Client? _http;
+  final DeviceTimezoneLookup _timezone;
+  InsightsClient(this._ref, {http.Client? httpClient, DeviceTimezoneLookup? timezone})
+      : _http = httpClient,
+        _timezone = timezone ?? deviceTimezone;
 
   String get _baseUrl => '${_ref.read(backendUrlProvider)}/api/v3/insights';
   String get _backendUrl => _ref.read(backendUrlProvider);
 
   Future<Map<String, String>> _headers() async {
     final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
-    final headers = <String, String>{
-      "Content-Type": "application/json",
-      "X-Timezone": formatUtcOffset(DateTime.now().timeZoneOffset),
-    };
+    final headers = <String, String>{"Content-Type": "application/json"};
     if (token != null) headers["Authorization"] = "Bearer $token";
     headers.addAll(
       await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),
     );
+    // The backend stores it, so its hourly and 06:00 runs know where this user's day starts.
+    final zone = await _timezone();
+    if (zone != null) headers[clientTimezoneHeader] = zone;
     return headers;
+  }
+
+  Future<http.Response> _get(Uri uri, Map<String, String> headers) {
+    final client = _http;
+    return client != null ? client.get(uri, headers: headers) : http.get(uri, headers: headers);
+  }
+
+  Future<http.Response> _post(Uri uri, Map<String, String> headers) {
+    final client = _http;
+    return client != null ? client.post(uri, headers: headers) : http.post(uri, headers: headers);
   }
 
   Future<http.Response> _send(Future<http.Response> Function() send) async {
@@ -86,7 +83,7 @@ class InsightsClient {
   Future<List<AppInsight>> fetch() async {
     try {
       final response = await _send(() async {
-        return http.get(Uri.parse(_baseUrl), headers: await _headers()).timeout(const Duration(seconds: 10));
+        return _get(Uri.parse(_baseUrl), await _headers()).timeout(const Duration(seconds: 10));
       });
       if (response.statusCode != 200) return const [];
       final List list = jsonDecode(response.body);
@@ -100,7 +97,7 @@ class InsightsClient {
   Future<List<AppInsight>> generate() async {
     try {
       final response = await _send(() async {
-        return http.post(Uri.parse("$_baseUrl/generate"), headers: await _headers()).timeout(const Duration(seconds: 15));
+        return _post(Uri.parse("$_baseUrl/generate"), await _headers()).timeout(const Duration(seconds: 15));
       });
       if (response.statusCode != 200) return const [];
       final List list = jsonDecode(response.body);
@@ -113,7 +110,7 @@ class InsightsClient {
 
   Future<void> dismiss(String id) async {
     try {
-      await http.post(Uri.parse("$_baseUrl/$id/dismiss"), headers: await _headers()).timeout(const Duration(seconds: 10));
+      await _post(Uri.parse("$_baseUrl/$id/dismiss"), await _headers()).timeout(const Duration(seconds: 10));
     } catch (e) {
       debugPrint("[InsightsClient] dismiss failed: $e");
     }

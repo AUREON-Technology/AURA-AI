@@ -353,6 +353,44 @@ class TestDocumentStore:
         assert await store.tombstone(DocumentId("d1"), owner_id=UserId("alice")) == 2
         assert await store.list_active(owner_id=UserId("alice")) == []
 
+    async def test_every_corpus_change_advances_only_its_owners_revision(self) -> None:
+        """What lets each gateway worker notice that another one changed an owner's corpus
+        (F-14): put, supersede, tombstone and purge each move the revision, never backwards."""
+        store = InMemoryDocumentStore()
+        assert await store.corpus_revisions(["alice", "global"]) == {}
+
+        seen = []
+        await store.put(self._document("d1", owner="alice"), [self._chunk("d1", 0)])
+        seen.append((await store.corpus_revisions(["alice"]))["alice"])
+        await store.put(self._document("d1", version=2, owner="alice"), [self._chunk("d1", 0, 2)])
+        await store.supersede(DocumentId("d1"), old_version=1, new_version=2)
+        seen.append((await store.corpus_revisions(["alice"]))["alice"])
+        await store.tombstone(DocumentId("d1"), owner_id=UserId("alice"))
+        seen.append((await store.corpus_revisions(["alice"]))["alice"])
+        await store.purge_owner(UserId("alice"))
+        seen.append((await store.corpus_revisions(["alice"]))["alice"])
+
+        assert seen == sorted(set(seen))  # strictly increasing
+        await store.put(self._document("g1", owner=None), [])
+        revisions = await store.corpus_revisions(["alice", "bob", "global"])
+        assert set(revisions) == {"alice", "global"}
+        assert revisions["alice"] == seen[-1]
+
+    async def test_active_chunks_are_listed_per_owner_key_and_fetched_by_id(self) -> None:
+        store = InMemoryDocumentStore()
+        await store.put(self._document("a", owner="alice"), [self._chunk("a", 0), self._chunk("a", 1)])
+        await store.put(self._document("g", owner=None), [self._chunk("g", 0)])
+        await store.put(
+            self._document("old", owner="alice", status=DocumentStatus.SUPERSEDED),
+            [self._chunk("old", 0)],
+        )
+
+        assert set(await store.active_chunk_ids("alice")) == {"a:v1:0", "a:v1:1"}
+        assert set(await store.active_chunk_ids("global")) == {"g:v1:0"}
+        assert await store.active_chunk_ids("bob") == []
+        fetched = await store.active_chunks(["a:v1:1", "old:v1:0", "missing:v1:0"])
+        assert [c.id.value for c in fetched] == ["a:v1:1"]
+
 
 class TestMemoryStore:
     def _record(self, memory_id: str = "m1", *, owner: str = "u1",
@@ -397,6 +435,47 @@ class TestMemoryStore:
         await store.put(self._record())
         await store.update(replace(await store.get(MemoryId("m1")), confidence=0.95))
         assert (await store.get(MemoryId("m1"))).confidence == pytest.approx(0.95)
+
+    async def test_touch_many_bumps_only_the_access_fields(self) -> None:
+        """Reinforcement is a field-level update on the *current* row (F-16): it never writes
+        back a snapshot, so whatever else changed since the caller read the record survives."""
+        from dataclasses import replace
+        from datetime import datetime, timezone
+
+        store = InMemoryMemoryStore()
+        await store.put(self._record("m1"))
+        await store.put(self._record("m2"))
+        await store.update(replace(await store.get(MemoryId("m1")),
+                                   superseded_by=MemoryId("m9"), confidence=0.9))
+        at = datetime(2030, 1, 1, tzinfo=timezone.utc)
+
+        touched = await store.touch_many(
+            [MemoryId("m1"), MemoryId("m2"), MemoryId("m1"), MemoryId("gone")],
+            owner_id=UserId("u1"), at=at,
+        )
+
+        assert touched == 2  # duplicates collapse, absent ids are skipped, never created
+        m1, m2 = await store.get(MemoryId("m1")), await store.get(MemoryId("m2"))
+        assert (m1.access_count, m2.access_count) == (1, 1)
+        assert m1.last_accessed_at == at
+        assert m1.superseded_by == MemoryId("m9") and m1.confidence == pytest.approx(0.9)
+        assert await store.get(MemoryId("gone")) is None
+
+    async def test_touch_many_is_owner_scoped_and_never_moves_time_backwards(self) -> None:
+        from datetime import datetime, timezone
+
+        store = InMemoryMemoryStore()
+        await store.put(self._record("a", owner="alice"))
+        later = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        await store.touch_many([MemoryId("a")], owner_id=UserId("alice"), at=later)
+
+        assert await store.touch_many([MemoryId("a")], owner_id=UserId("bob"), at=later) == 0
+        await store.touch_many(
+            [MemoryId("a")], owner_id=UserId("alice"), at=datetime(2001, 1, 1, tzinfo=timezone.utc)
+        )
+        record = await store.get(MemoryId("a"))
+        assert record.access_count == 2
+        assert record.last_accessed_at == later
 
     async def test_deletion_is_owner_scoped(self) -> None:
         """A memory id in a URL must not be a capability over another user's data."""

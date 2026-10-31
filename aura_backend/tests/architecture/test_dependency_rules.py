@@ -3,35 +3,43 @@
 These enforce ADR-001 mechanically. A layering rule that lives only in a document decays within
 weeks; one that fails the build does not.
 
-The arrow CLAUDE.md states, and which this module enforces over **every** ``aura_core``
-subpackage (discovered from the filesystem, so a new package is covered the day it lands)::
+The layering (CLAUDE.md, ``aura_core/__init__.py``, ADR-001)::
 
-    domain/  ports/      stdlib only, and only each other
-    config/  observability/
-                         stdlib, domain, ports and each other; optional third-party only via
-                         the explicit allowlist below
-    engines              every other subpackage (llm, kernel, knowledge, memory, tools, ...):
-                         domain, ports, config, observability and other engines -- never
-                         adapters, api or container, at any scope
-    adapters/  api/      anything internal except the composition root; vendor SDKs only lazily
-                         inside functions, never at module scope
-    container.py         the only wiring point: nothing inside aura_core imports it
+    domain/  ports/      stdlib only (ports may also use domain)
+    engines              domain + ports (+ the support packages and peer engines)
+    adapters/  api/      vendor SDKs, imported lazily inside functions
+    container.py         the only place concrete meets abstract
 
-Plus ``aura_core`` never imports ``aura_backend.services`` or ``infrastructure`` (ADR-002's
-one-directional rule during the strangler migration; v2 SQLAlchemy stays outside the core).
+Every ``aura_core`` subpackage is *discovered*, not listed: a new package is an engine (the
+strictest non-core ring) until someone deliberately classifies it otherwise below. Both relative
+(``from ..adapters import x``) and absolute (``from aura_core.adapters import x``) imports are
+resolved to the ``aura_core`` package they land in, and "module scope" means everything that runs
+at import -- including imports nested in ``try``/``if``/class bodies, which a ``col_offset == 0``
+check would miss (F-28 / AR-09).
 
-F-28 / AR-09 (audit 2026-10-26): the earlier version only looked at *relative* imports, only
-treated ``col_offset == 0`` as module scope (so a ``try:``/``if:`` import escaped), never checked
-engines for vendor SDKs, and used a hand-written engine list that omitted ``llm`` among others.
-Every import here is resolved to its absolute dotted name first, so ``from ..adapters import x``,
-``from aura_core.adapters.x import y`` and ``from aura_core import adapters`` are the same edge.
-The self-tests at the bottom plant each of those shapes in a scratch tree and prove they fail.
+Rules:
+
+1. ``domain`` imports only the stdlib and ``domain``; ``ports`` only the stdlib, ``domain`` and
+   ``ports`` -- at *any* scope. This is what lets the whole cognitive core be unit-tested on bare
+   CPython.
+2. Engines and support packages never import ``adapters``, ``api`` or ``container`` -- at any
+   scope -- and import no third-party module at module scope. Policy must not depend on
+   infrastructure, or the dependency inversion is decorative.
+3. No ``aura_core`` module imports a vendor SDK (:data:`VENDOR_MODULES`) at module scope; adapters
+   and api reach them lazily, inside the function that needs them.
+4. Nothing in ``aura_core`` except ``container.py`` imports ``aura_core.container``.
+5. ``aura_core`` never imports ``aura_backend.services`` or ``infrastructure`` (ADR-002).
+
+Engines may import one another: the kernel composes planning, execution, tools and llm, and
+the rule CLAUDE.md states is about the direction of the arrow (policy never reaches outward to
+infrastructure), not about isolating engines from their peers.
 """
 
 from __future__ import annotations
 
 import ast
 import sys
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,86 +49,144 @@ CORE = Path(__file__).resolve().parents[2] / "aura_core"
 
 #: Modules that ship with CPython. ``sys.stdlib_module_names`` is authoritative on 3.10+ and
 #: avoids maintaining a hand-written list that silently rots.
-STDLIB = set(sys.stdlib_module_names) | {"__future__"}
+STDLIB = frozenset(sys.stdlib_module_names) | {"__future__"}
 
-PURE_LAYERS = frozenset({"domain", "ports"})
-SUPPORT_LAYERS = frozenset({"config", "observability"})
-WIRING_LAYERS = frozenset({"adapters", "api", "container"})
-ROOT_LAYER = "__init__"  # aura_core/__init__.py -- version string only
+#: The innermost ring, with the ``aura_core`` packages each may import besides the stdlib.
+CORE_LAYERS: dict[str, frozenset[str]] = {
+    "domain": frozenset({"domain"}),
+    "ports": frozenset({"domain", "ports"}),
+}
 
-#: Vendor SDKs and frameworks that may never be imported at module scope anywhere in
-#: ``aura_core`` -- not in engines, and not in adapters/api/container either, where CLAUDE.md
-#: requires them to be imported lazily inside the function that first needs them. Importing one
-#: at module scope makes the whole package unimportable without that dependency installed and,
-#: for the network clients, is one step away from an import-time connection (TD-01).
-VENDOR_SDKS = frozenset({
-    # storage and messaging
-    "asyncpg", "psycopg", "psycopg2", "redis", "qdrant_client", "sqlalchemy", "alembic",
-    "celery", "kombu", "boto3", "botocore", "firebase_admin", "google",
-    # HTTP clients and servers
-    "httpx", "requests", "aiohttp", "urllib3", "websockets", "fastapi", "starlette", "uvicorn",
-    "pydantic", "grpc",
-    # model runtimes and hosted-model SDKs
-    "openai", "anthropic", "cohere", "mistralai", "groq", "ollama", "torch", "torchvision",
-    "transformers", "sentence_transformers", "tiktoken", "vllm", "llama_cpp", "whisper",
-    "faster_whisper", "piper",
-    # sandbox, documents, media
-    "docker", "pypdf", "PIL", "pytesseract", "cryptography", "jwt", "github", "yaml",
+#: The outer ring: where vendor SDKs are permitted, lazily.
+OUTER_PACKAGES = frozenset({"adapters", "api"})
+
+#: Cross-cutting packages engines may use. ``config`` holds the typed settings and the hosted-
+#: inference policy (``config/external_inference.py``) the llm registry enforces; ``observability``
+#: turns the kernel's telemetry into metrics/logs/spans (ADR-009). Both are held to the engine
+#: rules themselves, so letting engines import them cannot smuggle infrastructure in.
+SUPPORT_PACKAGES = frozenset({"config", "observability"})
+
+#: The composition root (``aura_core/container.py``).
+COMPOSITION_ROOT = "container"
+
+#: ``aura_core/__init__.py`` itself -- imported implicitly by every absolute import.
+ROOT = "<root>"
+
+#: The engines CLAUDE.md names explicitly. Asserted to be classified as engines, so a
+#: reclassification that quietly exempts one fails loudly.
+NAMED_ENGINES = frozenset({
+    "prompts", "context", "memory", "knowledge", "tools", "safety",
+    "planning", "reasoning", "execution", "llm",
 })
 
-#: Third-party imports that may run at module scope. Each entry is ``(path relative to
-#: aura_core, top-level module) -> reason``. Everything not listed fails, whether or not it is
-#: in VENDOR_SDKS -- the denylist names the dangerous ones explicitly, this catches the rest.
-MODULE_SCOPE_THIRD_PARTY_ALLOWLIST: dict[tuple[str, str], str] = {
-    ("observability/metrics.py", "prometheus_client"): (
-        "optional dependency inside try/except ImportError; metrics degrade to no-ops "
-        "without it (AR-09 'not violations')"
-    ),
-    ("observability/tracing.py", "opentelemetry"): (
-        "optional dependency inside try/except ImportError; tracing degrades to no-ops "
-        "without it (AR-09 'not violations')"
-    ),
-}
+#: Third-party top-level modules, i.e. vendor SDKs and libraries outside the stdlib. Derived from
+#: ``requirements.lock`` / ``requirements-train.txt`` and from every non-stdlib import that
+#: actually appears in ``aura_core`` (``test_vendor_list_covers_every_third_party_import`` keeps
+#: it complete -- a new third-party import must be added here before it can land anywhere).
+VENDOR_MODULES = frozenset({
+    # storage / queues
+    "asyncpg", "psycopg", "psycopg2", "sqlalchemy", "alembic", "qdrant_client", "redis",
+    "celery", "kombu", "pymysql", "pytds", "pymongo",
+    # HTTP / web / RPC
+    "httpx", "httpcore", "requests", "urllib3", "aiohttp", "fastapi", "starlette",
+    "sse_starlette", "uvicorn", "websockets", "grpc", "mcp",
+    # hosted vendors and cloud SDKs (inference vendors are also banned outright by
+    # test_no_external_inference.py; listed here so even a lazy import would be classified)
+    "openai", "anthropic", "google", "firebase_admin", "boto3", "botocore", "docker",
+    "sentry_sdk",
+    # ML / numerics / media
+    "torch", "tensorflow", "transformers", "peft", "sentence_transformers", "tokenizers",
+    "safetensors", "huggingface_hub", "tiktoken", "onnxruntime", "ctranslate2",
+    "faster_whisper", "numpy", "scipy", "sklearn", "PIL", "pytesseract", "pypdf", "av",
+    # observability
+    "prometheus_client", "opentelemetry",
+    # data / crypto / schema
+    "pydantic", "pydantic_settings", "yaml", "jsonschema", "jinja2", "jwt", "cryptography",
+    "msgpack", "cbor2", "regex",
+})
 
-#: Internal layering exceptions: ``(path relative to aura_core, imported aura_core module)``
-#: -> reason. Each entry is debt with a finding id, not a sanctioned pattern.
-LAYER_ALLOWLIST: dict[tuple[str, str], str] = {
-    ("engineering2/pipeline.py", "aura_core.adapters.coding_fakes"): (
-        "F-28/AR-09: EngineerExecutionPipeline defaults its sandbox runner and GitHub client to "
-        "the in-memory fakes. engineering2 has zero importers and is slated for deletion "
-        "(F-29/AR-10, CB-13); changing its constructor contract here would be churn on dead "
-        "code. Delete this entry together with the package."
-    ),
-}
+#: The legacy tree (ADR-002) -- ``aura_core`` must never import it, at any scope.
+LEGACY_MODULES = frozenset(
+    {"services", "aura_backend", "main", "tasks", "celery_app", "infrastructure"}
+)
 
 
 @dataclass(frozen=True)
-class ImportEdge:
-    source: str  # path relative to the core root, posix
-    layer: str  # layer of the importing file
-    target: str  # fully resolved dotted module name
+class Allowed:
+    """One narrowly scoped, documented exception: a (rule, file, imported module) triple."""
+
+    rule: str
+    path: str
+    module: str
+    reason: str
+
+
+#: Exceptions to the rules above. Each names one file and one imported module, never a package
+#: or a whole rule. ``test_allowlist_has_no_stale_entries`` fails when one stops being needed.
+ALLOWLIST: tuple[Allowed, ...] = (
+    Allowed(
+        "module-scope-vendor", "observability/metrics.py", "prometheus_client",
+        "Optional dependency probed once at import inside try/except ImportError, exporting "
+        "PROMETHEUS_AVAILABLE and falling back to in-process counters; the metric catalogue's "
+        "types are needed at class-definition time, so the import cannot move into a function "
+        "without changing the module's public surface. Never fails import when absent.",
+    ),
+    Allowed(
+        "module-scope-vendor", "observability/tracing.py", "opentelemetry",
+        "Optional dependency probed once at import inside try/except ImportError (OTEL_AVAILABLE); "
+        "spans degrade to timing-only when absent. Never fails import when absent.",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------------------------
+# The walker
+# ---------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ImportRef:
+    """One imported name, resolved to an absolute dotted path."""
+
+    path: Path        # the importing file
     line: int
-    scope: str  # "module", "lazy" (inside a function) or "type_checking"
+    target: str       # absolute dotted name, e.g. ``aura_core.adapters.coding_fakes.X``
+    lazy: bool        # inside a function/lambda body: does not run at import
+    type_only: bool   # inside ``if TYPE_CHECKING:``: never runs at all
 
     @property
-    def top(self) -> str:
+    def head(self) -> str:
         return self.target.split(".")[0]
 
-    def __str__(self) -> str:
-        return f"{self.source}:{self.line} imports {self.target} ({self.scope} scope)"
+    @property
+    def core_package(self) -> str | None:
+        """The ``aura_core`` subpackage (or top-level module) imported, if any."""
+        parts = self.target.split(".")
+        if parts[0] != "aura_core":
+            return None
+        return parts[1] if len(parts) > 1 else ROOT
+
+    @property
+    def module_scope(self) -> bool:
+        return not self.lazy and not self.type_only
 
 
-def _layer_of(core: Path, path: Path) -> str:
-    rel = path.relative_to(core)
-    return rel.parts[0] if len(rel.parts) > 1 else rel.stem
+def _resolve(path: Path, core: Path, node: ast.Import | ast.ImportFrom) -> list[str]:
+    """Absolute dotted targets of one import statement, relative imports included.
 
-
-def _target_layer(core: Path, dotted: str) -> str | None:
-    """The aura_core layer a dotted name points into, or None if it is not aura_core."""
-    parts = dotted.split(".")
-    if parts[0] != core.name:
-        return None
-    return parts[1] if len(parts) > 1 else ROOT_LAYER
+    ``from X import a, b`` yields ``X.a`` and ``X.b`` so that ``from aura_core import container``
+    and ``from .. import adapters`` resolve to the package actually reached.
+    """
+    if isinstance(node, ast.Import):
+        return [alias.name for alias in node.names]
+    if node.level == 0:
+        base = node.module or ""
+    else:
+        package = list(path.relative_to(core.parent).with_suffix("").parts[:-1])
+        if node.level > 1:
+            package = package[: len(package) - (node.level - 1)]
+        base = ".".join(package + ([node.module] if node.module else []))
+    return [f"{base}.{alias.name}" if base else alias.name for alias in node.names]
 
 
 def _is_type_checking(test: ast.expr) -> bool:
@@ -129,204 +195,370 @@ def _is_type_checking(test: ast.expr) -> bool:
     )
 
 
-def _resolve(core: Path, path: Path, node: ast.Import | ast.ImportFrom) -> list[str]:
-    """Absolute dotted names for one import statement."""
-    if isinstance(node, ast.Import):
-        return [alias.name for alias in node.names]
-    if node.level == 0:
-        base = node.module or ""
-    else:
-        # The package a relative import is anchored at: the file's own directory, for both a
-        # plain module and an ``__init__.py``.
-        package = list(path.relative_to(core.parent).with_suffix("").parts[:-1])
-        anchor = package[: len(package) - (node.level - 1)]
-        base = ".".join(anchor + ([node.module] if node.module else []))
-    # ``from aura_core import adapters`` / ``from .. import adapters`` name the submodule only
-    # in the alias list; expand those so the edge points at the real layer.
-    if base == core.name or node.module is None:
-        return [f"{base}.{alias.name}" for alias in node.names]
-    return [base]
-
-
-def import_edges(core: Path, path: Path) -> list[ImportEdge]:
-    """Every import in ``path``, resolved, with the scope it executes in.
-
-    Module scope means "runs when the module is imported": that includes ``try``/``if``/``with``
-    bodies and class bodies, not just column-0 statements. Function and lambda bodies are lazy
-    (the pattern CLAUDE.md requires for vendor SDKs); ``if TYPE_CHECKING:`` bodies never run.
-    """
+def imports_of(path: Path, core: Path = CORE) -> list[ImportRef]:
+    """Every import in ``path``, at every scope, tagged with whether it runs at import time."""
     tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
-    rel = path.relative_to(core).as_posix()
-    layer = _layer_of(core, path)
-    edges: list[ImportEdge] = []
+    found: list[ImportRef] = []
 
-    def visit(node: ast.AST, scope: str) -> None:
+    def visit(node: ast.AST, lazy: bool, type_only: bool) -> None:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-                visit(child, "lazy" if scope == "module" else scope)
+                visit(child, True, type_only)
                 continue
             if isinstance(child, ast.If) and _is_type_checking(child.test):
                 for stmt in child.body:
-                    visit(ast.Module(body=[stmt], type_ignores=[]), "type_checking")
+                    visit(ast.Module(body=[stmt], type_ignores=[]), lazy, True)
                 for stmt in child.orelse:
-                    visit(ast.Module(body=[stmt], type_ignores=[]), scope)
+                    visit(ast.Module(body=[stmt], type_ignores=[]), lazy, type_only)
                 continue
             if isinstance(child, (ast.Import, ast.ImportFrom)):
-                for target in _resolve(core, path, child):
-                    edges.append(ImportEdge(rel, layer, target, child.lineno, scope))
-            visit(child, scope)
+                for target in _resolve(path, core, child):
+                    found.append(ImportRef(path, child.lineno, target, lazy, type_only))
+            visit(child, lazy, type_only)
 
-    visit(tree, "module")
-    return edges
+    visit(tree, False, False)
+    return found
 
 
-def _modules(core: Path, package: str = "") -> list[Path]:
-    root = core / package if package else core
+def discover_packages(core: Path = CORE) -> list[str]:
+    """Every subpackage of ``aura_core`` plus its top-level modules (``container``)."""
+    names = {p.name for p in core.iterdir() if p.is_dir() and (p / "__init__.py").exists()}
+    names |= {p.stem for p in core.glob("*.py") if p.stem != "__init__"}
+    return sorted(names)
+
+
+def engine_packages(core: Path = CORE) -> list[str]:
+    """Everything that is not core, outer ring, support or the composition root."""
+    excluded = set(CORE_LAYERS) | OUTER_PACKAGES | SUPPORT_PACKAGES | {COMPOSITION_ROOT}
+    return [name for name in discover_packages(core) if name not in excluded]
+
+
+def _modules(package: str, core: Path = CORE) -> list[Path]:
+    if not package:
+        root = core
+    elif (core / package).is_dir():
+        root = core / package
+    else:
+        return [core / f"{package}.py"]
     return sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
 
 
-def all_edges(core: Path) -> list[ImportEdge]:
-    return [edge for module in _modules(core) for edge in import_edges(core, module)]
+def _allowed(rule: str, ref: ImportRef, core: Path, used: set[Allowed] | None) -> bool:
+    rel = ref.path.relative_to(core).as_posix()
+    for entry in ALLOWLIST:
+        if entry.rule == rule and entry.path == rel and ref.head == entry.module:
+            if used is not None:
+                used.add(entry)
+            return True
+    return False
 
 
-def layers(core: Path) -> dict[str, str]:
-    """Every layer present under ``core`` mapped to its kind. Engines are whatever is left."""
-    found = {_layer_of(core, p) for p in _modules(core)}
-    kinds: dict[str, str] = {}
-    for name in found:
-        if name in PURE_LAYERS:
-            kinds[name] = "pure"
-        elif name in SUPPORT_LAYERS:
-            kinds[name] = "support"
-        elif name in WIRING_LAYERS:
-            kinds[name] = "wiring"
-        elif name == ROOT_LAYER:
-            kinds[name] = "root"
-        else:
-            kinds[name] = "engine"
-    return kinds
+def _where(ref: ImportRef, core: Path) -> str:
+    scope = "type-only" if ref.type_only else ("lazy" if ref.lazy else "module scope")
+    return f"{ref.path.relative_to(core).as_posix()}:{ref.line} imports {ref.target} ({scope})"
 
 
-def layering_violations(core: Path) -> list[ImportEdge]:
-    """Internal edges that point the wrong way."""
-    kinds = layers(core)
-    violations: list[ImportEdge] = []
-    for edge in all_edges(core):
-        target = _target_layer(core, edge.target)
-        if target is None:
+# ---------------------------------------------------------------------------------------------
+# The rules, as functions of a core root so the self-tests can run them on a synthetic tree
+# ---------------------------------------------------------------------------------------------
+
+
+def core_layer_violations(package: str, core: Path = CORE) -> list[str]:
+    """Rule 1: domain/ports import only the stdlib and the inner layers they may see."""
+    allowed_core = CORE_LAYERS[package]
+    out: list[str] = []
+    for module in _modules(package, core):
+        for ref in imports_of(module, core):
+            if ref.core_package is not None:
+                if ref.core_package not in allowed_core:
+                    out.append(_where(ref, core))
+            elif ref.head not in STDLIB:
+                out.append(_where(ref, core))
+    return out
+
+
+def engine_violations(
+    package: str, core: Path = CORE, used: set[Allowed] | None = None
+) -> list[str]:
+    """Rule 2: an engine or support package never reaches outward, nor needs a vendor at import."""
+    forbidden_core = OUTER_PACKAGES | {COMPOSITION_ROOT}
+    if package in SUPPORT_PACKAGES:
+        # Support packages sit beneath the engines they serve: they may not import them either.
+        forbidden_core = forbidden_core | set(engine_packages(core))
+    out: list[str] = []
+    for module in _modules(package, core):
+        for ref in imports_of(module, core):
+            if ref.core_package is not None:
+                if ref.core_package in forbidden_core:
+                    out.append(_where(ref, core))
+            elif (
+                ref.head not in STDLIB
+                and ref.module_scope
+                and not _allowed("module-scope-vendor", ref, core, used)
+            ):
+                out.append(_where(ref, core))
+    return out
+
+
+def vendor_violations(core: Path = CORE, used: set[Allowed] | None = None) -> list[str]:
+    """Rule 3: no vendor SDK at module scope anywhere in ``aura_core``."""
+    out: list[str] = []
+    for module in _modules("", core):
+        for ref in imports_of(module, core):
+            if (
+                ref.head in VENDOR_MODULES
+                and ref.module_scope
+                and not _allowed("module-scope-vendor", ref, core, used)
+            ):
+                out.append(_where(ref, core))
+    return out
+
+
+def container_violations(core: Path = CORE) -> list[str]:
+    """Rule 4: only the composition root may import the composition root."""
+    out: list[str] = []
+    for module in _modules("", core):
+        if module == core / f"{COMPOSITION_ROOT}.py":
             continue
-        source_kind = kinds.get(edge.layer, "engine")
-        target_kind = kinds.get(target, "engine" if target not in WIRING_LAYERS else "wiring")
-        if target == ROOT_LAYER:
-            continue
-        if target == "container" and edge.layer != "container":
-            violations.append(edge)  # the composition root is imported only by entry points
-        elif source_kind == "pure" and target_kind != "pure":
-            violations.append(edge)
-        elif source_kind == "support" and target_kind not in ("pure", "support"):
-            violations.append(edge)
-        elif source_kind == "engine" and target_kind == "wiring":
-            violations.append(edge)
-        elif edge.layer == "adapters" and target == "api":
-            violations.append(edge)  # infrastructure never depends on the HTTP surface
-    return violations
+        for ref in imports_of(module, core):
+            if ref.core_package == COMPOSITION_ROOT:
+                out.append(_where(ref, core))
+    return out
 
 
-def third_party_edges(core: Path) -> list[ImportEdge]:
-    return [
-        e for e in all_edges(core)
-        if e.top not in STDLIB and _target_layer(core, e.target) is None
-    ]
+# ---------------------------------------------------------------------------------------------
+# The fitness tests
+# ---------------------------------------------------------------------------------------------
 
 
-def pure_layer_violations(core: Path) -> list[ImportEdge]:
-    """domain/ports importing anything but the stdlib, at any scope (even lazily)."""
-    kinds = layers(core)
-    return [e for e in third_party_edges(core) if kinds.get(e.layer) == "pure"]
+def test_every_package_is_classified() -> None:
+    """Discovery found the tree, and every package lands in exactly one ring."""
+    packages = discover_packages()
+    assert set(CORE_LAYERS) | OUTER_PACKAGES | SUPPORT_PACKAGES | {COMPOSITION_ROOT} <= set(
+        packages
+    ), "a ring names a package that no longer exists -- update the classification"
+    engines = set(engine_packages())
+    missing = NAMED_ENGINES - engines
+    assert not missing, f"CLAUDE.md names these as engines but they are not checked: {missing}"
 
 
-def vendor_sdk_violations(core: Path) -> list[ImportEdge]:
-    """A denylisted vendor SDK imported at module scope anywhere."""
-    return [
-        e for e in third_party_edges(core) if e.scope == "module" and e.top in VENDOR_SDKS
-    ]
-
-
-def module_scope_third_party(core: Path) -> list[ImportEdge]:
-    """Any third-party import that runs at import time."""
-    return [e for e in third_party_edges(core) if e.scope == "module"]
-
-
-# --------------------------------------------------------------------------------------------
-# The rules, applied to the real tree
-# --------------------------------------------------------------------------------------------
-
-
-def _fmt(edges: list[ImportEdge]) -> str:
-    return "\n  ".join(str(e) for e in edges)
-
-
-def test_layer_discovery_covers_the_whole_tree() -> None:
-    """Guard against the check passing because it scanned nothing (a moved path, a typo)."""
-    kinds = layers(CORE)
-    assert {"domain", "ports", "adapters", "api", "container"} <= set(kinds)
-    # CLAUDE.md lists llm as an engine; the old hand-written list omitted it (AR-09 gap 4).
-    for engine in ("llm", "kernel", "knowledge", "memory", "tools", "agents", "triggers"):
-        assert kinds.get(engine) == "engine", engine
-    assert sum(1 for k in kinds.values() if k == "engine") >= 20
-    assert len(all_edges(CORE)) > 500
-
-
-def test_core_layers_import_only_stdlib() -> None:
-    """The rule that makes the core testable without infrastructure (any scope)."""
-    violations = pure_layer_violations(CORE)
+@pytest.mark.parametrize("package", sorted(CORE_LAYERS))
+def test_core_layers_import_only_stdlib(package: str) -> None:
+    """The rule that makes the core testable without infrastructure."""
+    violations = core_layer_violations(package)
     assert not violations, (
-        "domain and ports must import only the standard library (ADR-001):\n  "
-        + _fmt(violations)
+        "domain imports only the stdlib, ports only the stdlib and domain (ADR-001):\n  "
+        + "\n  ".join(violations)
     )
 
 
-def test_internal_layering_arrow() -> None:
-    """Engines never reach adapters/api/container; domain/ports reach nothing outward."""
-    violations = [
-        e for e in layering_violations(CORE) if (e.source, e.target) not in LAYER_ALLOWLIST
-    ]
+@pytest.mark.parametrize("package", engine_packages() + sorted(SUPPORT_PACKAGES))
+def test_engines_do_not_import_adapters(package: str) -> None:
+    """Policy must not depend on infrastructure -- at any scope, absolute or relative."""
+    violations = engine_violations(package)
     assert not violations, (
-        "aura_core layering violated (ADR-001; engines -> domain + ports only, container.py is "
-        "the only wiring point):\n  " + _fmt(violations)
+        f"{package} must not import adapters/api/container, nor a third-party module at "
+        "module scope (ADR-001):\n  " + "\n  ".join(violations)
     )
 
 
-def test_vendor_sdks_never_imported_at_module_scope() -> None:
-    """Vendor SDKs are imported lazily inside functions, in adapters/api as everywhere else."""
-    violations = vendor_sdk_violations(CORE)
+def test_vendor_sdks_are_imported_lazily() -> None:
+    """Adapters and api reach vendor SDKs inside the function that needs them, never at import.
+
+    ADR-001: an unused adapter must never have to be installed, and importing ``aura_core``
+    must never pull a driver into the process.
+    """
+    violations = vendor_violations()
     assert not violations, (
-        "vendor SDKs must be imported lazily inside the function that needs them, never at "
-        "module scope (CLAUDE.md, ADR-001):\n  " + _fmt(violations)
+        "vendor SDKs must be imported lazily, inside a function (ADR-001):\n  "
+        + "\n  ".join(violations)
     )
 
 
-def test_module_scope_third_party_imports_are_allowlisted() -> None:
-    """Catches the vendor a denylist forgot to name."""
-    violations = [
-        e for e in module_scope_third_party(CORE)
-        if (e.source, e.top) not in MODULE_SCOPE_THIRD_PARTY_ALLOWLIST
-    ]
+def test_only_the_composition_root_imports_the_container() -> None:
+    violations = container_violations()
     assert not violations, (
-        "third-party import at module scope; import it lazily, or add an allowlist entry with "
-        "a reason:\n  " + _fmt(violations)
+        "nothing below container.py may import it -- it is the composition root:\n  "
+        + "\n  ".join(violations)
     )
 
 
-def test_allowlists_have_no_stale_entries() -> None:
-    """An allowlist entry that no longer matches anything is a hole waiting to be reused."""
-    live_third_party = {(e.source, e.top) for e in module_scope_third_party(CORE)}
-    stale = [k for k in MODULE_SCOPE_THIRD_PARTY_ALLOWLIST if k not in live_third_party]
-    live_layering = {(e.source, e.target) for e in layering_violations(CORE)}
-    stale += [k for k in LAYER_ALLOWLIST if k not in live_layering]
-    assert not stale, f"remove stale allowlist entries: {stale}"
-    for key, reason in {**MODULE_SCOPE_THIRD_PARTY_ALLOWLIST, **LAYER_ALLOWLIST}.items():
-        assert reason.strip(), f"allowlist entry {key} needs a reason"
+def test_vendor_list_covers_every_third_party_import() -> None:
+    """:data:`VENDOR_MODULES` is complete, so the lazy-import rule cannot be dodged by novelty."""
+    unclassified: list[str] = []
+    for module in _modules(""):
+        for ref in imports_of(module):
+            if ref.core_package is not None or ref.head in STDLIB:
+                continue
+            if ref.head in VENDOR_MODULES or ref.head in LEGACY_MODULES:
+                continue
+            unclassified.append(_where(ref, CORE))
+    assert not unclassified, (
+        "third-party import not in VENDOR_MODULES -- classify it there:\n  "
+        + "\n  ".join(unclassified)
+    )
+
+
+def test_allowlist_has_no_stale_entries() -> None:
+    """An exception that is no longer needed is removed, not left to excuse a future regression."""
+    used: set[Allowed] = set()
+    vendor_violations(used=used)
+    for package in engine_packages() + sorted(SUPPORT_PACKAGES):
+        engine_violations(package, used=used)
+    stale = [f"{a.rule}: {a.path} -> {a.module}" for a in ALLOWLIST if a not in used]
+    assert not stale, "remove these ALLOWLIST entries, nothing needs them:\n  " + "\n  ".join(stale)
+
+
+# ---------------------------------------------------------------------------------------------
+# Self-tests: the walker catches what it claims to, in both import forms
+# ---------------------------------------------------------------------------------------------
+
+
+def _synthetic_core(tmp_path: Path, files: dict[str, str]) -> Path:
+    core = tmp_path / "aura_core"
+    for package in (*CORE_LAYERS, *OUTER_PACKAGES, *SUPPORT_PACKAGES, "kernel", "llm"):
+        (core / package).mkdir(parents=True, exist_ok=True)
+        (core / package / "__init__.py").write_text("")
+    (core / "__init__.py").write_text("")
+    (core / "container.py").write_text("from .adapters import thing\n")
+    for rel, source in files.items():
+        (core / rel).parent.mkdir(parents=True, exist_ok=True)
+        (core / rel).write_text(textwrap.dedent(source))
+    return core
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "from aura_core.adapters.coding_fakes import Fake",
+        "import aura_core.adapters.coding_fakes",
+        "from aura_core import adapters",
+        "from ..adapters.coding_fakes import Fake",
+        "from .. import adapters",
+        "from ..api import v3",
+        "from aura_core.container import build",
+        "from .. import container",
+    ],
+)
+@pytest.mark.parametrize(
+    "wrapping",
+    [
+        "{stmt}\n",
+        "try:\n    {stmt}\nexcept ImportError:\n    pass\n",
+        "class Engine:\n    {stmt}\n",
+        "def build():\n    {stmt}\n",
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    {stmt}\n",
+    ],
+    ids=["module", "try", "class-body", "lazy", "type-checking"],
+)
+def test_walker_catches_engine_reaching_outward(
+    tmp_path: Path, statement: str, wrapping: str
+) -> None:
+    core = _synthetic_core(tmp_path, {"kernel/bad.py": wrapping.format(stmt=statement)})
+    assert engine_violations("kernel", core), f"missed: {statement!r} in {wrapping!r}"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "import qdrant_client",
+        "from qdrant_client.models import PointStruct",
+        "import asyncpg as pg",
+    ],
+)
+@pytest.mark.parametrize(
+    "wrapping",
+    [
+        "{stmt}\n",
+        "try:\n    {stmt}\nexcept ImportError:\n    pass\n",
+        "if True:\n    {stmt}\n",
+        "class Store:\n    {stmt}\n",
+    ],
+    ids=["module", "try", "if", "class-body"],
+)
+def test_walker_catches_module_scope_vendor_import(
+    tmp_path: Path, statement: str, wrapping: str
+) -> None:
+    core = _synthetic_core(tmp_path, {"adapters/store.py": wrapping.format(stmt=statement)})
+    assert vendor_violations(core), f"missed: {statement!r} in {wrapping!r}"
+
+
+def test_walker_permits_the_correct_patterns(tmp_path: Path) -> None:
+    """Lazy vendor imports in adapters, type-only vendor imports, peer engines, inner layers."""
+    core = _synthetic_core(
+        tmp_path,
+        {
+            "adapters/store.py": """
+                from typing import TYPE_CHECKING
+                from ..domain import entities
+                from aura_core.ports import storage
+                if TYPE_CHECKING:
+                    import asyncpg
+
+                class Store:
+                    async def _pool(self):
+                        import asyncpg
+                        return await asyncpg.create_pool()
+            """,
+            "kernel/ok.py": """
+                import json
+                from ..domain import entities
+                from aura_core.ports import storage
+                from ..llm import router
+                from aura_core.observability import get_logger
+                from aura_core import config
+
+                def fetch():
+                    import httpx
+                    return httpx
+            """,
+            "ports/storage.py": "from ..domain import entities\nfrom aura_core.domain import x\n",
+            "domain/entities.py": "import dataclasses\nfrom . import x\n",
+        },
+    )
+    assert not engine_violations("kernel", core)
+    assert not vendor_violations(core)
+    assert not container_violations(core)
+    assert not core_layer_violations("ports", core)
+    assert not core_layer_violations("domain", core)
+
+
+@pytest.mark.parametrize(
+    ("package", "statement"),
+    [
+        ("domain", "from aura_core.ports import storage"),
+        ("domain", "from ..ports import storage"),
+        ("ports", "from aura_core.llm import router"),
+        ("ports", "from ..adapters import store"),
+        ("ports", "import pydantic"),
+        ("domain", "def f():\n    import httpx\n"),
+    ],
+)
+def test_walker_catches_core_layer_violation(tmp_path: Path, package: str, statement: str) -> None:
+    core = _synthetic_core(tmp_path, {f"{package}/bad.py": statement + "\n"})
+    assert core_layer_violations(package, core), f"missed: {statement!r} in {package}"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    ["from aura_core.container import build", "from ..container import build",
+     "def f():\n    from aura_core import container\n"],
+)
+def test_walker_catches_container_import(tmp_path: Path, statement: str) -> None:
+    core = _synthetic_core(tmp_path, {"api/bad.py": statement + "\n"})
+    assert container_violations(core), f"missed: {statement!r}"
+
+
+def test_discovery_treats_new_packages_as_engines(tmp_path: Path) -> None:
+    core = _synthetic_core(tmp_path, {"brand_new/__init__.py": "", "brand_new/x.py": ""})
+    assert "brand_new" in engine_packages(core)
+    assert "container" not in engine_packages(core)
+    assert "adapters" not in engine_packages(core)
+
+
+def test_support_packages_may_not_import_engines(tmp_path: Path) -> None:
+    core = _synthetic_core(tmp_path, {"config/bad.py": "from aura_core.kernel import AIKernel\n"})
+    assert engine_violations("config", core)
 
 
 def test_core_never_imports_legacy_services() -> None:
@@ -336,10 +568,26 @@ def test_core_never_imports_legacy_services() -> None:
     (explaining which defect they replace), and a grep-style check would flag those comments
     while still missing an aliased import.
     """
-    forbidden = {"services", "aura_backend", "main", "tasks", "celery_app", "infrastructure"}
-    violations = [e for e in all_edges(CORE) if e.top in forbidden]
+    forbidden = LEGACY_MODULES
+    violations: list[str] = []
+
+    for module in _modules(""):
+        tree = ast.parse(module.read_text(encoding="utf-8"), str(module))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split(".")[0] in forbidden:
+                        violations.append(
+                            f"{module.relative_to(CORE)}:{node.lineno} imports {alias.name}"
+                        )
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                if node.module.split(".")[0] in forbidden:
+                    violations.append(
+                        f"{module.relative_to(CORE)}:{node.lineno} imports from {node.module}"
+                    )
     assert not violations, (
-        "aura_core must not import the legacy backend packages (ADR-002):\n  " + _fmt(violations)
+        "aura_core must not import the legacy backend packages (ADR-002):\n  "
+        + "\n  ".join(violations)
     )
 
 
@@ -353,7 +601,7 @@ def test_no_import_time_network_connections() -> None:
     suspicious = ("QdrantClient(", "create_async_engine(", "redis.Redis(", "httpx.AsyncClient(")
     violations: list[str] = []
 
-    for module in _modules(CORE):
+    for module in _modules(""):
         source = module.read_text(encoding="utf-8")
         tree = ast.parse(source, str(module))
         for node in tree.body:  # module scope only
@@ -383,7 +631,7 @@ def test_ports_are_async() -> None:
     non_io = {"name", "model_id", "dimension", "max_batch_size", "capabilities", "spec",
               "subscribe", "now", "monotonic", "stream", "run_streaming"}
 
-    for module in _modules(CORE, "ports"):
+    for module in _modules("ports"):
         tree = ast.parse(module.read_text(encoding="utf-8"), str(module))
         for node in ast.walk(tree):
             # Only Protocol definitions are ports. Plain value objects in the same module
@@ -410,136 +658,3 @@ def test_ports_are_async() -> None:
         "port I/O methods must be async (see docs/analysis/05-performance-report.md §2):\n  "
         + "\n  ".join(violations)
     )
-
-
-# --------------------------------------------------------------------------------------------
-# Self-tests: a planted violation of each shape AR-09 named must be caught
-# --------------------------------------------------------------------------------------------
-
-
-@pytest.fixture
-def scratch_core(tmp_path: Path) -> Path:
-    core = tmp_path / "aura_core"
-    files = {
-        "__init__.py": "",
-        "container.py": "from aura_core.adapters.store import Store\n",
-        "domain/__init__.py": "",
-        "domain/entities.py": "import dataclasses\n",
-        "ports/__init__.py": "from ..domain import entities\n",
-        "adapters/__init__.py": "",
-        "adapters/store.py": "def connect():\n    import asyncpg\n    return asyncpg\n",
-        "api/__init__.py": "",
-        "kernel/__init__.py": "",
-        "kernel/clean.py": (
-            "from typing import TYPE_CHECKING\n"
-            "from aura_core.domain import entities\n"
-            "from ..ports import x\n"
-            "if TYPE_CHECKING:\n"
-            "    import httpx\n"
-            "def lazy():\n"
-            "    import torch\n"
-        ),
-    }
-    for rel, text in files.items():
-        path = core / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
-    return core
-
-
-def _plant(core: Path, rel: str, text: str) -> None:
-    path = core / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-
-def test_selftest_clean_scratch_tree_passes(scratch_core: Path) -> None:
-    assert layering_violations(scratch_core) == []
-    assert vendor_sdk_violations(scratch_core) == []
-    assert module_scope_third_party(scratch_core) == []
-    assert pure_layer_violations(scratch_core) == []
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        "from aura_core.adapters.store import Store\n",  # absolute (AR-09 gap 1)
-        "from aura_core import adapters\n",  # absolute, submodule in alias list
-        "import aura_core.adapters.store\n",
-        "from ..adapters.store import Store\n",  # relative
-        "from .. import adapters\n",
-        "try:\n    from aura_core.adapters.store import Store\nexcept ImportError:\n    pass\n",
-        "def f():\n    from aura_core.adapters.store import Store\n",  # lazy is still a dependency
-        "from aura_core.container import build\n",
-        "from aura_core.api import routes\n",
-    ],
-)
-def test_selftest_engine_to_wiring_import_is_caught(scratch_core: Path, source: str) -> None:
-    # A package the old hand-written list did not name: discovery must treat it as an engine.
-    _plant(scratch_core, "brand_new_engine/__init__.py", "")
-    _plant(scratch_core, "brand_new_engine/planted.py", source)
-    found = layering_violations(scratch_core)
-    assert [e.source for e in found] == ["brand_new_engine/planted.py"], found
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        "import httpx\n",  # module scope (AR-09 gap 3)
-        "import qdrant_client.http.models\n",
-        "from sentence_transformers import SentenceTransformer\n",
-        "try:\n    import redis\nexcept ImportError:\n    redis = None\n",  # AR-09 gap 2
-        "if True:\n    from asyncpg import Pool\n",
-        "class Holder:\n    import torch\n",
-    ],
-)
-def test_selftest_module_scope_vendor_import_in_engine_is_caught(
-    scratch_core: Path, source: str
-) -> None:
-    _plant(scratch_core, "llm/__init__.py", "")
-    _plant(scratch_core, "llm/planted.py", source)
-    vendor = vendor_sdk_violations(scratch_core)
-    assert [e.source for e in vendor] == ["llm/planted.py"], vendor
-    assert [e.source for e in module_scope_third_party(scratch_core)] == ["llm/planted.py"]
-
-
-def test_selftest_module_scope_vendor_import_in_adapter_is_caught(scratch_core: Path) -> None:
-    _plant(scratch_core, "adapters/eager.py", "import docker\n")
-    assert [e.source for e in vendor_sdk_violations(scratch_core)] == ["adapters/eager.py"]
-
-
-def test_selftest_unlisted_third_party_is_caught(scratch_core: Path) -> None:
-    """Not in VENDOR_SDKS, still not allowed at module scope without an allowlist entry."""
-    _plant(scratch_core, "kernel/numeric.py", "import numpy\n")
-    assert vendor_sdk_violations(scratch_core) == []
-    assert [e.source for e in module_scope_third_party(scratch_core)] == ["kernel/numeric.py"]
-
-
-@pytest.mark.parametrize(
-    "rel, source",
-    [
-        ("domain/bad.py", "def f():\n    import pydantic\n"),  # even lazily
-        ("ports/bad.py", "import numpy\n"),
-    ],
-)
-def test_selftest_pure_layer_third_party_is_caught(
-    scratch_core: Path, rel: str, source: str
-) -> None:
-    _plant(scratch_core, rel, source)
-    assert [e.source for e in pure_layer_violations(scratch_core)] == [rel]
-
-
-@pytest.mark.parametrize(
-    "rel, source",
-    [
-        ("domain/bad.py", "from aura_core.kernel import clean\n"),
-        ("ports/bad.py", "from ..adapters import store\n"),
-        ("config/__init__.py", "from aura_core.kernel import clean\n"),
-        ("adapters/bad.py", "from aura_core.api import routes\n"),
-    ],
-)
-def test_selftest_outward_edges_from_inner_layers_are_caught(
-    scratch_core: Path, rel: str, source: str
-) -> None:
-    _plant(scratch_core, rel, source)
-    assert [e.source for e in layering_violations(scratch_core)] == [rel]

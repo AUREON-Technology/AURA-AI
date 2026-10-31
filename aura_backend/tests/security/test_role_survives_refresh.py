@@ -14,6 +14,11 @@ import pytest
 import services.jwt_auth as jwt_auth
 from services.rbac import stamp_resolved_role
 
+#: A verified Google sign-in, as services.security.verify_identity_token reports it. Email-list
+#: roles need both keys (SEC-08); tests/security/test_email_role_grants_require_verified_google.py
+#: covers what happens without them.
+_GOOGLE = {"email_verified": True, "sign_in_provider": "google.com"}
+
 EMAIL = "former-admin@example.com"
 
 
@@ -31,7 +36,7 @@ def _role(access_token: str) -> str:
 
 def test_removing_an_admin_from_the_env_list_takes_effect_on_the_next_refresh(monkeypatch):
     monkeypatch.setenv("ADMIN_EMAILS", EMAIL)
-    pair = jwt_auth.issue_token_pair(stamp_resolved_role({"uid": "u-1", "email": EMAIL}))
+    pair = jwt_auth.issue_token_pair(stamp_resolved_role({"uid": "u-1", "email": EMAIL, **_GOOGLE}))
     assert _role(pair["access_token"]) == "Admin"
 
     monkeypatch.delenv("ADMIN_EMAILS")
@@ -46,7 +51,7 @@ def test_removing_an_admin_from_the_env_list_takes_effect_on_the_next_refresh(mo
 
 def test_a_role_still_granted_at_its_source_survives_refresh(monkeypatch):
     monkeypatch.setenv("DEVELOPER_EMAILS", EMAIL)
-    pair = jwt_auth.issue_token_pair(stamp_resolved_role({"uid": "u-2", "email": EMAIL}))
+    pair = jwt_auth.issue_token_pair(stamp_resolved_role({"uid": "u-2", "email": EMAIL, **_GOOGLE}))
 
     rotated = jwt_auth.refresh_token_pair(pair["refresh_token"])
 

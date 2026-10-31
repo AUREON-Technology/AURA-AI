@@ -1,6 +1,6 @@
 """Postgres implementation of the ``UserDataKeyStore`` port (ADR-032).
 
-Reads and writes ``aura_user_data_keys``, which Alembic migration ``0017`` creates; like
+Reads and writes ``aura_user_data_keys``, which Alembic migration ``0019`` creates; like
 ``postgres_goals.py`` this adapter never issues DDL. ``owner_id`` references
 ``users(auth_subject) ON DELETE CASCADE``, so erasing a user destroys their keys with the row.
 

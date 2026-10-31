@@ -201,6 +201,62 @@ class TestMemoryStore:
         finally:
             await pool.close()
 
+    async def test_touch_many_is_a_field_level_update_of_the_current_row(
+        self, schema_url, raw
+    ) -> None:
+        """F-16: recall reinforcement used the full-row UPSERT from the copy recall had read, so
+        a supersede, an edit or a delete in between was reverted. ``touch_many`` is a single
+        ``UPDATE ... SET access_count = access_count + 1``: it changes nothing else, re-creates
+        nothing, never re-encrypts ``content``, and its increments do not lose to each other."""
+        import asyncio
+        from dataclasses import replace
+
+        pool = PostgresPool(schema_url, min_size=1, max_size=10)
+        store = PostgresMemoryStore(schema_url, pool=pool, cipher=FieldCipher([KEY_NEW]))
+        try:
+            await store.put(_memory("m1", "Alice lives in Cairo"))
+            await store.put(_memory("m2", "Alice likes tea"))
+            await store.put(_memory("b1", "Bob likes coffee", owner="bob"))
+            snapshot = await store.get(MemoryId("m1"))  # what a recall would have read
+
+            # Meanwhile: consolidation supersedes m1, and m2 is deleted.
+            await store.update(replace(snapshot, superseded_by=MemoryId("m9"), confidence=0.9))
+            assert await store.delete(MemoryId("m2"), owner_id=UserId("alice"))
+            sealed = await raw.fetchval("SELECT content FROM aura_memories WHERE id = 'm1'")
+
+            at = datetime.now(timezone.utc) + timedelta(hours=1)
+            touched = await store.touch_many(
+                [MemoryId("m1"), MemoryId("m2"), MemoryId("m1"), MemoryId("b1")],
+                owner_id=UserId("alice"), at=at,
+            )
+            assert touched == 1  # m2 is gone, b1 is bob's, the duplicate m1 counts once
+
+            m1 = await store.get(MemoryId("m1"))
+            assert m1.superseded_by == MemoryId("m9"), "reinforcement resurrected m1"
+            assert m1.confidence == pytest.approx(0.9)
+            assert m1.access_count == 1 and m1.last_accessed_at == at
+            assert await store.get(MemoryId("m2")) is None, "reinforcement re-created m2"
+            assert (await store.get(MemoryId("b1"))).access_count == 0
+            assert await raw.fetchval(
+                "SELECT content FROM aura_memories WHERE id = 'm1'"
+            ) == sealed  # content untouched: not even re-encrypted
+
+            # An older clock never moves last_accessed_at backwards.
+            await store.touch_many([MemoryId("m1")], owner_id=UserId("alice"),
+                                   at=at - timedelta(days=30))
+            m1 = await store.get(MemoryId("m1"))
+            assert m1.access_count == 2 and m1.last_accessed_at == at
+
+            # Concurrent recalls, each on its own connection: no increment is lost.
+            await asyncio.gather(*(
+                store.touch_many([MemoryId("m1")], owner_id=UserId("alice"), at=at)
+                for _ in range(25)
+            ))
+            assert (await store.get(MemoryId("m1"))).access_count == 27
+            assert await store.touch_many([], owner_id=UserId("alice"), at=at) == 0
+        finally:
+            await pool.close()
+
 
 class TestPersonalOsStore:
     async def test_crud_with_fields_sealed(self, schema_url, raw) -> None:

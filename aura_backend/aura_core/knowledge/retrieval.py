@@ -86,14 +86,24 @@ class BM25Index:
         # doc_id -> (group, its distinct terms, token count): what removal and scoring need.
         # The token lists themselves are not kept; scoring never needed them.
         self._documents: dict[str, tuple[str, tuple[str, ...], int]] = {}
+        # group -> every doc id added under it, including the ones with no indexable tokens:
+        # what a per-group refresh diffs against the document store. Without the tokenless ones
+        # (a chunk in a script the tokenizer does not cover, say), every refresh would see them
+        # as missing and fetch them again.
+        self._members: dict[str, set[str]] = {}
+        # doc_id -> group, for documents added with no tokens. Not in `_documents`: they must not
+        # count towards N or the average length, or scoring would change.
+        self._tokenless: dict[str, str] = {}
         self._document_frequency: Counter[str] = Counter()
         self._length_sum = 0
 
     def add(self, doc_id: str, text: str, *, group: str = "") -> None:
-        if doc_id in self._documents:
+        if doc_id in self._documents or doc_id in self._tokenless:
             self.remove(doc_id)
         tokens = tokenize(text)
         if not tokens:
+            self._tokenless[doc_id] = group
+            self._members.setdefault(group, set()).add(doc_id)
             return
         counts = Counter(tokens)
         shard = self._postings.setdefault(group, {})
@@ -101,13 +111,25 @@ class BM25Index:
             shard.setdefault(term, {})[doc_id] = frequency
             self._document_frequency[term] += 1
         self._documents[doc_id] = (group, tuple(counts), len(tokens))
+        self._members.setdefault(group, set()).add(doc_id)
         self._length_sum += len(tokens)
 
     def add_many(self, items: Iterable[tuple[str, str]], *, group: str = "") -> None:
         for doc_id, text in items:
             self.add(doc_id, text, group=group)
 
+    def _forget_member(self, group: str, doc_id: str) -> None:
+        members = self._members.get(group)
+        if members is not None:
+            members.discard(doc_id)
+            if not members:
+                del self._members[group]
+
     def remove(self, doc_id: str) -> None:
+        tokenless_group = self._tokenless.pop(doc_id, None)
+        if tokenless_group is not None:
+            self._forget_member(tokenless_group, doc_id)
+            return
         entry = self._documents.pop(doc_id, None)
         if entry is None:
             return
@@ -124,6 +146,7 @@ class BM25Index:
                 del self._document_frequency[term]
         if not shard:
             self._postings.pop(group, None)
+        self._forget_member(group, doc_id)
         self._length_sum -= length
 
     @property
@@ -133,6 +156,12 @@ class BM25Index:
     @property
     def average_length(self) -> float:
         return self._length_sum / len(self._documents) if self._documents else 0.0
+
+    def ids_in(self, group: str) -> frozenset[str]:
+        """Every doc id added under ``group`` and not removed since, tokenless ones included.
+
+        A snapshot, so the caller may hold it across an ``await`` while the index changes."""
+        return frozenset(self._members.get(group, ()))
 
     def group_of(self, doc_id: str) -> str | None:
         """The group ``doc_id`` was added under, or ``None`` if it is not indexed."""
@@ -202,6 +231,8 @@ class BM25Index:
     def clear(self) -> None:
         self._postings.clear()
         self._documents.clear()
+        self._members.clear()
+        self._tokenless.clear()
         self._document_frequency.clear()
         self._length_sum = 0
 

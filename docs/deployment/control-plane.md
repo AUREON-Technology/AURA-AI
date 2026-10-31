@@ -188,9 +188,15 @@ blocks — the code path is already inert-by-default even on the VPS.
 
 ## 6. Migrations
 
-Railway does not run a Compose `depends_on` gate. Instead, `aura_backend/railway.json`'s
-**pre-deploy command** runs `alembic upgrade head` against the service's `DATABASE_URL` before the
-new release receives traffic:
+Railway does not run a Compose `depends_on` gate. Instead, the service's **pre-deploy command**
+runs `alembic upgrade head` against the service's `DATABASE_URL` before the new release receives
+traffic.
+
+**Where that command lives matters.** Railway applies `aura_backend/railway.json` only when the
+service links it as its config file. The production AURA-AI service does not (`railwayConfigFile`
+null), so its dashboard settings are what run, and editing `railway.json` changes nothing live.
+The command is set in **Settings → Deploy → Pre-deploy command** (done 2026-10-31; first live run
+logged `MIGRATION OK` at `0016 (head)`). It matches the value `railway.json` records:
 
 ```json
 "preDeployCommand": "sh /app/scripts/railway-predeploy.sh"
