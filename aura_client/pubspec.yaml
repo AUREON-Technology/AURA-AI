@@ -93,6 +93,10 @@ dependencies:
   highlight: ^0.7.0
   shared_preferences: ^2.5.5
   xterm: ^4.0.0
+  # The device's IANA zone name ("Asia/Riyadh"), which Dart's DateTime cannot give (only an
+  # abbreviation or an offset). Sent as X-Client-Timezone so the backend computes "today" for
+  # insights and the daily briefing in the user's day, not UTC's (audit F-17).
+  flutter_timezone: ^5.1.1
 dev_dependencies:
   flutter_launcher_icons: ^0.13.1
   flutter_test:

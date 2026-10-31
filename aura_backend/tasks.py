@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from celery.signals import worker_process_shutdown, worker_shutdown
+from datetime import datetime, timezone
 from celery_app import celery_app
 from config import settings
 from services.rag import rag_service
@@ -210,23 +211,35 @@ def generate_insights_for_all_users_task() -> dict:
         return {"status": "error", "message": str(e)}
 
 
-async def _generate_daily_briefings_for_all_users() -> int:
-    from sqlalchemy import select
+async def _generate_daily_briefings_for_all_users(now: datetime | None = None) -> int:
+    """Briefs every user for whom it is now at or past 06:00 *their* time and who has had no
+    briefing yet today (``services.daily_briefing.briefing_due``). Beat runs this hourly, so
+    each user's briefing lands in their own morning rather than at 06:00 UTC (audit F-17)."""
+    from sqlalchemy import func, select
     from infrastructure.db.base import get_session_factory, is_configured
-    from infrastructure.db.models import User
-    from services.daily_briefing import generate_daily_briefing_for_user
+    from infrastructure.db.models import Insight, User
+    from services.daily_briefing import briefing_due, generate_daily_briefing_for_user
+    from services.user_time import resolve_timezone
 
     if not is_configured():
         logger.info("Skipping daily briefing generation: DATABASE_URL not configured.")
         return 0
 
+    now = now or datetime.now(timezone.utc)
     session_factory = get_session_factory()
     count = 0
     async with session_factory() as db:
         users = (await db.execute(select(User))).scalars().all()
+        last_sent = dict((await db.execute(
+            select(Insight.user_id, func.max(Insight.created_at))
+            .where(Insight.kind == "daily_briefing")
+            .group_by(Insight.user_id)
+        )).all())
         for user in users:
+            if not briefing_due(now, resolve_timezone(user.timezone), last_sent.get(user.id)):
+                continue
             try:
-                await generate_daily_briefing_for_user(db, user.id)
+                await generate_daily_briefing_for_user(db, user.id, now=now)
                 count += 1
             except Exception as e:
                 logger.error(f"Daily briefing generation failed for user {user.id}: {e}")
