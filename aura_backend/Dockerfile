@@ -14,26 +14,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Pin the runtime set. requirements.lock is compiled from requirements.txt with the
-# command recorded in its own header. Test/dev extras stay in requirements-dev.txt and
+# command recorded in its own header. Test/dev extras stay in requirements-dev.lock and
 # never land here.
 #
-# The lock resolves torch from PyTorch's CPU index, and carries both index URLs itself so
-# this install needs no extra flags. That is deliberate and worth keeping: the default
-# Linux torch wheel drags in the nvidia-*, cuda-* and triton packages, which is 6.5 GB of
-# CUDA runtime that a CPU-only host can never execute. Four services build from this
-# context, so the cost is paid four times over. Re-compiling without the CPU index will
-# silently put all of it back.
-COPY requirements.lock requirements-train.txt ./
+# Every pin carries --hash entries and the install runs with --require-hashes (F-38/SEC-10):
+# an artefact that does not match the hash recorded at lock time fails the build, whichever
+# index served it. torch is resolved from PyTorch's CPU index (uv's --torch-backend cpu routes
+# only the PyTorch packages there; everything else comes from PyPI alone), so this install
+# needs that index as an extra. uv does not write the --torch-backend index into the lockfile,
+# and the file must not carry an --index-url line either (pip lets it replace command-line
+# extras), so the index is passed here. A PyPI upload cannot satisfy a hash taken from
+# download.pytorch.org, so the extra index is not a dependency-confusion path. Keep the CPU index: the default Linux torch wheel drags in the nvidia-*, cuda-* and triton packages,
+# which is 6.5 GB of CUDA runtime that a CPU-only host can never execute. Four services build
+# from this context, so the cost is paid four times over.
+COPY requirements.lock requirements-train.lock ./
 
-RUN pip install --no-cache-dir --user -r requirements.lock
+RUN pip install --no-cache-dir --user --require-hashes \
+        --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
 
 # Optional LoRA training dependencies (peft; ADR-008 Loop B, GAP-017). Off by default so the
 # gateway and every other service never carry them; only `worker-training` builds with
-# AURA_TRAINING_DEPS=true. requirements-train.txt constrains itself to requirements.lock, so
-# this cannot move torch/transformers away from the gateway's pins.
+# AURA_TRAINING_DEPS=true. requirements-train.lock is compiled from requirements-train.txt,
+# which constrains itself to requirements.lock, so this cannot move torch/transformers away
+# from the gateway's pins -- and it is hash-locked the same way.
 ARG AURA_TRAINING_DEPS=false
 RUN if [ "$AURA_TRAINING_DEPS" = "true" ]; then \
-        pip install --no-cache-dir --user -r requirements-train.txt; \
+        pip install --no-cache-dir --user --require-hashes \
+            --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-train.lock; \
     fi
 
 # ==========================================

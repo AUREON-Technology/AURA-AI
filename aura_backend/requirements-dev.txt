@@ -3,9 +3,10 @@
 # Deliberately separate from requirements.txt: the production image should not
 # carry a test runner, and the `aura_core` suite needs nothing from the runtime
 # dependency set beyond fastapi/httpx/pydantic, which requirements.txt already
-# pins. Install the lockfile plus this file to run the full suite:
+# pins. CI and developers install the hash-locked compile of this file,
+# requirements-dev.lock, next to the runtime lock (F-38/SEC-10, GAP-033):
 #
-#     pip install -r requirements.lock -r requirements-dev.txt
+#     pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock -r requirements-dev.lock
 #     pytest
 #
 # The `aura_core` suite needs no Docker, no network, no API key, and no model —
@@ -20,7 +21,7 @@
 # testcontainers' own skip check (`docker.from_env().ping()`) rides along with it,
 # so the Postgres integration test still skips cleanly rather than erroring.
 #
-#     pip install -r requirements.lock -r requirements-dev.txt
+#     pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock -r requirements-dev.lock
 #     pytest                                   # aura_core
 #     TESTING=True python -m unittest discover -p "test_*.py"   # legacy
 
@@ -32,6 +33,14 @@ pytest-cov>=5.0
 # both requirement files, so the Postgres integration test still runs there.
 testcontainers[postgres]>=4.0.0
 
-# Lockfile regeneration (runtime pins only; run on Linux 3.11 or with uv's platform flags):
-#   uv pip compile --python-version 3.11 --python-platform linux --strip-extras --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match --emit-index-url --output-file requirements.lock requirements.txt
+# Lockfile regeneration, in this order (uv; the platform flags make it host-independent).
+# Every lock is hashed. --torch-backend cpu sends only the PyTorch packages to PyTorch's
+# CPU index and everything else to PyPI alone -- never --extra-index-url with
+# --index-strategy unsafe-best-match, which lets either index answer for any name (the
+# dependency-confusion shape of the 2022 torchtriton incident). Edit this file or
+# requirements.txt -> rerun all three; the dev and training locks are constrained to the
+# runtime one, so a shared package can never differ between them.
+#   uv pip compile --python-version 3.11 --python-platform linux --strip-extras --torch-backend cpu --generate-hashes --emit-index-annotation --output-file requirements.lock requirements.txt
+#   uv pip compile --python-version 3.11 --python-platform linux --strip-extras --torch-backend cpu --generate-hashes --emit-index-annotation --constraint requirements.lock --output-file requirements-dev.lock requirements-dev.txt
+#   uv pip compile --python-version 3.11 --python-platform linux --strip-extras --torch-backend cpu --generate-hashes --emit-index-annotation --output-file requirements-train.lock requirements-train.txt
 pip-tools>=7.4

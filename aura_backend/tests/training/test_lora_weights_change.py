@@ -13,7 +13,8 @@ adapter independently of anything the trainer reported:
 
 Not part of the default run (it needs ``requirements-train.txt`` and a model download):
 
-    pip install -r requirements.lock -r requirements-dev.txt -r requirements-train.txt
+    pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock -r requirements-dev.lock \
+        -r requirements-train.lock
     pytest tests/training -m training -s
 
 ``AURA_TRAIN_TEST_BASE_MODEL`` overrides the base (default ``hf-internal-testing/tiny-random-gpt2``,

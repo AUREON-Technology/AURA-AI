@@ -11,10 +11,18 @@ name: Backend CI
 #   * The legacy tree is unittest and includes a testcontainers-backed sync
 #     integration test that needs Docker.
 #
-# Each runs under its own runner, and both need requirements-dev.txt on the
+# Each runs under its own runner, and both need the dev lock on the
 # path: unittest discovery imports every `test_*.py` in the tree — including
 # the pytest modules — so a runner without pytest installed fails the legacy
 # step with an import error that has nothing to do with the legacy code.
+#
+# Installs are hash-locked (F-38/SEC-10): requirements.lock and requirements-dev.lock
+# carry --hash for every pin, and --require-hashes makes a missing or mismatched hash
+# fatal. Both files must be hashed for that to work in one pip call, which is why dev
+# tooling is installed from requirements-dev.lock (compiled from requirements-dev.txt
+# against requirements.lock) rather than the unpinned .txt. The PyTorch CPU index is
+# passed on the command line because the lockfile records only which index torch came
+# from (uv --torch-backend cpu), not an index option pip would read.
 
 on:
   pull_request:
@@ -55,10 +63,10 @@ jobs:
           cache-dependency-path: |
             aura_backend/requirements.lock
             aura_backend/requirements.txt
-            aura_backend/requirements-dev.txt
+            aura_backend/requirements-dev.lock
 
       - name: Install dependencies
-        run: pip install -r requirements.lock -r requirements-dev.txt
+        run: pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock -r requirements-dev.lock
 
       - name: Dockerfile boots aura_service (AURA-012)
         run: |
@@ -96,7 +104,7 @@ jobs:
           TESTING: "True"
         # unittest has no exclude, so discovery still *imports* the modules
         # under tests/ before finding no TestCase subclasses in them. That is
-        # why requirements-dev.txt is installed above even for this step:
+        # why requirements-dev.lock is installed above even for this step:
         # without pytest on the runner, every one of those imports raises and
         # the failure reads as "legacy suite broken" rather than "wrong
         # runner".
@@ -129,7 +137,7 @@ jobs:
         # source as the PyPI release, so upstream advisories apply unchanged.
         run: |
           pip install pip-audit
-          sed -E 's/^([A-Za-z0-9._-]+==[^+]+)\+[A-Za-z0-9.]+$/\1/' requirements.lock > /tmp/audit.lock
+          sed -E 's/^([A-Za-z0-9._-]+==[^+ ]+)\+[A-Za-z0-9.]+( \\)?$/\1\2/' requirements.lock > /tmp/audit.lock
           # No pipe here: the default shell has no pipefail, so `pip-audit | tee` would
           # report tee's status and swallow a CVE finding.
           pip-audit --disable-pip --no-deps -r /tmp/audit.lock > /tmp/audit.out 2>&1 || {
@@ -205,10 +213,10 @@ jobs:
           cache: "pip"
           cache-dependency-path: |
             aura_backend/requirements.lock
-            aura_backend/requirements-dev.txt
+            aura_backend/requirements-dev.lock
 
       - name: Install dependencies
-        run: pip install -r requirements.lock -r requirements-dev.txt
+        run: pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock -r requirements-dev.lock
 
       - name: Postgres adapter tests (real database)
         env:

@@ -74,7 +74,7 @@ Alembic with 5 migrations (`alembic/versions/0001_initial_schema.py` through `00
 
 ```bash
 cd aura_backend
-pip install -r requirements.lock -r requirements-dev.txt
+pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock -r requirements-dev.lock
 
 # Default suite (no Docker, no network, no model)
 pytest

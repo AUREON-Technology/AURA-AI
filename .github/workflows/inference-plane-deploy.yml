@@ -59,7 +59,7 @@ jobs:
       - name: Configuration validation (Control Plane / Inference Plane contract)
         working-directory: aura_backend
         run: |
-          python -m pip install --quiet -r requirements-dev.txt -r requirements.lock 2>/dev/null || true
+          python -m pip install --quiet --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock -r requirements-dev.lock 2>/dev/null || true
           python -m pytest tests/deployment/test_inference_contract.py -q
 
   # Whether the Space is configured, decided in a step rather than in a job-level `if:`.

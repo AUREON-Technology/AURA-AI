@@ -1,3 +1,5 @@
 aura_client/assets/*.gguf filter=lfs diff=lfs merge=lfs -text
 *.sh text eol=lf
 aura_backend/requirements.lock text eol=lf
+aura_backend/requirements-dev.lock text eol=lf
+aura_backend/requirements-train.lock text eol=lf

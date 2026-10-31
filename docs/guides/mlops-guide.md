@@ -229,11 +229,13 @@ hyperparameters, the torch/transformers/peft versions, and these metrics: `steps
 To verify locally, use a separate venv. Never install the training deps into the gateway's venv:
 
 ```bash
-pip install -r requirements.lock -r requirements-dev.txt -r requirements-train.txt
+pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock -r requirements-dev.lock \
+    -r requirements-train.lock
 pytest tests/training -m training -s   # downloads tiny-random-gpt2; skips without peft/network
 ```
 
-`requirements-train.txt` constrains itself to `requirements.lock`, so the training image cannot
+`requirements-train.txt` constrains itself to `requirements.lock` (and is installed through its
+hashed compile, `requirements-train.lock`), so the training image cannot
 drift from the gateway's torch/transformers pins. Contabo-style CPU hosts should train elsewhere
 and use `POST /api/v3/admin/models/import` to register a local Ollama tag as `CANDIDATE`.
 

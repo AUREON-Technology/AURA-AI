@@ -120,11 +120,14 @@ class PyTorchAdapter:
         )
 
         if self._config.checkpoint_path and os.path.exists(self._config.checkpoint_path):
-            # Load from checkpoint
+            # Load from checkpoint. weights_only=True (F-38/SEC-13): the unpickler then accepts
+            # only tensors and plain containers/scalars, which is all save_checkpoint() writes
+            # (state dicts, strings, ints, a metrics dict). A full pickle would execute
+            # arbitrary code from whoever controls checkpoint_path.
             checkpoint = torch.load(
                 self._config.checkpoint_path,
                 map_location=torch_device,
-                weights_only=False,
+                weights_only=True,
             )
             self._model = self._build_model_from_config()
             self._model.load_state_dict(checkpoint.get("model", checkpoint))
@@ -312,7 +315,8 @@ class PyTorchAdapter:
             raise FileNotFoundError(f"Checkpoint not found: {path}")
 
         torch_device = self.device
-        checkpoint = torch.load(path, map_location=torch_device, weights_only=False)
+        # weights_only=True: see load_model() (F-38/SEC-13).
+        checkpoint = torch.load(path, map_location=torch_device, weights_only=True)
 
         if not self._loaded:
             self._model = self._build_model_from_config()

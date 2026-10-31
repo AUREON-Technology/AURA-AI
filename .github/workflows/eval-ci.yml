@@ -44,6 +44,7 @@ on:
       - "aura_backend/tests/e2e/test_agent_tasks_gate.py"
       - "aura_backend/tests/e2e/test_docs_corpus_gate.py"
       - "aura_backend/requirements.lock"
+      - "aura_backend/requirements-dev.lock"
       # The docs_corpus suite ingests these ADRs verbatim; editing one can move retrieval scores.
       - "docs/architecture/**"
       - ".github/workflows/eval-ci.yml"
@@ -68,6 +69,7 @@ on:
       - "aura_backend/tests/e2e/test_agent_tasks_gate.py"
       - "aura_backend/tests/e2e/test_docs_corpus_gate.py"
       - "aura_backend/requirements.lock"
+      - "aura_backend/requirements-dev.lock"
       - "docs/architecture/**"
       - ".github/workflows/eval-ci.yml"
   workflow_dispatch:
@@ -111,10 +113,10 @@ jobs:
           cache-dependency-path: |
             aura_backend/requirements.lock
             aura_backend/requirements.txt
-            aura_backend/requirements-dev.txt
+            aura_backend/requirements-dev.lock
 
       - name: Install dependencies
-        run: pip install -r requirements.lock -r requirements-dev.txt
+        run: pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock -r requirements-dev.lock
 
       - name: Run deterministic evaluation gate
         # No AURA_LLM_PROVIDERS / AURA_DATABASE_URL / AURA_REDIS_URL / AURA_QDRANT_URL on purpose:
@@ -153,10 +155,10 @@ jobs:
           cache-dependency-path: |
             aura_backend/requirements.lock
             aura_backend/requirements.txt
-            aura_backend/requirements-dev.txt
+            aura_backend/requirements-dev.lock
 
       - name: Install dependencies
-        run: pip install -r requirements.lock -r requirements-dev.txt
+        run: pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock -r requirements-dev.lock
 
       - name: Run agent evaluation
         # Inputs arrive through env, never interpolated into the script text, so a crafted input
