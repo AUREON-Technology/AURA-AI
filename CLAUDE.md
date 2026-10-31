@@ -53,10 +53,19 @@ from it change how the paragraph above reads (checked live on 2026-10-28, `main`
   the code expected `0015`. The owner ran `alembic upgrade head` over `railway ssh` (`0013 → 0016`).
   Live `/health/ready` then showed `healthy: true`, `schema.revision 0016` at `6417c43`. The cause:
   Railway does not run `preDeployCommand` in a shell, so the old inline `echo … && alembic upgrade
-  head && …` ran only the `echo` and still passed. It now calls `scripts/railway-predeploy.sh`
-  (one argv; pinned by `tests/unit/test_release_identity.py`). Never put `&&`, `||` or `;` back
-  into that field. Still check `/health/ready`'s `schema` block after any merge that adds a
-  migration, because the fixed step has not yet been seen running on a real deploy.
+  head && …` ran only the `echo` and still passed. `aura_backend/railway.json` now says
+  `sh /app/scripts/railway-predeploy.sh` (one argv; pinned by `tests/unit/test_release_identity.py`).
+  **But Railway does not read `railway.json` for this service** (verified 2026-10-31 at `80a8ef0`).
+  The service has no config file linked, and its dashboard settings win:
+  - its pre-deploy command is still the old inline chain;
+  - its health check path is unset;
+  - its builder reads `RAILPACK`, although the image is built from the repo `Dockerfile`.
+
+  Until the owner sets the service's pre-deploy command to `sh /app/scripts/railway-predeploy.sh`
+  in Railway (Settings → Deploy), **no deploy migrates**. A change to `railway.json` alone changes
+  nothing live. Never put `&&`, `||` or `;` into that field. Check `/health/ready`'s `schema` block
+  after any merge that adds a migration. The script's log lines carry a `[HH:MM:SSZ]` prefix, so
+  an unprefixed `=== MIGRATION START ===` means the old command ran.
 - **Railway auto-deploys every `main` push itself, CI or not**, and **CI stopped getting runners
   again around 19:50 UTC on 2026-10-28** (CB-44: jobs end in 2–4 s with no log). Until that is
   fixed, a merge ships to production with no CI, and a PR's "CI green" cannot be had — run the

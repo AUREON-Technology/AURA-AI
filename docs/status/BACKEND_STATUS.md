@@ -10,8 +10,11 @@
 2026-10-30 the owner ran `alembic upgrade head` over `railway ssh` (`0013 → 0016`, clean), and live
 `/health/ready` then showed `healthy: true` and `schema.revision 0016`. The pre-deploy step that
 should have done this ran only its leading `echo`, because Railway does not evaluate
-`preDeployCommand` in a shell. It now calls `scripts/railway-predeploy.sh` (TESTED against a
-stand-in `alembic`; not yet seen on a live deploy).
+`preDeployCommand` in a shell. `railway.json` now calls `scripts/railway-predeploy.sh` (TESTED
+against a stand-in `alembic`). **That never reaches Railway** (verified 2026-10-31): the service
+has no config file linked, and its dashboard pre-deploy command is still the old inline chain. The
+deploy of `80a8ef0` logged the old, unprefixed `=== MIGRATION START ===` and nothing else. The
+owner must set the command in the Railway dashboard (see Open issues).
 
 **CI stopped executing again** around 19:50 UTC (no runner assigned; CB-44). The last Backend CI
 that ran was green at `dc87beb` (3848 passed, 56 skipped; unittest 100 OK; pip-audit; docker-build).
@@ -72,12 +75,16 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 ## Open issues (most severe first)
 
 **Operational**
-1. **Pre-deploy migration fix unproven on a live deploy (CB-43 follow-up).** The database is at
-   `0016` and readiness is green. The first deploy of the script (8bc8d4c) logged only
-   `MIGRATION START`, and the step ended about a second later, so the outcome was invisible.
-   The script now flushes its log before exiting. The next deploy must show `revision
-   before/after` and `=== MIGRATION OK ===`. Only `MIGRATION START` means the script itself
-   stops early.
+1. **No deploy migrates the database (CB-43 follow-up).** The database is at `0016` (migrated
+   by hand) and readiness is green. But Railway ignores `aura_backend/railway.json` for this
+   service: `railwayConfigFile` is null, and the dashboard's pre-deploy command is still the old
+   inline chain. So the script has never run, and every deploy logs only an unprefixed
+   `=== MIGRATION START ===`. **Owner action:** in Railway, AURA-AI → Settings → Deploy →
+   Pre-deploy command, set `sh /app/scripts/railway-predeploy.sh`. The image is built from the
+   repo `Dockerfile`, which copies the script to `/app/scripts/`. The next deploy must then show
+   `[HH:MM:SSZ] revision before … after` and `=== MIGRATION OK ===`. Linking `railway.json` as the
+   service's config file instead would also apply its builder and health-check settings, so it is
+   a larger, separate change.
 2. **CI not executing (CB-44)**, and Railway deploys without it. Restore Actions; gate Railway on
    CI (turn off its GitHub auto-deploy or enable "Wait for CI").
 3. **The VPS deploy path is dead** (host-key change; CB-03). The owner must confirm whether the
