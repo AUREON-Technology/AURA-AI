@@ -841,6 +841,43 @@ class PostgresMemoryStore:
         """
         await self.put(record)
 
+    async def touch_many(
+        self, memory_ids: Sequence[MemoryId], *, owner_id: UserId, at: datetime
+    ) -> int:
+        """One field-level ``UPDATE`` for a whole recall, never the snapshot UPSERT (F-16).
+
+        Recall used to reinforce through ``update`` -- the full-row UPSERT above -- from the copy
+        it had read, so a supersede, edit or delete landing in between was reverted (a deleted
+        row was even re-inserted), and two overlapping recalls lost an increment. The increment
+        is done by the database, so it is atomic under any concurrency; ``content`` is neither
+        read nor re-encrypted; and it is one round trip and one pool connection where the
+        per-record UPSERTs took up to ``limit`` of each. ``GREATEST`` keeps a replica with a
+        clock behind another's from moving ``last_accessed_at`` backwards.
+        """
+        wanted = list(dict.fromkeys(mid.value for mid in memory_ids))
+        if not wanted:
+            return 0
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                status = await conn.execute(
+                    """
+                    UPDATE aura_memories
+                    SET access_count = access_count + 1,
+                        last_accessed_at = GREATEST(last_accessed_at, $3::timestamptz)
+                    WHERE owner_id = $1 AND id = ANY($2::text[])
+                    """,
+                    owner_id.value,
+                    wanted,
+                    at,
+                )
+        except Exception as exc:
+            raise _unavailable(f"could not reinforce memories: {exc}") from exc
+        try:
+            return int(status.rsplit(" ", 1)[-1])
+        except ValueError:  # pragma: no cover - asyncpg always reports a count
+            return 0
+
     async def get(self, memory_id: MemoryId) -> MemoryRecord | None:
         pool = await self._pool._get_pool()
         try:

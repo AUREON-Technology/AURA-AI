@@ -247,6 +247,21 @@ class MemoryStore(Protocol):
     async def update(self, record: MemoryRecord) -> None:
         ...
 
+    async def touch_many(
+        self, memory_ids: Sequence[MemoryId], *, owner_id: UserId, at: datetime
+    ) -> int:
+        """Record one access on each of ``owner_id``'s rows in ``memory_ids``: atomically add one
+        to ``access_count`` and move ``last_accessed_at`` forward to ``at`` (never backwards).
+
+        A field-level update of the *current* row, never a write of a record the caller read
+        earlier. Recall reinforces what it returned, and between its read and this write the
+        row may have been superseded, edited or deleted; writing the snapshot back reverted all
+        three -- a superseded memory came back to life, a deleted one was re-created -- and two
+        overlapping recalls lost an increment (F-16). An id that no longer exists, or belongs to
+        another owner, is skipped, never created. Returns how many rows were touched.
+        """
+        ...
+
     async def delete(self, memory_id: MemoryId, *, owner_id: UserId) -> bool:
         ...
 

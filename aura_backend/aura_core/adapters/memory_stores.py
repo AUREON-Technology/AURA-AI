@@ -397,6 +397,25 @@ class InMemoryMemoryStore:
         async with self._lock:
             self._records[record.id.value] = record
 
+    async def touch_many(
+        self, memory_ids: Sequence[MemoryId], *, owner_id: UserId, at: datetime
+    ) -> int:
+        # Read-modify-write of the *stored* record under the lock -- the in-process equivalent
+        # of `SET access_count = access_count + 1`. Never the caller's copy (see the port).
+        touched = 0
+        async with self._lock:
+            for key in dict.fromkeys(m.value for m in memory_ids):
+                current = self._records.get(key)
+                if current is None or current.owner_id != owner_id:
+                    continue
+                self._records[key] = _dc_replace(
+                    current,
+                    access_count=current.access_count + 1,
+                    last_accessed_at=max(current.last_accessed_at, at),
+                )
+                touched += 1
+        return touched
+
     async def delete(self, memory_id: MemoryId, *, owner_id: UserId) -> bool:
         record = self._records.get(memory_id.value)
         if record is None or record.owner_id != owner_id:

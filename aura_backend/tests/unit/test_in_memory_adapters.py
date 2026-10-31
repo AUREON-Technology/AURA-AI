@@ -398,6 +398,47 @@ class TestMemoryStore:
         await store.update(replace(await store.get(MemoryId("m1")), confidence=0.95))
         assert (await store.get(MemoryId("m1"))).confidence == pytest.approx(0.95)
 
+    async def test_touch_many_bumps_only_the_access_fields(self) -> None:
+        """Reinforcement is a field-level update on the *current* row (F-16): it never writes
+        back a snapshot, so whatever else changed since the caller read the record survives."""
+        from dataclasses import replace
+        from datetime import datetime, timezone
+
+        store = InMemoryMemoryStore()
+        await store.put(self._record("m1"))
+        await store.put(self._record("m2"))
+        await store.update(replace(await store.get(MemoryId("m1")),
+                                   superseded_by=MemoryId("m9"), confidence=0.9))
+        at = datetime(2030, 1, 1, tzinfo=timezone.utc)
+
+        touched = await store.touch_many(
+            [MemoryId("m1"), MemoryId("m2"), MemoryId("m1"), MemoryId("gone")],
+            owner_id=UserId("u1"), at=at,
+        )
+
+        assert touched == 2  # duplicates collapse, absent ids are skipped, never created
+        m1, m2 = await store.get(MemoryId("m1")), await store.get(MemoryId("m2"))
+        assert (m1.access_count, m2.access_count) == (1, 1)
+        assert m1.last_accessed_at == at
+        assert m1.superseded_by == MemoryId("m9") and m1.confidence == pytest.approx(0.9)
+        assert await store.get(MemoryId("gone")) is None
+
+    async def test_touch_many_is_owner_scoped_and_never_moves_time_backwards(self) -> None:
+        from datetime import datetime, timezone
+
+        store = InMemoryMemoryStore()
+        await store.put(self._record("a", owner="alice"))
+        later = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        await store.touch_many([MemoryId("a")], owner_id=UserId("alice"), at=later)
+
+        assert await store.touch_many([MemoryId("a")], owner_id=UserId("bob"), at=later) == 0
+        await store.touch_many(
+            [MemoryId("a")], owner_id=UserId("alice"), at=datetime(2001, 1, 1, tzinfo=timezone.utc)
+        )
+        record = await store.get(MemoryId("a"))
+        assert record.access_count == 2
+        assert record.last_accessed_at == later
+
     async def test_deletion_is_owner_scoped(self) -> None:
         """A memory id in a URL must not be a capability over another user's data."""
         store = InMemoryMemoryStore()
