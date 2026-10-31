@@ -290,12 +290,17 @@ class TestReencryptionScript:
                 out = capsys.readouterr().out
                 return json.loads(out[out.index("{"):])
 
+            def mem_pos(report: dict) -> tuple[dict, dict]:
+                # By name: the report also covers aura_user_data_keys since ADR-032.
+                by_table = {t["table"]: t for t in report["tables"]}
+                return by_table["aura_memories"], by_table["aura_personal_os_records"]
+
             # 1. Dry run with the old key only: counts, writes nothing.
             monkeypatch.setenv("AURA_DATA_ENCRYPTION_KEYS", KEY_OLD)
             assert await script.run(dry_run=True, batch=3, tables="all",
                                      database_url=schema_url) == 0
             report = last_report()
-            mem, pos = report["tables"]
+            mem, pos = mem_pos(report)
             assert (mem["plaintext"], mem["written"], pos["plaintext"]) == (7, 0, 3)
             assert await raw.fetchval(
                 "SELECT count(*) FROM aura_memories WHERE content NOT LIKE 'aura-enc:%'"
@@ -304,7 +309,7 @@ class TestReencryptionScript:
             # 2. Real run, batch smaller than the row count to exercise keyset pagination.
             assert await script.run(dry_run=False, batch=3, tables="all",
                                     database_url=schema_url) == 0
-            mem, pos = last_report()["tables"]
+            mem, pos = mem_pos(last_report())
             assert (mem["written"], pos["written"]) == (7, 3)
             assert await raw.fetchval(
                 "SELECT count(*) FROM aura_memories WHERE content NOT LIKE 'aura-enc:%'"
@@ -313,14 +318,14 @@ class TestReencryptionScript:
             # 3. Idempotent: nothing left under the primary key.
             assert await script.run(dry_run=False, batch=3, tables="all",
                                     database_url=schema_url) == 0
-            mem, pos = last_report()["tables"]
+            mem, pos = mem_pos(last_report())
             assert (mem["examined"], pos["examined"]) == (0, 0)
 
             # 4. Rotation: new key first, old key still configured; everything moves to new.
             monkeypatch.setenv("AURA_DATA_ENCRYPTION_KEYS", f"{KEY_NEW},{KEY_OLD}")
             assert await script.run(dry_run=False, batch=3, tables="all",
                                     database_url=schema_url) == 0
-            mem, pos = last_report()["tables"]
+            mem, pos = mem_pos(last_report())
             assert (mem["old_key"], mem["written"], pos["written"]) == (8, 8, 3)
 
             # 5. The old key can now be dropped: the new key alone reads every row.
