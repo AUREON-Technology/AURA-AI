@@ -98,7 +98,11 @@ class TestErasureIntegration(unittest.TestCase):
         app = FastAPI()
         app.include_router(router)
         app.state.aura = Container(load_settings(refresh=True, validate=False))
-        root = issue_token_pair(stamp_resolved_role({"uid": "root", "email": ROOT}))
+        # A verified Google sign-in, as verify_identity_token reports it: since SEC-08 the
+        # SUPERADMIN_EMAILS match needs both facts.
+        root = issue_token_pair(stamp_resolved_role({
+            "uid": "root", "email": ROOT, "email_verified": True, "sign_in_provider": "google.com",
+        }))
         device = issue_device_token({"uid": subject, "email": f"{subject}@example.com"}, device_id="dev-x")
 
         with TestClient(app) as client:

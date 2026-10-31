@@ -110,7 +110,12 @@ class TestRoleAssignmentIntegration(unittest.TestCase):
         from services.jwt_auth import issue_token_pair
         from services.rbac import stamp_role
 
-        user_info = {"uid": f"uid-{email}", "email": email, "name": email}
+        # What services.security.verify_identity_token reports for a Google sign-in: since
+        # SEC-08 an email-list role needs a verified address from Google sign-in.
+        user_info = {
+            "uid": f"uid-{email}", "email": email, "name": email,
+            "email_verified": True, "sign_in_provider": "google.com",
+        }
 
         async def run():
             async with get_session_factory()() as db:
