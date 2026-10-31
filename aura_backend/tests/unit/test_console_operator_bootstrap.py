@@ -32,6 +32,11 @@ from services.rbac import (
     is_console_operator,
 )
 
+#: A verified Google sign-in, as services.security.verify_identity_token reports it. Email-list
+#: roles need both keys (SEC-08); tests/security/test_email_role_grants_require_verified_google.py
+#: covers what happens without them.
+_GOOGLE = {"email_verified": True, "sign_in_provider": "google.com"}
+
 _OPERATOR = "operator@example.com"
 _STRANGER = "someone-else@example.com"
 
@@ -57,13 +62,13 @@ class TestTheAuraPrefixedSpellingWorks:
     def test_the_bare_name_is_honoured(self, monkeypatch, variable: str) -> None:
         monkeypatch.setenv(variable, _OPERATOR)
         assert console_operators_configured()
-        assert is_console_operator(get_user_role({"email": _OPERATOR, "uid": "u"}))
+        assert is_console_operator(get_user_role({"email": _OPERATOR, "uid": "u", **_GOOGLE}))
 
     @pytest.mark.parametrize("variable", CONSOLE_ROLE_ENV_VARS)
     def test_the_prefixed_name_is_honoured_too(self, monkeypatch, variable: str) -> None:
         monkeypatch.setenv(f"AURA_{variable}", _OPERATOR)
         assert console_operators_configured(), f"AURA_{variable} was ignored"
-        assert is_console_operator(get_user_role({"email": _OPERATOR, "uid": "u"})), (
+        assert is_console_operator(get_user_role({"email": _OPERATOR, "uid": "u", **_GOOGLE})), (
             f"AURA_{variable} did not grant a console role"
         )
 
@@ -72,13 +77,13 @@ class TestTheAuraPrefixedSpellingWorks:
         monkeypatch.setenv("SUPERADMIN_EMAILS", _OPERATOR)
         monkeypatch.setenv("AURA_SUPERADMIN_EMAILS", _STRANGER)
 
-        assert get_user_role({"email": _OPERATOR, "uid": "u"}) == "SuperAdmin"
-        assert get_user_role({"email": _STRANGER, "uid": "u"}) == "User"
+        assert get_user_role({"email": _OPERATOR, "uid": "u", **_GOOGLE}) == "SuperAdmin"
+        assert get_user_role({"email": _STRANGER, "uid": "u", **_GOOGLE}) == "User"
 
     def test_superadmin_is_still_the_only_list_that_mints_superadmin(self, monkeypatch) -> None:
         """Accepting a second spelling must not widen what a list can grant."""
         monkeypatch.setenv("AURA_ADMIN_EMAILS", _OPERATOR)
-        assert get_user_role({"email": _OPERATOR, "uid": "u"}) == "Admin"
+        assert get_user_role({"email": _OPERATOR, "uid": "u", **_GOOGLE}) == "Admin"
 
 
 class TestConsoleOperatorsConfigured:
@@ -121,7 +126,7 @@ class TestTheRefusalNamesTheRealCause:
         import api.v2.auth as auth_module
 
         async def _verified(request, authorization=None):
-            return {"uid": "u", "email": _OPERATOR, "name": "Operator", "picture": None}
+            return {"uid": "u", "email": _OPERATOR, "name": "Operator", "picture": None, **_GOOGLE}
 
         monkeypatch.setattr(auth_module, "verify_identity_token", _verified)
         monkeypatch.setattr(auth_module, "_persist_user", lambda *a, **k: _noop())
