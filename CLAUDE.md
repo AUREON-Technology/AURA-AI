@@ -91,7 +91,8 @@ evidence its exit criteria name** — "built" and "tested" are not "proven."
 ### Backend (`cd aura_backend` first)
 
 ```bash
-pip install -r requirements.lock -r requirements-dev.txt
+pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
+pip install -r requirements-dev.txt     # separate: the lock is hash-pinned, dev deps are not (GAP-033)
 
 pytest                                   # aura_core suite — no Docker, no network, no model
 pytest tests/some_test.py::TestClass::test_name   # single test
