@@ -77,8 +77,13 @@ point of this file.
 | Adversarial AI safety | `tests/certification/test_adversarial_safety.py` | The same two tokens. |
 | Agent / tool containment | `tests/certification/test_agent_containment.py` (boundary only) | The boundary part needs tokens. The **escape** invariants need a host with `AURA_SANDBOX_ENABLED` and a reachable Docker daemon — structurally impossible on Railway, so `deploy/scripts/verify-engineer-workspaces.sh` on the VPS. |
 | Backup / restore | `deploy/scripts/restore-drill.sh` | VPS shell plus an isolated restore target. No token fixes this. |
+| Core user journeys (A/B/C/E) | `tests/certification/test_e2e_user_journeys.py` | The same two tokens. Journey D (desktop coding) is NOT APPLICABLE on any reachable target. |
 
-Two are one command away. Two need the VPS, which is a different blocker.
+Three are one command away. Two need the VPS, which is a different blocker.
+
+Note what the verdict column still says for each: the rows above have instruments and remain
+BLOCKED or UNKNOWN. `test_certification_gate.py` rejects a suite path offered as evidence for
+a PASS, so building these could not move a verdict even by accident -- only a run can.
 
 ## Owner-side actions, in dependency order
 
