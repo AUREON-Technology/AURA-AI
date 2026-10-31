@@ -138,3 +138,52 @@ class TestDeployPreflight:
                         f"{workflow} preflight uses ${var} outside an emptiness test: "
                         f"...{context}..."
                     )
+
+
+def _triggers(spec: dict) -> dict:
+    # PyYAML (YAML 1.1) reads a bare `on:` key as the boolean True.
+    on = spec.get("on", spec.get(True)) or {}
+    if isinstance(on, str):
+        return {on: None}
+    if isinstance(on, list):
+        return {name: None for name in on}
+    return on
+
+
+def _workflow_run_workflows() -> list[Path]:
+    return [
+        path
+        for path in _workflow_files()
+        if "workflow_run" in _triggers(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
+    ]
+
+
+class TestWorkflowRunTrust:
+    """A `workflow_run` job runs only for a push to main in this repository (F-38 / SEC-11).
+
+    `workflow_run.branches: [main]` matches the head branch *name*. A pull request from a fork
+    whose branch is called `main` matches it, its Backend CI run completes, and the triggered
+    workflow then runs in the base repository -- with the production environment and its
+    secrets. The event, the branch and the head repository all have to be checked.
+    """
+
+    _REQUIRED = (
+        "github.event.workflow_run.event == 'push'",
+        "github.event.workflow_run.head_branch == 'main'",
+        "github.event.workflow_run.head_repository.full_name == github.repository",
+    )
+
+    def test_the_deploy_workflows_are_the_ones_checked(self) -> None:
+        names = {path.name for path in _workflow_run_workflows()}
+        assert {"deploy-backend.yml", "control-plane-deploy.yml"} <= names
+
+    @pytest.mark.parametrize("path", _workflow_run_workflows(), ids=_ids)
+    def test_every_job_requires_a_trusted_push(self, path: Path) -> None:
+        spec = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for name, job in (spec.get("jobs") or {}).items():
+            condition = " ".join(str(job.get("if", "")).split())
+            missing = [check for check in self._REQUIRED if check not in condition]
+            assert not missing, (
+                f"{path.name}:{name} can be started by a workflow_run that is not a push to "
+                f"main in this repository; its `if:` lacks {missing}."
+            )
