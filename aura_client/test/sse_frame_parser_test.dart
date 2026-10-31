@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:aura_client/core/ai/online_agents/sse_agent_client.dart';
+import 'package:aura_client/features/chat/data/turn_meta.dart';
 
 List<SseChatEvent> feedAll(List<String> chunks) {
   final parser = SseFrameParser();
@@ -140,6 +141,18 @@ void main() {
         'event: done\ndata: {"turn_id":"t-2","needs_confirmation":[]}\n\n',
       ]);
       expect(events[0].turnMeta!.needsConfirmation, isFalse);
+    });
+
+    test('TurnMeta.encode/decode round-trips needsConfirmation through local persistence', () {
+      // TurnMeta.encode (used to persist Message.turnMetaJson) writes needsConfirmation back
+      // out as a plain bool, not the wire's list-of-tool-names shape -- decode must accept
+      // both or a cached message silently loses a pending confirmation on reload.
+      const meta = TurnMeta(needsConfirmation: true);
+      final decoded = TurnMeta.decode(meta.encode());
+      expect(decoded.needsConfirmation, isTrue);
+
+      const clearMeta = TurnMeta(needsConfirmation: false);
+      expect(TurnMeta.decode(clearMeta.encode()).needsConfirmation, isFalse);
     });
 
     test('step frame carries a label', () {
