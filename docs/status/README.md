@@ -31,9 +31,10 @@ uses the strongest evidence that exists:
   `preDeployCommand` in a shell, so the inline `echo … && alembic upgrade head && …` ran only the
   echo (the deploy log shows `MIGRATION START` then `Starting Container` 0.19 s later) and still
   passed. `railway.json` now calls `scripts/railway-predeploy.sh`, BUILT and TESTED against a
-  stand-in `alembic`. **But Railway does not read `railway.json` for this service** (no config
-  file linked; verified 2026-10-31). Its dashboard still holds the old inline command, so no
-  deploy migrates until the owner changes that setting (BACKEND_STATUS.md, Open issues 1). *Was (2026-10-28):* live at
+  stand-in `alembic`. Railway ignores `railway.json` for this service (no config file linked), so on
+  2026-10-31 the owner set the same command in the dashboard. Seen running on a live deploy
+  (deploy `4afdd9a8` at `9bfaa22`, 2026-10-31 08:40 UTC): `MIGRATION OK` at `0016 (head)`. Applying an actual pending revision is still
+  unobserved (BACKEND_STATUS.md, Open issues 1). *Was (2026-10-28):* live at
   `2337577` with schema `0013` against an expected `0015`.
 - **CI has not executed since ~19:50 UTC on 2026-10-28.** Every job of every workflow on `main`
   for #187, #185, #188 and #143 (Backend CI #392–#397, Client CI #150–#151, Host Daemon CI #60,
