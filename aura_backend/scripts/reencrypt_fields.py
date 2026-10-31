@@ -10,8 +10,11 @@ Seals every row the current data key would store differently:
   rows still sealed under an older one. Run this, confirm it reports nothing left, and only then
   drop the old key.
 
-Covers ``aura_memories.content`` and ``aura_personal_os_records.fields``, for every owner.
-Server-side encryption at rest, not end-to-end: see ``aura_core/adapters/field_crypto.py``.
+Covers ``aura_memories.content``, ``aura_personal_os_records.fields`` and -- since ADR-032 --
+``aura_user_data_keys.wrapped_key`` (each user's data key, wrapped by these same keys), for every
+owner. Re-wrapping a data key changes only its wrapping: the ``gcm2`` ciphertext in the synced
+tables is sealed with the data key itself and is untouched. Server-side encryption at rest, not
+end-to-end: see ``aura_core/adapters/field_crypto.py``.
 
 Properties:
 
@@ -179,6 +182,60 @@ async def _reencrypt_personal_os(
     return report
 
 
+async def _rewrap_user_data_keys(
+    pool: Any, cipher: Any, *, batch: int, dry_run: bool
+) -> TableReport:
+    """Re-wrap each user's data key (ADR-032) under the primary KEK. Never prints a key."""
+    from aura_core.adapters.field_crypto import ENVELOPE_PREFIX
+    from aura_core.adapters.user_data_keys import DataKeyWrapper
+    from aura_core.domain.errors import AuraError
+
+    report = TableReport("aura_user_data_keys")
+    wrapper = DataKeyWrapper(cipher)
+    current = f"{ENVELOPE_PREFIX}{cipher.primary_key_id}:%"
+    last = ("", "")
+    async with pool.acquire() as conn:
+        if not await _table_exists(conn, "aura_user_data_keys"):
+            return report
+        while True:
+            rows = await conn.fetch(
+                "SELECT owner_id, kid, wrapped_key FROM aura_user_data_keys "
+                "WHERE (owner_id, kid) > ($1, $2) AND wrapped_key NOT LIKE $3 "
+                "ORDER BY owner_id, kid LIMIT $4",
+                last[0], last[1], current, batch,
+            )
+            if not rows:
+                break
+            last = (rows[-1]["owner_id"], rows[-1]["kid"])
+            async with conn.transaction():
+                for row in rows:
+                    report.examined += 1
+                    label = f"{row['owner_id']}/{row['kid']}"
+                    stored = row["wrapped_key"]
+                    try:
+                        key = wrapper.unwrap(row["owner_id"], row["kid"], stored)
+                    except AuraError:
+                        report.failed_ids.append(label)
+                        continue
+                    if cipher.is_encrypted(stored):
+                        report.rotated += 1
+                    else:
+                        report.plaintext += 1
+                    if dry_run:
+                        continue
+                    status = await conn.execute(
+                        "UPDATE aura_user_data_keys SET wrapped_key = $1, kek_id = $2 "
+                        "WHERE owner_id = $3 AND kid = $4 AND wrapped_key = $5",
+                        wrapper.wrap(row["owner_id"], row["kid"], key), cipher.primary_key_id,
+                        row["owner_id"], row["kid"], stored,
+                    )
+                    if status.endswith(" 1"):
+                        report.written += 1
+                    else:
+                        report.raced += 1
+    return report
+
+
 async def run(*, dry_run: bool, batch: int, tables: str, database_url: str | None = None) -> int:
     from aura_core.adapters.postgres_store import PostgresPool
     from aura_core.config.settings import load_settings
@@ -201,6 +258,8 @@ async def run(*, dry_run: bool, batch: int, tables: str, database_url: str | Non
             reports.append(await _reencrypt_memories(pg, cipher, batch=batch, dry_run=dry_run))
         if tables in ("all", "personal_os"):
             reports.append(await _reencrypt_personal_os(pg, cipher, batch=batch, dry_run=dry_run))
+        if tables in ("all", "user_data_keys"):
+            reports.append(await _rewrap_user_data_keys(pg, cipher, batch=batch, dry_run=dry_run))
     finally:
         await pool.close()
 
@@ -218,7 +277,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true",
                         help="decrypt and count candidate rows, write nothing")
     parser.add_argument("--batch-size", type=int, default=500)
-    parser.add_argument("--tables", choices=("all", "memories", "personal_os"), default="all")
+    parser.add_argument(
+        "--tables", choices=("all", "memories", "personal_os", "user_data_keys"), default="all"
+    )
     parser.add_argument("--database-url", default=None,
                         help="override AURA_DATABASE_URL (default: the configured one)")
     args = parser.parse_args(argv)

@@ -29,6 +29,7 @@ from ..domain.knowledge import (
 from ..domain.memory import MemoryKind, MemoryRecord
 from ..domain.outbox import OutboxEntry
 from ..domain.personal_os import PersonalOsRecord, RecordKind
+from ..domain.user_keys import UserKeyring
 
 __all__ = [
     "GLOBAL_OWNER",
@@ -37,6 +38,7 @@ __all__ = [
     "DocumentStore",
     "MemoryStore",
     "PersonalOsStore",
+    "UserDataKeyStore",
     "GraphStore",
     "Cache",
     "GoalsPort",
@@ -288,15 +290,22 @@ class MemoryStore(Protocol):
 
 @runtime_checkable
 class PersonalOsStore(Protocol):
-    """Persistence for server-authored :class:`PersonalOsRecord` rows (Phase C2).
+    """Persistence for the user's personal-OS records: tasks, calendar events, finance and
+    health records (Phase C2; ADR-032).
 
-    Deliberately one port for all four kinds (task, calendar event, finance record, health
-    record) rather than four: they differ in ``fields``, not in how they are stored, listed, or
-    torn down, and a caller filters by ``kind`` the same way it filters :class:`MemoryStore` by
-    :class:`MemoryKind`.
+    Deliberately one port for all four kinds rather than four: they differ in ``fields``, not in
+    how they are stored, listed, or torn down, and a caller filters by ``kind`` the same way it
+    filters :class:`MemoryStore` by :class:`MemoryKind`.
+
+    In production this is the app's own synced tables (``PostgresSyncedPersonalOsStore``), so a
+    record written here reaches the user's devices on their next sync and the agent sees what the
+    user created in the app.
     """
 
-    async def put(self, record: PersonalOsRecord) -> None:
+    async def put(self, record: PersonalOsRecord) -> PersonalOsRecord | None:
+        """Store a new record. May return the record as stored when it differs from the one
+        given -- e.g. a health record merged onto that day's existing row, under that row's id.
+        ``None`` means it was stored as given."""
         ...
 
     async def get(self, record_id: PersonalOsRecordId, *, owner_id: UserId) -> PersonalOsRecord | None:
@@ -311,6 +320,22 @@ class PersonalOsStore(Protocol):
         ...
 
     async def delete(self, record_id: PersonalOsRecordId, *, owner_id: UserId) -> bool:
+        ...
+
+
+@runtime_checkable
+class UserDataKeyStore(Protocol):
+    """Per-user data keys (ADR-032): generated server-side, stored only wrapped by the server's
+    key-encryption key, and handed to the user's own devices so they and the server encrypt the
+    synced personal-OS fields with the same key."""
+
+    async def keyring(self, owner_id: UserId, *, create: bool = True) -> UserKeyring | None:
+        """The owner's keys, unwrapped. With ``create`` a first primary key is generated when the
+        owner has none; without it, ``None`` is returned instead."""
+        ...
+
+    async def rotate(self, owner_id: UserId) -> UserKeyring:
+        """Demote the current primary key to decrypt-only and make a new primary, atomically."""
         ...
 
 

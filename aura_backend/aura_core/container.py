@@ -150,6 +150,8 @@ class Container:
         self.vectors = self._build_vector_store()
         self.documents = self._build_document_store()
         self.memory_store = self._build_memory_store()
+        # ADR-032: per-user data keys for the synced personal-OS fields.
+        self.user_data_keys = self._build_user_data_keys()
         self.personal_os_store = self._build_personal_os_store()
         self.engineer_runs = self._build_engineer_run_store()
         # GAP-024: the same store, under the name of the port it now fully implements
@@ -931,6 +933,24 @@ class Container:
         if backend != "memory":
             raise ConfigurationError(f"unknown memory backend {backend!r}")
         return InMemoryMemoryStore()
+
+    def _build_user_data_keys(self) -> Any:
+        """The `UserDataKeyStore` (ADR-032): per-user data keys wrapped by the field cipher's
+        keys (`AURA_DATA_ENCRYPTION_KEYS`), so they rotate with it."""
+        backend = self.settings.infrastructure.memory_backend
+        if backend == "postgres":
+            from .adapters.postgres_user_data_keys import PostgresUserDataKeyStore
+
+            return PostgresUserDataKeyStore(
+                self.settings.infrastructure.database_url,
+                pool=self._postgres_pool(),
+                cipher=self._field_cipher(),
+            )
+        if backend != "memory":
+            raise ConfigurationError(f"unknown memory backend {backend!r}")
+        from .adapters.user_data_keys import InMemoryUserDataKeyStore
+
+        return InMemoryUserDataKeyStore()
 
     def _build_personal_os_store(self) -> Any:
         backend = self.settings.infrastructure.memory_backend
