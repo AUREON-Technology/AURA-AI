@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from celery.signals import worker_process_shutdown, worker_shutdown
 from celery_app import celery_app
 from config import settings
 from services.rag import rag_service
@@ -268,6 +269,40 @@ async def _ensure_worker_container():
         await _worker_container.startup()
         _worker_started = True
     return _worker_container
+
+
+@worker_process_shutdown.connect
+@worker_shutdown.connect
+def _shutdown_worker_container(**_: object) -> None:
+    """Close this process's container -- its asyncpg pool, Redis, Qdrant and provider clients --
+    before the process exits (R2.7).
+
+    ``worker_process_shutdown`` fires in each prefork child as it exits, which with
+    ``--max-tasks-per-child`` is routinely, not only at deploy time; ``worker_shutdown`` covers a
+    solo/threads pool, where tasks run in the main process. Before this, every recycled child left
+    its Postgres connections for the server to time out.
+
+    The close runs on the worker loop, not a fresh one: the pool is bound to the loop it was
+    created on, and asyncpg refuses to operate it from another. A process that never ran a
+    container-backed task builds nothing here. Never raises -- a signal handler that throws would
+    only turn a clean exit into a noisy one.
+    """
+    global _worker_container, _worker_started, _worker_loop
+    container, _worker_container = _worker_container, None
+    _worker_started = False
+    if container is None:
+        return
+    try:
+        _run_async(container.shutdown())
+    except Exception:  # noqa: BLE001 -- see the docstring
+        logger.exception("worker container shutdown failed")
+    loop, _worker_loop = _worker_loop, None
+    if loop is not None and not loop.is_closed():
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception:  # noqa: BLE001
+            pass
+        loop.close()
 
 
 async def _memory_owner_ids(container) -> list:

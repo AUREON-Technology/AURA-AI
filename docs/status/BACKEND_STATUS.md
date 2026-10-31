@@ -132,8 +132,17 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
     reused worker loop.
   - Every worker and beat now has a healthcheck (`scripts/celery_healthcheck.py`).
   - Pinned by `tests/unit/test_deploy_robustness.py`.
-  - Not done here: R2.7's `container.shutdown()` closing the PG, Redis and Qdrant clients (in
-    `aura_core/`, outside this change), and the R2.7 drill report.
+  - Not done here: the R2.7 drill report.
+  - Follow-up (R2.7, built and tested locally, not CI-run): `Container.shutdown()` now closes
+    what the container actually connected: the shared asyncpg pool (terminated if a graceful
+    close outlasts its budget), Redis, Qdrant, each provider's httpx client, the Docker client,
+    and the GitHub and MCP clients. It never builds a client in order to close it. Closes run
+    concurrently, each bounded by 5 s, so the whole shutdown fits the 15 s lifespan margin. One
+    failing or hanging close is logged and the rest still run, and a second call does nothing.
+    The gateway lifespan calls it after uvicorn's drain, and each Celery worker process calls it
+    on exit (`worker_process_shutdown`/`worker_shutdown`), on its own event loop. Pinned by
+    `tests/unit/test_container_shutdown.py`. The legacy SQLAlchemy engine
+    (`infrastructure/db/base.py`) is outside the container and is still not disposed.
 
 **Still open (High)**
 - F-22 and F-27 are built and tested locally, not CI-run:

@@ -31,6 +31,7 @@ __all__ = [
     "TelemetrySink",
     "RateLimiter",
     "RateLimitDecision",
+    "Closeable",
 ]
 
 
@@ -135,6 +136,21 @@ class EventBus(Protocol):
         audit logging must not be able to fail a user's request.
         """
         ...
+
+
+@runtime_checkable
+class Closeable(Protocol):
+    """An adapter that holds a connection, pool or client and can release it.
+
+    Optional on purpose, and separate from the storage and cache ports: an in-memory adapter has
+    nothing to release, and making every port demand a no-op ``close`` would only invite adapters
+    that pretend. The composition root closes whatever satisfies this at shutdown (R2.7).
+
+    ``close`` must be idempotent and must not connect: an adapter that never built its client
+    returns at once rather than building one to close it.
+    """
+
+    async def close(self) -> None: ...
 
 
 @runtime_checkable

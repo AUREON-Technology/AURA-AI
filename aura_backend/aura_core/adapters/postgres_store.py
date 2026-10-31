@@ -240,11 +240,28 @@ class PostgresPool:
         except Exception as exc:
             raise _unavailable(f"could not create the v3 schema: {exc}") from exc
 
-    async def close(self) -> None:
-        if self._pool is not None:
-            await self._pool.close()
-            self._pool = None
-            self._schema_ready = False
+    async def close(self, *, timeout_s: float | None = None) -> None:
+        """Release the pool. Safe to call when it was never created, and a second time.
+
+        asyncpg's ``Pool.close()`` waits for every acquired connection to be released. With
+        ``timeout_s`` that wait is bounded, and a connection still busy afterwards -- a query
+        outliving the shutdown drain -- is terminated instead, because a shutdown that never
+        ends gets SIGKILLed and then nothing is closed cleanly.
+        """
+        pool, self._pool = self._pool, None
+        self._schema_ready = False
+        if pool is None:
+            return
+        if timeout_s is None:
+            await pool.close()
+            return
+        try:
+            await asyncio.wait_for(pool.close(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "postgres pool did not close within %.1fs; terminating its connections", timeout_s
+            )
+            pool.terminate()
 
     async def ping(self) -> bool:
         try:
