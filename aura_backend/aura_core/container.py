@@ -1630,22 +1630,68 @@ class Container:
             except Exception:  # pragma: no cover - defensive; sync() already swallows store errors
                 logger.exception("blueprint sync failed")
 
-    async def shutdown(self) -> None:
+    async def shutdown(self, *, timeout_s: float = 10.0, per_resource_timeout_s: float = 5.0) -> None:
+        """Release every network resource the container wired, once, within a bounded time.
+
+        F-25 (R2.7): this used to close the providers, the embedder and the GitHub/MCP clients
+        but never the Postgres pool, the Redis client or the Qdrant client -- so a worker restart
+        left their sockets for the server to time out -- and any one ``close()`` raising skipped
+        everything after it. Now each resource closes in its own ``try`` under its own timeout,
+        a failure or a hang is logged and the rest still run, and the whole is capped at
+        ``timeout_s`` so lifespan shutdown fits inside the margin uvicorn leaves before SIGKILL
+        (``tests/unit/test_deploy_robustness.py``: 15 s). Each resource still gets a short floor
+        once the budget is spent, because an already-closed or never-connected adapter returns
+        immediately and skipping it would only leak what could have been released.
+
+        Idempotent: a second call (lifespan plus an explicit call in a test, say) is a no-op.
+        """
+        import inspect
+
+        if getattr(self, "_shutdown_started", False):
+            return
+        self._shutdown_started = True
+
         if self._blueprint_sync_task is not None:
             self._blueprint_sync_task.cancel()
-        await self.router.close()
-        close = getattr(self.embedder, "close", None)
-        if close is not None:
-            await close()
-        if self.github_client is not None:
-            await self.github_client.close()
-        for client in self._github_clients_by_user.values():
-            await client.close()
-        if self.mcp_client is not None:
-            await self.mcp_client.close()
+
+        resources: list[tuple[str, Any]] = [
+            ("router", self.router),  # closes every provider's httpx client
+            ("embedder", self.embedder),
+            ("github_client", self.github_client),
+            *((f"github_client[{uid}]", c) for uid, c in self._github_clients_by_user.items()),
+            ("mcp_client", self.mcp_client),
+            ("cache", self.cache_backend),  # RedisCache: the Redis connection pool
+            ("vectors", self.vectors),  # QdrantVectorStore: the Qdrant client
+            # Last: the stores above may still be flushing through it. Document/memory/... stores
+            # share this one pool, so closing it here releases all of them.
+            ("postgres_pool", self._pg_pool),
+        ]
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        seen: set[int] = set()
+        for name, resource in resources:
+            if resource is None or id(resource) in seen:
+                continue
+            seen.add(id(resource))
+            close = getattr(resource, "close", None) or getattr(resource, "aclose", None)
+            if close is None:
+                continue
+            budget = max(0.25, min(per_resource_timeout_s, deadline - loop.time()))
+            try:
+                result = close()
+                if inspect.isawaitable(result):
+                    await asyncio.wait_for(result, timeout=budget)
+            except asyncio.TimeoutError:
+                logger.warning("shutdown: closing %s timed out after %.2fs", name, budget)
+            except Exception:
+                logger.warning("shutdown: closing %s failed", name, exc_info=True)
+
         mark_dead = getattr(self.metrics, "mark_process_dead", None)
         if mark_dead is not None:
-            mark_dead()
+            try:
+                mark_dead()
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("shutdown: mark_process_dead failed", exc_info=True)
         logger.info("container shutdown complete")
 
     def postgres_pool(self) -> Any:

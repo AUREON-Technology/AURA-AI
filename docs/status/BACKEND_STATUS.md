@@ -40,7 +40,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 | --- | --- | --- |
 | Backend CI gate (test, pip-audit, docker-build) | PROVEN at `dc87beb`; **not executing since** | GAP-043; run 40719101969 green on `dc87beb`; runs #392–#397 died in 2–4 s with no runner (CB-44) |
 | CI hygiene (F-37, 2026-10-30) | BUILT, not CI-run (CB-44) | Every third-party action pinned to a commit SHA; `concurrency` + `timeout-minutes` on the CI workflows; `--cov-fail-under=82` (83.4% measured locally); a `postgres` job running `tests/load/*_postgres.py` against a `postgres:16` service (not run locally: no Docker daemon); `repo-hygiene.yml` (pinned actionlint + tracked-artefact guard, every PR). actionlint 1.7.12 with shellcheck is clean locally. `tests/unit/test_repo_hygiene.py` pins all of it |
-| Hexagonal layering fitness tests | TESTED | `tests/architecture/`; F-28: narrower than CLAUDE.md claims (misses absolute and vendor-SDK imports) |
+| Hexagonal layering fitness tests | TESTED | `tests/architecture/test_dependency_rules.py`; F-28 fixed 2026-10-31 (not CI-run): every `aura_core` package, relative and absolute imports, vendor-SDK denylist at module scope, self-tests. One allowlisted debt: `engineering2` → `adapters.coding_fakes` |
 | Self-hosting invariant / ADR-030 host categories | TESTED | `tests/architecture/test_no_external_inference.py` |
 | AIKernel plan → execute → generate | TESTED (scripted/echo providers) | GAP-021 open; F-24/CB-14 built (not CI-run): a planner failure is now a degraded turn with a reason, and the stream path records telemetry |
 | Email/issue analysis off the event loop (F-23) | BUILT, tested locally, not CI-run | `/api/v3/automation/*` goes through `ProviderRouter` (awaited, admitted, local-only since unclassified) and returns 503 on failure instead of a 200 placeholder; the rate limiter's Redis `INCR` runs in the threadpool; the shared Redis client has a 2 s command timeout |
@@ -154,8 +154,10 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
     reused worker loop.
   - Every worker and beat now has a healthcheck (`scripts/celery_healthcheck.py`).
   - Pinned by `tests/unit/test_deploy_robustness.py`.
-  - Not done here: R2.7's `container.shutdown()` closing the PG, Redis and Qdrant clients (in
-    `aura_core/`, outside this change), and the R2.7 drill report.
+  - `container.shutdown()` (2026-10-31) now also closes the Postgres pool, the Redis client and
+    the Qdrant client, each in its own `try` under a per-resource timeout inside a 10 s overall
+    budget, and is idempotent (`tests/unit/test_container_shutdown.py`). Not done: the R2.7
+    drill report.
 
 - F-16 memory write races (built, tested locally, not CI-run).
   - Recall reinforcement no longer rewrites whole rows. It used to call `store.update(record.touched())`
@@ -238,7 +240,33 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
   - F-27: migration `0016` baselines the 16 runtime-only tables.
 - **GAP-011, GAP-041 (P0):** inference is single-slot and no load matrix exists.
 
-**Medium:** F-28 and F-38 open. F-14, F-16, F-17, F-18 (ADR-032), F-23–F-26, F-30 and F-33–F-37 are built and tested locally, not CI-run or proven.
+- F-28 and F-38 code items (2026-10-31; built and tested locally, not CI-run):
+  - F-28: the layering fitness test walks every `aura_core` package and resolves relative and
+    absolute imports. It enforces domain/ports → stdlib, engines never → adapters/api/container,
+    and no vendor SDK at module scope anywhere. One existing violation is allowlisted with a
+    reason: dead `engineering2` defaults to `adapters.coding_fakes` (delete with F-29).
+  - F-38/SEC-10: `requirements.lock` is hashed and compiled with uv `--torch-backend cpu` instead
+    of `--extra-index-url … --index-strategy unsafe-best-match`. Pins are unchanged except
+    pyasn1 0.6.5 and pypdf 6.21.4, bumped for advisories pip-audit reports against the old
+    pins. Dev and training deps install from new hashed `requirements-dev.lock` and
+    `requirements-train.lock`. Every install passes `--require-hashes` plus the PyTorch CPU index.
+    The new command is `pip install --require-hashes --extra-index-url
+    https://download.pytorch.org/whl/cpu -r requirements.lock -r requirements-dev.lock`; the
+    old two-file command now fails, because pip's hash mode covers every file in the call.
+    Verified: a fresh Python 3.11 venv on pip 24.0, and the Dockerfile's install lines in
+    `python:3.11-slim` with training deps.
+  - SEC-11: `deploy-backend.yml` and `control-plane-deploy.yml` jobs require
+    `workflow_run.event == 'push'`, `head_branch == 'main'` and a head repository equal to this
+    one. SEC-13: checkpoints load with `weights_only=True`. SEC-14: the secret scan covers every
+    tracked text file in the client, backend, admin, hostd, deploy, workflows, scripts and docs.
+    Its one hit is the public Firebase Android `api_key`, which is allowlisted.
+  - Pinned by `tests/architecture/test_supply_chain.py`. SEC-08 is still open: it needs the
+    Firebase console check.
+
+**Medium:** F-16–F-18, F-23, F-24, F-26, F-33–F-38. F-25, F-28, F-30 and the F-38 code items
+are built (above), not proven.
+
+**Medium:** F-14, F-16, F-17, F-18 (ADR-032), F-23–F-26, F-28, F-30 and F-33–F-37, plus F-38's code items, are built and tested locally, not CI-run or proven. SEC-08 (part of F-38) needs the Firebase console check.
 
 **Conditional:** SEC-08 / F-38 becomes Critical if Firebase email/password sign-in is enabled.
 That needs a check in the Firebase console.
