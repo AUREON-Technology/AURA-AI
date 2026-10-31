@@ -54,9 +54,13 @@ of two Postgres tables: `aura_memories.content` and `aura_personal_os_records.fi
 **not end-to-end encryption**: the gateway and workers hold the key and decrypt on every read,
 because recall and the personal-OS tools must hand these values to the model. What it protects
 against is exposure of the *database* — a dump, a backup file, a copied volume, a read-only SQL
-credential — not a compromised application server. The legacy zero-knowledge tables
-(`tasks`/`calendar_events`/`finance_records`/`health_records`, client-encrypted, server has no key)
-are untouched.
+credential — not a compromised application server. The synced tables
+(`tasks`/`calendar_events`/`finance_records`/`health_records`/...) are not covered by this
+encryption. They used to be zero-knowledge, encrypted on the client with a key the server never
+had. That ended with ADR-032: their `*_enc` fields are now AES-GCM under a per-user data key,
+which the server holds wrapped by these same keys. The keys are therefore also the
+key-encryption key for every user's data key, and `scripts/reencrypt_fields.py` re-wraps those
+keys on rotation.
 
 **Mechanism** (`aura_core/adapters/field_crypto.py`). Fernet (AES-128-CBC + HMAC-SHA256) from the
 already-required `cryptography` package, under its own key, separate from

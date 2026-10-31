@@ -1,10 +1,9 @@
 """Postgres implementation of the ``PersonalOsStore`` port (Phase C2).
 
-Its own table, its own schema management, sharing only the connection pool -- the same pattern
-``postgres_graph.py`` already uses for a store that is not documents or memories. See
-``aura_core/domain/personal_os.py`` for why this is a separate table from the legacy
-``tasks``/``calendar_events``/``finance_records``/``health_records`` (zero-knowledge encrypted,
-server has no key) rather than an extension of them.
+**Superseded by ADR-032.** The agent's personal-OS store is now the app's synced tables
+(``postgres_synced_personal_os.py``). This table, ``aura_personal_os_records``, is what the agent
+wrote before; it is still read by ``scripts/move_personal_os_records.py`` (which copies it into
+the synced tables) and cleared by erasure, and nothing else writes it. It is not dropped yet.
 
 **``fields`` is encrypted at rest** (server-side, not end-to-end) when the container passes an
 enabled :class:`~aura_core.adapters.field_crypto.FieldCipher`: the whole mapping is sealed as one

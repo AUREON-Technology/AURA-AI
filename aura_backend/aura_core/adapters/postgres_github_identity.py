@@ -9,8 +9,7 @@ claim, not the table's own UUID primary key.
 
 Unlike those two ports, this one decrypts on read and encrypts on write (``secrets_crypto``) --
 the one place in the codebase a third-party credential is both stored in and read back out of
-Postgres in the clear, rather than living only in an env var or staying zero-knowledge ciphertext
-the server never opens.
+Postgres in the clear, rather than living only in an env var.
 """
 
 from __future__ import annotations

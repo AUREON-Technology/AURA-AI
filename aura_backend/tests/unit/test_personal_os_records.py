@@ -1,5 +1,6 @@
 """Server-side personal-OS CRUD tools (Phase C2): real writes to a real store, not a client-applied
-proposal, kept off the zero-knowledge encrypted legacy tables."""
+proposal. Against the in-memory store here; the production store (the app's synced tables,
+ADR-032) is exercised against a real Postgres by ``test_personal_os_sync_integration.py``."""
 
 from __future__ import annotations
 

@@ -6,9 +6,12 @@ api/v2/sync.py: `WHERE user_id = ? AND sync_txid >= ?`. This single
 generic query replaces V1's five hand-written per-table Firestore
 listeners/LWW comparators.
 
-Text fields suffixed `_enc` store client-encrypted ciphertext as-is (the
-same AES-256-GCM `gcm:<iv>:<ciphertext>` format the Flutter client already
-produces) — the backend never sees plaintext, only stores/returns blobs.
+Text fields suffixed `_enc` store AES-256-GCM ciphertext: `gcm2:<kid>:<iv>:<ct>`
+under the user's data key (ADR-032), or a not-yet-migrated device's legacy
+`gcm:<iv>:<ct>`. The sync endpoint stores and returns them as-is, but this
+is NOT zero-knowledge any more: the server holds each user's data key
+(`aura_user_data_keys`, wrapped by AURA_DATA_ENCRYPTION_KEYS) so the agent's
+personal-OS tools can read and write these rows.
 """
 import uuid
 from datetime import datetime
@@ -235,7 +238,8 @@ class GitHubIdentity(Base):
     ``aura_core/config/settings.py``'s ``GitHubSettings``. Not a :class:`SyncableMixin` table:
     nothing here is client-visible or cursor-synced, it is a server-only OAuth credential.
     ``*_enc`` columns hold ciphertext from ``aura_core/adapters/secrets_crypto.py``'s own key,
-    which the server *does* decrypt on use -- unlike every other ``*_enc`` column in this schema.
+    which the server decrypts on use. The synced tables' ``*_enc`` columns use a different key
+    (each user's data key, ADR-032).
     """
 
     __tablename__ = "github_identities"

@@ -7,6 +7,8 @@ import '../auth/token_manager.dart';
 import '../config/backend_url_provider.dart';
 import '../database/database.dart';
 import '../database/database_provider.dart';
+import '../security/data_key_client.dart';
+import '../security/data_key_migration.dart';
 import '../security/device_validation_service.dart';
 import '../security/encryption_service.dart';
 import 'outbox_ack.dart';
@@ -101,7 +103,32 @@ class SyncClient {
     await RemoteDeletes(_db, _ref, httpClient: _http).flush();
     final pulled = await pull();
     if (!pulled.ok) return pulled;
+    if (await adoptDataKey()) {
+      final repushed = await push();
+      if (!repushed.ok) return repushed;
+    }
     return pushed;
+  }
+
+  /// ADR-032: fetch the account data key when this device lacks it (or met
+  /// a key id it does not know), then move local data off the device key.
+  /// Runs right after a pull, so the re-encrypted rows it queues carry the
+  /// latest server state. Returns true when it queued uploads. Never throws:
+  /// offline, the app simply keeps using the device key and tries again on
+  /// the next sync.
+  Future<bool> adoptDataKey() async {
+    try {
+      if (!EncryptionService.hasDataKey || EncryptionService.sawUnknownDataKey) {
+        final fetched = await DataKeyClient(_ref, httpClient: _http).fetchAndInstall();
+        if (!fetched && !EncryptionService.hasDataKey) return false;
+      }
+      if (!EncryptionService.hasLegacyKey) return false;
+      final report = await DataKeyMigration(_db).run();
+      return report.queued > 0 || report.outboxRewrapped > 0;
+    } catch (e) {
+      debugPrint("[SyncClient] data key migration deferred: ${e.runtimeType}");
+      return false;
+    }
   }
 
   /// Mutations per request: bounds the body under the gateway's size limit,

@@ -4,9 +4,14 @@
 field just before it is written and decrypts it just after it is read, so anyone who obtains a
 database dump, a backup file, or read access to the Postgres volume sees ciphertext -- but the
 running server (and anyone who controls it) reads everything, because it has to: memory recall
-and the personal-OS tools feed these values to the model. The legacy zero-knowledge tables
-(``tasks``/``calendar_events``/``finance_records``/``health_records``) are the only place the
-server holds no key, and this module never touches them.
+and the personal-OS tools feed these values to the model.
+
+Since ADR-032 these keys are also the key-encryption key for each user's data key
+(``user_data_keys.py``, table ``aura_user_data_keys``), which seals the synced tables' ``*_enc``
+fields (``tasks``/``calendar_events``/``finance_records``/``health_records``/...). Those tables
+are therefore server-readable too -- not zero-knowledge -- and whoever holds these keys and a
+database dump can read them. Rotating these keys re-wraps the data keys
+(``scripts/reencrypt_fields.py``); the synced ciphertext itself is untouched.
 
 What is encrypted, and what deliberately is not, is listed in
 ``docs/architecture/004-memory-taxonomy.md`` ("Encryption at rest"); the short version is that

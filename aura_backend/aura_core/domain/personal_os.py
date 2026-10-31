@@ -1,17 +1,15 @@
-"""Server-authored personal-OS records (Phase C2).
+"""Personal-OS records: tasks, calendar events, finance and health records (Phase C2; ADR-032).
 
-Deliberately a *different* store from the legacy ``tasks``/``calendar_events``/``finance_records``/
-``health_records`` tables (``infrastructure/db/models.py``). Those columns are zero-knowledge
-encrypted -- the client holds the only key, and the server is contractually forbidden to read
-them (``aura_client/lib/core/security/encryption_service.dart``). A server-side tool has no key to
-encrypt with, so it cannot write valid ciphertext there; writing plaintext into a column the whole
-architecture promises never contains any would not degrade that guarantee, it would invert it.
+The domain view of one of the user's items as the agent reads and writes it. Since ADR-032 these
+are the app's own synced rows (``tasks``/``calendar_events``/``finance_records``/
+``health_records``, ``infrastructure/db/models.py``): their text fields are encrypted with a
+per-user data key that the user's devices *and the server* hold, so the agent can create, read,
+update and delete the user's real items and the app shows them after its next sync. That ended
+the zero-knowledge property these tables used to have; the threat-model change is recorded in
+``docs/architecture/032-personal-os-single-store.md``.
 
-This module is the alternative: a plain, server-readable table the kernel owns outright, exactly
-like ``aura_memories``/``aura_documents`` already are (``aura_core/adapters/postgres_store.py``).
-A record here is visible to the kernel that wrote it and to server-side tools that read it back;
-it is not (yet) synced to the Flutter client's local database or existing UI -- that needs its own
-endpoint and is named as follow-up work, not implied by this module's existence.
+Before ADR-032 the agent wrote a separate server-only table (``aura_personal_os_records``) the app
+never read; ``scripts/move_personal_os_records.py`` moves those rows across.
 """
 
 from __future__ import annotations

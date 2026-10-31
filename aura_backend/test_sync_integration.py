@@ -162,7 +162,7 @@ class TestSyncApiIntegration(unittest.TestCase):
             self.assertEqual(len(tasks), 1)
             self.assertEqual(tasks[0]["id"], task_id)
             # Round-trips as the exact ciphertext the client sent — the
-            # same zero-knowledge property test_sync_encryption_boundary.py
+            # same pass-through property test_sync_encryption_boundary.py
             # asserts at the unit level, now proven against a real DB too.
             self.assertEqual(tasks[0]["title_enc"], "gcm:fake_iv:fake_ciphertext")
             self.assertIsNone(tasks[0]["deleted_at"])
