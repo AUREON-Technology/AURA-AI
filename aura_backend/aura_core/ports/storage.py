@@ -254,6 +254,27 @@ class MemoryStore(Protocol):
     async def update(self, record: MemoryRecord) -> None:
         ...
 
+    async def touch_many(
+        self,
+        memory_ids: Sequence[MemoryId],
+        *,
+        now: datetime,
+        confidence_floor: float | None = None,
+    ) -> int:
+        """Reinforce records in place, field by field; return how many rows were touched.
+
+        Increments ``access_count``, moves ``last_accessed_at`` forward (never back), and, when
+        ``confidence_floor`` is given, raises ``confidence`` to at least that value (capped at 1).
+        It must not write any other column, and it must skip superseded records.
+
+        This exists because reinforcement used to be ``update(record.touched())`` -- a
+        whole-row write from the snapshot a recall read seconds earlier. A supersede, decay or
+        edit that landed in between was silently undone: a superseded memory came back to life
+        (audit F-16 / AR-06). Each implementation makes this one atomic statement (or one
+        critical section), so it cannot interleave with a concurrent whole-row write.
+        """
+        ...
+
     async def delete(self, memory_id: MemoryId, *, owner_id: UserId) -> bool:
         ...
 

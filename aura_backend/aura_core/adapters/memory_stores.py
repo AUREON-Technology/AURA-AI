@@ -402,6 +402,36 @@ class InMemoryMemoryStore:
         async with self._lock:
             self._records[record.id.value] = record
 
+    async def touch_many(
+        self,
+        memory_ids: Sequence[MemoryId],
+        *,
+        now: datetime,
+        confidence_floor: float | None = None,
+    ) -> int:
+        """Field-level reinforcement against the *current* record, under the store's lock.
+
+        Reads and replaces inside one critical section, so it can never write back a copy
+        older than a concurrent ``update`` -- the race the whole-row path had (AR-06).
+        """
+        touched = 0
+        async with self._lock:
+            for memory_id in dict.fromkeys(m.value for m in memory_ids):
+                current = self._records.get(memory_id)
+                if current is None or current.superseded_by is not None:
+                    continue
+                confidence = current.confidence
+                if confidence_floor is not None:
+                    confidence = min(1.0, max(confidence, confidence_floor))
+                self._records[memory_id] = _dc_replace(
+                    current,
+                    access_count=current.access_count + 1,
+                    last_accessed_at=max(current.last_accessed_at, now),
+                    confidence=confidence,
+                )
+                touched += 1
+        return touched
+
     async def delete(self, memory_id: MemoryId, *, owner_id: UserId) -> bool:
         record = self._records.get(memory_id.value)
         if record is None or record.owner_id != owner_id:

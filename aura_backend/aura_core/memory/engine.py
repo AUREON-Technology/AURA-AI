@@ -25,7 +25,6 @@ are still found -- and still land in ``"shared"``.
 
 from __future__ import annotations
 
-import asyncio
 import time
 from dataclasses import asdict, replace
 from typing import Any, Mapping, Sequence
@@ -135,13 +134,19 @@ class MemoryEngine:
         if duplicate is not None:
             # Restating a fact is reinforcement, not a second fact. Bumping access_count and
             # confidence is what makes repeated preferences outrank one-off mentions.
-            merged = replace(
-                duplicate.touched(now=now),
-                confidence=min(1.0, max(duplicate.confidence, confidence) + 0.05),
-            )
-            await self._store.update(merged)
-            logger.info("memory reinforced", extra={"kind": str(kind), "memory_id": merged.id.value})
-            return merged
+            #
+            # Field-level, not a whole-row write of `duplicate`: that copy was read before the
+            # embedding call, and writing it back would undo a supersede or edit that landed in
+            # between (F-16 / AR-06). If the duplicate was superseded meanwhile, nothing is
+            # touched and the statement is written as a new fact below instead.
+            floor = min(1.0, max(duplicate.confidence, confidence) + 0.05)
+            if await self._store.touch_many([duplicate.id], now=now, confidence_floor=floor):
+                current = await self._store.get(duplicate.id)
+                merged = current or replace(duplicate.touched(now=now), confidence=floor)
+                logger.info(
+                    "memory reinforced", extra={"kind": str(kind), "memory_id": merged.id.value}
+                )
+                return merged
 
         record = MemoryRecord(
             id=MemoryId.new(),
@@ -318,7 +323,11 @@ class MemoryEngine:
         if not records:
             return
         try:
-            await asyncio.gather(*(self._store.update(r.touched(now=now)) for r in records))
+            # One field-level statement for the whole batch. The old path was N parallel
+            # whole-row UPSERTs of the records as this recall had read them, which could revert a
+            # concurrent supersede (resurrecting the memory), undo decay, and lose concurrent
+            # access_count increments (F-16 / AR-06).
+            await self._store.touch_many([r.id for r in records], now=now)
         except Exception:
             # Reinforcement is bookkeeping. Failing it must not fail the recall it accompanies.
             logger.debug("memory reinforcement failed", exc_info=True)

@@ -849,6 +849,46 @@ class PostgresMemoryStore:
         """
         await self.put(record)
 
+    # Field-level on purpose: never `content`, `superseded_by`, `expires_at` or `metadata`.
+    # Reinforcement used to go through `update` -- the full UPSERT above, from the snapshot the
+    # recall had read -- so a supersede that committed in between was reverted to NULL and the
+    # memory came back (AR-06). One statement, one row lock per id: it serialises with a
+    # concurrent supersede instead of overwriting it, and `superseded_by IS NULL` is re-checked
+    # against the row as it is *after* that supersede commits (READ COMMITTED re-evaluation).
+    _TOUCH = """
+        UPDATE aura_memories SET
+            access_count = access_count + 1,
+            last_accessed_at = GREATEST(last_accessed_at, $2),
+            confidence = CASE
+                WHEN $3::double precision IS NULL THEN confidence
+                ELSE LEAST(1.0, GREATEST(confidence, $3::double precision))
+            END
+        WHERE id = ANY($1::text[]) AND superseded_by IS NULL
+    """
+
+    async def touch_many(
+        self,
+        memory_ids: Sequence[MemoryId],
+        *,
+        now: datetime,
+        confidence_floor: float | None = None,
+    ) -> int:
+        """Atomic reinforcement: one ``UPDATE`` for every id, no read, no re-encryption."""
+        wanted = list(dict.fromkeys(mid.value for mid in memory_ids))
+        if not wanted:
+            return 0
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                status = await conn.execute(self._TOUCH, wanted, now, confidence_floor)
+        except Exception as exc:
+            raise _unavailable(f"could not reinforce memories: {exc}") from exc
+        # asyncpg returns the command tag, e.g. "UPDATE 3".
+        try:
+            return int(str(status).rsplit(" ", 1)[-1])
+        except ValueError:
+            return 0
+
     async def get(self, memory_id: MemoryId) -> MemoryRecord | None:
         pool = await self._pool._get_pool()
         try:

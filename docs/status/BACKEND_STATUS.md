@@ -51,7 +51,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 | Hosted open-weight inference, ADR-030 Phases 1–5 | TESTED | GAP-064; inert unless `AURA_ALLOW_HOSTED_INFERENCE=true` |
 | ADR-030 Phase 6, live | BUILT (`built_not_proven`) | In-process run against live OpenRouter (`nvidia/nemotron-3-ultra-550b-a55b:free`, `ALLOW_PROMPT_TRAINING=true`): 9/10 checks pass, the 429 burst was skipped (`docs/reports/phase-6-hosted-inference-openrouter-inprocess-20261028.txt`). The Verify Hosted Inference workflow has never run. |
 | Hybrid retrieval / knowledge | TESTED (hash embedder) | A3 recall@5 0.65; F-14 fixed: drop-on-read in `c415a52`; the cross-worker change feed and active-only `chunks_for` are in the `fix(retrieval)` F-14 commit (tested on real Postgres and Redis, not CI-run); F-30 built and benchmarked locally, not CI-run: the threshold no longer passes a rank pseudo-score, and the owner-sharded inverted BM25 brings the lexical stage at 50k chunks from 54.7 to 4.8 ms p50, with identical scores (`docs/reports/LEXICAL_RETRIEVAL_BENCHMARK.md`; the 200k point and Postgres FTS are open) |
-| Memory engine | TESTED | F-15 fixed (`19244e6`); F-16 write races open |
+| Memory engine | TESTED | F-15 fixed (`19244e6`); F-16 write races built and tested locally (in-memory + Postgres 16), not CI-run; AR-12 (two memory stores) open, see below |
 | v2 sync protocol | BUILT (fixes merged, not CI-run); **broken live until 0014 applies** | F-11 (`31608f9`), F-12 (`19c64f9`, migration `0014`), F-13 (`c5b1924`), F-07 (`98143ff`) |
 | Auth / RBAC / JWT | BUILT (fixes merged, not CI-run); **at risk live until 0015 applies** | F-02: refresh re-resolves role (`2d42388`) and Access-page assignments now take effect (`3e4e0f5`, migration `0015`); F-03 (`a3fa5c2`: dev keys, `iss`/`aud`); F-10 (`039865e`: no JWT secret → no start in production). Demotion still revokes no sessions. |
 | Security regression suite (P1.5) | TESTED | GAP-048 `built_not_proven` |
@@ -150,6 +150,51 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
   - Not done here: R2.7's `container.shutdown()` closing the PG, Redis and Qdrant clients (in
     `aura_core/`, outside this change), and the R2.7 drill report.
 
+- F-16 memory write races (built, tested locally, not CI-run).
+  - Recall reinforcement no longer rewrites whole rows. It used to call `store.update(record.touched())`
+    from the recall's snapshot: a full UPSERT that put `superseded_by` back to NULL (a superseded
+    memory came back) and lost concurrent `access_count` increments. A new `MemoryStore.touch_many`
+    port method does one field-level `UPDATE … SET access_count = access_count + 1,
+    last_accessed_at = GREATEST(…), confidence = GREATEST(…) WHERE id = ANY($1) AND superseded_by
+    IS NULL` (the in-memory adapter does the same under its lock). It never writes `content`,
+    `superseded_by`, `expires_at` or `metadata`. `remember()`'s near-duplicate reinforcement goes
+    through the same method. If the duplicate was superseded in the meantime, the statement is
+    stored as a new fact.
+  - `EpisodicMemory.append` takes a short per-(owner, session) lease through the shared `Cache`
+    port (`incr` == 1, 15 s TTL). The lease covers only the load-append-save, so it holds across
+    workers. Summarisation runs outside the lease on a snapshot of the oldest messages, then
+    commits with a compare-and-set: the prefix must still be there and the summary unchanged. Only
+    then is the prefix dropped, and messages appended during the model call are kept. One
+    summarisation runs per session at a time (single-flight marker). If the cache cannot count,
+    the append proceeds unprotected rather than failing the turn.
+  - Tests: `tests/unit/test_memory_write_races.py` and `tests/unit/test_session_write_races.py`
+    (both fail on the old code), plus `tests/load/test_memory_touch_postgres.py` against Postgres
+    16. The Postgres test includes a touch that blocks on an uncommitted supersede and re-checks
+    after the supersede commits.
+  - Not addressed: consolidation's decay and supersede writes are still whole-row writes from its
+    own snapshot. They can drop a concurrent reinforcement's increment, but they cannot resurrect
+    anything.
+- **AR-12: two memory stores. Current state (no unification in this change; it needs an ADR).**
+  - `aura_memories` (`MemoryStore`, v3) is the only store the kernel reads. These write to it: the
+    extractor, the `remember` tool, and `POST /api/v3/memory`.
+  - The v2 `memories` table (`SYNCABLE_MODELS`) receives only an encrypted copy, which the client
+    queues in `MemoryRepository.saveMemory` after the v3 POST:
+    - When the POST returns 200, the copy uses the server's `MemoryId` (F-07/F-13), so both rows
+      share one id.
+    - When the POST fails, the copy keeps a client UUID that v3 never sees. The v3 memory is then
+      never created and the save is not retried. That is the remaining id divergence.
+    - Memories the server writes on its own (extractor, tool) never get a `memories` row.
+  - Nothing reads live `memories` rows. A client pull applies only their tombstones
+    (`_applyMemoryTombstones`), which is how a forget reaches other devices. The memory list comes
+    from `GET /api/v3/memory`.
+  - A client delete removes the v3 record by id and queues a sync tombstone. `push_sync` records
+    that tombstone only if the row exists.
+  - User erasure covers both stores: `forget_owner` for `aura_memories`, `users` `ON DELETE
+    CASCADE` for `memories`.
+  - No backend code path writes both stores for the same fact. The only dual write is the client's
+    deliberate encrypted copy. Removing it would also remove the tombstone channel, so that is part
+    of the store decision, not of this fix.
+
 **Still open (High)**
 - F-22 and F-27 are built and tested locally, not CI-run:
   - F-22: one configured LLM deadline, an SSE keep-alive every 15 s, and `/api/v3/chat` given
@@ -157,7 +202,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
   - F-27: migration `0016` baselines the 16 runtime-only tables.
 - **GAP-011, GAP-041 (P0):** inference is single-slot and no load matrix exists.
 
-**Medium:** F-16–F-18, F-23, F-24, F-26, F-28, F-33–F-38. F-25 and F-30 are built (above), not proven.
+**Medium:** F-17 (timezone half), F-18, F-23, F-24, F-26, F-28, F-33–F-38. F-25 and F-30 are built (above), not proven.
 
 **Conditional:** SEC-08 / F-38 becomes Critical if Firebase email/password sign-in is enabled.
 That needs a check in the Firebase console.
