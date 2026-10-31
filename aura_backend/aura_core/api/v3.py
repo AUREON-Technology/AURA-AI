@@ -1180,6 +1180,77 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             raise HTTPException(status_code=404, detail={"error": "not_found"})
         return JSONResponse(content={"deleted": True})
 
+    # -- personal data key (ADR-032) ---------------------------------------------------
+
+    #: Own budget, independent of the general limiter (which may be disabled): a DEK changes
+    #: rarely, and a client fetches it once per install plus once per rotation.
+    data_key_limiter = SlidingWindowRateLimiter(
+        container.cache_backend, policies=(), metrics=getattr(container, "metrics", None)
+    )
+    data_key_headers = {"Cache-Control": "no-store, max-age=0", "Pragma": "no-cache"}
+
+    @router.get("/keys/data")
+    async def personal_data_key(
+        request: Request, caller: Principal = Depends(principal)
+    ) -> JSONResponse:
+        """The caller's own data keys, for encrypting the synced personal-OS fields (ADR-032).
+
+        Always the authenticated subject's keys -- nothing in the request can name another user.
+        Never cached (``no-store``), never logged (only the key ids reach the audit log), refused
+        to service keys, and refused over plain HTTP in staging/production.
+        """
+        if caller.is_service:
+            await audit_service(request, caller, "data_key.denied", "refused", {})
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError("data keys are issued to users only").to_dict(),
+                headers=data_key_headers,
+            )
+        forwarded = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+        if settings.environment.is_production_like and (forwarded or request.url.scheme) == "http":
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "tls_required", "message": "data keys are only served over TLS"},
+                headers=data_key_headers,
+            )
+        decision = await data_key_limiter.check_limit(
+            key=caller.user_id.value, scope="data_key", limit=10
+        )
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=RateLimitedError(
+                    "rate limit exceeded", retry_after=decision.retry_after_s
+                ).to_dict(),
+                headers={**data_key_headers, "Retry-After": str(decision.retry_after_s)},
+            )
+        keyring = await container.user_data_keys.keyring(caller.user_id, create=True)
+        try:
+            await container.audit.record(AuditEvent(
+                action="data_key.read", actor=caller.email or caller.user_id.value,
+                actor_role=caller.role, resource=f"user:{caller.user_id.value}", outcome="ok",
+                correlation_id=request.headers.get("x-correlation-id") or "",
+                source_ip=request.client.host if request.client else None,
+                detail={"kids": [k.kid for k in keyring.keys], "primary": keyring.primary.kid},
+            ))
+        except Exception:
+            logger.warning("data key audit write failed", exc_info=False)
+        return JSONResponse(
+            content={
+                "format": "gcm2",
+                "primary": keyring.primary.kid,
+                "keys": [
+                    {
+                        "kid": k.kid,
+                        "key": base64.b64encode(k.key).decode("ascii"),
+                        "created_at": k.created_at.isoformat(),
+                    }
+                    for k in keyring.keys
+                ],
+            },
+            headers=data_key_headers,
+        )
+
     # -- sessions ----------------------------------------------------------------------
 
     @router.delete("/sessions/{session_id}", dependencies=idempotent)

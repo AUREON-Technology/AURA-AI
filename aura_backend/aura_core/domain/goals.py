@@ -1,10 +1,11 @@
 """Read-only goal snapshot for the context engine and planning tools (Phase D2).
 
-``Goal.title_enc``/``description_enc`` (``infrastructure/db/models.py``) are zero-knowledge
-ciphertext the backend is contractually forbidden to read -- the same constraint that applies to
-every other syncable table. :class:`GoalSnapshot` carries only the columns that table stores in
-plaintext: enough for the kernel to reason about *which* goals exist, how urgent and important
-they are, and how far along they are, without ever seeing what a goal is actually about.
+``Goal.title_enc``/``description_enc`` (``infrastructure/db/models.py``) are ciphertext. Since
+ADR-032 they are sealed with the user's data key, which the server holds, so they are no longer
+zero-knowledge -- but this snapshot was designed before that and still carries only the columns the
+table stores in plaintext: enough for the kernel to reason about *which* goals exist, how urgent
+and important they are, and how far along they are. Reading goal text is not wired (no port
+decrypts it); see ADR-032's residual risks.
 """
 
 from __future__ import annotations

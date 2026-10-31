@@ -260,13 +260,23 @@ async def _erase_core(container, owner: str, conversation_ids: set[str]) -> tupl
             logger.exception("erasure step failed", extra={"step": name})
             failed.append(name)
 
-    async def personal_os():
-        store, removed = container.personal_os_store, 0
+    async def drain(store):
+        removed = 0
         while records := await store.list_for_owner(owner_id, limit=100):
             deleted = [await store.delete(r.id, owner_id=owner_id) for r in records]
             if not any(deleted):
                 raise RuntimeError("personal-OS records could not be deleted")
             removed += sum(deleted)
+        return removed
+
+    async def personal_os():
+        # The synced tables (ADR-032): this tombstones and blanks the ciphertext; the `users`
+        # row's cascade below then removes the rows and the user's data keys outright. The old
+        # server-only table is still cleared until it is dropped.
+        removed = await drain(container.personal_os_store)
+        legacy = getattr(container, "legacy_personal_os_store", None)
+        if legacy is not None:
+            removed += await drain(legacy)
         return removed
 
     async def conversations():

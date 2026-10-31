@@ -2,6 +2,13 @@
 
 **Status:** Proposed · **Date:** 2026-10-01 · **Track:** [AP](../roadmaps/AURA_ADAPTIVE_PLATFORM_ROADMAP.md)
 
+> **Superseded in part by [ADR-032](032-personal-os-single-store.md) (Accepted 2026-10-31).** The
+> synced tables are no longer zero-knowledge. The server holds each user's data key, and the
+> agent's personal-OS tools read and write those tables directly. Decision 3 below therefore
+> rests on a property that no longer exists. Whether those tables may be discovered or indexed
+> is now a policy question, not an encryption boundary, and has to be decided before this ADR is
+> accepted.
+
 ## Context
 
 Personal AURA (tasks, calendar, finance, health, personas, Engineer) is the live product. Keeping

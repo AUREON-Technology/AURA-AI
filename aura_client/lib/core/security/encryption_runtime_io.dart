@@ -22,6 +22,14 @@ Future<void> writeEncryptionBackupKey(String keyB64) async {
   await EncryptionKeyBackup.writeTo(dir, keyB64);
 }
 
+/// Removes the `.aura_db_key` backup once the device key is retired (ADR-032).
+Future<void> deleteEncryptionBackupKey() async {
+  try {
+    final file = EncryptionKeyBackup.fileFor(await EncryptionKeyBackup.supportDirectory());
+    if (await file.exists()) await file.delete();
+  } catch (_) {}
+}
+
 Future<String?> readEncryptionLegacyKey() async {
   try {
     final dir = await EncryptionKeyBackup.supportDirectory();

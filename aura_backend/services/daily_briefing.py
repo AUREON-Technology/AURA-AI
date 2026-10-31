@@ -2,9 +2,10 @@
 
 Same shape as ``services/insights.py`` deliberately -- this *is* an insight (``kind
 ="daily_briefing"``), just generated on a schedule rather than by a rule reacting to the latest
-state. It reads the same legacy tables and respects the same zero-knowledge constraint: task and
-event titles are ``title_enc`` ciphertext this process cannot read, so the briefing only ever
-counts things, never names them. The actual composition (turning counts into the two strings a
+state. It reads the same legacy tables and only ever counts things, never names them: task and
+event titles are ``title_enc`` ciphertext. Since ADR-032 the server holds each user's data key
+and *could* decrypt ``gcm2`` titles, but this module deliberately does not -- a digest of counts
+needs no plaintext, so it stays out of the set of code paths that read user content. The actual composition (turning counts into the two strings a
 client renders) is ``aura_core.triggers.briefing.build_daily_briefing`` -- a pure function, tested
 without a database -- kept in ``aura_core`` because it is genuinely reusable kernel logic, not
 because this module couldn't hold it.

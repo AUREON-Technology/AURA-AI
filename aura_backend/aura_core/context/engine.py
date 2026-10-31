@@ -257,9 +257,10 @@ class ContextEngine:
         """Active goals as persistent facts about the user (Phase D2).
 
         Content is built entirely from :class:`~aura_core.domain.goals.GoalSnapshot`'s plaintext
-        fields -- no title or description, which are zero-knowledge ciphertext this process
-        cannot read (see ``infrastructure/db/models.py``'s ``Goal``). A goal a model cannot name
-        is still worth knowing the shape of: how urgent, how important, how far along.
+        fields -- no title or description. Those are ciphertext under the user's data key
+        (ADR-032), which the server holds, but ``GoalsPort`` does not decrypt them. A goal a
+        model cannot name is still worth knowing the shape of: how urgent, how important, how
+        far along.
         """
         items = []
         for goal in request.goals:

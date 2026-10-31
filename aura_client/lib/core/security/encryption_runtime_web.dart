@@ -19,6 +19,12 @@ Future<void> writeEncryptionBackupKey(String keyB64) async {
   await auraSecureStorage.write(key: _backupKeyName, value: keyB64);
 }
 
+Future<void> deleteEncryptionBackupKey() async {
+  try {
+    await auraSecureStorage.delete(key: _backupKeyName);
+  } catch (_) {}
+}
+
 Future<String?> readEncryptionLegacyKey() async => null;
 
 Future<void> deleteEncryptionLegacyKey() async {}

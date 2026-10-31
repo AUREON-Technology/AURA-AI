@@ -146,20 +146,18 @@ class GenerationId(Identifier):
 
 @dataclass(frozen=True, slots=True)
 class PersonalOsRecordId(Identifier):
-    """A task, calendar event, finance record, or health record the kernel itself wrote
+    """A task, calendar event, finance record, or health record (Phase C2).
 
-    (Phase C2). Deliberately its own id type, not shared with the legacy encrypted tables of the
-    same name: this is a different table with a different visibility contract -- see
-    ``aura_core/domain/personal_os.py``.
+    Since ADR-032 this is the synced row's own UUID, so an id the agent reports is the id the app
+    holds -- see ``aura_core/domain/personal_os.py``.
     """
 
 
 @dataclass(frozen=True, slots=True)
 class EngineerRunId(Identifier):
     """One recorded outcome of an engineer-agent tool call (sandbox or GitHub) -- see
-    ``aura_core/domain/engineering.py``. Its own id type for the same reason
-    :class:`PersonalOsRecordId` is: a different table, a different visibility contract, not to be
-    confused with a `ToolCallId`."""
+    ``aura_core/domain/engineering.py``. Its own id type: a different table with a different
+    visibility contract, not to be confused with a `ToolCallId`."""
 
 
 @dataclass(frozen=True, slots=True)

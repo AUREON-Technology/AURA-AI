@@ -1,11 +1,10 @@
 """The daily briefing (Phase E2): a pure function over counts, same design as Phase D3's tools.
 
-``title_enc``/``description_enc`` on tasks and calendar events are the same zero-knowledge
-ciphertext every other syncable table uses -- the server that composes this briefing cannot read
-what a task or event is *called*, only structured, plaintext facts about it. That is not a
-limitation specific to this function; it is why the existing ``services/insights.py`` rule engine
-also only ever says "3 overdue tasks," never a task's name. This function keeps that constraint
-honest by construction: there is no field here a title could occupy.
+``title_enc``/``description_enc`` on tasks and calendar events are ciphertext. Since ADR-032 the
+server holds the user's data key and *could* read them (the agent's personal-OS tools do), so this
+is no longer a zero-knowledge guarantee -- but the briefing is still built only from structured,
+plaintext facts (counts, dates), as ``services/insights.py``'s rules are: there is no field here a
+title could occupy, so a briefing never repeats an item's text into a notification.
 """
 
 from __future__ import annotations

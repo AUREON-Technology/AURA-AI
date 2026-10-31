@@ -1,13 +1,11 @@
 """Server-authored engineer-agent run records.
 
-Like ``domain/personal_os.py``'s ``PersonalOsRecord``, this is deliberately *not* one of the
-zero-knowledge-encrypted legacy tables (``tasks``/``calendar_events``/...): the server itself is
-the one that learns a PR's URL, a commit's SHA, or a sandbox command's stdout -- there is no
-client key to encrypt with, so a plaintext, server-readable row is the honest shape, not a
-weakening of the client-encrypted tables' guarantee.
+This is deliberately *not* one of the synced, client-encrypted tables
+(``tasks``/``calendar_events``/...): the server itself is the one that learns a PR's URL, a
+commit's SHA, or a sandbox command's stdout, so a plaintext, server-readable row is the honest
+shape.
 
-Unlike ``PersonalOsRecord`` (as of this writing, not yet synced to the client -- see that
-module's docstring), an :class:`EngineerRun` *is* synced: it is the only durable record of what
+An :class:`EngineerRun` *is* synced: it is the only durable record of what
 an engineer-agent tool call did once its sandbox container or GitHub-side state stops being
 directly queryable, so a client history view needs it delivered via the same pull-only sync path
 covered in ``infrastructure/db/models.py``'s ``SYNCABLE_MODELS``.

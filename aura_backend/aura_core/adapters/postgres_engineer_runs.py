@@ -3,8 +3,7 @@ extension that generalises it to every persona's run (GAP-024).
 
 Its own table, its own schema management, sharing only the connection pool -- the same pattern
 ``postgres_personal_os.py`` uses. See ``aura_core/domain/engineering.py`` for why this is a
-plaintext, server-owned table rather than an extension of the zero-knowledge-encrypted legacy
-tables.
+plaintext, server-owned table rather than an extension of the client-encrypted synced tables.
 
 Deliberately its own table (``aura_engineer_runs``), not a row in the v2 ``SYNCABLE_MODELS``
 schema (``infrastructure/db/models.py``): those tables key ``user_id`` to the v2 relational

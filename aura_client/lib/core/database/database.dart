@@ -429,6 +429,8 @@ class AppDatabase extends _$AppDatabase {
       await delete(outboxEntries).go();
       await delete(syncMetadata).go();
     });
+    // The account data key belongs to the account too (ADR-032).
+    await EncryptionService.forgetDataKeys();
   }
 
   /// Watermark for the Notification Center's unread badge -- reuses the
@@ -445,24 +447,34 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
-  /// True when decrypted rows still start with `gcm:`, meaning the current
-  /// key could not unwrap ciphertext (TypeConverter returns the raw blob).
-  Future<bool> _hasUndecryptedCiphertext() async {
+  /// True when this device has lost the key its local rows are sealed with:
+  /// a raw legacy `gcm:` value the device key cannot open.
+  ///
+  /// Reads raw column values, not decrypted ones. It used to flag any row
+  /// whose *decrypted* text still started with `gcm:` -- which is also what a
+  /// row pulled from another device looks like (that device's ciphertext,
+  /// stored inside this device's own readable wrapper), so a second device
+  /// wiped its local data on start (ADR-032). A `gcm2` value whose account
+  /// data key is not on this device yet is not loss either: that key is
+  /// fetched again from the server on the next sync.
+  @visibleForTesting
+  Future<bool> hasUnreadableLocalCiphertext() async {
+    const probes = {
+      'messages': 'content',
+      'tasks': 'title',
+      'projects': 'title',
+      'goals': 'title',
+      'learning_logs': 'prompt',
+    };
     try {
-      final allMessages = await (select(messages)..limit(5)).get();
-      if (allMessages.any((msg) => msg.content.startsWith('gcm:'))) return true;
-
-      final allTasks = await (select(tasks)..limit(5)).get();
-      if (allTasks.any((t) => t.title.startsWith('gcm:'))) return true;
-
-      final allProjects = await (select(projects)..limit(5)).get();
-      if (allProjects.any((p) => p.title.startsWith('gcm:'))) return true;
-
-      final allGoals = await (select(goals)..limit(5)).get();
-      if (allGoals.any((g) => g.title.startsWith('gcm:'))) return true;
-
-      final allLogs = await (select(learningLogs)..limit(5)).get();
-      if (allLogs.any((l) => l.prompt.startsWith('gcm:'))) return true;
+      for (final probe in probes.entries) {
+        final rows = await customSelect(
+          'SELECT ${probe.value} AS v FROM ${probe.key} LIMIT 5',
+        ).get();
+        if (rows.any((r) => EncryptionService.isLocalKeyLoss(r.readNullable<String>('v')))) {
+          return true;
+        }
+      }
     } catch (e) {
       debugPrint("[Database] Integrity check encountered error: $e");
     }
@@ -548,9 +560,9 @@ class AppDatabase extends _$AppDatabase {
         },
         beforeOpen: (details) async {
           // Perform a decryption integrity check (detect key mismatch/loss from backup restore)
-          var needsReset = await _hasUndecryptedCiphertext();
+          var needsReset = await hasUnreadableLocalCiphertext();
           if (needsReset && await EncryptionService.tryRestoreBackupKey()) {
-            needsReset = await _hasUndecryptedCiphertext();
+            needsReset = await hasUnreadableLocalCiphertext();
             if (!needsReset) {
               await EncryptionService.persistCurrentKey();
               debugPrint("[Database] Decryption restored via encryption-key backup. No wipe.");

@@ -241,9 +241,13 @@ class TestMissingKeyPolicy:
         env.setenv("AURA_DATA_ENCRYPTION_KEYS", KEY_NEW)
         container = Container(AuraSettings.from_env())  # lazy: no connection is opened
         assert isinstance(container.memory_store, PostgresMemoryStore)
-        assert isinstance(container.personal_os_store, PostgresPersonalOsStore)
+        # ADR-032: the agent's store is the synced tables, sealed with per-user data keys that
+        # are themselves wrapped by this same cipher; the old table keeps it directly.
+        assert isinstance(container.legacy_personal_os_store, PostgresPersonalOsStore)
         assert container.memory_store._cipher.enabled
-        assert container.memory_store._cipher is container.personal_os_store._cipher
+        assert container.memory_store._cipher is container.legacy_personal_os_store._cipher
+        assert container.user_data_keys._wrapper._cipher is container.memory_store._cipher
+        assert container.personal_os_store._keys is container.user_data_keys
 
 
 # -- the two stores, against a recording connection ------------------------------------------

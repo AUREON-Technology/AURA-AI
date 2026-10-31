@@ -1,10 +1,13 @@
-"""Guards the zero-knowledge property of the v2 sync API (Doc/V2_BLUEPRINT.md
-§9): the backend must never inspect, transform, or attempt to decrypt the
-`_enc` fields it stores — they're opaque AES-256-GCM ciphertext the client
-produced, and only the client holds the key. This is a regression test,
-not a feature test: if someone later adds server-side logic that touches
-these fields' contents (e.g., "let's decrypt titles for search indexing"),
-this is the test that should catch the architecture violation.
+"""Guards the pass-through property of the v2 sync endpoint: it stores and
+returns the `_enc` fields byte for byte, never inspecting, transforming or
+decrypting them.
+
+This is no longer a zero-knowledge guarantee. Since ADR-032 the server holds each
+user's data key, and the agent's personal-OS store
+(`aura_core/adapters/postgres_synced_personal_os.py`) decrypts and encrypts these
+fields. The sync endpoint itself still must not, because it is the client's
+write path and must return exactly what a device wrote, whether that is `gcm2`
+or a not-yet-migrated device's legacy `gcm:`.
 
 Constructs SQLAlchemy model objects directly (no DB session/connection
 needed — `_row_to_dict` only introspects `__table__.columns` + `getattr`),

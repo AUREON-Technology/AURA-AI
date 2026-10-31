@@ -64,7 +64,8 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 | Backup / DR | TESTED in a sandbox; OPEN on any live target | A2 sandbox (`phase-a2-restore-drill.md`); GAP-028, GAP-046 |
 | 50-user capacity | OPEN | GAP-011 (P0), GAP-041 |
 | Real-model evaluation gates | OPEN | GAP-021; GAP-006 (`eval-ci.yml` is dispatch-only) |
-| Schema / migrations | TESTED (local PG16, `0001`→`0016`); **production at `0013`** | Alembic `0001`→`0016`, single head; F-27 built: `0016` baselines the 16 runtime-only tables, `env.py` keeps autogenerate off `aura_*`, and a fitness test requires a migration for every runtime table |
+| Schema / migrations | TESTED (local PG16, `0001`→`0017`); production at `0016` until the ADR-032 change deploys | Alembic `0001`→`0017`, single head; F-27 built: `0016` baselines the 16 runtime-only tables, `env.py` keeps autogenerate off `aura_*`, and a fitness test requires a migration for every runtime table. `0017` (ADR-032) adds `aura_user_data_keys`; `upgrade → downgrade -1 → upgrade` checked on PG16 |
+| Personal-OS single store (ADR-032, CB-28 / F-18) | BUILT and TESTED locally (pytest, legacy unittest, real PG16); **not deployed, not CI-run** | Owner chose Option A (server-held per-user data key) on 2026-10-31. The agent's `create_/list_/update_/delete_*` tools now read and write the synced `tasks`/`calendar_events`/`finance_records`/`health_records` rows, encrypted `gcm2` with the user's data key; `GET /api/v3/keys/data` hands that key to the user's devices. **The synced fields are no longer zero-knowledge** (threat-model table in ADR-032). Old rows: `scripts/move_personal_os_records.py` (not yet run anywhere) |
 | Learning / fine-tuning | BUILT | GAP-017; GAP-018 (a failed train is recorded as success) |
 | Voice | BUILT | GAP-020: speech-to-text is English-only while an Arabic voice ships |
 | Track AP: AP1–AP8 | TESTED (`built_not_proven`) | GAP-049…057; held at BUILT until M0 |
@@ -75,6 +76,12 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 ## Open issues (most severe first)
 
 **Operational**
+0. **ADR-032 needs migration `0019` live.** After the merge that carries it, `/health/ready` must
+   show `schema.revision 0019`. Until then the key endpoint and the agent's personal-OS tools
+   fail on production, because `aura_user_data_keys` does not exist. `AURA_DATA_ENCRYPTION_KEYS`
+   (already required in production) now also wraps every user's data key: losing it loses every
+   user's synced personal-OS text on the server. Then run `python
+   scripts/move_personal_os_records.py --dry-run`, and without `--dry-run` if it is clean.
 1. **Deploy-time migration runs, but has not yet applied a revision (CB-43 follow-up).** Since
    2026-10-31 the dashboard's pre-deploy command is `sh /app/scripts/railway-predeploy.sh`. Its
    first live run (deploy `4afdd9a8` at `9bfaa22`, 2026-10-31 08:40 UTC) logged `revision before/after: 0016 (head)` and
@@ -160,7 +167,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
   - F-27: migration `0016` baselines the 16 runtime-only tables.
 - **GAP-011, GAP-041 (P0):** inference is single-slot and no load matrix exists.
 
-**Medium:** F-16–F-18, F-23, F-24, F-26, F-28, F-33–F-38. F-25 and F-30 are built (above), not proven.
+**Medium:** F-16, F-17, F-23, F-24, F-26, F-28, F-33–F-38. F-25 and F-30 are built (above), not proven. F-18 is built (ADR-032), tested locally, not CI-run or deployed.
 
 **Conditional:** SEC-08 / F-38 becomes Critical if Firebase email/password sign-in is enabled.
 That needs a check in the Firebase console.
@@ -177,6 +184,9 @@ That needs a check in the Firebase console.
 
 ## Next steps
 
+0. After the ADR-032 merge deploys: check that `/health/ready` reports `schema.revision 0017`, then
+   run the personal-OS data move (`--dry-run` first), and confirm in the app that an
+   agent-created task appears after a sync.
 1. **Owner:** confirm a real sign-in works on `aureon-ai.tech` now that the schema is `0016` (CB-43 migrated 2026-10-30).
 2. **Owner:** restore Actions (CB-44); re-run Backend CI on `main`; gate Railway deploys on CI.
 3. Enable branch protection with required checks (GAP-005 / CB-02).
