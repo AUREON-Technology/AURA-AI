@@ -167,6 +167,13 @@ class DocumentStore(Protocol):
         ...
 
     async def chunks_for(self, document_id: DocumentId, version: int) -> Sequence[Chunk]:
+        """The chunks of ``version`` while it is the document's *active* version.
+
+        Empty once that version is superseded or tombstoned. Retrieval resolves chunk ids from a
+        per-process lexical index through here, and another worker's index may still name a
+        retired version; this filter is what keeps that text out of context (audit F-14). A
+        caller retiring a version reads its chunks *before* superseding it.
+        """
         ...
 
     async def purge_owner(self, owner_id: UserId) -> int:

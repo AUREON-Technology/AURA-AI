@@ -250,6 +250,11 @@ class InMemoryDocumentStore:
         return max(matches, key=lambda d: d.version) if matches else None
 
     async def chunks_for(self, document_id: DocumentId, version: int) -> list[Chunk]:
+        """Chunks of ``version`` while it is the active version; none once it is superseded or
+        tombstoned. Matches the Postgres adapter's ``status = 'active'`` join (audit F-14)."""
+        document = self._documents.get((document_id.value, version))
+        if document is None or document.status is not DocumentStatus.ACTIVE:
+            return []
         return list(self._chunks.get((document_id.value, version), []))
 
     async def list_active(

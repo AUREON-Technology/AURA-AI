@@ -50,7 +50,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 | Self-hosted LLM (qwen2.5:3b, CPU Ollama) | TESTED in a sandbox only | A4 sandbox p50 56 s / p95 71 s (`docs/reports/phase-a4-load-test.md`); not on the current production target |
 | Hosted open-weight inference, ADR-030 Phases 1–5 | TESTED | GAP-064; inert unless `AURA_ALLOW_HOSTED_INFERENCE=true` |
 | ADR-030 Phase 6, live | BUILT (`built_not_proven`) | In-process run against live OpenRouter (`nvidia/nemotron-3-ultra-550b-a55b:free`, `ALLOW_PROMPT_TRAINING=true`): 9/10 checks pass, the 429 burst was skipped (`docs/reports/phase-6-hosted-inference-openrouter-inprocess-20261028.txt`). The Verify Hosted Inference workflow has never run. |
-| Hybrid retrieval / knowledge | TESTED (hash embedder) | A3 recall@5 0.65; F-14 fixed (`c415a52`, not CI-run); F-30 built and benchmarked locally, not CI-run: the threshold no longer passes a rank pseudo-score, and the owner-sharded inverted BM25 brings the lexical stage at 50k chunks from 54.7 to 4.8 ms p50, with identical scores (`docs/reports/LEXICAL_RETRIEVAL_BENCHMARK.md`; the 200k point and Postgres FTS are open) |
+| Hybrid retrieval / knowledge | TESTED (hash embedder) | A3 recall@5 0.65; F-14 fixed: drop-on-read in `c415a52`; the cross-worker change feed and active-only `chunks_for` are in the `fix(retrieval)` F-14 commit (tested on real Postgres and Redis, not CI-run); F-30 built and benchmarked locally, not CI-run: the threshold no longer passes a rank pseudo-score, and the owner-sharded inverted BM25 brings the lexical stage at 50k chunks from 54.7 to 4.8 ms p50, with identical scores (`docs/reports/LEXICAL_RETRIEVAL_BENCHMARK.md`; the 200k point and Postgres FTS are open) |
 | Memory engine | TESTED | F-15 fixed (`19244e6`); F-16 write races open |
 | v2 sync protocol | BUILT (fixes merged, not CI-run); **broken live until 0014 applies** | F-11 (`31608f9`), F-12 (`19c64f9`, migration `0014`), F-13 (`c5b1924`), F-07 (`98143ff`) |
 | Auth / RBAC / JWT | BUILT (fixes merged, not CI-run); **at risk live until 0015 applies** | F-02: refresh re-resolves role (`2d42388`) and Access-page assignments now take effect (`3e4e0f5`, migration `0015`); F-03 (`a3fa5c2`: dev keys, `iss`/`aud`); F-10 (`039865e`: no JWT secret → no start in production). Demotion still revokes no sessions. |
@@ -108,8 +108,23 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
   reranker that raises, the relevance floor is now gated on heuristic relevance, not on
   `1 - rank/n`, so an unrelated query is `searched_but_empty` (`2307bc4`). `BM25Index` is an
   owner-sharded inverted index with float-identical scores and unchanged A3 metrics. Results and
-  the Postgres FTS recommendation are in `docs/reports/LEXICAL_RETRIEVAL_BENCHMARK.md`. F-14's
-  cross-worker half (uploads invisible on other workers) is unchanged.
+  the Postgres FTS recommendation are in `docs/reports/LEXICAL_RETRIEVAL_BENCHMARK.md`.
+- F-14 cross-worker half (R2.4 Option A, no migration). Built and tested locally, including
+  against real Postgres 16 and Redis 7, two OS processes among the runs. Not CI-run and not
+  deployed.
+  - **The change feed.** Every ingest, new version and delete bumps a generation counter in the
+    shared cache (Redis `INCR`) and records the changed document ids.
+  - **Catching up.** Each worker checks the counter at most every 250 ms before a lexical
+    search, then re-indexes those documents from the shared store.
+  - **Fallbacks.** A reset counter, a lost entry, or a worker too far behind triggers a full
+    rebuild, which is built off to the side and swapped in.
+  - **The read-side fix.** `chunks_for` now resolves only active versions, on both Postgres and
+    in-memory, so stale lexical ids resolve to nothing.
+  - **Measured.** An upload became visible on the other process in about 20 ms. The worst-case
+    per-query overhead is one Redis `GET`, 0.4–0.7 ms p50
+    (`docs/reports/LEXICAL_RETRIEVAL_BENCHMARK.md` §7).
+  - **Bonus.** Documents ingested by Celery now reach the gateway workers' lexical indexes too.
+  - **Still open.** Per-worker memory and startup cost, which Option B addresses.
 
 - F-25 deploy and runtime robustness (R2.7). BUILT and tested locally (pytest, legacy unittest,
   `docker compose config -q` on both files, the Celery healthcheck run against a local Redis

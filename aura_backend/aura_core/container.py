@@ -55,6 +55,7 @@ from .knowledge.chunking import ChunkingConfig
 from .knowledge.engine import KnowledgeEngine
 from .knowledge.extraction import RuleEntityExtractor
 from .knowledge.index_manager import IndexManager, PromotionGate
+from .knowledge.lexical_sync import LexicalChangeFeed
 from .knowledge.reranking import build_reranker
 from .kernel.kernel import AIKernel, KernelDependencies
 from .llm.cache import InMemoryCache, LLMCache
@@ -273,6 +274,9 @@ class Container:
             max_document_bytes=settings.knowledge.max_document_bytes,
             metrics=self.metrics,
             event_bus=self.events,
+            # F-14: keeps every gateway worker's per-process BM25 index in step through the
+            # shared cache (Redis in production). See `knowledge/lexical_sync.py`.
+            lexical_feed=LexicalChangeFeed(self.cache_backend),
         )
         cag_settings = settings.cag
         self.cag = (

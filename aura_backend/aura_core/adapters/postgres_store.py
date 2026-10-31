@@ -443,11 +443,19 @@ class PostgresDocumentStore:
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
+                # Joined to the document row and limited to an active version, like
+                # `iter_all_chunks`. Retrieval resolves lexical-only hits through here, and the
+                # per-process BM25 index of another gateway worker can still hold the ids of a
+                # deleted or superseded version: without the join their text came back as
+                # context (audit F-14).
                 rows = await conn.fetch(
                     """
-                    SELECT * FROM aura_chunks
-                    WHERE document_id = $1 AND document_version = $2
-                    ORDER BY idx
+                    SELECT c.* FROM aura_chunks c
+                    JOIN aura_documents d
+                      ON d.id = c.document_id AND d.version = c.document_version
+                    WHERE c.document_id = $1 AND c.document_version = $2
+                      AND d.status = 'active'
+                    ORDER BY c.idx
                     """,
                     document_id.value,
                     version,
