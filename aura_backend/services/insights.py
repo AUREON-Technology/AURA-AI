@@ -27,12 +27,13 @@ proven," not "replaced."
 import json
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.db.models import FinanceRecord, HealthRecord, Insight, Task
+from services.user_timezone import local_day
 
 logger = logging.getLogger("aura_backend.insights")
 
@@ -45,11 +46,22 @@ HIGH_SPEND_THRESHOLD = 100.0
 GENERATED_KINDS = ("overdue_tasks", "hydration", "high_spend")
 
 
-async def generate_insights_for_user(db: AsyncSession, user_id: uuid.UUID) -> list[Insight]:
+async def generate_insights_for_user(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    tz: tzinfo | None = None,
+    now: datetime | None = None,
+) -> list[Insight]:
     """Computes fresh candidate insights, replacing any un-surfaced ones
     from a previous run for this user (avoids piling up stale duplicates
-    across repeated calls/scheduled runs)."""
-    now = datetime.now(timezone.utc)
+    across repeated calls/scheduled runs).
+
+    ``tz`` is the user's timezone (``services/user_timezone.py``); "today" and
+    the 3 pm hydration cut-off are in it. ``None`` means UTC, the old behaviour.
+    ``now`` is injectable for tests."""
+    now = now or datetime.now(timezone.utc)
+    day = local_day(now, tz or timezone.utc)
     candidates: list[dict] = []
 
     # 1. Overdue tasks
@@ -72,18 +84,20 @@ async def generate_insights_for_user(db: AsyncSession, user_id: uuid.UUID) -> li
             "citations": [str(t.id) for t in overdue],
         })
 
-    # 2. Hydration vs. goal (today's record, if any)
-    today_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+    # 2. Hydration vs. goal (today's record, if any). "Today" is the user's day: the client
+    # stores the record at local midnight, which is not inside the UTC day for anyone east of
+    # UTC in their evening (F-17). Bounded on both sides, so tomorrow's row is not "today's".
     health_result = await db.execute(
         select(HealthRecord).where(
             HealthRecord.user_id == user_id,
             HealthRecord.deleted_at.is_(None),
-            HealthRecord.record_date >= today_start,
-        )
+            HealthRecord.record_date >= day.start,
+            HealthRecord.record_date < day.end,
+        ).order_by(HealthRecord.record_date)
     )
     today_health = health_result.scalars().first()
-    # Only nudge in the back half of the day, so this isn't wrong at 8am.
-    if now.hour >= 15 and (today_health is None or today_health.water_ml < WATER_GOAL_ML * 0.5):
+    # Only nudge in the back half of the user's day, so this isn't wrong at 8am.
+    if day.now.hour >= 15 and (today_health is None or today_health.water_ml < WATER_GOAL_ML * 0.5):
         current = today_health.water_ml if today_health else 0
         candidates.append({
             "kind": "hydration",

@@ -36,6 +36,24 @@ class AppInsight {
       );
 }
 
+/// The device's current UTC offset as `+HH:MM`, sent as `X-Timezone`.
+///
+/// The backend computes "today" (water logged today, tasks due today) in the
+/// user's day, not the UTC day (audit F-17): the health record for a day is
+/// stored at local midnight, so for anyone outside UTC the UTC day and the
+/// local day disagree for part of every day. An IANA name would be better
+/// across DST changes, but Dart has no source for one without a native
+/// plugin, and `timeZoneName` is an ambiguous abbreviation ("IST"). The
+/// offset is exact for today and is re-sent on every insights request.
+String formatUtcOffset(Duration offset) {
+  final minutes = offset.inMinutes;
+  final sign = minutes < 0 ? '-' : '+';
+  final abs = minutes.abs();
+  final hh = (abs ~/ 60).toString().padLeft(2, '0');
+  final mm = (abs % 60).toString().padLeft(2, '0');
+  return '$sign$hh:$mm';
+}
+
 class InsightsClient {
   final Ref _ref;
   InsightsClient(this._ref);
@@ -45,7 +63,10 @@ class InsightsClient {
 
   Future<Map<String, String>> _headers() async {
     final token = await _ref.read(tokenManagerProvider).getValidAccessToken();
-    final headers = <String, String>{"Content-Type": "application/json"};
+    final headers = <String, String>{
+      "Content-Type": "application/json",
+      "X-Timezone": formatUtcOffset(DateTime.now().timeZoneOffset),
+    };
     if (token != null) headers["Authorization"] = "Bearer $token";
     headers.addAll(
       await DeviceValidationService.getAttestationHeaders(backendUrl: _backendUrl),

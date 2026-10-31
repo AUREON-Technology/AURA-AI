@@ -9,7 +9,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,12 @@ from infrastructure.db.models import Insight
 from infrastructure.db.user_repo import get_or_create_user
 from services.insights import generate_insights_for_user
 from services.jwt_auth import verify_access_token
+from services.user_timezone import (
+    TIMEZONE_HEADER,
+    parse_timezone,
+    remember_timezone,
+    stored_timezone,
+)
 
 router = APIRouter(prefix="/api/v3/insights", tags=["insights"])
 
@@ -40,6 +46,28 @@ class InsightResponse(BaseModel):
     citations: list[str] = []
 
 
+def _shared_cache(request: Request):
+    """The v3 container's cache (Redis in both deployments), or ``None`` without a container."""
+    container = getattr(request.app.state, "aura", None)
+    return getattr(container, "cache_backend", None)
+
+
+async def _user_timezone(request: Request, user_id: uuid.UUID):
+    """The timezone for this user's "today" (F-17).
+
+    A valid ``X-Timezone`` header wins and is remembered for the scheduled jobs, which have no
+    request to read it from. Without one, the last remembered value is used. With neither, the
+    result is UTC (``None``). An invalid header is ignored rather than refused: a bad timezone
+    should cost the user their local day, not their insights.
+    """
+    cache = _shared_cache(request)
+    sent = parse_timezone(request.headers.get(TIMEZONE_HEADER))
+    if sent is not None:
+        await remember_timezone(cache, user_id, sent)
+        return sent
+    return await stored_timezone(cache, user_id)
+
+
 def _to_response(row: Insight) -> InsightResponse:
     payload = json.loads(row.payload_json)
     return InsightResponse(
@@ -53,9 +81,16 @@ def _to_response(row: Insight) -> InsightResponse:
 
 
 @router.get("", response_model=list[InsightResponse])
-async def list_insights(user_info: dict = Depends(verify_access_token), db: AsyncSession = Depends(get_db)):
+async def list_insights(
+    request: Request,
+    user_info: dict = Depends(verify_access_token),
+    db: AsyncSession = Depends(get_db),
+):
     _require_db_configured()
     user = await get_or_create_user(db, user_info)
+    # Nothing here depends on the day, but this is the request the client makes on every visit
+    # to the Today screen, so it is where the scheduled jobs learn the user's timezone.
+    await _user_timezone(request, user.id)
     result = await db.execute(
         select(Insight)
         .where(Insight.user_id == user.id, Insight.dismissed_at.is_(None))
@@ -66,10 +101,16 @@ async def list_insights(user_info: dict = Depends(verify_access_token), db: Asyn
 
 
 @router.post("/generate", response_model=list[InsightResponse])
-async def generate_insights(user_info: dict = Depends(verify_access_token), db: AsyncSession = Depends(get_db)):
+async def generate_insights(
+    request: Request,
+    user_info: dict = Depends(verify_access_token),
+    db: AsyncSession = Depends(get_db),
+):
     _require_db_configured()
     user = await get_or_create_user(db, user_info)
-    created = await generate_insights_for_user(db, user.id)
+    created = await generate_insights_for_user(
+        db, user.id, tz=await _user_timezone(request, user.id)
+    )
     await db.commit()
     return [_to_response(r) for r in created]
 

@@ -195,6 +195,35 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
     deliberate encrypted copy. Removing it would also remove the tombstone channel, so that is part
     of the store decision, not of this fix.
 
+- F-17, "today" half (built, tested locally against Postgres 16, not CI-run). The 2026-10-26 audit
+  found that insights and the daily briefing computed "today" and the 3 pm hydration cut-off in
+  UTC. The client stores a day's health record at local midnight, so a UTC+3 user was told
+  "0 ml of water logged today" every evening. Both services now take the user's timezone
+  (`services/user_timezone.py`): "today" runs from local midnight to local midnight (23 or 25
+  hours on a DST day), and the hydration query is now bounded on both sides.
+  - **Where the timezone lives, without a migration.** No existing column fits: `users` has no
+    settings or preferences field. Instead:
+    - The client sends `X-Timezone` on the insights requests it already makes (`GET
+      /api/v3/insights` on every Today-screen visit, and `POST …/generate`).
+    - `/generate` uses that value directly. Both routes also store it in the shared cache
+      (`user-tz:<user id>`, Redis in both deployments, 60-day TTL refreshed on each request).
+    - The hourly insights job and the daily briefing job read it from there.
+    - Missing, unknown or invalid values fall back to the UTC day, the old behaviour. A lost
+      cache entry costs only that, and only until the user's next visit.
+    - The follow-up migration would add one nullable `users.timezone VARCHAR(64)` and change only
+      `remember_timezone`/`stored_timezone`.
+  - **What the client sends.** A fixed offset (`+03:00`) from `DateTime.timeZoneOffset`, because
+    no IANA source exists without a new native plugin (`flutter_timezone`). That plugin was
+    deliberately not added. The backend also accepts IANA names, which are DST-correct on every
+    date, so a later client can send one with no backend change. A fixed offset can be wrong for
+    a few hours after a DST change, until the next insights request refreshes it.
+  - Not changed: the briefing still runs at one fixed UTC time for everyone (it now counts the
+    user's own day).
+  - Tests: `tests/unit/test_user_timezone.py` covers UTC+3 and UTC-5 days, US DST days of 23 and
+    25 hours, Santiago's skipped midnight, invalid input falling back to UTC, and header
+    precedence. Six Postgres cases are in `test_insights_integration.py`. The client test is
+    `test/core/insights_client_test.dart`.
+
 **Still open (High)**
 - F-22 and F-27 are built and tested locally, not CI-run:
   - F-22: one configured LLM deadline, an SSE keep-alive every 15 s, and `/api/v3/chat` given
@@ -202,7 +231,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
   - F-27: migration `0016` baselines the 16 runtime-only tables.
 - **GAP-011, GAP-041 (P0):** inference is single-slot and no load matrix exists.
 
-**Medium:** F-17 (timezone half), F-18, F-23, F-24, F-26, F-28, F-33–F-38. F-25 and F-30 are built (above), not proven.
+**Medium:** F-18, F-23, F-24, F-26, F-28, F-33–F-38. F-25 and F-30 are built (above), not proven.
 
 **Conditional:** SEC-08 / F-38 becomes Critical if Firebase email/password sign-in is enabled.
 That needs a check in the Firebase console.

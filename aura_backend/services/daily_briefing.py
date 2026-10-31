@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aura_core.domain.goals import GoalSnapshot
 from aura_core.triggers.briefing import BriefingCounts, build_daily_briefing
 from infrastructure.db.models import CalendarEvent, Goal, Insight, Task
+from services.user_timezone import local_day
 
 logger = logging.getLogger("aura_backend.daily_briefing")
 
@@ -31,12 +32,21 @@ logger = logging.getLogger("aura_backend.daily_briefing")
 GOAL_NEAR_TARGET_WINDOW = timedelta(days=7)
 
 
-async def generate_daily_briefing_for_user(db: AsyncSession, user_id: uuid.UUID) -> Insight:
+async def generate_daily_briefing_for_user(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    tz: tzinfo | None = None,
+    now: datetime | None = None,
+) -> Insight:
     """Computes and persists today's briefing, replacing yesterday's un-surfaced one (same
-    replace-not-accumulate rule ``services/insights.py`` uses for its own candidates)."""
-    now = datetime.now(timezone.utc)
-    today_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
-    today_end = today_start + timedelta(days=1)
+    replace-not-accumulate rule ``services/insights.py`` uses for its own candidates).
+
+    "Today" is the user's day in ``tz`` (F-17; ``None`` means UTC): "due today" and "events
+    today" span local midnight to local midnight, which on a DST day is 23 or 25 hours."""
+    now = now or datetime.now(timezone.utc)
+    day = local_day(now, tz or timezone.utc)
+    today_start, today_end = day.start, day.end
 
     overdue_result = await db.execute(
         select(Task).where(

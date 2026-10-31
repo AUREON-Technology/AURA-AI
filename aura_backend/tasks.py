@@ -170,23 +170,40 @@ async def _drain_finetune_queue() -> dict:
     return {"status": "success", "ran": len(ran), "jobs": ran}
 
 
+async def _timezone_cache():
+    """The shared cache the gateway stores each user's timezone in (F-17), or ``None``.
+
+    Without it every user's day is the UTC day, which is what these jobs did before; a cache
+    that cannot be reached must not stop the insights themselves.
+    """
+    try:
+        return (await _ensure_worker_container()).cache_backend
+    except Exception as exc:
+        logger.warning(f"No shared cache for user timezones; using UTC days: {exc}")
+        return None
+
+
 async def _generate_insights_for_all_users() -> int:
     from sqlalchemy import select
     from infrastructure.db.base import get_session_factory, is_configured
     from infrastructure.db.models import User
     from services.insights import generate_insights_for_user
+    from services.user_timezone import stored_timezone
 
     if not is_configured():
         logger.info("Skipping insights generation: DATABASE_URL not configured.")
         return 0
 
     session_factory = get_session_factory()
+    cache = await _timezone_cache()
     count = 0
     async with session_factory() as db:
         users = (await db.execute(select(User))).scalars().all()
         for user in users:
             try:
-                await generate_insights_for_user(db, user.id)
+                await generate_insights_for_user(
+                    db, user.id, tz=await stored_timezone(cache, user.id)
+                )
                 count += 1
             except Exception as e:
                 logger.error(f"Insight generation failed for user {user.id}: {e}")
@@ -214,18 +231,22 @@ async def _generate_daily_briefings_for_all_users() -> int:
     from infrastructure.db.base import get_session_factory, is_configured
     from infrastructure.db.models import User
     from services.daily_briefing import generate_daily_briefing_for_user
+    from services.user_timezone import stored_timezone
 
     if not is_configured():
         logger.info("Skipping daily briefing generation: DATABASE_URL not configured.")
         return 0
 
     session_factory = get_session_factory()
+    cache = await _timezone_cache()
     count = 0
     async with session_factory() as db:
         users = (await db.execute(select(User))).scalars().all()
         for user in users:
             try:
-                await generate_daily_briefing_for_user(db, user.id)
+                await generate_daily_briefing_for_user(
+                    db, user.id, tz=await stored_timezone(cache, user.id)
+                )
                 count += 1
             except Exception as e:
                 logger.error(f"Daily briefing generation failed for user {user.id}: {e}")

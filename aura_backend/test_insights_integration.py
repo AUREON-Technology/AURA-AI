@@ -210,6 +210,137 @@ class TestInsightsIntegration(unittest.TestCase):
         self.assertIn("daily_briefing", kinds)
         self.assertIn("overdue_tasks", kinds)
 
+    # -- "today" is the user's day (F-17) ---------------------------------------------------
+
+    def _hydration_for(self, subject, tz_name, record_local_midnight, now, water_ml=300):
+        """Store a health record where the client puts it (local midnight, as UTC) and run the
+        hourly rules at ``now`` for a user in ``tz_name``."""
+        import asyncio
+        from zoneinfo import ZoneInfo
+
+        from infrastructure.db.base import get_session_factory
+        from infrastructure.db.models import HealthRecord, User
+        from services.insights import generate_insights_for_user
+
+        async def scenario():
+            factory = get_session_factory()
+            async with factory() as db:
+                user = User(
+                    id=uuid.uuid4(), auth_subject=subject, email=f"{subject}@example.com",
+                    display_name=subject,
+                )
+                db.add(user)
+                await db.flush()
+                record = HealthRecord(
+                    id=uuid.uuid4(), user_id=user.id, water_ml=water_ml,
+                    record_date=record_local_midnight.astimezone(timezone.utc),
+                )
+                db.add(record)
+                await db.commit()
+                created = await generate_insights_for_user(
+                    db, user.id, tz=ZoneInfo(tz_name) if tz_name else None, now=now,
+                )
+                await db.commit()
+                return str(record.id), {r.kind: json.loads(r.payload_json) for r in created}
+
+        return asyncio.run(scenario())
+
+    def test_a_utc_plus_3_evening_sees_todays_water(self):
+        """18:30 in Riyadh is 15:30Z. Today's record sits at 21:00Z yesterday, which the UTC
+        day excluded: the user was told "0ml logged today" every evening."""
+        from zoneinfo import ZoneInfo
+
+        riyadh = ZoneInfo("Asia/Riyadh")
+        record_id, rows = self._hydration_for(
+            "tz-plus-3", "Asia/Riyadh",
+            datetime(2026, 10, 31, tzinfo=riyadh),
+            now=datetime(2026, 10, 31, 15, 30, tzinfo=timezone.utc),
+        )
+        self.assertIn("hydration", rows)
+        self.assertEqual(rows["hydration"]["message"], "Only 300ml of water logged today.")
+        self.assertEqual(rows["hydration"]["citations"], [record_id])
+
+    def test_a_utc_minus_5_evening_sees_todays_water(self):
+        """22:00 in Bogota on 31 Oct is 03:00Z on 1 Nov: the UTC day had already moved on."""
+        from zoneinfo import ZoneInfo
+
+        bogota = ZoneInfo("America/Bogota")
+        record_id, rows = self._hydration_for(
+            "tz-minus-5", "America/Bogota",
+            datetime(2026, 10, 31, tzinfo=bogota),
+            now=datetime(2026, 11, 1, 3, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(rows["hydration"]["message"], "Only 300ml of water logged today.")
+        self.assertEqual(rows["hydration"]["citations"], [record_id])
+
+    def test_the_3pm_cutoff_is_local(self):
+        """16:00Z is past 3 pm UTC but 11:00 in Bogota: too early to nag."""
+        from zoneinfo import ZoneInfo
+
+        _, rows = self._hydration_for(
+            "tz-cutoff", "America/Bogota",
+            datetime(2026, 10, 31, tzinfo=ZoneInfo("America/Bogota")),
+            now=datetime(2026, 10, 31, 16, 0, tzinfo=timezone.utc),
+        )
+        self.assertNotIn("hydration", rows)
+
+    def test_yesterdays_record_is_not_todays(self):
+        """Bounded on both sides: at 22:30 Riyadh time on 31 Oct (19:30Z), the 30 Oct record
+        must not count as today's."""
+        from zoneinfo import ZoneInfo
+
+        _, rows = self._hydration_for(
+            "tz-yesterday", "Asia/Riyadh",
+            datetime(2026, 10, 30, tzinfo=ZoneInfo("Asia/Riyadh")),
+            now=datetime(2026, 10, 31, 19, 30, tzinfo=timezone.utc),
+        )
+        self.assertEqual(rows["hydration"]["message"], "Only 0ml of water logged today.")
+        self.assertEqual(rows["hydration"]["citations"], [])
+
+    def test_without_a_timezone_the_day_is_still_the_utc_day(self):
+        _, rows = self._hydration_for(
+            "tz-none", None,
+            datetime(2026, 10, 31, tzinfo=timezone.utc),
+            now=datetime(2026, 10, 31, 16, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(rows["hydration"]["message"], "Only 300ml of water logged today.")
+
+    def test_the_briefing_counts_what_is_due_on_the_users_day(self):
+        """For a UTC-5 user at 06:00Z (01:00 local on 31 Oct), a task due at 20:00 local on
+        31 Oct (01:00Z on 1 Nov) is due today. The UTC day ended at 00:00Z and missed it."""
+        import asyncio
+        from zoneinfo import ZoneInfo
+
+        from infrastructure.db.base import get_session_factory
+        from infrastructure.db.models import Task, User
+        from services.daily_briefing import generate_daily_briefing_for_user
+
+        bogota = ZoneInfo("America/Bogota")
+        now = datetime(2026, 10, 31, 6, 0, tzinfo=timezone.utc)
+
+        async def scenario():
+            factory = get_session_factory()
+            async with factory() as db:
+                user = User(
+                    id=uuid.uuid4(), auth_subject="tz-briefing",
+                    email="tz-briefing@example.com", display_name="TZ Briefing",
+                )
+                db.add(user)
+                await db.flush()
+                tonight = Task(
+                    id=uuid.uuid4(), user_id=user.id, title_enc="gcm:iv:t",
+                    due_date=datetime(2026, 10, 31, 20, 0, tzinfo=bogota),
+                )
+                db.add(tonight)
+                await db.commit()
+                row = await generate_daily_briefing_for_user(db, user.id, tz=bogota, now=now)
+                await db.commit()
+                return str(tonight.id), json.loads(row.payload_json)
+
+        tonight_id, payload = asyncio.run(scenario())
+        self.assertIn(tonight_id, payload["citations"])
+        self.assertIn("1 task due today", payload["explanation"])
+
 
 if __name__ == "__main__":
     unittest.main()
