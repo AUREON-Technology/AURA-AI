@@ -2,8 +2,9 @@ import 'dart:math' as math;
 import 'dart:ui' show Color;
 
 /// WCAG 2.1 relative luminance + contrast ratio helpers.
-/// Used both by design-token definitions and by `tool/check_contrast.dart`,
-/// which fails CI if a token pair regresses below WCAG AA
+/// Used both by design-token definitions and by
+/// `test/design_system_contrast_test.dart`, which fails CI if a token pair
+/// regresses below WCAG AA
 /// (4.5:1 for normal text, 3:1 for large text / UI components).
 double relativeLuminance(Color c) {
   double toLinear(double v) => v <= 0.03928 ? v / 12.92 : math.pow((v + 0.055) / 1.055, 2.4).toDouble();
