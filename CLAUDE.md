@@ -91,7 +91,9 @@ evidence its exit criteria name** — "built" and "tested" are not "proven."
 ### Backend (`cd aura_backend` first)
 
 ```bash
-pip install -r requirements.lock -r requirements-dev.txt
+# Hash-locked (F-38): one pip call, both locks, PyTorch CPU index on the command line
+pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu \
+  -r requirements.lock -r requirements-dev.lock
 
 pytest                                   # aura_core suite — no Docker, no network, no model
 pytest tests/some_test.py::TestClass::test_name   # single test
@@ -108,8 +110,12 @@ alembic upgrade head                     # migrations, against AURA_DATABASE_URL
 Both suites (`pytest` and the legacy `unittest`) run in CI and both must pass — they cover
 different trees (ADR-002 strangler migration) and neither substitutes for the other.
 
-Regenerate the lockfile with the exact command in `requirements.lock`'s own header comment (uses
-`uv pip compile` with a CPU-only PyTorch index — don't hand-edit pins).
+Regenerate the lockfiles with the exact commands in their own header comments (`uv pip compile
+--torch-backend cpu --generate-hashes`; `requirements-dev.lock` and `requirements-train.lock` are
+constrained to `requirements.lock`) — don't hand-edit pins. Every lock is hashed, so pip runs in
+hash mode for the whole call: `-r requirements-dev.txt` (unhashed) can no longer be mixed in, and the
+PyTorch index stays on the command line because an `--index-url` inside a requirements file makes
+pip drop a command-line `--extra-index-url`.
 
 ### Client (`cd aura_client` first)
 
