@@ -33,6 +33,7 @@ from ..domain.errors import ConfigurationError, DependencyUnavailableError, NotF
 from ..domain.identifiers import ChunkId, DocumentId, MemoryId, SessionId, TurnId, UserId
 from ..domain.knowledge import Chunk, Document, DocumentStatus, SourceType, TrustTier
 from ..domain.memory import MemoryKind, MemoryRecord, Provenance
+from ..ports.storage import GLOBAL_OWNER
 from .field_crypto import FieldCipher
 from dataclasses import replace as _replace
 
@@ -197,6 +198,16 @@ class PostgresPool:
             CREATE INDEX IF NOT EXISTS ix_aura_chunks_document
                 ON aura_chunks (document_id, document_version, idx)
             """,
+            # One row per owner key ('global' for owner-less content), advanced in the same
+            # transaction as every change to that owner's active chunks. Each gateway worker
+            # reads it before a lexical search to learn whether its in-process index for that
+            # owner is stale (F-14) -- a primary-key read, so it is cheap enough for every query.
+            """
+            CREATE TABLE IF NOT EXISTS aura_corpus_revisions (
+                owner_key   TEXT    PRIMARY KEY,
+                revision    BIGINT  NOT NULL DEFAULT 0
+            )
+            """,
             """
             CREATE TABLE IF NOT EXISTS aura_memories (
                 id                  TEXT        PRIMARY KEY,
@@ -240,11 +251,28 @@ class PostgresPool:
         except Exception as exc:
             raise _unavailable(f"could not create the v3 schema: {exc}") from exc
 
-    async def close(self) -> None:
-        if self._pool is not None:
-            await self._pool.close()
-            self._pool = None
-            self._schema_ready = False
+    async def close(self, *, timeout_s: float | None = None) -> None:
+        """Release the pool. Safe to call when it was never created, and a second time.
+
+        asyncpg's ``Pool.close()`` waits for every acquired connection to be released. With
+        ``timeout_s`` that wait is bounded, and a connection still busy afterwards -- a query
+        outliving the shutdown drain -- is terminated instead, because a shutdown that never
+        ends gets SIGKILLed and then nothing is closed cleanly.
+        """
+        pool, self._pool = self._pool, None
+        self._schema_ready = False
+        if pool is None:
+            return
+        if timeout_s is None:
+            await pool.close()
+            return
+        try:
+            await asyncio.wait_for(pool.close(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "postgres pool did not close within %.1fs; terminating its connections", timeout_s
+            )
+            pool.terminate()
 
     async def ping(self) -> bool:
         try:
@@ -258,6 +286,17 @@ class PostgresPool:
 
 
 # -- documents ----------------------------------------------------------------------------
+
+#: Advances one owner key's corpus revision; run inside the transaction that changed the corpus,
+#: so a reader that sees the new revision also sees the change (see `corpus_revisions`).
+_BUMP_REVISION = """
+    INSERT INTO aura_corpus_revisions (owner_key, revision) VALUES ($1, 1)
+    ON CONFLICT (owner_key) DO UPDATE SET revision = aura_corpus_revisions.revision + 1
+"""
+
+
+def _owner_key(owner_id: UserId | None) -> str:
+    return owner_id.value if owner_id is not None else GLOBAL_OWNER
 
 
 class PostgresDocumentStore:
@@ -346,6 +385,8 @@ class PostgresDocumentStore:
                                 for chunk in chunks
                             ],
                         )
+                    # Last, so the revision row is locked for as short a time as possible.
+                    await conn.execute(_BUMP_REVISION, _owner_key(document.owner_id))
         except Exception as exc:
             raise _unavailable(
                 f"could not write document {document.id.value!r}: {exc}",
@@ -614,13 +655,23 @@ class PostgresDocumentStore:
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
+                # One statement, so the status change and the owner's revision bump are atomic
+                # without an explicit transaction. Nothing superseded, nothing bumped.
                 await conn.execute(
                     """
-                    UPDATE aura_documents SET status = 'superseded', updated_at = now()
-                    WHERE id = $1 AND version = $2 AND status = 'active'
+                    WITH superseded AS (
+                        UPDATE aura_documents SET status = 'superseded', updated_at = now()
+                        WHERE id = $1 AND version = $2 AND status = 'active'
+                        RETURNING owner_id
+                    )
+                    INSERT INTO aura_corpus_revisions (owner_key, revision)
+                    SELECT DISTINCT COALESCE(owner_id, $3), 1 FROM superseded
+                    ON CONFLICT (owner_key) DO UPDATE
+                        SET revision = aura_corpus_revisions.revision + 1
                     """,
                     document_id.value,
                     old_version,
+                    GLOBAL_OWNER,
                 )
         except Exception as exc:
             raise _unavailable(f"could not supersede {document_id.value!r}: {exc}") from exc
@@ -641,6 +692,9 @@ class PostgresDocumentStore:
                     status = await conn.execute(
                         "DELETE FROM aura_documents WHERE owner_id = $1", owner_id.value
                     )
+                    # Advanced, never deleted: a worker that last saw revision N must not see N
+                    # again after the erasure and conclude nothing changed.
+                    await conn.execute(_BUMP_REVISION, owner_id.value)
         except Exception as exc:
             raise _unavailable(f"could not purge documents of {owner_id.value!r}: {exc}") from exc
         return int(status.split()[-1]) if status else 0
@@ -695,9 +749,69 @@ class PostgresDocumentStore:
                             document_id.value,
                             owner_id.value,
                         )
+                    await conn.execute(_BUMP_REVISION, _owner_key(owner_id))
         except Exception as exc:
             raise _unavailable(f"could not tombstone {document_id.value!r}: {exc}") from exc
         return int(chunk_count or 0)
+
+    async def corpus_revisions(self, owner_keys: Sequence[str]) -> dict[str, int]:
+        if not owner_keys:
+            return {}
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT owner_key, revision FROM aura_corpus_revisions
+                    WHERE owner_key = ANY($1::text[])
+                    """,
+                    list(owner_keys),
+                )
+        except Exception as exc:
+            raise _unavailable(f"could not read corpus revisions: {exc}") from exc
+        return {row["owner_key"]: int(row["revision"]) for row in rows}
+
+    async def active_chunk_ids(self, owner_key: str) -> list[str]:
+        """Ids only: a worker refreshing its lexical shard diffs these against what it holds
+        and fetches content just for the difference (`active_chunks`). Branches on the global
+        key rather than using ``IS NOT DISTINCT FROM`` so both forms can use the partial
+        ``ix_aura_documents_active`` index."""
+        pool = await self._pool._get_pool()
+        owner_predicate = "d.owner_id IS NULL" if owner_key == GLOBAL_OWNER else "d.owner_id = $1"
+        params = () if owner_key == GLOBAL_OWNER else (owner_key,)
+        try:
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    f"""
+                    SELECT c.id FROM aura_documents d
+                    JOIN aura_chunks c
+                      ON c.document_id = d.id AND c.document_version = d.version
+                    WHERE d.status = 'active' AND {owner_predicate}
+                    """,
+                    *params,
+                )
+        except Exception as exc:
+            raise _unavailable(f"could not list active chunks: {exc}") from exc
+        return [row["id"] for row in rows]
+
+    async def active_chunks(self, chunk_ids: Sequence[str]) -> list[Chunk]:
+        if not chunk_ids:
+            return []
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT c.* FROM aura_chunks c
+                    JOIN aura_documents d
+                      ON d.id = c.document_id AND d.version = c.document_version
+                    WHERE c.id = ANY($1::text[]) AND d.status = 'active'
+                    """,
+                    list(chunk_ids),
+                )
+        except Exception as exc:
+            raise _unavailable(f"could not read chunks: {exc}") from exc
+        return [self._chunk(row) for row in rows]
 
     async def close(self) -> None:
         await self._pool.close()
@@ -840,6 +954,43 @@ class PostgresMemoryStore:
         but not the other would silently drop data on whichever path was not exercised in testing.
         """
         await self.put(record)
+
+    async def touch_many(
+        self, memory_ids: Sequence[MemoryId], *, owner_id: UserId, at: datetime
+    ) -> int:
+        """One field-level ``UPDATE`` for a whole recall, never the snapshot UPSERT (F-16).
+
+        Recall used to reinforce through ``update`` -- the full-row UPSERT above -- from the copy
+        it had read, so a supersede, edit or delete landing in between was reverted (a deleted
+        row was even re-inserted), and two overlapping recalls lost an increment. The increment
+        is done by the database, so it is atomic under any concurrency; ``content`` is neither
+        read nor re-encrypted; and it is one round trip and one pool connection where the
+        per-record UPSERTs took up to ``limit`` of each. ``GREATEST`` keeps a replica with a
+        clock behind another's from moving ``last_accessed_at`` backwards.
+        """
+        wanted = list(dict.fromkeys(mid.value for mid in memory_ids))
+        if not wanted:
+            return 0
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                status = await conn.execute(
+                    """
+                    UPDATE aura_memories
+                    SET access_count = access_count + 1,
+                        last_accessed_at = GREATEST(last_accessed_at, $3::timestamptz)
+                    WHERE owner_id = $1 AND id = ANY($2::text[])
+                    """,
+                    owner_id.value,
+                    wanted,
+                    at,
+                )
+        except Exception as exc:
+            raise _unavailable(f"could not reinforce memories: {exc}") from exc
+        try:
+            return int(status.rsplit(" ", 1)[-1])
+        except ValueError:  # pragma: no cover - asyncpg always reports a count
+            return 0
 
     async def get(self, memory_id: MemoryId) -> MemoryRecord | None:
         pool = await self._pool._get_pool()

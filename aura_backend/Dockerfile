@@ -17,23 +17,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # command recorded in its own header. Test/dev extras stay in requirements-dev.txt and
 # never land here.
 #
-# The lock resolves torch from PyTorch's CPU index, and carries both index URLs itself so
-# this install needs no extra flags. That is deliberate and worth keeping: the default
-# Linux torch wheel drags in the nvidia-*, cuda-* and triton packages, which is 6.5 GB of
-# CUDA runtime that a CPU-only host can never execute. Four services build from this
-# context, so the cost is paid four times over. Re-compiling without the CPU index will
-# silently put all of it back.
-COPY requirements.lock requirements-train.txt ./
+# The lock pins torch to PyTorch's CPU wheel (torch==2.13.0+cpu). That is deliberate and
+# worth keeping: the default Linux torch wheel drags in the nvidia-*, cuda-* and triton
+# packages, which is 6.5 GB of CUDA runtime that a CPU-only host can never execute. Four
+# services build from this context, so the cost is paid four times over.
+#
+# Hash-checked (audit F-38 / SEC-10). Every file pip downloads must match a sha256 recorded
+# in the lock, so neither index can substitute a package -- the dependency-confusion pattern
+# of the 2022 torchtriton incident. The lock is compiled with `--torch-backend cpu`, which
+# resolves only the PyTorch packages against the CPU index and everything else against PyPI,
+# and it names no index itself (a requirements-file --index-url would discard the flag
+# below), so the CPU index is named here. Without it the install fails outright -- it cannot
+# silently fall back to the CUDA build, because those hashes are not in the lock.
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+COPY requirements.lock requirements-train.lock ./
 
-RUN pip install --no-cache-dir --user -r requirements.lock
+RUN pip install --no-cache-dir --user --require-hashes \
+        --extra-index-url "$TORCH_INDEX_URL" -r requirements.lock
 
 # Optional LoRA training dependencies (peft; ADR-008 Loop B, GAP-017). Off by default so the
 # gateway and every other service never carry them; only `worker-training` builds with
-# AURA_TRAINING_DEPS=true. requirements-train.txt constrains itself to requirements.lock, so
-# this cannot move torch/transformers away from the gateway's pins.
+# AURA_TRAINING_DEPS=true. requirements-train.lock is compiled from requirements-train.txt,
+# which constrains itself to requirements.lock, so this cannot move torch/transformers away
+# from the gateway's pins; it is hash-checked the same way.
 ARG AURA_TRAINING_DEPS=false
 RUN if [ "$AURA_TRAINING_DEPS" = "true" ]; then \
-        pip install --no-cache-dir --user -r requirements-train.txt; \
+        pip install --no-cache-dir --user --require-hashes \
+            --extra-index-url "$TORCH_INDEX_URL" -r requirements-train.lock; \
     fi
 
 # ==========================================

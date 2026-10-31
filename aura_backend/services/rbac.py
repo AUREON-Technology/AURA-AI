@@ -104,6 +104,36 @@ def granted_role(email: str, uid: str) -> tuple[str, str | None]:
     return best, source
 
 
+#: The only identity provider whose email claim may select a role from an email list (SEC-08).
+EMAIL_GRANT_PROVIDER = "google.com"
+
+
+def email_grant_eligible(user_info: dict) -> bool:
+    """Whether this identity's ``email`` may be matched against the email lists (SEC-08).
+
+    The env lists and roles.json name people by email address, and an email claim is only as
+    good as whoever vouched for it. Firebase will mint an ID token for an email/password account
+    whose address nobody has verified -- so if that provider were ever enabled, anyone holding
+    the (public) Firebase API key could register an operator's address and be granted
+    SuperAdmin by address alone. The match therefore needs both:
+
+    * ``email_verified is True`` -- the address was proven, not just typed; and
+    * ``sign_in_provider == "google.com"`` -- the proof came from Google sign-in, the only
+      provider the console and the apps offer.
+
+    Both keys are written only by ``services.security.verify_identity_token`` from a verified
+    Google or Firebase ID token (Firebase's ``firebase.sign_in_provider``; a Google ID token is
+    Google sign-in by definition), and travel with the server-side refresh record. Nothing a
+    client sends can set them: access-token claims (``verify_access_token``) never carry them.
+    An identity without them still keeps a role it holds by uid in roles.json, by Access-page
+    assignment, or by the role claim this server stamped into its own access token.
+    """
+    return (
+        user_info.get("email_verified") is True
+        and user_info.get("sign_in_provider") == EMAIL_GRANT_PROVIDER
+    )
+
+
 def get_user_role(user_info: dict, *, assigned_role: str | None = None) -> str:
     """Resolve the highest applicable role from env lists, roles.json, an Access-page
     assignment, and the token's own claim.
@@ -117,7 +147,9 @@ def get_user_role(user_info: dict, *, assigned_role: str | None = None) -> str:
     15-minute statement of the role; refresh strips it before re-resolving
     (``services/jwt_auth.refresh_token_pair``) so it can never outlive its sources.
     """
-    email = (user_info.get("email") or "").strip()
+    # An unverified or non-Google email selects nothing from the email lists; roles.json is
+    # still consulted by uid, which the identity provider -- not the user -- chose.
+    email = (user_info.get("email") or "").strip() if email_grant_eligible(user_info) else ""
     uid = str(user_info.get("uid") or user_info.get("sub") or "")
 
     granted, _ = granted_role(email, uid)

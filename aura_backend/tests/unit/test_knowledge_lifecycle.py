@@ -372,3 +372,140 @@ class TestLexicalIndexAcrossWorkers:
         contents = " ".join(c.chunk.content for c in result.chunks)
         assert "250" not in contents
         assert "500" in contents
+
+
+class TestLexicalIndexConvergesAcrossWorkers:
+    """The other half of F-14: every worker's BM25 index converges with the shared document
+    store, not only at restart. A write on worker A bumps a per-owner corpus revision in the
+    store; worker B compares it before searching and refreshes only that owner's shard. Two
+    engines over one pair of stores stand in for two uvicorn workers, each started (rebuilt)
+    before the other one writes."""
+
+    RUNBOOK = "The AURA-4419 escalation runbook says to page the on-call SRE."
+
+    @staticmethod
+    def _worker(documents, vectors, embedder, index_manager) -> KnowledgeEngine:
+        return KnowledgeEngine(
+            documents=documents, vectors=vectors, embedder=embedder,
+            index_manager=index_manager, score_threshold=0.15,
+        )
+
+    @staticmethod
+    def _lexical_hits(result, document_id: str) -> list:
+        return [
+            c for c in result.chunks
+            if c.chunk.document_id.value == document_id and c.lexical_rank is not None
+        ]
+
+    async def test_a_document_ingested_on_another_worker_is_found_lexically(
+        self, documents, vectors, embedder, index_manager, user
+    ) -> None:
+        worker_a = self._worker(documents, vectors, embedder, index_manager)
+        worker_b = self._worker(documents, vectors, embedder, index_manager)
+        await worker_a.rebuild_lexical_index()
+        await worker_b.rebuild_lexical_index()
+
+        await worker_a.ingest(
+            content=self.RUNBOOK, title="Runbook", document_id=DocumentId("runbook"),
+            owner_id=user,
+        )
+
+        result = await worker_b.retrieve("AURA-4419 runbook", owner_id=user)
+        assert self._lexical_hits(result, "runbook"), "worker B's lexical search missed it"
+        assert worker_b.lexical_size == worker_a.lexical_size
+
+    async def test_a_global_document_ingested_on_another_worker_is_found_by_every_user(
+        self, documents, vectors, embedder, index_manager
+    ) -> None:
+        worker_a = self._worker(documents, vectors, embedder, index_manager)
+        worker_b = self._worker(documents, vectors, embedder, index_manager)
+        await worker_b.rebuild_lexical_index()
+
+        await worker_a.ingest(
+            content=self.RUNBOOK, title="Runbook", document_id=DocumentId("runbook"),
+            owner_id=None,
+        )
+
+        for reader in (UserId("alice"), UserId("bob")):
+            result = await worker_b.retrieve("AURA-4419 runbook", owner_id=reader)
+            assert self._lexical_hits(result, "runbook")
+
+    async def test_a_document_deleted_on_another_worker_leaves_its_index(
+        self, documents, vectors, embedder, index_manager, user
+    ) -> None:
+        """Not just filtered when it happens to be a hit: gone from B's index on B's next search
+        of that owner, whatever the query."""
+        worker_a = self._worker(documents, vectors, embedder, index_manager)
+        worker_b = self._worker(documents, vectors, embedder, index_manager)
+        await worker_a.ingest(
+            content=self.RUNBOOK, title="Runbook", document_id=DocumentId("runbook"),
+            owner_id=user,
+        )
+        await worker_b.rebuild_lexical_index()
+        assert worker_b.lexical_size > 0
+
+        assert await worker_a.delete_document(DocumentId("runbook"), owner_id=user) > 0
+
+        await worker_b.retrieve("something else entirely", owner_id=user)
+        assert worker_b.lexical_size == 0
+        result = await worker_b.retrieve("AURA-4419 runbook", owner_id=user)
+        assert not result.chunks
+
+    async def test_a_new_version_on_another_worker_replaces_the_old_one_lexically(
+        self, documents, vectors, embedder, index_manager, user
+    ) -> None:
+        worker_a = self._worker(documents, vectors, embedder, index_manager)
+        worker_b = self._worker(documents, vectors, embedder, index_manager)
+        await worker_a.ingest(
+            content="The expense cap is 250 dollars per claim.", title="Policy",
+            document_id=DocumentId("policy"), owner_id=user,
+        )
+        await worker_b.rebuild_lexical_index()
+        await worker_a.ingest(
+            content="The expense cap is 500 dollars per claim.", title="Policy",
+            document_id=DocumentId("policy"), owner_id=user,
+        )
+
+        result = await worker_b.retrieve("expense cap dollars per claim", owner_id=user)
+        hits = self._lexical_hits(result, "policy")
+        assert hits and all(c.chunk.document_version == 2 for c in hits)
+        assert worker_b.lexical_size == worker_a.lexical_size
+
+    async def test_an_erasure_on_another_worker_empties_that_owner_only(
+        self, documents, vectors, embedder, index_manager
+    ) -> None:
+        alice, bob = UserId("alice"), UserId("bob")
+        worker_a = self._worker(documents, vectors, embedder, index_manager)
+        worker_b = self._worker(documents, vectors, embedder, index_manager)
+        for owner in (alice, bob):
+            await worker_a.ingest(
+                content=self.RUNBOOK, title="Runbook",
+                document_id=DocumentId(f"rb-{owner.value}"), owner_id=owner,
+            )
+        await worker_b.rebuild_lexical_index()
+
+        await worker_a.erase_owner(alice)
+
+        assert not (await worker_b.retrieve("AURA-4419 runbook", owner_id=alice)).chunks
+        assert self._lexical_hits(
+            await worker_b.retrieve("AURA-4419 runbook", owner_id=bob), "rb-bob"
+        )
+        assert worker_b.lexical_size == worker_a.lexical_size
+
+    async def test_an_unreachable_revision_check_keeps_the_local_index(
+        self, documents, vectors, embedder, index_manager, user
+    ) -> None:
+        """The check keeps the index fresh; it is not a gate. If the store cannot answer it,
+        retrieval runs on what this worker already has instead of failing the turn."""
+        worker = self._worker(documents, vectors, embedder, index_manager)
+        await worker.ingest(
+            content=self.RUNBOOK, title="Runbook", document_id=DocumentId("runbook"),
+            owner_id=user,
+        )
+
+        async def unavailable(owner_keys):
+            raise RuntimeError("postgres is down")
+
+        documents.corpus_revisions = unavailable
+        result = await worker.retrieve("AURA-4419 runbook", owner_id=user)
+        assert self._lexical_hits(result, "runbook")

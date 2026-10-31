@@ -167,6 +167,9 @@ class TestRecall:
             async def update(self, record):  # noqa: ANN001
                 raise RuntimeError("write path is down")
 
+            async def touch_many(self, memory_ids, *, owner_id, at):  # noqa: ANN001
+                raise RuntimeError("write path is down")
+
         engine = MemoryEngine(
             store=UnwritableStore(), vectors=InMemoryVectorStore(), embedder=embedder,
             index_alias="m",
@@ -174,6 +177,109 @@ class TestRecall:
         await engine.remember(owner_id=user, content="The user is vegetarian.", source="t")
         hits = await engine.recall(MemoryQuery(owner_id=user, text="the user is vegetarian"))
         assert hits
+
+
+class _InterleavingStore(InMemoryMemoryStore):
+    """A store whose next batch read is followed, before recall gets to reinforce, by a write
+    from somewhere else -- consolidation superseding a record, or the user deleting one.
+
+    Not a mock: every read and write goes to the real in-memory adapter. It only fixes the
+    ordering that a recall racing consolidation (or a delete) produces in production, where the
+    vector search and the reinforcement are separated by several awaits.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.after_next_read = None
+
+    async def get_many(self, memory_ids):  # noqa: ANN001
+        snapshot = await super().get_many(memory_ids)
+        hook, self.after_next_read = self.after_next_read, None
+        if hook is not None:
+            await hook(self)
+        return snapshot
+
+
+class TestReinforcementIsAtomic:
+    """F-16 / AR-06: recall reinforcement wrote the whole row back from the snapshot recall read,
+    so anything that changed the row in between -- a supersede, a delete, another recall's
+    increment -- was silently reverted."""
+
+    @pytest.fixture
+    def racing(self, vectors, embedder, metrics, events, clock) -> MemoryEngine:
+        return MemoryEngine(
+            store=_InterleavingStore(), vectors=vectors, embedder=embedder,
+            index_alias="test_memory", metrics=metrics, event_bus=events, clock=clock,
+        )
+
+    async def test_a_record_superseded_mid_recall_stays_superseded(self, racing, user) -> None:
+        record = await racing.remember(
+            owner_id=user, content="The user lives in Cairo.", subject="home", source="t1"
+        )
+        newer = MemoryId("newer-fact")
+
+        async def supersede(store) -> None:  # noqa: ANN001
+            current = await store.get(record.id)
+            await store.update(current.superseded(newer))
+
+        racing._store.after_next_read = supersede
+        hits = await racing.recall(MemoryQuery(owner_id=user, text="the user lives in cairo"))
+        assert [h.record.id for h in hits] == [record.id]  # recall saw it while it was active
+
+        stored = await racing._store.get(record.id)
+        assert stored.superseded_by == newer, "reinforcement resurrected a superseded memory"
+        assert stored.access_count == 1  # ...and the access was still counted
+
+    async def test_a_record_deleted_mid_recall_stays_deleted(self, racing, user) -> None:
+        record = await racing.remember(
+            owner_id=user, content="The user is vegetarian.", source="t1"
+        )
+
+        async def delete(store) -> None:  # noqa: ANN001
+            assert await store.delete(record.id, owner_id=user)
+
+        racing._store.after_next_read = delete
+        await racing.recall(MemoryQuery(owner_id=user, text="the user is vegetarian"))
+
+        assert await racing._store.get(record.id) is None, "reinforcement re-created a deleted row"
+
+    async def test_a_concurrent_edit_is_not_reverted(self, racing, user) -> None:
+        from dataclasses import replace
+
+        record = await racing.remember(
+            owner_id=user, content="The user is vegetarian.", source="t1", confidence=0.6
+        )
+
+        async def edit(store) -> None:  # noqa: ANN001
+            current = await store.get(record.id)
+            await store.update(replace(current, confidence=0.95, metadata={"edited": True}))
+
+        racing._store.after_next_read = edit
+        await racing.recall(MemoryQuery(owner_id=user, text="the user is vegetarian"))
+
+        stored = await racing._store.get(record.id)
+        assert stored.confidence == pytest.approx(0.95)
+        assert stored.metadata.get("edited") is True
+
+    async def test_concurrent_recalls_each_count(self, engine, user) -> None:
+        import asyncio
+
+        record = await engine.remember(
+            owner_id=user, content="The user is vegetarian.", source="t1"
+        )
+        query = MemoryQuery(owner_id=user, text="the user is vegetarian")
+        await asyncio.gather(*(engine.recall(query) for _ in range(5)))
+
+        assert (await engine._store.get(record.id)).access_count == 5
+
+    async def test_reinforcement_stamps_the_injected_clock(self, engine, user, clock) -> None:
+        record = await engine.remember(
+            owner_id=user, content="The user is vegetarian.", source="t1"
+        )
+        clock.advance(3600)
+        await engine.recall(MemoryQuery(owner_id=user, text="the user is vegetarian"))
+
+        assert (await engine._store.get(record.id)).last_accessed_at == clock.now()
 
 
 class TestConsolidation:

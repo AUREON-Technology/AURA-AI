@@ -9,6 +9,11 @@ from fastapi.testclient import TestClient
 
 from api.v2.auth import router
 
+#: A verified Google sign-in, as services.security.verify_identity_token reports it. Email-list
+#: roles need both keys (SEC-08); tests/security/test_email_role_grants_require_verified_google.py
+#: covers what happens without them.
+_GOOGLE = {"email_verified": True, "sign_in_provider": "google.com"}
+
 
 def _client() -> TestClient:
     app = FastAPI()
@@ -35,7 +40,7 @@ def test_web_token_issues_a_pair_for_an_admin(monkeypatch) -> None:
     monkeypatch.setenv("ADMIN_EMAILS", "ops@aura.ai")
 
     async def identity(request, authorization):
-        return {"uid": "a1", "email": "ops@aura.ai", "name": "Ops"}
+        return {"uid": "a1", "email": "ops@aura.ai", "name": "Ops", **_GOOGLE}
 
     with patch("api.v2.auth.verify_identity_token", new=identity):
         response = _client().post(
@@ -53,7 +58,7 @@ def test_web_token_persists_the_operator(monkeypatch) -> None:
     monkeypatch.setenv("SUPERADMIN_EMAILS", "ops@aura.ai")
 
     async def identity(request, authorization):
-        return {"uid": "a1", "email": "ops@aura.ai", "name": "Ops"}
+        return {"uid": "a1", "email": "ops@aura.ai", "name": "Ops", **_GOOGLE}
 
     seen: dict = {}
 

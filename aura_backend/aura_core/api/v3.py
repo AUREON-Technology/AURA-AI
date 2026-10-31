@@ -1703,6 +1703,9 @@ def build_app(
 
     @app.on_event("shutdown")
     async def on_shutdown() -> None:
+        # uvicorn sends lifespan shutdown only after its graceful drain
+        # (--timeout-graceful-shutdown) has let in-flight requests and streams finish, so closing
+        # the pools and clients here cannot pull them out from under a live turn (R2.7).
         await container.shutdown()
 
     return app

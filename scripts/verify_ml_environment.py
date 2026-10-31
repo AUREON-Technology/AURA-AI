@@ -121,7 +121,7 @@ def test_pytorch_checkpoint():
     torch.save({'model': model.state_dict(), 'optimizer': optimizer.state_dict()}, checkpoint_path)
     
     new_model = nn.Sequential(nn.Linear(128, 256), nn.ReLU(), nn.Linear(256, 10))
-    checkpoint = torch.load(checkpoint_path)
+    checkpoint = torch.load(checkpoint_path, weights_only=True)
     new_model.load_state_dict(checkpoint['model'])
     
     for p1, p2 in zip(model.parameters(), new_model.parameters()):

@@ -168,6 +168,15 @@ The default suite has the gate as well.
 
 ## 5. Effect on F-14 (per-worker divergence)
 
+> **Update (2026-10-31).** F-14's cross-worker half has since been fixed separately. A per-owner
+> revision in `aura_corpus_revisions` (migration 0017) is advanced with every corpus change.
+> Each worker checks it before a lexical search and diff-refreshes only the shards that moved.
+> The benchmark was re-run on that change, and every figure in §3 stayed within run-to-run noise.
+> At 50k chunks, `lexical_stage` was p50 4.65 / p95 7.69 ms and `retrieve` was 9.29 / 12.50 ms.
+> The in-memory store answers the revision check without I/O. Against Postgres the check is one
+> extra primary-key round trip per search, and that has not been measured here. The rest of this
+> section describes the inverted-index change as it stood.
+
 The change neither fixes F-14 nor makes it worse:
 
 - The index is still per process.

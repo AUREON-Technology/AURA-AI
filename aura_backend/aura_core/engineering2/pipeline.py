@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .policy import SandboxPolicy, GitSafetyPolicy
 from .models import EngineerTask, EngineerResult, EngineerMode
-from aura_core.adapters.coding_fakes import InMemorySandboxRunner, InMemoryGitHubClient
+from aura_core.ports.coding import CodeHostClient, SandboxRunner
 from aura_core.domain.engineering import EngineerRun, EngineerRunStatus as DomainEngineerRunStatus
 from aura_core.domain.identifiers import EngineerRunId, UserId, WorkspaceId, CorrelationId
 
@@ -72,15 +72,18 @@ class EngineerExecutionPipeline:
         *,
         sandbox_policy: SandboxPolicy | None = None,
         git_safety_policy: GitSafetyPolicy | None = None,
-        sandbox_runner: Any | None = None,
-        github_client: Any | None = None,
+        sandbox_runner: SandboxRunner | None = None,
+        github_client: CodeHostClient | None = None,
         max_iterations: int = 8,
         deadline_s: float = 300.0,
     ) -> None:
         self.sandbox_policy = sandbox_policy or SandboxPolicy()
         self.git_safety_policy = git_safety_policy or GitSafetyPolicy()
-        self.sandbox_runner = sandbox_runner or InMemorySandboxRunner()
-        self.github_client = github_client or InMemoryGitHubClient()
+        # Injected, never defaulted to an adapter: an engine that constructs infrastructure
+        # itself inverts the dependency rule (ADR-001; tests/architecture/test_dependency_rules.py).
+        # Nothing in this pipeline calls either yet, so ``None`` changes no behaviour.
+        self.sandbox_runner = sandbox_runner
+        self.github_client = github_client
         self.max_iterations = max_iterations
         self.deadline_s = deadline_s
 

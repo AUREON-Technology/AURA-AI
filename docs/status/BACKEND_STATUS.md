@@ -10,8 +10,11 @@
 2026-10-30 the owner ran `alembic upgrade head` over `railway ssh` (`0013 → 0016`, clean), and live
 `/health/ready` then showed `healthy: true` and `schema.revision 0016`. The pre-deploy step that
 should have done this ran only its leading `echo`, because Railway does not evaluate
-`preDeployCommand` in a shell. It now calls `scripts/railway-predeploy.sh` (TESTED against a
-stand-in `alembic`; not yet seen on a live deploy).
+`preDeployCommand` in a shell. The service also ignores `railway.json` (no config file linked), so
+the fix lives in the Railway dashboard. On 2026-10-31 the owner set the pre-deploy command to
+`sh /app/scripts/railway-predeploy.sh`, and it is now **seen running on a live deploy**
+(deploy `4afdd9a8` at `9bfaa22`, 2026-10-31 08:40 UTC): `revision before: 0016 (head)`, alembic connected, `revision after: 0016
+(head)`, `=== MIGRATION OK ===`, all before the app started.
 
 **CI stopped executing again** around 19:50 UTC (no runner assigned; CB-44). The last Backend CI
 that ran was green at `dc87beb` (3848 passed, 56 skipped; unittest 100 OK; pip-audit; docker-build).
@@ -50,7 +53,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 | Self-hosted LLM (qwen2.5:3b, CPU Ollama) | TESTED in a sandbox only | A4 sandbox p50 56 s / p95 71 s (`docs/reports/phase-a4-load-test.md`); not on the current production target |
 | Hosted open-weight inference, ADR-030 Phases 1–5 | TESTED | GAP-064; inert unless `AURA_ALLOW_HOSTED_INFERENCE=true` |
 | ADR-030 Phase 6, live | BUILT (`built_not_proven`) | In-process run against live OpenRouter (`nvidia/nemotron-3-ultra-550b-a55b:free`, `ALLOW_PROMPT_TRAINING=true`): 9/10 checks pass, the 429 burst was skipped (`docs/reports/phase-6-hosted-inference-openrouter-inprocess-20261028.txt`). The Verify Hosted Inference workflow has never run. |
-| Hybrid retrieval / knowledge | TESTED (hash embedder) | A3 recall@5 0.65; F-14 fixed (`c415a52`, not CI-run); F-30 built and benchmarked locally, not CI-run: the threshold no longer passes a rank pseudo-score, and the owner-sharded inverted BM25 brings the lexical stage at 50k chunks from 54.7 to 4.8 ms p50, with identical scores (`docs/reports/LEXICAL_RETRIEVAL_BENCHMARK.md`; the 200k point and Postgres FTS are open) |
+| Hybrid retrieval / knowledge | TESTED (hash embedder) | A3 recall@5 0.65; F-14 fixed: read-time drop (`c415a52`) and cross-worker convergence via per-owner corpus revisions (migration 0017), neither CI-run; F-30 built and benchmarked locally, not CI-run: the threshold no longer passes a rank pseudo-score, and the owner-sharded inverted BM25 brings the lexical stage at 50k chunks from 54.7 to 4.8 ms p50, with identical scores (`docs/reports/LEXICAL_RETRIEVAL_BENCHMARK.md`; the 200k point and Postgres FTS are open) |
 | Memory engine | TESTED | F-15 fixed (`19244e6`); F-16 write races open |
 | v2 sync protocol | BUILT (fixes merged, not CI-run); **broken live until 0014 applies** | F-11 (`31608f9`), F-12 (`19c64f9`, migration `0014`), F-13 (`c5b1924`), F-07 (`98143ff`) |
 | Auth / RBAC / JWT | BUILT (fixes merged, not CI-run); **at risk live until 0015 applies** | F-02: refresh re-resolves role (`2d42388`) and Access-page assignments now take effect (`3e4e0f5`, migration `0015`); F-03 (`a3fa5c2`: dev keys, `iss`/`aud`); F-10 (`039865e`: no JWT secret → no start in production). Demotion still revokes no sessions. |
@@ -72,12 +75,13 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 ## Open issues (most severe first)
 
 **Operational**
-1. **Pre-deploy migration fix unproven on a live deploy (CB-43 follow-up).** The database is at
-   `0016` and readiness is green. The first deploy of the script (8bc8d4c) logged only
-   `MIGRATION START`, and the step ended about a second later, so the outcome was invisible.
-   The script now flushes its log before exiting. The next deploy must show `revision
-   before/after` and `=== MIGRATION OK ===`. Only `MIGRATION START` means the script itself
-   stops early.
+1. **Deploy-time migration runs, but has not yet applied a revision (CB-43 follow-up).** Since
+   2026-10-31 the dashboard's pre-deploy command is `sh /app/scripts/railway-predeploy.sh`. Its
+   first live run (deploy `4afdd9a8` at `9bfaa22`, 2026-10-31 08:40 UTC) logged `revision before/after: 0016 (head)` and
+   `=== MIGRATION OK ===`. That deploy had nothing to apply, so the first PR that adds a migration
+   is the real test: its log should show `before: 0016 … after: 0017`. Railway still ignores
+   `railway.json` for this service, which leaves the `/health/live` health check and the builder
+   setting unapplied. Linking it as the config file is a separate, larger change.
 2. **CI not executing (CB-44)**, and Railway deploys without it. Restore Actions; gate Railway on
    CI (turn off its GitHub auto-deploy or enable "Wait for CI").
 3. **The VPS deploy path is dead** (host-key change; CB-03). The owner must confirm whether the
@@ -108,8 +112,13 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
   reranker that raises, the relevance floor is now gated on heuristic relevance, not on
   `1 - rank/n`, so an unrelated query is `searched_but_empty` (`2307bc4`). `BM25Index` is an
   owner-sharded inverted index with float-identical scores and unchanged A3 metrics. Results and
-  the Postgres FTS recommendation are in `docs/reports/LEXICAL_RETRIEVAL_BENCHMARK.md`. F-14's
-  cross-worker half (uploads invisible on other workers) is unchanged.
+  the Postgres FTS recommendation are in `docs/reports/LEXICAL_RETRIEVAL_BENCHMARK.md`.
+- F-14 cross-worker half (built and tested locally, including against a throwaway Postgres 16;
+  not CI-run, not proven on a multi-worker deploy). Every corpus change advances a per-owner
+  revision in `aura_corpus_revisions` (migration 0017) inside the writing transaction. Each
+  worker reads the revisions for the owners a search touches, and diff-refreshes only the shards
+  that moved. An upload, new version, delete or erasure served by one worker reaches the others'
+  BM25 indexes on their next search of that owner, not at restart.
 
 - F-25 deploy and runtime robustness (R2.7). BUILT and tested locally (pytest, legacy unittest,
   `docker compose config -q` on both files, the Celery healthcheck run against a local Redis
@@ -132,8 +141,17 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
     reused worker loop.
   - Every worker and beat now has a healthcheck (`scripts/celery_healthcheck.py`).
   - Pinned by `tests/unit/test_deploy_robustness.py`.
-  - Not done here: R2.7's `container.shutdown()` closing the PG, Redis and Qdrant clients (in
-    `aura_core/`, outside this change), and the R2.7 drill report.
+  - Not done here: the R2.7 drill report.
+  - Follow-up (R2.7, built and tested locally, not CI-run): `Container.shutdown()` now closes
+    what the container actually connected: the shared asyncpg pool (terminated if a graceful
+    close outlasts its budget), Redis, Qdrant, each provider's httpx client, the Docker client,
+    and the GitHub and MCP clients. It never builds a client in order to close it. Closes run
+    concurrently, each bounded by 5 s, so the whole shutdown fits the 15 s lifespan margin. One
+    failing or hanging close is logged and the rest still run, and a second call does nothing.
+    The gateway lifespan calls it after uvicorn's drain, and each Celery worker process calls it
+    on exit (`worker_process_shutdown`/`worker_shutdown`), on its own event loop. Pinned by
+    `tests/unit/test_container_shutdown.py`. The legacy SQLAlchemy engine
+    (`infrastructure/db/base.py`) is outside the container and is still not disposed.
 
 **Still open (High)**
 - F-22 and F-27 are built and tested locally, not CI-run:

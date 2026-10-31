@@ -214,17 +214,29 @@ class InMemoryVectorStore:
         return sorted(self._indexes)
 
 
+def _owner_key_of(document: Document) -> str:
+    return document.owner_id.value if document.owner_id is not None else GLOBAL_OWNER
+
+
 class InMemoryDocumentStore:
     def __init__(self) -> None:
         self._documents: dict[tuple[str, int], Document] = {}
         self._chunks: dict[tuple[str, int], list[Chunk]] = {}
+        # owner key -> corpus revision (see `DocumentStore.corpus_revisions`). Shared by every
+        # engine handed this store, which is what lets tests stand two engines in for two
+        # gateway workers.
+        self._revisions: dict[str, int] = {}
         self._lock = asyncio.Lock()
+
+    def _bump(self, owner_key: str) -> None:
+        self._revisions[owner_key] = self._revisions.get(owner_key, 0) + 1
 
     async def put(self, document: Document, chunks: Sequence[Chunk]) -> None:
         key = (document.id.value, document.version)
         async with self._lock:
             self._documents[key] = document
             self._chunks[key] = list(chunks)
+            self._bump(_owner_key_of(document))
 
     async def get(self, document_id: DocumentId, *, version: int | None = None) -> Document | None:
         if version is not None:
@@ -329,8 +341,9 @@ class InMemoryDocumentStore:
     async def supersede(self, document_id: DocumentId, *, old_version: int, new_version: int) -> None:
         key = (document_id.value, old_version)
         document = self._documents.get(key)
-        if document is not None:
+        if document is not None and document.status is DocumentStatus.ACTIVE:
             self._documents[key] = document.superseded()
+            self._bump(_owner_key_of(document))
 
     async def purge_owner(self, owner_id: UserId) -> int:
         async with self._lock:
@@ -341,6 +354,9 @@ class InMemoryDocumentStore:
             for key in keys:
                 self._documents.pop(key, None)
                 self._chunks.pop(key, None)
+            # Advanced, never reset: a worker that last saw revision N must not see N again
+            # after an erasure and conclude nothing changed.
+            self._bump(owner_id.value)
         return len(keys)
 
     async def tombstone(self, document_id: DocumentId, *, owner_id: UserId | None) -> int:
@@ -354,7 +370,29 @@ class InMemoryDocumentStore:
                     continue
                 self._documents[key] = _dc_replace(document, status=DocumentStatus.TOMBSTONED)
                 removed += len(self._chunks.get(key, []))
+            self._bump(owner if owner is not None else GLOBAL_OWNER)
         return removed
+
+    async def corpus_revisions(self, owner_keys: Sequence[str]) -> dict[str, int]:
+        return {key: self._revisions[key] for key in owner_keys if key in self._revisions}
+
+    async def active_chunk_ids(self, owner_key: str) -> list[str]:
+        return [
+            chunk.id.value
+            for key, document in list(self._documents.items())
+            if document.status is DocumentStatus.ACTIVE and _owner_key_of(document) == owner_key
+            for chunk in self._chunks.get(key, [])
+        ]
+
+    async def active_chunks(self, chunk_ids: Sequence[str]) -> list[Chunk]:
+        wanted = set(chunk_ids)
+        return [
+            chunk
+            for key, document in list(self._documents.items())
+            if document.status is DocumentStatus.ACTIVE
+            for chunk in self._chunks.get(key, [])
+            if chunk.id.value in wanted
+        ]
 
 
 class InMemoryMemoryStore:
@@ -396,6 +434,25 @@ class InMemoryMemoryStore:
     async def update(self, record: MemoryRecord) -> None:
         async with self._lock:
             self._records[record.id.value] = record
+
+    async def touch_many(
+        self, memory_ids: Sequence[MemoryId], *, owner_id: UserId, at: datetime
+    ) -> int:
+        # Read-modify-write of the *stored* record under the lock -- the in-process equivalent
+        # of `SET access_count = access_count + 1`. Never the caller's copy (see the port).
+        touched = 0
+        async with self._lock:
+            for key in dict.fromkeys(m.value for m in memory_ids):
+                current = self._records.get(key)
+                if current is None or current.owner_id != owner_id:
+                    continue
+                self._records[key] = _dc_replace(
+                    current,
+                    access_count=current.access_count + 1,
+                    last_accessed_at=max(current.last_accessed_at, at),
+                )
+                touched += 1
+        return touched
 
     async def delete(self, memory_id: MemoryId, *, owner_id: UserId) -> bool:
         record = self._records.get(memory_id.value)

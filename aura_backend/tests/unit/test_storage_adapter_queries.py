@@ -600,6 +600,74 @@ class TestTombstoneIsScopedByOwner:
         assert "owner_id IS NULL" in updates[0][1]
 
 
+class TestCorpusRevisions:
+    """Each gateway worker reads these to know its lexical shard for an owner is stale (F-14).
+    A reader that sees a new revision must also see the change, so every bump runs inside the
+    transaction (or the single statement) that made the change."""
+
+    @staticmethod
+    def _bumps(conn) -> list:
+        return [c for c in conn.calls if c[0] == "execute" and "aura_corpus_revisions" in c[1]]
+
+    async def test_put_bumps_the_owner_inside_its_transaction(self) -> None:
+        store, conn = _doc_store()
+        doc = Document(id=DocumentId("d1"), version=1, title="T", content="b", owner_id=UserId("u1"))
+        await store.put(doc, [])
+        bumps = self._bumps(conn)
+        assert [b[2] for b in bumps] == [("u1",)]
+        assert conn.calls.index(bumps[0]) < conn.calls.index(("COMMIT",))
+
+    async def test_a_global_document_bumps_the_global_key(self) -> None:
+        store, conn = _doc_store()
+        await store.put(Document(id=DocumentId("d1"), version=1, title="T", content="b"), [])
+        assert [b[2] for b in self._bumps(conn)] == [("global",)]
+
+    async def test_supersede_marks_and_bumps_in_one_statement(self) -> None:
+        store, conn = _doc_store()
+        await store.supersede(DocumentId("d1"), old_version=1, new_version=2)
+        (statement,) = [c for c in conn.calls if c[0] == "execute"]
+        assert "status = 'superseded'" in statement[1]
+        assert "RETURNING owner_id" in statement[1]
+        assert "INSERT INTO aura_corpus_revisions" in statement[1]
+
+    async def test_tombstone_and_purge_bump_inside_their_transactions(self) -> None:
+        store, conn = _doc_store()
+        await store.tombstone(DocumentId("d1"), owner_id=UserId("u1"))
+        await store.purge_owner(UserId("u1"))
+        assert [b[2] for b in self._bumps(conn)] == [("u1",), ("u1",)]
+        # Each bump falls between its own BEGIN and COMMIT.
+        markers = [
+            "bump" if c[0] == "execute" and "aura_corpus_revisions" in c[1] else c[0]
+            for c in conn.calls
+            if c[0] in ("BEGIN", "COMMIT") or "aura_corpus_revisions" in c[1]
+        ]
+        assert markers == ["BEGIN", "bump", "COMMIT", "BEGIN", "bump", "COMMIT"]
+
+    async def test_revisions_are_one_keyed_read(self) -> None:
+        store, conn = _doc_store()
+        conn.rows = [{"owner_key": "u1", "revision": 7}]
+        assert await store.corpus_revisions(["u1", "global"]) == {"u1": 7}
+        assert conn.calls[-1][2] == (["u1", "global"],)
+        assert await store.corpus_revisions([]) == {}
+
+    async def test_active_ids_join_active_documents_with_an_index_usable_predicate(self) -> None:
+        store, conn = _doc_store()
+        conn.rows = [{"id": "d1:v1:0"}]
+        assert await store.active_chunk_ids("u1") == ["d1:v1:0"]
+        assert await store.active_chunk_ids("global") == ["d1:v1:0"]
+        owned, global_ = [c for c in conn.calls if c[0] == "fetch"]
+        assert "d.status = 'active'" in owned[1] and "d.owner_id = $1" in owned[1]
+        assert owned[2] == ("u1",)
+        assert "d.owner_id IS NULL" in global_[1] and global_[2] == ()
+
+    async def test_chunks_are_fetched_only_from_active_versions(self) -> None:
+        store, conn = _doc_store()
+        assert await store.active_chunks([]) == []
+        await store.active_chunks(["d1:v1:0"])
+        (fetch,) = [c for c in conn.calls if c[0] == "fetch"]
+        assert "d.status = 'active'" in fetch[1] and fetch[2] == (["d1:v1:0"],)
+
+
 class TestIterAllChunksExcludesInactiveVersions:
     async def test_the_query_joins_on_active_documents(self) -> None:
         """Without the join a rebuild would index every historical version, and retrieval would
