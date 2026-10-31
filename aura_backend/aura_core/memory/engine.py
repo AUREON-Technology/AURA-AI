@@ -25,7 +25,6 @@ are still found -- and still land in ``"shared"``.
 
 from __future__ import annotations
 
-import asyncio
 import time
 from dataclasses import asdict, replace
 from typing import Any, Mapping, Sequence
@@ -289,7 +288,7 @@ class MemoryEngine:
         # Reinforce only what was actually used, not everything the vector search returned --
         # otherwise every recall inflates access_count for irrelevant records.
         used_ids = {h.record.id for h in hits}
-        await self._reinforce([r for r in touched if r.id in used_ids], now)
+        await self._reinforce(query.owner_id, [r.id for r in touched if r.id in used_ids], now)
 
         if self._metrics is not None:
             for kind in query.kinds:
@@ -314,11 +313,15 @@ class MemoryEngine:
             used += cost
         return kept
 
-    async def _reinforce(self, records: Sequence[MemoryRecord], now) -> None:
-        if not records:
+    async def _reinforce(self, owner_id: UserId, ids: Sequence[MemoryId], now) -> None:
+        if not ids:
             return
         try:
-            await asyncio.gather(*(self._store.update(r.touched(now=now)) for r in records))
+            # A field-level touch of the current rows, never `update(record.touched())`: the
+            # records were read before ranking, and writing that copy back reverted whatever
+            # changed in between -- it resurrected superseded memories, re-created deleted
+            # ones and lost concurrent increments (F-16).
+            await self._store.touch_many(ids, owner_id=owner_id, at=now)
         except Exception:
             # Reinforcement is bookkeeping. Failing it must not fail the recall it accompanies.
             logger.debug("memory reinforcement failed", exc_info=True)

@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+from celery.signals import worker_process_shutdown, worker_shutdown
+from datetime import datetime, timezone
 from celery_app import celery_app
 from config import settings
 from services.rag import rag_service
@@ -209,23 +211,35 @@ def generate_insights_for_all_users_task() -> dict:
         return {"status": "error", "message": str(e)}
 
 
-async def _generate_daily_briefings_for_all_users() -> int:
-    from sqlalchemy import select
+async def _generate_daily_briefings_for_all_users(now: datetime | None = None) -> int:
+    """Briefs every user for whom it is now at or past 06:00 *their* time and who has had no
+    briefing yet today (``services.daily_briefing.briefing_due``). Beat runs this hourly, so
+    each user's briefing lands in their own morning rather than at 06:00 UTC (audit F-17)."""
+    from sqlalchemy import func, select
     from infrastructure.db.base import get_session_factory, is_configured
-    from infrastructure.db.models import User
-    from services.daily_briefing import generate_daily_briefing_for_user
+    from infrastructure.db.models import Insight, User
+    from services.daily_briefing import briefing_due, generate_daily_briefing_for_user
+    from services.user_time import resolve_timezone
 
     if not is_configured():
         logger.info("Skipping daily briefing generation: DATABASE_URL not configured.")
         return 0
 
+    now = now or datetime.now(timezone.utc)
     session_factory = get_session_factory()
     count = 0
     async with session_factory() as db:
         users = (await db.execute(select(User))).scalars().all()
+        last_sent = dict((await db.execute(
+            select(Insight.user_id, func.max(Insight.created_at))
+            .where(Insight.kind == "daily_briefing")
+            .group_by(Insight.user_id)
+        )).all())
         for user in users:
+            if not briefing_due(now, resolve_timezone(user.timezone), last_sent.get(user.id)):
+                continue
             try:
-                await generate_daily_briefing_for_user(db, user.id)
+                await generate_daily_briefing_for_user(db, user.id, now=now)
                 count += 1
             except Exception as e:
                 logger.error(f"Daily briefing generation failed for user {user.id}: {e}")
@@ -268,6 +282,40 @@ async def _ensure_worker_container():
         await _worker_container.startup()
         _worker_started = True
     return _worker_container
+
+
+@worker_process_shutdown.connect
+@worker_shutdown.connect
+def _shutdown_worker_container(**_: object) -> None:
+    """Close this process's container -- its asyncpg pool, Redis, Qdrant and provider clients --
+    before the process exits (R2.7).
+
+    ``worker_process_shutdown`` fires in each prefork child as it exits, which with
+    ``--max-tasks-per-child`` is routinely, not only at deploy time; ``worker_shutdown`` covers a
+    solo/threads pool, where tasks run in the main process. Before this, every recycled child left
+    its Postgres connections for the server to time out.
+
+    The close runs on the worker loop, not a fresh one: the pool is bound to the loop it was
+    created on, and asyncpg refuses to operate it from another. A process that never ran a
+    container-backed task builds nothing here. Never raises -- a signal handler that throws would
+    only turn a clean exit into a noisy one.
+    """
+    global _worker_container, _worker_started, _worker_loop
+    container, _worker_container = _worker_container, None
+    _worker_started = False
+    if container is None:
+        return
+    try:
+        _run_async(container.shutdown())
+    except Exception:  # noqa: BLE001 -- see the docstring
+        logger.exception("worker container shutdown failed")
+    loop, _worker_loop = _worker_loop, None
+    if loop is not None and not loop.is_closed():
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception:  # noqa: BLE001
+            pass
+        loop.close()
 
 
 async def _memory_owner_ids(container) -> list:

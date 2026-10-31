@@ -183,6 +183,13 @@ class KnowledgeEngine:
         # adapter replaces this when a deployment outgrows it (ADR-005). Chunks are grouped by
         # owner key (`_owner_key`), so a query reads only its tenant's and the global postings.
         self._lexical = BM25Index()
+        # Owner key -> the store's corpus revision this worker's shard for it last matched. Each
+        # gateway worker holds its own index over one shared store, so a write served by another
+        # worker reaches this one only through these revisions (F-14): `_converge_lexical`
+        # compares them before every lexical search and refreshes the shards that moved. A key
+        # that is absent has never been checked, which always triggers a refresh.
+        self._lexical_revisions: dict[str, int] = {}
+        self._lexical_refresh_locks = _KeyedLocks()
 
         # Serialises the check-then-write section of `ingest` per content hash and per document
         # id. Without it, concurrent duplicate submissions (a double tap, a client retry racing its
@@ -676,8 +683,6 @@ class KnowledgeEngine:
     async def _lexical_search(
         self, text: str, owner_id: UserId | None, include_global: bool
     ) -> list[tuple[str, float]]:
-        if self._lexical.size == 0:
-            return []
         # Tenant isolation is the choice of groups: the caller's own chunks and, if asked, the
         # global ones. No identity reads only the global group. Selecting shards replaces the
         # per-query pass over every chunk's owner that used to build an allow-list (F-30).
@@ -686,20 +691,91 @@ class KnowledgeEngine:
             groups.append(GLOBAL_OWNER)
         if not groups:
             return []
+        await self._converge_lexical(groups)
+        if self._lexical.size == 0:
+            return []
         return self._lexical.search(text, limit=self._candidate_k, groups=groups)
+
+    async def _converge_lexical(self, groups: Sequence[str]) -> None:
+        """Bring the shards this search reads up to date with the shared document store.
+
+        One keyed read of the store's corpus revisions per search. A shard whose revision has
+        not moved since this worker last matched it costs nothing more; one that has moved --
+        an upload, a new version, a delete or an erasure served by any worker -- is refreshed
+        on its own (`_refresh_lexical_group`), so a busy tenant never makes another tenant's
+        search rebuild anything.
+
+        Never raises. If the store cannot answer, the search runs on the index this worker
+        already has: the read-time active-version check in `retrieve` still keeps retired chunks
+        out of the results, and the next search tries again.
+        """
+        try:
+            revisions = await self._documents.corpus_revisions(groups)
+        except Exception as exc:
+            logger.warning(
+                "lexical index freshness check failed; searching the local index",
+                extra={"error": type(exc).__name__},
+            )
+            return
+        for group in groups:
+            current = revisions.get(group, 0)
+            if self._lexical_revisions.get(group, -1) >= current:
+                continue
+            async with self._lexical_refresh_locks.hold(group):
+                # Re-checked under the lock: a concurrent search may have refreshed the shard to
+                # this revision or a later one while this one waited.
+                if self._lexical_revisions.get(group, -1) >= current:
+                    continue
+                try:
+                    await self._refresh_lexical_group(group)
+                except Exception as exc:
+                    logger.warning(
+                        "lexical shard refresh failed; searching the local index",
+                        extra={"error": type(exc).__name__},
+                    )
+                    continue
+                # `current` was read before the refresh listed the shard, so anything committed
+                # after that listing carries a later revision and is picked up next time.
+                self._lexical_revisions[group] = current
+
+    async def _refresh_lexical_group(self, group: str) -> None:
+        """Make one shard hold exactly the active chunks the store has for this owner key.
+
+        A diff, not a rebuild: the store lists the shard's active chunk ids, ids this worker
+        holds that are no longer listed are removed, and only the listed ids it lacks are
+        fetched and tokenised. The cost is one id listing plus the content of what changed.
+        """
+        active = set(await self._documents.active_chunk_ids(group))
+        # Computed straight after the listing returns, with no await in between, so no local
+        # write can interleave between the listing and the diff taken against it.
+        held = self._lexical.ids_in(group)
+        stale = held - active
+        missing = active - held
+        for chunk_id in stale:
+            self._lexical.remove(chunk_id)
+        if missing:
+            for chunk in await self._documents.active_chunks(sorted(missing)):
+                self._lexical.add(chunk.id.value, chunk.content, group=group)
+        if stale or missing:
+            logger.info(
+                "lexical shard refreshed from the document store",
+                extra={"added": len(missing), "removed": len(stale)},
+            )
 
     async def _drop_inactive_lexical(
         self, hits: Sequence[tuple[str, float]], live_ids: set[str]
     ) -> list[tuple[str, float]]:
         """Drop lexical hits whose chunk is not part of its document's active version.
 
-        The BM25 index is per process, and a delete or a new version only updates the index of
-        the gateway worker that served it. Every other worker keeps the old chunk ids until it
-        restarts, and ``chunks_for`` resolves them regardless of status, so a deleted document
-        stayed searchable there (F-14). The document store is shared, so it decides: a hit
-        whose document is tombstoned, or whose version has been superseded, is dropped and
-        evicted from this worker's index. Versions never become active again, so the eviction is
-        final. Hits the vector store also returned are live already, and skip the lookup.
+        The BM25 index is per process, and a delete or a new version updates directly only the
+        index of the gateway worker that served it. `_converge_lexical` brings the other workers
+        along before each search, but a write can still land between that check and this
+        search, or the check can fail, and ``chunks_for`` resolves chunk ids regardless of
+        status -- which is how a deleted document stayed searchable (F-14). So this stays as the
+        guard: the shared document store decides, and a hit whose document is tombstoned, or
+        whose version has been superseded, is dropped and evicted from this worker's index.
+        Versions never become active again, so the eviction is final. Hits the vector store also
+        returned are live already, and skip the lookup.
         """
         active_versions: dict[str, int | None] = {}
         kept: list[tuple[str, float]] = []
@@ -872,8 +948,13 @@ class KnowledgeEngine:
 
         Called at startup: the lexical index is process-local, so a restart or a new replica
         starts with an empty one, and hybrid retrieval would silently degrade to dense-only.
+
+        The recorded corpus revisions are forgotten with it, so each shard is checked against the
+        store on its first search: whatever another worker wrote while this stream was running
+        is reconciled then rather than missed.
         """
         self._lexical.clear()
+        self._lexical_revisions.clear()
         count = 0
         async for batch in self._documents.iter_all_chunks(batch_size=500):
             for chunk in batch:

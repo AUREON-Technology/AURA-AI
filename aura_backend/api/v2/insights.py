@@ -9,16 +9,17 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.db.base import get_db, is_configured
-from infrastructure.db.models import Insight
+from infrastructure.db.models import Insight, User
 from infrastructure.db.user_repo import get_or_create_user
 from services.insights import generate_insights_for_user
 from services.jwt_auth import verify_access_token
+from services.user_time import TIMEZONE_HEADER, normalize_timezone
 
 router = APIRouter(prefix="/api/v3/insights", tags=["insights"])
 
@@ -40,6 +41,16 @@ class InsightResponse(BaseModel):
     citations: list[str] = []
 
 
+def _remember_timezone(user: User, client_timezone: str | None) -> None:
+    """Stores the zone the client reported (``X-Client-Timezone``) so the scheduled runs, which
+    have no request to read it from, compute "today" in it too (audit F-17). A missing or
+    unrecognised value leaves the stored one alone: an old client, or a platform that could not
+    tell, must not reset a correctly set-up user back to UTC."""
+    valid = normalize_timezone(client_timezone)
+    if valid is not None and user.timezone != valid:
+        user.timezone = valid
+
+
 def _to_response(row: Insight) -> InsightResponse:
     payload = json.loads(row.payload_json)
     return InsightResponse(
@@ -53,9 +64,14 @@ def _to_response(row: Insight) -> InsightResponse:
 
 
 @router.get("", response_model=list[InsightResponse])
-async def list_insights(user_info: dict = Depends(verify_access_token), db: AsyncSession = Depends(get_db)):
+async def list_insights(
+    user_info: dict = Depends(verify_access_token),
+    db: AsyncSession = Depends(get_db),
+    client_timezone: str | None = Header(default=None, alias=TIMEZONE_HEADER),
+):
     _require_db_configured()
     user = await get_or_create_user(db, user_info)
+    _remember_timezone(user, client_timezone)
     result = await db.execute(
         select(Insight)
         .where(Insight.user_id == user.id, Insight.dismissed_at.is_(None))
@@ -66,9 +82,16 @@ async def list_insights(user_info: dict = Depends(verify_access_token), db: Asyn
 
 
 @router.post("/generate", response_model=list[InsightResponse])
-async def generate_insights(user_info: dict = Depends(verify_access_token), db: AsyncSession = Depends(get_db)):
+async def generate_insights(
+    user_info: dict = Depends(verify_access_token),
+    db: AsyncSession = Depends(get_db),
+    client_timezone: str | None = Header(default=None, alias=TIMEZONE_HEADER),
+):
     _require_db_configured()
     user = await get_or_create_user(db, user_info)
+    _remember_timezone(user, client_timezone)
+    # Flushed before generating: the rules read the zone back from the users row.
+    await db.flush()
     created = await generate_insights_for_user(db, user.id)
     await db.commit()
     return [_to_response(r) for r in created]

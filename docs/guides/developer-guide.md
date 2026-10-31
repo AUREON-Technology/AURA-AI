@@ -10,7 +10,8 @@ the test suite enforces.
 ```bash
 cd aura_backend
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.lock -r requirements-dev.txt
+pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
+pip install -r requirements-dev.txt   # a second install: the lock is hash-pinned, this is not
 pytest                      # 1010 tests, ~7 seconds
 ```
 
@@ -36,8 +37,10 @@ the build:
 
 | Test | Rule |
 | --- | --- |
-| `test_core_layers_import_only_stdlib` | Nothing outside the stdlib in `domain/` or `ports/` |
-| `test_engines_do_not_import_adapters` | No module-scope adapter import from an engine |
+| `test_core_layers_import_only_stdlib` | Nothing outside the stdlib in `domain/` or `ports/` (ports may use `domain`), at any scope |
+| `test_engines_do_not_import_adapters` | No engine (every discovered package that is not core, `adapters`/`api`, `config`/`observability` or `container`) imports `adapters`, `api` or `container` at any scope, or any third-party module at import time |
+| `test_vendor_sdks_are_imported_lazily` | No vendor SDK (`VENDOR_MODULES`) imported at module scope anywhere in `aura_core` |
+| `test_only_the_composition_root_imports_the_container` | Nothing in `aura_core` imports `container` |
 | `test_no_import_time_network_connections` | No client constructed at import (TD-01) |
 | `test_ports_are_async` | Every port I/O method is a coroutine |
 

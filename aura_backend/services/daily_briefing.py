@@ -16,13 +16,15 @@ import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aura_core.domain.goals import GoalSnapshot
 from aura_core.triggers.briefing import BriefingCounts, build_daily_briefing
-from infrastructure.db.models import CalendarEvent, Goal, Insight, Task
+from infrastructure.db.models import CalendarEvent, Goal, Insight, Task, User
+from services.user_time import local_day_bounds, local_now, resolve_timezone
 
 logger = logging.getLogger("aura_backend.daily_briefing")
 
@@ -30,13 +32,38 @@ logger = logging.getLogger("aura_backend.daily_briefing")
 #: far enough that it doesn't show up fresh every morning for a week straight.
 GOAL_NEAR_TARGET_WINDOW = timedelta(days=7)
 
+#: The briefing goes out at this hour of the *user's* morning. The beat runs hourly and asks
+#: ``briefing_due`` per user, rather than once a day at 06:00 UTC -- which was 23:00 the night
+#: before in California, and would have briefed that user on a day that had not started yet.
+BRIEFING_LOCAL_HOUR = 6
+#: A run missed at 06:00 (a beat restart) is caught up by a later one until noon local. Past
+#: that it is not a morning briefing any more, so the user waits for tomorrow's.
+BRIEFING_CATCH_UP_HOURS = 6
 
-async def generate_daily_briefing_for_user(db: AsyncSession, user_id: uuid.UUID) -> Insight:
+
+def briefing_due(now: datetime, tz: ZoneInfo, last_briefing_at: datetime | None) -> bool:
+    """Whether a user in ``tz`` should get a briefing at ``now``: it is their morning (06:00 to
+    noon, their time) and they have had none yet this local day.
+
+    A window rather than "the 06:00 hour" so a missed hourly run costs nothing.
+    ``last_briefing_at`` counts dismissed briefings too: dismissing it is not asking for another.
+    """
+    hour = local_now(now, tz).hour
+    if not BRIEFING_LOCAL_HOUR <= hour < BRIEFING_LOCAL_HOUR + BRIEFING_CATCH_UP_HOURS:
+        return False
+    today_start, _ = local_day_bounds(now, tz)
+    return last_briefing_at is None or last_briefing_at < today_start
+
+
+async def generate_daily_briefing_for_user(
+    db: AsyncSession, user_id: uuid.UUID, *, now: datetime | None = None,
+) -> Insight:
     """Computes and persists today's briefing, replacing yesterday's un-surfaced one (same
     replace-not-accumulate rule ``services/insights.py`` uses for its own candidates)."""
-    now = datetime.now(timezone.utc)
-    today_start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
-    today_end = today_start + timedelta(days=1)
+    now = now or datetime.now(timezone.utc)
+    # The user's own day, not the UTC one (audit F-17).
+    tz = resolve_timezone(await db.scalar(select(User.timezone).where(User.id == user_id)))
+    today_start, today_end = local_day_bounds(now, tz)
 
     overdue_result = await db.execute(
         select(Task).where(
@@ -100,6 +127,9 @@ async def generate_daily_briefing_for_user(db: AsyncSession, user_id: uuid.UUID)
 
     row = Insight(
         id=uuid.uuid4(), user_id=user_id, kind="daily_briefing",
+        # Stamped with the same clock the day boundaries came from: ``briefing_due`` compares
+        # it against the user's local day to send one briefing a day.
+        created_at=now,
         payload_json=json.dumps({
             "message": message, "explanation": explanation, "citations": citations,
         }),

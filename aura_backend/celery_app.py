@@ -170,10 +170,11 @@ _beat_schedule = {
         "schedule": 60.0,
         "options": {"queue": "realtime"},
     },
-    # Phase E2: once a day, well before a typical morning check-in.
+    # Phase E2: each user's briefing at 06:00 *their* time (audit F-17). Hourly, on the hour,
+    # because time zones are; the task itself picks who is due and never sends one twice a day.
     "daily-briefing": {
         "task": "tasks.generate_daily_briefings_task",
-        "schedule": crontab(minute=0, hour=6),
+        "schedule": crontab(minute=0),
         "options": {"queue": "realtime"},
     },
     # Engineer-agent workspaces (ADR-013): pause what is idle, delete what has expired.

@@ -212,6 +212,32 @@ class DocumentStore(Protocol):
         """Mark deleted and return the number of chunks to purge from indexes."""
         ...
 
+    # -- convergence of per-process derived indexes (F-14) ---------------------------------
+    #
+    # An *owner key* is an owner's id, or :data:`GLOBAL_OWNER` for owner-less content -- the same
+    # partition the vector payloads and the lexical index use.
+
+    async def corpus_revisions(self, owner_keys: Sequence[str]) -> Mapping[str, int]:
+        """A counter per owner key that changes whenever that owner's set of active chunks may
+        have changed: every ``put``, ``supersede``, ``tombstone`` and ``purge_owner`` advances
+        it, in the same transaction as the change itself. It never goes backwards, including
+        across an erasure. Keys never written are absent, which callers read as 0.
+
+        This is what lets a process holding a derived in-memory index (the per-worker BM25
+        index) learn cheaply -- one keyed read -- that another process changed the corpus, and
+        refresh only the owner whose content moved.
+        """
+        ...
+
+    async def active_chunk_ids(self, owner_key: str) -> Sequence[str]:
+        """The ids of every chunk of every active document version this owner key owns."""
+        ...
+
+    async def active_chunks(self, chunk_ids: Sequence[str]) -> Sequence[Chunk]:
+        """Those of ``chunk_ids`` that belong to an active document version, in no set order.
+        Unknown, superseded and tombstoned ids are simply absent."""
+        ...
+
 
 @runtime_checkable
 class MemoryStore(Protocol):
@@ -245,6 +271,21 @@ class MemoryStore(Protocol):
         ...
 
     async def update(self, record: MemoryRecord) -> None:
+        ...
+
+    async def touch_many(
+        self, memory_ids: Sequence[MemoryId], *, owner_id: UserId, at: datetime
+    ) -> int:
+        """Record one access on each of ``owner_id``'s rows in ``memory_ids``: atomically add one
+        to ``access_count`` and move ``last_accessed_at`` forward to ``at`` (never backwards).
+
+        A field-level update of the *current* row, never a write of a record the caller read
+        earlier. Recall reinforces what it returned, and between its read and this write the
+        row may have been superseded, edited or deleted; writing the snapshot back reverted all
+        three -- a superseded memory came back to life, a deleted one was re-created -- and two
+        overlapping recalls lost an increment (F-16). An id that no longer exists, or belongs to
+        another owner, is skipped, never created. Returns how many rows were touched.
+        """
         ...
 
     async def delete(self, memory_id: MemoryId, *, owner_id: UserId) -> bool:

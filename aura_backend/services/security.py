@@ -329,6 +329,10 @@ async def verify_identity_token(
             "email": id_info.get("email"),
             "name": id_info.get("name"),
             "picture": id_info.get("picture"),
+            # Role grants by email need both (SEC-08, services.rbac.email_grant_eligible).
+            # verify_oauth2_token accepts only Google's issuer, so this *is* Google sign-in.
+            "email_verified": id_info.get("email_verified") is True,
+            "sign_in_provider": "google.com",
         }
     except Exception as google_err:
         logger.warning(f"Token is not a valid Google ID token: {google_err}. Trying Firebase...")
@@ -346,6 +350,11 @@ async def verify_identity_token(
                 "email": decoded_token.get("email"),
                 "name": decoded_token.get("name"),
                 "picture": decoded_token.get("picture"),
+                # SEC-08: a Firebase token can come from any enabled provider, including
+                # email/password with an address nobody verified. Role grants by email read
+                # both of these (services.rbac.email_grant_eligible).
+                "email_verified": decoded_token.get("email_verified") is True,
+                "sign_in_provider": (decoded_token.get("firebase") or {}).get("sign_in_provider"),
             }
         except Exception as firebase_err:
             logger.error(f"Firebase verification failed: {firebase_err}")

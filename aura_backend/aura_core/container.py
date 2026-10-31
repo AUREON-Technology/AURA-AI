@@ -74,6 +74,7 @@ from .observability.metrics import get_metrics
 from .rag import StrategyFacade, build_strategies
 from .observability.tracing import get_tracer
 from .planning.engine import PlanningEngine
+from .ports.runtime import Closeable
 from .prompts import build_default_registry
 from .reasoning.engine import ReasoningEngine
 from .safety.pipeline import SafetyPipeline
@@ -82,9 +83,16 @@ from .tools.policy import ToolPolicy
 from .tools.registry import ToolRegistry
 from .triggers import DEFAULT_TRIGGER_SPECS, DURABLE_EVENT_TYPES, TriggerContext, TriggerEngine
 
-__all__ = ["Container", "build_container", "build_field_cipher"]
+__all__ = ["Container", "build_container", "build_field_cipher", "SHUTDOWN_CLOSE_TIMEOUT_S"]
 
 logger = get_logger("container")
+
+#: Ceiling on any one close in ``Container.shutdown()``. The closes run concurrently, so this is
+#: also the bound on the whole shutdown, and it has to end inside the margin F-25 left between
+#: uvicorn's drain and the orchestrator's SIGKILL (``LIFESPAN_MARGIN_S`` in
+#: tests/unit/test_deploy_robustness.py, 15 s). A close that takes longer is abandoned and
+#: logged; the process is exiting either way, and the OS reclaims the socket.
+SHUTDOWN_CLOSE_TIMEOUT_S = 5.0
 
 
 class Container:
@@ -123,6 +131,8 @@ class Container:
         self._pg_pool: Any = None
         # Memoised by _field_cipher(); only built when a Postgres store that encrypts asks.
         self._cipher: Any = None
+        # Set by shutdown(), cleared by startup(): a second shutdown is a no-op.
+        self._shut_down = False
 
         # Extra readiness probes contributed by the layer above (see register_readiness_check).
         self._readiness_checks: dict[str, Any] = {}
@@ -1543,6 +1553,9 @@ class Container:
         query, and the in-process lexical index is empty after a restart, which would silently
         degrade hybrid retrieval to dense-only.
         """
+        # Re-arms shutdown(): a container started again after one (a test client re-entering
+        # its lifespan, an evaluation run) reconnects lazily, and those clients must close too.
+        self._shut_down = False
         await self.index_manager.ensure_ready()
         if self.settings.knowledge.hybrid_enabled:
             await self.knowledge.rebuild_lexical_index()
@@ -1588,22 +1601,90 @@ class Container:
                 logger.exception("blueprint sync failed")
 
     async def shutdown(self) -> None:
-        if self._blueprint_sync_task is not None:
-            self._blueprint_sync_task.cancel()
-        await self.router.close()
-        close = getattr(self.embedder, "close", None)
-        if close is not None:
-            await close()
-        if self.github_client is not None:
-            await self.github_client.close()
-        for client in self._github_clients_by_user.values():
-            await client.close()
-        if self.mcp_client is not None:
-            await self.mcp_client.close()
+        """Release every connection this container opened (R2.7). Idempotent; never raises.
+
+        Called by the gateway's lifespan shutdown, which uvicorn runs only after its graceful
+        drain (``--timeout-graceful-shutdown``) has let in-flight requests finish, and by each
+        Celery worker process on exit, on that process's one event loop (``tasks.py``) -- the
+        loop the asyncpg pool is bound to.
+
+        Only what was actually constructed is closed. Every adapter here connects lazily, and
+        each ``close`` returns at once when its client was never built; the Postgres pool is read
+        from its memo rather than through ``_postgres_pool()``, which would create one. Building a
+        client in order to close it would be a network call on the way out, often against the
+        very dependency whose outage is why the process is stopping.
+
+        The closes run concurrently, each bounded by ``SHUTDOWN_CLOSE_TIMEOUT_S``, and one
+        failing or hanging is logged without stopping the rest.
+        """
+        if self._shut_down:
+            return
+        self._shut_down = True
+        closers = self._shutdown_closers()
+        await asyncio.gather(*(self._close_quietly(name, close) for name, close in closers))
         mark_dead = getattr(self.metrics, "mark_process_dead", None)
         if mark_dead is not None:
             mark_dead()
-        logger.info("container shutdown complete")
+        logger.info("container shutdown complete", extra={"closed": [name for name, _ in closers]})
+
+    def _shutdown_closers(self) -> list[tuple[str, Any]]:
+        """``(name, zero-argument coroutine function)`` for each resource to release."""
+        closers: list[tuple[str, Any]] = []
+
+        task, self._blueprint_sync_task = self._blueprint_sync_task, None
+        if task is not None:
+            task.cancel()
+
+            async def stop_blueprint_sync() -> None:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+            closers.append(("blueprint sync", stop_blueprint_sync))
+
+        # Each provider holds its own httpx client (openai_compatible, ollama).
+        for provider in self.providers:
+            if isinstance(provider, Closeable):
+                closers.append((f"provider {provider.name}", provider.close))
+
+        for name, adapter in (
+            ("embedder", self.embedder),
+            ("cache", self.cache_backend),  # Redis
+            ("vector store", self.vectors),  # Qdrant
+            ("docker sandbox", getattr(self, "docker_sandbox_runner", None)),
+            ("github client", self.github_client),
+            ("mcp client", self.mcp_client),
+        ):
+            if adapter is not None and isinstance(adapter, Closeable):
+                closers.append((name, adapter.close))
+
+        user_clients = list(self._github_clients_by_user.values())
+        self._github_clients_by_user.clear()
+        for client in user_clients:
+            closers.append(("github client (user)", client.close))
+
+        # Every Postgres store shares this one pool, so it is closed here once, not per store.
+        if self._pg_pool is not None:
+            pool = self._pg_pool
+            # The pool's own budget is shorter than the outer one, so a connection still busy
+            # gets terminated rather than abandoned when the outer timeout cancels the close.
+            graceful_s = SHUTDOWN_CLOSE_TIMEOUT_S * 0.8
+            closers.append(("postgres pool", lambda: pool.close(timeout_s=graceful_s)))
+
+        return closers
+
+    @staticmethod
+    async def _close_quietly(name: str, close: Any) -> None:
+        timeout = SHUTDOWN_CLOSE_TIMEOUT_S
+        try:
+            await asyncio.wait_for(close(), timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning("shutdown: %s did not close within %.1fs; abandoned", name, timeout)
+        except Exception as exc:
+            logger.warning(
+                "shutdown: closing %s failed (%s: %s); continuing", name, type(exc).__name__, exc
+            )
 
     def postgres_pool(self) -> Any:
         """The shared Postgres pool, for callers above this package.

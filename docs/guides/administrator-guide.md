@@ -14,6 +14,13 @@ Two operator roles:
   source register/delete, and allowlisted Ollama pull/delete. `ADMIN_EMAILS` mints Admin only;
   SuperAdmin is assigned via `SUPERADMIN_EMAILS` or the Access page.
 
+The email lists (`SUPERADMIN_EMAILS`, `ADMIN_EMAILS`, `DEVELOPER_EMAILS`, and email keys in
+`roles.json`) match only a **verified Google sign-in**: the ID token must say
+`email_verified: true`, and a Firebase token must also say
+`firebase.sign_in_provider: "google.com"`. An account created with email/password -- or any
+other provider -- under a listed address is an ordinary User. A role held by uid in `roles.json`
+or assigned on the Access page does not depend on this.
+
 Mutations write an audit record.
 
 ```bash

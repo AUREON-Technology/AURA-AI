@@ -226,6 +226,179 @@ class TestEpisodicMemory:
         assert state.summary == "MODEL SUMMARY"
         assert "q0" in calls[0]
 
+    async def test_an_append_during_summarisation_is_not_lost(self) -> None:
+        """F-16: append loaded the state, awaited the model for the summary, then wrote the
+        state it had loaded -- so any exchange appended while the model was thinking (a second
+        device, a retried request) was overwritten and gone."""
+        import asyncio
+
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def slow(transcript: str, previous: str) -> str:
+            started.set()
+            await release.wait()
+            return "SUMMARY"
+
+        episodic = EpisodicMemory(
+            cache=InMemoryCache(), window=2, summarise_after=4, summariser=slow
+        )
+        sid, uid = SessionId("s1"), UserId("u1")
+        await episodic.append(sid, uid, user_message="q0", assistant_message="a0")
+        await episodic.append(sid, uid, user_message="q1", assistant_message="a1")
+
+        summarising = asyncio.create_task(
+            episodic.append(sid, uid, user_message="q2", assistant_message="a2")
+        )
+        await asyncio.wait_for(started.wait(), 1)
+        # The model is slow; a concurrent turn must not wait for it, nor be erased by it.
+        await asyncio.wait_for(
+            episodic.append(sid, uid, user_message="q3", assistant_message="a3"), 1
+        )
+        release.set()
+        await summarising
+
+        state = await episodic.load(sid, uid)
+        contents = [m.content for m in state.messages]
+        assert contents[-2:] == ["q3", "a3"], "a concurrent append was lost"
+        assert "q2" in contents
+        assert state.summary == "SUMMARY"
+        assert "q0" not in contents  # the summarised turns were folded, not kept twice
+        assert state.turn_count == 4
+
+    async def test_a_summary_is_not_applied_over_a_cleared_session(self) -> None:
+        """Clearing while the model summarises must not bring the old turns back."""
+        import asyncio
+
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def slow(transcript: str, previous: str) -> str:
+            started.set()
+            await release.wait()
+            return "SUMMARY OF THE OLD CONVERSATION"
+
+        episodic = EpisodicMemory(
+            cache=InMemoryCache(), window=2, summarise_after=4, summariser=slow
+        )
+        sid, uid = SessionId("s1"), UserId("u1")
+        for i in range(2):
+            await episodic.append(sid, uid, user_message=f"q{i}", assistant_message=f"a{i}")
+        summarising = asyncio.create_task(
+            episodic.append(sid, uid, user_message="q2", assistant_message="a2")
+        )
+        await asyncio.wait_for(started.wait(), 1)
+        await episodic.clear(sid, uid)
+        release.set()
+        await summarising
+
+        state = await episodic.load(sid, uid)
+        assert state.messages == ()
+        assert state.summary == ""
+
+    @pytest.mark.parametrize("first", ["a", "b"])
+    async def test_two_workers_summarising_at_once_apply_exactly_one(self, first) -> None:
+        """Two workers (two instances over one shared cache, as two processes over Redis) can
+        both see the overflow and both summarise. Whichever applies first wins; the other's
+        summary was computed against state that no longer exists, so it is discarded rather
+        than folding the same turns in twice or dropping the winner's trim."""
+        import asyncio
+
+        cache = InMemoryCache()
+        gates = {"a": asyncio.Event(), "b": asyncio.Event()}
+        started = {"a": asyncio.Event(), "b": asyncio.Event()}
+
+        def summariser(name: str):
+            async def summarise(transcript: str, previous: str) -> str:
+                started[name].set()
+                await gates[name].wait()
+                return f"SUMMARY-{name.upper()}"
+            return summarise
+
+        workers = {
+            name: EpisodicMemory(cache=cache, window=2, summarise_after=4,
+                                 summariser=summariser(name))
+            for name in ("a", "b")
+        }
+        sid, uid = SessionId("s1"), UserId("u1")
+        for i in range(2):
+            await workers["a"].append(sid, uid, user_message=f"q{i}", assistant_message=f"a{i}")
+
+        task_a = asyncio.create_task(
+            workers["a"].append(sid, uid, user_message="q2", assistant_message="a2"))
+        await asyncio.wait_for(started["a"].wait(), 1)
+        task_b = asyncio.create_task(
+            workers["b"].append(sid, uid, user_message="q3", assistant_message="a3"))
+        await asyncio.wait_for(started["b"].wait(), 1)
+
+        second = "b" if first == "a" else "a"
+        gates[first].set()
+        await (task_a if first == "a" else task_b)
+        gates[second].set()
+        await asyncio.gather(task_a, task_b)
+
+        state = await workers["a"].load(sid, uid)
+        contents = [m.content for m in state.messages]
+        assert state.summary == f"SUMMARY-{first.upper()}"
+        assert contents[-2:] == ["q3", "a3"]
+        assert "q0" not in contents and "a1" not in contents
+        assert state.turn_count == 4
+        assert state.folded + len(state.messages) == 8  # every message: folded once or kept
+
+    async def test_a_lease_held_by_another_worker_is_waited_for(self) -> None:
+        import asyncio
+
+        cache = InMemoryCache()
+        episodic = EpisodicMemory(cache=cache, window=2, summarise_after=4)
+        sid, uid = SessionId("s1"), UserId("u1")
+        lease = f"{EpisodicMemory._LEASE_PREFIX}{episodic._key(sid, uid)}"
+        assert await cache.incr(lease, ttl_s=10) == 1  # another worker is mid-write
+
+        pending = asyncio.create_task(
+            episodic.append(sid, uid, user_message="q", assistant_message="a"))
+        await asyncio.sleep(0.05)
+        assert not pending.done()
+
+        await cache.delete(lease)
+        await asyncio.wait_for(pending, 1)
+        assert (await episodic.load(sid, uid)).turn_count == 1
+        assert await cache.get(lease) is None  # released after the write
+
+    async def test_a_stuck_lease_delays_but_never_drops_an_exchange(self) -> None:
+        cache = InMemoryCache()
+        episodic = EpisodicMemory(cache=cache, window=2, summarise_after=4, lease_wait_s=0.05)
+        sid, uid = SessionId("s1"), UserId("u1")
+        await cache.incr(f"{EpisodicMemory._LEASE_PREFIX}{episodic._key(sid, uid)}", ttl_s=60)
+
+        await episodic.append(sid, uid, user_message="q", assistant_message="a")
+        assert (await episodic.load(sid, uid)).turn_count == 1
+
+    async def test_a_cache_that_cannot_arbitrate_still_records_the_exchange(self) -> None:
+        """Redis down: incr raises (it must, for the rate limiter); the append degrades to the
+        in-process lock rather than failing the turn's persistence."""
+
+        class NoIncr(InMemoryCache):
+            async def incr(self, key, *, ttl_s=None):  # noqa: ANN001
+                raise ConnectionError("redis is down")
+
+        episodic = EpisodicMemory(cache=NoIncr(), window=2, summarise_after=4)
+        sid, uid = SessionId("s1"), UserId("u1")
+        await episodic.append(sid, uid, user_message="q", assistant_message="a")
+        assert (await episodic.load(sid, uid)).turn_count == 1
+
+    async def test_concurrent_appends_are_all_recorded(self) -> None:
+        import asyncio
+
+        episodic = EpisodicMemory(cache=InMemoryCache(), window=50, summarise_after=100)
+        sid, uid = SessionId("s1"), UserId("u1")
+        await asyncio.gather(*(
+            episodic.append(sid, uid, user_message=f"q{i}", assistant_message=f"a{i}")
+            for i in range(8)
+        ))
+        state = await episodic.load(sid, uid)
+        assert state.turn_count == 8
+        assert {m.content for m in state.messages} == (
+            {f"q{i}" for i in range(8)} | {f"a{i}" for i in range(8)}
+        )
+
     async def test_a_failing_summariser_falls_back_to_a_transcript(self) -> None:
         """Losing the conversation entirely is worse than keeping a crude record of it."""
 

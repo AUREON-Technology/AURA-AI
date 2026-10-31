@@ -58,7 +58,14 @@ jobs:
             aura_backend/requirements-dev.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.lock -r requirements-dev.txt
+        # Hash-checked (F-38): every artefact must match a hash recorded in requirements.lock.
+        # The lock names no index; torch's +cpu wheel exists only on PyTorch's CPU index, so it
+        # is passed here, and --require-hashes means neither index can substitute a file.
+        # requirements-dev.txt is unhashed test tooling (GAP-033), so it is a second install --
+        # one hash-checked requirement puts pip in hash mode for every file on its command line.
+        run: |
+          pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
+          pip install -r requirements-dev.txt
 
       - name: Dockerfile boots aura_service (AURA-012)
         run: |
@@ -127,9 +134,20 @@ jobs:
         # resolve -- which would drop torch out of the scan while still reporting success.
         # Strip the local segment for the scan only: the CPU wheel is built from the same
         # source as the PyPI release, so upstream advisories apply unchanged.
+        #
+        # The lock is hash-pinned (F-38), and the +cpu hashes cannot match PyPI's torch files,
+        # so the scan reads bare `name==version` lines: the pin lines, with the trailing
+        # continuation backslash and the local segment removed. Nothing is installed here, so
+        # dropping the hashes for the scan loses no protection. The two checks after it fail the
+        # job if the extraction ever leaves a hash or backslash behind, or loses torch.
         run: |
           pip install pip-audit
-          sed -E 's/^([A-Za-z0-9._-]+==[^+]+)\+[A-Za-z0-9.]+$/\1/' requirements.lock > /tmp/audit.lock
+          grep -E '^[A-Za-z0-9._-]+==' requirements.lock \
+            | sed -E 's/[[:space:]]*\\$//; s/\+[A-Za-z0-9.]+$//' > /tmp/audit.lock
+          if grep -q -e '--hash' -e '\\' /tmp/audit.lock || ! grep -qx 'torch==[0-9.]*' /tmp/audit.lock; then
+            echo "::error::could not reduce requirements.lock to name==version pins for pip-audit"
+            exit 1
+          fi
           # No pipe here: the default shell has no pipefail, so `pip-audit | tee` would
           # report tee's status and swallow a CVE finding.
           pip-audit --disable-pip --no-deps -r /tmp/audit.lock > /tmp/audit.out 2>&1 || {
@@ -208,7 +226,14 @@ jobs:
             aura_backend/requirements-dev.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.lock -r requirements-dev.txt
+        # Hash-checked (F-38): every artefact must match a hash recorded in requirements.lock.
+        # The lock names no index; torch's +cpu wheel exists only on PyTorch's CPU index, so it
+        # is passed here, and --require-hashes means neither index can substitute a file.
+        # requirements-dev.txt is unhashed test tooling (GAP-033), so it is a second install --
+        # one hash-checked requirement puts pip in hash mode for every file on its command line.
+        run: |
+          pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
+          pip install -r requirements-dev.txt
 
       - name: Postgres adapter tests (real database)
         env:
