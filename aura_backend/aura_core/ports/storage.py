@@ -212,6 +212,32 @@ class DocumentStore(Protocol):
         """Mark deleted and return the number of chunks to purge from indexes."""
         ...
 
+    # -- convergence of per-process derived indexes (F-14) ---------------------------------
+    #
+    # An *owner key* is an owner's id, or :data:`GLOBAL_OWNER` for owner-less content -- the same
+    # partition the vector payloads and the lexical index use.
+
+    async def corpus_revisions(self, owner_keys: Sequence[str]) -> Mapping[str, int]:
+        """A counter per owner key that changes whenever that owner's set of active chunks may
+        have changed: every ``put``, ``supersede``, ``tombstone`` and ``purge_owner`` advances
+        it, in the same transaction as the change itself. It never goes backwards, including
+        across an erasure. Keys never written are absent, which callers read as 0.
+
+        This is what lets a process holding a derived in-memory index (the per-worker BM25
+        index) learn cheaply -- one keyed read -- that another process changed the corpus, and
+        refresh only the owner whose content moved.
+        """
+        ...
+
+    async def active_chunk_ids(self, owner_key: str) -> Sequence[str]:
+        """The ids of every chunk of every active document version this owner key owns."""
+        ...
+
+    async def active_chunks(self, chunk_ids: Sequence[str]) -> Sequence[Chunk]:
+        """Those of ``chunk_ids`` that belong to an active document version, in no set order.
+        Unknown, superseded and tombstoned ids are simply absent."""
+        ...
+
 
 @runtime_checkable
 class MemoryStore(Protocol):

@@ -353,6 +353,44 @@ class TestDocumentStore:
         assert await store.tombstone(DocumentId("d1"), owner_id=UserId("alice")) == 2
         assert await store.list_active(owner_id=UserId("alice")) == []
 
+    async def test_every_corpus_change_advances_only_its_owners_revision(self) -> None:
+        """What lets each gateway worker notice that another one changed an owner's corpus
+        (F-14): put, supersede, tombstone and purge each move the revision, never backwards."""
+        store = InMemoryDocumentStore()
+        assert await store.corpus_revisions(["alice", "global"]) == {}
+
+        seen = []
+        await store.put(self._document("d1", owner="alice"), [self._chunk("d1", 0)])
+        seen.append((await store.corpus_revisions(["alice"]))["alice"])
+        await store.put(self._document("d1", version=2, owner="alice"), [self._chunk("d1", 0, 2)])
+        await store.supersede(DocumentId("d1"), old_version=1, new_version=2)
+        seen.append((await store.corpus_revisions(["alice"]))["alice"])
+        await store.tombstone(DocumentId("d1"), owner_id=UserId("alice"))
+        seen.append((await store.corpus_revisions(["alice"]))["alice"])
+        await store.purge_owner(UserId("alice"))
+        seen.append((await store.corpus_revisions(["alice"]))["alice"])
+
+        assert seen == sorted(set(seen))  # strictly increasing
+        await store.put(self._document("g1", owner=None), [])
+        revisions = await store.corpus_revisions(["alice", "bob", "global"])
+        assert set(revisions) == {"alice", "global"}
+        assert revisions["alice"] == seen[-1]
+
+    async def test_active_chunks_are_listed_per_owner_key_and_fetched_by_id(self) -> None:
+        store = InMemoryDocumentStore()
+        await store.put(self._document("a", owner="alice"), [self._chunk("a", 0), self._chunk("a", 1)])
+        await store.put(self._document("g", owner=None), [self._chunk("g", 0)])
+        await store.put(
+            self._document("old", owner="alice", status=DocumentStatus.SUPERSEDED),
+            [self._chunk("old", 0)],
+        )
+
+        assert set(await store.active_chunk_ids("alice")) == {"a:v1:0", "a:v1:1"}
+        assert set(await store.active_chunk_ids("global")) == {"g:v1:0"}
+        assert await store.active_chunk_ids("bob") == []
+        fetched = await store.active_chunks(["a:v1:1", "old:v1:0", "missing:v1:0"])
+        assert [c.id.value for c in fetched] == ["a:v1:1"]
+
 
 class TestMemoryStore:
     def _record(self, memory_id: str = "m1", *, owner: str = "u1",
