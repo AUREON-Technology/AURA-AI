@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import 'package:aura_client/core/theme/theme.dart';
 import '../finance_view_model.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class FinanceTransactionForm extends ConsumerStatefulWidget {
   const FinanceTransactionForm({super.key});
@@ -144,6 +145,7 @@ class _FinanceTransactionFormState
                   style: const TextStyle(color: Colors.white, fontSize: 14),
                 ),
                 trailing: IconButton(
+                  tooltip: context.l10n.changeDate,
                   icon: const Icon(Icons.edit, color: AuraTheme.textSecondary),
                   onPressed: () async {
                     final date = await showDatePicker(

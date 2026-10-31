@@ -6,6 +6,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import '../../data/chat_repository.dart';
 import '../chat_view_model.dart';
 import '../pending_actions_executor.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class PendingActionsCard extends ConsumerWidget {
   const PendingActionsCard({super.key});
@@ -31,7 +32,7 @@ class PendingActionsCard extends ConsumerWidget {
                 const SizedBox(width: AuraSpacing.sm),
                 Expanded(
                   child: Text(
-                    'AURA Proposes Actions',
+                    context.l10n.pendingActionsTitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -74,14 +75,14 @@ class PendingActionsCard extends ConsumerWidget {
               runSpacing: AuraSpacing.sm,
               children: [
                 AuraButton(
-                  label: 'Reject',
+                  label: context.l10n.pendingActionsReject,
                   variant: AuraButtonVariant.ghost,
                   onPressed: () => ref
                       .read(chatViewModelProvider.notifier)
                       .rejectPendingActions(),
                 ),
                 AuraButton(
-                  label: 'Approve Actions',
+                  label: context.l10n.pendingActionsApprove,
                   variant: AuraButtonVariant.primary,
                   onPressed: () async {
                     final messenger = ScaffoldMessenger.of(context);
@@ -89,7 +90,7 @@ class PendingActionsCard extends ConsumerWidget {
                         .read(chatViewModelProvider.notifier)
                         .approvePendingActions();
                     if (!context.mounted) return;
-                    messenger.showSnackBar(_snackBarFor(outcome, palette));
+                    messenger.showSnackBar(_snackBarFor(outcome, palette, context.l10n));
                   },
                 ),
               ],
@@ -100,22 +101,22 @@ class PendingActionsCard extends ConsumerWidget {
     );
   }
 
-  SnackBar _snackBarFor(PendingActionsOutcome outcome, AuraPalette palette) {
+  SnackBar _snackBarFor(PendingActionsOutcome outcome, AuraPalette palette, AppLocalizations l10n) {
     if (outcome.allSucceeded) {
       return SnackBar(
-        content: const Text('Proposed actions successfully executed!'),
+        content: Text(l10n.pendingActionsAllSucceeded),
         backgroundColor: palette.success,
       );
     }
     if (outcome.allFailed) {
       return SnackBar(
-        content: Text('All actions failed: ${outcome.failedLabels.join('; ')}'),
+        content: Text(l10n.pendingActionsAllFailed(outcome.failedLabels.join('; '))),
         backgroundColor: palette.danger,
       );
     }
     return SnackBar(
       content: Text(
-        '${outcome.failedLabels.length} action(s) failed: ${outcome.failedLabels.join('; ')}',
+        l10n.pendingActionsSomeFailed(outcome.failedLabels.length, outcome.failedLabels.join('; ')),
       ),
       backgroundColor: palette.warning,
     );

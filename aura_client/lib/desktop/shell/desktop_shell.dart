@@ -264,8 +264,8 @@ class _ShellBody extends ConsumerWidget {
           child: _OverlayScrim(onDismiss: () => _dismissTopPanel(ref, regions)),
         ),
         if (regions.primaryFloating && !regions.secondaryFloating)
-          Positioned(
-            left: ideDensity.activityBarWidth,
+          PositionedDirectional(
+            start: ideDensity.activityBarWidth,
             top: 0,
             bottom: ideDensity.statusBarHeight,
             width: regions.primaryWidth,
@@ -275,11 +275,11 @@ class _ShellBody extends ConsumerWidget {
             ),
           ),
         if (regions.secondaryFloating)
-          Positioned(
+          PositionedDirectional(
             // In compact the AI panel takes the whole content area rather
             // than a sliver of it -- a chat column 200px wide is not usable.
-            left: regions.secondaryFillsContentArea ? ideDensity.activityBarWidth : null,
-            right: 0,
+            start: regions.secondaryFillsContentArea ? ideDensity.activityBarWidth : null,
+            end: 0,
             top: 0,
             bottom: ideDensity.statusBarHeight,
             width: regions.secondaryFillsContentArea ? null : regions.secondaryWidth,

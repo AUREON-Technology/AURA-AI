@@ -9,6 +9,7 @@ import 'auth_provider.dart';
 import 'sign_out_confirmation.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class ProfilePage extends ConsumerStatefulWidget {
   const ProfilePage({super.key});
@@ -62,15 +63,15 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text(
-          'User Profile & Security',
-          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+        title: Text(
+          context.l10n.profileTitle,
+          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
         ),
       ),
       body: authState.when(
         data: (profile) {
           if (profile == null) {
-            return const Center(child: Text('Not signed in', style: TextStyle(color: Colors.white70)));
+            return Center(child: Text(context.l10n.profileNotSignedIn, style: const TextStyle(color: Colors.white70)));
           }
 
           final avatarUrl = profile.photoUrl ?? 'https://api.dicebear.com/7.x/bottts/png?seed=${profile.displayName}';
@@ -179,7 +180,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                           )
                         : const Icon(Icons.info_outline, size: 16),
-                    label: const Text('Show Attestation Status'),
+                    label: Text(context.l10n.profileShowAttestation),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AuraTheme.accentTeal,
                     ),
@@ -256,7 +257,7 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
                 }
               },
               icon: const Icon(Icons.logout, size: 16, color: Colors.redAccent),
-              label: const Text('Sign Out', style: TextStyle(color: Colors.redAccent)),
+              label: Text(context.l10n.signOut, style: const TextStyle(color: Colors.redAccent)),
             ),
           ],
         ),

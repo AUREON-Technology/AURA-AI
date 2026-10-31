@@ -9,8 +9,12 @@ import '../../data/chat_repository.dart';
 import '../chat_view_model.dart';
 import 'chat_image_attachments.dart';
 import 'voice_recorder_button.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
-/// Tooltip and screen-reader label of the composer's Stop button.
+/// English tooltip and screen-reader label of the composer's Stop button.
+///
+/// The widget reads `chatStopGenerating` from `app_en.arb`; this constant mirrors that
+/// value so tests can find the button by tooltip.
 const kStopGeneratingLabel = 'Stop generating';
 
 class ChatComposer extends ConsumerWidget {
@@ -32,6 +36,7 @@ class ChatComposer extends ConsumerWidget {
     final isStreaming = ref.watch(streamingMessageIdProvider) != null;
     final locked = chat.composerLocked(isStreaming: isStreaming);
     final (personaLabel, _) = personaDisplay(ref.watch(activeAgentIdProvider));
+    final l10n = context.l10n;
 
     return Container(
       padding: const EdgeInsets.all(AuraSpacing.xl),
@@ -43,21 +48,21 @@ class ChatComposer extends ConsumerWidget {
             spacing: AuraSpacing.sm,
             children: [
               FilterChip(
-                label: const Text('Knowledge'),
+                label: Text(l10n.chatToggleKnowledge),
                 selected: chat.useRag,
                 onSelected: locked
                     ? null
                     : (v) => ref.read(chatViewModelProvider.notifier).setUseRag(v),
               ),
               FilterChip(
-                label: const Text('Memory'),
+                label: Text(l10n.chatToggleMemory),
                 selected: chat.useMemory,
                 onSelected: locked
                     ? null
                     : (v) => ref.read(chatViewModelProvider.notifier).setUseMemory(v),
               ),
               FilterChip(
-                label: const Text('Tools'),
+                label: Text(l10n.chatToggleTools),
                 selected: chat.useTools,
                 onSelected: locked
                     ? null
@@ -76,8 +81,10 @@ class ChatComposer extends ConsumerWidget {
                   enabled: !locked,
                   decoration: InputDecoration(
                     hintText: locked
-                        ? 'Waiting for $personaLabel...'
-                        : (isMobile ? 'Ask $personaLabel...' : 'Ask $personaLabel anything...'),
+                        ? l10n.chatComposerWaiting(personaLabel)
+                        : (isMobile
+                            ? l10n.chatComposerHintShort(personaLabel)
+                            : l10n.chatComposerHint(personaLabel)),
                   ),
                   style: TextStyle(color: palette.textPrimary),
                   onSubmitted: locked ? null : (_) => onSend(),
@@ -99,12 +106,12 @@ class ChatComposer extends ConsumerWidget {
                 child: isStreaming
                     ? IconButton(
                         key: const ValueKey('chat-stop-button'),
-                        tooltip: kStopGeneratingLabel,
+                        tooltip: l10n.chatStopGenerating,
                         icon: Icon(Icons.stop_rounded, color: palette.onBrand),
                         onPressed: () => ref.read(chatRepositoryProvider).stopStreaming(),
                       )
                     : IconButton(
-                        tooltip: 'Send',
+                        tooltip: l10n.chatSend,
                         icon: Icon(Icons.send, color: palette.onBrand),
                         onPressed: locked ? null : onSend,
                       ),

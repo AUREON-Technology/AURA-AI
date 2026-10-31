@@ -56,13 +56,18 @@ all.
 - **Client CI** (`client-ci.yml`, Flutter 3.44.6): `analyze-and-test` and `build-linux` are
   green. `build-windows` is red. The run as a whole is red because `build-android` runs out of
   disk.
-- **Host Daemon CI** (`hostd-ci.yml`, Dart 3.11.4): no green run since 2026-09-11.
+- **Host Daemon CI** (`hostd-ci.yml`): no green run since 2026-09-11. Pinned to Dart 3.12.2 on
+  2026-10-30 (was 3.11.4), the SDK Flutter 3.44.6 ships, so daemon and client share a toolchain.
+  Locally on 3.12.2: `dart analyze --fatal-infos` clean; `dart test` 231 passed, 1 failed (the
+  debugpy case, because debugpy was not installed locally; CI installs it). Not CI-run (CB-44).
   - Linux: tests pass, then the PTY isolate hangs until the 15-minute timeout.
   - Windows (`continue-on-error`): 212 passed, 5 failed.
 - **Releases:** none for desktop. `release-apk.yml` is Android only.
-- **Repository hygiene:** `aura_hostd/aura_hostd` is a tracked Windows executable that cannot be
-  reproduced from source. Build logs and `aura_client/scratch_test_*.tmp` are also tracked
-  (GAP-010, F-29).
+- **Repository hygiene:** untracked on 2026-10-30 (F-37/F-29, CB-13): `aura_hostd/aura_hostd` (a
+  7.3 MB Windows executable with no extension), `aura_hostd/build/aura_hostd.log{,.err}` and
+  `aura_client/scratch_test_*.tmp`. They stay in history. `scripts/check_tracked_artifacts.py`
+  (run by `repo-hygiene.yml` on every PR and by `tests/unit/test_repo_hygiene.py`) now fails if
+  any binary, log or file over 5 MB is tracked again.
 - **Stale docs:** `aura_hostd/README.md` (says there is no PTY and no pairing), and
   `aura_client/README.md` (still the Flutter template).
 
@@ -88,6 +93,11 @@ all.
    - The hostd Linux PTY test hang.
 5. **macOS (new, code-read).** The network entitlement is missing.
 6. **Others.**
+   - F-36 (2026-10-30, TESTED locally on Linux, not run on Windows): the IDE's explorer indent,
+     tab-bar and debug-console padding, git panel and floating shell panels now use directional
+     (start/end) layout, so an RTL locale mirrors the IDE. The hostd page's Browse and Save
+     icon buttons have tooltips. No one has looked at the IDE under RTL, because no widget
+     test pumps the IDE shell that way.
    - F-26: built (see 3); backoff now resets only after a connection that stayed up 30 s.
    - UX-09 / UX-17: `/ide` renders nothing off Windows. The forced `/today` → `/ide` redirect
      is fixed on 2026-10-30 (F-34, TESTED locally, not run on Windows): the IDE preference only
@@ -124,8 +134,8 @@ all.
    jobs gating.
 5. F-09 remainder: scope or shorten the desktop app's own token, and share the host-agent
    registry across workers.
-6. Untrack the binaries and build hostd in CI with a checksum. Add the macOS entitlement, or
-   declare macOS unsupported.
+6. Build hostd in CI with a checksum (the tracked binaries are gone as of 2026-10-30). Add the
+   macOS entitlement, or declare macOS unsupported.
 7. Record the GAP-026 end-to-end session on real Windows and Linux machines, then close #78 and
    #88.
 

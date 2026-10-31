@@ -42,7 +42,7 @@ class MemoryPage extends ConsumerWidget {
             child: Row(
               children: [
                 Padding(
-                  padding: const EdgeInsets.only(right: AuraSpacing.sm),
+                  padding: const EdgeInsetsDirectional.only(end: AuraSpacing.sm),
                   child: FilterChip(
                     label: const Text('All'),
                     selected: state.kindFilter == null,
@@ -52,7 +52,7 @@ class MemoryPage extends ConsumerWidget {
                 ),
                 for (final kind in kMemoryKinds)
                   Padding(
-                    padding: const EdgeInsets.only(right: AuraSpacing.sm),
+                    padding: const EdgeInsetsDirectional.only(end: AuraSpacing.sm),
                     child: FilterChip(
                       label: Text(kind),
                       selected: state.kindFilter == kind,

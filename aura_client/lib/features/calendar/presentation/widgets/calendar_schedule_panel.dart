@@ -6,6 +6,7 @@ import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import '../calendar_view_model.dart';
 import 'add_event_dialog.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class CalendarSchedulePanel extends ConsumerWidget {
   final List<CalendarEvent> dayEvents;
@@ -38,6 +39,7 @@ class CalendarSchedulePanel extends ConsumerWidget {
                   ),
                 ),
                 IconButton(
+                  tooltip: context.l10n.eventAdd,
                   onPressed: () => showAddEventDialog(context, ref, ui.selectedDate),
                   icon: const Icon(Icons.add, color: Colors.white),
                   style: IconButton.styleFrom(
@@ -117,6 +119,7 @@ class CalendarSchedulePanel extends ConsumerWidget {
                                 ),
                               ),
                               IconButton(
+                                tooltip: context.l10n.eventDelete,
                                 icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 18),
                                 onPressed: () async {
                                   final confirm = await showDialog<bool>(

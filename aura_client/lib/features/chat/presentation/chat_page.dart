@@ -17,6 +17,7 @@ import 'widgets/message_bubble.dart';
 import 'widgets/pending_actions_card.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// "Copilot" -- chat, rebuilt on the V2 design system.
 ///
@@ -186,7 +187,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                                     onPressed: () => ref
                                         .read(chatVisibleMessageLimitProvider(activeSessionId).notifier)
                                         .loadMore(),
-                                    child: const Text('Load earlier messages'),
+                                    child: Text(context.l10n.chatLoadEarlier),
                                   ),
                                 ),
                               );

@@ -20,8 +20,8 @@ and both nginx server blocks. None of it is proven:
 | Area / page | Status | Evidence |
 | --- | --- | --- |
 | Login (Google ID token → `POST /api/v3/auth/web/token`, Developer+, httpOnly SameSite=strict cookies) | TESTED (backend side only) | `app/api/auth/login/route.ts`; `tests/unit/test_web_token.py`, `test_console_operator_bootstrap.py` |
-| `/api/v3/*` proxy and refresh rotation | BUILT; F-35 fix TESTED locally (2026-10-30), not CI-run | Single-flight refresh keyed by refresh token (`src/lib/refresh.ts`); `tests/e2e/refresh.spec.ts` against a mock gateway that enforces single-use refresh tokens fails without it (`[200, 401, 401]`); `tests/unit/refresh.spec.ts`. Dedupes within one server process only |
-| Session gate (layout, plus nginx `auth_request` for Grafana) | BUILT; defect | `app/(console)/layout.tsx` → `/api/v3/admin/me`. It never refreshes: a page render after the access token expired redirects to `/login` (seen locally in dev, 2026-10-30) |
+| `/api/v3/*` proxy and refresh rotation | BUILT; F-35 fix TESTED locally (2026-10-30), not CI-run | Single-flight refresh keyed by refresh token (`src/lib/refresh.ts`); `tests/e2e/refresh.spec.ts` against a mock gateway that enforces single-use refresh tokens fails without it (`[200, 401, 401]`); `tests/unit/refresh.spec.ts`. Dedupes within one server process only; the state lives on `globalThis` so the proxy and `middleware.ts` share it |
+| Session gate (layout, plus nginx `auth_request` for Grafana) | BUILT; refresh-on-render TESTED locally (2026-10-30), not CI-run | `middleware.ts` (Node.js runtime) refreshes before a console page renders when the access cookie is missing or its JWT `exp` is within 30 s, through the same single-flight refresh as the proxy, sets the rotated cookies and forwards them to `app/(console)/layout.tsx` on the same request; a failed refresh clears both cookies and redirects to `/login`. `tests/e2e/session-gate.spec.ts` (4 tests: reload and sidebar navigation after expiry, an expired-`exp` cookie, an invalid refresh token, and a page render plus a proxied request sharing one refresh) — the first three fail without the middleware, the fourth fails if the refresh state is module-local. The sharing was also checked against `next build` + `next start`: 0 replays |
 | Overview / Settings | BUILT; heading asserted in e2e | `tests/e2e/admin.spec.ts` |
 | Providers (breaker state, circuit reset) | BUILT; e2e spec, never run in CI | `providers/page.tsx` |
 | Providers: ADR-030 ceiling, `third_party`, `may_train_on_prompts` | OPEN | `router.stats()` emits them, but `src/lib/types.ts` `ProviderRow` lacks the fields |
@@ -41,16 +41,19 @@ and both nginx server blocks. None of it is proven:
   test (2026-09-27, `AURA_REAL_PRODUCTION_TEST_REPORT.md` §28) found `/console` unreachable.
 - **Dev stack:** `aura-dev-console` is defined (`docker-compose.dev.yml`). `dev.aureon-ai.tech` no
   longer resolves in DNS. The VPS Dev Ops workflow (`console_only` option) has never run.
-- **Admin CI** (`admin-ci.yml`): has never run.
-  - **Triggers:** only `workflow_run` of VPS Dev Ops (never run) and `workflow_dispatch`. There is
-    no PR trigger (GAP-007, F-37, CB-30).
-  - **Lint:** a no-op. There is no ESLint config, so `next lint` exits at its setup prompt.
-  - **e2e:** its `workflow_run` path points Playwright at the dev domain rather than the mock
-    gateway the specs expect.
-- **Playwright:** 3 e2e specs (`admin.spec.ts`, `superadmin.spec.ts`, `refresh.spec.ts`) against
-  `tests/e2e/mock-gateway.mjs`, plus `tests/unit/refresh.spec.ts`. They cover about 5 of 10 pages.
-  Run locally on 2026-10-30: 5 passed, 1 failed — `admin.spec.ts` fails on clean `main` too
-  (`getByRole("heading", { name: "Overview" })` matches both an `h1` and an `h2`).
+- **Admin CI** (`admin-ci.yml`): has never run. **Rewired 2026-10-30 (F-37), not CI-run (CB-44).**
+  - **Triggers:** `pull_request` and `push` to `main` on `aura_admin/**`, plus `workflow_dispatch`
+    with an optional `base_url`. The dead `workflow_run`-of-VPS-Dev-Ops path (dev domain) is gone.
+  - **Steps:** `npm ci`, `tsc --noEmit`, `npm run build`, `playwright install --with-deps
+    chromium`, `npm run test:e2e` against the mock gateway the config starts itself.
+  - **Lint:** deliberately not a step. There is no ESLint config, so `next lint` stops at its setup
+    prompt; it gets wired in once a config is committed.
+- **Playwright:** 4 e2e specs (`admin.spec.ts`, `superadmin.spec.ts`, `refresh.spec.ts`,
+  `session-gate.spec.ts`) against `tests/e2e/mock-gateway.mjs`, plus `tests/unit/refresh.spec.ts`.
+  They cover about 6 of 10 pages. Run locally on 2026-10-30 (`CI=1 npx playwright test`): 10
+  passed, 0 failed. The `admin.spec.ts` heading locator now asks for `level: 1` (it matched both
+  an `h1` and an `h2`). Ports are overridable (`MOCK_GATEWAY_PORT`, `PLAYWRIGHT_APP_PORT`) so two
+  checkouts can run the suite on one host.
 
 ## Open issues (most severe first)
 
@@ -59,14 +62,15 @@ and both nginx server blocks. None of it is proven:
    is on Railway.
 2. **AP9 / GAP-058 / CB-39: no Project Factory UI.** This is the critical-path blocker for Track AP
    MVP-1; every adaptation route is reachable only through the raw API.
-3. **GAP-007 / CB-30 / F-37: Admin CI never runs.** Lint checks nothing, and the e2e target is
-   misconfigured.
+3. **GAP-007 / CB-30 / F-37: Admin CI has never run.** It now triggers on PRs and runs e2e against
+   the mock gateway (2026-10-30), but no runner has executed it (CB-44). Locally the suite is green.
+   Lint is still absent (no ESLint config).
 4. **F-38 / SEC-08:** role grants from the email lists never check `email_verified`, and console
    login trusts those lists. This becomes Critical if Firebase email/password sign-in is enabled.
-5. **Session gate never refreshes.** The console layout checks the access cookie alone, so a page
-   render after its 15 minutes redirects to `/login` even with a valid refresh cookie. A fix needs
-   middleware (a server component cannot set cookies). F-35 (parallel 401s spending the single-use
-   refresh token) is fixed in the proxy but built and tested only locally.
+5. **Session refresh is tested only locally.** F-35 (the proxy) and the session gate's
+   refresh-on-render (`middleware.ts`) both pass against the mock gateway, but neither has run in
+   CI or against the real gateway. An access cookie that is present, not a JWT, and rejected by the
+   gateway still goes to `/login` (the middleware leaves non-JWT tokens to the gateway).
 6. **ADR-030 §8:** provider data ceiling and training consent are not displayed.
 7. **Others.**
    - A postcss advisory whose fix needs Next 16.
@@ -83,17 +87,13 @@ and both nginx server blocks. None of it is proven:
 
 1. Decide where the console is served (Railway service, the VPS once deploys work, or both), and
    confirm `/console/login` returns 200 there.
-2. **Fix Admin CI.**
-   - Add `pull_request` and `push` triggers on `aura_admin/**`.
-   - Run e2e against the mock gateway.
-   - Add an ESLint config.
-   - Gate the `workflow_run` path on success.
-   - Link one green run (GAP-007, the M0 exit).
+2. **Finish Admin CI.** PR/push triggers and mock-gateway e2e are in (2026-10-30). Still to do:
+   - fix the `admin.spec.ts` heading locator so the gate can go green;
+   - add an ESLint config, then a lint step;
+   - link one green run (GAP-007, the M0 exit).
 3. Do the Firebase email/password check, then add the `email_verified` and `sign_in_provider`
    gate (F-38).
-4. Refresh in the session gate too (middleware), with a spec that reloads after expiry. Fix the
-   `admin.spec.ts` heading locator.
-5. Build AP9 `/console/adaptation`:
+4. Build AP9 `/console/adaptation`:
    - connectors, twin, and blueprint evaluate / approve / deploy / rollback;
    - typed-confirm dialogs;
    - mock-gateway specs;
@@ -105,5 +105,5 @@ and both nginx server blocks. None of it is proven:
 - Whether any console container is running on the VPS.
 - Whether `npm run build` and the Playwright specs pass in CI (only run locally, 2026-10-30:
   build and `tsc --noEmit` clean; Playwright as above).
-- How Admin CI's dev-URL e2e path would actually behave (inferred from code).
+- Whether the rewired Admin CI behaves on a real runner as it does locally (CB-44: no runners).
 - The Firebase sign-in providers (SEC-08).

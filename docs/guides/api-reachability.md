@@ -43,7 +43,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/admin/local-models` | — | `aura_admin/app/(console)/models/page.tsx:27` | — | called |  |
 | POST | `/api/v3/admin/local-models/pull` | — | `aura_admin/app/(console)/models/page.tsx:265` | — | called |  |
 | DELETE | `/api/v3/admin/local-models/{name}` | — | `aura_admin/app/(console)/models/page.tsx:246`, `aura_admin/app/(console)/models/page.tsx:265` | — | called |  |
-| GET | `/api/v3/admin/me` | — | `aura_admin/app/(console)/layout.tsx:13`, `aura_admin/app/api/auth/session/route.ts:11` (+2) | — | called |  |
+| GET | `/api/v3/admin/me` | — | `aura_admin/app/(console)/layout.tsx:13`, `aura_admin/app/api/auth/session/route.ts:11` (+3) | — | called |  |
 | GET | `/api/v3/admin/models` | — | `aura_admin/app/(console)/models/page.tsx:26` | — | called |  |
 | POST | `/api/v3/admin/models/import` | — | `aura_admin/app/(console)/models/page.tsx:216` | — | called |  |
 | POST | `/api/v3/admin/models/{model_id}/request-promotion` | — | `aura_admin/app/(console)/models/page.tsx:111` | — | called |  |
@@ -76,11 +76,11 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/agents/runs/{run_id}` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
 | POST | `/api/v3/auth/desktop/devices/revoke` | — | — | — | none | to wire: desktop pairing flow (ADR-011), no caller in client or hostd yet |
 | POST | `/api/v3/auth/desktop/login` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:57`, `aura_client/lib/core/auth/token_manager.dart:28` (+2) | — | — | called |  |
-| POST | `/api/v3/auth/desktop/pair/approve` | `aura_client/lib/desktop/host/host_panel.dart:280`, `aura_client/lib/features/engineering/presentation/host_daemon_page.dart:147` | — | — | called |  |
+| POST | `/api/v3/auth/desktop/pair/approve` | `aura_client/lib/desktop/host/host_panel.dart:280`, `aura_client/lib/features/engineering/presentation/host_daemon_page.dart:148` | — | — | called |  |
 | POST | `/api/v3/auth/desktop/pair/poll` | — | — | `aura_hostd/lib/src/pairing_client.dart:114`, `aura_hostd/test/pairing_client_test.dart:70` (+4) | called |  |
 | POST | `/api/v3/auth/desktop/pair/start` | — | — | `aura_hostd/lib/src/pairing_client.dart:85`, `aura_hostd/test/pairing_client_test.dart:64` (+3) | called |  |
 | POST | `/api/v3/auth/nonce` | `aura_client/lib/core/security/device_validation_service.dart:139` | — | — | called |  |
-| POST | `/api/v3/auth/refresh` | `aura_client/lib/core/auth/token_manager.dart:67`, `aura_client/lib/core/auth/token_manager.dart:98` (+2) | `aura_admin/app/api/v3/[...path]/route.ts:8` | — | called |  |
+| POST | `/api/v3/auth/refresh` | `aura_client/lib/core/auth/token_manager.dart:67`, `aura_client/lib/core/auth/token_manager.dart:98` (+2) | `aura_admin/src/lib/refresh.ts:76` | — | called |  |
 | POST | `/api/v3/auth/revoke` | `aura_client/lib/core/auth/token_manager.dart:366` | `aura_admin/app/api/auth/logout/route.ts:8` | — | called |  |
 | POST | `/api/v3/auth/token` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:63`, `aura_client/lib/core/auth/token_manager.dart:67` (+4) | — | — | called |  |
 | POST | `/api/v3/auth/web/token` | `aura_client/lib/core/auth/token_manager.dart:254`, `aura_client/lib/core/auth/token_manager.dart:260` | `aura_admin/app/api/auth/login/route.ts:10` | — | called |  |
@@ -126,7 +126,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/tools` | — | — | — | none | to wire: tool catalogue is not shown anywhere |
 | WS | `/api/v3/voice/live` | `aura_client/lib/core/ai/voice/live/live_voice_protocol.dart:1`, `aura_client/lib/core/ai/voice/live/live_voice_socket.dart:13` (+1) | — | — | called |  |
 | POST | `/api/v3/voice/speak` | `aura_client/lib/core/ai/voice/speech_text.dart:1`, `aura_client/lib/core/ai/voice/voice_client.dart:12` (+1) | — | — | called |  |
-| POST | `/api/v3/voice/transcribe` | `aura_client/lib/core/ai/voice/voice_client.dart:59`, `aura_client/lib/features/chat/presentation/widgets/voice_recorder_button.dart:16` | — | — | called |  |
+| POST | `/api/v3/voice/transcribe` | `aura_client/lib/core/ai/voice/voice_client.dart:59`, `aura_client/lib/features/chat/presentation/widgets/voice_recorder_button.dart:17` | — | — | called |  |
 | GET | `/docs` | — | — | — | infra |  |
 | GET | `/docs/oauth2-redirect` | — | — | — | infra |  |
 | GET | `/health/live` | — | — | — | infra |  |

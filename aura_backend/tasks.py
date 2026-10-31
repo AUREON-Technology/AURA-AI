@@ -22,12 +22,28 @@ def _run_async(coro):
     task failed -- the outbox drain every 60 s, nightly consolidation, the hourly insights -- with
     the error swallowed into ``{"status": "error"}``. Celery's prefork workers run one task at a
     time per process, so one loop per process is safe to reuse.
+
+    Reusing the loop is also why an interrupted run must not leave its coroutine behind. A soft
+    time limit (celery_app.py) raises ``SoftTimeLimitExceeded`` from a signal handler, which
+    unwinds ``run_until_complete`` but leaves the task scheduled on the loop -- and the *next*
+    task's ``run_until_complete`` would resume it, interleaved with unrelated work. So whatever
+    ends the run early, the abandoned task is cancelled and allowed to unwind first.
     """
     global _worker_loop
     if _worker_loop is None or _worker_loop.is_closed():
         _worker_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(_worker_loop)
-    return _worker_loop.run_until_complete(coro)
+    task = _worker_loop.create_task(coro)
+    try:
+        return _worker_loop.run_until_complete(task)
+    except BaseException:
+        if not task.done():
+            task.cancel()
+            try:
+                _worker_loop.run_until_complete(task)
+            except BaseException:  # the cancellation itself, or whatever cleanup raised
+                pass
+        raise
 
 @celery_app.task(name="tasks.ingest_document_task")
 def ingest_document_task(doc_id: str, content: str, metadata: dict) -> bool:

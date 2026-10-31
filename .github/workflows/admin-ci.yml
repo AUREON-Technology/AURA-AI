@@ -1,64 +1,92 @@
 name: Admin CI
 
-# Runs against the dev stack brought up by vps-dev-ops.yml
-# Triggered automatically when vps-dev-ops.yml's bring_up_dev action completes,
-# or manually with a dev stack URL.
+# Gates every PR touching aura_admin (the Next.js operator console) on a clean install, a
+# typecheck, a production build, and the Playwright suite (CB-30 / audit F-37).
+#
+# The suite needs no live stack: playwright.config.ts starts tests/e2e/mock-gateway.mjs and
+# `next dev` itself (its `webServer` block), so it runs against the mock gateway here exactly as
+# it does locally. This used to fire only after VPS Dev Ops brought up the dev stack and point
+# PLAYWRIGHT_BASE_URL at https://dev.<domain> -- which never ran on a pull request, and
+# dev.aureon-ai.tech no longer resolves. A manual run can still target a live console with the
+# optional `base_url` input.
+#
+# `npm run lint` is deliberately not a step: the package has no ESLint config, so `next lint`
+# opens an interactive setup prompt and either hangs or fails for a reason unrelated to the diff.
+# Wire it in once an ESLint config is committed.
 
 on:
-  workflow_run:
-    workflows: ["VPS Dev Ops"]
-    types: [completed]
+  pull_request:
+    paths:
+      - "aura_admin/**"
+      - ".github/workflows/admin-ci.yml"
+  push:
     branches: [main]
+    paths:
+      - "aura_admin/**"
+      - ".github/workflows/admin-ci.yml"
   workflow_dispatch:
     inputs:
-      dev_stack_url:
-        description: 'Dev stack base URL (e.g., https://dev.aura.example.com)'
-        required: true
+      base_url:
+        description: "Optional: run the e2e suite against this console URL instead of the local mock stack"
+        required: false
         type: string
+        default: ""
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   admin-ci:
     name: Admin Dashboard CI
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: aura_admin
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
           cache-dependency-path: aura_admin/package-lock.json
 
       - name: Install dependencies
-        working-directory: aura_admin
         run: npm ci
 
-      - name: Lint
-        working-directory: aura_admin
-        run: npm run lint
+      - name: Typecheck
+        run: npx tsc --noEmit
 
       - name: Build
-        working-directory: aura_admin
         run: npm run build
 
-      - name: Determine dev stack URL
-        id: dev-url
-        run: |
-          if [ "${{ github.event.workflow_run.conclusion }}" = "success" ]; then
-            # vps-dev-ops bring_up_dev sets this as an output or we use default
-            echo "url=https://dev.${{ vars.AURA_DOMAIN }}" >> $GITHUB_OUTPUT
-          else
-            echo "url=${{ github.event.inputs.dev_stack_url }}" >> $GITHUB_OUTPUT
-          fi
+      # The browser revision must match the locked @playwright/test, so install through the
+      # package's own CLI rather than a separate action.
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
 
       - name: Run E2E tests
-        working-directory: aura_admin
         env:
-          PLAYWRIGHT_BASE_URL: ${{ steps.dev-url.outputs.url }}
+          CI: "true"
+          # Empty unless a manual run named a target; playwright.config.ts then uses its local
+          # mock stack (http://127.0.0.1:3000).
+          PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
         run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: admin-playwright-report
+          path: |
+            aura_admin/playwright-report
+            aura_admin/test-results
+          retention-days: 7
+          if-no-files-found: ignore

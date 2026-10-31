@@ -151,7 +151,7 @@ Severity: **Critical** (blocks everything / live exposure) · **High** (blocks a
 
 ---
 **ID:** CB-13 · **Severity:** Medium · **Area:** Dead/unreviewed code (GAP-008, GAP-010, GAP-038)
-- **Actual state:** `engineering2`, `proactive`, `continuous_intelligence`, `security/{authenticator,policy,rate_limiter,secret_manager}` have zero importers; `aura_hostd/build/aura_hostd.exe` + logs tracked; root strays; legacy ingest tasks registered.
+- **Actual state:** `engineering2`, `proactive`, `continuous_intelligence`, `security/{authenticator,policy,rate_limiter,secret_manager}` have zero importers; root strays; legacy ingest tasks registered. Tracked binaries/logs (APK, `aura_hostd/aura_hostd`, hostd logs, `scratch_test_*.tmp`) untracked 2026-10-30 with a guard (`scripts/check_tracked_artifacts.py`, F-37); not CI-run (CB-44).
 - **Required action:** delete/untrack via reviewed PR; guard test.
 - **Roadmap phase:** M1.
 
@@ -192,7 +192,7 @@ Severity: **Critical** (blocks everything / live exposure) · **High** (blocks a
 | CB-27 | Medium | Engineer | Workspace VPS verification never run (GAP-025) | Run script; commit report | M9 |
 | CB-28 | Medium | Personal OS | Two stores; agent-created tasks invisible in app | Store decision ADR + implementation | M11 |
 | CB-29 | Medium | Voice | English-only STT while Arabic TTS ships (GAP-020) | Multilingual ASR + WER | M12 |
-| CB-30 | Medium | Client | Release APK on floating Flutter (GAP-044); 16 uncalled routes; admin CI not on PRs (GAP-007) | Pin; wire/declare; PR-trigger admin | M14 |
+| CB-30 | Medium | Client | 16 uncalled routes. Release-APK Flutter pin and admin PR trigger built 2026-10-30 (F-37), not CI-run (CB-44); admin e2e has one failing spec | Wire/declare routes; one green Admin CI run (GAP-007) | M14 |
 | CB-31 | Low | Docs | CLAUDE.md ADR range/SYNCABLE_MODELS/admin; `rag/agentic.py:119` "no OCR"; duplicate Phase J; gap register dates (GAP-039) | Doc corrections | M0 |
 
 ## Track AP — Adaptive AI Platform (AP0–AP13, parallel track)

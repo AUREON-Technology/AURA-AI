@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import 'package:aura_client/core/theme/theme.dart';
 import '../../data/task_repository.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class AddTaskDialog extends ConsumerStatefulWidget {
   const AddTaskDialog({super.key});
@@ -176,6 +177,7 @@ class _AddTaskDialogState extends ConsumerState<AddTaskDialog> {
                         ),
                         if (_dueDate != null)
                           IconButton(
+                            tooltip: context.l10n.clearDueDate,
                             icon: const Icon(Icons.close, size: 16, color: Colors.white54),
                             onPressed: () {
                               setState(() {

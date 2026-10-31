@@ -5,7 +5,8 @@ import 'package:flutter/material.dart';
 class ChatHeaderActionButton extends StatelessWidget {
   final IconData icon;
   final Color color;
-  final String? tooltip;
+  /// Required: an icon-only control has no other accessible name (audit F-36).
+  final String tooltip;
   final VoidCallback onPressed;
   final double iconSize;
 
@@ -14,7 +15,7 @@ class ChatHeaderActionButton extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.onPressed,
-    this.tooltip,
+    required this.tooltip,
     this.iconSize = 20,
   });
 

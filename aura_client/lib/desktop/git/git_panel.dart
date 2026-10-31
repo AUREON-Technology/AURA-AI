@@ -243,7 +243,7 @@ class _GitPanelState extends ConsumerState<GitPanel> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(AuraSpacing.md, 0, AuraSpacing.md, AuraSpacing.sm),
                   child: Align(
-                    alignment: Alignment.centerLeft,
+                    alignment: AlignmentDirectional.centerStart,
                     child: Text('No commits loaded.', style: TextStyle(color: palette.textDisabled, fontSize: 12)),
                   ),
                 )
@@ -502,7 +502,7 @@ class _Section extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(AuraSpacing.md, AuraSpacing.sm, AuraSpacing.sm, 0),
+          padding: const EdgeInsetsDirectional.fromSTEB(AuraSpacing.md, AuraSpacing.sm, AuraSpacing.sm, 0),
           child: Row(
             children: [
               Expanded(

@@ -37,7 +37,8 @@
 #   AURA_COMPOSE_OVERRIDE=/path/to/override.yml[:/more.yml]
 #                                   extra -f files merged over AURA_COMPOSE. Defaults to a
 #                                   docker-compose.override.yml sitting next to it.
-#   AURA_HEALTH_URL=https://$AURA_DOMAIN/health
+#   AURA_HEALTH_URL=https://$AURA_DOMAIN/health/live   (a value ending in /health gets /live)
+#   AURA_READY_TIMEOUT_S=300        how long to wait for /health/ready before failing the deploy
 #   AURA_SHA=<commit>               pin to the SHA CI tested (must be on origin/main)
 #   AURA_STASH_DIRTY=1              stash tracked local edits instead of aborting (CI default)
 
@@ -413,38 +414,56 @@ fi
 run "${DC[*]} ps"
 
 # -- 8. verify -----------------------------------------------------------------------------
-# Liveness only says the process is up; readiness is the one that checks dependencies, so it
-# is the one worth gating on. Retried, because a cold start pulls a model into memory.
+# Three gates, all fatal (audit F-25):
+#   8a  liveness through the edge  -- nginx is up and reaches a gateway process (HTTP 200 only)
+#   8b  revision                   -- the process answering is the commit just built
+#   8c  readiness                  -- /health/ready says healthy, schema at the image's head
+# Liveness used to be `curl -f https://$domain/health`. nginx has no `/health` route and answers
+# it with a 301 to `/health/`, which `curl -f` treats as success -- so that gate passed whenever
+# nginx was up -- and readiness was printed but never failed a deploy.
 
 say "Verifying"
 if [ "$DRY_RUN" = 1 ]; then info "[dry-run] would poll the health endpoints"; exit 0; fi
 
 if [ -n "${AURA_HEALTH_URL:-}" ]; then
   HEALTH_URL="$AURA_HEALTH_URL"
-elif curl -fsS --max-time 2 http://127.0.0.1:8000/health >/dev/null 2>&1; then
-  HEALTH_URL="http://127.0.0.1:8000/health"
+  # An override written for the old check (`.../health`) still works: point it at liveness.
+  case "$HEALTH_URL" in
+    */health) HEALTH_URL="${HEALTH_URL}/live" ;;
+  esac
+elif curl -fsS --max-time 2 http://127.0.0.1:8000/health/live >/dev/null 2>&1; then
+  # Only on a host whose override publishes the gateway on loopback (host-proxy.conf.example).
+  HEALTH_URL="http://127.0.0.1:8000/health/live"
 elif [ -f "$COMPOSE_DIR/.env" ]; then
   DOMAIN="$(sed -n 's/^AURA_DOMAIN=//p' "$COMPOSE_DIR/.env" | head -1 | tr -d "[:space:]\"'")"
   if [ -n "$DOMAIN" ]; then
-    HEALTH_URL="https://${DOMAIN}/health"
+    HEALTH_URL="https://${DOMAIN}/health/live"
   else
-    HEALTH_URL="http://127.0.0.1:8000/health"
+    HEALTH_URL="http://127.0.0.1:8000/health/live"
   fi
 else
-  HEALTH_URL="http://127.0.0.1:8000/health"
+  HEALTH_URL="http://127.0.0.1:8000/health/live"
 fi
 info "health url: $HEALTH_URL"
-READY_URL="${HEALTH_URL%/health}/health/ready"
+# The edge's base URL, for the WebSocket probe below.
+EDGE_BASE="${HEALTH_URL%/health/live}"
 
+# 8a. Exactly 200. Not `curl -f`: that passes any 3xx, and a redirect here means the URL is
+# wrong (http:// instead of https://, or a path nginx does not route), not that the app is up.
 ok=0
+LIVE_CODE="000"
 for attempt in $(seq 1 30); do
-  if curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then ok=1; break; fi
-  printf '    waiting for %s (%d/30)\r' "$HEALTH_URL" "$attempt"
+  LIVE_CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$HEALTH_URL" 2>/dev/null || true)"
+  if [ "$LIVE_CODE" = 200 ]; then ok=1; break; fi
+  printf '    waiting for %s (%d/30, last HTTP %s)\r' "$HEALTH_URL" "$attempt" "${LIVE_CODE:-000}"
   sleep 4
 done
 echo
 [ "$ok" = 1 ] || {
-  printf '\n\033[1;31mFAILED: %s never became healthy\033[0m\n' "$HEALTH_URL" >&2
+  printf '\n\033[1;31mFAILED: %s never answered 200 (last HTTP %s)\033[0m\n' "$HEALTH_URL" "${LIVE_CODE:-000}" >&2
+  case "$LIVE_CODE" in
+    3??) echo "    A redirect: the URL is wrong for this edge (https://, and /health/live exactly)." >&2 ;;
+  esac
   echo "    Last 60 lines from $BACKEND_SERVICE:" >&2
   "${DC[@]}" logs --tail=60 "$BACKEND_SERVICE" >&2 || true
   cat >&2 <<ROLLBACK
@@ -460,14 +479,6 @@ ROLLBACK
 }
 
 info "liveness:  OK  ($HEALTH_URL)"
-if curl -fsS --max-time 10 "$READY_URL" >/dev/null 2>&1; then
-  info "readiness: OK  ($READY_URL)"
-else
-  # Not fatal: /health/ready only exists on the v3 gateway, and a v1/v2-only host has no such
-  # endpoint. A dependency that is genuinely down shows up in the body, so it is printed.
-  info "readiness: not OK or not present at $READY_URL"
-  curl -sS --max-time 10 "$READY_URL" 2>&1 | head -20 | sed 's/^/      /' || true
-fi
 
 # -- 8b. the running build is the build we just shipped (BLOCK-03) -------------------------
 # The check this deploy path did not have. Production ran a 2026-09-13 image for two weeks while
@@ -535,6 +546,88 @@ VERMISMATCH
 fi
 info "revision:  OK  (serving ${LIVE_SHA:0:12}, matches the commit just built)"
 
+# -- 8c. readiness gates the deploy (audit F-25) --------------------------------------------
+# Asked of the gateway container directly, like the revision probe and for the same reason: the
+# claim is about the gateway's dependencies, and the edge was verified separately in 8a.
+#
+# Fatal, after a bounded window. Ready means: HTTP 200, `healthy: true`, and -- when this deploy
+# just ran migrations against a Postgres in this stack -- a `schema` block that is healthy *and*
+# names the revision it verified. The schema check deliberately reports healthy-but-unverified
+# when it cannot reach Postgres (so a DB blip does not evict a serving gateway), which is right
+# for traffic and wrong for a deploy gate: right after a migration that is exactly the case to
+# refuse. Nothing is rolled back automatically -- the new code is serving and the edge is up
+# (nginx no longer waits for readiness); the deploy is marked failed so a human looks.
+#
+# Readiness includes "at least one LLM provider is healthy", so an inference outage fails the
+# deploy too. That is intended: a release that cannot answer a chat turn is not a success.
+READY_TIMEOUT_S="${AURA_READY_TIMEOUT_S:-300}"
+EXPECT_SCHEMA=0
+[ "$RUN_MIGRATIONS" = 1 ] && [ -n "$BACKEND_DIR" ] && [ "$HAS_DB" = 1 ] && EXPECT_SCHEMA=1
+
+READY_PROBE='import json, os, sys, urllib.error, urllib.request
+try:
+    resp = urllib.request.urlopen("http://127.0.0.1:8000/health/ready", timeout=15)
+    code, body = resp.status, resp.read().decode()
+except urllib.error.HTTPError as exc:
+    code, body = exc.code, exc.read().decode()
+except Exception as exc:
+    print("NOT_READY: /health/ready unreachable: %s: %s" % (type(exc).__name__, exc))
+    sys.exit(1)
+try:
+    payload = json.loads(body)
+except ValueError:
+    print("NOT_READY: HTTP %s, body is not JSON" % code)
+    print(body[:2000])
+    sys.exit(1)
+problems = []
+if code != 200:
+    problems.append("HTTP %s" % code)
+if payload.get("healthy") is not True:
+    problems.append("healthy is not true")
+schema = (payload.get("checks") or {}).get("schema")
+if schema is None:
+    if os.environ.get("AURA_EXPECT_SCHEMA") == "1":
+        problems.append("no schema block, though migrations just ran against Postgres")
+elif schema.get("healthy") is not True:
+    problems.append("schema: %s (at %s, image expects %s)" % (
+        schema.get("detail", "unhealthy"), schema.get("revision"), schema.get("expected")))
+elif not schema.get("revision"):
+    problems.append("schema unverified: %s" % schema.get("detail", "no revision reported"))
+print("NOT_READY: " + "; ".join(problems) if problems else "READY")
+print(json.dumps(payload, indent=2, sort_keys=True)[:4000])
+sys.exit(1 if problems else 0)'
+
+say "Waiting for readiness (up to ${READY_TIMEOUT_S}s)"
+READY_OUT=""
+ready=0
+_ready_deadline=$(( $(date +%s) + READY_TIMEOUT_S ))
+while :; do
+  if READY_OUT="$("${DC[@]}" exec -T -e "AURA_EXPECT_SCHEMA=$EXPECT_SCHEMA" "$BACKEND_SERVICE" \
+                    python -c "$READY_PROBE" 2>&1)"; then
+    ready=1; break
+  fi
+  [ "$(date +%s)" -ge "$_ready_deadline" ] && break
+  printf '    %s\r' "$(printf '%s' "$READY_OUT" | head -1 | cut -c1-110)"
+  sleep 10
+done
+echo
+if [ "$ready" != 1 ]; then
+  printf '\n\033[1;31mFAILED: the gateway is not ready after %ss\033[0m\n' "$READY_TIMEOUT_S" >&2
+  printf '%s\n' "$READY_OUT" | head -80 | sed 's/^/      /' >&2
+  cat >&2 <<NOTREADY
+
+    ${AFTER:0:8} is running and the edge is serving (liveness passed), but /health/ready does
+    not report it fit to serve. Read the verdict line above, then:
+      providers all unhealthy   inference is down: ${DC[*]} logs --tail=60 ollama
+      schema behind/unverified  ${DC[*]} run --rm --no-deps -T $BACKEND_SERVICE alembic upgrade head
+    Gateway log: ${DC[*]} logs --tail=60 $BACKEND_SERVICE
+    Roll back:   git -C $REPO checkout ${BEFORE} && ${DC[*]} up -d --build $BACKEND_SERVICE
+    A slow cold start can be given longer with AURA_READY_TIMEOUT_S (now ${READY_TIMEOUT_S}).
+NOTREADY
+  exit 1
+fi
+info "readiness: OK  ($(printf '%s' "$READY_OUT" | head -1))"
+
 # Phase H: confirm the edge still upgrades /api/v3/voice/live. A 404 here most likely means
 # nginx negotiated HTTP/2 with this curl (ALPN offers h2 by default) -- HTTP/2 forbids the
 # legacy Connection/Upgrade headers the WebSocket handshake needs, so the request silently
@@ -542,13 +635,15 @@ info "revision:  OK  (serving ${LIVE_SHA:0:12}, matches the commit just built)"
 # HTTPS server blocks in aura.conf.template for exactly this reason; if this still 404s,
 # check for `http2 on;` having crept back in before suspecting the location block itself.
 # Retried: force-recreate leaves nginx briefly unready and a single probe can false-alarm.
-WS_URL="${HEALTH_URL%/health}/api/v3/voice/live"
+WS_URL="${EDGE_BASE}/api/v3/voice/live"
 WS_CODE="000"
 for _ws_try in $(seq 1 15); do
+  # `|| true`, not `|| echo 000`: curl already writes 000 on a connection failure, and the
+  # echo appended a second one.
   WS_CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
     -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
     -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
-    "$WS_URL" 2>/dev/null || echo '000')"
+    "$WS_URL" 2>/dev/null || true)"
   case "$WS_CODE" in
     101|4??) break ;;  # 101 success; 4xx is a real edge/app answer (not startup flake)
   esac

@@ -9,6 +9,7 @@ import 'package:aura_client/features/voice_live/presentation/widgets/aura_voice_
 import 'package:aura_client/features/voice_live/presentation/widgets/aura_voice_waveform.dart';
 import 'package:aura_client/features/voice_live/presentation/widgets/live_transcript_panel.dart';
 import 'package:aura_client/features/voice_live/presentation/widgets/live_voice_controls.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Full-screen live voice surface (outside the shell nav bar).
 class LiveVoicePage extends ConsumerStatefulWidget {
@@ -56,8 +57,9 @@ class _LiveVoicePageState extends ConsumerState<LiveVoicePage>
         child: Column(
           children: [
             Align(
-              alignment: Alignment.centerLeft,
+              alignment: AlignmentDirectional.centerStart,
               child: IconButton(
+                tooltip: context.l10n.liveVoiceEnd,
                 icon: Icon(Icons.close, color: palette.textPrimary),
                 onPressed: () async {
                   await ref.read(liveVoiceViewModelProvider.notifier).endSession();

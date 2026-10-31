@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_api_error.dart';
 import 'package:aura_client/features/chat/data/feedback_repository.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 Future<void> showFeedbackSheet({
   required BuildContext context,
@@ -33,14 +34,14 @@ Future<void> showFeedbackSheet({
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('Rate this answer', style: Theme.of(context).textTheme.titleLarge),
+                Text(context.l10n.chatRateAnswer, style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: AuraSpacing.md),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     for (var i = 1; i <= 5; i++)
                       IconButton(
-                        tooltip: '$i of 5',
+                        tooltip: context.l10n.chatRatingStar(i, 5),
                         onPressed: () => setState(() => rating = i),
                         icon: Icon(
                           i <= rating ? Icons.star : Icons.star_border,
@@ -51,12 +52,12 @@ Future<void> showFeedbackSheet({
                 ),
                 AuraTextField(
                   controller: correction,
-                  label: 'Optional correction',
+                  label: context.l10n.chatFeedbackCorrection,
                   maxLines: 3,
                 ),
                 const SizedBox(height: AuraSpacing.lg),
                 AuraButton(
-                  label: 'Send feedback',
+                  label: context.l10n.chatFeedbackSend,
                   expand: true,
                   onPressed: () async {
                     try {
@@ -71,7 +72,7 @@ Future<void> showFeedbackSheet({
                         Navigator.of(context).pop();
                         AuraSnackbar.show(
                           context,
-                          message: 'Thanks — feedback sent.',
+                          message: context.l10n.chatFeedbackSent,
                           kind: AuraSnackbarKind.success,
                         );
                       }

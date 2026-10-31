@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import 'package:aura_client/core/theme/theme.dart';
 import '../../data/calendar_repository.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 void showAddEventDialog(
   BuildContext context,
@@ -88,6 +89,7 @@ void showAddEventDialog(
                           ),
                         ),
                         trailing: IconButton(
+                          tooltip: context.l10n.eventChangeStart,
                           icon: const Icon(
                             Icons.edit,
                             color: AuraTheme.textSecondary,
@@ -149,6 +151,7 @@ void showAddEventDialog(
                           ),
                         ),
                         trailing: IconButton(
+                          tooltip: context.l10n.eventChangeEnd,
                           icon: const Icon(
                             Icons.edit,
                             color: AuraTheme.textSecondary,

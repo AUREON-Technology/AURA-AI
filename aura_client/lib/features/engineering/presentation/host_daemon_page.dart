@@ -14,6 +14,7 @@ import 'package:aura_client/core/hostd/hostd_control_client.dart';
 import 'package:aura_client/core/hostd/hostd_error_messages.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart';
 import 'package:aura_client/core/hostd/hostd_supervisor.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// The desktop Engineer daemon screen (ADR-011 Unit 8) -- supervise `aura_hostd`, pair it,
 /// grant/trust/revoke workspace roots, and browse them. Everything here talks to the daemon's
@@ -277,8 +278,16 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
                 child: AuraTextField(controller: _pathController, hintText: '/path/to/aura_hostd'),
               ),
               const SizedBox(width: AuraSpacing.sm),
-              IconButton(onPressed: _browseForExecutable, icon: const Icon(Icons.folder_open)),
-              IconButton(onPressed: _saveExecutablePath, icon: const Icon(Icons.save_outlined)),
+              IconButton(
+                tooltip: context.l10n.hostdBrowseExecutable,
+                onPressed: _browseForExecutable,
+                icon: const Icon(Icons.folder_open),
+              ),
+              IconButton(
+                tooltip: context.l10n.hostdSaveExecutable,
+                onPressed: _saveExecutablePath,
+                icon: const Icon(Icons.save_outlined),
+              ),
             ],
           ),
         ],

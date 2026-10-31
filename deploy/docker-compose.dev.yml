@@ -30,6 +30,23 @@ x-logging: &logging
 x-restart: &restart
   restart: unless-stopped
 
+# Celery healthchecks (audit F-25). Each worker pings only its own node; beat checks the broker
+# and that its schedule file is still being written. Why each is shaped this way is in
+# aura_backend/scripts/celery_healthcheck.py. Kept identical in docker-compose.prod.yml (parity).
+x-celery-worker-healthcheck: &celery_worker_healthcheck
+  test: ["CMD", "python", "/app/scripts/celery_healthcheck.py", "worker"]
+  interval: 60s
+  timeout: 30s
+  retries: 3
+  start_period: 120s
+
+x-celery-beat-healthcheck: &celery_beat_healthcheck
+  test: ["CMD", "python", "/app/scripts/celery_healthcheck.py", "beat"]
+  interval: 120s
+  timeout: 30s
+  retries: 3
+  start_period: 300s
+
 # Mirrors docker-compose.prod.yml's x-hosted-providers exactly (parity rule: the stacks share
 # a host). Hosted open-weight providers (ADR-030; docs/roadmaps/AURA_FREE_HOSTED_INFERENCE_PLAN.md).
 # Three vendor-neutral slots, HOSTED1..HOSTED3, each pointed at a provider by .env. Every slot
@@ -222,9 +239,11 @@ services:
       HOSTNAME: 0.0.0.0
       PORT: "3000"
     networks: [edge, aura_edge]
+    # service_started, not service_healthy -- see the matching block in docker-compose.prod.yml
+    # (audit F-25): waiting for a *ready* gateway tied this container to the LLM provider.
     depends_on:
       dev-gateway:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test:
         [
@@ -249,12 +268,15 @@ services:
       args: *release_args
     <<: *restart
     logging: *logging
+    # Graceful drain on deploy (audit F-25) -- same values and reasoning as prod's `gateway`.
+    stop_grace_period: 180s
     command: >
       uvicorn aura_service:app
       --host 0.0.0.0 --port 8000
       --workers ${AURA_WORKERS:-2}
       --proxy-headers --forwarded-allow-ips='*'
       --timeout-keep-alive 65
+      --timeout-graceful-shutdown ${AURA_GRACEFUL_SHUTDOWN_S:-150}
     environment:
       <<: *hosted_providers
       AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-development}
@@ -393,8 +415,9 @@ services:
       redis: {condition: service_healthy}
       qdrant: {condition: service_started}
     healthcheck:
+      # Liveness, not readiness -- see prod's `gateway` healthcheck (audit F-25).
       test: ["CMD", "python", "-c",
-             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5).status==200 else 1)"]
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/live', timeout=5).status==200 else 1)"]
       interval: 20s
       timeout: 10s
       retries: 5
@@ -472,6 +495,9 @@ services:
     <<: *restart
     logging: *logging
     command: celery -A tasks worker -Q realtime -c 2 --loglevel=info --max-tasks-per-child=200
+    # Warm shutdown window -- see prod's worker-realtime (audit F-25).
+    stop_grace_period: 120s
+    healthcheck: *celery_worker_healthcheck
     environment: &worker_env
       <<: *hosted_providers
       AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-development}
@@ -528,6 +554,8 @@ services:
     <<: *restart
     logging: *logging
     command: celery -A tasks worker -Q ingestion,learning -c 2 --loglevel=info --max-tasks-per-child=50
+    stop_grace_period: 120s
+    healthcheck: *celery_worker_healthcheck
     environment: *worker_env
     secrets: [postgres_password, redis_password, qdrant_api_key, data_encryption_keys, hosted1_api_key, hosted2_api_key, hosted3_api_key]
     volumes:
@@ -555,6 +583,8 @@ services:
     <<: *restart
     logging: *logging
     command: celery -A tasks worker -Q training -c 1 --loglevel=info --max-tasks-per-child=1
+    stop_grace_period: 120s
+    healthcheck: *celery_worker_healthcheck
     environment:
       <<: *worker_env
       AURA_FINETUNE_TRAINER: local
@@ -579,7 +609,9 @@ services:
       args: *release_args
     <<: *restart
     logging: *logging
-    command: celery -A celery_app beat --loglevel=info
+    command: celery -A celery_app beat --loglevel=info --schedule=/app/celerybeat-schedule
+    stop_grace_period: 30s
+    healthcheck: *celery_beat_healthcheck
     environment: *worker_env
     secrets: [postgres_password, redis_password, qdrant_api_key, data_encryption_keys, hosted1_api_key, hosted2_api_key, hosted3_api_key]
     networks: [data]

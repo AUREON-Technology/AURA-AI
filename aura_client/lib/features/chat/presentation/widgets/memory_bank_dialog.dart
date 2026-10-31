@@ -6,6 +6,7 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import '../../data/memory_repository.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 void showMemoryBankDialog(BuildContext context) {
   final factController = TextEditingController();
@@ -34,9 +35,9 @@ void showMemoryBankDialog(BuildContext context) {
                 maxHeight: MediaQuery.sizeOf(context).height * 0.75,
               ),
               child: Padding(
-                padding: EdgeInsets.only(
-                  left: AuraSpacing.xl,
-                  right: AuraSpacing.xl,
+                padding: EdgeInsetsDirectional.only(
+                  start: AuraSpacing.xl,
+                  end: AuraSpacing.xl,
                   top: AuraSpacing.xl,
                   bottom:
                       AuraSpacing.xl + MediaQuery.viewInsetsOf(context).bottom,
@@ -50,7 +51,7 @@ void showMemoryBankDialog(BuildContext context) {
                         const SizedBox(width: AuraSpacing.sm),
                         Expanded(
                           child: Text(
-                            'User Memory Bank',
+                            context.l10n.memoryBankTitle,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -61,6 +62,7 @@ void showMemoryBankDialog(BuildContext context) {
                           ),
                         ),
                         IconButton(
+                          tooltip: context.l10n.close,
                           icon: Icon(Icons.close, color: palette.textDisabled),
                           onPressed: () => Navigator.pop(context),
                         ),
@@ -68,7 +70,7 @@ void showMemoryBankDialog(BuildContext context) {
                     ),
                     const SizedBox(height: AuraSpacing.xs),
                     Text(
-                      'These are facts and preferences AURA has learned about you. They are injected as system prompts to personalize reasoning.',
+                      context.l10n.memoryBankExplainer,
                       style: TextStyle(
                         color: palette.textSecondary,
                         fontSize: 12,
@@ -80,8 +82,8 @@ void showMemoryBankDialog(BuildContext context) {
                         Expanded(
                           child: TextField(
                             controller: factController,
-                            decoration: const InputDecoration(
-                              hintText: 'Add a custom fact manually...',
+                            decoration: InputDecoration(
+                              hintText: context.l10n.memoryBankAddHint,
                             ),
                             style: TextStyle(
                               color: palette.textPrimary,
@@ -91,7 +93,7 @@ void showMemoryBankDialog(BuildContext context) {
                         ),
                         const SizedBox(width: AuraSpacing.sm),
                         AuraButton(
-                          label: 'Add',
+                          label: context.l10n.add,
                           onPressed: () async {
                             final fact = factController.text.trim();
                             if (fact.isNotEmpty) {
@@ -111,7 +113,7 @@ void showMemoryBankDialog(BuildContext context) {
                           if (memories.isEmpty) {
                             return Center(
                               child: Text(
-                                'No memories stored yet. AURA extracts them automatically from conversations, or you can add one above.',
+                                context.l10n.memoryBankEmpty,
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   color: palette.textSecondary,
@@ -145,6 +147,7 @@ void showMemoryBankDialog(BuildContext context) {
                                         ),
                                       ),
                                       IconButton(
+                                        tooltip: context.l10n.memoryBankDelete,
                                         icon: Icon(
                                           Icons.delete,
                                           size: 16,

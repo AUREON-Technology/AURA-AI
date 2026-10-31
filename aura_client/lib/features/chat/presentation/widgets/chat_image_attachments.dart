@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:aura_client/core/ai/vision/chat_images.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Picks images for the next message (ADR-031). Not shown at all unless the gateway says it can
 /// understand images (`GET /api/v3/capabilities`): an attach button that can only produce a 503
@@ -34,7 +35,7 @@ class AttachImageButton extends ConsumerWidget {
     final full = count >= capabilities.maxImages;
 
     return IconButton(
-      tooltip: full ? 'Image limit reached' : 'Attach image',
+      tooltip: full ? context.l10n.chatImageLimitReached : context.l10n.chatAttachImage,
       icon: const Icon(Icons.image_outlined),
       onPressed: !enabled || full ? null : () => _attach(context, ref, capabilities),
     );
@@ -87,7 +88,7 @@ class PendingImagesStrip extends ConsumerWidget {
         children: [
           for (var i = 0; i < images.length; i++)
             Semantics(
-              label: 'Attached image ${i + 1} of ${images.length}: ${images[i].name}',
+              label: context.l10n.chatAttachedImageLabel(i + 1, images.length, images[i].name),
               image: true,
               child: Stack(
                 clipBehavior: Clip.none,
@@ -108,11 +109,11 @@ class PendingImagesStrip extends ConsumerWidget {
                       ),
                     ),
                   ),
-                  Positioned(
+                  PositionedDirectional(
                     top: -10,
-                    right: -10,
+                    end: -10,
                     child: IconButton(
-                      tooltip: 'Remove image ${i + 1}',
+                      tooltip: context.l10n.chatRemoveImage(i + 1),
                       iconSize: 18,
                       visualDensity: VisualDensity.compact,
                       icon: Icon(Icons.cancel, color: palette.textSecondary),
@@ -173,7 +174,7 @@ class SentImagesView extends ConsumerWidget {
         for (var i = 0; i < images.length; i++)
           Semantics(
             button: true,
-            label: 'Sent image ${i + 1} of ${images.length}: ${images[i].name}. Open preview',
+            label: context.l10n.chatSentImageLabel(i + 1, images.length, images[i].name),
             excludeSemantics: true,
             child: InkWell(
               borderRadius: BorderRadius.circular(AuraRadius.sm),
@@ -212,7 +213,7 @@ class SentImagesView extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             IconButton(
-              tooltip: 'Close preview',
+              tooltip: dialogContext.l10n.chatClosePreview,
               icon: const Icon(Icons.close),
               onPressed: () => Navigator.of(dialogContext).pop(),
             ),

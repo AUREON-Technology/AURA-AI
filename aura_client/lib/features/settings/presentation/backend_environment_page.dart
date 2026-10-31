@@ -5,6 +5,7 @@ import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/config/backend_url_settings.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_api_client.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 final backendReachabilityProvider = FutureProvider.autoDispose<bool>((ref) async {
   final response = await ref.read(auraApiClientProvider).probeHealth();
@@ -37,7 +38,7 @@ class _BackendEnvironmentPageState extends ConsumerState<BackendEnvironmentPage>
       if (changed) {
         AuraSnackbar.show(
           context,
-          message: 'Sign in again to continue.',
+          message: context.l10n.serverSwitchedSignInAgain,
           kind: AuraSnackbarKind.info,
         );
       }
@@ -59,7 +60,7 @@ class _BackendEnvironmentPageState extends ConsumerState<BackendEnvironmentPage>
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: Text(
-          'Server environment',
+          context.l10n.serverEnvironmentTitle,
           style: Theme.of(context).textTheme.headlineMedium,
         ),
       ),
@@ -70,7 +71,7 @@ class _BackendEnvironmentPageState extends ConsumerState<BackendEnvironmentPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Current server', style: Theme.of(context).textTheme.titleSmall),
+                Text(context.l10n.serverCurrent, style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: AuraSpacing.sm),
                 Text(backendUrl, style: Theme.of(context).textTheme.bodySmall),
                 const SizedBox(height: AuraSpacing.md),
@@ -84,7 +85,7 @@ class _BackendEnvironmentPageState extends ConsumerState<BackendEnvironmentPage>
                       ),
                       const SizedBox(width: AuraSpacing.sm),
                       Text(
-                        reachable ? 'Reachable' : 'Unreachable',
+                        reachable ? context.l10n.serverReachable : context.l10n.serverUnreachable,
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ],
@@ -100,11 +101,11 @@ class _BackendEnvironmentPageState extends ConsumerState<BackendEnvironmentPage>
                         ),
                       ),
                       const SizedBox(width: AuraSpacing.sm),
-                      Text('Checking…', style: Theme.of(context).textTheme.bodySmall),
+                      Text(context.l10n.serverChecking, style: Theme.of(context).textTheme.bodySmall),
                     ],
                   ),
                   error: (_, _) => Text(
-                    'Could not check reachability',
+                    context.l10n.serverReachabilityError,
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
@@ -153,8 +154,7 @@ class _BackendEnvironmentPageState extends ConsumerState<BackendEnvironmentPage>
           ),
           const SizedBox(height: AuraSpacing.lg),
           Text(
-            'Switching servers clears your session on this device. '
-            'Sign in again after changing environments.',
+            context.l10n.serverSwitchExplainer,
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ],

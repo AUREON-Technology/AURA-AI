@@ -9,6 +9,7 @@ import 'package:record/record.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 
 import '../../../../core/ai/voice/voice_client.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 enum _VoiceState { idle, recording, transcribing }
 
@@ -51,7 +52,7 @@ class _VoiceRecorderButtonState extends ConsumerState<VoiceRecorderButton> {
         if (mounted) {
           AuraSnackbar.show(
             context,
-            message: 'Microphone permission is needed to record a voice note.',
+            message: context.l10n.voiceMicPermission,
             kind: AuraSnackbarKind.error,
           );
         }
@@ -71,7 +72,7 @@ class _VoiceRecorderButtonState extends ConsumerState<VoiceRecorderButton> {
       if (mounted) {
         AuraSnackbar.show(
           context,
-          message: 'Voice recording is not available on this device.',
+          message: context.l10n.voiceRecordingUnavailable,
           kind: AuraSnackbarKind.error,
         );
       }
@@ -103,7 +104,7 @@ class _VoiceRecorderButtonState extends ConsumerState<VoiceRecorderButton> {
       if (text == null) {
         AuraSnackbar.show(
           context,
-          message: 'Could not transcribe that voice note.',
+          message: context.l10n.voiceTranscribeFailed,
           kind: AuraSnackbarKind.error,
         );
       } else {
@@ -113,7 +114,7 @@ class _VoiceRecorderButtonState extends ConsumerState<VoiceRecorderButton> {
       if (mounted) {
         AuraSnackbar.show(
           context,
-          message: 'Could not read that recording.',
+          message: context.l10n.voiceReadFailed,
           kind: AuraSnackbarKind.error,
         );
       }
@@ -148,7 +149,7 @@ class _VoiceRecorderButtonState extends ConsumerState<VoiceRecorderButton> {
 
     final recording = _state == _VoiceState.recording;
     return IconButton(
-      tooltip: recording ? 'Stop recording' : 'Record a voice note',
+      tooltip: recording ? context.l10n.voiceStopRecording : context.l10n.voiceRecordNote,
       icon: Icon(
         recording ? Icons.stop_circle : Icons.mic_none,
         color: recording ? palette.danger : palette.textSecondary,

@@ -1,0 +1,10 @@
+# actionlint configuration, read by the repo-hygiene workflow (audit F-37).
+#
+# Keep this list short and specific: each entry silences one finding in one file, with the reason.
+paths:
+  .github/workflows/verify-hosted-inference.yml:
+    ignore:
+      # Summarise step: `ls evidence/provider_wire | tr ...` only lists JSON capture names this
+      # workflow wrote itself into the summary; no filename is ever parsed or acted on. Owned by
+      # the deploy/verification area, so it is silenced here rather than rewritten from CI hygiene.
+      - 'SC2012:'

@@ -84,6 +84,29 @@ aura_client/scratch_test_*.tmp
 # had never seen those changes, and nothing about `git log` or a merged PR made that visible.
 aura_hostd/build/
 aura_hostd/*.exe
+# `dart compile exe` with no -o names the output after the entrypoint, with no extension on Linux
+# and macOS -- and a 7.3 MB Windows build was committed under exactly that name.
+aura_hostd/aura_hostd
+
+# ==========================================
+# Build artefacts, logs and local databases — anywhere in the tree (audit F-37, CB-13)
+# ==========================================
+# An ignore rule does not untrack a file that is already in the index, so
+# scripts/check_tracked_artifacts.py checks `git ls-files` itself; keep the two in step.
+# Releases ship as CI artifacts (release-apk.yml) or GitHub Release assets, never as commits.
+aura_client/releases/
+*.apk
+*.aab
+*.ipa
+*.exe
+*.dll
+*.dylib
+*.log
+*.log.err
+*.db
+*.sqlite
+*.sqlite3
+*.tsbuildinfo
 
 # ==========================================
 # Node (repo root)

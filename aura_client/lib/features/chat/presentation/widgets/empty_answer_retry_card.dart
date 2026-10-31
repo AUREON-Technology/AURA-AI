@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 /// Shown when an assistant turn ends with no tokens instead of a blank body.
 class EmptyAnswerRetryCard extends StatelessWidget {
@@ -20,7 +21,7 @@ class EmptyAnswerRetryCard extends StatelessWidget {
             const SizedBox(width: AuraSpacing.sm),
             Expanded(
               child: Text(
-                'No reply this turn',
+                context.l10n.chatNoReplyTitle,
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   color: palette.textPrimary,
@@ -32,7 +33,7 @@ class EmptyAnswerRetryCard extends StatelessWidget {
         ),
         const SizedBox(height: AuraSpacing.sm),
         Text(
-          'AURA finished without an answer. Retry to send your last message again.',
+          context.l10n.chatNoReplyBody,
           style: TextStyle(
             color: palette.textSecondary,
             fontSize: 13,
@@ -41,7 +42,7 @@ class EmptyAnswerRetryCard extends StatelessWidget {
         ),
         const SizedBox(height: AuraSpacing.md),
         AuraButton(
-          label: 'Retry',
+          label: context.l10n.retry,
           icon: Icons.refresh,
           onPressed: onRetry,
         ),

@@ -131,4 +131,7 @@ EXPOSE 8000
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 
 # Workers via AURA_WORKERS, same default as deploy/docker-compose.prod.yml.
-CMD ["sh", "-c", "uvicorn aura_service:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${AURA_WORKERS:-4} --proxy-headers --log-level info"]
+# This is the command Railway runs. `exec` makes uvicorn PID 1, so the platform's SIGTERM reaches
+# it rather than a shell, and --timeout-graceful-shutdown bounds the drain below railway.json's
+# drainingSeconds (audit F-25; the compose files carry the same pair on the gateway).
+CMD ["sh", "-c", "exec uvicorn aura_service:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${AURA_WORKERS:-4} --proxy-headers --log-level info --timeout-graceful-shutdown ${AURA_GRACEFUL_SHUTDOWN_S:-150}"]

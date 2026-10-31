@@ -314,7 +314,7 @@ class _GoalCard extends StatelessWidget {
               children: [
                 if (goal.category != null && goal.category!.isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsetsDirectional.only(end: 8),
                     child: Chip(
                       label: Text(goal.category!, style: const TextStyle(fontSize: 11)),
                       backgroundColor: Colors.blue.withValues(alpha: 0.1),

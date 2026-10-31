@@ -170,7 +170,7 @@ class _EditorTabItem extends StatelessWidget {
               // Dirty indicator
               if (tab.isDirty)
                 Padding(
-                  padding: const EdgeInsets.only(left: 4),
+                  padding: const EdgeInsetsDirectional.only(start: 4),
                   child: Container(
                     width: 6,
                     height: 6,
@@ -183,7 +183,7 @@ class _EditorTabItem extends StatelessWidget {
               // Pinned indicator
               if (tab.isPinned)
                 Padding(
-                  padding: const EdgeInsets.only(left: 4),
+                  padding: const EdgeInsetsDirectional.only(start: 4),
                   child: Icon(
                     Icons.push_pin,
                     size: 12,

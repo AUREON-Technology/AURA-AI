@@ -284,7 +284,6 @@ class TestLexicalIndexRebuild:
         original = knowledge.lexical_size
 
         knowledge._lexical.clear()
-        knowledge._lexical_owner.clear()
         assert knowledge.lexical_size == 0
 
         rebuilt = await knowledge.rebuild_lexical_index()
@@ -299,7 +298,6 @@ class TestLexicalIndexRebuild:
             document_id=DocumentId("handbook"), owner_id=user,
         )
         knowledge._lexical.clear()
-        knowledge._lexical_owner.clear()
         await knowledge.rebuild_lexical_index()
 
         assert (await knowledge.retrieve("AURA-4419", owner_id=user)).chunks

@@ -53,6 +53,9 @@ logger = get_logger("knowledge")
 #: owner, and echoing those back into metadata would duplicate them on every retrieved chunk.
 _PROVENANCE_KEYS = ("modality", "page", "needs_ocr")
 
+# Scores relevance when the configured reranker is disabled or fails (see `_rerank`). Stateless.
+_FALLBACK_SCORER = HeuristicReranker()
+
 
 def derive_document_id(title: str, owner_id: UserId | None) -> DocumentId:
     """The id a document gets when the caller does not name one.
@@ -93,6 +96,11 @@ class _KeyedLocks:
 
 def _owner_value(owner_id: UserId | None) -> str | None:
     return owner_id.value if owner_id is not None else None
+
+
+def _owner_key(owner_id: UserId | None) -> str:
+    """The lexical index group a chunk lives in: its owner, or the shared global group."""
+    return owner_id.value if owner_id is not None else GLOBAL_OWNER
 
 
 class IngestionResult:
@@ -172,9 +180,9 @@ class KnowledgeEngine:
         self._events = event_bus
 
         # In-process lexical index. Rebuilt from the document store on startup; the Postgres FTS
-        # adapter replaces this when a deployment outgrows it (ADR-005).
+        # adapter replaces this when a deployment outgrows it (ADR-005). Chunks are grouped by
+        # owner key (`_owner_key`), so a query reads only its tenant's and the global postings.
         self._lexical = BM25Index()
-        self._lexical_owner: dict[str, str] = {}
 
         # Serialises the check-then-write section of `ingest` per content hash and per document
         # id. Without it, concurrent duplicate submissions (a double tap, a client retry racing its
@@ -349,10 +357,7 @@ class KnowledgeEngine:
             )
 
         for chunk in chunks:
-            self._lexical.add(chunk.id.value, chunk.content)
-            self._lexical_owner[chunk.id.value] = (
-                chunk.owner_id.value if chunk.owner_id else GLOBAL_OWNER
-            )
+            self._lexical.add(chunk.id.value, chunk.content, group=_owner_key(chunk.owner_id))
 
         if self._graph_pipeline is not None:
             # Extract from what survived the context guard, not the raw upload: a quarantined
@@ -449,7 +454,6 @@ class KnowledgeEngine:
         await self._vectors.delete(identity, point_ids=ids)
         for chunk_id in ids:
             self._lexical.remove(chunk_id)
-            self._lexical_owner.pop(chunk_id, None)
 
     async def _extract_graph(
         self, document: Document, text: str, owner_id: UserId | None, *, superseded: bool
@@ -493,7 +497,6 @@ class KnowledgeEngine:
         await self._vectors.delete(identity, point_ids=[c.id.value for c in chunks])
         for chunk in chunks:
             self._lexical.remove(chunk.id.value)
-            self._lexical_owner.pop(chunk.id.value, None)
         if self._graph_pipeline is not None:
             # Before the tombstone and allowed to raise: "delete my data" must include the facts
             # derived from it, and a failure here leaves the document un-tombstoned so a retried
@@ -675,15 +678,15 @@ class KnowledgeEngine:
     ) -> list[tuple[str, float]]:
         if self._lexical.size == 0:
             return []
-        owner_value = owner_id.value if owner_id else None
-        allowed = {
-            chunk_id
-            for chunk_id, owner in self._lexical_owner.items()
-            if owner == owner_value or (include_global and owner == GLOBAL_OWNER)
-        }
-        if not allowed:
+        # Tenant isolation is the choice of groups: the caller's own chunks and, if asked, the
+        # global ones. No identity reads only the global group. Selecting shards replaces the
+        # per-query pass over every chunk's owner that used to build an allow-list (F-30).
+        groups = [owner_id.value] if owner_id else []
+        if include_global:
+            groups.append(GLOBAL_OWNER)
+        if not groups:
             return []
-        return self._lexical.search(text, limit=self._candidate_k, allowed_ids=allowed)
+        return self._lexical.search(text, limit=self._candidate_k, groups=groups)
 
     async def _drop_inactive_lexical(
         self, hits: Sequence[tuple[str, float]], live_ids: set[str]
@@ -713,7 +716,6 @@ class KnowledgeEngine:
                     kept.append((chunk_id, score))
                     continue
             self._lexical.remove(chunk_id)
-            self._lexical_owner.pop(chunk_id, None)
         return kept
 
     async def _resolve_contents(
@@ -746,22 +748,55 @@ class KnowledgeEngine:
     async def _rerank(
         self, query: str, candidate_ids: Sequence[str], contents: Mapping[str, str]
     ) -> list[tuple[str, float]]:
+        """Order the candidates and give each the score the relevance threshold is applied to.
+
+        That score has to measure how well *this* chunk matches *this* query, on the scale the
+        threshold is calibrated for. It used to be derived from rank (``1 - i/n``) whenever the
+        reranker was disabled or raised, which made the threshold meaningless on exactly those
+        paths: the top candidate scored 1.0 and always passed however irrelevant it was, the
+        bottom third was always cut however relevant, and ``searched_but_empty`` could never be
+        true (audit F-30 / AR-14).
+
+        The threshold is calibrated against :class:`HeuristicReranker` scores -- the default
+        provider, and what the cross-encoder itself degrades to -- so without a working
+        configured reranker that is what supplies the score. Neither fallback is a rank:
+
+        - reranking disabled: the fusion order is kept, as configured, but each candidate is
+          *gated* on its heuristic relevance;
+        - the reranker raised: the candidates are reranked by the heuristic instead, the same
+          degradation ``CrossEncoderReranker`` applies to its own failures.
+
+        Dense cosine is deliberately not used as the gate: its distribution depends on the
+        embedding model (``bge-small`` puts unrelated passages well above 0.35), so the same
+        floor would mean something different per deployment. If even the heuristic fails, every
+        candidate scores 0.0 -- an honest "nothing passed" rather than a fabricated pass.
+        """
         usable = [(cid, contents[cid]) for cid in candidate_ids if cid in contents]
         if not usable:
             return []
+        texts = [text for _cid, text in usable]
+
         if not self._rerank_enabled:
-            # Preserve fusion order, mapping rank to a descending pseudo-score so the threshold
-            # comparison downstream still behaves sensibly.
-            return [(cid, 1.0 - i / max(1, len(usable))) for i, (cid, _) in enumerate(usable)]
+            relevance = await self._fallback_relevance(query, texts)
+            return [(cid, relevance.get(i, 0.0)) for i, (cid, _) in enumerate(usable)]
 
         try:
-            ranked = await self._reranker.rerank(
-                query, [text for _cid, text in usable], top_k=self._candidate_k
-            )
+            ranked = await self._reranker.rerank(query, texts, top_k=self._candidate_k)
         except Exception:
-            logger.warning("reranker failed; falling back to fusion order")
-            return [(cid, 1.0 - i / max(1, len(usable))) for i, (cid, _) in enumerate(usable)]
+            logger.warning("reranker failed; scoring with the heuristic reranker instead")
+            relevance = await self._fallback_relevance(query, texts)
+            ranked = sorted(relevance.items(), key=lambda item: item[1], reverse=True)
+            if len(ranked) < len(usable):
+                ranked.extend((i, 0.0) for i in range(len(usable)) if i not in relevance)
         return [(usable[index][0], score) for index, score in ranked if index < len(usable)]
+
+    async def _fallback_relevance(self, query: str, texts: Sequence[str]) -> dict[int, float]:
+        """Heuristic relevance per candidate index; empty (so everything fails) if it raises."""
+        try:
+            return dict(await _FALLBACK_SCORER.rerank(query, texts))
+        except Exception:  # pragma: no cover - the heuristic is pure Python over strings
+            logger.warning("heuristic relevance scoring failed; no candidate can pass the threshold")
+            return {}
 
     def _diversify(self, results: Sequence[RetrievedChunk], top_k: int) -> list[RetrievedChunk]:
         """Drop near-duplicate chunks.
@@ -839,14 +874,10 @@ class KnowledgeEngine:
         starts with an empty one, and hybrid retrieval would silently degrade to dense-only.
         """
         self._lexical.clear()
-        self._lexical_owner.clear()
         count = 0
         async for batch in self._documents.iter_all_chunks(batch_size=500):
             for chunk in batch:
-                self._lexical.add(chunk.id.value, chunk.content)
-                self._lexical_owner[chunk.id.value] = (
-                    chunk.owner_id.value if chunk.owner_id else GLOBAL_OWNER
-                )
+                self._lexical.add(chunk.id.value, chunk.content, group=_owner_key(chunk.owner_id))
                 count += 1
         logger.info("lexical index rebuilt", extra={"chunks": count})
         return count

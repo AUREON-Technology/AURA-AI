@@ -8,6 +8,7 @@ import 'package:aura_client/core/network/aura_failure_view.dart';
 
 import '../../data/agent_config_repository.dart';
 import '../../data/agents_repository.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class PersonaChip extends ConsumerWidget {
   /// When true, the label may ellipsize if a parent [Flexible] is tight.
@@ -110,7 +111,7 @@ class PersonaPickerSheet extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Choose a persona',
+                  context.l10n.personaPickerTitle,
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 const SizedBox(height: AuraSpacing.sm),
@@ -137,7 +138,7 @@ class PersonaPickerSheet extends ConsumerWidget {
                           selected: isActive,
                           trailing: !locked && agent.id == 'engineer'
                               ? IconButton(
-                                  tooltip: 'Engineer Task History',
+                                  tooltip: context.l10n.engineerTaskHistory,
                                   visualDensity: VisualDensity.compact,
                                   icon: Icon(Icons.history, color: palette.textSecondary),
                                   onPressed: () {

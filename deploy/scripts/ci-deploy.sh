@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # GitHub Actions entry point. Same as vps-update.sh, with the production
 # checkout's locations filled in so the workflow does not have to know them.
 #
@@ -10,7 +10,8 @@
 #
 # Optional environment:
 #   AURA_SHA          commit CI tested (must be on origin/main)
-#   AURA_HEALTH_URL   override; otherwise https://$AURA_DOMAIN/health
+#   AURA_HEALTH_URL   override; otherwise https://$AURA_DOMAIN/health/live
+#   AURA_READY_TIMEOUT_S  how long vps-update.sh waits for /health/ready (default 300)
 #   AURA_STASH_DIRTY  default 1 -- stash tracked local edits so ff-only can proceed
 set -euo pipefail
 
@@ -25,7 +26,10 @@ export AURA_DEV_OPS="${AURA_DEV_OPS:-0}"
 if [ -z "${AURA_HEALTH_URL:-}" ] && [ -f "$AURA_REPO/deploy/.env" ]; then
   domain="$(sed -n 's/^AURA_DOMAIN=//p' "$AURA_REPO/deploy/.env" | head -1 | tr -d "[:space:]\"'")"
   if [ -n "$domain" ]; then
-    export AURA_HEALTH_URL="https://${domain}/health"
+    # /health/live, not /health (audit F-25). nginx has no `/health` route: it answers that path
+    # with a 301 to `/health/`, which `curl -f` counts as success, so the old URL "passed" as
+    # long as nginx was up -- whatever the gateway was doing.
+    export AURA_HEALTH_URL="https://${domain}/health/live"
   fi
 fi
 

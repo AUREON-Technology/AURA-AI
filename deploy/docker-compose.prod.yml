@@ -37,6 +37,23 @@ x-logging: &logging
 x-restart: &restart
   restart: unless-stopped
 
+# Celery healthchecks (audit F-25). Each worker pings only its own node; beat checks the broker
+# and that its schedule file is still being written. Why each is shaped this way is in
+# aura_backend/scripts/celery_healthcheck.py. Kept identical in docker-compose.dev.yml (parity).
+x-celery-worker-healthcheck: &celery_worker_healthcheck
+  test: ["CMD", "python", "/app/scripts/celery_healthcheck.py", "worker"]
+  interval: 60s
+  timeout: 30s
+  retries: 3
+  start_period: 120s
+
+x-celery-beat-healthcheck: &celery_beat_healthcheck
+  test: ["CMD", "python", "/app/scripts/celery_healthcheck.py", "beat"]
+  interval: 120s
+  timeout: 30s
+  retries: 3
+  start_period: 300s
+
 # Hosted open-weight providers (ADR-030; docs/roadmaps/AURA_FREE_HOSTED_INFERENCE_PLAN.md).
 # Three vendor-neutral slots, HOSTED1..HOSTED3, each pointed at a provider by .env. Every slot
 # is a no-op until BOTH AURA_ALLOW_HOSTED_INFERENCE=true AND AURA_LLM_PROVIDERS lists it (e.g.
@@ -294,9 +311,15 @@ services:
       - nginx_certs:/etc/letsencrypt
       - ./nginx/www:/var/www/certbot:ro
     networks: [edge, observability, aura_edge]
+    # service_started, never service_healthy (audit F-25). The edge must come up whether or not
+    # the gateway is ready: readiness needs a working LLM provider, so with `service_healthy` an
+    # Ollama outage plus any nginx recreate (vps-update.sh force-recreates it on every deploy)
+    # left nothing listening on 80/443 -- not even /healthz, the ACME challenge, or the dev vhost.
+    # nginx resolves the upstream lazily and answers 502 until the gateway listens, which is the
+    # honest answer. Pinned by tests/unit/test_deploy_robustness.py.
     depends_on:
       gateway:
-        condition: service_healthy
+        condition: service_started
       console:
         condition: service_started
     healthcheck:
@@ -329,9 +352,11 @@ services:
       HOSTNAME: 0.0.0.0
       PORT: "3000"
     networks: [edge]
+    # service_started for the same reason as nginx above: nginx depends on this service, so a
+    # console that waited for a *ready* gateway held the edge down with it.
     depends_on:
       gateway:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test:
         [
@@ -356,12 +381,29 @@ services:
       args: *release_args
     <<: *restart
     logging: *logging
+    # Graceful drain on deploy (audit F-25). Docker's default is SIGKILL 10 s after SIGTERM, which
+    # cut off every in-flight chat stream on every deploy. Now: SIGTERM reaches uvicorn directly
+    # (the entrypoint `exec`s this command, so uvicorn is PID 1), it stops accepting, closes idle
+    # keep-alives and WebSockets (close 1012, which hostd and the voice client reconnect on), and
+    # waits up to --timeout-graceful-shutdown for in-flight responses; stop_grace_period leaves
+    # 30 s on top of that for lifespan shutdown (container.shutdown()) before the SIGKILL.
+    #
+    # Why 150 s and not the 600 s /api/v3/chat read timeout: the single gateway replica refuses
+    # new connections for as long as it drains, so the drain window is also the deploy's
+    # worst-case edge outage (uvicorn returns as soon as the last response ends, so that is only
+    # paid when something is actually streaming). 150 s is above the planner call's own worst
+    # case on the 5-10 tok/s CPU model (700 tokens at 5 tok/s = 140 s, PlanningEngine.plan), so an
+    # ordinary turn already past planning finishes. What it does not cover is a multi-iteration
+    # engineer loop (600 s deadline): that is cut and surfaces as an interrupted stream -- the
+    # trade for not holding the edge down for ten minutes on every deploy.
+    stop_grace_period: 180s
     command: >
       uvicorn aura_service:app
       --host 0.0.0.0 --port 8000
       --workers ${AURA_WORKERS:-4}
       --proxy-headers --forwarded-allow-ips='*'
       --timeout-keep-alive 65
+      --timeout-graceful-shutdown ${AURA_GRACEFUL_SHUTDOWN_S:-150}
     environment:
       <<: *hosted_providers
       AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-production}
@@ -597,9 +639,14 @@ services:
       redis: {condition: service_healthy}
       qdrant: {condition: service_started}
     healthcheck:
-      # Readiness, not liveness: this gates traffic, so it must reflect dependencies.
+      # Liveness, not readiness (audit F-25). This status is what `depends_on: service_healthy`
+      # waits on, and /health/ready is false whenever no LLM provider is healthy -- so a
+      # readiness healthcheck turned an Ollama outage into "gateway unhealthy", which held the
+      # edge down. Nothing routes on this status (nginx proxies regardless), so it only has to
+      # say "the process is up and serving HTTP". Readiness stays where it belongs: the deploy
+      # gate (vps-update.sh polls /health/ready and fails the deploy) and Prometheus.
       test: ["CMD", "python", "-c",
-             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5).status==200 else 1)"]
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/live', timeout=5).status==200 else 1)"]
       interval: 20s
       timeout: 10s
       retries: 5
@@ -706,6 +753,12 @@ services:
     logging: *logging
     # Separate queues so a multi-minute ingestion backlog cannot delay a user-facing task.
     command: celery -A tasks worker -Q realtime -c 4 --loglevel=info --max-tasks-per-child=200
+    # SIGTERM is Celery's warm shutdown: stop consuming, let running tasks finish. 120 s lets a
+    # realtime task through one full provider call; anything still running then is SIGKILLed,
+    # and because tasks are acks_late (celery_app.py) its message is redelivered rather than
+    # lost. Same value on every worker, in both compose files.
+    stop_grace_period: 120s
+    healthcheck: *celery_worker_healthcheck
     environment: &worker_env
       <<: *hosted_providers
       AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-production}
@@ -798,6 +851,8 @@ services:
     <<: *restart
     logging: *logging
     command: celery -A tasks worker -Q ingestion,learning -c 2 --loglevel=info --max-tasks-per-child=50
+    stop_grace_period: 120s
+    healthcheck: *celery_worker_healthcheck
     environment: *worker_env
     secrets: [postgres_password, redis_password, qdrant_api_key, hfspace_api_key, hosted1_api_key, hosted2_api_key, hosted3_api_key, data_encryption_keys]
     volumes:
@@ -832,6 +887,10 @@ services:
     <<: *restart
     logging: *logging
     command: celery -A tasks worker -Q training -c 1 --loglevel=info --max-tasks-per-child=1
+    # A training run outlives any grace period; training tasks are not acks_late (a redelivery
+    # would retrain for hours), so a deploy that stops this worker fails the running job.
+    stop_grace_period: 120s
+    healthcheck: *celery_worker_healthcheck
     environment:
       <<: *worker_env
       AURA_FINETUNE_TRAINER: local
@@ -858,7 +917,10 @@ services:
     logging: *logging
     # Scheduler only. knowledge_refresh_task and memory_consolidate_task run on
     # worker-ingestion (`learning` queue), which has Postgres/Qdrant/Ollama.
-    command: celery -A celery_app beat --loglevel=info
+    # --schedule names the default path explicitly so the beat healthcheck and beat agree on it.
+    command: celery -A celery_app beat --loglevel=info --schedule=/app/celerybeat-schedule
+    stop_grace_period: 30s
+    healthcheck: *celery_beat_healthcheck
     environment: *worker_env
     secrets: [postgres_password, redis_password, qdrant_api_key, hfspace_api_key, hosted1_api_key, hosted2_api_key, hosted3_api_key, data_encryption_keys]
     networks: [data]

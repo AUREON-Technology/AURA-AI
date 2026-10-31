@@ -92,7 +92,7 @@ class _FileTile extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Padding(
-      padding: EdgeInsets.only(left: depth * ideDensity.treeRowHeight),
+      padding: EdgeInsetsDirectional.only(start: depth * ideDensity.treeRowHeight),
       child: SizedBox(
         height: ideDensity.treeRowHeight,
         child: InkWell(
@@ -251,7 +251,7 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
       children: [
         // Directory header
         Padding(
-          padding: EdgeInsets.only(left: widget.depth * ideDensity.treeRowHeight),
+          padding: EdgeInsetsDirectional.only(start: widget.depth * ideDensity.treeRowHeight),
           child: SizedBox(
             height: ideDensity.treeRowHeight,
             child: InkWell(
@@ -423,7 +423,7 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
 
     if (_loading) {
       return Padding(
-        padding: EdgeInsets.only(left: (widget.depth + 1) * ideDensity.treeRowHeight),
+        padding: EdgeInsetsDirectional.only(start: (widget.depth + 1) * ideDensity.treeRowHeight),
         child: SizedBox(
           height: ideDensity.treeRowHeight,
           child: Center(
@@ -447,7 +447,7 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
     // top-level Explorer error view offers.
     if (children?.error != null) {
       return Padding(
-        padding: EdgeInsets.only(left: (widget.depth + 1) * ideDensity.treeRowHeight),
+        padding: EdgeInsetsDirectional.only(start: (widget.depth + 1) * ideDensity.treeRowHeight),
         child: Row(
           children: [
             Icon(
@@ -481,7 +481,7 @@ class _DirectoryTileState extends ConsumerState<_DirectoryTile> {
 
     if (entries.isEmpty) {
       return Padding(
-        padding: EdgeInsets.only(left: (widget.depth + 1) * ideDensity.treeRowHeight),
+        padding: EdgeInsetsDirectional.only(start: (widget.depth + 1) * ideDensity.treeRowHeight),
         child: SizedBox(
           height: ideDensity.treeRowHeight,
           child: Text(

@@ -9,6 +9,7 @@ import 'widgets/calendar_month_grid.dart';
 import 'widgets/calendar_schedule_panel.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/core/network/aura_failure_view.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class CalendarPage extends ConsumerWidget {
   const CalendarPage({super.key});
@@ -246,6 +247,7 @@ class _CalendarHeader extends StatelessWidget {
                       ),
                     ),
                     IconButton(
+                      tooltip: context.l10n.close,
                       icon: const Icon(Icons.close, color: Colors.white),
                       onPressed: () => Navigator.pop(context),
                     ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 Future<void> showCaptureSheet(BuildContext context) {
   final controller = TextEditingController();
@@ -22,18 +23,18 @@ Future<void> showCaptureSheet(BuildContext context) {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Ask Copilot', style: Theme.of(context).textTheme.titleLarge),
+            Text(context.l10n.captureTitle, style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: AuraSpacing.md),
             AuraTextField(
               controller: controller,
-              hintText: 'Capture a thought, task, or question…',
+              hintText: context.l10n.captureHint,
               maxLines: 3,
               textInputAction: TextInputAction.send,
               onSubmitted: (value) => _go(context, value),
             ),
             const SizedBox(height: AuraSpacing.lg),
             AuraButton(
-              label: 'Send to Copilot',
+              label: context.l10n.captureSend,
               icon: Icons.auto_awesome,
               expand: true,
               onPressed: () => _go(context, controller.text),

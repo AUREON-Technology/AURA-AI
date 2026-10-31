@@ -8,8 +8,8 @@ build.
 **Android** — the only platform with a working release path end to end. Device attestation
 (Google Play Integrity) is wired on both client and backend; see
 [play-store-signing.md](play-store-signing.md) for the release-signing setup and
-`.github/workflows/release-apk.yml` for the build. `aura_client/releases/` holds the current
-sideload-installable build.
+`.github/workflows/release-apk.yml` for the build; its uploaded artifact is the
+sideload-installable build. APKs are no longer committed (`aura_client/releases/` is ignored).
 
 ## Dev-only — do not distribute
 

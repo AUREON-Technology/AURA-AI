@@ -6,6 +6,7 @@ import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/theme/theme.dart';
 import '../calendar_view_model.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class CalendarMonthGrid extends ConsumerWidget {
   final Map<String, List<CalendarEvent>> eventsByDay;
@@ -35,8 +36,16 @@ class CalendarMonthGrid extends ConsumerWidget {
                 Text(DateFormat('MMMM yyyy').format(ui.currentMonthDate), style: Theme.of(context).textTheme.titleLarge),
                 Row(
                   children: [
-                    IconButton(icon: const Icon(Icons.chevron_left, color: Colors.white), onPressed: vm.prevMonth),
-                    IconButton(icon: const Icon(Icons.chevron_right, color: Colors.white), onPressed: vm.nextMonth),
+                    IconButton(
+                      tooltip: context.l10n.calendarPreviousMonth,
+                      icon: const Icon(Icons.chevron_left, color: Colors.white),
+                      onPressed: vm.prevMonth,
+                    ),
+                    IconButton(
+                      tooltip: context.l10n.calendarNextMonth,
+                      icon: const Icon(Icons.chevron_right, color: Colors.white),
+                      onPressed: vm.nextMonth,
+                    ),
                   ],
                 ),
               ],
