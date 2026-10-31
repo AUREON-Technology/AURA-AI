@@ -190,7 +190,7 @@ Severity: **Critical** (blocks everything / live exposure) · **High** (blocks a
 | CB-25 | High | Desktop | Desktop + hostd not compiled/tested in CI since 09-13; `build-windows` non-gating | M8.0 re-baseline; make Windows gating | M8 |
 | CB-26 | Medium | Desktop | PTY Windows-only; no bundled/signed hostd; no restart-on-crash; no installer/updates | M8.3, M8.8, M8.10 | M8 |
 | CB-27 | Medium | Engineer | Workspace VPS verification never run (GAP-025) | Run script; commit report | M9 |
-| CB-28 | Medium | Personal OS | Two stores; agent-created tasks invisible in app | Store decision ADR + implementation | M11 |
+| CB-28 | Medium | Personal OS | Two stores; agent-created tasks invisible in app. **BUILT 2026-10-31** (ADR-032 Accepted, Option A: server-held per-user data key; agent tools on the synced tables; client key migration; migration `0017`). TESTED locally (pytest, legacy unittest, real PG16, Flutter). Not deployed, not CI-run | `/health/ready` at `0017` after deploy; run `move_personal_os_records.py`; agent task seen in the app on a real account | M11 |
 | CB-29 | Medium | Voice | English-only STT while Arabic TTS ships (GAP-020) | Multilingual ASR + WER | M12 |
 | CB-30 | Medium | Client | 16 uncalled routes. Release-APK Flutter pin and admin PR trigger built 2026-10-30 (F-37), not CI-run (CB-44); admin e2e has one failing spec | Wire/declare routes; one green Admin CI run (GAP-007) | M14 |
 | CB-31 | Low | Docs | CLAUDE.md ADR range/SYNCABLE_MODELS/admin; `rag/agentic.py:119` "no OCR"; duplicate Phase J; gap register dates (GAP-039) | Doc corrections | M0 |

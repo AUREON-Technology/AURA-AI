@@ -24,6 +24,11 @@ uses the strongest evidence that exists:
 
 ## System-wide facts (checked live on 2026-10-28, ~21:20 UTC)
 
+- **Pending, 2026-10-31: ADR-032 adds migration `0017` (`aura_user_data_keys`).** It is not on
+  `main` yet. After the merge that carries it, the Railway pre-deploy step must take production to
+  `0017`, and `/health/ready` must show `schema.revision 0017`. Until it does, the key endpoint and
+  the agent's personal-OS tools fail. ADR-032 also ends zero-knowledge for the synced personal-OS
+  fields: the server now holds each user's data key, wrapped by `AURA_DATA_ENCRYPTION_KEYS`.
 - **Update 2026-10-30: the production database matches the code again (CB-43 resolved).** The
   owner ran `alembic upgrade head` over `railway ssh` (`0013 → 0014 → 0015 → 0016`, clean). Live
   `/health/ready` showed `healthy: true`, `schema.revision 0016`, release `6417c43`, deployment
