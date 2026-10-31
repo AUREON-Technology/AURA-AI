@@ -4,6 +4,8 @@ Future<String?> readEncryptionBackupKey() async => null;
 
 Future<void> writeEncryptionBackupKey(String keyB64) async {}
 
+Future<void> deleteEncryptionBackupKey() async {}
+
 Future<String?> readEncryptionLegacyKey() async => null;
 
 Future<void> deleteEncryptionLegacyKey() async {}

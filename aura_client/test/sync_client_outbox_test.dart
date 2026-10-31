@@ -106,7 +106,8 @@ void main() {
     );
     final methods = <String>[];
     final httpClient = MockClient((request) async {
-      methods.add(request.method);
+      // Only the sync endpoint: the data-key fetch after the pull (ADR-032) is not under test.
+      if (request.url.path == '/api/v3/sync') methods.add(request.method);
       if (request.method == 'POST') return http.Response('boom', 500);
       return http.Response(jsonEncode(emptyPull('txid:42')), 200);
     });
