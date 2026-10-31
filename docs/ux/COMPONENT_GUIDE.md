@@ -82,8 +82,20 @@ activity item     search field
 (`status badge` came off this list with `AuraSyncStatusView` — the sync pill was the most
 duplicated instance of it, and it was duplicated exactly once, inside chat.)
 
-**Phase 2 scope**, and the order to take them in is by duplication count, not by how interesting
-they are — the tree item, the status badge and the toolbar are copied the most.
+**Phase 2 scope.** The order to take them in is by duplication count, not by how interesting they
+are — but *measure it first*. An earlier version of this file asserted that "the tree item, the
+status badge and the toolbar are copied the most". Counted on 2026-10-30, that was wrong:
+
+| Candidate | Instances |
+|---|---|
+| `PopupMenuButton` (context menu) | 3 files |
+| Panel toolbar (`compactControlHeight`) | **1** — `explorer_panel.dart`, and nothing else |
+
+A one-instance "duplicate" is not a component waiting to be extracted; it is one widget. So Phase
+2 is smaller than this list makes it look, and the honest next step is to count each remaining
+row before building for it. The two that earned extraction so far — `AuraCommandPalette` and
+`AuraSyncStatusView`/`AuraBanner` — did so because a *second* surface needed them, not because
+they appeared on a list.
 
 Two are blocked or constrained rather than merely unscheduled:
 

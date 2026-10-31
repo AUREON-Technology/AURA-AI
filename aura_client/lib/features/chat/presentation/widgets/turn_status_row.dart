@@ -15,6 +15,19 @@ class TurnStatusRow extends StatelessWidget {
 
   static const libraryEmptyCopy =
       'Searched your library — nothing relevant was found.';
+
+  /// ADR-006: retrieved knowledge and tool output travel on the DATA trust
+  /// channel, and a turn whose context was quarantined cannot run a
+  /// `side_effecting` tool without explicit confirmation. That is the
+  /// mechanism that stops a poisoned document from silently triggering a
+  /// write — and until now the user was never told it had engaged.
+  ///
+  /// Worded as a protection rather than an accusation: the content being
+  /// untrusted is the normal state for anything retrieved, and the thing
+  /// worth knowing is that nothing can act on it unasked.
+  static const quarantinedContextCopy =
+      'AURA treated the content it read as untrusted, so nothing with side '
+      'effects can run without your confirmation.';
   static const reducedModeCopy = 'AURA ran this turn in a reduced mode.';
   static const ungroundedCopy = 'Ungrounded — no sources attached.';
   static const interruptedCopy = 'Interrupted — this answer is incomplete.';
@@ -25,6 +38,14 @@ class TurnStatusRow extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // First, because it is the only note here that bears on what the
+        // answer is allowed to *do* rather than on how good it is.
+        if (meta.tainted)
+          _Note(
+            icon: Icons.gpp_maybe_outlined,
+            color: palette.warning,
+            text: quarantinedContextCopy,
+          ),
         if (meta.interrupted)
           _Note(
             icon: Icons.stop_circle_outlined,
