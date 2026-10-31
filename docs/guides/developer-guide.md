@@ -10,7 +10,8 @@ the test suite enforces.
 ```bash
 cd aura_backend
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.lock -r requirements-dev.txt
+pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
+pip install -r requirements-dev.txt   # a second install: the lock is hash-pinned, this is not
 pytest                      # 1010 tests, ~7 seconds
 ```
 
