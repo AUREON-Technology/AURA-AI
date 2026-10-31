@@ -1,19 +1,21 @@
-"""Server-side personal-OS CRUD tools (Phase C2).
+"""Server-side personal-OS CRUD tools (Phase C2; ADR-032).
 
-Where ``personal_os.py``'s ``propose_*`` tools return a payload the Flutter client applies to its
-*own* (zero-knowledge encrypted) local tables after the user approves a card, these write
-immediately to a server-owned table the kernel can also read back
-(``aura_core/domain/personal_os.py`` explains why it is a different table, not the same one).
-That makes them side-effecting with no confirmation gate of their own -- ``ToolPolicy`` still
-requires confirmation for a tainted context (ADR-006), but an untainted call from a persona whose
-``risk_ceiling`` and ``allowed_tools`` include one of these runs immediately. Keep the corresponding
-``propose_*`` tool for anything a deployment wants a human to approve first; these are for personas
-trusted to act without asking.
+These read and write the user's real personal-OS records: in production the store is
+``PostgresSyncedPersonalOsStore``, which is the app's own synced ``tasks``/``calendar_events``/
+``finance_records``/``health_records`` tables, encrypted with the user's data key that both the
+server and the user's devices hold (ADR-032). A task created here is on the user's Tasks tab after
+their next sync, and ``list_tasks`` sees what the user created in the app. ``personal_os.py``'s
+``propose_*`` tools remain the alternative when a deployment wants a human to approve first.
 
-Full CRUD now: ``update_*``/``delete_*`` were the named follow-up (Phase C exit criteria) and are
-the same shape of change as create -- fetch through the owner-scoped ``store.get``, merge fields
-via ``PersonalOsRecord.with_fields``, write back through ``store.update``/``store.delete``. Both
-re-check the fetched record's ``kind`` before acting: ``PersonalOsStore.get``/``delete`` are
+They are side-effecting with no confirmation gate of their own -- ``ToolPolicy`` still requires
+confirmation for a tainted context (ADR-006), but an untainted call from a persona whose
+``risk_ceiling`` and ``allowed_tools`` include one of these runs immediately. Keep the
+corresponding ``propose_*`` tool for anything a deployment wants a human to approve first; these
+are for personas trusted to act without asking.
+
+Full CRUD: ``update_*``/``delete_*`` fetch through the owner-scoped ``store.get``, merge fields
+via ``PersonalOsRecord.with_fields``, and write back through ``store.update``/``store.delete``.
+Both re-check the fetched record's ``kind`` before acting: ``PersonalOsStore.get``/``delete`` are
 scoped by id and owner only, not kind, so without that check ``update_task``/``delete_task`` could
 reach a calendar event or finance record that happens to share this owner, given its id -- either
 silently corrupting its ``fields`` (an update merging task-shaped keys into an event) or deleting
@@ -83,8 +85,10 @@ def _domain(
                 fields=fields, created_at=now, updated_at=now,
                 source=f"agent:{context.agent_id}" if context.agent_id else "kernel",
             )
-            await builder.store.put(record)
-            return f"Created {noun} {record.id.value}."
+            stored = await builder.store.put(record)
+            # A store may keep the record under another id (a health record merged onto that
+            # day's existing row); report the id the record can actually be found under.
+            return f"Created {noun} {(stored or record).id.value}."
 
         @tool(
             f"list_{plural}", f"List this user's {plural.replace('_', ' ')}, most recent first.",
@@ -162,6 +166,7 @@ _DOMAINS = (
             param("due_date", "string", "ISO 8601 date, e.g. '2026-09-01'.", required=False),
             param("priority", "string", "Task priority.", required=False,
                   enum=["low", "medium", "high"], default="medium"),
+            param("completed", "boolean", "Whether the task is done.", required=False),
         ),
     ),
     _domain(
@@ -182,6 +187,8 @@ _DOMAINS = (
             param("category", "string", "e.g. 'groceries', 'salary'.", required=False,
                   max_length=64),
             param("description", "string", "Optional detail.", required=False, max_length=500),
+            param("occurred_at", "string", "ISO 8601 date or datetime of the transaction; "
+                  "defaults to now.", required=False),
         ),
     ),
     _domain(
@@ -194,6 +201,7 @@ _DOMAINS = (
                   minimum=0),
             param("exercise_minutes", "integer", "Exercise duration in minutes.", required=False,
                   minimum=0),
+            param("calories", "integer", "Calories consumed.", required=False, minimum=0),
         ),
     ),
 )

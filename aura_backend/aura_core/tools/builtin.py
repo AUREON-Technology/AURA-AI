@@ -588,9 +588,10 @@ def default_tools(
     Everything that touches the network or the filesystem is opt-in and requires explicit
     configuration. A default install has arithmetic, the clock, and personal-OS proposals
     (client-applied JSON; no server writes): useful, and incapable of reaching anything.
-    ``personal_os_store`` additionally wires the create/list CRUD tools (Phase C2) -- real
-    server-side writes an agent's grant permits without a client-side approval card, against
-    aura_core's own table, never the client's zero-knowledge encrypted one.
+    ``personal_os_store`` additionally wires the create/list/update/delete CRUD tools (Phase C2)
+    -- real server-side writes an agent's grant permits without a client-side approval card. In
+    production that store is the app's own synced tables, encrypted with the user's data key
+    (ADR-032).
 
     ``sandbox_runner`` and ``github_client_resolver`` wire the engineer agent's tools
     (``tools/coding.py``) the same opt-in way -- absent, none of those tools are registered at

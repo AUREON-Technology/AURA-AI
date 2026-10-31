@@ -8,6 +8,16 @@ engine on the Flutter side with two endpoints:
   POST /api/v3/sync                 -> a batch of client mutations, applied
                                         with last-write-wins on `client_updated_at`
 
+**A second writer (ADR-032).** The agent's personal-OS tools write `tasks`, `calendar_events`,
+`finance_records` and `health_records` too, through
+`aura_core/adapters/postgres_synced_personal_os.py`. `aura_core` may not import this module, so
+that adapter restates the rules below in SQL: the owner scope, `sync_txid` on every write, the
+server clock as `client_updated_at`, tombstones that blank `*_enc`, and the `health_records`
+natural key. Change a rule here and change it there; `test_personal_os_sync_integration.py`
+checks the two against each other on a real Postgres. `*_enc` values are AES-GCM under the
+user's data key, which the server holds, so they are not opaque to the server any more, although
+this endpoint still only stores and returns them.
+
 Postgres becomes the source of truth; the client's local Drift database is
 a cache + offline mutation queue, not a second authority.
 

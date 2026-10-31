@@ -150,8 +150,11 @@ class Container:
         self.vectors = self._build_vector_store()
         self.documents = self._build_document_store()
         self.memory_store = self._build_memory_store()
-        # ADR-032: per-user data keys for the synced personal-OS fields.
+        # ADR-032: per-user data keys, then the agent's personal-OS store on the synced tables
+        # (encrypted with those keys). The old server-only table stays reachable for the data
+        # move script and for erasure until it is dropped.
         self.user_data_keys = self._build_user_data_keys()
+        self.legacy_personal_os_store = self._build_legacy_personal_os_store()
         self.personal_os_store = self._build_personal_os_store()
         self.engineer_runs = self._build_engineer_run_store()
         # GAP-024: the same store, under the name of the port it now fully implements
@@ -952,15 +955,31 @@ class Container:
 
         return InMemoryUserDataKeyStore()
 
-    def _build_personal_os_store(self) -> Any:
-        backend = self.settings.infrastructure.memory_backend
-        if backend == "postgres":
+    def _build_legacy_personal_os_store(self) -> Any:
+        """`aura_personal_os_records`, the agent's store before ADR-032. Read by
+        `scripts/move_personal_os_records.py` and cleared by erasure; nothing else writes it.
+        None in memory mode, where there is no old data to move."""
+        if self.settings.infrastructure.memory_backend == "postgres":
             from .adapters.postgres_personal_os import PostgresPersonalOsStore
 
             return PostgresPersonalOsStore(
                 self.settings.infrastructure.database_url,
                 pool=self._postgres_pool(),
                 cipher=self._field_cipher(),
+            )
+        return None
+
+    def _build_personal_os_store(self) -> Any:
+        """The agent's personal-OS store (ADR-032): the app's synced tables in production, so
+        the agent and the app share one store; in memory otherwise."""
+        backend = self.settings.infrastructure.memory_backend
+        if backend == "postgres":
+            from .adapters.postgres_synced_personal_os import PostgresSyncedPersonalOsStore
+
+            return PostgresSyncedPersonalOsStore(
+                self.settings.infrastructure.database_url,
+                pool=self._postgres_pool(),
+                keys=self.user_data_keys,
             )
         if backend != "memory":
             raise ConfigurationError(f"unknown memory backend {backend!r}")
