@@ -1,0 +1,246 @@
+[
+  {
+    "id": "F2-01",
+    "severity": "P1",
+    "title": "Production (Railway) ships every main push with no CI gate and no branch protection",
+    "subsystem": "CI/CD governance",
+    "evidence": [
+      ".github/workflows/control-plane-deploy.yml:3-5,24-28",
+      "docs/status/BACKEND_STATUS.md:18-21,35,92-93,97",
+      "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:26-30,52-60",
+      "docs/production/gap_register.yaml:132-157",
+      ".github/workflows/eval-ci.yml:17-20"
+    ],
+    "current_behavior": "Railway's GitHub integration auto-deploys each push to the unprotected main branch; four PRs and everything since reached production without a CI run; all CI workflows and the evaluation gate are advisory because no required status checks exist.",
+    "expected_behavior": "A merge to main requires green required checks and production deploys only from a CI-verified SHA (control-plane-deploy.yml or Railway 'Wait for CI').",
+    "recommendation": "Enable branch protection with required checks (Backend test/pip-audit/docker-build, Repo Hygiene, Eval gate, Client/Hostd/Admin on their paths); disable Railway GitHub auto-deploy or enable Wait for CI; set vars.CONTROL_PLANE_DEPLOY_REQUIRED=true so a silent skip fails.",
+    "confidence": "High (source) / Med (live)"
+  },
+  {
+    "id": "F2-02",
+    "severity": "P1",
+    "title": "GitHub Actions not executing (CB-44): every gate in the repo is inert",
+    "subsystem": "CI/CD",
+    "evidence": [
+      "docs/status/BACKEND_STATUS.md:18-21,44",
+      "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:26-30",
+      "docs/production/gap_register.yaml:1002-1027"
+    ],
+    "current_behavior": "Jobs die in 2-4 s with no runner since ~2026-10-28 19:50 UTC; last green Backend CI is dc87beb; every TESTED claim since is local-only; GAP-043 still reads 'proven'.",
+    "expected_behavior": "Workflows get runners and run to completion on every PR and main push.",
+    "recommendation": "Owner restores Actions (billing/spending limit); re-run Backend, Client, Hostd, Admin, Repo Hygiene on main; mark GAP-043 regressed.",
+    "confidence": "Med (DOCUMENTED ONLY)"
+  },
+  {
+    "id": "F2-03",
+    "severity": "P1",
+    "title": "Railway ignores railway.json; deploy settings live only in the dashboard and drift from the repo",
+    "subsystem": "Railway control plane",
+    "evidence": [
+      "docs/deployment/control-plane.md:195-199",
+      "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:17",
+      "docs/status/BACKEND_STATUS.md:85-91",
+      "aura_backend/railway.json:8-14",
+      "aura_backend/tests/unit/test_release_identity.py:240-265"
+    ],
+    "current_behavior": "railwayConfigFile is null on the production service; the pre-deploy command was fixed by hand in the dashboard; healthcheckPath, restart policy, drainingSeconds and preDeployTimeoutSeconds in railway.json are not applied; tests pin a file production does not read; the F-25 drain budget is unproven on Railway.",
+    "expected_behavior": "The service links aura_backend/railway.json so deploy behaviour is reviewed in git and pinned by tests, or the file is removed and tests retargeted.",
+    "recommendation": "Set the service's config file to aura_backend/railway.json, verify the next deploy log shows the /health/live check and the pre-deploy script, and record a dashboard snapshot in docs/reports/.",
+    "confidence": "Med (doc claims)"
+  },
+  {
+    "id": "F2-04",
+    "severity": "P1",
+    "title": "VPS deploy path dead on a stale host-key pin; the VPS's running revision and exposure are unknown",
+    "subsystem": "VPS deployment / security",
+    "evidence": [
+      "deploy/known_hosts:8-15",
+      "docs/status/BACKEND_STATUS.md:37,94-96,211",
+      ".github/workflows/deploy-backend.yml:85-95",
+      "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:63-71",
+      "git ls-files deploy/vps_known_hosts.tmp -> tracked"
+    ],
+    "current_behavior": "No automated deploy has reached the VPS in ~6 weeks (Host key verification failed since 2026-10-18); the host still holds the production compose, secrets and data; whether the key change was a rebuild or a compromise is unconfirmed; Verify Hosted Inference and VPS Dev Ops share the dead path.",
+    "expected_behavior": "The VPS is either confirmed out of band, re-pinned and brought to main, or decommissioned with secrets rotated and workflows retired.",
+    "recommendation": "Confirm the fingerprint out of band, decide the VPS future (CB-03), update deploy/known_hosts by PR and delete deploy/vps_known_hosts.tmp; until then treat the VPS as untrusted and rotate any secret shared with Railway.",
+    "confidence": "Med"
+  },
+  {
+    "id": "F2-05",
+    "severity": "P2",
+    "title": "Whether Celery workers and beat run on Railway is undocumented; background work may be silently absent",
+    "subsystem": "Railway control plane / background jobs",
+    "evidence": [
+      "docs/deployment/control-plane.md:21-46",
+      "docs/status/BACKEND_STATUS.md (no Railway worker/beat mention; grep lines 115-158 are VPS/F-25 only)",
+      "deploy/monitoring/alerts/aura.yml:63-77"
+    ],
+    "current_behavior": "Outbox drain, nightly knowledge refresh, memory consolidation, ingestion and learning queues depend on worker-* and beat services that must be created by hand in the Railway dashboard; nothing in the repo or status docs proves they exist, and no healthcheck or alert covers them on Railway.",
+    "expected_behavior": "Every production process is enumerated with command, revision and health evidence; a missing worker is visible.",
+    "recommendation": "List Railway services (railway status) and record them; create the three services per control-plane.md section 2 if absent; surface outbox age in /health/ready or an alert.",
+    "confidence": "Med"
+  },
+  {
+    "id": "F2-06",
+    "severity": "P2",
+    "title": "No metrics scrape, alerting or log retention for the production target; the alert catalogue applies only to the VPS",
+    "subsystem": "Observability",
+    "evidence": [
+      "deploy/monitoring/prometheus.yml:6-7,17-21",
+      "deploy/docker-compose.prod.yml:1081-1192",
+      "deploy/monitoring/alerts/aura.yml",
+      "docs/deployment/operations.md:46-52",
+      "docs/status/BACKEND_STATUS.md:50,63,200-201"
+    ],
+    "current_behavior": "AuraGatewayDown, AuraAllProvidersUnhealthy, AuraOutboxBacklog, AuraBackupStale, AuraInsecureModeActive and the rest cannot fire for Railway; the F-24 HTTP/outbox metrics have never been scraped on a live target.",
+    "expected_behavior": "A scrape of the production gateway and a paging route for critical rules.",
+    "recommendation": "Deploy Prometheus and Alertmanager as Railway services using the existing configs, scrape with AURA_METRICS_TOKEN, route critical alerts to a human, and record one live scrape showing aura_http_* and aura_outbox_*.",
+    "confidence": "High (source)"
+  },
+  {
+    "id": "F2-07",
+    "severity": "P2",
+    "title": "/metrics is unauthenticated unless AURA_METRICS_TOKEN is set; on Railway the app is the edge and the doc never asks for the token",
+    "subsystem": "Observability / information disclosure",
+    "evidence": [
+      "aura_backend/aura_core/api/v3.py:1764-1769",
+      "aura_backend/aura_core/config/settings.py:985-990",
+      "aura_backend/aura_core/api/security_headers.py:98-107",
+      "docs/deployment/control-plane.md:56-96,170-179",
+      "deploy/nginx/templates/aura.conf.template:224-227"
+    ],
+    "current_behavior": "The metrics route has no auth dependency; protection is opt-in via AURA_METRICS_TOKEN (the code comment records a live probe that found /metrics world-readable on Railway); the Railway variable list omits the token; the VPS relies on nginx deny.",
+    "expected_behavior": "Metrics reachable only by the scraper on every target.",
+    "recommendation": "Set AURA_METRICS_TOKEN on the Railway gateway and confirm /metrics returns 401; document the variable in control-plane.md; consider failing validate() rather than warning when the app is the edge.",
+    "confidence": "Med (configuration UNKNOWN)"
+  },
+  {
+    "id": "F2-08",
+    "severity": "P2",
+    "title": "Backup/DR exists only as a VPS compose sidecar; the production datastores on Railway/Qdrant have no repo-owned backup, drill, or RPO/RTO",
+    "subsystem": "Backup / DR",
+    "evidence": [
+      "deploy/docker-compose.prod.yml:1195-1247",
+      "deploy/scripts/backup.sh:1-25",
+      "docs/production/DISASTER_RECOVERY.md:23-49",
+      "docs/production/gap_register.yaml:724-744",
+      "docs/deployment/control-plane.md:67-70",
+      "docs/status/BACKEND_STATUS.md:64"
+    ],
+    "current_behavior": "Production data lives in Railway Postgres (provider snapshots UNKNOWN), a Redis plugin and an external Qdrant; nothing in the repo dumps, encrypts, verifies or restores them; the only drill was a 2026-08-23 sandbox; RPO/RTO never measured.",
+    "expected_behavior": "Scheduled, encrypted, verified backups of the live Postgres and Qdrant with an off-platform copy and a drill report in docs/reports/.",
+    "recommendation": "Run the existing backup.sh as a Railway cron/service against the Railway DATABASE_URL and Qdrant URL with an age recipient and S3 target, then execute restore-drill.sh against that output and file the report.",
+    "confidence": "High (source) / UNKNOWN (Railway plan)"
+  },
+  {
+    "id": "F2-09",
+    "severity": "P2",
+    "title": "Data-encryption and ADR-032 user-key custody on Railway is a single dashboard variable with no documented backup, and the deployment doc omits it",
+    "subsystem": "Secrets / key custody",
+    "evidence": [
+      "aura_backend/aura_core/config/settings.py:1878-1887",
+      "deploy/docker-compose.prod.yml:251-260",
+      "deploy/scripts/bootstrap-secrets.sh:85-91",
+      "docs/deployment/control-plane.md:54-96,170-179",
+      "docs/status/BACKEND_STATUS.md:68,79-84"
+    ],
+    "current_behavior": "AURA_DATA_ENCRYPTION_KEYS, required at boot and (after migration 0019) wrapping every user's data key, exists only as a Railway env var; rotation guidance is VPS-only; losing or regenerating it is total loss of encrypted content; the Railway variable list does not mention it.",
+    "expected_behavior": "Sealed off-platform key escrow, a Railway rotation runbook, and the variable listed as required in control-plane.md.",
+    "recommendation": "Export and seal the current keys offline; add AURA_DATA_ENCRYPTION_KEYS, AURA_METRICS_TOKEN and AURA_JWT_ISSUER/AUDIENCE to control-plane.md; add a test that the doc lists every production-required variable.",
+    "confidence": "High"
+  },
+  {
+    "id": "F2-10",
+    "severity": "P2",
+    "title": "Sensitive-class turns have no serving path while hfspace is down on the hosted-primary Railway topology",
+    "subsystem": "Inference routing on the production target",
+    "evidence": [
+      "docs/deployment/control-plane.md:161-168",
+      "docs/status/BACKEND_STATUS.md:24,35-36,98",
+      "deploy/docker-compose.prod.yml:57-63",
+      "aura_backend/aura_core/container.py:1787"
+    ],
+    "current_behavior": "By ADR-030 policy, documents, memory and tool-output turns may only go to local or hfspace; production has neither healthy (hosted1 only), so those turns are expected to fail while public-content chat succeeds; readiness only reports local_healthy.",
+    "expected_behavior": "A healthy sensitive-capable provider, or an explicit documented degraded mode visible on /health/ready and alerts.",
+    "recommendation": "Restore the Space or provision a sensitive-capable provider; have /health/ready report sensitive capability distinctly; alert when no provider admits sensitive content.",
+    "confidence": "Med (derived from docs; not probed)"
+  },
+  {
+    "id": "F2-11",
+    "severity": "P3",
+    "title": "Deploy Control Plane's readiness and revision probes do not match the app's routes for any plausible RAILWAY_HEALTH_URL",
+    "subsystem": "CI/CD (control-plane-deploy.yml)",
+    "evidence": [
+      ".github/workflows/control-plane-deploy.yml:130,149",
+      "aura_backend/aura_core/api/v3.py:1734-1750",
+      "grep '\"/health\"' aura_backend/aura_service.py -> no match"
+    ],
+    "current_behavior": "With /health/ready the wait greps for \"status\" which the payload lacks; with /health/live the version URL becomes .../health/live/health/version (404, 'revision mismatch'); with /health the app 404s. The workflow cannot pass as written once configured.",
+    "expected_behavior": "Poll /health/live, derive /health/version from the origin, assert git_sha.",
+    "recommendation": "Compute origin=${RAILWAY_HEALTH_URL%%/health*}, poll $origin/health/live, verify $origin/health/version; add a unit test for the workflow's URL derivation.",
+    "confidence": "Med (variable value UNKNOWN)"
+  },
+  {
+    "id": "F2-12",
+    "severity": "P3",
+    "title": "Deploy-time migration safety relies on an 'additive migrations' assumption the chain no longer satisfies and nothing enforces",
+    "subsystem": "Migrations / rollback",
+    "evidence": [
+      "deploy/scripts/vps-update.sh:22-25,381-384,474-476",
+      "aura_backend/alembic/versions/0001_initial_schema.py ... 0019_user_data_keys.py",
+      "aura_backend/scripts/railway-predeploy.sh:2-3",
+      "docs/deployment/rollback.md:8-14",
+      "docs/status/BACKEND_STATUS.md:67"
+    ],
+    "current_behavior": "Both targets migrate before the new code starts while the old code keeps serving, and rollback reverts the image only; no test or checklist requires expand/contract compatibility or a tested downgrade per revision (only 0017 noted as downgrade-checked).",
+    "expected_behavior": "Each migration is backward-compatible with the previous image or flagged as needing a maintenance window; downgrade exercised in CI.",
+    "recommendation": "Add alembic upgrade head && downgrade -1 && upgrade head to the postgres CI job; add a migration-review item to RELEASE_CHECKLIST.md; correct the vps-update.sh comment.",
+    "confidence": "Med"
+  },
+  {
+    "id": "F2-13",
+    "severity": "P3",
+    "title": "Runtime images unpinned or tag-only; the production inference Space builds from vllm/vllm-openai:latest",
+    "subsystem": "Supply chain",
+    "evidence": [
+      "deploy/spaces/inference-vllm/Dockerfile:16-21",
+      "deploy/docker-compose.prod.yml:289,733,1012,1037",
+      "deploy/docker-compose.prod.yml:936,984,1064,1082-1178 (digest-pinned examples)",
+      "docs/reports/AURA_FULL_SYSTEM_REVIEW.md:251,258"
+    ],
+    "current_behavior": "A Space rebuild picks up whatever vLLM is current; nginx, postgres, redis and tinyproxy float within a tag while observability, ollama, qdrant and the compose vllm service are digest-pinned.",
+    "expected_behavior": "Every production image pinned by digest with a deliberate bump procedure.",
+    "recommendation": "Pin vllm/vllm-openai by tag+digest as the compose vllm service does; pin nginx/postgres/redis/tinyproxy by digest; extend test_repo_hygiene.py to assert digests on prod images.",
+    "confidence": "High (source)"
+  },
+  {
+    "id": "F2-14",
+    "severity": "P3",
+    "title": "Dockerfile CMD lacks --forwarded-allow-ips, so uvicorn ignores Railway's X-Forwarded-Proto/For; the compose command has it",
+    "subsystem": "Runtime config (Railway)",
+    "evidence": [
+      "aura_backend/Dockerfile:147",
+      "deploy/docker-compose.prod.yml:400-406",
+      "aura_backend/aura_core/security/rate_limit.py:202-229",
+      "aura_backend/aura_core/config/settings.py:1043,1067"
+    ],
+    "current_behavior": "Behind Railway's edge the uvicorn peer is not loopback, so request.url.scheme stays http and request.client is the proxy; rate limiting is unaffected (own X-Forwarded-For parser), but any scheme-derived URL, secure-cookie or HSTS decision would see plain HTTP.",
+    "expected_behavior": "The platform CMD trusts the single edge hop exactly as the compose command does.",
+    "recommendation": "Add --forwarded-allow-ips='*' (or FORWARDED_ALLOW_IPS) to the Dockerfile CMD and pin it in test_deploy_robustness.py.",
+    "confidence": "Low (impact not traced)"
+  },
+  {
+    "id": "F2-15",
+    "severity": "P4",
+    "title": "Tracked deploy/vps_known_hosts.tmp duplicates deploy/known_hosts and is not covered by the artefact guard",
+    "subsystem": "Repo hygiene",
+    "evidence": [
+      "git ls-files deploy/vps_known_hosts.tmp -> tracked",
+      "deploy/vps_known_hosts.tmp:1 identical to deploy/known_hosts:15"
+    ],
+    "current_behavior": "A scratch file carrying the stale host-key pin is in the tree and could be mistaken for the authoritative pin.",
+    "expected_behavior": "One documented pin file.",
+    "recommendation": "Delete the .tmp file by PR; extend scripts/check_tracked_artifacts.py to refuse *.tmp.",
+    "confidence": "High"
+  }
+]

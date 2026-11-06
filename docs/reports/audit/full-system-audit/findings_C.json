@@ -1,0 +1,129 @@
+[
+  {
+    "id": "C-01",
+    "severity": "P1",
+    "title": "Taint is not carried across delegate_to_agent, so a tainted orchestrator turn can trigger unconfirmed server-side writes through a sub-persona",
+    "subsystem": "tools/delegation, kernel, tool policy",
+    "evidence": [
+      "aura_backend/aura_core/tools/delegation.py:84-96 (tool is not side_effecting; policy.py:136-139 never holds it in a tainted context)",
+      "aura_backend/aura_core/tools/delegation.py:134-148 (child TurnRequest carries no taint)",
+      "aura_backend/aura_core/kernel/kernel.py:111-170 (TurnRequest has no taint field)",
+      "aura_backend/aura_core/kernel/kernel.py:399-426 (taint derived only from the child's own retrieval/caller_context/resume)",
+      "aura_backend/aura_core/tools/records.py:10-14 (create_*/update_*/delete_* run with no confirmation when untainted)",
+      "aura_backend/aura_core/agents/registry.py:155-181 (task_planner/finance_advisor/health_companion grants include those CRUD tools)",
+      "aura_backend/aura_core/container.py:1400-1403 (CRUD tools registered whenever personal_os_store is wired)",
+      "grep taint tests/unit/test_delegation.py -> 0 hits"
+    ],
+    "current_behavior": "A parent turn tainted by a quarantined chunk, fetch_url output or caller context may still call delegate_to_agent (policy_ok). The child turn starts untainted, so a planned create_task/delete_finance_record etc. in the child executes immediately. The tool's own refusal (delegation.py:152-158) only fires for sub-turns that report needs_confirmation, which untainted CRUD calls never do.",
+    "expected_behavior": "ADR-006: a turn whose context was quarantined cannot run a side-effecting tool without confirmation, across any number of kernel hops.",
+    "recommendation": "Add an inherited-taint input to TurnRequest, set it from context.tainted in delegate_to_agent and OR it into the child's taint at kernel.py:426/734; add a tests/unit/test_delegation.py case asserting a tainted parent makes the child's side-effecting call return confirmation_required.",
+    "confidence": "High (code); Med (practical exploitability requires the planner model to follow injected text and a persona holding CRUD tools)"
+  },
+  {
+    "id": "C-02",
+    "severity": "P2",
+    "title": "write_files is registered for the engineer capability but absent from the engineer persona's grant, so the persona can never use it",
+    "subsystem": "agents/registry, tools/coding",
+    "evidence": [
+      "aura_backend/aura_core/tools/coding.py:520-538,828 (registered with required_capability=engineer_agent)",
+      "aura_backend/aura_core/agents/registry.py:213-225 (grant lists write_file and edit_file, not write_files, and no mcp_* name)",
+      "aura_backend/aura_core/kernel/kernel.py:1468-1473 (filtered out of declarations)",
+      "aura_backend/aura_core/tools/policy.py:86-87 (denied outside_agent_grant if called)",
+      "aura_backend/tests/architecture/test_workspace_local_tools.py:34 and tests/unit/test_engineer_tools.py:149-210 exercise the tool with a hand-built ToolContext, bypassing the persona grant"
+    ],
+    "current_behavior": "The D6 atomic multi-file write (and every MCP-bridged tool) is unreachable from the engineer persona; only an engineer_agent-capable caller using the unrestricted orchestrator persona can reach them.",
+    "expected_behavior": "Every tool built for the engineer is in the engineer's grant, pinned by a test comparing the grant against the registered engineer tool names.",
+    "recommendation": "Add write_files (and a policy for mcp_* names) to the grant at registry.py:213-225; add a test asserting the grant covers build_sandbox_tools()+build_github_tools() names.",
+    "confidence": "High"
+  },
+  {
+    "id": "C-03",
+    "severity": "P3",
+    "title": "Engineer tooling is reachable under the orchestrator persona without the engineer prompt or multi-pass loop",
+    "subsystem": "agents/registry, kernel",
+    "evidence": [
+      "aura_backend/aura_core/agents/registry.py:144-148 (orchestrator allowed_tools=None, SYSTEM ceiling)",
+      "aura_backend/aura_core/agents/registry.py:226-232 (comment describes persona+tool gating as belt-and-braces)",
+      "aura_backend/aura_core/kernel/kernel.py:1452-1473",
+      "aura_backend/aura_core/tools/registry.py:169-192",
+      "aura_backend/aura_core/api/v3.py:217 (ChatRequest.agent defaults to orchestrator)"
+    ],
+    "current_behavior": "A caller holding engineer_agent who leaves agent=orchestrator is offered run_command, git_push, github_commit_files etc. under the generic orchestrator prompt (no treat-output-as-data instruction) with max_plan_iterations=1. Tool-level policy still applies, so this is a prompt/UX gap rather than privilege escalation.",
+    "expected_behavior": "A persona gate described as a second layer should constrain which prompt and loop the engineer tools run under, or be documented as tool-level only.",
+    "recommendation": "Give orchestrator an explicit allowed_tools excluding required_capability tools, or correct the registry.py:226-232 comment.",
+    "confidence": "High"
+  },
+  {
+    "id": "C-04",
+    "severity": "P3",
+    "title": "_READ_TOOLS grants remember_fact (a durable write) to every persona, including decision_agent described as read-only",
+    "subsystem": "agents/registry",
+    "evidence": [
+      "aura_backend/aura_core/agents/registry.py:129 (_READ_TOOLS includes remember_fact)",
+      "aura_backend/aura_core/agents/registry.py:200-204 (comment: read-only and deliberately so)",
+      "aura_backend/aura_core/tools/builtin.py:269-281 (side_effecting=True, PERSONAL)"
+    ],
+    "current_behavior": "Every persona can write long-term memory into its scope without confirmation when untainted.",
+    "expected_behavior": "A grant named _READ_TOOLS contains only reads; a persona documented as read-only cannot write.",
+    "recommendation": "Move remember_fact out of _READ_TOOLS and grant it only to personas that should persist facts; fix the comment.",
+    "confidence": "High"
+  },
+  {
+    "id": "C-05",
+    "severity": "P3",
+    "title": "TOOLS_MAX_CALLS_PER_TURN is parsed and documented but never enforced",
+    "subsystem": "config, execution",
+    "evidence": [
+      "aura_backend/aura_core/config/settings.py:905,916 (only references; grep max_calls_per_turn aura_core -> 2 hits)",
+      "aura_backend/aura_core/execution/agentic_loop.py:111-138 (the per-turn bounds that do exist: tool_budget/risk_budget)"
+    ],
+    "current_behavior": "Setting the variable changes nothing.",
+    "expected_behavior": "A setting either governs behaviour or does not exist.",
+    "recommendation": "Remove the setting or wire it into RunBudgetGate as the default tool_budget for personas that set none.",
+    "confidence": "High"
+  },
+  {
+    "id": "C-06",
+    "severity": "P4",
+    "title": "delegate_to_agent's target enum is frozen at container build, so blueprint-compiled agents are never delegable",
+    "subsystem": "tools/delegation, adaptation",
+    "evidence": [
+      "aura_backend/aura_core/tools/delegation.py:64,74-77 (enum computed once at build time)",
+      "aura_backend/aura_core/adaptation/runtime.py:184-216 (generated agents live only in the runtime snapshot registry)",
+      "aura_backend/aura_core/container.py:605-614"
+    ],
+    "current_behavior": "Delegation targets are the seven built-in non-orchestrator personas regardless of deployed blueprints.",
+    "expected_behavior": "Either documented as built-in-only, or validation reads the live registry.",
+    "recommendation": "Document, or validate target_agent_id via agents.resolve() at call time instead of a static enum.",
+    "confidence": "High"
+  },
+  {
+    "id": "C-07",
+    "severity": "P4",
+    "title": "GET /api/v3/tools has no client caller",
+    "subsystem": "api/v3, client",
+    "evidence": [
+      "aura_backend/aura_core/api/v3.py:1317-1334",
+      "grep \"/api/v3/tools\" aura_client/lib -> 0 hits; /api/v3/agents is used at aura_client/lib/features/chat/data/agents_repository.dart:94"
+    ],
+    "current_behavior": "Endpoint exists; nothing in the shipped client reads it.",
+    "expected_behavior": "Shipped endpoints have a client or are marked admin/introspection-only.",
+    "recommendation": "Mark as introspection-only in the route docstring or add a client use.",
+    "confidence": "High"
+  },
+  {
+    "id": "C-08",
+    "severity": "P3",
+    "title": "fetch_url, list_files/read_file and get_weather have builder code but no container wiring, so research_agent's only network tool cannot be enabled by configuration",
+    "subsystem": "tools/builtin, container",
+    "evidence": [
+      "aura_backend/aura_core/tools/builtin.py:570-636 (default_tools accepts workspace, allowed_http_hosts, enable_weather)",
+      "aura_backend/aura_core/container.py:1400-1412 (the call passes none of those three)",
+      "aura_backend/aura_core/agents/registry.py:186-189 (research_agent grant names fetch_url and the comment assumes AURA_HTTP_ALLOWED_HOSTS enables it)"
+    ],
+    "current_behavior": "The three tool groups are IMPLEMENTED BUT UNREACHABLE at this baseline; research_agent has no retrieval beyond search_knowledge/recall_memory.",
+    "expected_behavior": "A persona grant naming a tool corresponds to a tool an operator can actually enable.",
+    "recommendation": "Either wire the three parameters from settings in Container._build_tools (an http-hosts setting may need adding) or drop fetch_url from the research_agent grant and the builders from default_tools.",
+    "confidence": "High (grant/wiring mismatch is code-read); production config not probed"
+  }
+]

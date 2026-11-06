@@ -1,0 +1,150 @@
+[
+  {
+    "id": "E1-01",
+    "severity": "P2",
+    "title": "Live-voice PCM frames are not size-validated; utterance buffering is bounded by frame count, not bytes",
+    "subsystem": "voice/live",
+    "evidence": [
+      "aura_backend/aura_core/api/voice_live.py:209-211",
+      "aura_backend/aura_core/voice/session.py:131-153",
+      "aura_backend/aura_core/voice/turn_taking.py:62-66,82-86",
+      "aura_backend/aura_core/voice/vad.py:42-45,64-81",
+      "aura_backend/aura_core/config/settings.py:1515"
+    ],
+    "current_behavior": "Any binary WebSocket frame is forwarded to push_pcm; each frame advances the endpoint clock by config.frame_ms regardless of its byte length, so an authenticated client can buffer up to ~750 oversized frames per utterance before they are wrapped as WAV and sent to Whisper. The VAD also iterates every sample of each frame on the event loop. No per-frame or per-utterance byte cap exists.",
+    "expected_behavior": "Frames larger than EnergyVad.frame_bytes are rejected or split; the utterance buffer is capped in bytes (max_utterance_ms * sample_rate * 2).",
+    "recommendation": "Validate len(frame) in voice_live.py before push_pcm (close 4400 on violation), add a byte ceiling in LiveVoiceSession.push_pcm, and add a unit test with an oversized frame.",
+    "confidence": "High"
+  },
+  {
+    "id": "E1-02",
+    "severity": "P2",
+    "title": "No end-to-end evidence that batch or live speech works on any built image; the load proof is a stub and CI never runs an engine-backed test",
+    "subsystem": "voice",
+    "evidence": [
+      "aura_backend/tests/load/test_live_voice_roundtrip.py:17-26",
+      "aura_backend/tests/unit/test_voice_adapters.py:71,112,355,373",
+      "aura_backend/tests/unit/test_tesseract_ocr.py:21-23",
+      ".github/workflows/backend-ci.yml:174",
+      "docs/plans/phase-h-live-voice-chat.md:3-5,479-495",
+      "git ls-files docs/reports (no voice/WER/device report)"
+    ],
+    "current_behavior": "Every real-engine test is skipif-gated on binaries that the CI job never installs; the live round-trip load test unconditionally skips; no Phase H device or latency report exists; BACKEND_STATUS.md:70 records Voice as BUILT.",
+    "expected_behavior": "CI installs espeak-ng/tesseract-ocr so the skipped tests run, or a container job runs them; the load round trip is implemented and a report committed before Phase H / M12 advances.",
+    "recommendation": "Add the two apt packages to the backend CI job; implement test_live_voice_roundtrip.py (Piper -> Whisper) against the built image and commit the report.",
+    "confidence": "High"
+  },
+  {
+    "id": "E1-03",
+    "severity": "P2",
+    "title": "Image understanding is implemented but unreachable in every known deployment: no provider declares the image modality, vision is off, and no VLM evidence exists",
+    "subsystem": "vision",
+    "evidence": [
+      "deploy/docker-compose.prod.yml:467,547-549",
+      "deploy/docker-compose.dev.yml:346-348",
+      "docs/deployment/control-plane.md:88-92",
+      "docs/production/gap_register.yaml:555-567",
+      "aura_backend/aura_core/vision/engine.py:130-137",
+      "aura_backend/aura_core/api/v3.py:500-503",
+      "git ls-files docs/reports (no phase-6-vision or vision-eval report)"
+    ],
+    "current_behavior": "VisionEngine exists and is tested only with the echo provider. In production the client hides the attach button and API callers get 503 dependency_unavailable. Enabling AURA_VISION_ENABLED without an image-capable provider makes every image turn OCR-only (flagged degraded).",
+    "expected_behavior": "A pinned VLM serving the vision pool with a committed phase-6-vision report and a vision-eval run (ADR-031 exit).",
+    "recommendation": "Keep GAP-019 at in_progress/built_not_proven; do not describe vision as a product capability until deploy/scripts/verify_vision.py has produced a report. Blocked on GAP-012.",
+    "confidence": "High"
+  },
+  {
+    "id": "E1-04",
+    "severity": "P3",
+    "title": "Whisper model weights are fetched from the Hugging Face Hub at first transcription, with no revision pin and no bake into the image",
+    "subsystem": "voice/stt, supply chain",
+    "evidence": [
+      "aura_backend/aura_core/adapters/whisper_stt.py:109-111,137-141",
+      "aura_backend/Dockerfile:60-106",
+      "aura_backend/requirements.lock:593",
+      "aura_backend/aura_core/container.py:1779"
+    ],
+    "current_behavior": "The first /voice/transcribe or live turn on each fresh container (per gateway worker) downloads tiny.en (~75 MB) over the network; Hub outages or rate limits surface as DependencyUnavailableError on the user's first voice note; the revision is unpinned. Readiness reports stt as configured before any weights exist on disk.",
+    "expected_behavior": "Weights downloaded and SHA-pinned at image build like the Piper voices, or loaded at startup, with a recorded revision (CB-18 / GAP-031).",
+    "recommendation": "Add a Dockerfile step pulling the CTranslate2 tiny.en snapshot into HF_HOME with a checksum, or warm the model in lifespan startup and document the runtime dependency.",
+    "confidence": "High"
+  },
+  {
+    "id": "E1-05",
+    "severity": "P3",
+    "title": "Arabic is asymmetric across the pipeline: Arabic TTS ships, but STT is English-only and OCR has no Arabic language data",
+    "subsystem": "voice/stt, knowledge/ocr",
+    "evidence": [
+      "aura_backend/aura_core/config/settings.py:1491,1523,754,782",
+      "aura_backend/aura_core/voice/session.py:196-203",
+      "aura_backend/aura_core/container.py:1221",
+      "aura_backend/aura_core/api/v3.py:1091",
+      "aura_backend/Dockerfile:79",
+      "aura_backend/aura_core/knowledge/documents.py:364-376"
+    ],
+    "current_behavior": "An Arabic voice note transcribes as English garbage or empty; the live page rejects language 'ar' at start; the image installs only tesseract-ocr (eng+osd), so AURA_KNOWLEDGE_OCR_LANG=ara would make every OCR call fail inside apply_ocr, leaving pages unreadable with no startup error.",
+    "expected_behavior": "A multilingual Whisper size with measured WER, and tesseract-ocr-ara installed when Arabic OCR is configured (or a startup check that the configured ocr_lang is installed).",
+    "recommendation": "Install tesseract-ocr-ara in the Dockerfile; validate ocr_lang against pytesseract.get_languages() at container build; schedule the GAP-020 WER report.",
+    "confidence": "High"
+  },
+  {
+    "id": "E1-06",
+    "severity": "P3",
+    "title": "Live-voice language from the client start frame is passed unvalidated to Whisper",
+    "subsystem": "voice/live",
+    "evidence": [
+      "aura_backend/aura_core/api/voice_live.py:162",
+      "aura_backend/aura_core/voice/session.py:196-203,214-219"
+    ],
+    "current_behavior": "With a multilingual model configured, an arbitrary string reaches WhisperModel.transcribe(language=...); the exception is reported as stt_failed with only the exception type name.",
+    "expected_behavior": "An allow-list of ISO 639-1 codes; language_unsupported for others.",
+    "recommendation": "Validate the language at start-frame handling in voice_live.py.",
+    "confidence": "Med"
+  },
+  {
+    "id": "E1-07",
+    "severity": "P4",
+    "title": "Enabling vision on a deployment without a VLM silently turns every image turn into OCR-only answers",
+    "subsystem": "vision",
+    "evidence": [
+      "aura_backend/aura_core/config/settings.py:1606,1628",
+      "aura_backend/aura_core/vision/engine.py:114-118,130-137",
+      "aura_backend/aura_core/api/v3.py:620-628"
+    ],
+    "current_behavior": "GET /capabilities advertises images as available whenever OCR exists; the client shows the attach button; answers are grounded only in OCR text (flagged degraded, mode=ocr_fallback).",
+    "expected_behavior": "available distinguishes 'a vision model can serve' from 'only OCR can'; the client shows a reduced affordance.",
+    "recommendation": "Add a mode field (vlm/ocr_only) to the capabilities payload and gate the attach UI copy on it.",
+    "confidence": "Med"
+  },
+  {
+    "id": "E1-08",
+    "severity": "P4",
+    "title": "espeak-ng receives the spoken text as a positional argv element without a '--' separator",
+    "subsystem": "voice/tts",
+    "evidence": [
+      "aura_backend/aura_core/adapters/espeak_tts.py:278-293,320-335",
+      "aura_backend/aura_core/adapters/spoken_text.py:206"
+    ],
+    "current_behavior": "create_subprocess_exec is used, so no shell injection; a prepared text beginning with '-' may be parsed as an option by espeak-ng and fail (non-zero exit -> RuntimeError -> tts_failed/500) rather than be spoken. Whether prepare_spoken_text strips a leading dash was not verified.",
+    "expected_behavior": "Text passed after '--' or via stdin.",
+    "recommendation": "Insert '--' before the text in build_espeak_command and add a test with '-hello'.",
+    "confidence": "Low"
+  },
+  {
+    "id": "E1-09",
+    "severity": "P4",
+    "title": "Documentation inaccuracies around multimodal status",
+    "subsystem": "docs",
+    "evidence": [
+      "docs/reports/AURA_FULL_SYSTEM_REVIEW.md:327 vs aura_backend/aura_core/vision/engine.py:86-205",
+      "docs/production/gap_register.yaml:938 and docs/roadmaps/AURA_CRITICAL_BACKLOG.md:196 vs aura_backend/aura_core/rag/agentic.py:119-125",
+      "docs/production/gap_register.yaml:552-553 vs :556 and aura_client/lib/features/chat/presentation/widgets/chat_image_attachments.dart:32-40",
+      "aura_backend/aura_core/ports/documents.py:34-35 vs aura_backend/aura_core/container.py:1084-1094",
+      "aura_backend/aura_core/api/v3.py:1100-1101 vs aura_backend/aura_core/container.py:1139-1142"
+    ],
+    "current_behavior": "Stale 'vision: not implemented' and 'no OCR' claims remain in the prior review and gap register; GAP-019 contradicts its own later entry; two docstrings describe adapters that no longer match the wiring.",
+    "expected_behavior": "Docs match code.",
+    "recommendation": "Mark the Full System Review section superseded, close the agentic.py item of GAP-039/CB-31, collapse GAP-019's reverified_2026_10_30 note, and refresh the two docstrings.",
+    "confidence": "High"
+  }
+]

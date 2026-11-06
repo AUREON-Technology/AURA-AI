@@ -1,0 +1,197 @@
+[
+  {
+    "id": "F1-01",
+    "severity": "P1",
+    "title": "Google Cloud service-account key and backend .env remain in git history; rotation unrecorded",
+    "subsystem": "Secrets / repository",
+    "evidence": [
+      "git log --all --format=%h -- aura_backend/credentials.json -> 5b37323 (\"chore: add Google Cloud service account credentials file\")",
+      "git log --all -- aura_backend/.env credentials.json -> d2b92f0",
+      "git log --diff-filter=D -> deleted in 044f417",
+      "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:99-104 (CB-06 names only the GOCSPX client secret)",
+      ".gitignore:5-9 (names now ignored)"
+    ],
+    "current_behavior": "Anyone with read access to the repository or a pre-044f417 clone can recover the service-account private key and the historical .env contents; no document records a rotation.",
+    "expected_behavior": "Historical credentials rotated and the rotation recorded; history rewritten or keys provably dead.",
+    "recommendation": "Rotate the service-account key(s) and every value in that .env; record the date in docs/reports/; run a one-time history secret scan as evidence; consider a history rewrite while main is still unprotected and collaborator count is low.",
+    "confidence": "High (presence); rotation state UNKNOWN"
+  },
+  {
+    "id": "F1-02",
+    "severity": "P2",
+    "title": "Backup container mounts the entire deploy/secrets directory (CB-08 still open)",
+    "subsystem": "Deploy / backups",
+    "evidence": [
+      "deploy/docker-compose.prod.yml:1237 (./secrets:/run/backup-secrets:ro)",
+      "deploy/docker-compose.prod.yml:1215,1229-1231 (only three files used)",
+      "deploy/docker-compose.prod.yml:220-284 (jwt_secret, data_encryption_keys, secrets_encryption_key, firebase_credentials.json, github_oauth_client_secret live in the same directory)",
+      "deploy/docker-compose.prod.yml:1240 (backup is on the egress network)"
+    ],
+    "current_behavior": "A compromise of the backup container yields every signing and encryption key, including the KEK that wraps all users' ADR-032 data keys.",
+    "expected_behavior": "The backup job sees only the files it uses.",
+    "recommendation": "Mount the age recipients, S3 keys and rclone.conf individually or from a ./secrets/backup/ subdirectory; add a compose fitness test asserting no service bind-mounts ./secrets wholesale.",
+    "confidence": "High"
+  },
+  {
+    "id": "F1-03",
+    "severity": "P2",
+    "title": "On Railway the legacy per-IP rate limiter and audit source_ip see the proxy address, not the client's",
+    "subsystem": "Gateway / rate limiting",
+    "evidence": [
+      "aura_backend/Dockerfile:147 (--proxy-headers, no --forwarded-allow-ips)",
+      "aura_backend/docker-entrypoint.sh (no FORWARDED_ALLOW_IPS; grep empty)",
+      "aura_backend/infrastructure/http_limits.py:67 (keys on request.client.host)",
+      "aura_backend/aura_core/api/v3.py:318,409,1233 (source_ip = request.client.host)",
+      "aura_backend/aura_core/api/v3.py:361 and aura_core/security/rate_limit.py:202-224 (v3 limiter reads XFF itself, unaffected)",
+      "docs/deployment/control-plane.md:64 (sets only AURA_TRUSTED_PROXY_COUNT)"
+    ],
+    "current_behavior": "On the Railway target all users share one 100 req/min bucket keyed on the edge proxy address; one client can 429 the whole API and audit rows record the proxy IP.",
+    "expected_behavior": "Client IP derived from the single trusted hop on every limiter and audit write.",
+    "recommendation": "Set FORWARDED_ALLOW_IPS (or --forwarded-allow-ips) narrowly for the Railway service, or key the legacy limiter on extract_client_ip() like v3; verify with two source IPs against production.",
+    "confidence": "Medium (Railway proxy source address not observed)"
+  },
+  {
+    "id": "F1-04",
+    "severity": "P2",
+    "title": "Desktop app sign-in mints a 30-day, unscoped, unattested token that can fetch the user's data key",
+    "subsystem": "Auth / ADR-032",
+    "evidence": [
+      "aura_backend/api/v2/auth.py:242-267 (issue_device_token without scope)",
+      "aura_backend/services/jwt_auth.py:46,263-284,435-442",
+      "aura_backend/aura_core/api/v3.py:1192-1252 (GET /api/v3/keys/data returns the DEK)",
+      "docs/architecture/032-personal-os-single-store.md:332 (threat row: stolen token yields DEK)"
+    ],
+    "current_behavior": "A token stolen from a desktop is a full session for a month and exposes the user's personal-OS plaintext; pairing tokens were scoped (F-09) but the app's own login was not.",
+    "expected_behavior": "Desktop app sessions short-lived and refreshable (device-bound refresh), or scoped away from /keys/data and admin routes.",
+    "recommendation": "Issue the desktop app a 15-minute access + device-bound refresh pair; keep the 30-day form for the scoped daemon only; document the interim trade in ADR-032.",
+    "confidence": "High (code); Medium (severity)"
+  },
+  {
+    "id": "F1-05",
+    "severity": "P3",
+    "title": "Production CORS default includes localhost origins with credentials (SEC-12 still open)",
+    "subsystem": "Gateway",
+    "evidence": [
+      "deploy/docker-compose.prod.yml:516",
+      "aura_backend/aura_service.py:238-254"
+    ],
+    "current_behavior": "A page on a developer's localhost can make credentialed cross-origin calls to production; impact bounded because the API is bearer-only.",
+    "expected_behavior": "Production default names only production origins.",
+    "recommendation": "Drop localhost from the prod default; set ALLOWED_ORIGINS explicitly on Railway.",
+    "confidence": "High"
+  },
+  {
+    "id": "F1-06",
+    "severity": "P3",
+    "title": "fetch_url reads the whole response body into memory before truncating",
+    "subsystem": "Tools / SSRF residual",
+    "evidence": [
+      "aura_backend/aura_core/tools/builtin.py:461,478-496"
+    ],
+    "current_behavior": "A multi-GB allowlisted URL is fully buffered before the 20,000-char cap; DNS-rebinding TOCTOU acknowledged in code.",
+    "expected_behavior": "Bounded streamed read.",
+    "recommendation": "Use client.stream() and abort past a byte budget (e.g. 1 MB); keep the char cap.",
+    "confidence": "High"
+  },
+  {
+    "id": "F1-07",
+    "severity": "P3",
+    "title": "Audit log and turn telemetry hold email and source IP with no retention and survive erasure",
+    "subsystem": "Privacy / data lifecycle",
+    "evidence": [
+      "aura_backend/alembic/versions/0016_runtime_tables_baseline.py:64-75",
+      "aura_backend/api/admin_platform.py:234-242 (NOT_ERASED)",
+      "grep for purge/retention over aura_audit_events and aura_turn_telemetry: none"
+    ],
+    "current_behavior": "After erasure the subject's email and IPs persist indefinitely in audit rows; telemetry likewise.",
+    "expected_behavior": "Documented retention enforced by a periodic purge; erasure pseudonymises the subject's actor field.",
+    "recommendation": "Celery beat purge with configurable days; on erasure replace actor with a hash; state the policy in docs/.",
+    "confidence": "High"
+  },
+  {
+    "id": "F1-08",
+    "severity": "P3",
+    "title": "Session/device revocation scans all Redis keys; no refresh-token reuse detection",
+    "subsystem": "Auth",
+    "evidence": [
+      "aura_backend/services/jwt_auth.py:319-333,379-403"
+    ],
+    "current_behavior": "O(total sessions) Redis round trips per demotion or erasure; a replayed consumed refresh token is refused without revoking its family.",
+    "expected_behavior": "Per-uid index sets; family revocation on replay.",
+    "recommendation": "Write uid-indexed sets at issue time; revoke the family when a consumed token is replayed.",
+    "confidence": "High"
+  },
+  {
+    "id": "F1-09",
+    "severity": "P3",
+    "title": "Documents and chunks stored in plaintext in Postgres and Qdrant payloads; third-party Qdrant on Railway",
+    "subsystem": "Data residency / encryption at rest",
+    "evidence": [
+      "aura_backend/aura_core/adapters/postgres_store.py:831-895 (cipher applied to memories only)",
+      "docs/deployment/control-plane.md:69",
+      "docs/architecture/032-personal-os-single-store.md (scope is personal-OS fields only)"
+    ],
+    "current_behavior": "Uploaded document text is readable by anyone with DB or Qdrant access and leaves the control plane on the Railway target.",
+    "expected_behavior": "An explicit decision per target on document confidentiality; optionally sealed chunk text.",
+    "recommendation": "Record the decision in the ADR owning the Railway split; if confidentiality is wanted, seal aura_chunks.content and Qdrant text payloads with the owner's DEK.",
+    "confidence": "Medium"
+  },
+  {
+    "id": "F1-10",
+    "severity": "P3",
+    "title": "VPS gateway trusts X-Forwarded-For from any container (--forwarded-allow-ips='*')",
+    "subsystem": "Deploy",
+    "evidence": [
+      "deploy/docker-compose.prod.yml:404",
+      "deploy/docker-compose.dev.yml:277"
+    ],
+    "current_behavior": "Any container on the gateway's networks can spoof client IP to the limiters and audit.",
+    "expected_behavior": "Trust only nginx's address.",
+    "recommendation": "Replace '*' with the nginx service address or edge subnet in both compose files.",
+    "confidence": "High"
+  },
+  {
+    "id": "F1-11",
+    "severity": "P3",
+    "title": "hostd control-server token file permissions not restricted (SEC-01 residual)",
+    "subsystem": "aura_hostd",
+    "evidence": [
+      "grep 0600|chmod|umask|writeAsString in aura_hostd/lib/src/control_server.dart: no permission handling (doc comment at :13 only)"
+    ],
+    "current_behavior": "control.json, holding the bearer that can flip workspace trust, is written with the process umask.",
+    "expected_behavior": "Token file created 0600 / restricted ACL.",
+    "recommendation": "Write to a temp file, restrict permissions, then rename.",
+    "confidence": "Medium (CODE-PRESENT / BEHAVIOR UNVERIFIED)"
+  },
+  {
+    "id": "F1-12",
+    "severity": "P3",
+    "title": "No command_timeout on the asyncpg pool; legacy SQLAlchemy engine never disposed; connection budget uncomputed",
+    "subsystem": "Database",
+    "evidence": [
+      "aura_backend/aura_core/adapters/postgres_store.py:120-122",
+      "aura_backend/infrastructure/db/base.py:69",
+      "aura_backend/Dockerfile:147 (AURA_WORKERS default 4)",
+      "aura_backend/aura_core/container.py:905",
+      "no max_connections in deploy/docker-compose.*.yml (grep empty)"
+    ],
+    "current_behavior": "A slow statement holds a pool slot indefinitely; two pools per worker across gateway and Celery workers can exceed Postgres's default 100 connections.",
+    "expected_behavior": "Per-statement timeout and a documented, enforced connection budget.",
+    "recommendation": "Pass command_timeout and max_inactive_connection_lifetime to create_pool; compute the budget per deployment and set max_connections explicitly.",
+    "confidence": "High"
+  },
+  {
+    "id": "F1-13",
+    "severity": "P4",
+    "title": "Legacy plaintext rows are read silently after keys are configured",
+    "subsystem": "Encryption at rest",
+    "evidence": [
+      "aura_backend/aura_core/adapters/field_crypto.py:33-36,180-182",
+      "aura_backend/scripts/reencrypt_fields.py (exists; no evidence it ran on Railway)"
+    ],
+    "current_behavior": "Rows written before AURA_DATA_ENCRYPTION_KEYS was set stay plaintext and are indistinguishable from outside.",
+    "expected_behavior": "A count of remaining plaintext rows is visible and driven to zero.",
+    "recommendation": "Expose a needs_reencryption counter via metrics/readiness, run the script, record the output.",
+    "confidence": "High"
+  }
+]

@@ -1,0 +1,159 @@
+[
+  {
+    "id": "G-01",
+    "severity": "P1",
+    "title": "No test gate blocks a production deploy",
+    "subsystem": "process/ci",
+    "evidence": [
+      ".github/workflows/eval-ci.yml:17-20",
+      "docs/status/BACKEND_STATUS.md:19-22",
+      "docs/production/gap_register.yaml:132-158 (GAP-005)",
+      "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:26-28 (CB-44)",
+      "CLAUDE.md: Railway auto-deploys every main push, CI or not"
+    ],
+    "current_behavior": "Railway ships every main push; GitHub Actions assigns no runner since ~2026-10-28 19:50 UTC; main is unprotected, so even a running CI is advisory.",
+    "expected_behavior": "Required status checks (Backend CI test/pip-audit/docker-build, Evaluation regression gate, Repo Hygiene) on a protected main, and Railway waiting for CI.",
+    "recommendation": "Owner restores Actions, protects main with required checks, enables Railway 'Wait for CI' or disables its auto-deploy; record both settings in docs/reports/.",
+    "confidence": "High"
+  },
+  {
+    "id": "G-02",
+    "severity": "P1",
+    "title": "Every AI-quality gate is scripted; no real-model evaluation exists or is scheduled",
+    "subsystem": "evaluation",
+    "evidence": [
+      "aura_backend/evaluation/gate.py:11-23,141-157",
+      "aura_backend/tests/e2e/test_agent_tasks_gate.py:5-11",
+      "aura_backend/tests/e2e/test_docs_corpus_gate.py:7-15",
+      "aura_backend/evaluation/suites/agent_tasks_baseline.json (1.0/1.0/1.0)",
+      "docs/production/gap_register.yaml:585-600 (GAP-021 open)",
+      ".github/workflows/eval-ci.yml:144-146 (dispatch-run manual only)"
+    ],
+    "current_behavior": "Gates use EchoProvider, ContextGroundedProvider and the non-semantic hash embedder; agent_tasks 100% is tautological; production embedder/LLM quality has never been measured.",
+    "expected_behavior": "A scheduled real-model evaluation (production embedder + the deployed model) reporting recall@10, groundedness and citation precision per PRODUCTION_SLO, committed to docs/reports/.",
+    "recommendation": "Add a schedule/dispatch job running evaluation/runner.py and evaluation/vision_eval.py against the dev stack with AURA_LLM_PROVIDERS set (outside gate.py's determinism check); commit the first report; then gate releases on it. Fits ADR-003/030 (local-first, hosted only behind the flag).",
+    "confidence": "High"
+  },
+  {
+    "id": "G-03",
+    "severity": "P2",
+    "title": "Windows coverage for the Windows-first desktop targets is advisory only",
+    "subsystem": "ci/desktop",
+    "evidence": [
+      ".github/workflows/client-ci.yml:120 (continue-on-error: true)",
+      ".github/workflows/hostd-ci.yml:73 (continue-on-error: true)",
+      "docs/status/DESKTOP_APP_STATUS.md:47,55"
+    ],
+    "current_behavior": "Known Windows failures (10 client path_containment cases, 5 hostd cases: 8.3 short paths, errno 32 locks) cannot turn a run red.",
+    "expected_behavior": "Windows jobs gating once green.",
+    "recommendation": "Fix the 8.3 path canonicalisation in client and hostd tests, verify a green run, then remove continue-on-error.",
+    "confidence": "High"
+  },
+  {
+    "id": "G-04",
+    "severity": "P2",
+    "title": "Host Daemon CI hangs on Linux; the fix has never been CI-run",
+    "subsystem": "ci/hostd",
+    "evidence": [
+      ".github/workflows/hostd-ci.yml:30-33",
+      "docs/status/DESKTOP_APP_STATUS.md:16,56,70",
+      "git commit 4b1968e (2026-10-28)"
+    ],
+    "current_behavior": "Linux job passes 220 tests then the PosixPtySession reader isolate hangs until the 15-minute timeout; fix merged with no runner since.",
+    "expected_behavior": "Green Linux Host Daemon CI run.",
+    "recommendation": "Re-run on main once runners return; if it still hangs, tag posix_pty_session_test.dart and run it with its own timeout.",
+    "confidence": "Medium"
+  },
+  {
+    "id": "G-05",
+    "severity": "P2",
+    "title": "Coverage floor covers aura_core only; legacy/platform tree and its Docker-dependent tests have no coverage or infra-free path",
+    "subsystem": "ci/backend",
+    "evidence": [
+      ".github/workflows/backend-ci.yml:94 (--cov=aura_core --cov-fail-under=82)",
+      "no .coveragerc / pyproject coverage section (ls/grep)",
+      "aura_backend/test_erasure_integration.py:31, test_celery_loop_integration.py:25, test_insights_integration.py:29, test_github_link_integration.py:38 (skipUnless docker)"
+    ],
+    "current_behavior": "api/v2, services/ (JWT, sync) and infrastructure/ are outside the coverage ratchet; four legacy Postgres tests skip anywhere without Docker.",
+    "expected_behavior": "Coverage reported over the whole shipped tree; the Postgres-backed legacy tests run in the CI postgres job.",
+    "recommendation": "Add --cov=api --cov=services --cov=infrastructure reporting (no floor initially); move the four testcontainers tests to tests/load/*_postgres.py so the existing postgres service job executes them.",
+    "confidence": "Medium"
+  },
+  {
+    "id": "G-06",
+    "severity": "P3",
+    "title": "Dev/test tooling unpinned (GAP-033 open); no flake, parallel, property-based or mutation tooling",
+    "subsystem": "supply-chain/test",
+    "evidence": [
+      "aura_backend/requirements-dev.txt (pytest>=8.0, pytest-asyncio>=0.23, pytest-cov>=5.0, testcontainers[postgres]>=4.0.0)",
+      "grep xdist|hypothesis|flaky|mutmut in requirements*.txt: no matches",
+      "docs/production/gap_register.yaml:819-832"
+    ],
+    "current_behavior": "4305 tests run serially under whatever pytest/pytest-asyncio resolves on the day; three workflows install them unhashed.",
+    "expected_behavior": "requirements-dev.lock with hashes consumed by backend-ci, eval-ci and repo-hygiene.",
+    "recommendation": "Generate requirements-dev.lock with the same uv command as requirements.lock and use it in all three workflows; consider pytest-xdist for the 45-minute test job.",
+    "confidence": "High"
+  },
+  {
+    "id": "G-07",
+    "severity": "P3",
+    "title": "Local verification environment diverges from the locked one",
+    "subsystem": "process/testing",
+    "evidence": [
+      "EXECUTED-HERE: venv/Scripts/python -c 'import fastapi,sys;print(fastapi.__version__, sys.version)' -> 0.136.3 3.14.4",
+      "EXECUTED-HERE: import prometheus_client -> ModuleNotFoundError",
+      "aura_backend/requirements.lock: fastapi==0.141.1, prometheus-client==0.26.0",
+      "EXECUTED-HERE: pytest --collect-only -> tests/security/test_route_auth.py:125 AttributeError: module 'fastapi.routing' has no attribute 'iter_route_contexts'"
+    ],
+    "current_behavior": "The 'tested locally, not CI-run' claims in docs/status/* come from CPython 3.14 with older FastAPI; the route-auth suite that fails on any unprotected route cannot even be collected on it.",
+    "expected_behavior": "Local runs from the lock on Python 3.11, matching CI.",
+    "recommendation": "Document a Python 3.11 venv built from requirements.lock as the only sanctioned local path; add a conftest warning when fastapi.__version__ differs from the lock.",
+    "confidence": "High"
+  },
+  {
+    "id": "G-08",
+    "severity": "P3",
+    "title": "Certification, training, benchmark and non-Postgres load suites have never produced a passing artefact",
+    "subsystem": "evaluation/certification",
+    "evidence": [
+      "docs/reports/AURA_CERTIFICATION_EVIDENCE_MATRIX.md:3,7 (NOT PRODUCTION CERTIFIED, 2026-09-28)",
+      "aura_backend/tests/certification/conftest.py:19-20",
+      "aura_backend/tests/training/test_lora_weights_change.py:14-22",
+      "docs/production/gap_register.yaml:465 (GAP-017)",
+      "docs/reports/phase-a4-load-test.md"
+    ],
+    "current_behavior": "The suites exist and skip honestly; none has run against the Railway deployment that is now production.",
+    "expected_behavior": "One -m cert run with synthetic users on the dev/prod stack, one -m training run, a refreshed load matrix on the current inference plane.",
+    "recommendation": "Owner-scheduled runs with reports committed under docs/reports/ and the evidence matrix updated (tests/architecture/test_certification_gate.py enforces its wording).",
+    "confidence": "High"
+  },
+  {
+    "id": "G-09",
+    "severity": "P4",
+    "title": "Vision eval harness has no threshold, baseline or report",
+    "subsystem": "evaluation/vision",
+    "evidence": [
+      "aura_backend/evaluation/vision_eval.py:36-38",
+      "ls docs/reports -> no vision-eval-* files"
+    ],
+    "current_behavior": "ADR-031 Phase 7 exit criterion (a vision eval report with a pinned model) unmet; only the unit self-test runs.",
+    "expected_behavior": "A first measured run and an owner-set --min-accuracy.",
+    "recommendation": "Run --target space/gateway once a vision model is reachable; commit the report.",
+    "confidence": "High"
+  },
+  {
+    "id": "G-10",
+    "severity": "P4",
+    "title": "Admin console has no lint gate and about 6 of 10 pages covered by e2e",
+    "subsystem": "ci/admin",
+    "evidence": [
+      ".github/workflows/admin-ci.yml:13-15",
+      "aura_admin/package.json:9 (lint: next lint, no ESLint config)",
+      "docs/status/WEB_CONSOLE_STATUS.md:52-53"
+    ],
+    "current_behavior": "Lint deliberately skipped in CI; four pages have no spec; Admin CI has never run.",
+    "expected_behavior": "ESLint config committed, npm run lint in CI, one spec per page.",
+    "recommendation": "Follow GAP-007.",
+    "confidence": "High"
+  }
+]

@@ -1,0 +1,260 @@
+[
+  {
+    "id": "E3-01",
+    "severity": "P1",
+    "title": "Host-agent registry is per-process while the image runs 4 uvicorn workers",
+    "subsystem": "backend/host-agent bridge",
+    "evidence": [
+      "aura_backend/aura_core/adapters/host_agent.py:156-181",
+      "aura_backend/aura_core/adapters/host_agent.py:383-391",
+      "aura_backend/Dockerfile:147",
+      "deploy/.env.example:10",
+      "docs/architecture/011-desktop-engineer-agent.md:400-412",
+      "Railway AURA_WORKERS value: UNKNOWN"
+    ],
+    "current_behavior": "The daemon's WebSocket is held by one uvicorn worker's in-memory registry; chat turns served by other workers find no session and fail with 'no desktop app is connected and no server-side sandbox is configured'. On Railway there is no Docker fallback, so the Engineer persona fails in proportion to the worker count.",
+    "expected_behavior": "A paired desktop is reachable from every request for that user, or the gateway refuses host-agent support when AURA_WORKERS>1.",
+    "recommendation": "Set AURA_WORKERS=1 on Railway and assert it at startup when the registry is enabled; then move host-agent routing to Redis pub/sub or a dedicated single process (ADR-011 names both). Record the Railway value in BACKEND_STATUS.md.",
+    "confidence": "High (code); Med (production effect)"
+  },
+  {
+    "id": "E3-02",
+    "severity": "P2",
+    "title": "Server-side tool timeouts cut off the daemon's interactive approval; an approved write can land after the model was told it timed out",
+    "subsystem": "backend tools / hostd approval queue",
+    "evidence": [
+      "aura_backend/aura_core/kernel/kernel.py:1499",
+      "aura_backend/aura_core/agents/registry.py:213-225",
+      "aura_backend/aura_core/tools/registry.py:361-376",
+      "aura_backend/aura_core/tools/coding.py:483,504,539,581",
+      "aura_backend/aura_core/adapters/host_agent.py:250,270,305,329",
+      "aura_hostd/lib/src/approval_queue.dart:46",
+      "aura_hostd/lib/src/task_handler.dart:110-118,193-205,266-268"
+    ],
+    "current_behavior": "write_file/edit_file are cancelled server-side after 15 s (write_files 30 s, run_command 60 s because the Engineer ToolContext deadline is 60 s) while the daemon waits up to 5 minutes for a human. A later Approve still executes the write/command on the user's machine after the agent was told it timed out and may have retried. run_command longer than 60 s always times out despite its 605 s spec.",
+    "expected_behavior": "A server-side timeout cancels the pending approval on the daemon, or the server waits as long as the daemon's approval window; the Engineer's effective run_command budget matches its documented 605 s.",
+    "recommendation": "Send a cancel frame for the call id on timeout/cancellation and mark the approval cancelled on the daemon; give the Engineer context a deadline at least as long as the longest host-routed tool; add a backend test with a fake daemon that answers after the tool timeout.",
+    "confidence": "High (code-read); behavior unverified"
+  },
+  {
+    "id": "E3-03",
+    "severity": "P2",
+    "title": "D8 per-task worktree isolation is unreachable from the client",
+    "subsystem": "client/backend/hostd",
+    "evidence": [
+      "aura_backend/aura_core/api/v3.py:234-237",
+      "aura_client/lib/core/ai/online_agents/sse_agent_client.dart:131-142",
+      "grep task_isolation aura_client/lib aura_client/test: 0 hits",
+      "aura_hostd/lib/src/isolated_task_registry.dart:76-154",
+      "aura_client/lib/desktop/control_center/control_center_panel.dart:142"
+    ],
+    "current_behavior": "No client sets desktop_task_isolation, so every desktop task writes into the live checkout; the Agent Review panel is always empty and its empty-state copy promises behavior that cannot happen; DESKTOP_APP_STATUS.md presents D8/D9 as landed.",
+    "expected_behavior": "A Desktop IDE chat turn requests isolation so writes land in .aura-workspaces/<session> and review/merge/discard has content.",
+    "recommendation": "Add the field to buildChatRequestBody gated on the IDE, cover it in sse_agent_client tests, and correct the status doc until wired.",
+    "confidence": "High"
+  },
+  {
+    "id": "E3-04",
+    "severity": "P3",
+    "title": "write_files is registered but not in the Engineer persona's grant",
+    "subsystem": "backend tools",
+    "evidence": [
+      "aura_backend/aura_core/tools/coding.py:520-563,828",
+      "aura_backend/aura_core/agents/registry.py:213-225",
+      "aura_backend/tests/unit/test_engineer_tools.py:149-215",
+      "aura_backend/tests/unit/test_workspace_local_policy.py:116"
+    ],
+    "current_behavior": "The Engineer model is never offered write_files, so the D6 atomic multi-file path and its daemon-side single-RPC approval are dead in practice; tests call the tool directly and bypass the grant.",
+    "expected_behavior": "The grant matches the documented Engineer tool surface.",
+    "recommendation": "Add write_files to the Engineer allowed_tools and add a kernel-level test that the Engineer declarations include it.",
+    "confidence": "High (grant); Med (declaration filtering not re-read)"
+  },
+  {
+    "id": "E3-05",
+    "severity": "P2",
+    "title": "In a trusted root run_command has no path confinement and the hard denylist is a regex seatbelt; ADR-011's 'never merely confirmable' claim holds only for file RPCs",
+    "subsystem": "hostd command policy",
+    "evidence": [
+      "aura_hostd/lib/src/command_policy.dart:21-28,31-47,160-162",
+      "aura_hostd/lib/src/task_handler.dart:259,274-281",
+      "docs/architecture/011-desktop-engineer-agent.md:52-58,89-93",
+      "aura_backend/aura_core/tools/policy.py:129-134"
+    ],
+    "current_behavior": "A trusted root lets an untainted Engineer turn run any command as the user's OS account with no prompt, including commands touching paths outside the root; the denylist is pattern-based and bypassable (rm -r -f, find -delete, python -c). CB-05's taint-to-confirm is done; the untainted-trusted case remains.",
+    "expected_behavior": "Trusted mode is clearly a developer-only mode with a visible warning, or trusted commands keep argument-level containment for destructive verbs.",
+    "recommendation": "Apply the untrusted tier's argument containment to a documented set of destructive verbs in trusted roots; label the trust toggle with the real consequence; amend ADR-011's containment section.",
+    "confidence": "High"
+  },
+  {
+    "id": "E3-06",
+    "severity": "P2",
+    "title": "The desktop app's own sign-in token is a full 30-day, unscoped, non-refreshable device token",
+    "subsystem": "backend auth",
+    "evidence": [
+      "aura_backend/api/v2/auth.py:242-267",
+      "aura_backend/services/jwt_auth.py:46,263-283,435-441",
+      "docs/status/DESKTOP_APP_STATUS.md:94-96",
+      "no client caller of /api/v3/auth/desktop/devices/revoke (grep aura_client/lib)"
+    ],
+    "current_behavior": "A desktop login yields a bearer valid for the whole API for 30 days, persisted client-side; revocation exists only via an endpoint no client calls.",
+    "expected_behavior": "Desktop sessions follow the short-access/refresh model, or a much shorter TTL plus a reachable revoke.",
+    "recommendation": "Issue a normal token pair from /desktop/login or shorten the TTL and wire the revoke endpoint in Settings.",
+    "confidence": "High"
+  },
+  {
+    "id": "E3-07",
+    "severity": "P3",
+    "title": "run always executes in the first granted root; the backend never names a working directory",
+    "subsystem": "hostd TaskHandler",
+    "evidence": [
+      "aura_hostd/lib/src/task_handler.dart:241,249-251",
+      "aura_backend/aura_core/tools/coding.py:602-605",
+      "aura_hostd/lib/src/task_handler.dart:99,216"
+    ],
+    "current_behavior": "With multiple granted roots every run_command executes in root[0] under root[0]'s trust, while file RPCs resolve by path against any root; commands can run unprompted in a trusted root the user is not working in.",
+    "expected_behavior": "The Engineer session is bound to one root chosen in the IDE and the backend passes it as cwd.",
+    "recommendation": "Thread the active root through ToolContext.metadata and send cwd; refuse run when several roots are granted and none is named.",
+    "confidence": "High"
+  },
+  {
+    "id": "E3-08",
+    "severity": "P3",
+    "title": "Pairing approval shows no device identity and the only approval UI is self-approval; device revoke is unreachable",
+    "subsystem": "pairing",
+    "evidence": [
+      "aura_backend/services/device_pairing.py:141-166",
+      "aura_client/lib/desktop/host/host_panel.dart:271-289",
+      "aura_client/lib/features/engineering/presentation/host_daemon_page.dart:148",
+      "aura_backend/api/v2/auth.py:228,232-240",
+      "aura_backend/aura_core/adapters/host_agent.py:165-170"
+    ],
+    "current_behavior": "A user who enters a code shown to them by someone else binds their account to an attacker's daemon; the host_agent-scoped token limits it to the socket, but the victim's Engineer writes and command output then route to the attacker's machine and no client screen can revoke.",
+    "expected_behavior": "The approve step names the requesting machine and paired devices are listable and revocable from the app.",
+    "recommendation": "Add device_name to start_pairing and echo it on approve; add a Paired devices list with GET /desktop/devices and the existing revoke.",
+    "confidence": "Med"
+  },
+  {
+    "id": "E3-09",
+    "severity": "P3",
+    "title": "macOS build is sandboxed without the network-client entitlement",
+    "subsystem": "client/macOS",
+    "evidence": [
+      "aura_client/macos/Runner/Release.entitlements:5-9",
+      "no macOS job in .github/workflows/client-ci.yml (status doc)"
+    ],
+    "current_behavior": "A release build likely cannot open a socket to the backend; nothing has ever verified macOS.",
+    "expected_behavior": "com.apple.security.network.client is present or macOS is declared unsupported.",
+    "recommendation": "Add the entitlement or remove macOS from the supported list.",
+    "confidence": "High (code-read); behavior unverified"
+  },
+  {
+    "id": "E3-10",
+    "severity": "P3",
+    "title": "The Desktop IDE is gated to Windows, the one desktop platform CI does not gate",
+    "subsystem": "client/CI",
+    "evidence": [
+      "aura_client/lib/core/platform/aura_platform.dart:14,19",
+      ".github/workflows/hostd-ci.yml:73",
+      "client-ci.yml build-windows continue-on-error (DESKTOP_APP_STATUS.md:47,63-65)"
+    ],
+    "current_behavior": "The IDE renders only on Windows; Linux CI compiles but never shows it; Windows CI jobs are advisory; /ide renders nothing on Linux/macOS.",
+    "expected_behavior": "The gating CI job runs on the platform the feature ships on.",
+    "recommendation": "Make the Windows jobs gating once green, or widen isDesktopIde to Linux and test there.",
+    "confidence": "High"
+  },
+  {
+    "id": "E3-11",
+    "severity": "P3",
+    "title": "Nothing in this pass is proven: no green Host Daemon CI since 2026-09-11, no end-to-end report, no VPS workspace report",
+    "subsystem": "verification",
+    "evidence": [
+      "docs/status/DESKTOP_APP_STATUS.md:9-22,66-71",
+      "docs/production/gap_register.yaml:677-704",
+      "git ls-files docs/reports | grep -iE engineer|desktop|hostd -> desktop-ide-phase0-audit-2026-09-25.md only",
+      "deploy/scripts/verify-engineer-workspaces.sh exists; no report"
+    ],
+    "current_behavior": "All desktop/hostd claims rest on local runs recorded in docs; this pass could not run dart test or pytest either.",
+    "expected_behavior": "Committed green Linux and Windows hostd CI runs plus the two reports the gap register names.",
+    "recommendation": "Restore runners (CB-44), make hostd CI green on both OSes, record GAP-026's session, run verify-engineer-workspaces.sh on a host with the sandbox profile.",
+    "confidence": "High"
+  },
+  {
+    "id": "E3-12",
+    "severity": "P3",
+    "title": "No restart-on-crash, no re-auth path, no bundled daemon: a 4401 or a crash needs a human",
+    "subsystem": "hostd lifecycle",
+    "evidence": [
+      "aura_client/lib/core/hostd/hostd_supervisor_io.dart:25-28,35-38",
+      "aura_hostd/lib/src/rpc_client.dart:89-93,140-147",
+      "aura_backend/aura_core/api/host_agent.py:138-149",
+      "aura_backend/services/jwt_auth.py:46"
+    ],
+    "current_behavior": "The daemon stops on token expiry (30 days) or revocation and never sends reauth, so the server's reauth branch is dead; the supervisor does not restart a crashed daemon; no binary is bundled.",
+    "expected_behavior": "Supervised restart with backoff, an actionable re-pair prompt on 4401, an installer that ships the daemon.",
+    "recommendation": "Implement restart in HostdSupervisor; surface 4401 as a pair-again state; bundle the daemon (M8.10).",
+    "confidence": "High"
+  },
+  {
+    "id": "E3-13",
+    "severity": "P3",
+    "title": "A Google OAuth client secret sits in deploy/.env on this workstation (untracked)",
+    "subsystem": "secrets",
+    "evidence": [
+      "deploy/.env:4 key GOOGLE_DESKTOP_CLIENT_SECRET (value redacted)",
+      "git ls-files deploy/.env -> not tracked; .gitignore:8",
+      "aura_client/lib/core/config/config.dart:44-60",
+      "aura_backend/tests/architecture/test_no_committed_client_secrets.py:117"
+    ],
+    "current_behavior": "The repo leak (CB-06) is fixed, but a real GOCSPX- secret remains on the developer host and the desktop build scripts read deploy/.env into --dart-define, so builds made there compile a secret in again. Whether it is the rotated or leaked value is UNKNOWN.",
+    "expected_behavior": "No desktop build carries a client secret; the public Desktop-app client uses PKCE alone.",
+    "recommendation": "Delete the key from deploy/.env, confirm the Google client type, and make the desktop build scripts refuse a non-empty secret unless explicitly overridden.",
+    "confidence": "High (presence); UNKNOWN (which value)"
+  },
+  {
+    "id": "E3-14",
+    "severity": "P3",
+    "title": "Engineer in production is desktop-only: the Docker fallback cannot exist on Railway and is off by default on the VPS",
+    "subsystem": "deployment boundary",
+    "evidence": [
+      "aura_backend/aura_core/container.py:1438-1462",
+      "deploy/.env.example:359-372",
+      "deploy/docker-compose.prod.yml:669-678",
+      "aura_backend/railway.json:3-6",
+      "aura_backend/aura_core/adapters/host_agent.py:387-391"
+    ],
+    "current_behavior": "On aureon-ai.tech every write_file/run_command from a user without a paired desktop fails with a clear error while the tools stay declared to the model; with E3-01 the persona has no reliable execution path on the live target.",
+    "expected_behavior": "Status docs and the persona prompt state that the Engineer needs a paired desktop on Railway.",
+    "recommendation": "Document in BACKEND_STATUS.md; consider hiding the sandbox tools when neither runner can serve the caller.",
+    "confidence": "Med"
+  },
+  {
+    "id": "E3-15",
+    "severity": "P4",
+    "title": "Loopback /status is unauthenticated and lists granted roots and the backend URL",
+    "subsystem": "hostd control server",
+    "evidence": [
+      "aura_hostd/lib/src/control_server.dart:7-14,138,232-241"
+    ],
+    "current_behavior": "Any local process can read granted roots and pairing state without the control token (disclosed as a convenience boundary).",
+    "expected_behavior": "Only liveness fields on the unauthenticated path.",
+    "recommendation": "Return authenticated/backend_connected only; keep roots behind the token.",
+    "confidence": "High"
+  },
+  {
+    "id": "E3-16",
+    "severity": "P4",
+    "title": "Stale documentation inside the desktop track",
+    "subsystem": "docs",
+    "evidence": [
+      "docs/architecture/011-desktop-engineer-agent.md:52-58,144-151,216-224,334-337,342-353",
+      "aura_hostd/README.md:25",
+      "aura_hostd/lib/src/command_policy.dart:7-13",
+      "aura_client/lib/desktop/control_center/control_center_panel.dart:142",
+      "docs/status/DESKTOP_APP_STATUS.md:24-27,52"
+    ],
+    "current_behavior": "ADR-011 says the desktop exchange sends a client secret and that no approval screen exists; the hostd README says no pairing flow exists; command_policy's header says non-allowlisted commands are refused rather than queued; the Control Center promises isolated worktrees the client never requests.",
+    "expected_behavior": "Docs match code.",
+    "recommendation": "Fix each item when touching the file; see report section 7.",
+    "confidence": "High"
+  }
+]

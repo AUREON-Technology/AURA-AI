@@ -1,0 +1,305 @@
+[
+  {
+    "id": "D-01",
+    "severity": "P2",
+    "title": "The ten retrieval strategies (incl. GraphRAG and the adaptive router) are built but never used by any turn or route",
+    "subsystem": "knowledge/rag",
+    "evidence": [
+      "aura_backend/aura_core/container.py:384-401 builds self.strategies and self.retrieval = StrategyFacade(...)",
+      "aura_backend/aura_core/container.py:576 passes knowledge=self.knowledge to KernelDependencies",
+      "aura_backend/aura_core/kernel/kernel.py:1084 deps.knowledge.retrieve(message, owner_id=...)",
+      "aura_backend/aura_core/api/v3.py:827 container.knowledge.retrieve(...)",
+      "grep '\\.retrieval\\b|container\\.retrieval' over aura_core/, aura_service.py, tests/ -> only tests/unit/test_knowledge_graph_pipeline.py:400-417",
+      "aura_backend/aura_core/rag/facade.py:53-56"
+    ],
+    "current_behavior": "AURA_KNOWLEDGE_RETRIEVAL_STRATEGY is validated at boot and then has no effect; every turn is plain hybrid retrieval; the knowledge graph is written on every ingest and read by nothing in the request path (GAP-023 still true, also for 'adaptive').",
+    "expected_behavior": "Selecting a strategy changes retrieval; GraphRAG/adaptive are reachable; ADR-005's graph-retrieval paragraph describes live behavior.",
+    "recommendation": "Pass knowledge=self.retrieval (the facade already presents KnowledgeEngine.retrieve's signature) to KernelDependencies and the /knowledge/search route, with a fitness test; or relabel the strategies and graph as not-in-path in ADR-005, GAP-023 and the review.",
+    "confidence": "High"
+  },
+  {
+    "id": "D-02",
+    "severity": "P2",
+    "title": "Nightly refresh promotion is not recall-gated: no evaluator is wired",
+    "subsystem": "learning/loop-A, index lifecycle",
+    "evidence": [
+      "aura_backend/aura_core/container.py:343-353 constructs KnowledgeRefreshPipeline without evaluator",
+      "aura_backend/aura_core/learning/knowledge_refresh.py:321-330 recall only computed when evaluator is not None",
+      "aura_backend/aura_core/knowledge/index_manager.py:109-118 recall gate skipped when either recall is None",
+      "grep 'evaluator=' in aura_backend/tests -> no match",
+      "docs/architecture/007-versioned-indexes.md:38; docs/architecture/008-human-in-the-loop-learning.md:31,37"
+    ],
+    "current_behavior": "Only chunk-count, error-rate and min-chunks gates apply; a rebuild that loses recall promotes; max_recall_drop is dead configuration.",
+    "expected_behavior": "The recall@5 regression gate documented in ADR-007/008 runs, or the ADRs say it does not.",
+    "recommendation": "Wire RetrievalEvaluator with the committed docs_corpus suite as the refresh evaluator and add a lifecycle test that a recall drop blocks promotion; or mark the recall gate not implemented in ADR-007/008 and the gap register.",
+    "confidence": "High"
+  },
+  {
+    "id": "D-03",
+    "severity": "P3",
+    "title": "With an unchanged embedder the refresh candidate is the live index: 'never modified' and rollback do not hold, and the corpus is re-embedded nightly",
+    "subsystem": "learning/loop-A, index lifecycle",
+    "evidence": [
+      "aura_backend/aura_core/learning/knowledge_refresh.py:315-318 candidate = identity_for_current_embedder()",
+      "aura_backend/aura_core/domain/knowledge.py:215-219 physical_name has no generation component",
+      "aura_backend/aura_core/knowledge/index_manager.py:208-212,218-247 build() upserts every chunk into target",
+      "aura_backend/aura_core/knowledge/index_manager.py:334-335 promote repoints alias to the same name",
+      "aura_backend/aura_core/learning/knowledge_refresh.py:4-6,312-313,348-349"
+    ],
+    "current_behavior": "Every chunk is embedded twice per night (ingest then build) and written in place into the serving collection; rollback is an alias repoint to itself; retention is meaningless unless the embedding model changed.",
+    "expected_behavior": "A refresh builds a separate generation (or skips build when identity is unchanged) so the ADR-007 safety property is real and the nightly cost is one embedding pass.",
+    "recommendation": "Include the GenerationId in refresh build names and make prune retention real, or skip build() when candidate == previous and document that same-embedder refreshes are incremental; document the embedding cost.",
+    "confidence": "High"
+  },
+  {
+    "id": "D-04",
+    "severity": "P2",
+    "title": "The non-semantic hash embedder is the default, is not refused in production despite the code claiming it is, and nothing committed pins what the Railway gateway uses",
+    "subsystem": "llm/embeddings, deploy",
+    "evidence": [
+      "aura_backend/aura_core/config/settings.py:626-627,680-681 defaults local-embeddings / hash-embed-v1",
+      "aura_backend/aura_core/llm/embeddings.py:63-72 'Not semantic ... AuraSettings.validate() refuses ... in staging or production'",
+      "grep 'local-embeddings|hash-embed' in settings.py -> only :626-627,680-681; no check in validate()",
+      "docs/deployment/control-plane.md:56-87 Railway env list has no AURA_EMBEDDING_*",
+      "docs/guides/split-inference-deployment.md:261-263 recommends local-embeddings to save RAM",
+      "grep 'embedding' in aura_backend/aura_service.py -> no match (readiness does not report the embedder)"
+    ],
+    "current_behavior": "If the Railway dashboard does not set the variable, production retrieval and memory run on character-n-gram hashing and nothing in /health/* reveals it. Live value UNKNOWN.",
+    "expected_behavior": "Production refuses the hash embedder (as the docstring promises) or readiness exposes the active embedder; the Railway runbook names the variable.",
+    "recommendation": "Add the refusal to AuraSettings.validate() for staging/production; add embedding {provider, model, dimension} to /health/ready; add AURA_EMBEDDING_PROVIDER/MODEL/DIMENSION to control-plane.md and verify the live value.",
+    "confidence": "High (code); live state UNKNOWN"
+  },
+  {
+    "id": "D-05",
+    "severity": "P2",
+    "title": "What the model sees of retrieved knowledge is at most 2 x 280 characters, plus <=3 memories in 80 tokens and an 80-token CAG prefix",
+    "subsystem": "context/knowledge/memory",
+    "evidence": [
+      "aura_backend/aura_core/context/engine.py:57-58,305-307",
+      "aura_backend/aura_core/config/settings.py:714,735 (retrieval_top_k=2, prompt_chunk_max_chars=280)",
+      "aura_backend/aura_core/config/settings.py:840-842 (recall_limit=3, token_budget=80); :818 (CAG_MAX_TOKENS=80)",
+      "aura_backend/aura_core/kernel/kernel.py:1069-1072",
+      "aura_backend/aura_core/knowledge/chunking.py:31 (chunks stored at ~320 tokens)",
+      "grep KNOWLEDGE_TOP_K|KNOWLEDGE_PROMPT_CHUNK_CHARS|MEMORY_RECALL_LIMIT in deploy/ -> no match"
+    ],
+    "current_behavior": "~80% of every retrieved chunk is cut before the prompt; citations name a page/heading whose text the model mostly did not read; the evaluation suite scores retrieval ids, not the clipped prompt, so the gate cannot see this.",
+    "expected_behavior": "Prompt budget sized to the deployed context window (several full chunks for 8k+ contexts) with the clip as a last resort, and an answer-quality eval over the real prompt path.",
+    "recommendation": "Treat prompt_chunk_max_chars/top_k as per-deployment capacity settings documented in control-plane.md/compose; raise defaults for non-CPU providers; add the ContextGroundedProvider answer suite over the rendered prompt.",
+    "confidence": "High (behavior); impact unmeasured"
+  },
+  {
+    "id": "D-06",
+    "severity": "P2",
+    "title": "Document chunks and every vector payload are plaintext, including on Qdrant Cloud in the Railway target; memory subject is plaintext in the vector payload",
+    "subsystem": "data/encryption-at-rest",
+    "evidence": [
+      "aura_backend/aura_core/knowledge/index_manager.py:277-288 payload carries content",
+      "aura_backend/aura_core/adapters/postgres_store.py:184-197 aura_chunks content TEXT",
+      "aura_backend/aura_core/adapters/postgres_store.py:843-846,891-895 memory content encrypted",
+      "aura_backend/aura_core/memory/engine.py:177-184 memory vector payload carries subject",
+      "docs/deployment/control-plane.md:69-70 Qdrant Cloud",
+      "docs/architecture/004-memory-taxonomy.md:108; docs/production/gap_register.yaml:459-460; CB-22"
+    ],
+    "current_behavior": "A Qdrant Cloud operator or API-key leak exposes every user's document text and memory subjects; ADR-004 explicitly leaves this uncovered.",
+    "expected_behavior": "A recorded decision for chunks and third-party vector stores; at minimum no readable content in off-host vector payloads.",
+    "recommendation": "Add a vector_payload_content setting (off when Qdrant is off-host) and resolve chunk text from the owner-scoped document store (the engine already does this for lexical-only hits, engine.py:797-813); cover chunks in the encryption ADR.",
+    "confidence": "High"
+  },
+  {
+    "id": "D-07",
+    "severity": "P3",
+    "title": "MemoryEngine.forget_source cannot delete vectors: it filters on a payload key that is never written",
+    "subsystem": "memory",
+    "evidence": [
+      "aura_backend/aura_core/memory/engine.py:441-444 delete_by_filter(filters={'source': source})",
+      "aura_backend/aura_core/memory/engine.py:177-184 payload keys: memory_id, kind, owner_id, subject, scope",
+      "aura_backend/aura_core/adapters/qdrant_store.py:360-394",
+      "grep 'forget_source\\(' in aura_core -> no caller"
+    ],
+    "current_behavior": "Rows are deleted, vector points orphaned; docstring claims the points are removed. Dead code today, latent bug for ADR-004's 'forget everything from X'.",
+    "expected_behavior": "Points removed with the rows.",
+    "recommendation": "Add source (provenance) to the memory vector payload, or delete by the ids returned from delete_by_provenance; add a test.",
+    "confidence": "High"
+  },
+  {
+    "id": "D-08",
+    "severity": "P4",
+    "title": "In-process BM25 index is rebuilt from the entire document store in every process at startup; ADR-005's Postgres FTS scale-out path is not built",
+    "subsystem": "knowledge/scalability",
+    "evidence": [
+      "aura_backend/aura_core/knowledge/engine.py:946-964 rebuild_lexical_index iterates all chunks",
+      "aura_backend/aura_core/knowledge/retrieval.py:60-66",
+      "docs/architecture/005-hybrid-retrieval.md:20-22,93",
+      "docs/status/BACKEND_STATUS.md:56 ('the 200k point and Postgres FTS are open')"
+    ],
+    "current_behavior": "Each gateway/worker process holds a full copy of all tenants' postings; memory and boot time grow with corpus x process count; no ceiling documented.",
+    "expected_behavior": "A stated corpus ceiling and a tested FTS adapter behind the same port before it is reached.",
+    "recommendation": "Record the ceiling from LEXICAL_RETRIEVAL_BENCHMARK.md in the capacity doc; build the FTS adapter when the 200k measurement is taken (M5).",
+    "confidence": "Med"
+  },
+  {
+    "id": "D-09",
+    "severity": "P4",
+    "title": "Memory consolidation never merges: 'merged' is always 0",
+    "subsystem": "memory",
+    "evidence": [
+      "aura_backend/aura_core/memory/engine.py:341,385 merged never incremented",
+      "aura_backend/aura_core/memory/engine.py:333 docstring 'Merge duplicates ...'",
+      "aura_backend/aura_core/memory/engine.py:131-143 merge happens only at write time",
+      "docs/architecture/004-memory-taxonomy.md:40-44"
+    ],
+    "current_behavior": "Duplicates that slip past the write-time check persist until decay expires one.",
+    "expected_behavior": "Consolidation merges near-duplicates, or the docstring/ADR say merging is write-time only.",
+    "recommendation": "Decide and align; if implemented, reuse _find_duplicate over list_for_owner with the policy threshold.",
+    "confidence": "High"
+  },
+  {
+    "id": "D-10",
+    "severity": "P4",
+    "title": "No automatic memory extraction exists; memory is written only by the remember tool, POST /memory, or the kernel's session-classification note",
+    "subsystem": "memory",
+    "evidence": [
+      "grep '\\.remember\\(|remember_many\\(' outside memory/engine.py -> aura_core/tools/builtin.py:283, aura_core/api/v3.py:1160",
+      "aura_backend/aura_core/kernel/kernel.py:329,942,1226 _remember_session_classification",
+      "docs/architecture/004-memory-taxonomy.md:7,30,47"
+    ],
+    "current_behavior": "Learning about the user happens only when the model calls the tool; provenance extractor fields are never populated by a background extractor.",
+    "expected_behavior": "Documented as the design (tool-driven memory) or an extractor exists.",
+    "recommendation": "Documentation decision; no code change required.",
+    "confidence": "High"
+  },
+  {
+    "id": "D-11",
+    "severity": "P3",
+    "title": "Embedding and reranker weights load by name with no revision pin; the index identity cannot detect a silent upstream change",
+    "subsystem": "llm/supply-chain",
+    "evidence": [
+      "aura_backend/aura_core/llm/embeddings.py:358 SentenceTransformer(self._model_name)",
+      "aura_backend/aura_core/knowledge/reranking.py:104 CrossEncoder(self._model_name)",
+      "aura_backend/aura_core/domain/knowledge.py:215-219 identity is the model id string",
+      "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:178 (CB-18 / GAP-030)"
+    ],
+    "current_behavior": "A re-published BAAI/bge-small-en-v1.5 changes vectors; new chunks go into the same collection as old ones with no rebuild and no error.",
+    "expected_behavior": "Pinned revision plus recorded digest, folded into the identity or a startup check.",
+    "recommendation": "Add AURA_EMBEDDING_REVISION, pass revision= to SentenceTransformer, fold the revision into IndexIdentity.embedding_model_id or assert it against alias metadata at startup.",
+    "confidence": "High"
+  },
+  {
+    "id": "D-12",
+    "severity": "P4",
+    "title": "Evaluation gate triggers on PR/push but every quality number is hash-embedder/scripted-provider and nothing has run since CB-44",
+    "subsystem": "evaluation",
+    "evidence": [
+      ".github/workflows/eval-ci.yml:26-73,126-134",
+      "aura_backend/evaluation/suites/docs_corpus_baseline.json:4-10 (recall@5 0.65, MRR 0.368, nDCG 0.511, precision@k 0.287)",
+      "aura_backend/tests/e2e/test_evaluation_gate.py:78",
+      "docs/production/gap_register.yaml GAP-021 (open)"
+    ],
+    "current_behavior": "The gate can only catch regressions of the hash-embedder pipeline; the production embedder and the clipped prompt (D-05) are unmeasured; no runner executes it.",
+    "expected_behavior": "A real-embedder retrieval report and a real-model answer report (GAP-021 exit condition).",
+    "recommendation": "Run evaluation/runner.py once against sentence-transformers + hosted1 and commit the report; keep the deterministic gate as the merge gate.",
+    "confidence": "High"
+  },
+  {
+    "id": "D-13",
+    "severity": "P3",
+    "title": "On the Railway production target Loop B cannot run a job to completion, and an approved dataset does not survive a redeploy",
+    "subsystem": "learning/loop-B, deploy",
+    "evidence": [
+      "docs/deployment/control-plane.md:29-37 (no worker-training; 'omit it if not')",
+      "aura_backend/celery_app.py:202-206 (training queue, expires 110)",
+      "aura_backend/aura_core/api/admin.py:465-471 (run_inline -> ScriptedTrainer -> NOT_TRAINED)",
+      "aura_backend/aura_core/container.py:492 + aura_core/config/settings.py:1127 (FileDatasetStore at /var/lib/aura/datasets)",
+      "deploy/docker-compose.prod.yml:901 (only compose mounts aura_datasets)",
+      "aura_backend/aura_core/learning/finetune.py:364-365,396-398"
+    ],
+    "current_behavior": "A queued job stays QUEUED forever; an inline job ends NOT_TRAINED; after a Railway redeploy enqueue/run for an approved digest fails with 'dataset is not stored' while the approval row persists. Live state UNKNOWN.",
+    "expected_behavior": "The documented loop is runnable on the live target or documented as dataset-preparation-only there (GAP-017 option b).",
+    "recommendation": "Store datasets in Postgres (digest-keyed JSONL) or object storage so approval and artefact share a lifetime; state in control-plane.md that Loop B on Railway stops at approval.",
+    "confidence": "High (code); live UNKNOWN"
+  },
+  {
+    "id": "D-14",
+    "severity": "P3",
+    "title": "A trained LoRA adapter can be registered and promoted but never serves; promotion to production is a no-op for every artefact LocalLoraTrainer produces",
+    "subsystem": "learning/registry/kernel",
+    "evidence": [
+      "aura_backend/aura_core/adapters/local_lora_trainer.py:16-20",
+      "aura_backend/aura_core/kernel/kernel.py:1990-2006 _servable_model_tag returns None for path/URI artefacts",
+      "aura_backend/aura_core/kernel/kernel.py:824-830,2067-2070",
+      "docs/guides/mlops-guide.md:151,314-317",
+      "aura_backend/aura_core/api/admin.py:491 (imported Ollama tag path; router behavior with an unknown tag on Railway not traced)"
+    ],
+    "current_behavior": "ADR-008 Loop B ends at a CANDIDATE row; GAP-017 target (a) unmet; the registry's production stage can point at something no provider can load.",
+    "expected_behavior": "Promotion refused for non-servable artefacts, or a merge/convert/serve step exists; the registry records servability.",
+    "recommendation": "Make ModelRegistry.transition(to=CANARY|PRODUCTION) refuse artefacts _servable_model_tag would discard (move the helper to the domain); long term, GAP-017's merge/convert/serve step on a GPU host.",
+    "confidence": "High"
+  },
+  {
+    "id": "D-15",
+    "severity": "P3",
+    "title": "A second, legacy learning and ingestion path is still mounted in the v3 gateway and bypasses ADR-008 and KnowledgeEngine",
+    "subsystem": "learning/ingestion/architecture",
+    "evidence": [
+      "aura_backend/aura_service.py:127,137 include api/learning.py (/api/v3/learning/*, api/learning.py:13-65)",
+      "aura_backend/api/learning.py:51-52 enqueues tasks.build_lora_dataset_task",
+      "aura_backend/tasks.py:8-9,110-126 module-scope legacy imports; JSON-file dataset builder",
+      "aura_backend/services/drive.py:164-166 enqueues ingest_pdf_task -> legacy rag_service.ingest_pdf (tasks.py:100)",
+      "aura_backend/aura_service.py:298-300 /health reports legacy learning metrics",
+      "docs/production/gap_register.yaml GAP-038 ('dead legacy tasks')"
+    ],
+    "current_behavior": "An Admin can produce an un-curated, un-approved dataset via /api/v3/learning/build_dataset; Drive sync can index PDFs that never pass the context guard. Client reachability of the Drive path not traced (UNKNOWN).",
+    "expected_behavior": "One learning path (ADR-008) and one ingestion path (ADR-005/006 guard).",
+    "recommendation": "Remove or 410 the /api/v3/learning/* router and build_lora_dataset_task; route ingest_pdf_task through KnowledgeEngine.ingest(segments=...); drop the module-scope legacy imports from tasks.py.",
+    "confidence": "Med-High"
+  },
+  {
+    "id": "D-16",
+    "severity": "P4",
+    "title": "Fine-tune queue drain builds a new container every 120 s, and enqueue reaches into ApprovalService's private store",
+    "subsystem": "learning/resources",
+    "evidence": [
+      "aura_backend/tasks.py:162-172 _drain_finetune_queue calls build_container() directly",
+      "aura_backend/tasks.py:267-284 _ensure_worker_container memoises and runs startup()",
+      "aura_backend/aura_core/learning/finetune.py:358 self._approvals._store.get(...)",
+      "deploy/docker-compose.prod.yml:889 (--max-tasks-per-child=1 bounds the leak on worker-training)"
+    ],
+    "current_behavior": "Bounded by process recycling on worker-training; would accumulate pools on any other consumer; private access bypasses ApprovalService's own lookup.",
+    "expected_behavior": "Workers share one container per process; services use public APIs.",
+    "recommendation": "Use _ensure_worker_container() in _drain_finetune_queue; add ApprovalService.get() and call it.",
+    "confidence": "High"
+  },
+  {
+    "id": "D-17",
+    "severity": "P4",
+    "title": "Status and gap documentation for learning is out of date in both directions",
+    "subsystem": "docs",
+    "evidence": [
+      "docs/status/BACKEND_STATUS.md:69 'GAP-018 (a failed train is recorded as success)' vs aura_core/learning/finetune.py:444-448,508-533 and tests/unit/test_finetune_honesty.py:107-143",
+      "docs/production/gap_register.yaml:470-481 GAP-017 current_state cites code that no longer exists",
+      "docs/guides/mlops-guide.md:6-7 'Loop A ... Gated automatically' (recall gate unwired, D-02)",
+      "docs/status/BACKEND_STATUS.md:57 'F-16 write races open' vs commit 8b34504; :66 'eval-ci.yml is dispatch-only' vs .github/workflows/eval-ci.yml:26-73"
+    ],
+    "current_behavior": "Readers believe a P1 honesty bug and F-16 are open and that eval CI never triggers; readers of GAP-017's current_state believe the trainer still fabricates artefacts.",
+    "expected_behavior": "Status lines reflect the tree.",
+    "recommendation": "Update BACKEND_STATUS.md:57,66,69; rewrite GAP-017's current_state; qualify mlops-guide.md's Loop A gating claim.",
+    "confidence": "High"
+  },
+  {
+    "id": "D-18",
+    "severity": "P4",
+    "title": "No committed evidence of a weight-changing run, and no evaluation of any trained artefact against the base model",
+    "subsystem": "learning/evaluation",
+    "evidence": [
+      "aura_backend/pytest.ini:17,22 (training marker excluded by default)",
+      "aura_backend/tests/training/test_lora_weights_change.py:55,87 (one opt-in test)",
+      "docs/production/gap_register.yaml:493-504 (coordinator-run result, no report path)",
+      ".github/workflows/backend-ci.yml:99-110,242 (never runs -m training)",
+      "aura_backend/aura_core/mlops/model_registry.py:238-251 (canary gate reads metrics no trainer path writes)"
+    ],
+    "current_behavior": "'Fine-tuning works' rests on an uncommitted local run on hf-internal-testing/tiny-random-gpt2; the registry's only automatic quality gate is inert.",
+    "expected_behavior": "GAP-017's exit condition: a report in docs/reports/ with base revision, dataset digest, eval delta and approval id.",
+    "recommendation": "Run pytest tests/training -m training on a host with requirements-train.txt and commit the output; have the job engine call AnswerEvaluator on base vs adapter and write coverage_drop so the canary gate has data.",
+    "confidence": "High"
+  }
+]

@@ -1,0 +1,3731 @@
+{
+  "audit": "AURA AI full-system engineering audit",
+  "date": "2026-10-31",
+  "baseline": {
+    "repository": "E:\\AURA AI",
+    "remote": "https://github.com/anasibrahimgnedy-collab/AURA-AI.git",
+    "branch": "main",
+    "commit": "ffbbb9fff777a7b6117236c67d517fd201ac2208"
+  },
+  "mode": "read-only; no application source, configuration, dependency, git state or existing report modified",
+  "reports": [
+    "AUDIT_BRIEF.md",
+    "README.md",
+    "agent_inventory.md",
+    "client_api_reachability.md",
+    "deployment_and_operations.md",
+    "desktop_and_engineer.md",
+    "executive_summary.md",
+    "feature_matrix.md",
+    "gap_analysis.md",
+    "learning_and_mlops.md",
+    "model_inventory.md",
+    "multimodal_audit.md",
+    "provider_matrix.md",
+    "rag_and_knowledge.md",
+    "readiness_scorecard.md",
+    "remediation_roadmap.md",
+    "repository_inventory.md",
+    "security_and_privacy.md",
+    "system_architecture.md",
+    "testing_and_evaluation.md",
+    "tool_inventory.md",
+    "verification_log.md",
+    "audit_manifest.json"
+  ],
+  "severity_scale": {
+    "P0": "critical",
+    "P1": "high",
+    "P2": "medium",
+    "P3": "low",
+    "P4": "informational"
+  },
+  "consolidated_findings_count": 84,
+  "consolidated_findings_by_severity": {
+    "P1": 9,
+    "P2": 25,
+    "P3": 38,
+    "P4": 12
+  },
+  "raw_pass_findings_count": 117,
+  "raw_pass_findings_by_severity": {
+    "P1": 11,
+    "P2": 34,
+    "P3": 50,
+    "P4": 22
+  },
+  "features_count": 44,
+  "features_by_status": {
+    "BROKEN": 1,
+    "IMPLEMENTED BUT UNREACHABLE": 10,
+    "IMPLEMENTED — NOT FULLY VERIFIED": 20,
+    "NOT IMPLEMENTED": 3,
+    "PARTIALLY IMPLEMENTED": 10
+  },
+  "readiness": {
+    "dimensions": [
+      {
+        "dimension": "Core architecture and correctness",
+        "weight_pct": 10,
+        "score": 3,
+        "weighted": 0.3
+      },
+      {
+        "dimension": "Models and inference infrastructure",
+        "weight_pct": 10,
+        "score": 2,
+        "weighted": 0.2
+      },
+      {
+        "dimension": "Agents and tool execution",
+        "weight_pct": 10,
+        "score": 3,
+        "weighted": 0.3
+      },
+      {
+        "dimension": "Memory, RAG and knowledge",
+        "weight_pct": 10,
+        "score": 2,
+        "weighted": 0.2
+      },
+      {
+        "dimension": "Security and privacy",
+        "weight_pct": 15,
+        "score": 2,
+        "weighted": 0.3
+      },
+      {
+        "dimension": "Testing and evaluation",
+        "weight_pct": 10,
+        "score": 2,
+        "weighted": 0.2
+      },
+      {
+        "dimension": "Reliability and performance",
+        "weight_pct": 10,
+        "score": 2,
+        "weighted": 0.2
+      },
+      {
+        "dimension": "Deployment and operations",
+        "weight_pct": 10,
+        "score": 1,
+        "weighted": 0.1
+      },
+      {
+        "dimension": "Client and product readiness",
+        "weight_pct": 5,
+        "score": 2,
+        "weighted": 0.1
+      }
+    ],
+    "weighted_total_of_5": 2.1
+  },
+  "consolidated_findings": [
+    {
+      "id": "FSA-001",
+      "severity": "P1",
+      "title": "Taint is not inherited across `delegate_to_agent`",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "C-01"
+      ],
+      "phase": 0,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-002",
+      "severity": "P1",
+      "title": "A GCP service-account key and a backend `.env` are recoverable from git history; no rotation recorded",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "F1-01"
+      ],
+      "phase": 0,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-003",
+      "severity": "P3",
+      "title": "Stale plaintext secrets sit beside the checkout and leak into desktop builds",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "A-06",
+        "E3-13"
+      ],
+      "phase": 0,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-004",
+      "severity": "P2",
+      "title": "Desktop app sign-in mints a 30-day, unscoped, non-refreshable token that can fetch the user's data key; revoke is unreachable",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "E3-06",
+        "E3-08",
+        "F1-04"
+      ],
+      "phase": 0,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-005",
+      "severity": "P2",
+      "title": "On Railway the legacy per-IP limiter and audit `source_ip` see the proxy address; uvicorn ignores forwarded headers",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "A-04",
+        "F1-03",
+        "F2-14"
+      ],
+      "phase": 0,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-006",
+      "severity": "P2",
+      "title": "In a trusted root `run_command` has no path confinement, always runs in root[0], and the denylist is a bypassable regex",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "E3-05",
+        "E3-07"
+      ],
+      "phase": 0,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-007",
+      "severity": "P2",
+      "title": "Live-voice PCM frames are not size-validated",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "E1-01"
+      ],
+      "phase": 0,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-008",
+      "severity": "P2",
+      "title": "Backup container mounts the entire `deploy/secrets` directory, including the KEK that wraps every user's ADR-032 data key (CB-08 still open)",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "F1-02"
+      ],
+      "phase": 0,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-009",
+      "severity": "P2",
+      "title": "`/metrics` is unauthenticated unless `AURA_METRICS_TOKEN` is set; Railway doc never asks for it",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "F2-07"
+      ],
+      "phase": 0,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-010",
+      "severity": "P3",
+      "title": "Production CORS default includes localhost origins with credentials (SEC-12)",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "F1-05"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-011",
+      "severity": "P3",
+      "title": "`fetch_url` buffers the whole body before truncating",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "F1-06"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-012",
+      "severity": "P3",
+      "title": "VPS gateway trusts `X-Forwarded-For` from any container (`--forwarded-allow-ips='*'`)",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "F1-10"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-013",
+      "severity": "P3",
+      "title": "hostd `control.json` bearer written with the process umask",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "F1-11"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-014",
+      "severity": "P4",
+      "title": "hostd loopback `/status` is unauthenticated and lists granted roots and backend URL",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "E3-15"
+      ],
+      "phase": 6,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-015",
+      "severity": "P3",
+      "title": "Session/device revocation `SCAN`s all Redis keys; no refresh-token reuse (family) revocation",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "F1-08"
+      ],
+      "phase": 2,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-016",
+      "severity": "P3",
+      "title": "Audit log and turn telemetry keep email and source IP forever and survive erasure",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "F1-07"
+      ],
+      "phase": 2,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-017",
+      "severity": "P3",
+      "title": "`_READ_TOOLS` grants `remember_fact` (a durable write) to every persona, including the \"read-only\" `decision_agent`",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "C-04"
+      ],
+      "phase": 0,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-018",
+      "severity": "P2",
+      "title": "Document chunks, every Qdrant payload and memory `subject` are plaintext, including on third-party Qdrant in the Railway design (CB-22)",
+      "group": {
+        "number": 1,
+        "name": "Critical correctness and security defects"
+      },
+      "sources": [
+        "D-06",
+        "F1-09"
+      ],
+      "phase": 2,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-020",
+      "severity": "P1",
+      "title": "Production ships every `main` push with no CI gate and no branch protection",
+      "group": {
+        "number": 2,
+        "name": "Production blockers"
+      },
+      "sources": [
+        "F2-01"
+      ],
+      "phase": 0,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-021",
+      "severity": "P1",
+      "title": "GitHub Actions is not assigning runners (CB-44); every gate is inert and GAP-043 still says `proven`",
+      "group": {
+        "number": 2,
+        "name": "Production blockers"
+      },
+      "sources": [
+        "F2-02"
+      ],
+      "phase": 0,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-022",
+      "severity": "P1",
+      "title": "Railway ignores `aura_backend/railway.json`; deploy behaviour lives only in the dashboard",
+      "group": {
+        "number": 2,
+        "name": "Production blockers"
+      },
+      "sources": [
+        "F2-03"
+      ],
+      "phase": 0,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-023",
+      "severity": "P1",
+      "title": "VPS deploy path dead on a stale host-key pin; the VPS's running revision, secrets exposure and provenance of the key change are unknown",
+      "group": {
+        "number": 2,
+        "name": "Production blockers"
+      },
+      "sources": [
+        "F2-04"
+      ],
+      "phase": 0,
+      "effort": "S–M"
+    },
+    {
+      "id": "FSA-024",
+      "severity": "P1",
+      "title": "On the live target every SENSITIVE generation has no eligible provider while `hfspace` is 503",
+      "group": {
+        "number": 2,
+        "name": "Production blockers"
+      },
+      "sources": [
+        "B-01",
+        "F2-10"
+      ],
+      "phase": 0,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-025",
+      "severity": "P1",
+      "title": "Admission and hosted quota limits are per process while the gateway runs 4 uvicorn workers plus Celery workers (GAP-011/041)",
+      "group": {
+        "number": 2,
+        "name": "Production blockers"
+      },
+      "sources": [
+        "B-02"
+      ],
+      "phase": 2,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-026",
+      "severity": "P1",
+      "title": "The host-agent registry is per-process while the image defaults to 4 workers; on Railway the Engineer has no fallback runner",
+      "group": {
+        "number": 2,
+        "name": "Production blockers"
+      },
+      "sources": [
+        "E3-01",
+        "E3-14"
+      ],
+      "phase": 0,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-027",
+      "severity": "P2",
+      "title": "Whether Celery workers and beat exist on Railway is undocumented; durable background work may be silently absent",
+      "group": {
+        "number": 2,
+        "name": "Production blockers"
+      },
+      "sources": [
+        "A-03",
+        "F2-05"
+      ],
+      "phase": 0,
+      "effort": "S–M"
+    },
+    {
+      "id": "FSA-028",
+      "severity": "P2",
+      "title": "No metrics scrape, alerting or log retention for the production target; the alert catalogue is VPS-only",
+      "group": {
+        "number": 2,
+        "name": "Production blockers"
+      },
+      "sources": [
+        "F2-06"
+      ],
+      "phase": 6,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-029",
+      "severity": "P2",
+      "title": "No repo-owned backup, restore drill or RPO/RTO for the Railway Postgres/Redis/Qdrant",
+      "group": {
+        "number": 2,
+        "name": "Production blockers"
+      },
+      "sources": [
+        "F2-08"
+      ],
+      "phase": 6,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-030",
+      "severity": "P2",
+      "title": "`AURA_DATA_ENCRYPTION_KEYS` (now wrapping every user's ADR-032 data key) is a lone dashboard variable with no escrow and is missing from the Railway runbook",
+      "group": {
+        "number": 2,
+        "name": "Production blockers"
+      },
+      "sources": [
+        "F2-09"
+      ],
+      "phase": 0,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-031",
+      "severity": "P2",
+      "title": "The non-semantic hash embedder is the default, is not refused in production despite the docstring, and nothing reveals the live embedder",
+      "group": {
+        "number": 2,
+        "name": "Production blockers"
+      },
+      "sources": [
+        "D-04"
+      ],
+      "phase": 0,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-032",
+      "severity": "P4",
+      "title": "ADR-032 key fetch and the agent's Personal-OS tools need migration `0019` live; production is claimed at `0016`",
+      "group": {
+        "number": 2,
+        "name": "Production blockers"
+      },
+      "sources": [
+        "E2-08"
+      ],
+      "phase": 0,
+      "effort": null
+    },
+    {
+      "id": "FSA-040",
+      "severity": "P2",
+      "title": "D8 per-task worktree isolation is never requested by the client; the Agent Review panel is always empty",
+      "group": {
+        "number": 3,
+        "name": "Broken integrations"
+      },
+      "sources": [
+        "E3-03"
+      ],
+      "phase": 3,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-041",
+      "severity": "P2",
+      "title": "Server-side tool timeouts (15 s write, 60 s Engineer deadline) cut off the daemon's 5-minute approval window; a late approval still executes",
+      "group": {
+        "number": 3,
+        "name": "Broken integrations"
+      },
+      "sources": [
+        "E3-02"
+      ],
+      "phase": 2,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-042",
+      "severity": "P2",
+      "title": "The operator console is unreachable on every live target; 32 admin routes (incl. ADR-029 service keys and all Track AP) are raw-API only",
+      "group": {
+        "number": 3,
+        "name": "Broken integrations"
+      },
+      "sources": [
+        "E2-04"
+      ],
+      "phase": 3,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-043",
+      "severity": "P3",
+      "title": "A legacy learning/ingestion path is still mounted and enqueues tasks on a queue no worker consumes; workers import the legacy RAG service at module scope",
+      "group": {
+        "number": 3,
+        "name": "Broken integrations"
+      },
+      "sources": [
+        "A-02",
+        "A-07",
+        "D-15"
+      ],
+      "phase": 3,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-044",
+      "severity": "P3",
+      "title": "Daemon pairing succeeds for accounts the host socket will refuse (4401 with no reason); the app has no paired-device list or revoke",
+      "group": {
+        "number": 3,
+        "name": "Broken integrations"
+      },
+      "sources": [
+        "E2-05",
+        "E3-08",
+        "E3-12"
+      ],
+      "phase": 3,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-045",
+      "severity": "P3",
+      "title": "47 routes have no shipped consumer (backlog says 16): `/tools`, `/agents/runs`, `/knowledge/graph`, `/learning/*`, 25 Track AP admin routes",
+      "group": {
+        "number": 3,
+        "name": "Broken integrations"
+      },
+      "sources": [
+        "A-08",
+        "C-07",
+        "E2-06"
+      ],
+      "phase": 3,
+      "effort": "S–M"
+    },
+    {
+      "id": "FSA-046",
+      "severity": "P3",
+      "title": "No client sends `Idempotency-Key`; the server-side idempotency machinery has zero callers (GAP-013 text STALE)",
+      "group": {
+        "number": 3,
+        "name": "Broken integrations"
+      },
+      "sources": [
+        "E2-03"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-047",
+      "severity": "P3",
+      "title": "`fetch_url`, `list_files`/`read_file` and `get_weather` builders are never wired by `container.py`; `research_agent`'s only network tool cannot be enabled",
+      "group": {
+        "number": 3,
+        "name": "Broken integrations"
+      },
+      "sources": [
+        "C-08"
+      ],
+      "phase": 3,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-048",
+      "severity": "P3",
+      "title": "Deploy Control Plane's readiness and revision probes cannot pass for any plausible `RAILWAY_HEALTH_URL`",
+      "group": {
+        "number": 3,
+        "name": "Broken integrations"
+      },
+      "sources": [
+        "F2-11"
+      ],
+      "phase": 1,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-049",
+      "severity": "P3",
+      "title": "The dead `dev.aureon-ai.tech` preset is still selectable; switching clears tokens without revoking them",
+      "group": {
+        "number": 3,
+        "name": "Broken integrations"
+      },
+      "sources": [
+        "E2-07"
+      ],
+      "phase": 6,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-050",
+      "severity": "P2",
+      "title": "The ten retrieval strategies, the adaptive router and GraphRAG are built and boot-validated but no turn or route uses them; the knowledge graph is written on every ingest and read by nothing in the request path (GAP-023)",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "D-01"
+      ],
+      "phase": 4,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-051",
+      "severity": "P2",
+      "title": "The model sees at most 2 chunks × 280 chars, ≤3 memories in 80 tokens and an 80-token CAG prefix; the global 400-token prompt budget sized for CPU Ollama also caps fast hosted providers",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "B-10",
+        "D-05"
+      ],
+      "phase": 4,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-052",
+      "severity": "P2",
+      "title": "Projects and Goals exist on the server (migration 0004, `models.py:191-232`) and in the client (`features/projects`, `features/goals`, synced via outbox) but are outside the agent's ADR-032 store, `RecordKind` and CRUD tools; goals reach the kernel as title-less snapshots",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "E2-01"
+      ],
+      "phase": 4,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-053",
+      "severity": "P2",
+      "title": "Nightly knowledge refresh promotion is not recall-gated: no evaluator is wired, `max_recall_drop` is dead config (ADR-007/008 claim otherwise)",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "D-02"
+      ],
+      "phase": 4,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-054",
+      "severity": "P3",
+      "title": "With an unchanged embedder the refresh \"candidate\" is the live collection: \"never modified\"/rollback do not hold and the corpus is embedded twice nightly",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "D-03"
+      ],
+      "phase": 4,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-055",
+      "severity": "P2",
+      "title": "Fine-tuning never reaches traffic on any target: production uses `ScriptedTrainer` (`NOT_TRAINED`), a real LoRA adapter is unservable, the dataset store is ephemeral on Railway, and no weight-change run is committed",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "B-05",
+        "D-13",
+        "D-14",
+        "D-18"
+      ],
+      "phase": 4,
+      "effort": "L"
+    },
+    {
+      "id": "FSA-056",
+      "severity": "P2",
+      "title": "Image understanding (ADR-031) is implemented and tested with the echo provider but unreachable in every known deployment: no provider declares `text,image`, `AURA_VISION_ENABLED` is off, `hosted1` is third-party (refused), `hfspace` text-only and down; enabling vision without a VLM silently degrades to OCR-only",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "B-09",
+        "E1-03",
+        "E1-07"
+      ],
+      "phase": 4,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-057",
+      "severity": "P2",
+      "title": "`write_files` (D6 atomic multi-file write) and every `mcp_*` tool are registered under `engineer_agent` but absent from the Engineer persona's grant, so the persona can never use them; tests bypass the grant with hand-built contexts",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "C-02",
+        "E3-04"
+      ],
+      "phase": 3,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-058",
+      "severity": "P3",
+      "title": "Arabic is asymmetric: Arabic TTS ships, STT is `tiny.en` (English-only), OCR installs only `eng` (GAP-020)",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "E1-05"
+      ],
+      "phase": 4,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-059",
+      "severity": "P3",
+      "title": "Live-voice `language` from the client start frame is passed unvalidated to Whisper",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "E1-06"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-060",
+      "severity": "P3",
+      "title": "Engineer tooling is reachable under the default `orchestrator` persona without the Engineer prompt or multi-pass loop",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "C-03"
+      ],
+      "phase": 4,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-061",
+      "severity": "P3",
+      "title": "hostd lifecycle: no restart-on-crash, no re-auth path, no bundled daemon, no installer/signing/updater (CB-26, M8.10)",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "E3-12"
+      ],
+      "phase": 6,
+      "effort": "L"
+    },
+    {
+      "id": "FSA-062",
+      "severity": "P3",
+      "title": "macOS release build is sandboxed without `com.apple.security.network.client`; macOS is never built in CI",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "E3-09"
+      ],
+      "phase": 6,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-063",
+      "severity": "P3",
+      "title": "The Desktop IDE is gated to Windows (`aura_platform.dart:14,19`), the one desktop platform whose CI jobs are `continue-on-error`",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "E3-10"
+      ],
+      "phase": 1,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-064",
+      "severity": "P4",
+      "title": "Memory consolidation never merges (`merged` always 0); merging is write-time only",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "D-09"
+      ],
+      "phase": 4,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-065",
+      "severity": "P4",
+      "title": "No automatic memory extraction exists; memory is written only by `remember_fact`, `POST /memory` and the kernel's session-classification note",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "D-10"
+      ],
+      "phase": 4,
+      "effort": null
+    },
+    {
+      "id": "FSA-066",
+      "severity": "P3",
+      "title": "`MemoryEngine.forget_source` deletes rows but cannot delete vectors (filters on a payload key never written); currently uncalled",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "D-07"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-067",
+      "severity": "P4",
+      "title": "`delegate_to_agent`'s target enum is frozen at container build; blueprint-compiled agents are never delegable",
+      "group": {
+        "number": 4,
+        "name": "Incomplete core features"
+      },
+      "sources": [
+        "C-06"
+      ],
+      "phase": 4,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-070",
+      "severity": "P4",
+      "title": "Postgres FTS scale-out path (ADR-005) is not built; the in-process BM25 index is rebuilt from the whole store in every process at startup",
+      "group": {
+        "number": 5,
+        "name": "Missing capabilities (informational unless noted)"
+      },
+      "sources": [
+        "D-08"
+      ],
+      "phase": 5,
+      "effort": null
+    },
+    {
+      "id": "FSA-071",
+      "severity": "P4",
+      "title": "Not implemented anywhere: video understanding; push notifications (`firebase_messaging` absent, in-app centre only); automatic memory extraction; Track AP super-admin screens (AP9)",
+      "group": {
+        "number": 5,
+        "name": "Missing capabilities (informational unless noted)"
+      },
+      "sources": [
+        "D-10",
+        "E2-04"
+      ],
+      "phase": null,
+      "effort": null
+    },
+    {
+      "id": "FSA-072",
+      "severity": "P3",
+      "title": "In-process BM25 per worker: memory and boot time grow with corpus × process count; no ceiling documented",
+      "group": {
+        "number": 6,
+        "name": "Performance and scalability"
+      },
+      "sources": [
+        "D-08"
+      ],
+      "phase": 5,
+      "effort": null
+    },
+    {
+      "id": "FSA-073",
+      "severity": "P3",
+      "title": "No `command_timeout` on the asyncpg pool; legacy SQLAlchemy engine never disposed; connection budget never computed (two pools × workers vs Postgres default 100)",
+      "group": {
+        "number": 6,
+        "name": "Performance and scalability"
+      },
+      "sources": [
+        "F1-12"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-074",
+      "severity": "P3",
+      "title": "The only real-model latency evidence is the 2026-09 sandbox (qwen2.5:3b, CPU Ollama, p50 56 s / p95 71 s, single-flight); nothing measured on the current Railway + Groq topology",
+      "group": {
+        "number": 6,
+        "name": "Performance and scalability"
+      },
+      "sources": [
+        "lead"
+      ],
+      "phase": 5,
+      "effort": null
+    },
+    {
+      "id": "FSA-080",
+      "severity": "P2",
+      "title": "The architecture, v3-only, reachability, route-auth and IDOR gates cannot execute anywhere today: the local venv (Python 3.14, FastAPI 0.136.3) drifts from `requirements.lock` (FastAPI 0.141.1) and CI has no runners",
+      "group": {
+        "number": 7,
+        "name": "Evaluation and testing"
+      },
+      "sources": [
+        "A-01"
+      ],
+      "phase": 1,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-081",
+      "severity": "P2",
+      "title": "No engine-backed speech/OCR test runs anywhere: CI installs no espeak-ng/tesseract, every real-engine test is skipif-gated, the live-voice load round-trip unconditionally skips, and no Phase H device/latency report exists",
+      "group": {
+        "number": 7,
+        "name": "Evaluation and testing"
+      },
+      "sources": [
+        "E1-02"
+      ],
+      "phase": 1,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-082",
+      "severity": "P2",
+      "title": "Every quality number is hash-embedder / scripted-provider; no real-embedder retrieval report and no real-model answer report exist (GAP-021); the eval gate cannot see the clipped prompt (FSA-051)",
+      "group": {
+        "number": 7,
+        "name": "Evaluation and testing"
+      },
+      "sources": [
+        "D-12"
+      ],
+      "phase": 1,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-083",
+      "severity": "P3",
+      "title": "The committed API-reachability matrix over-credits callers (UI route paths, method-blind matches, test files)",
+      "group": {
+        "number": 7,
+        "name": "Evaluation and testing"
+      },
+      "sources": [
+        "E2-02"
+      ],
+      "phase": 1,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-084",
+      "severity": "P3",
+      "title": "ADR-030 hosted inference is live on Railway but Phase 6 is unproven; the verify workflow needs the dead VPS path and the only report is in-process (9/10, 429 burst skipped, against OpenRouter not the deployed provider)",
+      "group": {
+        "number": 7,
+        "name": "Evaluation and testing"
+      },
+      "sources": [
+        "B-06"
+      ],
+      "phase": 1,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-085",
+      "severity": "P3",
+      "title": "Nothing in the desktop/hostd/Engineer-workspace track is proven: no green Host Daemon CI since 2026-09-11, no real-machine end-to-end report (GAP-026), no `verify-engineer-workspaces.sh` report (GAP-025)",
+      "group": {
+        "number": 7,
+        "name": "Evaluation and testing"
+      },
+      "sources": [
+        "E3-11"
+      ],
+      "phase": 1,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-086",
+      "severity": "P3",
+      "title": "Testing-pass findings (G) — see `testing_and_evaluation.md` for the suite inventory, executed results and per-subsystem regression proposals; its `G-xx` items are tracked there and summarised in `remediation_roadmap.md` Phase 1.",
+      "group": {
+        "number": 7,
+        "name": "Evaluation and testing"
+      },
+      "sources": [],
+      "phase": null,
+      "effort": null
+    },
+    {
+      "id": "FSA-090",
+      "severity": "P3",
+      "title": "Deploy-time migration safety relies on an \"additive migrations\" assumption nothing enforces; rollback reverts the image only",
+      "group": {
+        "number": 8,
+        "name": "Reliability and recovery"
+      },
+      "sources": [
+        "F2-12"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-091",
+      "severity": "P4",
+      "title": "Fine-tune queue drain builds a new container every 120 s and reaches into `ApprovalService._store`",
+      "group": {
+        "number": 8,
+        "name": "Reliability and recovery"
+      },
+      "sources": [
+        "D-16"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-092",
+      "severity": "P3",
+      "title": "Structured-output requests exclude every provider left at the default `SUPPORTS_JSON_MODE=false`; no boot-time warning",
+      "group": {
+        "number": 8,
+        "name": "Reliability and recovery"
+      },
+      "sources": [
+        "B-08"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-093",
+      "severity": "P3",
+      "title": "Native Ollama adapter reports every completion as `finish_reason=stop` (truncation invisible)",
+      "group": {
+        "number": 8,
+        "name": "Reliability and recovery"
+      },
+      "sources": [
+        "B-07"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-094",
+      "severity": "P4",
+      "title": "Legacy plaintext rows are read silently after keys are configured; no count of remaining plaintext rows",
+      "group": {
+        "number": 8,
+        "name": "Reliability and recovery"
+      },
+      "sources": [
+        "F1-13"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-100",
+      "severity": "P3",
+      "title": "Dev/prod compose parity gaps on security-relevant keys (sandbox network name, mock attestation default, sandbox limits, hosted/large-provider keys)",
+      "group": {
+        "number": 9,
+        "name": "Architectural inconsistencies"
+      },
+      "sources": [
+        "A-05"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-101",
+      "severity": "P3",
+      "title": "Two stacked rate limiters with different keying (see FSA-005); two learning paths (see FSA-043); two sync-era stores for Personal OS partially unified (see FSA-052). Tracked under those entries.",
+      "group": {
+        "number": 9,
+        "name": "Architectural inconsistencies"
+      },
+      "sources": [],
+      "phase": null,
+      "effort": null
+    },
+    {
+      "id": "FSA-110",
+      "severity": "P3",
+      "title": "Embedder (`bge-small`), cross-encoder, Whisper weights and the Ollama tag load by name with no revision/digest; Whisper is fetched from the Hub on first transcription per fresh container",
+      "group": {
+        "number": 10,
+        "name": "Technical debt"
+      },
+      "sources": [
+        "B-03",
+        "D-11",
+        "E1-04"
+      ],
+      "phase": 2,
+      "effort": "M"
+    },
+    {
+      "id": "FSA-111",
+      "severity": "P3",
+      "title": "HF Space image is `vllm/vllm-openai:latest` with an optional model revision; nginx/postgres/redis/tinyproxy float within a tag",
+      "group": {
+        "number": 10,
+        "name": "Technical debt"
+      },
+      "sources": [
+        "B-04",
+        "F2-13"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-112",
+      "severity": "P3",
+      "title": "`TOOLS_MAX_CALLS_PER_TURN` is parsed and documented but never enforced",
+      "group": {
+        "number": 10,
+        "name": "Technical debt"
+      },
+      "sources": [
+        "C-05"
+      ],
+      "phase": 2,
+      "effort": "S"
+    },
+    {
+      "id": "FSA-113",
+      "severity": "P4",
+      "title": "Tracked `deploy/vps_known_hosts.tmp` duplicates the stale pin; not covered by the artefact guard",
+      "group": {
+        "number": 10,
+        "name": "Technical debt"
+      },
+      "sources": [
+        "F2-15"
+      ],
+      "phase": 1,
+      "effort": null
+    },
+    {
+      "id": "FSA-114",
+      "severity": "P4",
+      "title": "Repository strays: three stale `.claude/worktrees` (one with an unmerged September client commit), root `ML_ENVIRONMENT_REPORT.md`, `test_personal_os.py`, `aura_backend/{learning_logs.json,routing_centroids.json,sentiment_centroids.json,local_qdrant_storage/,Deployment_info.txt}`, root `docker-compose.yml` (legacy local stack)",
+      "group": {
+        "number": 10,
+        "name": "Technical debt"
+      },
+      "sources": [
+        "lead"
+      ],
+      "phase": 6,
+      "effort": null
+    },
+    {
+      "id": "FSA-120",
+      "severity": "P4",
+      "title": "Documentation contradicted by the tree (each pass's \"Documentation inaccuracies\" section has the paired citations)",
+      "group": {
+        "number": 11,
+        "name": "Documentation inaccuracies (all P4, one entry)"
+      },
+      "sources": [
+        "A-09",
+        "B-11",
+        "D-17",
+        "E1-09",
+        "E3-16"
+      ],
+      "phase": 1,
+      "effort": "S–M"
+    }
+  ],
+  "features": [
+    {
+      "feature": "Chat (non-streaming `POST /api/v3/chat`)",
+      "integration_status": "API/service-key only",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Streaming chat (SSE)",
+      "integration_status": "Reachable",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Memory (6 kinds, decay, provenance, forget)",
+      "integration_status": "Reachable; sync id fix unverified live",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "RAG / knowledge-grounded QA",
+      "integration_status": "Reachable",
+      "overall_status": "PARTIALLY IMPLEMENTED",
+      "overall_status_note": "PARTIALLY IMPLEMENTED (quality path unmeasured; live provider gap)"
+    },
+    {
+      "feature": "Retrieval strategies / adaptive router / GraphRAG",
+      "integration_status": "Not connected to any turn",
+      "overall_status": "IMPLEMENTED BUT UNREACHABLE",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Knowledge graph",
+      "integration_status": "Written, never read",
+      "overall_status": "IMPLEMENTED BUT UNREACHABLE",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Knowledge ingestion (upload, PDF, OCR, chunking)",
+      "integration_status": "Reachable",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Knowledge refresh (nightly rebuild/promotion)",
+      "integration_status": "Beat/worker presence on Railway UNKNOWN (FSA-027)",
+      "overall_status": "PARTIALLY IMPLEMENTED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Agentic execution (8 personas, planning, budgets)",
+      "integration_status": "Reachable",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Tool execution (policy, taint, capability)",
+      "integration_status": "Reachable",
+      "overall_status": "PARTIALLY IMPLEMENTED",
+      "overall_status_note": "PARTIALLY IMPLEMENTED (delegation taint gap)"
+    },
+    {
+      "feature": "Human approvals (`approval_id` bound to call digest)",
+      "integration_status": "Reachable",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Personal OS — Tasks / Calendar / Finance / Health",
+      "integration_status": "Blocked live until 0019 applies (FSA-032)",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Personal OS — Projects / Goals",
+      "integration_status": "App-only",
+      "overall_status": "PARTIALLY IMPLEMENTED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Personal OS — Reminders / Notes / Income",
+      "integration_status": "—",
+      "overall_status": "PARTIALLY IMPLEMENTED",
+      "overall_status_note": "PARTIALLY IMPLEMENTED (no first-class model)"
+    },
+    {
+      "feature": "Insights / daily briefing / proactivity",
+      "integration_status": "Beat presence on Railway UNKNOWN (FSA-027)",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Automation (email/issue analysis)",
+      "integration_status": "Reachable; cannot succeed live",
+      "overall_status": "IMPLEMENTED BUT UNREACHABLE",
+      "overall_status_note": "IMPLEMENTED BUT UNREACHABLE (live)"
+    },
+    {
+      "feature": "Voice input (batch STT)",
+      "integration_status": "Reachable",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Speech output (TTS)",
+      "integration_status": "Reachable",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Live voice (`/api/v3/voice/live` WS)",
+      "integration_status": "HTTP/1.1-only nginx rule on VPS; Railway path unverified",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Arabic voice/OCR",
+      "integration_status": "—",
+      "overall_status": "PARTIALLY IMPLEMENTED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "OCR (PDF/images)",
+      "integration_status": "Reachable",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Vision (image understanding, ADR-031)",
+      "integration_status": "Unreachable",
+      "overall_status": "IMPLEMENTED BUT UNREACHABLE",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Video",
+      "integration_status": "—",
+      "overall_status": "NOT IMPLEMENTED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Learning — dataset curation + approval",
+      "integration_status": "—",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Fine-tuning / weight modification",
+      "integration_status": "No path to traffic",
+      "overall_status": "IMPLEMENTED BUT UNREACHABLE",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Model management (list/pull/delete, registry, promotion, rollback)",
+      "integration_status": "—",
+      "overall_status": "IMPLEMENTED BUT UNREACHABLE",
+      "overall_status_note": "IMPLEMENTED BUT UNREACHABLE (live)"
+    },
+    {
+      "feature": "Provider management (breakers, reset, routing explain)",
+      "integration_status": "—",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Administration (console, RBAC, approvals, access, audit, GDPR forget)",
+      "integration_status": "Unreachable",
+      "overall_status": "IMPLEMENTED BUT UNREACHABLE",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Coding agent (Engineer persona, sandbox/hostd routing)",
+      "integration_status": "Per-process host registry × 4 workers (FSA-026)",
+      "overall_status": "PARTIALLY IMPLEMENTED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Desktop IDE (explorer, editor, terminal, git, debug, palette)",
+      "integration_status": "—",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Desktop host daemon (pairing, RPC, containment, approvals, PTY, worktrees, DAP)",
+      "integration_status": "Isolation never requested by client (FSA-040); approval/timeout mismatch (FSA-041)",
+      "overall_status": "PARTIALLY IMPLEMENTED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Desktop packaging / updater / signing",
+      "integration_status": "—",
+      "overall_status": "NOT IMPLEMENTED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Offline operation (local Drift data, no local inference)",
+      "integration_status": "—",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Synchronisation (`/api/v3/sync` cursor protocol)",
+      "integration_status": "Reachable",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Auth (Google sign-in, JWT iss/aud, refresh rotation, device attestation)",
+      "integration_status": "Desktop token 30-day unscoped (FSA-004)",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Push notifications",
+      "integration_status": "—",
+      "overall_status": "NOT IMPLEMENTED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Observability (metrics, alerts, logs, tracing)",
+      "integration_status": "No scrape/alerts for Railway (FSA-028); `/metrics` auth opt-in (FSA-009)",
+      "overall_status": "IMPLEMENTED BUT UNREACHABLE",
+      "overall_status_note": "IMPLEMENTED BUT UNREACHABLE (live)"
+    },
+    {
+      "feature": "Backup / disaster recovery",
+      "integration_status": "Nothing for Railway datastores (FSA-029)",
+      "overall_status": "PARTIALLY IMPLEMENTED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "CI/CD gating and deploy",
+      "integration_status": "Runners dead; `main` unprotected; Railway auto-deploys; VPS path dead (FSA-020…023)",
+      "overall_status": "BROKEN",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Hosted open-weight inference (ADR-030 slots)",
+      "integration_status": "Phase 6 unproven (FSA-084)",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Two-plane deployment (Railway control + HF inference)",
+      "integration_status": "Partially deployed: control plane live, inference plane down, VPS monolith stale (see `deployment_and_operations.md`)",
+      "overall_status": "PARTIALLY IMPLEMENTED",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Track AP (connectors, USM, blueprints, super-admin deploy)",
+      "integration_status": "25 uncalled routes",
+      "overall_status": "IMPLEMENTED BUT UNREACHABLE",
+      "overall_status_note": ""
+    },
+    {
+      "feature": "Service keys / caller context (ADR-029)",
+      "integration_status": "API-only",
+      "overall_status": "IMPLEMENTED BUT UNREACHABLE",
+      "overall_status_note": "IMPLEMENTED BUT UNREACHABLE (UI)"
+    },
+    {
+      "feature": "GitHub link (Engineer)",
+      "integration_status": "Reachable",
+      "overall_status": "IMPLEMENTED — NOT FULLY VERIFIED",
+      "overall_status_note": ""
+    }
+  ],
+  "raw_pass_findings": [
+    {
+      "id": "A-01",
+      "severity": "P2",
+      "title": "Architecture gate (v3-only surface, route reachability, route-auth/IDOR scans) is not executable anywhere right now",
+      "subsystem": "verification/ci",
+      "evidence": [
+        "EXECUTED-HERE: pytest tests/architecture -> 8 failed; 6 are AttributeError: module 'fastapi.routing' has no attribute 'iter_route_contexts'",
+        "aura_backend/tests/architecture/test_v3_only_surface.py:29",
+        "aura_backend/scripts/api_reachability.py:73",
+        "aura_backend/tests/security/test_route_auth.py:125",
+        "aura_backend/tests/security/test_idor.py:125",
+        "aura_backend/requirements.lock:587 fastapi==0.141.1 vs venv fastapi 0.136.3 / starlette 1.2.1",
+        "CI runners not assigned since 2026-10-28 (CB-44, DOCUMENTED ONLY)"
+      ],
+      "current_behavior": "Six invariants error before asserting; CI does not run; docs/guides/api-reachability.md cannot be regenerated or checked locally.",
+      "expected_behavior": "Every merge proves all /api/ routes are under /api/v3, the admin surface cannot browse user content, every uncalled route is triaged, and the auth/IDOR sweeps pass.",
+      "recommendation": "Owner re-syncs the venv to requirements.lock and re-runs; until CI runners return, run pytest tests/architecture tests/security locally before each merge and record the result; guard the FastAPI feature with an explicit 'lock not installed' failure.",
+      "confidence": "High",
+      "pass": "A",
+      "report": "system_architecture.md"
+    },
+    {
+      "id": "A-02",
+      "severity": "P3",
+      "title": "Ingestion-family Celery tasks are published to a queue no worker consumes",
+      "subsystem": "background-jobs/wiring",
+      "evidence": [
+        "aura_backend/tasks.py:50, 61, 110 (no queue= in decorator)",
+        "aura_backend/celery_app.py:131-149 (no task_routes / task_default_queue)",
+        "deploy/docker-compose.prod.yml:747-911 workers consume -Q realtime | ingestion,learning | training",
+        "docs/deployment/control-plane.md:30-32",
+        "aura_backend/api/learning.py:52 build_lora_dataset_task.delay (POST /api/v3/learning/build_dataset)",
+        "aura_backend/services/drive.py:166 ingest_pdf_task.delay (router not mounted in aura_service.py:124-139)"
+      ],
+      "current_behavior": ".delay() lands on Celery's default 'celery' queue; no worker consumes it; the returned task id never runs.",
+      "expected_behavior": "Tasks run on the ingestion queue they are named for, or the dead routes are removed (GAP-013).",
+      "recommendation": "Add queue=\"ingestion\" to the three decorators or remove the dead learning/drive paths; add a unit test asserting each registered task's queue is consumed by a compose worker.",
+      "confidence": "High (code); runtime behavior unverified",
+      "pass": "A",
+      "report": "system_architecture.md"
+    },
+    {
+      "id": "A-03",
+      "severity": "P2",
+      "title": "Railway target codifies only the gateway; outbox drain, insights, briefings, workspace reaper and idempotency purge depend on hand-created workers/beat",
+      "subsystem": "deployment-boundary",
+      "evidence": [
+        "aura_backend/railway.json:4-14 (one service)",
+        "aura_backend/Dockerfile:147 (uvicorn gateway only)",
+        ".github/workflows/control-plane-deploy.yml:24-28",
+        "docs/deployment/control-plane.md:23-36",
+        "aura_backend/aura_core/container.py:145-155 DurableEventBus -> outbox",
+        "aura_backend/tasks.py:199-450; aura_backend/celery_app.py:157-216 beat schedule"
+      ],
+      "current_behavior": "Whether worker-realtime/worker-ingestion/beat run on Railway is UNKNOWN; no manifest, no CI check, status docs silent. If absent, durable events accumulate unconsumed and no scheduled job runs.",
+      "expected_behavior": "The background tier of the production control plane is declared in-repo and its presence is asserted by the deploy's health verification.",
+      "recommendation": "Expose beat heartbeat age and outbox backlog on /admin/status; fail control-plane-deploy's health step on a stale heartbeat; record in BACKEND_STATUS.md whether the three services exist today.",
+      "confidence": "Med",
+      "pass": "A",
+      "report": "system_architecture.md"
+    },
+    {
+      "id": "A-04",
+      "severity": "P2",
+      "title": "Two stacked per-IP rate limiters key on different addresses; on Railway the legacy one likely collapses all users into one 100 rpm bucket",
+      "subsystem": "edge/security",
+      "evidence": [
+        "aura_backend/infrastructure/http_limits.py:67 request.client.host",
+        "aura_backend/aura_service.py:235 RateLimitMiddleware(requests_per_minute=100)",
+        "aura_backend/aura_core/security/rate_limit.py:202-229 extract_client_ip (right-most X-Forwarded-For)",
+        "aura_backend/aura_service.py:288-292 SlidingWindowRateLimiter wired into build_router",
+        "aura_backend/Dockerfile:147 --proxy-headers without --forwarded-allow-ips",
+        "Railway has no nginx (SEC-08, AURA_FULL_SYSTEM_REVIEW.md:252)"
+      ],
+      "current_behavior": "On the VPS both limiters see the real peer via nginx. On Railway, if the edge peer is not loopback, request.client.host is the proxy for everyone and the legacy limiter throttles the whole deployment collectively at 100 req/min.",
+      "expected_behavior": "One limiter, keyed on the trusted-proxy-resolved client address, on every target.",
+      "recommendation": "Remove the legacy RateLimitMiddleware from aura_service.py (the aura_core limiter is already wired) or key it with extract_client_ip; set --forwarded-allow-ips to Railway's edge range; verify live with two source IPs and the 429 metric series.",
+      "confidence": "Med",
+      "pass": "A",
+      "report": "system_architecture.md"
+    },
+    {
+      "id": "A-05",
+      "severity": "P3",
+      "title": "Dev/prod compose parity gaps on security-relevant keys",
+      "subsystem": "deploy",
+      "evidence": [
+        "deploy/docker-compose.dev.yml:365 AURA_SANDBOX_NETWORK: sandbox_egress (unprefixed, hard-coded)",
+        "deploy/docker-compose.prod.yml:565-566 ${AURA_SANDBOX_NETWORK:-aura_sandbox_egress} with project-prefix comment",
+        "deploy/docker-compose.dev.yml:333 ALLOW_MOCK_ATTESTATION default true vs prod.yml:519 false (subagent)",
+        "prod.yml:448-585 HFSPACE/HF_TOKEN/large-provider and sandbox limit keys absent from dev (subagent)",
+        "CLAUDE.md:264-271 parity rule"
+      ],
+      "current_behavior": "Dev sandbox would attach to a network name compose does not create (CODE-PRESENT / BEHAVIOR UNVERIFIED); dev accepts mock attestation by default; sandbox resource limits unset in dev.",
+      "expected_behavior": "The two files differ only in project name, ports and secrets.",
+      "recommendation": "Align the listed keys; extend the compose-plumbing parity tests to sandbox and attestation keys.",
+      "confidence": "Med",
+      "pass": "A",
+      "report": "system_architecture.md"
+    },
+    {
+      "id": "A-06",
+      "severity": "P3",
+      "title": "Secret-literal fitness test scans gitignored files and fails on developer checkouts; stale secret copies on disk",
+      "subsystem": "secrets-hygiene/verification",
+      "evidence": [
+        "EXECUTED-HERE: tests/architecture/test_no_committed_client_secrets.py:200 fails on deploy/.env:4, deploy/.env.bak-20260914-134105:4 (Google OAuth client secret), aura_backend/credentials.json:5 (private key)",
+        "git ls-files -> none tracked",
+        "git check-ignore -v -> .gitignore:8 .env; .gitignore:9 .env.*; aura_backend/.gitignore:1 credentials.json"
+      ],
+      "current_behavior": "Nothing is committed, but the test cannot distinguish tracked from untracked files, and a 2026-09-14 .env backup plus a service-account private key sit in plaintext beside the checkout.",
+      "expected_behavior": "The test checks the committed tree only; no stale secret copies on disk.",
+      "recommendation": "Scope the scan to git ls-files; owner deletes deploy/.env.bak-20260914-134105 and moves credentials.json out of the repo directory (rotate if provenance is unclear). Values redacted in this report.",
+      "confidence": "High",
+      "pass": "A",
+      "report": "system_architecture.md"
+    },
+    {
+      "id": "A-07",
+      "severity": "P3",
+      "title": "Every Celery worker imports the legacy RAG service at module scope, which opens (or silently creates) a Qdrant client at import",
+      "subsystem": "legacy-tree/background-jobs",
+      "evidence": [
+        "aura_backend/tasks.py:8 from services.rag import rag_service",
+        "aura_backend/services/rag.py:374 rag_service = RAGService() at module level",
+        "aura_backend/services/rag.py:35-51 QdrantClient(...) in __init__, fallback QdrantClient(path=\"local_qdrant_storage\")",
+        "aura_backend/tests/architecture/test_dependency_rules.py:594-617 bans this pattern inside aura_core only"
+      ],
+      "current_behavior": "Realtime/training workers construct a Qdrant client at import; with QDRANT_HOST unset a private sqlite Qdrant is created that nothing reads. Only the A-02 tasks use it, so today's effect is import-time coupling.",
+      "expected_behavior": "Workers connect lazily and only to the stores their queue needs.",
+      "recommendation": "Move the services.rag import inside the two ingestion tasks or delete them with A-02; keep tasks.py importable without infrastructure.",
+      "confidence": "Med",
+      "pass": "A",
+      "report": "system_architecture.md"
+    },
+    {
+      "id": "A-08",
+      "severity": "P4",
+      "title": "Backend route surface grew to 47 uncalled routes; backlog still says 16",
+      "subsystem": "reachability/docs",
+      "evidence": [
+        "docs/guides/api-reachability.md:14-127 (47 rows with 'none')",
+        "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:195 CB-30 '16 uncalled routes'",
+        "aura_backend/aura_core/api/admin_adaptation.py:99-347 (25 Track AP routes, no console page)",
+        "aura_backend/scripts/api_reachability.py:37-48 TRIAGE"
+      ],
+      "current_behavior": "All 47 are IMPLEMENTED BUT UNREACHABLE from any shipped UI; triaged as 'to wire (AP9)' or 'to wire or remove'.",
+      "expected_behavior": "Backlog count matches the matrix; each group has an owner decision.",
+      "recommendation": "Update CB-30; decide remove-vs-wire for learning/* and /tools.",
+      "confidence": "High",
+      "pass": "A",
+      "report": "system_architecture.md"
+    },
+    {
+      "id": "A-09",
+      "severity": "P4",
+      "title": "Documentation inaccuracies in the architecture description",
+      "subsystem": "docs",
+      "evidence": [
+        "CLAUDE.md:239 ADR range ends at 031 but docs/architecture/032-personal-os-single-store.md exists",
+        "CLAUDE.md:201 ADR-030 'Proposed' vs 00-overview.md:137 'Proposed; Phase 1 built' and wired slots",
+        "CLAUDE.md:272-275 'nginx is the only published port' is VPS-only; Railway exposes uvicorn (Dockerfile:147)",
+        "docs/status/BACKEND_STATUS.md:67,187 ADR-032 migration '0017' vs :79-80 and CB-28 '0019'; tree has 0019_user_data_keys.py",
+        "CLAUDE.md:248 SYNCABLE_MODELS location contradicted by AURA_FULL_SYSTEM_REVIEW.md:525 (UNKNOWN which is right)"
+      ],
+      "current_behavior": "Docs describe a slightly different tree than the one checked out.",
+      "expected_behavior": "CLAUDE.md and status docs match the tree.",
+      "recommendation": "Correct the listed lines.",
+      "confidence": "High",
+      "pass": "A",
+      "report": "system_architecture.md"
+    },
+    {
+      "id": "B-01",
+      "severity": "P1",
+      "title": "On the live target, every SENSITIVE generation has no eligible provider while hfspace is down",
+      "subsystem": "llm/routing + deployment",
+      "evidence": [
+        "aura_backend/aura_core/llm/router.py:325-327",
+        "aura_backend/aura_core/config/settings.py:485",
+        "aura_backend/aura_core/llm/sensitivity.py:49-50",
+        "aura_backend/aura_core/kernel/kernel.py:1163-1196",
+        "aura_backend/aura_core/tools/registry.py:405",
+        "docs/status/BACKEND_STATUS.md:24,35-36 (DOCUMENTED ONLY)",
+        "docs/deployment/control-plane.md:149,166"
+      ],
+      "current_behavior": "With providers hosted1,hfspace and hfspace returning 503, any turn that draws on memory/documents/goals/non-clean history, runs a tool, is an Engineer or image turn, and every unclassified background generation is routed only to hfspace; once its circuit opens, plan() has no candidates and the request fails with AllProvidersFailedError (503). Only context-free chat is served by hosted1.",
+      "expected_behavior": "A SENSITIVE-capable provider is always available, or the operator consciously raises the hosted ceiling; readiness distinguishes 'sensitive-capable provider down' from healthy.",
+      "recommendation": "Restore hfspace on an always-on GPU flavor or add a second SENSITIVE-capable node; add a readiness/alert signal for sensitive-capable provider health; document the consequence in control-plane.md next to AURA_LLM_PROVIDERS. Do not raise hosted1 to sensitive without an owner decision (ADR-030 section 4).",
+      "confidence": "High (code) / Med (live state is a status-doc claim)",
+      "pass": "B",
+      "report": "provider_matrix.md"
+    },
+    {
+      "id": "B-02",
+      "severity": "P1",
+      "title": "Admission and quota limits are per process; the VPS stack runs 4 gateway workers plus Celery workers against a single Ollama slot",
+      "subsystem": "llm/admission, deployment",
+      "evidence": [
+        "aura_backend/aura_core/llm/admission.py:27-31",
+        "aura_backend/aura_core/llm/quota.py:36-40",
+        "deploy/docker-compose.prod.yml:403,434,440,782,952",
+        "docs/production/gap_register.yaml:286-313 (GAP-011 open)"
+      ],
+      "current_behavior": "Effective concurrency on Ollama is 1 x number of processes; overflow queues inside Ollama until the 180 s timeout. Per-minute hosted quota windows are also per process, so N processes can each spend the provider's RPM.",
+      "expected_behavior": "One shared limiter per capacity group across processes, and a measured concurrency matrix (GAP-041).",
+      "recommendation": "Build the Redis-backed cross-process admission/quota controller the module docstring names, or run inference-facing processes with AURA_WORKERS=1; run tests/load on the real topology.",
+      "confidence": "High (code) / Med (impact unmeasured)",
+      "pass": "B",
+      "report": "provider_matrix.md"
+    },
+    {
+      "id": "B-03",
+      "severity": "P2",
+      "title": "Embedder, cross-encoder and Whisper weights are loaded by name with no revision; the LLM is an Ollama tag",
+      "subsystem": "supply-chain/model pinning",
+      "evidence": [
+        "aura_backend/aura_core/llm/embeddings.py:358",
+        "aura_backend/aura_core/knowledge/reranking.py:104",
+        "aura_backend/aura_core/adapters/whisper_stt.py:63",
+        "deploy/docker-compose.prod.yml:430",
+        "aura_backend/Dockerfile:67-99 (Piper assets SHA-pinned, for contrast)"
+      ],
+      "current_behavior": "An upstream Hub push silently changes embeddings (the index identity guards by model id only), rerank scores and transcripts; the Ollama model can change on image/weights pull.",
+      "expected_behavior": "Every weight artefact pinned by revision/digest and recorded in index identity and telemetry.",
+      "recommendation": "Add *_MODEL_REVISION settings for embedding, rerank and STT, pass revision= to the loaders, include it in EmbeddingResult.model_id; pin the Ollama model by digest or serve via vLLM --revision.",
+      "confidence": "High",
+      "pass": "B",
+      "report": "provider_matrix.md"
+    },
+    {
+      "id": "B-04",
+      "severity": "P2",
+      "title": "HF Space inference image is unpinned (vllm/vllm-openai:latest); model revision optional",
+      "subsystem": "deployment/inference plane",
+      "evidence": [
+        "deploy/spaces/inference-vllm/Dockerfile:21",
+        "deploy/spaces/inference-vllm/entrypoint.sh:22-24,65-67",
+        "deploy/docker-compose.prod.yml:984 (on-host vllm pinned by tag+digest)",
+        "docs/reports/AURA_FULL_SYSTEM_REVIEW.md:251 (SEC-07)"
+      ],
+      "current_behavior": "A Space rebuild can change vLLM behaviour; without VLLM_MODEL_REVISION the served weights can change silently.",
+      "expected_behavior": "Rented plane pinned like the on-host compose: image digest and mandatory model revision.",
+      "recommendation": "Pin the Space base image by tag+digest with a deliberate bump policy; make VLLM_MODEL_REVISION required in entrypoint.sh (fail loudly like the API-key check).",
+      "confidence": "High",
+      "pass": "B",
+      "report": "provider_matrix.md"
+    },
+    {
+      "id": "B-05",
+      "severity": "P2",
+      "title": "No path from a trained LoRA adapter to served traffic; the production trainer trains nothing",
+      "subsystem": "learning/fine-tuning",
+      "evidence": [
+        "deploy/docker-compose.prod.yml:556,877-905",
+        "aura_backend/aura_core/learning/finetune.py:121-140",
+        "aura_backend/aura_core/adapters/local_lora_trainer.py:16-20,301-312",
+        "aura_backend/aura_core/kernel/kernel.py:1991-2006",
+        "grep: no caller of OllamaProvider.create_model/warm_model; aura_core/api/admin.py:565-611 uses list/pull/delete only"
+      ],
+      "current_behavior": "Approval -> job -> NOT_TRAINED on every live target (scripted trainer). With worker-training, a SUCCEEDED job registers a CANDIDATE whose adapter directory the kernel refuses to serve; no merge/convert/create step exists.",
+      "expected_behavior": "Learning yields a servable, evaluated model version, or the capability is described as dataset curation only.",
+      "recommendation": "Build the merge -> GGUF -> create_model -> canary step behind RegressionGate, or relabel the capability in status docs and the client.",
+      "confidence": "High",
+      "pass": "B",
+      "report": "provider_matrix.md"
+    },
+    {
+      "id": "B-06",
+      "severity": "P2",
+      "title": "ADR-030 hosted inference is live on Railway but Phase 6 is unproven, and the proof workflow targets a VPS whose host key changed",
+      "subsystem": "llm/hosted, verification",
+      "evidence": [
+        ".github/workflows/verify-hosted-inference.yml:124-134",
+        "docs/status/BACKEND_STATUS.md:37",
+        "docs/reports/phase-6-hosted-inference-openrouter-inprocess-20261028.txt:1-16,42-43,53",
+        "docs/production/gap_register.yaml:1546-1571 (GAP-064 built_not_proven)"
+      ],
+      "current_behavior": "Production traffic goes to a hosted provider whose 429/cooldown path, Redis-persisted quota and real fallback were never exercised on a live stack; the only report is in-process, 9/10 with the 429 burst skipped, against OpenRouter rather than the provider documented for hosted1.",
+      "expected_behavior": "GAP-064 exit condition met: a committed report with every scripted check run on a live stack and live wire captures for the deployed provider.",
+      "recommendation": "Add a Railway-targetable run of verify_hosted_inference.py with Redis and the real fallback, run check 10, commit the report and the hosted1 provider's wire captures.",
+      "confidence": "High",
+      "pass": "B",
+      "report": "provider_matrix.md"
+    },
+    {
+      "id": "B-07",
+      "severity": "P3",
+      "title": "Native Ollama adapter reports every completion as finish_reason=stop",
+      "subsystem": "llm/providers",
+      "evidence": [
+        "aura_backend/aura_core/llm/providers/ollama.py:170,206",
+        "grep done_reason in providers/ollama.py: no match"
+      ],
+      "current_behavior": "A done_reason 'length' truncation is reported as a clean stop; kernel and telemetry cannot see truncation. Production uses openai_compatible against Ollama /v1, so impact is limited to kind=ollama deployments.",
+      "expected_behavior": "done_reason mapped to FinishReason as the OpenAI adapter does.",
+      "recommendation": "Read done_reason in complete() and in the final stream event.",
+      "confidence": "High",
+      "pass": "B",
+      "report": "provider_matrix.md"
+    },
+    {
+      "id": "B-08",
+      "severity": "P3",
+      "title": "Structured-output requests exclude every default-configured provider",
+      "subsystem": "llm/routing + config",
+      "evidence": [
+        "aura_backend/aura_core/llm/router.py:330-331",
+        "aura_backend/aura_core/config/settings.py:262",
+        "deploy/docker-compose.prod.yml:93,117,141",
+        "deploy/.env.example:208"
+      ],
+      "current_behavior": "Any request with response_schema is refused by every provider whose SUPPORTS_JSON_MODE was left at the default false; Railway's setting is UNKNOWN.",
+      "expected_behavior": "Boot-time warning when no enabled provider supports JSON mode while a feature needing it is on.",
+      "recommendation": "Add the boot check; set the flag in the documented Groq slot example; expose exclusion reasons in the admin routing explain.",
+      "confidence": "Med",
+      "pass": "B",
+      "report": "provider_matrix.md"
+    },
+    {
+      "id": "B-09",
+      "severity": "P3",
+      "title": "Image understanding is implemented but has no eligible provider on any target",
+      "subsystem": "vision",
+      "evidence": [
+        "aura_backend/aura_core/vision/engine.py:99-106",
+        "aura_backend/aura_core/llm/router.py:309-316",
+        "deploy/docker-compose.prod.yml:468,548",
+        "docs/status/BACKEND_STATUS.md:36",
+        "docs/production/gap_register.yaml:555-557"
+      ],
+      "current_behavior": "Image turns fail with dependency_unavailable or degrade to OCR text: hosted1 is third party (refused images), hfspace is text-only by default and down, AURA_VISION_ENABLED defaults to false; the client attach UI ships anyway.",
+      "expected_behavior": "A pinned VLM pool, or the client UI hidden until one is available.",
+      "recommendation": "Follow docs/deployment/inference-plane.md:118-138 on an always-on Space, or gate the client UI on readiness vision availability.",
+      "confidence": "High (code) / Med (live)",
+      "pass": "B",
+      "report": "provider_matrix.md"
+    },
+    {
+      "id": "B-10",
+      "severity": "P3",
+      "title": "Prompt budget is global (400 tokens), sized for CPU Ollama, and also caps fast hosted providers",
+      "subsystem": "llm/context",
+      "evidence": [
+        "aura_backend/aura_core/config/settings.py:639-641,693",
+        "aura_backend/aura_core/container.py:242",
+        "deploy/docker-compose.prod.yml: no AURA_LLM_MAX_PROMPT_TOKENS override (grep)"
+      ],
+      "current_behavior": "RAG/memory context is cut to 400 tokens before routing regardless of provider; on Railway with an 8k-context hosted model this limits grounding unless the dashboard overrides it (UNKNOWN).",
+      "expected_behavior": "Prompt budget derived from the selected provider's context window or configured per pool.",
+      "recommendation": "Make max_prompt_tokens a per-provider/pool ceiling, or document the override for hosted-primary topologies in control-plane.md.",
+      "confidence": "Med",
+      "pass": "B",
+      "report": "provider_matrix.md"
+    },
+    {
+      "id": "B-11",
+      "severity": "P4",
+      "title": "Status and architecture docs disagree with the tree on GAP-018, Ollama-in-production, ADR-030 deployment state and vision",
+      "subsystem": "documentation",
+      "evidence": [
+        "docs/status/BACKEND_STATUS.md:69 vs aura_core/learning/finetune.py:447-448,508-533",
+        "CLAUDE.md Deploy section vs docs/status/BACKEND_STATUS.md:24",
+        "docs/architecture/030-hosted-open-weight-inference.md:3 vs BACKEND_STATUS.md:24,35",
+        "docs/reports/AURA_FULL_SYSTEM_REVIEW.md:327-328 vs aura_core/vision/engine.py",
+        "docs/deployment/control-plane.md:75-76 vs :148-149"
+      ],
+      "current_behavior": "Readers are told a failed train is recorded as success, that Ollama serves production, that ADR-030 is not deployed, and that vision is not implemented.",
+      "expected_behavior": "Docs match the tree and the live target, with dated claims.",
+      "recommendation": "Update the five locations cited; mark the sole-hfspace block in control-plane.md as historical.",
+      "confidence": "High",
+      "pass": "B",
+      "report": "provider_matrix.md"
+    },
+    {
+      "id": "C-01",
+      "severity": "P1",
+      "title": "Taint is not carried across delegate_to_agent, so a tainted orchestrator turn can trigger unconfirmed server-side writes through a sub-persona",
+      "subsystem": "tools/delegation, kernel, tool policy",
+      "evidence": [
+        "aura_backend/aura_core/tools/delegation.py:84-96 (tool is not side_effecting; policy.py:136-139 never holds it in a tainted context)",
+        "aura_backend/aura_core/tools/delegation.py:134-148 (child TurnRequest carries no taint)",
+        "aura_backend/aura_core/kernel/kernel.py:111-170 (TurnRequest has no taint field)",
+        "aura_backend/aura_core/kernel/kernel.py:399-426 (taint derived only from the child's own retrieval/caller_context/resume)",
+        "aura_backend/aura_core/tools/records.py:10-14 (create_*/update_*/delete_* run with no confirmation when untainted)",
+        "aura_backend/aura_core/agents/registry.py:155-181 (task_planner/finance_advisor/health_companion grants include those CRUD tools)",
+        "aura_backend/aura_core/container.py:1400-1403 (CRUD tools registered whenever personal_os_store is wired)",
+        "grep taint tests/unit/test_delegation.py -> 0 hits"
+      ],
+      "current_behavior": "A parent turn tainted by a quarantined chunk, fetch_url output or caller context may still call delegate_to_agent (policy_ok). The child turn starts untainted, so a planned create_task/delete_finance_record etc. in the child executes immediately. The tool's own refusal (delegation.py:152-158) only fires for sub-turns that report needs_confirmation, which untainted CRUD calls never do.",
+      "expected_behavior": "ADR-006: a turn whose context was quarantined cannot run a side-effecting tool without confirmation, across any number of kernel hops.",
+      "recommendation": "Add an inherited-taint input to TurnRequest, set it from context.tainted in delegate_to_agent and OR it into the child's taint at kernel.py:426/734; add a tests/unit/test_delegation.py case asserting a tainted parent makes the child's side-effecting call return confirmation_required.",
+      "confidence": "High (code); Med (practical exploitability requires the planner model to follow injected text and a persona holding CRUD tools)",
+      "pass": "C",
+      "report": "tool_inventory.md"
+    },
+    {
+      "id": "C-02",
+      "severity": "P2",
+      "title": "write_files is registered for the engineer capability but absent from the engineer persona's grant, so the persona can never use it",
+      "subsystem": "agents/registry, tools/coding",
+      "evidence": [
+        "aura_backend/aura_core/tools/coding.py:520-538,828 (registered with required_capability=engineer_agent)",
+        "aura_backend/aura_core/agents/registry.py:213-225 (grant lists write_file and edit_file, not write_files, and no mcp_* name)",
+        "aura_backend/aura_core/kernel/kernel.py:1468-1473 (filtered out of declarations)",
+        "aura_backend/aura_core/tools/policy.py:86-87 (denied outside_agent_grant if called)",
+        "aura_backend/tests/architecture/test_workspace_local_tools.py:34 and tests/unit/test_engineer_tools.py:149-210 exercise the tool with a hand-built ToolContext, bypassing the persona grant"
+      ],
+      "current_behavior": "The D6 atomic multi-file write (and every MCP-bridged tool) is unreachable from the engineer persona; only an engineer_agent-capable caller using the unrestricted orchestrator persona can reach them.",
+      "expected_behavior": "Every tool built for the engineer is in the engineer's grant, pinned by a test comparing the grant against the registered engineer tool names.",
+      "recommendation": "Add write_files (and a policy for mcp_* names) to the grant at registry.py:213-225; add a test asserting the grant covers build_sandbox_tools()+build_github_tools() names.",
+      "confidence": "High",
+      "pass": "C",
+      "report": "tool_inventory.md"
+    },
+    {
+      "id": "C-03",
+      "severity": "P3",
+      "title": "Engineer tooling is reachable under the orchestrator persona without the engineer prompt or multi-pass loop",
+      "subsystem": "agents/registry, kernel",
+      "evidence": [
+        "aura_backend/aura_core/agents/registry.py:144-148 (orchestrator allowed_tools=None, SYSTEM ceiling)",
+        "aura_backend/aura_core/agents/registry.py:226-232 (comment describes persona+tool gating as belt-and-braces)",
+        "aura_backend/aura_core/kernel/kernel.py:1452-1473",
+        "aura_backend/aura_core/tools/registry.py:169-192",
+        "aura_backend/aura_core/api/v3.py:217 (ChatRequest.agent defaults to orchestrator)"
+      ],
+      "current_behavior": "A caller holding engineer_agent who leaves agent=orchestrator is offered run_command, git_push, github_commit_files etc. under the generic orchestrator prompt (no treat-output-as-data instruction) with max_plan_iterations=1. Tool-level policy still applies, so this is a prompt/UX gap rather than privilege escalation.",
+      "expected_behavior": "A persona gate described as a second layer should constrain which prompt and loop the engineer tools run under, or be documented as tool-level only.",
+      "recommendation": "Give orchestrator an explicit allowed_tools excluding required_capability tools, or correct the registry.py:226-232 comment.",
+      "confidence": "High",
+      "pass": "C",
+      "report": "tool_inventory.md"
+    },
+    {
+      "id": "C-04",
+      "severity": "P3",
+      "title": "_READ_TOOLS grants remember_fact (a durable write) to every persona, including decision_agent described as read-only",
+      "subsystem": "agents/registry",
+      "evidence": [
+        "aura_backend/aura_core/agents/registry.py:129 (_READ_TOOLS includes remember_fact)",
+        "aura_backend/aura_core/agents/registry.py:200-204 (comment: read-only and deliberately so)",
+        "aura_backend/aura_core/tools/builtin.py:269-281 (side_effecting=True, PERSONAL)"
+      ],
+      "current_behavior": "Every persona can write long-term memory into its scope without confirmation when untainted.",
+      "expected_behavior": "A grant named _READ_TOOLS contains only reads; a persona documented as read-only cannot write.",
+      "recommendation": "Move remember_fact out of _READ_TOOLS and grant it only to personas that should persist facts; fix the comment.",
+      "confidence": "High",
+      "pass": "C",
+      "report": "tool_inventory.md"
+    },
+    {
+      "id": "C-05",
+      "severity": "P3",
+      "title": "TOOLS_MAX_CALLS_PER_TURN is parsed and documented but never enforced",
+      "subsystem": "config, execution",
+      "evidence": [
+        "aura_backend/aura_core/config/settings.py:905,916 (only references; grep max_calls_per_turn aura_core -> 2 hits)",
+        "aura_backend/aura_core/execution/agentic_loop.py:111-138 (the per-turn bounds that do exist: tool_budget/risk_budget)"
+      ],
+      "current_behavior": "Setting the variable changes nothing.",
+      "expected_behavior": "A setting either governs behaviour or does not exist.",
+      "recommendation": "Remove the setting or wire it into RunBudgetGate as the default tool_budget for personas that set none.",
+      "confidence": "High",
+      "pass": "C",
+      "report": "tool_inventory.md"
+    },
+    {
+      "id": "C-06",
+      "severity": "P4",
+      "title": "delegate_to_agent's target enum is frozen at container build, so blueprint-compiled agents are never delegable",
+      "subsystem": "tools/delegation, adaptation",
+      "evidence": [
+        "aura_backend/aura_core/tools/delegation.py:64,74-77 (enum computed once at build time)",
+        "aura_backend/aura_core/adaptation/runtime.py:184-216 (generated agents live only in the runtime snapshot registry)",
+        "aura_backend/aura_core/container.py:605-614"
+      ],
+      "current_behavior": "Delegation targets are the seven built-in non-orchestrator personas regardless of deployed blueprints.",
+      "expected_behavior": "Either documented as built-in-only, or validation reads the live registry.",
+      "recommendation": "Document, or validate target_agent_id via agents.resolve() at call time instead of a static enum.",
+      "confidence": "High",
+      "pass": "C",
+      "report": "tool_inventory.md"
+    },
+    {
+      "id": "C-07",
+      "severity": "P4",
+      "title": "GET /api/v3/tools has no client caller",
+      "subsystem": "api/v3, client",
+      "evidence": [
+        "aura_backend/aura_core/api/v3.py:1317-1334",
+        "grep \"/api/v3/tools\" aura_client/lib -> 0 hits; /api/v3/agents is used at aura_client/lib/features/chat/data/agents_repository.dart:94"
+      ],
+      "current_behavior": "Endpoint exists; nothing in the shipped client reads it.",
+      "expected_behavior": "Shipped endpoints have a client or are marked admin/introspection-only.",
+      "recommendation": "Mark as introspection-only in the route docstring or add a client use.",
+      "confidence": "High",
+      "pass": "C",
+      "report": "tool_inventory.md"
+    },
+    {
+      "id": "C-08",
+      "severity": "P3",
+      "title": "fetch_url, list_files/read_file and get_weather have builder code but no container wiring, so research_agent's only network tool cannot be enabled by configuration",
+      "subsystem": "tools/builtin, container",
+      "evidence": [
+        "aura_backend/aura_core/tools/builtin.py:570-636 (default_tools accepts workspace, allowed_http_hosts, enable_weather)",
+        "aura_backend/aura_core/container.py:1400-1412 (the call passes none of those three)",
+        "aura_backend/aura_core/agents/registry.py:186-189 (research_agent grant names fetch_url and the comment assumes AURA_HTTP_ALLOWED_HOSTS enables it)"
+      ],
+      "current_behavior": "The three tool groups are IMPLEMENTED BUT UNREACHABLE at this baseline; research_agent has no retrieval beyond search_knowledge/recall_memory.",
+      "expected_behavior": "A persona grant naming a tool corresponds to a tool an operator can actually enable.",
+      "recommendation": "Either wire the three parameters from settings in Container._build_tools (an http-hosts setting may need adding) or drop fetch_url from the research_agent grant and the builders from default_tools.",
+      "confidence": "High (grant/wiring mismatch is code-read); production config not probed",
+      "pass": "C",
+      "report": "tool_inventory.md"
+    },
+    {
+      "id": "D-01",
+      "severity": "P2",
+      "title": "The ten retrieval strategies (incl. GraphRAG and the adaptive router) are built but never used by any turn or route",
+      "subsystem": "knowledge/rag",
+      "evidence": [
+        "aura_backend/aura_core/container.py:384-401 builds self.strategies and self.retrieval = StrategyFacade(...)",
+        "aura_backend/aura_core/container.py:576 passes knowledge=self.knowledge to KernelDependencies",
+        "aura_backend/aura_core/kernel/kernel.py:1084 deps.knowledge.retrieve(message, owner_id=...)",
+        "aura_backend/aura_core/api/v3.py:827 container.knowledge.retrieve(...)",
+        "grep '\\.retrieval\\b|container\\.retrieval' over aura_core/, aura_service.py, tests/ -> only tests/unit/test_knowledge_graph_pipeline.py:400-417",
+        "aura_backend/aura_core/rag/facade.py:53-56"
+      ],
+      "current_behavior": "AURA_KNOWLEDGE_RETRIEVAL_STRATEGY is validated at boot and then has no effect; every turn is plain hybrid retrieval; the knowledge graph is written on every ingest and read by nothing in the request path (GAP-023 still true, also for 'adaptive').",
+      "expected_behavior": "Selecting a strategy changes retrieval; GraphRAG/adaptive are reachable; ADR-005's graph-retrieval paragraph describes live behavior.",
+      "recommendation": "Pass knowledge=self.retrieval (the facade already presents KnowledgeEngine.retrieve's signature) to KernelDependencies and the /knowledge/search route, with a fitness test; or relabel the strategies and graph as not-in-path in ADR-005, GAP-023 and the review.",
+      "confidence": "High",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-02",
+      "severity": "P2",
+      "title": "Nightly refresh promotion is not recall-gated: no evaluator is wired",
+      "subsystem": "learning/loop-A, index lifecycle",
+      "evidence": [
+        "aura_backend/aura_core/container.py:343-353 constructs KnowledgeRefreshPipeline without evaluator",
+        "aura_backend/aura_core/learning/knowledge_refresh.py:321-330 recall only computed when evaluator is not None",
+        "aura_backend/aura_core/knowledge/index_manager.py:109-118 recall gate skipped when either recall is None",
+        "grep 'evaluator=' in aura_backend/tests -> no match",
+        "docs/architecture/007-versioned-indexes.md:38; docs/architecture/008-human-in-the-loop-learning.md:31,37"
+      ],
+      "current_behavior": "Only chunk-count, error-rate and min-chunks gates apply; a rebuild that loses recall promotes; max_recall_drop is dead configuration.",
+      "expected_behavior": "The recall@5 regression gate documented in ADR-007/008 runs, or the ADRs say it does not.",
+      "recommendation": "Wire RetrievalEvaluator with the committed docs_corpus suite as the refresh evaluator and add a lifecycle test that a recall drop blocks promotion; or mark the recall gate not implemented in ADR-007/008 and the gap register.",
+      "confidence": "High",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-03",
+      "severity": "P3",
+      "title": "With an unchanged embedder the refresh candidate is the live index: 'never modified' and rollback do not hold, and the corpus is re-embedded nightly",
+      "subsystem": "learning/loop-A, index lifecycle",
+      "evidence": [
+        "aura_backend/aura_core/learning/knowledge_refresh.py:315-318 candidate = identity_for_current_embedder()",
+        "aura_backend/aura_core/domain/knowledge.py:215-219 physical_name has no generation component",
+        "aura_backend/aura_core/knowledge/index_manager.py:208-212,218-247 build() upserts every chunk into target",
+        "aura_backend/aura_core/knowledge/index_manager.py:334-335 promote repoints alias to the same name",
+        "aura_backend/aura_core/learning/knowledge_refresh.py:4-6,312-313,348-349"
+      ],
+      "current_behavior": "Every chunk is embedded twice per night (ingest then build) and written in place into the serving collection; rollback is an alias repoint to itself; retention is meaningless unless the embedding model changed.",
+      "expected_behavior": "A refresh builds a separate generation (or skips build when identity is unchanged) so the ADR-007 safety property is real and the nightly cost is one embedding pass.",
+      "recommendation": "Include the GenerationId in refresh build names and make prune retention real, or skip build() when candidate == previous and document that same-embedder refreshes are incremental; document the embedding cost.",
+      "confidence": "High",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-04",
+      "severity": "P2",
+      "title": "The non-semantic hash embedder is the default, is not refused in production despite the code claiming it is, and nothing committed pins what the Railway gateway uses",
+      "subsystem": "llm/embeddings, deploy",
+      "evidence": [
+        "aura_backend/aura_core/config/settings.py:626-627,680-681 defaults local-embeddings / hash-embed-v1",
+        "aura_backend/aura_core/llm/embeddings.py:63-72 'Not semantic ... AuraSettings.validate() refuses ... in staging or production'",
+        "grep 'local-embeddings|hash-embed' in settings.py -> only :626-627,680-681; no check in validate()",
+        "docs/deployment/control-plane.md:56-87 Railway env list has no AURA_EMBEDDING_*",
+        "docs/guides/split-inference-deployment.md:261-263 recommends local-embeddings to save RAM",
+        "grep 'embedding' in aura_backend/aura_service.py -> no match (readiness does not report the embedder)"
+      ],
+      "current_behavior": "If the Railway dashboard does not set the variable, production retrieval and memory run on character-n-gram hashing and nothing in /health/* reveals it. Live value UNKNOWN.",
+      "expected_behavior": "Production refuses the hash embedder (as the docstring promises) or readiness exposes the active embedder; the Railway runbook names the variable.",
+      "recommendation": "Add the refusal to AuraSettings.validate() for staging/production; add embedding {provider, model, dimension} to /health/ready; add AURA_EMBEDDING_PROVIDER/MODEL/DIMENSION to control-plane.md and verify the live value.",
+      "confidence": "High (code); live state UNKNOWN",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-05",
+      "severity": "P2",
+      "title": "What the model sees of retrieved knowledge is at most 2 x 280 characters, plus <=3 memories in 80 tokens and an 80-token CAG prefix",
+      "subsystem": "context/knowledge/memory",
+      "evidence": [
+        "aura_backend/aura_core/context/engine.py:57-58,305-307",
+        "aura_backend/aura_core/config/settings.py:714,735 (retrieval_top_k=2, prompt_chunk_max_chars=280)",
+        "aura_backend/aura_core/config/settings.py:840-842 (recall_limit=3, token_budget=80); :818 (CAG_MAX_TOKENS=80)",
+        "aura_backend/aura_core/kernel/kernel.py:1069-1072",
+        "aura_backend/aura_core/knowledge/chunking.py:31 (chunks stored at ~320 tokens)",
+        "grep KNOWLEDGE_TOP_K|KNOWLEDGE_PROMPT_CHUNK_CHARS|MEMORY_RECALL_LIMIT in deploy/ -> no match"
+      ],
+      "current_behavior": "~80% of every retrieved chunk is cut before the prompt; citations name a page/heading whose text the model mostly did not read; the evaluation suite scores retrieval ids, not the clipped prompt, so the gate cannot see this.",
+      "expected_behavior": "Prompt budget sized to the deployed context window (several full chunks for 8k+ contexts) with the clip as a last resort, and an answer-quality eval over the real prompt path.",
+      "recommendation": "Treat prompt_chunk_max_chars/top_k as per-deployment capacity settings documented in control-plane.md/compose; raise defaults for non-CPU providers; add the ContextGroundedProvider answer suite over the rendered prompt.",
+      "confidence": "High (behavior); impact unmeasured",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-06",
+      "severity": "P2",
+      "title": "Document chunks and every vector payload are plaintext, including on Qdrant Cloud in the Railway target; memory subject is plaintext in the vector payload",
+      "subsystem": "data/encryption-at-rest",
+      "evidence": [
+        "aura_backend/aura_core/knowledge/index_manager.py:277-288 payload carries content",
+        "aura_backend/aura_core/adapters/postgres_store.py:184-197 aura_chunks content TEXT",
+        "aura_backend/aura_core/adapters/postgres_store.py:843-846,891-895 memory content encrypted",
+        "aura_backend/aura_core/memory/engine.py:177-184 memory vector payload carries subject",
+        "docs/deployment/control-plane.md:69-70 Qdrant Cloud",
+        "docs/architecture/004-memory-taxonomy.md:108; docs/production/gap_register.yaml:459-460; CB-22"
+      ],
+      "current_behavior": "A Qdrant Cloud operator or API-key leak exposes every user's document text and memory subjects; ADR-004 explicitly leaves this uncovered.",
+      "expected_behavior": "A recorded decision for chunks and third-party vector stores; at minimum no readable content in off-host vector payloads.",
+      "recommendation": "Add a vector_payload_content setting (off when Qdrant is off-host) and resolve chunk text from the owner-scoped document store (the engine already does this for lexical-only hits, engine.py:797-813); cover chunks in the encryption ADR.",
+      "confidence": "High",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-07",
+      "severity": "P3",
+      "title": "MemoryEngine.forget_source cannot delete vectors: it filters on a payload key that is never written",
+      "subsystem": "memory",
+      "evidence": [
+        "aura_backend/aura_core/memory/engine.py:441-444 delete_by_filter(filters={'source': source})",
+        "aura_backend/aura_core/memory/engine.py:177-184 payload keys: memory_id, kind, owner_id, subject, scope",
+        "aura_backend/aura_core/adapters/qdrant_store.py:360-394",
+        "grep 'forget_source\\(' in aura_core -> no caller"
+      ],
+      "current_behavior": "Rows are deleted, vector points orphaned; docstring claims the points are removed. Dead code today, latent bug for ADR-004's 'forget everything from X'.",
+      "expected_behavior": "Points removed with the rows.",
+      "recommendation": "Add source (provenance) to the memory vector payload, or delete by the ids returned from delete_by_provenance; add a test.",
+      "confidence": "High",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-08",
+      "severity": "P4",
+      "title": "In-process BM25 index is rebuilt from the entire document store in every process at startup; ADR-005's Postgres FTS scale-out path is not built",
+      "subsystem": "knowledge/scalability",
+      "evidence": [
+        "aura_backend/aura_core/knowledge/engine.py:946-964 rebuild_lexical_index iterates all chunks",
+        "aura_backend/aura_core/knowledge/retrieval.py:60-66",
+        "docs/architecture/005-hybrid-retrieval.md:20-22,93",
+        "docs/status/BACKEND_STATUS.md:56 ('the 200k point and Postgres FTS are open')"
+      ],
+      "current_behavior": "Each gateway/worker process holds a full copy of all tenants' postings; memory and boot time grow with corpus x process count; no ceiling documented.",
+      "expected_behavior": "A stated corpus ceiling and a tested FTS adapter behind the same port before it is reached.",
+      "recommendation": "Record the ceiling from LEXICAL_RETRIEVAL_BENCHMARK.md in the capacity doc; build the FTS adapter when the 200k measurement is taken (M5).",
+      "confidence": "Med",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-09",
+      "severity": "P4",
+      "title": "Memory consolidation never merges: 'merged' is always 0",
+      "subsystem": "memory",
+      "evidence": [
+        "aura_backend/aura_core/memory/engine.py:341,385 merged never incremented",
+        "aura_backend/aura_core/memory/engine.py:333 docstring 'Merge duplicates ...'",
+        "aura_backend/aura_core/memory/engine.py:131-143 merge happens only at write time",
+        "docs/architecture/004-memory-taxonomy.md:40-44"
+      ],
+      "current_behavior": "Duplicates that slip past the write-time check persist until decay expires one.",
+      "expected_behavior": "Consolidation merges near-duplicates, or the docstring/ADR say merging is write-time only.",
+      "recommendation": "Decide and align; if implemented, reuse _find_duplicate over list_for_owner with the policy threshold.",
+      "confidence": "High",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-10",
+      "severity": "P4",
+      "title": "No automatic memory extraction exists; memory is written only by the remember tool, POST /memory, or the kernel's session-classification note",
+      "subsystem": "memory",
+      "evidence": [
+        "grep '\\.remember\\(|remember_many\\(' outside memory/engine.py -> aura_core/tools/builtin.py:283, aura_core/api/v3.py:1160",
+        "aura_backend/aura_core/kernel/kernel.py:329,942,1226 _remember_session_classification",
+        "docs/architecture/004-memory-taxonomy.md:7,30,47"
+      ],
+      "current_behavior": "Learning about the user happens only when the model calls the tool; provenance extractor fields are never populated by a background extractor.",
+      "expected_behavior": "Documented as the design (tool-driven memory) or an extractor exists.",
+      "recommendation": "Documentation decision; no code change required.",
+      "confidence": "High",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-11",
+      "severity": "P3",
+      "title": "Embedding and reranker weights load by name with no revision pin; the index identity cannot detect a silent upstream change",
+      "subsystem": "llm/supply-chain",
+      "evidence": [
+        "aura_backend/aura_core/llm/embeddings.py:358 SentenceTransformer(self._model_name)",
+        "aura_backend/aura_core/knowledge/reranking.py:104 CrossEncoder(self._model_name)",
+        "aura_backend/aura_core/domain/knowledge.py:215-219 identity is the model id string",
+        "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:178 (CB-18 / GAP-030)"
+      ],
+      "current_behavior": "A re-published BAAI/bge-small-en-v1.5 changes vectors; new chunks go into the same collection as old ones with no rebuild and no error.",
+      "expected_behavior": "Pinned revision plus recorded digest, folded into the identity or a startup check.",
+      "recommendation": "Add AURA_EMBEDDING_REVISION, pass revision= to SentenceTransformer, fold the revision into IndexIdentity.embedding_model_id or assert it against alias metadata at startup.",
+      "confidence": "High",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-12",
+      "severity": "P4",
+      "title": "Evaluation gate triggers on PR/push but every quality number is hash-embedder/scripted-provider and nothing has run since CB-44",
+      "subsystem": "evaluation",
+      "evidence": [
+        ".github/workflows/eval-ci.yml:26-73,126-134",
+        "aura_backend/evaluation/suites/docs_corpus_baseline.json:4-10 (recall@5 0.65, MRR 0.368, nDCG 0.511, precision@k 0.287)",
+        "aura_backend/tests/e2e/test_evaluation_gate.py:78",
+        "docs/production/gap_register.yaml GAP-021 (open)"
+      ],
+      "current_behavior": "The gate can only catch regressions of the hash-embedder pipeline; the production embedder and the clipped prompt (D-05) are unmeasured; no runner executes it.",
+      "expected_behavior": "A real-embedder retrieval report and a real-model answer report (GAP-021 exit condition).",
+      "recommendation": "Run evaluation/runner.py once against sentence-transformers + hosted1 and commit the report; keep the deterministic gate as the merge gate.",
+      "confidence": "High",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-13",
+      "severity": "P3",
+      "title": "On the Railway production target Loop B cannot run a job to completion, and an approved dataset does not survive a redeploy",
+      "subsystem": "learning/loop-B, deploy",
+      "evidence": [
+        "docs/deployment/control-plane.md:29-37 (no worker-training; 'omit it if not')",
+        "aura_backend/celery_app.py:202-206 (training queue, expires 110)",
+        "aura_backend/aura_core/api/admin.py:465-471 (run_inline -> ScriptedTrainer -> NOT_TRAINED)",
+        "aura_backend/aura_core/container.py:492 + aura_core/config/settings.py:1127 (FileDatasetStore at /var/lib/aura/datasets)",
+        "deploy/docker-compose.prod.yml:901 (only compose mounts aura_datasets)",
+        "aura_backend/aura_core/learning/finetune.py:364-365,396-398"
+      ],
+      "current_behavior": "A queued job stays QUEUED forever; an inline job ends NOT_TRAINED; after a Railway redeploy enqueue/run for an approved digest fails with 'dataset is not stored' while the approval row persists. Live state UNKNOWN.",
+      "expected_behavior": "The documented loop is runnable on the live target or documented as dataset-preparation-only there (GAP-017 option b).",
+      "recommendation": "Store datasets in Postgres (digest-keyed JSONL) or object storage so approval and artefact share a lifetime; state in control-plane.md that Loop B on Railway stops at approval.",
+      "confidence": "High (code); live UNKNOWN",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-14",
+      "severity": "P3",
+      "title": "A trained LoRA adapter can be registered and promoted but never serves; promotion to production is a no-op for every artefact LocalLoraTrainer produces",
+      "subsystem": "learning/registry/kernel",
+      "evidence": [
+        "aura_backend/aura_core/adapters/local_lora_trainer.py:16-20",
+        "aura_backend/aura_core/kernel/kernel.py:1990-2006 _servable_model_tag returns None for path/URI artefacts",
+        "aura_backend/aura_core/kernel/kernel.py:824-830,2067-2070",
+        "docs/guides/mlops-guide.md:151,314-317",
+        "aura_backend/aura_core/api/admin.py:491 (imported Ollama tag path; router behavior with an unknown tag on Railway not traced)"
+      ],
+      "current_behavior": "ADR-008 Loop B ends at a CANDIDATE row; GAP-017 target (a) unmet; the registry's production stage can point at something no provider can load.",
+      "expected_behavior": "Promotion refused for non-servable artefacts, or a merge/convert/serve step exists; the registry records servability.",
+      "recommendation": "Make ModelRegistry.transition(to=CANARY|PRODUCTION) refuse artefacts _servable_model_tag would discard (move the helper to the domain); long term, GAP-017's merge/convert/serve step on a GPU host.",
+      "confidence": "High",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-15",
+      "severity": "P3",
+      "title": "A second, legacy learning and ingestion path is still mounted in the v3 gateway and bypasses ADR-008 and KnowledgeEngine",
+      "subsystem": "learning/ingestion/architecture",
+      "evidence": [
+        "aura_backend/aura_service.py:127,137 include api/learning.py (/api/v3/learning/*, api/learning.py:13-65)",
+        "aura_backend/api/learning.py:51-52 enqueues tasks.build_lora_dataset_task",
+        "aura_backend/tasks.py:8-9,110-126 module-scope legacy imports; JSON-file dataset builder",
+        "aura_backend/services/drive.py:164-166 enqueues ingest_pdf_task -> legacy rag_service.ingest_pdf (tasks.py:100)",
+        "aura_backend/aura_service.py:298-300 /health reports legacy learning metrics",
+        "docs/production/gap_register.yaml GAP-038 ('dead legacy tasks')"
+      ],
+      "current_behavior": "An Admin can produce an un-curated, un-approved dataset via /api/v3/learning/build_dataset; Drive sync can index PDFs that never pass the context guard. Client reachability of the Drive path not traced (UNKNOWN).",
+      "expected_behavior": "One learning path (ADR-008) and one ingestion path (ADR-005/006 guard).",
+      "recommendation": "Remove or 410 the /api/v3/learning/* router and build_lora_dataset_task; route ingest_pdf_task through KnowledgeEngine.ingest(segments=...); drop the module-scope legacy imports from tasks.py.",
+      "confidence": "Med-High",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-16",
+      "severity": "P4",
+      "title": "Fine-tune queue drain builds a new container every 120 s, and enqueue reaches into ApprovalService's private store",
+      "subsystem": "learning/resources",
+      "evidence": [
+        "aura_backend/tasks.py:162-172 _drain_finetune_queue calls build_container() directly",
+        "aura_backend/tasks.py:267-284 _ensure_worker_container memoises and runs startup()",
+        "aura_backend/aura_core/learning/finetune.py:358 self._approvals._store.get(...)",
+        "deploy/docker-compose.prod.yml:889 (--max-tasks-per-child=1 bounds the leak on worker-training)"
+      ],
+      "current_behavior": "Bounded by process recycling on worker-training; would accumulate pools on any other consumer; private access bypasses ApprovalService's own lookup.",
+      "expected_behavior": "Workers share one container per process; services use public APIs.",
+      "recommendation": "Use _ensure_worker_container() in _drain_finetune_queue; add ApprovalService.get() and call it.",
+      "confidence": "High",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-17",
+      "severity": "P4",
+      "title": "Status and gap documentation for learning is out of date in both directions",
+      "subsystem": "docs",
+      "evidence": [
+        "docs/status/BACKEND_STATUS.md:69 'GAP-018 (a failed train is recorded as success)' vs aura_core/learning/finetune.py:444-448,508-533 and tests/unit/test_finetune_honesty.py:107-143",
+        "docs/production/gap_register.yaml:470-481 GAP-017 current_state cites code that no longer exists",
+        "docs/guides/mlops-guide.md:6-7 'Loop A ... Gated automatically' (recall gate unwired, D-02)",
+        "docs/status/BACKEND_STATUS.md:57 'F-16 write races open' vs commit 8b34504; :66 'eval-ci.yml is dispatch-only' vs .github/workflows/eval-ci.yml:26-73"
+      ],
+      "current_behavior": "Readers believe a P1 honesty bug and F-16 are open and that eval CI never triggers; readers of GAP-017's current_state believe the trainer still fabricates artefacts.",
+      "expected_behavior": "Status lines reflect the tree.",
+      "recommendation": "Update BACKEND_STATUS.md:57,66,69; rewrite GAP-017's current_state; qualify mlops-guide.md's Loop A gating claim.",
+      "confidence": "High",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "D-18",
+      "severity": "P4",
+      "title": "No committed evidence of a weight-changing run, and no evaluation of any trained artefact against the base model",
+      "subsystem": "learning/evaluation",
+      "evidence": [
+        "aura_backend/pytest.ini:17,22 (training marker excluded by default)",
+        "aura_backend/tests/training/test_lora_weights_change.py:55,87 (one opt-in test)",
+        "docs/production/gap_register.yaml:493-504 (coordinator-run result, no report path)",
+        ".github/workflows/backend-ci.yml:99-110,242 (never runs -m training)",
+        "aura_backend/aura_core/mlops/model_registry.py:238-251 (canary gate reads metrics no trainer path writes)"
+      ],
+      "current_behavior": "'Fine-tuning works' rests on an uncommitted local run on hf-internal-testing/tiny-random-gpt2; the registry's only automatic quality gate is inert.",
+      "expected_behavior": "GAP-017's exit condition: a report in docs/reports/ with base revision, dataset digest, eval delta and approval id.",
+      "recommendation": "Run pytest tests/training -m training on a host with requirements-train.txt and commit the output; have the job engine call AnswerEvaluator on base vs adapter and write coverage_drop so the canary gate has data.",
+      "confidence": "High",
+      "pass": "D",
+      "report": "rag_and_knowledge.md"
+    },
+    {
+      "id": "E1-01",
+      "severity": "P2",
+      "title": "Live-voice PCM frames are not size-validated; utterance buffering is bounded by frame count, not bytes",
+      "subsystem": "voice/live",
+      "evidence": [
+        "aura_backend/aura_core/api/voice_live.py:209-211",
+        "aura_backend/aura_core/voice/session.py:131-153",
+        "aura_backend/aura_core/voice/turn_taking.py:62-66,82-86",
+        "aura_backend/aura_core/voice/vad.py:42-45,64-81",
+        "aura_backend/aura_core/config/settings.py:1515"
+      ],
+      "current_behavior": "Any binary WebSocket frame is forwarded to push_pcm; each frame advances the endpoint clock by config.frame_ms regardless of its byte length, so an authenticated client can buffer up to ~750 oversized frames per utterance before they are wrapped as WAV and sent to Whisper. The VAD also iterates every sample of each frame on the event loop. No per-frame or per-utterance byte cap exists.",
+      "expected_behavior": "Frames larger than EnergyVad.frame_bytes are rejected or split; the utterance buffer is capped in bytes (max_utterance_ms * sample_rate * 2).",
+      "recommendation": "Validate len(frame) in voice_live.py before push_pcm (close 4400 on violation), add a byte ceiling in LiveVoiceSession.push_pcm, and add a unit test with an oversized frame.",
+      "confidence": "High",
+      "pass": "E1",
+      "report": "multimodal_audit.md"
+    },
+    {
+      "id": "E1-02",
+      "severity": "P2",
+      "title": "No end-to-end evidence that batch or live speech works on any built image; the load proof is a stub and CI never runs an engine-backed test",
+      "subsystem": "voice",
+      "evidence": [
+        "aura_backend/tests/load/test_live_voice_roundtrip.py:17-26",
+        "aura_backend/tests/unit/test_voice_adapters.py:71,112,355,373",
+        "aura_backend/tests/unit/test_tesseract_ocr.py:21-23",
+        ".github/workflows/backend-ci.yml:174",
+        "docs/plans/phase-h-live-voice-chat.md:3-5,479-495",
+        "git ls-files docs/reports (no voice/WER/device report)"
+      ],
+      "current_behavior": "Every real-engine test is skipif-gated on binaries that the CI job never installs; the live round-trip load test unconditionally skips; no Phase H device or latency report exists; BACKEND_STATUS.md:70 records Voice as BUILT.",
+      "expected_behavior": "CI installs espeak-ng/tesseract-ocr so the skipped tests run, or a container job runs them; the load round trip is implemented and a report committed before Phase H / M12 advances.",
+      "recommendation": "Add the two apt packages to the backend CI job; implement test_live_voice_roundtrip.py (Piper -> Whisper) against the built image and commit the report.",
+      "confidence": "High",
+      "pass": "E1",
+      "report": "multimodal_audit.md"
+    },
+    {
+      "id": "E1-03",
+      "severity": "P2",
+      "title": "Image understanding is implemented but unreachable in every known deployment: no provider declares the image modality, vision is off, and no VLM evidence exists",
+      "subsystem": "vision",
+      "evidence": [
+        "deploy/docker-compose.prod.yml:467,547-549",
+        "deploy/docker-compose.dev.yml:346-348",
+        "docs/deployment/control-plane.md:88-92",
+        "docs/production/gap_register.yaml:555-567",
+        "aura_backend/aura_core/vision/engine.py:130-137",
+        "aura_backend/aura_core/api/v3.py:500-503",
+        "git ls-files docs/reports (no phase-6-vision or vision-eval report)"
+      ],
+      "current_behavior": "VisionEngine exists and is tested only with the echo provider. In production the client hides the attach button and API callers get 503 dependency_unavailable. Enabling AURA_VISION_ENABLED without an image-capable provider makes every image turn OCR-only (flagged degraded).",
+      "expected_behavior": "A pinned VLM serving the vision pool with a committed phase-6-vision report and a vision-eval run (ADR-031 exit).",
+      "recommendation": "Keep GAP-019 at in_progress/built_not_proven; do not describe vision as a product capability until deploy/scripts/verify_vision.py has produced a report. Blocked on GAP-012.",
+      "confidence": "High",
+      "pass": "E1",
+      "report": "multimodal_audit.md"
+    },
+    {
+      "id": "E1-04",
+      "severity": "P3",
+      "title": "Whisper model weights are fetched from the Hugging Face Hub at first transcription, with no revision pin and no bake into the image",
+      "subsystem": "voice/stt, supply chain",
+      "evidence": [
+        "aura_backend/aura_core/adapters/whisper_stt.py:109-111,137-141",
+        "aura_backend/Dockerfile:60-106",
+        "aura_backend/requirements.lock:593",
+        "aura_backend/aura_core/container.py:1779"
+      ],
+      "current_behavior": "The first /voice/transcribe or live turn on each fresh container (per gateway worker) downloads tiny.en (~75 MB) over the network; Hub outages or rate limits surface as DependencyUnavailableError on the user's first voice note; the revision is unpinned. Readiness reports stt as configured before any weights exist on disk.",
+      "expected_behavior": "Weights downloaded and SHA-pinned at image build like the Piper voices, or loaded at startup, with a recorded revision (CB-18 / GAP-031).",
+      "recommendation": "Add a Dockerfile step pulling the CTranslate2 tiny.en snapshot into HF_HOME with a checksum, or warm the model in lifespan startup and document the runtime dependency.",
+      "confidence": "High",
+      "pass": "E1",
+      "report": "multimodal_audit.md"
+    },
+    {
+      "id": "E1-05",
+      "severity": "P3",
+      "title": "Arabic is asymmetric across the pipeline: Arabic TTS ships, but STT is English-only and OCR has no Arabic language data",
+      "subsystem": "voice/stt, knowledge/ocr",
+      "evidence": [
+        "aura_backend/aura_core/config/settings.py:1491,1523,754,782",
+        "aura_backend/aura_core/voice/session.py:196-203",
+        "aura_backend/aura_core/container.py:1221",
+        "aura_backend/aura_core/api/v3.py:1091",
+        "aura_backend/Dockerfile:79",
+        "aura_backend/aura_core/knowledge/documents.py:364-376"
+      ],
+      "current_behavior": "An Arabic voice note transcribes as English garbage or empty; the live page rejects language 'ar' at start; the image installs only tesseract-ocr (eng+osd), so AURA_KNOWLEDGE_OCR_LANG=ara would make every OCR call fail inside apply_ocr, leaving pages unreadable with no startup error.",
+      "expected_behavior": "A multilingual Whisper size with measured WER, and tesseract-ocr-ara installed when Arabic OCR is configured (or a startup check that the configured ocr_lang is installed).",
+      "recommendation": "Install tesseract-ocr-ara in the Dockerfile; validate ocr_lang against pytesseract.get_languages() at container build; schedule the GAP-020 WER report.",
+      "confidence": "High",
+      "pass": "E1",
+      "report": "multimodal_audit.md"
+    },
+    {
+      "id": "E1-06",
+      "severity": "P3",
+      "title": "Live-voice language from the client start frame is passed unvalidated to Whisper",
+      "subsystem": "voice/live",
+      "evidence": [
+        "aura_backend/aura_core/api/voice_live.py:162",
+        "aura_backend/aura_core/voice/session.py:196-203,214-219"
+      ],
+      "current_behavior": "With a multilingual model configured, an arbitrary string reaches WhisperModel.transcribe(language=...); the exception is reported as stt_failed with only the exception type name.",
+      "expected_behavior": "An allow-list of ISO 639-1 codes; language_unsupported for others.",
+      "recommendation": "Validate the language at start-frame handling in voice_live.py.",
+      "confidence": "Med",
+      "pass": "E1",
+      "report": "multimodal_audit.md"
+    },
+    {
+      "id": "E1-07",
+      "severity": "P4",
+      "title": "Enabling vision on a deployment without a VLM silently turns every image turn into OCR-only answers",
+      "subsystem": "vision",
+      "evidence": [
+        "aura_backend/aura_core/config/settings.py:1606,1628",
+        "aura_backend/aura_core/vision/engine.py:114-118,130-137",
+        "aura_backend/aura_core/api/v3.py:620-628"
+      ],
+      "current_behavior": "GET /capabilities advertises images as available whenever OCR exists; the client shows the attach button; answers are grounded only in OCR text (flagged degraded, mode=ocr_fallback).",
+      "expected_behavior": "available distinguishes 'a vision model can serve' from 'only OCR can'; the client shows a reduced affordance.",
+      "recommendation": "Add a mode field (vlm/ocr_only) to the capabilities payload and gate the attach UI copy on it.",
+      "confidence": "Med",
+      "pass": "E1",
+      "report": "multimodal_audit.md"
+    },
+    {
+      "id": "E1-08",
+      "severity": "P4",
+      "title": "espeak-ng receives the spoken text as a positional argv element without a '--' separator",
+      "subsystem": "voice/tts",
+      "evidence": [
+        "aura_backend/aura_core/adapters/espeak_tts.py:278-293,320-335",
+        "aura_backend/aura_core/adapters/spoken_text.py:206"
+      ],
+      "current_behavior": "create_subprocess_exec is used, so no shell injection; a prepared text beginning with '-' may be parsed as an option by espeak-ng and fail (non-zero exit -> RuntimeError -> tts_failed/500) rather than be spoken. Whether prepare_spoken_text strips a leading dash was not verified.",
+      "expected_behavior": "Text passed after '--' or via stdin.",
+      "recommendation": "Insert '--' before the text in build_espeak_command and add a test with '-hello'.",
+      "confidence": "Low",
+      "pass": "E1",
+      "report": "multimodal_audit.md"
+    },
+    {
+      "id": "E1-09",
+      "severity": "P4",
+      "title": "Documentation inaccuracies around multimodal status",
+      "subsystem": "docs",
+      "evidence": [
+        "docs/reports/AURA_FULL_SYSTEM_REVIEW.md:327 vs aura_backend/aura_core/vision/engine.py:86-205",
+        "docs/production/gap_register.yaml:938 and docs/roadmaps/AURA_CRITICAL_BACKLOG.md:196 vs aura_backend/aura_core/rag/agentic.py:119-125",
+        "docs/production/gap_register.yaml:552-553 vs :556 and aura_client/lib/features/chat/presentation/widgets/chat_image_attachments.dart:32-40",
+        "aura_backend/aura_core/ports/documents.py:34-35 vs aura_backend/aura_core/container.py:1084-1094",
+        "aura_backend/aura_core/api/v3.py:1100-1101 vs aura_backend/aura_core/container.py:1139-1142"
+      ],
+      "current_behavior": "Stale 'vision: not implemented' and 'no OCR' claims remain in the prior review and gap register; GAP-019 contradicts its own later entry; two docstrings describe adapters that no longer match the wiring.",
+      "expected_behavior": "Docs match code.",
+      "recommendation": "Mark the Full System Review section superseded, close the agentic.py item of GAP-039/CB-31, collapse GAP-019's reverified_2026_10_30 note, and refresh the two docstrings.",
+      "confidence": "High",
+      "pass": "E1",
+      "report": "multimodal_audit.md"
+    },
+    {
+      "id": "E2-01",
+      "severity": "P2",
+      "title": "Projects and Goals are app-only: no agent store kind, tool, or title access",
+      "subsystem": "personal-os / tools",
+      "evidence": [
+        "aura_backend/aura_core/domain/personal_os.py:28-31",
+        "aura_backend/aura_core/adapters/postgres_synced_personal_os.py:1-6,76-107",
+        "aura_backend/aura_core/tools/records.py:162-195",
+        "aura_backend/aura_core/adapters/postgres_goals.py:6-7,44-47",
+        "aura_backend/infrastructure/db/models.py:191-232,329-330",
+        "aura_client/lib/features/projects/data/project_repository.dart:18",
+        "aura_client/lib/features/goals/data/goal_repository.dart:18",
+        "aura_client/lib/core/sync/sync_client.dart:315-316"
+      ],
+      "current_behavior": "The app creates and syncs projects and goals through /api/v3/sync; the agent's ADR-032 store covers only tasks, calendar events, finance and health records; goals reach the kernel only as id/status/priority snapshots without titles; projects are invisible to the agent.",
+      "expected_behavior": "ADR-032's shared-store premise holds for every synced Personal-OS table: the agent can list and create projects and goals with titles decrypted under the user data key.",
+      "recommendation": "Add RecordKind.PROJECT/GOAL and matching _Table rows to the synced store, generate CRUD tools in records.py, let PostgresGoalsPort decrypt title_enc via user_data_keys, and cover it in test_personal_os_sync_integration.py against real Postgres.",
+      "confidence": "High",
+      "pass": "E2",
+      "report": "client_api_reachability.md"
+    },
+    {
+      "id": "E2-02",
+      "severity": "P3",
+      "title": "Reachability matrix over-credits callers (UI route paths, method-blind split matches, test files)",
+      "subsystem": "docs / architecture test",
+      "evidence": [
+        "docs/guides/api-reachability.md:90 vs aura_client/lib/core/routing/router.dart:46-48",
+        "docs/guides/api-reachability.md:40 vs aura_admin/app/(console)/learning/page.tsx:144 and models/page.tsx:246",
+        "docs/guides/api-reachability.md:80-81 (cites aura_hostd/test/pairing_client_test.dart)",
+        "aura_backend/scripts/api_reachability.py:29-32,118-135"
+      ],
+      "current_behavior": "Two of 77 'called' rows (POST /api/v3/chat, GET /admin/learning/jobs/{job_id}) have no real caller; test files count as callers; GET and POST on the same path are indistinguishable.",
+      "expected_behavior": "tests/architecture/test_api_reachability.py passes only when production code builds the route with the right HTTP method.",
+      "recommendation": "Exclude tests/ and test/ directories, require the match to sit in a string that also carries /api/v or a known base-URL assignment, record the verb next to the call, and re-triage POST /chat as API/service-key only.",
+      "confidence": "High",
+      "pass": "E2",
+      "report": "client_api_reachability.md"
+    },
+    {
+      "id": "E2-03",
+      "severity": "P3",
+      "title": "No client sends Idempotency-Key; GAP-013 claims it does",
+      "subsystem": "client / idempotency",
+      "evidence": [
+        "rg -i idempotency aura_client (excluding build dirs) -> 0 files",
+        "aura_backend/aura_core/api/idempotency.py:57",
+        "aura_backend/aura_core/api/v3.py:324-330",
+        "docs/production/gap_register.yaml:365-368"
+      ],
+      "current_behavior": "Retried writes to /knowledge/documents, /memory, /feedback and /engineering/workspaces/{id} are never deduplicated; the server-side idempotency machinery has zero callers.",
+      "expected_behavior": "Every side-effecting client write carries a per-attempt key so a retry after a timeout cannot duplicate the effect.",
+      "recommendation": "Send the header from KnowledgeCenter, MemoryRepository, FeedbackRepository and EngineerWorkspaces; pin with a test; correct GAP-013's reverified text.",
+      "confidence": "High",
+      "pass": "E2",
+      "report": "client_api_reachability.md"
+    },
+    {
+      "id": "E2-04",
+      "severity": "P2",
+      "title": "Operator console unreachable on every live target; 32 admin routes operable only through the raw API",
+      "subsystem": "admin console / deploy",
+      "evidence": [
+        "docs/status/WEB_CONSOLE_STATUS.md:13-15,37-43 (claims)",
+        "rg -i console docs/deployment -> 0 hits",
+        "deploy/docker-compose.prod.yml:334",
+        "aura_backend/aura_core/api/admin_service_keys.py:53-72",
+        "aura_backend/aura_core/api/admin_adaptation.py:99-348",
+        "aura_admin/tests/e2e/mock-gateway.mjs:113-226"
+      ],
+      "current_behavior": "Railway serves the backend only; the console image exists only for the VPS stack that takes no deploys; ADR-029 service-key issuance, scorecard, erasure-job polling and all Track AP operations have no UI, and the mock gateway covers 11 of 36 proxied paths.",
+      "expected_behavior": "An operator surface deployed alongside the backend, with every operator-facing route reachable from it or declared API-only.",
+      "recommendation": "Owner decides hosting (Railway service for aura_admin or the VPS once deploys work); then wire service-keys, jobs/{task_id}, scorecard and refresh/latest into existing pages and extend mock-gateway.mjs; AP9 stays a roadmap item.",
+      "confidence": "High (code) / Med (live)",
+      "pass": "E2",
+      "report": "client_api_reachability.md"
+    },
+    {
+      "id": "E2-05",
+      "severity": "P3",
+      "title": "Daemon pairing succeeds for accounts the host socket will refuse; app cannot revoke a paired daemon",
+      "subsystem": "hostd / auth",
+      "evidence": [
+        "aura_backend/aura_core/api/host_agent.py:53-54,87-92",
+        "aura_backend/aura_core/config/settings.py:1021,1057",
+        "aura_backend/aura_service.py:105-109",
+        "aura_backend/api/v2/auth.py:201-239",
+        "no caller for /api/v3/auth/desktop/devices/revoke in aura_client/lib or aura_hostd"
+      ],
+      "current_behavior": "With AURA_ENGINEER_AGENT_ROLES unset (default) pairing completes and stores a token, then every WebSocket connection is closed 4401 with no actionable message; a paired device can only be revoked server-side.",
+      "expected_behavior": "Pairing fails fast with the reason when the account cannot host; the app lists and revokes paired devices.",
+      "recommendation": "Check engineer_agent at /pair/approve (403 engineer_agent_required); add a device list and a devices/revoke caller to host_panel.dart / host_daemon_page.dart; document the env var in the hostd README.",
+      "confidence": "High",
+      "pass": "E2",
+      "report": "client_api_reachability.md"
+    },
+    {
+      "id": "E2-06",
+      "severity": "P3",
+      "title": "Five user-facing read routes still have no client view five weeks after triage; four learning routes have no caller at all",
+      "subsystem": "client",
+      "evidence": [
+        "aura_backend/scripts/api_reachability.py:40,41,46,47",
+        "docs/guides/api-reachability.md:75-76,114-120,127",
+        "docs/production/gap_register.yaml:357",
+        "aura_backend/api/learning.py:26-65"
+      ],
+      "current_behavior": "/tools, /agents/runs[/{id}], /knowledge/graph[/entities/{key}] are reachable only by hand-built requests; /learning/* has no consumer anywhere.",
+      "expected_behavior": "Each route has a consumer or is removed / declared API-only with an owner and date.",
+      "recommendation": "Wire /tools into settings, extend the Engineer history tab to /agents/runs, add a graph view to the knowledge page; remove api/learning.py or fold its export into /admin/learning/datasets/{digest}.",
+      "confidence": "Med",
+      "pass": "E2",
+      "report": "client_api_reachability.md"
+    },
+    {
+      "id": "E2-07",
+      "severity": "P3",
+      "title": "Dead dev.aureon-ai.tech preset still selectable in the app",
+      "subsystem": "client / config",
+      "evidence": [
+        "aura_client/lib/core/config/backend_url_settings.dart:21",
+        "aura_client/lib/core/config/backend_url_policy.dart:17",
+        "docs/status/MOBILE_APP_STATUS.md:46,70 (claims)"
+      ],
+      "current_behavior": "Choosing the development environment points the app at a host that no longer resolves, and setEnvironment() clears tokens without revoking them.",
+      "expected_behavior": "Only reachable presets are offered, or the switch probes /health/ready first and refuses.",
+      "recommendation": "Drop or re-point the dev preset; probe before switching.",
+      "confidence": "Med",
+      "pass": "E2",
+      "report": "client_api_reachability.md"
+    },
+    {
+      "id": "E2-08",
+      "severity": "P4",
+      "title": "ADR-032 key fetch depends on migration 0019 while production is claimed at 0016",
+      "subsystem": "client / deploy",
+      "evidence": [
+        "aura_backend/aura_core/api/v3.py:1192-1252",
+        "aura_backend/alembic/versions/0019_user_data_keys.py",
+        "aura_client/lib/core/security/data_key_client.dart:20-23,50-52",
+        "CLAUDE.md (database at 0016, claim)"
+      ],
+      "current_behavior": "Until 0019 is applied live, GET /api/v3/keys/data fails and devices stay on per-device keys; agent writes to the synced tables cannot be read by devices.",
+      "expected_behavior": "Deploy ordering documented and verified: migrate, confirm /health/ready schema.revision 0019, then ship the client.",
+      "recommendation": "Follow CB-28's exit criteria; no code change.",
+      "confidence": "High (code) / Med (live)",
+      "pass": "E2",
+      "report": "client_api_reachability.md"
+    },
+    {
+      "id": "E3-01",
+      "severity": "P1",
+      "title": "Host-agent registry is per-process while the image runs 4 uvicorn workers",
+      "subsystem": "backend/host-agent bridge",
+      "evidence": [
+        "aura_backend/aura_core/adapters/host_agent.py:156-181",
+        "aura_backend/aura_core/adapters/host_agent.py:383-391",
+        "aura_backend/Dockerfile:147",
+        "deploy/.env.example:10",
+        "docs/architecture/011-desktop-engineer-agent.md:400-412",
+        "Railway AURA_WORKERS value: UNKNOWN"
+      ],
+      "current_behavior": "The daemon's WebSocket is held by one uvicorn worker's in-memory registry; chat turns served by other workers find no session and fail with 'no desktop app is connected and no server-side sandbox is configured'. On Railway there is no Docker fallback, so the Engineer persona fails in proportion to the worker count.",
+      "expected_behavior": "A paired desktop is reachable from every request for that user, or the gateway refuses host-agent support when AURA_WORKERS>1.",
+      "recommendation": "Set AURA_WORKERS=1 on Railway and assert it at startup when the registry is enabled; then move host-agent routing to Redis pub/sub or a dedicated single process (ADR-011 names both). Record the Railway value in BACKEND_STATUS.md.",
+      "confidence": "High (code); Med (production effect)",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "E3-02",
+      "severity": "P2",
+      "title": "Server-side tool timeouts cut off the daemon's interactive approval; an approved write can land after the model was told it timed out",
+      "subsystem": "backend tools / hostd approval queue",
+      "evidence": [
+        "aura_backend/aura_core/kernel/kernel.py:1499",
+        "aura_backend/aura_core/agents/registry.py:213-225",
+        "aura_backend/aura_core/tools/registry.py:361-376",
+        "aura_backend/aura_core/tools/coding.py:483,504,539,581",
+        "aura_backend/aura_core/adapters/host_agent.py:250,270,305,329",
+        "aura_hostd/lib/src/approval_queue.dart:46",
+        "aura_hostd/lib/src/task_handler.dart:110-118,193-205,266-268"
+      ],
+      "current_behavior": "write_file/edit_file are cancelled server-side after 15 s (write_files 30 s, run_command 60 s because the Engineer ToolContext deadline is 60 s) while the daemon waits up to 5 minutes for a human. A later Approve still executes the write/command on the user's machine after the agent was told it timed out and may have retried. run_command longer than 60 s always times out despite its 605 s spec.",
+      "expected_behavior": "A server-side timeout cancels the pending approval on the daemon, or the server waits as long as the daemon's approval window; the Engineer's effective run_command budget matches its documented 605 s.",
+      "recommendation": "Send a cancel frame for the call id on timeout/cancellation and mark the approval cancelled on the daemon; give the Engineer context a deadline at least as long as the longest host-routed tool; add a backend test with a fake daemon that answers after the tool timeout.",
+      "confidence": "High (code-read); behavior unverified",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "E3-03",
+      "severity": "P2",
+      "title": "D8 per-task worktree isolation is unreachable from the client",
+      "subsystem": "client/backend/hostd",
+      "evidence": [
+        "aura_backend/aura_core/api/v3.py:234-237",
+        "aura_client/lib/core/ai/online_agents/sse_agent_client.dart:131-142",
+        "grep task_isolation aura_client/lib aura_client/test: 0 hits",
+        "aura_hostd/lib/src/isolated_task_registry.dart:76-154",
+        "aura_client/lib/desktop/control_center/control_center_panel.dart:142"
+      ],
+      "current_behavior": "No client sets desktop_task_isolation, so every desktop task writes into the live checkout; the Agent Review panel is always empty and its empty-state copy promises behavior that cannot happen; DESKTOP_APP_STATUS.md presents D8/D9 as landed.",
+      "expected_behavior": "A Desktop IDE chat turn requests isolation so writes land in .aura-workspaces/<session> and review/merge/discard has content.",
+      "recommendation": "Add the field to buildChatRequestBody gated on the IDE, cover it in sse_agent_client tests, and correct the status doc until wired.",
+      "confidence": "High",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "E3-04",
+      "severity": "P3",
+      "title": "write_files is registered but not in the Engineer persona's grant",
+      "subsystem": "backend tools",
+      "evidence": [
+        "aura_backend/aura_core/tools/coding.py:520-563,828",
+        "aura_backend/aura_core/agents/registry.py:213-225",
+        "aura_backend/tests/unit/test_engineer_tools.py:149-215",
+        "aura_backend/tests/unit/test_workspace_local_policy.py:116"
+      ],
+      "current_behavior": "The Engineer model is never offered write_files, so the D6 atomic multi-file path and its daemon-side single-RPC approval are dead in practice; tests call the tool directly and bypass the grant.",
+      "expected_behavior": "The grant matches the documented Engineer tool surface.",
+      "recommendation": "Add write_files to the Engineer allowed_tools and add a kernel-level test that the Engineer declarations include it.",
+      "confidence": "High (grant); Med (declaration filtering not re-read)",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "E3-05",
+      "severity": "P2",
+      "title": "In a trusted root run_command has no path confinement and the hard denylist is a regex seatbelt; ADR-011's 'never merely confirmable' claim holds only for file RPCs",
+      "subsystem": "hostd command policy",
+      "evidence": [
+        "aura_hostd/lib/src/command_policy.dart:21-28,31-47,160-162",
+        "aura_hostd/lib/src/task_handler.dart:259,274-281",
+        "docs/architecture/011-desktop-engineer-agent.md:52-58,89-93",
+        "aura_backend/aura_core/tools/policy.py:129-134"
+      ],
+      "current_behavior": "A trusted root lets an untainted Engineer turn run any command as the user's OS account with no prompt, including commands touching paths outside the root; the denylist is pattern-based and bypassable (rm -r -f, find -delete, python -c). CB-05's taint-to-confirm is done; the untainted-trusted case remains.",
+      "expected_behavior": "Trusted mode is clearly a developer-only mode with a visible warning, or trusted commands keep argument-level containment for destructive verbs.",
+      "recommendation": "Apply the untrusted tier's argument containment to a documented set of destructive verbs in trusted roots; label the trust toggle with the real consequence; amend ADR-011's containment section.",
+      "confidence": "High",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "E3-06",
+      "severity": "P2",
+      "title": "The desktop app's own sign-in token is a full 30-day, unscoped, non-refreshable device token",
+      "subsystem": "backend auth",
+      "evidence": [
+        "aura_backend/api/v2/auth.py:242-267",
+        "aura_backend/services/jwt_auth.py:46,263-283,435-441",
+        "docs/status/DESKTOP_APP_STATUS.md:94-96",
+        "no client caller of /api/v3/auth/desktop/devices/revoke (grep aura_client/lib)"
+      ],
+      "current_behavior": "A desktop login yields a bearer valid for the whole API for 30 days, persisted client-side; revocation exists only via an endpoint no client calls.",
+      "expected_behavior": "Desktop sessions follow the short-access/refresh model, or a much shorter TTL plus a reachable revoke.",
+      "recommendation": "Issue a normal token pair from /desktop/login or shorten the TTL and wire the revoke endpoint in Settings.",
+      "confidence": "High",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "E3-07",
+      "severity": "P3",
+      "title": "run always executes in the first granted root; the backend never names a working directory",
+      "subsystem": "hostd TaskHandler",
+      "evidence": [
+        "aura_hostd/lib/src/task_handler.dart:241,249-251",
+        "aura_backend/aura_core/tools/coding.py:602-605",
+        "aura_hostd/lib/src/task_handler.dart:99,216"
+      ],
+      "current_behavior": "With multiple granted roots every run_command executes in root[0] under root[0]'s trust, while file RPCs resolve by path against any root; commands can run unprompted in a trusted root the user is not working in.",
+      "expected_behavior": "The Engineer session is bound to one root chosen in the IDE and the backend passes it as cwd.",
+      "recommendation": "Thread the active root through ToolContext.metadata and send cwd; refuse run when several roots are granted and none is named.",
+      "confidence": "High",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "E3-08",
+      "severity": "P3",
+      "title": "Pairing approval shows no device identity and the only approval UI is self-approval; device revoke is unreachable",
+      "subsystem": "pairing",
+      "evidence": [
+        "aura_backend/services/device_pairing.py:141-166",
+        "aura_client/lib/desktop/host/host_panel.dart:271-289",
+        "aura_client/lib/features/engineering/presentation/host_daemon_page.dart:148",
+        "aura_backend/api/v2/auth.py:228,232-240",
+        "aura_backend/aura_core/adapters/host_agent.py:165-170"
+      ],
+      "current_behavior": "A user who enters a code shown to them by someone else binds their account to an attacker's daemon; the host_agent-scoped token limits it to the socket, but the victim's Engineer writes and command output then route to the attacker's machine and no client screen can revoke.",
+      "expected_behavior": "The approve step names the requesting machine and paired devices are listable and revocable from the app.",
+      "recommendation": "Add device_name to start_pairing and echo it on approve; add a Paired devices list with GET /desktop/devices and the existing revoke.",
+      "confidence": "Med",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "E3-09",
+      "severity": "P3",
+      "title": "macOS build is sandboxed without the network-client entitlement",
+      "subsystem": "client/macOS",
+      "evidence": [
+        "aura_client/macos/Runner/Release.entitlements:5-9",
+        "no macOS job in .github/workflows/client-ci.yml (status doc)"
+      ],
+      "current_behavior": "A release build likely cannot open a socket to the backend; nothing has ever verified macOS.",
+      "expected_behavior": "com.apple.security.network.client is present or macOS is declared unsupported.",
+      "recommendation": "Add the entitlement or remove macOS from the supported list.",
+      "confidence": "High (code-read); behavior unverified",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "E3-10",
+      "severity": "P3",
+      "title": "The Desktop IDE is gated to Windows, the one desktop platform CI does not gate",
+      "subsystem": "client/CI",
+      "evidence": [
+        "aura_client/lib/core/platform/aura_platform.dart:14,19",
+        ".github/workflows/hostd-ci.yml:73",
+        "client-ci.yml build-windows continue-on-error (DESKTOP_APP_STATUS.md:47,63-65)"
+      ],
+      "current_behavior": "The IDE renders only on Windows; Linux CI compiles but never shows it; Windows CI jobs are advisory; /ide renders nothing on Linux/macOS.",
+      "expected_behavior": "The gating CI job runs on the platform the feature ships on.",
+      "recommendation": "Make the Windows jobs gating once green, or widen isDesktopIde to Linux and test there.",
+      "confidence": "High",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "E3-11",
+      "severity": "P3",
+      "title": "Nothing in this pass is proven: no green Host Daemon CI since 2026-09-11, no end-to-end report, no VPS workspace report",
+      "subsystem": "verification",
+      "evidence": [
+        "docs/status/DESKTOP_APP_STATUS.md:9-22,66-71",
+        "docs/production/gap_register.yaml:677-704",
+        "git ls-files docs/reports | grep -iE engineer|desktop|hostd -> desktop-ide-phase0-audit-2026-09-25.md only",
+        "deploy/scripts/verify-engineer-workspaces.sh exists; no report"
+      ],
+      "current_behavior": "All desktop/hostd claims rest on local runs recorded in docs; this pass could not run dart test or pytest either.",
+      "expected_behavior": "Committed green Linux and Windows hostd CI runs plus the two reports the gap register names.",
+      "recommendation": "Restore runners (CB-44), make hostd CI green on both OSes, record GAP-026's session, run verify-engineer-workspaces.sh on a host with the sandbox profile.",
+      "confidence": "High",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "E3-12",
+      "severity": "P3",
+      "title": "No restart-on-crash, no re-auth path, no bundled daemon: a 4401 or a crash needs a human",
+      "subsystem": "hostd lifecycle",
+      "evidence": [
+        "aura_client/lib/core/hostd/hostd_supervisor_io.dart:25-28,35-38",
+        "aura_hostd/lib/src/rpc_client.dart:89-93,140-147",
+        "aura_backend/aura_core/api/host_agent.py:138-149",
+        "aura_backend/services/jwt_auth.py:46"
+      ],
+      "current_behavior": "The daemon stops on token expiry (30 days) or revocation and never sends reauth, so the server's reauth branch is dead; the supervisor does not restart a crashed daemon; no binary is bundled.",
+      "expected_behavior": "Supervised restart with backoff, an actionable re-pair prompt on 4401, an installer that ships the daemon.",
+      "recommendation": "Implement restart in HostdSupervisor; surface 4401 as a pair-again state; bundle the daemon (M8.10).",
+      "confidence": "High",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "E3-13",
+      "severity": "P3",
+      "title": "A Google OAuth client secret sits in deploy/.env on this workstation (untracked)",
+      "subsystem": "secrets",
+      "evidence": [
+        "deploy/.env:4 key GOOGLE_DESKTOP_CLIENT_SECRET (value redacted)",
+        "git ls-files deploy/.env -> not tracked; .gitignore:8",
+        "aura_client/lib/core/config/config.dart:44-60",
+        "aura_backend/tests/architecture/test_no_committed_client_secrets.py:117"
+      ],
+      "current_behavior": "The repo leak (CB-06) is fixed, but a real GOCSPX- secret remains on the developer host and the desktop build scripts read deploy/.env into --dart-define, so builds made there compile a secret in again. Whether it is the rotated or leaked value is UNKNOWN.",
+      "expected_behavior": "No desktop build carries a client secret; the public Desktop-app client uses PKCE alone.",
+      "recommendation": "Delete the key from deploy/.env, confirm the Google client type, and make the desktop build scripts refuse a non-empty secret unless explicitly overridden.",
+      "confidence": "High (presence); UNKNOWN (which value)",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "E3-14",
+      "severity": "P3",
+      "title": "Engineer in production is desktop-only: the Docker fallback cannot exist on Railway and is off by default on the VPS",
+      "subsystem": "deployment boundary",
+      "evidence": [
+        "aura_backend/aura_core/container.py:1438-1462",
+        "deploy/.env.example:359-372",
+        "deploy/docker-compose.prod.yml:669-678",
+        "aura_backend/railway.json:3-6",
+        "aura_backend/aura_core/adapters/host_agent.py:387-391"
+      ],
+      "current_behavior": "On aureon-ai.tech every write_file/run_command from a user without a paired desktop fails with a clear error while the tools stay declared to the model; with E3-01 the persona has no reliable execution path on the live target.",
+      "expected_behavior": "Status docs and the persona prompt state that the Engineer needs a paired desktop on Railway.",
+      "recommendation": "Document in BACKEND_STATUS.md; consider hiding the sandbox tools when neither runner can serve the caller.",
+      "confidence": "Med",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "E3-15",
+      "severity": "P4",
+      "title": "Loopback /status is unauthenticated and lists granted roots and the backend URL",
+      "subsystem": "hostd control server",
+      "evidence": [
+        "aura_hostd/lib/src/control_server.dart:7-14,138,232-241"
+      ],
+      "current_behavior": "Any local process can read granted roots and pairing state without the control token (disclosed as a convenience boundary).",
+      "expected_behavior": "Only liveness fields on the unauthenticated path.",
+      "recommendation": "Return authenticated/backend_connected only; keep roots behind the token.",
+      "confidence": "High",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "E3-16",
+      "severity": "P4",
+      "title": "Stale documentation inside the desktop track",
+      "subsystem": "docs",
+      "evidence": [
+        "docs/architecture/011-desktop-engineer-agent.md:52-58,144-151,216-224,334-337,342-353",
+        "aura_hostd/README.md:25",
+        "aura_hostd/lib/src/command_policy.dart:7-13",
+        "aura_client/lib/desktop/control_center/control_center_panel.dart:142",
+        "docs/status/DESKTOP_APP_STATUS.md:24-27,52"
+      ],
+      "current_behavior": "ADR-011 says the desktop exchange sends a client secret and that no approval screen exists; the hostd README says no pairing flow exists; command_policy's header says non-allowlisted commands are refused rather than queued; the Control Center promises isolated worktrees the client never requests.",
+      "expected_behavior": "Docs match code.",
+      "recommendation": "Fix each item when touching the file; see report section 7.",
+      "confidence": "High",
+      "pass": "E3",
+      "report": "desktop_and_engineer.md"
+    },
+    {
+      "id": "F1-01",
+      "severity": "P1",
+      "title": "Google Cloud service-account key and backend .env remain in git history; rotation unrecorded",
+      "subsystem": "Secrets / repository",
+      "evidence": [
+        "git log --all --format=%h -- aura_backend/credentials.json -> 5b37323 (\"chore: add Google Cloud service account credentials file\")",
+        "git log --all -- aura_backend/.env credentials.json -> d2b92f0",
+        "git log --diff-filter=D -> deleted in 044f417",
+        "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:99-104 (CB-06 names only the GOCSPX client secret)",
+        ".gitignore:5-9 (names now ignored)"
+      ],
+      "current_behavior": "Anyone with read access to the repository or a pre-044f417 clone can recover the service-account private key and the historical .env contents; no document records a rotation.",
+      "expected_behavior": "Historical credentials rotated and the rotation recorded; history rewritten or keys provably dead.",
+      "recommendation": "Rotate the service-account key(s) and every value in that .env; record the date in docs/reports/; run a one-time history secret scan as evidence; consider a history rewrite while main is still unprotected and collaborator count is low.",
+      "confidence": "High (presence); rotation state UNKNOWN",
+      "pass": "F1",
+      "report": "security_and_privacy.md"
+    },
+    {
+      "id": "F1-02",
+      "severity": "P2",
+      "title": "Backup container mounts the entire deploy/secrets directory (CB-08 still open)",
+      "subsystem": "Deploy / backups",
+      "evidence": [
+        "deploy/docker-compose.prod.yml:1237 (./secrets:/run/backup-secrets:ro)",
+        "deploy/docker-compose.prod.yml:1215,1229-1231 (only three files used)",
+        "deploy/docker-compose.prod.yml:220-284 (jwt_secret, data_encryption_keys, secrets_encryption_key, firebase_credentials.json, github_oauth_client_secret live in the same directory)",
+        "deploy/docker-compose.prod.yml:1240 (backup is on the egress network)"
+      ],
+      "current_behavior": "A compromise of the backup container yields every signing and encryption key, including the KEK that wraps all users' ADR-032 data keys.",
+      "expected_behavior": "The backup job sees only the files it uses.",
+      "recommendation": "Mount the age recipients, S3 keys and rclone.conf individually or from a ./secrets/backup/ subdirectory; add a compose fitness test asserting no service bind-mounts ./secrets wholesale.",
+      "confidence": "High",
+      "pass": "F1",
+      "report": "security_and_privacy.md"
+    },
+    {
+      "id": "F1-03",
+      "severity": "P2",
+      "title": "On Railway the legacy per-IP rate limiter and audit source_ip see the proxy address, not the client's",
+      "subsystem": "Gateway / rate limiting",
+      "evidence": [
+        "aura_backend/Dockerfile:147 (--proxy-headers, no --forwarded-allow-ips)",
+        "aura_backend/docker-entrypoint.sh (no FORWARDED_ALLOW_IPS; grep empty)",
+        "aura_backend/infrastructure/http_limits.py:67 (keys on request.client.host)",
+        "aura_backend/aura_core/api/v3.py:318,409,1233 (source_ip = request.client.host)",
+        "aura_backend/aura_core/api/v3.py:361 and aura_core/security/rate_limit.py:202-224 (v3 limiter reads XFF itself, unaffected)",
+        "docs/deployment/control-plane.md:64 (sets only AURA_TRUSTED_PROXY_COUNT)"
+      ],
+      "current_behavior": "On the Railway target all users share one 100 req/min bucket keyed on the edge proxy address; one client can 429 the whole API and audit rows record the proxy IP.",
+      "expected_behavior": "Client IP derived from the single trusted hop on every limiter and audit write.",
+      "recommendation": "Set FORWARDED_ALLOW_IPS (or --forwarded-allow-ips) narrowly for the Railway service, or key the legacy limiter on extract_client_ip() like v3; verify with two source IPs against production.",
+      "confidence": "Medium (Railway proxy source address not observed)",
+      "pass": "F1",
+      "report": "security_and_privacy.md"
+    },
+    {
+      "id": "F1-04",
+      "severity": "P2",
+      "title": "Desktop app sign-in mints a 30-day, unscoped, unattested token that can fetch the user's data key",
+      "subsystem": "Auth / ADR-032",
+      "evidence": [
+        "aura_backend/api/v2/auth.py:242-267 (issue_device_token without scope)",
+        "aura_backend/services/jwt_auth.py:46,263-284,435-442",
+        "aura_backend/aura_core/api/v3.py:1192-1252 (GET /api/v3/keys/data returns the DEK)",
+        "docs/architecture/032-personal-os-single-store.md:332 (threat row: stolen token yields DEK)"
+      ],
+      "current_behavior": "A token stolen from a desktop is a full session for a month and exposes the user's personal-OS plaintext; pairing tokens were scoped (F-09) but the app's own login was not.",
+      "expected_behavior": "Desktop app sessions short-lived and refreshable (device-bound refresh), or scoped away from /keys/data and admin routes.",
+      "recommendation": "Issue the desktop app a 15-minute access + device-bound refresh pair; keep the 30-day form for the scoped daemon only; document the interim trade in ADR-032.",
+      "confidence": "High (code); Medium (severity)",
+      "pass": "F1",
+      "report": "security_and_privacy.md"
+    },
+    {
+      "id": "F1-05",
+      "severity": "P3",
+      "title": "Production CORS default includes localhost origins with credentials (SEC-12 still open)",
+      "subsystem": "Gateway",
+      "evidence": [
+        "deploy/docker-compose.prod.yml:516",
+        "aura_backend/aura_service.py:238-254"
+      ],
+      "current_behavior": "A page on a developer's localhost can make credentialed cross-origin calls to production; impact bounded because the API is bearer-only.",
+      "expected_behavior": "Production default names only production origins.",
+      "recommendation": "Drop localhost from the prod default; set ALLOWED_ORIGINS explicitly on Railway.",
+      "confidence": "High",
+      "pass": "F1",
+      "report": "security_and_privacy.md"
+    },
+    {
+      "id": "F1-06",
+      "severity": "P3",
+      "title": "fetch_url reads the whole response body into memory before truncating",
+      "subsystem": "Tools / SSRF residual",
+      "evidence": [
+        "aura_backend/aura_core/tools/builtin.py:461,478-496"
+      ],
+      "current_behavior": "A multi-GB allowlisted URL is fully buffered before the 20,000-char cap; DNS-rebinding TOCTOU acknowledged in code.",
+      "expected_behavior": "Bounded streamed read.",
+      "recommendation": "Use client.stream() and abort past a byte budget (e.g. 1 MB); keep the char cap.",
+      "confidence": "High",
+      "pass": "F1",
+      "report": "security_and_privacy.md"
+    },
+    {
+      "id": "F1-07",
+      "severity": "P3",
+      "title": "Audit log and turn telemetry hold email and source IP with no retention and survive erasure",
+      "subsystem": "Privacy / data lifecycle",
+      "evidence": [
+        "aura_backend/alembic/versions/0016_runtime_tables_baseline.py:64-75",
+        "aura_backend/api/admin_platform.py:234-242 (NOT_ERASED)",
+        "grep for purge/retention over aura_audit_events and aura_turn_telemetry: none"
+      ],
+      "current_behavior": "After erasure the subject's email and IPs persist indefinitely in audit rows; telemetry likewise.",
+      "expected_behavior": "Documented retention enforced by a periodic purge; erasure pseudonymises the subject's actor field.",
+      "recommendation": "Celery beat purge with configurable days; on erasure replace actor with a hash; state the policy in docs/.",
+      "confidence": "High",
+      "pass": "F1",
+      "report": "security_and_privacy.md"
+    },
+    {
+      "id": "F1-08",
+      "severity": "P3",
+      "title": "Session/device revocation scans all Redis keys; no refresh-token reuse detection",
+      "subsystem": "Auth",
+      "evidence": [
+        "aura_backend/services/jwt_auth.py:319-333,379-403"
+      ],
+      "current_behavior": "O(total sessions) Redis round trips per demotion or erasure; a replayed consumed refresh token is refused without revoking its family.",
+      "expected_behavior": "Per-uid index sets; family revocation on replay.",
+      "recommendation": "Write uid-indexed sets at issue time; revoke the family when a consumed token is replayed.",
+      "confidence": "High",
+      "pass": "F1",
+      "report": "security_and_privacy.md"
+    },
+    {
+      "id": "F1-09",
+      "severity": "P3",
+      "title": "Documents and chunks stored in plaintext in Postgres and Qdrant payloads; third-party Qdrant on Railway",
+      "subsystem": "Data residency / encryption at rest",
+      "evidence": [
+        "aura_backend/aura_core/adapters/postgres_store.py:831-895 (cipher applied to memories only)",
+        "docs/deployment/control-plane.md:69",
+        "docs/architecture/032-personal-os-single-store.md (scope is personal-OS fields only)"
+      ],
+      "current_behavior": "Uploaded document text is readable by anyone with DB or Qdrant access and leaves the control plane on the Railway target.",
+      "expected_behavior": "An explicit decision per target on document confidentiality; optionally sealed chunk text.",
+      "recommendation": "Record the decision in the ADR owning the Railway split; if confidentiality is wanted, seal aura_chunks.content and Qdrant text payloads with the owner's DEK.",
+      "confidence": "Medium",
+      "pass": "F1",
+      "report": "security_and_privacy.md"
+    },
+    {
+      "id": "F1-10",
+      "severity": "P3",
+      "title": "VPS gateway trusts X-Forwarded-For from any container (--forwarded-allow-ips='*')",
+      "subsystem": "Deploy",
+      "evidence": [
+        "deploy/docker-compose.prod.yml:404",
+        "deploy/docker-compose.dev.yml:277"
+      ],
+      "current_behavior": "Any container on the gateway's networks can spoof client IP to the limiters and audit.",
+      "expected_behavior": "Trust only nginx's address.",
+      "recommendation": "Replace '*' with the nginx service address or edge subnet in both compose files.",
+      "confidence": "High",
+      "pass": "F1",
+      "report": "security_and_privacy.md"
+    },
+    {
+      "id": "F1-11",
+      "severity": "P3",
+      "title": "hostd control-server token file permissions not restricted (SEC-01 residual)",
+      "subsystem": "aura_hostd",
+      "evidence": [
+        "grep 0600|chmod|umask|writeAsString in aura_hostd/lib/src/control_server.dart: no permission handling (doc comment at :13 only)"
+      ],
+      "current_behavior": "control.json, holding the bearer that can flip workspace trust, is written with the process umask.",
+      "expected_behavior": "Token file created 0600 / restricted ACL.",
+      "recommendation": "Write to a temp file, restrict permissions, then rename.",
+      "confidence": "Medium (CODE-PRESENT / BEHAVIOR UNVERIFIED)",
+      "pass": "F1",
+      "report": "security_and_privacy.md"
+    },
+    {
+      "id": "F1-12",
+      "severity": "P3",
+      "title": "No command_timeout on the asyncpg pool; legacy SQLAlchemy engine never disposed; connection budget uncomputed",
+      "subsystem": "Database",
+      "evidence": [
+        "aura_backend/aura_core/adapters/postgres_store.py:120-122",
+        "aura_backend/infrastructure/db/base.py:69",
+        "aura_backend/Dockerfile:147 (AURA_WORKERS default 4)",
+        "aura_backend/aura_core/container.py:905",
+        "no max_connections in deploy/docker-compose.*.yml (grep empty)"
+      ],
+      "current_behavior": "A slow statement holds a pool slot indefinitely; two pools per worker across gateway and Celery workers can exceed Postgres's default 100 connections.",
+      "expected_behavior": "Per-statement timeout and a documented, enforced connection budget.",
+      "recommendation": "Pass command_timeout and max_inactive_connection_lifetime to create_pool; compute the budget per deployment and set max_connections explicitly.",
+      "confidence": "High",
+      "pass": "F1",
+      "report": "security_and_privacy.md"
+    },
+    {
+      "id": "F1-13",
+      "severity": "P4",
+      "title": "Legacy plaintext rows are read silently after keys are configured",
+      "subsystem": "Encryption at rest",
+      "evidence": [
+        "aura_backend/aura_core/adapters/field_crypto.py:33-36,180-182",
+        "aura_backend/scripts/reencrypt_fields.py (exists; no evidence it ran on Railway)"
+      ],
+      "current_behavior": "Rows written before AURA_DATA_ENCRYPTION_KEYS was set stay plaintext and are indistinguishable from outside.",
+      "expected_behavior": "A count of remaining plaintext rows is visible and driven to zero.",
+      "recommendation": "Expose a needs_reencryption counter via metrics/readiness, run the script, record the output.",
+      "confidence": "High",
+      "pass": "F1",
+      "report": "security_and_privacy.md"
+    },
+    {
+      "id": "F2-01",
+      "severity": "P1",
+      "title": "Production (Railway) ships every main push with no CI gate and no branch protection",
+      "subsystem": "CI/CD governance",
+      "evidence": [
+        ".github/workflows/control-plane-deploy.yml:3-5,24-28",
+        "docs/status/BACKEND_STATUS.md:18-21,35,92-93,97",
+        "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:26-30,52-60",
+        "docs/production/gap_register.yaml:132-157",
+        ".github/workflows/eval-ci.yml:17-20"
+      ],
+      "current_behavior": "Railway's GitHub integration auto-deploys each push to the unprotected main branch; four PRs and everything since reached production without a CI run; all CI workflows and the evaluation gate are advisory because no required status checks exist.",
+      "expected_behavior": "A merge to main requires green required checks and production deploys only from a CI-verified SHA (control-plane-deploy.yml or Railway 'Wait for CI').",
+      "recommendation": "Enable branch protection with required checks (Backend test/pip-audit/docker-build, Repo Hygiene, Eval gate, Client/Hostd/Admin on their paths); disable Railway GitHub auto-deploy or enable Wait for CI; set vars.CONTROL_PLANE_DEPLOY_REQUIRED=true so a silent skip fails.",
+      "confidence": "High (source) / Med (live)",
+      "pass": "F2",
+      "report": "deployment_and_operations.md"
+    },
+    {
+      "id": "F2-02",
+      "severity": "P1",
+      "title": "GitHub Actions not executing (CB-44): every gate in the repo is inert",
+      "subsystem": "CI/CD",
+      "evidence": [
+        "docs/status/BACKEND_STATUS.md:18-21,44",
+        "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:26-30",
+        "docs/production/gap_register.yaml:1002-1027"
+      ],
+      "current_behavior": "Jobs die in 2-4 s with no runner since ~2026-10-28 19:50 UTC; last green Backend CI is dc87beb; every TESTED claim since is local-only; GAP-043 still reads 'proven'.",
+      "expected_behavior": "Workflows get runners and run to completion on every PR and main push.",
+      "recommendation": "Owner restores Actions (billing/spending limit); re-run Backend, Client, Hostd, Admin, Repo Hygiene on main; mark GAP-043 regressed.",
+      "confidence": "Med (DOCUMENTED ONLY)",
+      "pass": "F2",
+      "report": "deployment_and_operations.md"
+    },
+    {
+      "id": "F2-03",
+      "severity": "P1",
+      "title": "Railway ignores railway.json; deploy settings live only in the dashboard and drift from the repo",
+      "subsystem": "Railway control plane",
+      "evidence": [
+        "docs/deployment/control-plane.md:195-199",
+        "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:17",
+        "docs/status/BACKEND_STATUS.md:85-91",
+        "aura_backend/railway.json:8-14",
+        "aura_backend/tests/unit/test_release_identity.py:240-265"
+      ],
+      "current_behavior": "railwayConfigFile is null on the production service; the pre-deploy command was fixed by hand in the dashboard; healthcheckPath, restart policy, drainingSeconds and preDeployTimeoutSeconds in railway.json are not applied; tests pin a file production does not read; the F-25 drain budget is unproven on Railway.",
+      "expected_behavior": "The service links aura_backend/railway.json so deploy behaviour is reviewed in git and pinned by tests, or the file is removed and tests retargeted.",
+      "recommendation": "Set the service's config file to aura_backend/railway.json, verify the next deploy log shows the /health/live check and the pre-deploy script, and record a dashboard snapshot in docs/reports/.",
+      "confidence": "Med (doc claims)",
+      "pass": "F2",
+      "report": "deployment_and_operations.md"
+    },
+    {
+      "id": "F2-04",
+      "severity": "P1",
+      "title": "VPS deploy path dead on a stale host-key pin; the VPS's running revision and exposure are unknown",
+      "subsystem": "VPS deployment / security",
+      "evidence": [
+        "deploy/known_hosts:8-15",
+        "docs/status/BACKEND_STATUS.md:37,94-96,211",
+        ".github/workflows/deploy-backend.yml:85-95",
+        "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:63-71",
+        "git ls-files deploy/vps_known_hosts.tmp -> tracked"
+      ],
+      "current_behavior": "No automated deploy has reached the VPS in ~6 weeks (Host key verification failed since 2026-10-18); the host still holds the production compose, secrets and data; whether the key change was a rebuild or a compromise is unconfirmed; Verify Hosted Inference and VPS Dev Ops share the dead path.",
+      "expected_behavior": "The VPS is either confirmed out of band, re-pinned and brought to main, or decommissioned with secrets rotated and workflows retired.",
+      "recommendation": "Confirm the fingerprint out of band, decide the VPS future (CB-03), update deploy/known_hosts by PR and delete deploy/vps_known_hosts.tmp; until then treat the VPS as untrusted and rotate any secret shared with Railway.",
+      "confidence": "Med",
+      "pass": "F2",
+      "report": "deployment_and_operations.md"
+    },
+    {
+      "id": "F2-05",
+      "severity": "P2",
+      "title": "Whether Celery workers and beat run on Railway is undocumented; background work may be silently absent",
+      "subsystem": "Railway control plane / background jobs",
+      "evidence": [
+        "docs/deployment/control-plane.md:21-46",
+        "docs/status/BACKEND_STATUS.md (no Railway worker/beat mention; grep lines 115-158 are VPS/F-25 only)",
+        "deploy/monitoring/alerts/aura.yml:63-77"
+      ],
+      "current_behavior": "Outbox drain, nightly knowledge refresh, memory consolidation, ingestion and learning queues depend on worker-* and beat services that must be created by hand in the Railway dashboard; nothing in the repo or status docs proves they exist, and no healthcheck or alert covers them on Railway.",
+      "expected_behavior": "Every production process is enumerated with command, revision and health evidence; a missing worker is visible.",
+      "recommendation": "List Railway services (railway status) and record them; create the three services per control-plane.md section 2 if absent; surface outbox age in /health/ready or an alert.",
+      "confidence": "Med",
+      "pass": "F2",
+      "report": "deployment_and_operations.md"
+    },
+    {
+      "id": "F2-06",
+      "severity": "P2",
+      "title": "No metrics scrape, alerting or log retention for the production target; the alert catalogue applies only to the VPS",
+      "subsystem": "Observability",
+      "evidence": [
+        "deploy/monitoring/prometheus.yml:6-7,17-21",
+        "deploy/docker-compose.prod.yml:1081-1192",
+        "deploy/monitoring/alerts/aura.yml",
+        "docs/deployment/operations.md:46-52",
+        "docs/status/BACKEND_STATUS.md:50,63,200-201"
+      ],
+      "current_behavior": "AuraGatewayDown, AuraAllProvidersUnhealthy, AuraOutboxBacklog, AuraBackupStale, AuraInsecureModeActive and the rest cannot fire for Railway; the F-24 HTTP/outbox metrics have never been scraped on a live target.",
+      "expected_behavior": "A scrape of the production gateway and a paging route for critical rules.",
+      "recommendation": "Deploy Prometheus and Alertmanager as Railway services using the existing configs, scrape with AURA_METRICS_TOKEN, route critical alerts to a human, and record one live scrape showing aura_http_* and aura_outbox_*.",
+      "confidence": "High (source)",
+      "pass": "F2",
+      "report": "deployment_and_operations.md"
+    },
+    {
+      "id": "F2-07",
+      "severity": "P2",
+      "title": "/metrics is unauthenticated unless AURA_METRICS_TOKEN is set; on Railway the app is the edge and the doc never asks for the token",
+      "subsystem": "Observability / information disclosure",
+      "evidence": [
+        "aura_backend/aura_core/api/v3.py:1764-1769",
+        "aura_backend/aura_core/config/settings.py:985-990",
+        "aura_backend/aura_core/api/security_headers.py:98-107",
+        "docs/deployment/control-plane.md:56-96,170-179",
+        "deploy/nginx/templates/aura.conf.template:224-227"
+      ],
+      "current_behavior": "The metrics route has no auth dependency; protection is opt-in via AURA_METRICS_TOKEN (the code comment records a live probe that found /metrics world-readable on Railway); the Railway variable list omits the token; the VPS relies on nginx deny.",
+      "expected_behavior": "Metrics reachable only by the scraper on every target.",
+      "recommendation": "Set AURA_METRICS_TOKEN on the Railway gateway and confirm /metrics returns 401; document the variable in control-plane.md; consider failing validate() rather than warning when the app is the edge.",
+      "confidence": "Med (configuration UNKNOWN)",
+      "pass": "F2",
+      "report": "deployment_and_operations.md"
+    },
+    {
+      "id": "F2-08",
+      "severity": "P2",
+      "title": "Backup/DR exists only as a VPS compose sidecar; the production datastores on Railway/Qdrant have no repo-owned backup, drill, or RPO/RTO",
+      "subsystem": "Backup / DR",
+      "evidence": [
+        "deploy/docker-compose.prod.yml:1195-1247",
+        "deploy/scripts/backup.sh:1-25",
+        "docs/production/DISASTER_RECOVERY.md:23-49",
+        "docs/production/gap_register.yaml:724-744",
+        "docs/deployment/control-plane.md:67-70",
+        "docs/status/BACKEND_STATUS.md:64"
+      ],
+      "current_behavior": "Production data lives in Railway Postgres (provider snapshots UNKNOWN), a Redis plugin and an external Qdrant; nothing in the repo dumps, encrypts, verifies or restores them; the only drill was a 2026-08-23 sandbox; RPO/RTO never measured.",
+      "expected_behavior": "Scheduled, encrypted, verified backups of the live Postgres and Qdrant with an off-platform copy and a drill report in docs/reports/.",
+      "recommendation": "Run the existing backup.sh as a Railway cron/service against the Railway DATABASE_URL and Qdrant URL with an age recipient and S3 target, then execute restore-drill.sh against that output and file the report.",
+      "confidence": "High (source) / UNKNOWN (Railway plan)",
+      "pass": "F2",
+      "report": "deployment_and_operations.md"
+    },
+    {
+      "id": "F2-09",
+      "severity": "P2",
+      "title": "Data-encryption and ADR-032 user-key custody on Railway is a single dashboard variable with no documented backup, and the deployment doc omits it",
+      "subsystem": "Secrets / key custody",
+      "evidence": [
+        "aura_backend/aura_core/config/settings.py:1878-1887",
+        "deploy/docker-compose.prod.yml:251-260",
+        "deploy/scripts/bootstrap-secrets.sh:85-91",
+        "docs/deployment/control-plane.md:54-96,170-179",
+        "docs/status/BACKEND_STATUS.md:68,79-84"
+      ],
+      "current_behavior": "AURA_DATA_ENCRYPTION_KEYS, required at boot and (after migration 0019) wrapping every user's data key, exists only as a Railway env var; rotation guidance is VPS-only; losing or regenerating it is total loss of encrypted content; the Railway variable list does not mention it.",
+      "expected_behavior": "Sealed off-platform key escrow, a Railway rotation runbook, and the variable listed as required in control-plane.md.",
+      "recommendation": "Export and seal the current keys offline; add AURA_DATA_ENCRYPTION_KEYS, AURA_METRICS_TOKEN and AURA_JWT_ISSUER/AUDIENCE to control-plane.md; add a test that the doc lists every production-required variable.",
+      "confidence": "High",
+      "pass": "F2",
+      "report": "deployment_and_operations.md"
+    },
+    {
+      "id": "F2-10",
+      "severity": "P2",
+      "title": "Sensitive-class turns have no serving path while hfspace is down on the hosted-primary Railway topology",
+      "subsystem": "Inference routing on the production target",
+      "evidence": [
+        "docs/deployment/control-plane.md:161-168",
+        "docs/status/BACKEND_STATUS.md:24,35-36,98",
+        "deploy/docker-compose.prod.yml:57-63",
+        "aura_backend/aura_core/container.py:1787"
+      ],
+      "current_behavior": "By ADR-030 policy, documents, memory and tool-output turns may only go to local or hfspace; production has neither healthy (hosted1 only), so those turns are expected to fail while public-content chat succeeds; readiness only reports local_healthy.",
+      "expected_behavior": "A healthy sensitive-capable provider, or an explicit documented degraded mode visible on /health/ready and alerts.",
+      "recommendation": "Restore the Space or provision a sensitive-capable provider; have /health/ready report sensitive capability distinctly; alert when no provider admits sensitive content.",
+      "confidence": "Med (derived from docs; not probed)",
+      "pass": "F2",
+      "report": "deployment_and_operations.md"
+    },
+    {
+      "id": "F2-11",
+      "severity": "P3",
+      "title": "Deploy Control Plane's readiness and revision probes do not match the app's routes for any plausible RAILWAY_HEALTH_URL",
+      "subsystem": "CI/CD (control-plane-deploy.yml)",
+      "evidence": [
+        ".github/workflows/control-plane-deploy.yml:130,149",
+        "aura_backend/aura_core/api/v3.py:1734-1750",
+        "grep '\"/health\"' aura_backend/aura_service.py -> no match"
+      ],
+      "current_behavior": "With /health/ready the wait greps for \"status\" which the payload lacks; with /health/live the version URL becomes .../health/live/health/version (404, 'revision mismatch'); with /health the app 404s. The workflow cannot pass as written once configured.",
+      "expected_behavior": "Poll /health/live, derive /health/version from the origin, assert git_sha.",
+      "recommendation": "Compute origin=${RAILWAY_HEALTH_URL%%/health*}, poll $origin/health/live, verify $origin/health/version; add a unit test for the workflow's URL derivation.",
+      "confidence": "Med (variable value UNKNOWN)",
+      "pass": "F2",
+      "report": "deployment_and_operations.md"
+    },
+    {
+      "id": "F2-12",
+      "severity": "P3",
+      "title": "Deploy-time migration safety relies on an 'additive migrations' assumption the chain no longer satisfies and nothing enforces",
+      "subsystem": "Migrations / rollback",
+      "evidence": [
+        "deploy/scripts/vps-update.sh:22-25,381-384,474-476",
+        "aura_backend/alembic/versions/0001_initial_schema.py ... 0019_user_data_keys.py",
+        "aura_backend/scripts/railway-predeploy.sh:2-3",
+        "docs/deployment/rollback.md:8-14",
+        "docs/status/BACKEND_STATUS.md:67"
+      ],
+      "current_behavior": "Both targets migrate before the new code starts while the old code keeps serving, and rollback reverts the image only; no test or checklist requires expand/contract compatibility or a tested downgrade per revision (only 0017 noted as downgrade-checked).",
+      "expected_behavior": "Each migration is backward-compatible with the previous image or flagged as needing a maintenance window; downgrade exercised in CI.",
+      "recommendation": "Add alembic upgrade head && downgrade -1 && upgrade head to the postgres CI job; add a migration-review item to RELEASE_CHECKLIST.md; correct the vps-update.sh comment.",
+      "confidence": "Med",
+      "pass": "F2",
+      "report": "deployment_and_operations.md"
+    },
+    {
+      "id": "F2-13",
+      "severity": "P3",
+      "title": "Runtime images unpinned or tag-only; the production inference Space builds from vllm/vllm-openai:latest",
+      "subsystem": "Supply chain",
+      "evidence": [
+        "deploy/spaces/inference-vllm/Dockerfile:16-21",
+        "deploy/docker-compose.prod.yml:289,733,1012,1037",
+        "deploy/docker-compose.prod.yml:936,984,1064,1082-1178 (digest-pinned examples)",
+        "docs/reports/AURA_FULL_SYSTEM_REVIEW.md:251,258"
+      ],
+      "current_behavior": "A Space rebuild picks up whatever vLLM is current; nginx, postgres, redis and tinyproxy float within a tag while observability, ollama, qdrant and the compose vllm service are digest-pinned.",
+      "expected_behavior": "Every production image pinned by digest with a deliberate bump procedure.",
+      "recommendation": "Pin vllm/vllm-openai by tag+digest as the compose vllm service does; pin nginx/postgres/redis/tinyproxy by digest; extend test_repo_hygiene.py to assert digests on prod images.",
+      "confidence": "High (source)",
+      "pass": "F2",
+      "report": "deployment_and_operations.md"
+    },
+    {
+      "id": "F2-14",
+      "severity": "P3",
+      "title": "Dockerfile CMD lacks --forwarded-allow-ips, so uvicorn ignores Railway's X-Forwarded-Proto/For; the compose command has it",
+      "subsystem": "Runtime config (Railway)",
+      "evidence": [
+        "aura_backend/Dockerfile:147",
+        "deploy/docker-compose.prod.yml:400-406",
+        "aura_backend/aura_core/security/rate_limit.py:202-229",
+        "aura_backend/aura_core/config/settings.py:1043,1067"
+      ],
+      "current_behavior": "Behind Railway's edge the uvicorn peer is not loopback, so request.url.scheme stays http and request.client is the proxy; rate limiting is unaffected (own X-Forwarded-For parser), but any scheme-derived URL, secure-cookie or HSTS decision would see plain HTTP.",
+      "expected_behavior": "The platform CMD trusts the single edge hop exactly as the compose command does.",
+      "recommendation": "Add --forwarded-allow-ips='*' (or FORWARDED_ALLOW_IPS) to the Dockerfile CMD and pin it in test_deploy_robustness.py.",
+      "confidence": "Low (impact not traced)",
+      "pass": "F2",
+      "report": "deployment_and_operations.md"
+    },
+    {
+      "id": "F2-15",
+      "severity": "P4",
+      "title": "Tracked deploy/vps_known_hosts.tmp duplicates deploy/known_hosts and is not covered by the artefact guard",
+      "subsystem": "Repo hygiene",
+      "evidence": [
+        "git ls-files deploy/vps_known_hosts.tmp -> tracked",
+        "deploy/vps_known_hosts.tmp:1 identical to deploy/known_hosts:15"
+      ],
+      "current_behavior": "A scratch file carrying the stale host-key pin is in the tree and could be mistaken for the authoritative pin.",
+      "expected_behavior": "One documented pin file.",
+      "recommendation": "Delete the .tmp file by PR; extend scripts/check_tracked_artifacts.py to refuse *.tmp.",
+      "confidence": "High",
+      "pass": "F2",
+      "report": "deployment_and_operations.md"
+    },
+    {
+      "id": "G-01",
+      "severity": "P1",
+      "title": "No test gate blocks a production deploy",
+      "subsystem": "process/ci",
+      "evidence": [
+        ".github/workflows/eval-ci.yml:17-20",
+        "docs/status/BACKEND_STATUS.md:19-22",
+        "docs/production/gap_register.yaml:132-158 (GAP-005)",
+        "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:26-28 (CB-44)",
+        "CLAUDE.md: Railway auto-deploys every main push, CI or not"
+      ],
+      "current_behavior": "Railway ships every main push; GitHub Actions assigns no runner since ~2026-10-28 19:50 UTC; main is unprotected, so even a running CI is advisory.",
+      "expected_behavior": "Required status checks (Backend CI test/pip-audit/docker-build, Evaluation regression gate, Repo Hygiene) on a protected main, and Railway waiting for CI.",
+      "recommendation": "Owner restores Actions, protects main with required checks, enables Railway 'Wait for CI' or disables its auto-deploy; record both settings in docs/reports/.",
+      "confidence": "High",
+      "pass": "G",
+      "report": "testing_and_evaluation.md"
+    },
+    {
+      "id": "G-02",
+      "severity": "P1",
+      "title": "Every AI-quality gate is scripted; no real-model evaluation exists or is scheduled",
+      "subsystem": "evaluation",
+      "evidence": [
+        "aura_backend/evaluation/gate.py:11-23,141-157",
+        "aura_backend/tests/e2e/test_agent_tasks_gate.py:5-11",
+        "aura_backend/tests/e2e/test_docs_corpus_gate.py:7-15",
+        "aura_backend/evaluation/suites/agent_tasks_baseline.json (1.0/1.0/1.0)",
+        "docs/production/gap_register.yaml:585-600 (GAP-021 open)",
+        ".github/workflows/eval-ci.yml:144-146 (dispatch-run manual only)"
+      ],
+      "current_behavior": "Gates use EchoProvider, ContextGroundedProvider and the non-semantic hash embedder; agent_tasks 100% is tautological; production embedder/LLM quality has never been measured.",
+      "expected_behavior": "A scheduled real-model evaluation (production embedder + the deployed model) reporting recall@10, groundedness and citation precision per PRODUCTION_SLO, committed to docs/reports/.",
+      "recommendation": "Add a schedule/dispatch job running evaluation/runner.py and evaluation/vision_eval.py against the dev stack with AURA_LLM_PROVIDERS set (outside gate.py's determinism check); commit the first report; then gate releases on it. Fits ADR-003/030 (local-first, hosted only behind the flag).",
+      "confidence": "High",
+      "pass": "G",
+      "report": "testing_and_evaluation.md"
+    },
+    {
+      "id": "G-03",
+      "severity": "P2",
+      "title": "Windows coverage for the Windows-first desktop targets is advisory only",
+      "subsystem": "ci/desktop",
+      "evidence": [
+        ".github/workflows/client-ci.yml:120 (continue-on-error: true)",
+        ".github/workflows/hostd-ci.yml:73 (continue-on-error: true)",
+        "docs/status/DESKTOP_APP_STATUS.md:47,55"
+      ],
+      "current_behavior": "Known Windows failures (10 client path_containment cases, 5 hostd cases: 8.3 short paths, errno 32 locks) cannot turn a run red.",
+      "expected_behavior": "Windows jobs gating once green.",
+      "recommendation": "Fix the 8.3 path canonicalisation in client and hostd tests, verify a green run, then remove continue-on-error.",
+      "confidence": "High",
+      "pass": "G",
+      "report": "testing_and_evaluation.md"
+    },
+    {
+      "id": "G-04",
+      "severity": "P2",
+      "title": "Host Daemon CI hangs on Linux; the fix has never been CI-run",
+      "subsystem": "ci/hostd",
+      "evidence": [
+        ".github/workflows/hostd-ci.yml:30-33",
+        "docs/status/DESKTOP_APP_STATUS.md:16,56,70",
+        "git commit 4b1968e (2026-10-28)"
+      ],
+      "current_behavior": "Linux job passes 220 tests then the PosixPtySession reader isolate hangs until the 15-minute timeout; fix merged with no runner since.",
+      "expected_behavior": "Green Linux Host Daemon CI run.",
+      "recommendation": "Re-run on main once runners return; if it still hangs, tag posix_pty_session_test.dart and run it with its own timeout.",
+      "confidence": "Medium",
+      "pass": "G",
+      "report": "testing_and_evaluation.md"
+    },
+    {
+      "id": "G-05",
+      "severity": "P2",
+      "title": "Coverage floor covers aura_core only; legacy/platform tree and its Docker-dependent tests have no coverage or infra-free path",
+      "subsystem": "ci/backend",
+      "evidence": [
+        ".github/workflows/backend-ci.yml:94 (--cov=aura_core --cov-fail-under=82)",
+        "no .coveragerc / pyproject coverage section (ls/grep)",
+        "aura_backend/test_erasure_integration.py:31, test_celery_loop_integration.py:25, test_insights_integration.py:29, test_github_link_integration.py:38 (skipUnless docker)"
+      ],
+      "current_behavior": "api/v2, services/ (JWT, sync) and infrastructure/ are outside the coverage ratchet; four legacy Postgres tests skip anywhere without Docker.",
+      "expected_behavior": "Coverage reported over the whole shipped tree; the Postgres-backed legacy tests run in the CI postgres job.",
+      "recommendation": "Add --cov=api --cov=services --cov=infrastructure reporting (no floor initially); move the four testcontainers tests to tests/load/*_postgres.py so the existing postgres service job executes them.",
+      "confidence": "Medium",
+      "pass": "G",
+      "report": "testing_and_evaluation.md"
+    },
+    {
+      "id": "G-06",
+      "severity": "P3",
+      "title": "Dev/test tooling unpinned (GAP-033 open); no flake, parallel, property-based or mutation tooling",
+      "subsystem": "supply-chain/test",
+      "evidence": [
+        "aura_backend/requirements-dev.txt (pytest>=8.0, pytest-asyncio>=0.23, pytest-cov>=5.0, testcontainers[postgres]>=4.0.0)",
+        "grep xdist|hypothesis|flaky|mutmut in requirements*.txt: no matches",
+        "docs/production/gap_register.yaml:819-832"
+      ],
+      "current_behavior": "4305 tests run serially under whatever pytest/pytest-asyncio resolves on the day; three workflows install them unhashed.",
+      "expected_behavior": "requirements-dev.lock with hashes consumed by backend-ci, eval-ci and repo-hygiene.",
+      "recommendation": "Generate requirements-dev.lock with the same uv command as requirements.lock and use it in all three workflows; consider pytest-xdist for the 45-minute test job.",
+      "confidence": "High",
+      "pass": "G",
+      "report": "testing_and_evaluation.md"
+    },
+    {
+      "id": "G-07",
+      "severity": "P3",
+      "title": "Local verification environment diverges from the locked one",
+      "subsystem": "process/testing",
+      "evidence": [
+        "EXECUTED-HERE: venv/Scripts/python -c 'import fastapi,sys;print(fastapi.__version__, sys.version)' -> 0.136.3 3.14.4",
+        "EXECUTED-HERE: import prometheus_client -> ModuleNotFoundError",
+        "aura_backend/requirements.lock: fastapi==0.141.1, prometheus-client==0.26.0",
+        "EXECUTED-HERE: pytest --collect-only -> tests/security/test_route_auth.py:125 AttributeError: module 'fastapi.routing' has no attribute 'iter_route_contexts'"
+      ],
+      "current_behavior": "The 'tested locally, not CI-run' claims in docs/status/* come from CPython 3.14 with older FastAPI; the route-auth suite that fails on any unprotected route cannot even be collected on it.",
+      "expected_behavior": "Local runs from the lock on Python 3.11, matching CI.",
+      "recommendation": "Document a Python 3.11 venv built from requirements.lock as the only sanctioned local path; add a conftest warning when fastapi.__version__ differs from the lock.",
+      "confidence": "High",
+      "pass": "G",
+      "report": "testing_and_evaluation.md"
+    },
+    {
+      "id": "G-08",
+      "severity": "P3",
+      "title": "Certification, training, benchmark and non-Postgres load suites have never produced a passing artefact",
+      "subsystem": "evaluation/certification",
+      "evidence": [
+        "docs/reports/AURA_CERTIFICATION_EVIDENCE_MATRIX.md:3,7 (NOT PRODUCTION CERTIFIED, 2026-09-28)",
+        "aura_backend/tests/certification/conftest.py:19-20",
+        "aura_backend/tests/training/test_lora_weights_change.py:14-22",
+        "docs/production/gap_register.yaml:465 (GAP-017)",
+        "docs/reports/phase-a4-load-test.md"
+      ],
+      "current_behavior": "The suites exist and skip honestly; none has run against the Railway deployment that is now production.",
+      "expected_behavior": "One -m cert run with synthetic users on the dev/prod stack, one -m training run, a refreshed load matrix on the current inference plane.",
+      "recommendation": "Owner-scheduled runs with reports committed under docs/reports/ and the evidence matrix updated (tests/architecture/test_certification_gate.py enforces its wording).",
+      "confidence": "High",
+      "pass": "G",
+      "report": "testing_and_evaluation.md"
+    },
+    {
+      "id": "G-09",
+      "severity": "P4",
+      "title": "Vision eval harness has no threshold, baseline or report",
+      "subsystem": "evaluation/vision",
+      "evidence": [
+        "aura_backend/evaluation/vision_eval.py:36-38",
+        "ls docs/reports -> no vision-eval-* files"
+      ],
+      "current_behavior": "ADR-031 Phase 7 exit criterion (a vision eval report with a pinned model) unmet; only the unit self-test runs.",
+      "expected_behavior": "A first measured run and an owner-set --min-accuracy.",
+      "recommendation": "Run --target space/gateway once a vision model is reachable; commit the report.",
+      "confidence": "High",
+      "pass": "G",
+      "report": "testing_and_evaluation.md"
+    },
+    {
+      "id": "G-10",
+      "severity": "P4",
+      "title": "Admin console has no lint gate and about 6 of 10 pages covered by e2e",
+      "subsystem": "ci/admin",
+      "evidence": [
+        ".github/workflows/admin-ci.yml:13-15",
+        "aura_admin/package.json:9 (lint: next lint, no ESLint config)",
+        "docs/status/WEB_CONSOLE_STATUS.md:52-53"
+      ],
+      "current_behavior": "Lint deliberately skipped in CI; four pages have no spec; Admin CI has never run.",
+      "expected_behavior": "ESLint config committed, npm run lint in CI, one spec per page.",
+      "recommendation": "Follow GAP-007.",
+      "confidence": "High",
+      "pass": "G",
+      "report": "testing_and_evaluation.md"
+    }
+  ]
+}

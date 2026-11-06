@@ -1,0 +1,182 @@
+[
+  {
+    "id": "B-01",
+    "severity": "P1",
+    "title": "On the live target, every SENSITIVE generation has no eligible provider while hfspace is down",
+    "subsystem": "llm/routing + deployment",
+    "evidence": [
+      "aura_backend/aura_core/llm/router.py:325-327",
+      "aura_backend/aura_core/config/settings.py:485",
+      "aura_backend/aura_core/llm/sensitivity.py:49-50",
+      "aura_backend/aura_core/kernel/kernel.py:1163-1196",
+      "aura_backend/aura_core/tools/registry.py:405",
+      "docs/status/BACKEND_STATUS.md:24,35-36 (DOCUMENTED ONLY)",
+      "docs/deployment/control-plane.md:149,166"
+    ],
+    "current_behavior": "With providers hosted1,hfspace and hfspace returning 503, any turn that draws on memory/documents/goals/non-clean history, runs a tool, is an Engineer or image turn, and every unclassified background generation is routed only to hfspace; once its circuit opens, plan() has no candidates and the request fails with AllProvidersFailedError (503). Only context-free chat is served by hosted1.",
+    "expected_behavior": "A SENSITIVE-capable provider is always available, or the operator consciously raises the hosted ceiling; readiness distinguishes 'sensitive-capable provider down' from healthy.",
+    "recommendation": "Restore hfspace on an always-on GPU flavor or add a second SENSITIVE-capable node; add a readiness/alert signal for sensitive-capable provider health; document the consequence in control-plane.md next to AURA_LLM_PROVIDERS. Do not raise hosted1 to sensitive without an owner decision (ADR-030 section 4).",
+    "confidence": "High (code) / Med (live state is a status-doc claim)"
+  },
+  {
+    "id": "B-02",
+    "severity": "P1",
+    "title": "Admission and quota limits are per process; the VPS stack runs 4 gateway workers plus Celery workers against a single Ollama slot",
+    "subsystem": "llm/admission, deployment",
+    "evidence": [
+      "aura_backend/aura_core/llm/admission.py:27-31",
+      "aura_backend/aura_core/llm/quota.py:36-40",
+      "deploy/docker-compose.prod.yml:403,434,440,782,952",
+      "docs/production/gap_register.yaml:286-313 (GAP-011 open)"
+    ],
+    "current_behavior": "Effective concurrency on Ollama is 1 x number of processes; overflow queues inside Ollama until the 180 s timeout. Per-minute hosted quota windows are also per process, so N processes can each spend the provider's RPM.",
+    "expected_behavior": "One shared limiter per capacity group across processes, and a measured concurrency matrix (GAP-041).",
+    "recommendation": "Build the Redis-backed cross-process admission/quota controller the module docstring names, or run inference-facing processes with AURA_WORKERS=1; run tests/load on the real topology.",
+    "confidence": "High (code) / Med (impact unmeasured)"
+  },
+  {
+    "id": "B-03",
+    "severity": "P2",
+    "title": "Embedder, cross-encoder and Whisper weights are loaded by name with no revision; the LLM is an Ollama tag",
+    "subsystem": "supply-chain/model pinning",
+    "evidence": [
+      "aura_backend/aura_core/llm/embeddings.py:358",
+      "aura_backend/aura_core/knowledge/reranking.py:104",
+      "aura_backend/aura_core/adapters/whisper_stt.py:63",
+      "deploy/docker-compose.prod.yml:430",
+      "aura_backend/Dockerfile:67-99 (Piper assets SHA-pinned, for contrast)"
+    ],
+    "current_behavior": "An upstream Hub push silently changes embeddings (the index identity guards by model id only), rerank scores and transcripts; the Ollama model can change on image/weights pull.",
+    "expected_behavior": "Every weight artefact pinned by revision/digest and recorded in index identity and telemetry.",
+    "recommendation": "Add *_MODEL_REVISION settings for embedding, rerank and STT, pass revision= to the loaders, include it in EmbeddingResult.model_id; pin the Ollama model by digest or serve via vLLM --revision.",
+    "confidence": "High"
+  },
+  {
+    "id": "B-04",
+    "severity": "P2",
+    "title": "HF Space inference image is unpinned (vllm/vllm-openai:latest); model revision optional",
+    "subsystem": "deployment/inference plane",
+    "evidence": [
+      "deploy/spaces/inference-vllm/Dockerfile:21",
+      "deploy/spaces/inference-vllm/entrypoint.sh:22-24,65-67",
+      "deploy/docker-compose.prod.yml:984 (on-host vllm pinned by tag+digest)",
+      "docs/reports/AURA_FULL_SYSTEM_REVIEW.md:251 (SEC-07)"
+    ],
+    "current_behavior": "A Space rebuild can change vLLM behaviour; without VLLM_MODEL_REVISION the served weights can change silently.",
+    "expected_behavior": "Rented plane pinned like the on-host compose: image digest and mandatory model revision.",
+    "recommendation": "Pin the Space base image by tag+digest with a deliberate bump policy; make VLLM_MODEL_REVISION required in entrypoint.sh (fail loudly like the API-key check).",
+    "confidence": "High"
+  },
+  {
+    "id": "B-05",
+    "severity": "P2",
+    "title": "No path from a trained LoRA adapter to served traffic; the production trainer trains nothing",
+    "subsystem": "learning/fine-tuning",
+    "evidence": [
+      "deploy/docker-compose.prod.yml:556,877-905",
+      "aura_backend/aura_core/learning/finetune.py:121-140",
+      "aura_backend/aura_core/adapters/local_lora_trainer.py:16-20,301-312",
+      "aura_backend/aura_core/kernel/kernel.py:1991-2006",
+      "grep: no caller of OllamaProvider.create_model/warm_model; aura_core/api/admin.py:565-611 uses list/pull/delete only"
+    ],
+    "current_behavior": "Approval -> job -> NOT_TRAINED on every live target (scripted trainer). With worker-training, a SUCCEEDED job registers a CANDIDATE whose adapter directory the kernel refuses to serve; no merge/convert/create step exists.",
+    "expected_behavior": "Learning yields a servable, evaluated model version, or the capability is described as dataset curation only.",
+    "recommendation": "Build the merge -> GGUF -> create_model -> canary step behind RegressionGate, or relabel the capability in status docs and the client.",
+    "confidence": "High"
+  },
+  {
+    "id": "B-06",
+    "severity": "P2",
+    "title": "ADR-030 hosted inference is live on Railway but Phase 6 is unproven, and the proof workflow targets a VPS whose host key changed",
+    "subsystem": "llm/hosted, verification",
+    "evidence": [
+      ".github/workflows/verify-hosted-inference.yml:124-134",
+      "docs/status/BACKEND_STATUS.md:37",
+      "docs/reports/phase-6-hosted-inference-openrouter-inprocess-20261028.txt:1-16,42-43,53",
+      "docs/production/gap_register.yaml:1546-1571 (GAP-064 built_not_proven)"
+    ],
+    "current_behavior": "Production traffic goes to a hosted provider whose 429/cooldown path, Redis-persisted quota and real fallback were never exercised on a live stack; the only report is in-process, 9/10 with the 429 burst skipped, against OpenRouter rather than the provider documented for hosted1.",
+    "expected_behavior": "GAP-064 exit condition met: a committed report with every scripted check run on a live stack and live wire captures for the deployed provider.",
+    "recommendation": "Add a Railway-targetable run of verify_hosted_inference.py with Redis and the real fallback, run check 10, commit the report and the hosted1 provider's wire captures.",
+    "confidence": "High"
+  },
+  {
+    "id": "B-07",
+    "severity": "P3",
+    "title": "Native Ollama adapter reports every completion as finish_reason=stop",
+    "subsystem": "llm/providers",
+    "evidence": [
+      "aura_backend/aura_core/llm/providers/ollama.py:170,206",
+      "grep done_reason in providers/ollama.py: no match"
+    ],
+    "current_behavior": "A done_reason 'length' truncation is reported as a clean stop; kernel and telemetry cannot see truncation. Production uses openai_compatible against Ollama /v1, so impact is limited to kind=ollama deployments.",
+    "expected_behavior": "done_reason mapped to FinishReason as the OpenAI adapter does.",
+    "recommendation": "Read done_reason in complete() and in the final stream event.",
+    "confidence": "High"
+  },
+  {
+    "id": "B-08",
+    "severity": "P3",
+    "title": "Structured-output requests exclude every default-configured provider",
+    "subsystem": "llm/routing + config",
+    "evidence": [
+      "aura_backend/aura_core/llm/router.py:330-331",
+      "aura_backend/aura_core/config/settings.py:262",
+      "deploy/docker-compose.prod.yml:93,117,141",
+      "deploy/.env.example:208"
+    ],
+    "current_behavior": "Any request with response_schema is refused by every provider whose SUPPORTS_JSON_MODE was left at the default false; Railway's setting is UNKNOWN.",
+    "expected_behavior": "Boot-time warning when no enabled provider supports JSON mode while a feature needing it is on.",
+    "recommendation": "Add the boot check; set the flag in the documented Groq slot example; expose exclusion reasons in the admin routing explain.",
+    "confidence": "Med"
+  },
+  {
+    "id": "B-09",
+    "severity": "P3",
+    "title": "Image understanding is implemented but has no eligible provider on any target",
+    "subsystem": "vision",
+    "evidence": [
+      "aura_backend/aura_core/vision/engine.py:99-106",
+      "aura_backend/aura_core/llm/router.py:309-316",
+      "deploy/docker-compose.prod.yml:468,548",
+      "docs/status/BACKEND_STATUS.md:36",
+      "docs/production/gap_register.yaml:555-557"
+    ],
+    "current_behavior": "Image turns fail with dependency_unavailable or degrade to OCR text: hosted1 is third party (refused images), hfspace is text-only by default and down, AURA_VISION_ENABLED defaults to false; the client attach UI ships anyway.",
+    "expected_behavior": "A pinned VLM pool, or the client UI hidden until one is available.",
+    "recommendation": "Follow docs/deployment/inference-plane.md:118-138 on an always-on Space, or gate the client UI on readiness vision availability.",
+    "confidence": "High (code) / Med (live)"
+  },
+  {
+    "id": "B-10",
+    "severity": "P3",
+    "title": "Prompt budget is global (400 tokens), sized for CPU Ollama, and also caps fast hosted providers",
+    "subsystem": "llm/context",
+    "evidence": [
+      "aura_backend/aura_core/config/settings.py:639-641,693",
+      "aura_backend/aura_core/container.py:242",
+      "deploy/docker-compose.prod.yml: no AURA_LLM_MAX_PROMPT_TOKENS override (grep)"
+    ],
+    "current_behavior": "RAG/memory context is cut to 400 tokens before routing regardless of provider; on Railway with an 8k-context hosted model this limits grounding unless the dashboard overrides it (UNKNOWN).",
+    "expected_behavior": "Prompt budget derived from the selected provider's context window or configured per pool.",
+    "recommendation": "Make max_prompt_tokens a per-provider/pool ceiling, or document the override for hosted-primary topologies in control-plane.md.",
+    "confidence": "Med"
+  },
+  {
+    "id": "B-11",
+    "severity": "P4",
+    "title": "Status and architecture docs disagree with the tree on GAP-018, Ollama-in-production, ADR-030 deployment state and vision",
+    "subsystem": "documentation",
+    "evidence": [
+      "docs/status/BACKEND_STATUS.md:69 vs aura_core/learning/finetune.py:447-448,508-533",
+      "CLAUDE.md Deploy section vs docs/status/BACKEND_STATUS.md:24",
+      "docs/architecture/030-hosted-open-weight-inference.md:3 vs BACKEND_STATUS.md:24,35",
+      "docs/reports/AURA_FULL_SYSTEM_REVIEW.md:327-328 vs aura_core/vision/engine.py",
+      "docs/deployment/control-plane.md:75-76 vs :148-149"
+    ],
+    "current_behavior": "Readers are told a failed train is recorded as success, that Ollama serves production, that ADR-030 is not deployed, and that vision is not implemented.",
+    "expected_behavior": "Docs match the tree and the live target, with dated claims.",
+    "recommendation": "Update the five locations cited; mark the sole-hfspace block in control-plane.md as historical.",
+    "confidence": "High"
+  }
+]

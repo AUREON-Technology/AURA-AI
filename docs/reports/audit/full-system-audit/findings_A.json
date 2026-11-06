@@ -1,0 +1,156 @@
+[
+  {
+    "id": "A-01",
+    "severity": "P2",
+    "title": "Architecture gate (v3-only surface, route reachability, route-auth/IDOR scans) is not executable anywhere right now",
+    "subsystem": "verification/ci",
+    "evidence": [
+      "EXECUTED-HERE: pytest tests/architecture -> 8 failed; 6 are AttributeError: module 'fastapi.routing' has no attribute 'iter_route_contexts'",
+      "aura_backend/tests/architecture/test_v3_only_surface.py:29",
+      "aura_backend/scripts/api_reachability.py:73",
+      "aura_backend/tests/security/test_route_auth.py:125",
+      "aura_backend/tests/security/test_idor.py:125",
+      "aura_backend/requirements.lock:587 fastapi==0.141.1 vs venv fastapi 0.136.3 / starlette 1.2.1",
+      "CI runners not assigned since 2026-10-28 (CB-44, DOCUMENTED ONLY)"
+    ],
+    "current_behavior": "Six invariants error before asserting; CI does not run; docs/guides/api-reachability.md cannot be regenerated or checked locally.",
+    "expected_behavior": "Every merge proves all /api/ routes are under /api/v3, the admin surface cannot browse user content, every uncalled route is triaged, and the auth/IDOR sweeps pass.",
+    "recommendation": "Owner re-syncs the venv to requirements.lock and re-runs; until CI runners return, run pytest tests/architecture tests/security locally before each merge and record the result; guard the FastAPI feature with an explicit 'lock not installed' failure.",
+    "confidence": "High"
+  },
+  {
+    "id": "A-02",
+    "severity": "P3",
+    "title": "Ingestion-family Celery tasks are published to a queue no worker consumes",
+    "subsystem": "background-jobs/wiring",
+    "evidence": [
+      "aura_backend/tasks.py:50, 61, 110 (no queue= in decorator)",
+      "aura_backend/celery_app.py:131-149 (no task_routes / task_default_queue)",
+      "deploy/docker-compose.prod.yml:747-911 workers consume -Q realtime | ingestion,learning | training",
+      "docs/deployment/control-plane.md:30-32",
+      "aura_backend/api/learning.py:52 build_lora_dataset_task.delay (POST /api/v3/learning/build_dataset)",
+      "aura_backend/services/drive.py:166 ingest_pdf_task.delay (router not mounted in aura_service.py:124-139)"
+    ],
+    "current_behavior": ".delay() lands on Celery's default 'celery' queue; no worker consumes it; the returned task id never runs.",
+    "expected_behavior": "Tasks run on the ingestion queue they are named for, or the dead routes are removed (GAP-013).",
+    "recommendation": "Add queue=\"ingestion\" to the three decorators or remove the dead learning/drive paths; add a unit test asserting each registered task's queue is consumed by a compose worker.",
+    "confidence": "High (code); runtime behavior unverified"
+  },
+  {
+    "id": "A-03",
+    "severity": "P2",
+    "title": "Railway target codifies only the gateway; outbox drain, insights, briefings, workspace reaper and idempotency purge depend on hand-created workers/beat",
+    "subsystem": "deployment-boundary",
+    "evidence": [
+      "aura_backend/railway.json:4-14 (one service)",
+      "aura_backend/Dockerfile:147 (uvicorn gateway only)",
+      ".github/workflows/control-plane-deploy.yml:24-28",
+      "docs/deployment/control-plane.md:23-36",
+      "aura_backend/aura_core/container.py:145-155 DurableEventBus -> outbox",
+      "aura_backend/tasks.py:199-450; aura_backend/celery_app.py:157-216 beat schedule"
+    ],
+    "current_behavior": "Whether worker-realtime/worker-ingestion/beat run on Railway is UNKNOWN; no manifest, no CI check, status docs silent. If absent, durable events accumulate unconsumed and no scheduled job runs.",
+    "expected_behavior": "The background tier of the production control plane is declared in-repo and its presence is asserted by the deploy's health verification.",
+    "recommendation": "Expose beat heartbeat age and outbox backlog on /admin/status; fail control-plane-deploy's health step on a stale heartbeat; record in BACKEND_STATUS.md whether the three services exist today.",
+    "confidence": "Med"
+  },
+  {
+    "id": "A-04",
+    "severity": "P2",
+    "title": "Two stacked per-IP rate limiters key on different addresses; on Railway the legacy one likely collapses all users into one 100 rpm bucket",
+    "subsystem": "edge/security",
+    "evidence": [
+      "aura_backend/infrastructure/http_limits.py:67 request.client.host",
+      "aura_backend/aura_service.py:235 RateLimitMiddleware(requests_per_minute=100)",
+      "aura_backend/aura_core/security/rate_limit.py:202-229 extract_client_ip (right-most X-Forwarded-For)",
+      "aura_backend/aura_service.py:288-292 SlidingWindowRateLimiter wired into build_router",
+      "aura_backend/Dockerfile:147 --proxy-headers without --forwarded-allow-ips",
+      "Railway has no nginx (SEC-08, AURA_FULL_SYSTEM_REVIEW.md:252)"
+    ],
+    "current_behavior": "On the VPS both limiters see the real peer via nginx. On Railway, if the edge peer is not loopback, request.client.host is the proxy for everyone and the legacy limiter throttles the whole deployment collectively at 100 req/min.",
+    "expected_behavior": "One limiter, keyed on the trusted-proxy-resolved client address, on every target.",
+    "recommendation": "Remove the legacy RateLimitMiddleware from aura_service.py (the aura_core limiter is already wired) or key it with extract_client_ip; set --forwarded-allow-ips to Railway's edge range; verify live with two source IPs and the 429 metric series.",
+    "confidence": "Med"
+  },
+  {
+    "id": "A-05",
+    "severity": "P3",
+    "title": "Dev/prod compose parity gaps on security-relevant keys",
+    "subsystem": "deploy",
+    "evidence": [
+      "deploy/docker-compose.dev.yml:365 AURA_SANDBOX_NETWORK: sandbox_egress (unprefixed, hard-coded)",
+      "deploy/docker-compose.prod.yml:565-566 ${AURA_SANDBOX_NETWORK:-aura_sandbox_egress} with project-prefix comment",
+      "deploy/docker-compose.dev.yml:333 ALLOW_MOCK_ATTESTATION default true vs prod.yml:519 false (subagent)",
+      "prod.yml:448-585 HFSPACE/HF_TOKEN/large-provider and sandbox limit keys absent from dev (subagent)",
+      "CLAUDE.md:264-271 parity rule"
+    ],
+    "current_behavior": "Dev sandbox would attach to a network name compose does not create (CODE-PRESENT / BEHAVIOR UNVERIFIED); dev accepts mock attestation by default; sandbox resource limits unset in dev.",
+    "expected_behavior": "The two files differ only in project name, ports and secrets.",
+    "recommendation": "Align the listed keys; extend the compose-plumbing parity tests to sandbox and attestation keys.",
+    "confidence": "Med"
+  },
+  {
+    "id": "A-06",
+    "severity": "P3",
+    "title": "Secret-literal fitness test scans gitignored files and fails on developer checkouts; stale secret copies on disk",
+    "subsystem": "secrets-hygiene/verification",
+    "evidence": [
+      "EXECUTED-HERE: tests/architecture/test_no_committed_client_secrets.py:200 fails on deploy/.env:4, deploy/.env.bak-20260914-134105:4 (Google OAuth client secret), aura_backend/credentials.json:5 (private key)",
+      "git ls-files -> none tracked",
+      "git check-ignore -v -> .gitignore:8 .env; .gitignore:9 .env.*; aura_backend/.gitignore:1 credentials.json"
+    ],
+    "current_behavior": "Nothing is committed, but the test cannot distinguish tracked from untracked files, and a 2026-09-14 .env backup plus a service-account private key sit in plaintext beside the checkout.",
+    "expected_behavior": "The test checks the committed tree only; no stale secret copies on disk.",
+    "recommendation": "Scope the scan to git ls-files; owner deletes deploy/.env.bak-20260914-134105 and moves credentials.json out of the repo directory (rotate if provenance is unclear). Values redacted in this report.",
+    "confidence": "High"
+  },
+  {
+    "id": "A-07",
+    "severity": "P3",
+    "title": "Every Celery worker imports the legacy RAG service at module scope, which opens (or silently creates) a Qdrant client at import",
+    "subsystem": "legacy-tree/background-jobs",
+    "evidence": [
+      "aura_backend/tasks.py:8 from services.rag import rag_service",
+      "aura_backend/services/rag.py:374 rag_service = RAGService() at module level",
+      "aura_backend/services/rag.py:35-51 QdrantClient(...) in __init__, fallback QdrantClient(path=\"local_qdrant_storage\")",
+      "aura_backend/tests/architecture/test_dependency_rules.py:594-617 bans this pattern inside aura_core only"
+    ],
+    "current_behavior": "Realtime/training workers construct a Qdrant client at import; with QDRANT_HOST unset a private sqlite Qdrant is created that nothing reads. Only the A-02 tasks use it, so today's effect is import-time coupling.",
+    "expected_behavior": "Workers connect lazily and only to the stores their queue needs.",
+    "recommendation": "Move the services.rag import inside the two ingestion tasks or delete them with A-02; keep tasks.py importable without infrastructure.",
+    "confidence": "Med"
+  },
+  {
+    "id": "A-08",
+    "severity": "P4",
+    "title": "Backend route surface grew to 47 uncalled routes; backlog still says 16",
+    "subsystem": "reachability/docs",
+    "evidence": [
+      "docs/guides/api-reachability.md:14-127 (47 rows with 'none')",
+      "docs/roadmaps/AURA_CRITICAL_BACKLOG.md:195 CB-30 '16 uncalled routes'",
+      "aura_backend/aura_core/api/admin_adaptation.py:99-347 (25 Track AP routes, no console page)",
+      "aura_backend/scripts/api_reachability.py:37-48 TRIAGE"
+    ],
+    "current_behavior": "All 47 are IMPLEMENTED BUT UNREACHABLE from any shipped UI; triaged as 'to wire (AP9)' or 'to wire or remove'.",
+    "expected_behavior": "Backlog count matches the matrix; each group has an owner decision.",
+    "recommendation": "Update CB-30; decide remove-vs-wire for learning/* and /tools.",
+    "confidence": "High"
+  },
+  {
+    "id": "A-09",
+    "severity": "P4",
+    "title": "Documentation inaccuracies in the architecture description",
+    "subsystem": "docs",
+    "evidence": [
+      "CLAUDE.md:239 ADR range ends at 031 but docs/architecture/032-personal-os-single-store.md exists",
+      "CLAUDE.md:201 ADR-030 'Proposed' vs 00-overview.md:137 'Proposed; Phase 1 built' and wired slots",
+      "CLAUDE.md:272-275 'nginx is the only published port' is VPS-only; Railway exposes uvicorn (Dockerfile:147)",
+      "docs/status/BACKEND_STATUS.md:67,187 ADR-032 migration '0017' vs :79-80 and CB-28 '0019'; tree has 0019_user_data_keys.py",
+      "CLAUDE.md:248 SYNCABLE_MODELS location contradicted by AURA_FULL_SYSTEM_REVIEW.md:525 (UNKNOWN which is right)"
+    ],
+    "current_behavior": "Docs describe a slightly different tree than the one checked out.",
+    "expected_behavior": "CLAUDE.md and status docs match the tree.",
+    "recommendation": "Correct the listed lines.",
+    "confidence": "High"
+  }
+]

@@ -1,0 +1,136 @@
+[
+  {
+    "id": "E2-01",
+    "severity": "P2",
+    "title": "Projects and Goals are app-only: no agent store kind, tool, or title access",
+    "subsystem": "personal-os / tools",
+    "evidence": [
+      "aura_backend/aura_core/domain/personal_os.py:28-31",
+      "aura_backend/aura_core/adapters/postgres_synced_personal_os.py:1-6,76-107",
+      "aura_backend/aura_core/tools/records.py:162-195",
+      "aura_backend/aura_core/adapters/postgres_goals.py:6-7,44-47",
+      "aura_backend/infrastructure/db/models.py:191-232,329-330",
+      "aura_client/lib/features/projects/data/project_repository.dart:18",
+      "aura_client/lib/features/goals/data/goal_repository.dart:18",
+      "aura_client/lib/core/sync/sync_client.dart:315-316"
+    ],
+    "current_behavior": "The app creates and syncs projects and goals through /api/v3/sync; the agent's ADR-032 store covers only tasks, calendar events, finance and health records; goals reach the kernel only as id/status/priority snapshots without titles; projects are invisible to the agent.",
+    "expected_behavior": "ADR-032's shared-store premise holds for every synced Personal-OS table: the agent can list and create projects and goals with titles decrypted under the user data key.",
+    "recommendation": "Add RecordKind.PROJECT/GOAL and matching _Table rows to the synced store, generate CRUD tools in records.py, let PostgresGoalsPort decrypt title_enc via user_data_keys, and cover it in test_personal_os_sync_integration.py against real Postgres.",
+    "confidence": "High"
+  },
+  {
+    "id": "E2-02",
+    "severity": "P3",
+    "title": "Reachability matrix over-credits callers (UI route paths, method-blind split matches, test files)",
+    "subsystem": "docs / architecture test",
+    "evidence": [
+      "docs/guides/api-reachability.md:90 vs aura_client/lib/core/routing/router.dart:46-48",
+      "docs/guides/api-reachability.md:40 vs aura_admin/app/(console)/learning/page.tsx:144 and models/page.tsx:246",
+      "docs/guides/api-reachability.md:80-81 (cites aura_hostd/test/pairing_client_test.dart)",
+      "aura_backend/scripts/api_reachability.py:29-32,118-135"
+    ],
+    "current_behavior": "Two of 77 'called' rows (POST /api/v3/chat, GET /admin/learning/jobs/{job_id}) have no real caller; test files count as callers; GET and POST on the same path are indistinguishable.",
+    "expected_behavior": "tests/architecture/test_api_reachability.py passes only when production code builds the route with the right HTTP method.",
+    "recommendation": "Exclude tests/ and test/ directories, require the match to sit in a string that also carries /api/v or a known base-URL assignment, record the verb next to the call, and re-triage POST /chat as API/service-key only.",
+    "confidence": "High"
+  },
+  {
+    "id": "E2-03",
+    "severity": "P3",
+    "title": "No client sends Idempotency-Key; GAP-013 claims it does",
+    "subsystem": "client / idempotency",
+    "evidence": [
+      "rg -i idempotency aura_client (excluding build dirs) -> 0 files",
+      "aura_backend/aura_core/api/idempotency.py:57",
+      "aura_backend/aura_core/api/v3.py:324-330",
+      "docs/production/gap_register.yaml:365-368"
+    ],
+    "current_behavior": "Retried writes to /knowledge/documents, /memory, /feedback and /engineering/workspaces/{id} are never deduplicated; the server-side idempotency machinery has zero callers.",
+    "expected_behavior": "Every side-effecting client write carries a per-attempt key so a retry after a timeout cannot duplicate the effect.",
+    "recommendation": "Send the header from KnowledgeCenter, MemoryRepository, FeedbackRepository and EngineerWorkspaces; pin with a test; correct GAP-013's reverified text.",
+    "confidence": "High"
+  },
+  {
+    "id": "E2-04",
+    "severity": "P2",
+    "title": "Operator console unreachable on every live target; 32 admin routes operable only through the raw API",
+    "subsystem": "admin console / deploy",
+    "evidence": [
+      "docs/status/WEB_CONSOLE_STATUS.md:13-15,37-43 (claims)",
+      "rg -i console docs/deployment -> 0 hits",
+      "deploy/docker-compose.prod.yml:334",
+      "aura_backend/aura_core/api/admin_service_keys.py:53-72",
+      "aura_backend/aura_core/api/admin_adaptation.py:99-348",
+      "aura_admin/tests/e2e/mock-gateway.mjs:113-226"
+    ],
+    "current_behavior": "Railway serves the backend only; the console image exists only for the VPS stack that takes no deploys; ADR-029 service-key issuance, scorecard, erasure-job polling and all Track AP operations have no UI, and the mock gateway covers 11 of 36 proxied paths.",
+    "expected_behavior": "An operator surface deployed alongside the backend, with every operator-facing route reachable from it or declared API-only.",
+    "recommendation": "Owner decides hosting (Railway service for aura_admin or the VPS once deploys work); then wire service-keys, jobs/{task_id}, scorecard and refresh/latest into existing pages and extend mock-gateway.mjs; AP9 stays a roadmap item.",
+    "confidence": "High (code) / Med (live)"
+  },
+  {
+    "id": "E2-05",
+    "severity": "P3",
+    "title": "Daemon pairing succeeds for accounts the host socket will refuse; app cannot revoke a paired daemon",
+    "subsystem": "hostd / auth",
+    "evidence": [
+      "aura_backend/aura_core/api/host_agent.py:53-54,87-92",
+      "aura_backend/aura_core/config/settings.py:1021,1057",
+      "aura_backend/aura_service.py:105-109",
+      "aura_backend/api/v2/auth.py:201-239",
+      "no caller for /api/v3/auth/desktop/devices/revoke in aura_client/lib or aura_hostd"
+    ],
+    "current_behavior": "With AURA_ENGINEER_AGENT_ROLES unset (default) pairing completes and stores a token, then every WebSocket connection is closed 4401 with no actionable message; a paired device can only be revoked server-side.",
+    "expected_behavior": "Pairing fails fast with the reason when the account cannot host; the app lists and revokes paired devices.",
+    "recommendation": "Check engineer_agent at /pair/approve (403 engineer_agent_required); add a device list and a devices/revoke caller to host_panel.dart / host_daemon_page.dart; document the env var in the hostd README.",
+    "confidence": "High"
+  },
+  {
+    "id": "E2-06",
+    "severity": "P3",
+    "title": "Five user-facing read routes still have no client view five weeks after triage; four learning routes have no caller at all",
+    "subsystem": "client",
+    "evidence": [
+      "aura_backend/scripts/api_reachability.py:40,41,46,47",
+      "docs/guides/api-reachability.md:75-76,114-120,127",
+      "docs/production/gap_register.yaml:357",
+      "aura_backend/api/learning.py:26-65"
+    ],
+    "current_behavior": "/tools, /agents/runs[/{id}], /knowledge/graph[/entities/{key}] are reachable only by hand-built requests; /learning/* has no consumer anywhere.",
+    "expected_behavior": "Each route has a consumer or is removed / declared API-only with an owner and date.",
+    "recommendation": "Wire /tools into settings, extend the Engineer history tab to /agents/runs, add a graph view to the knowledge page; remove api/learning.py or fold its export into /admin/learning/datasets/{digest}.",
+    "confidence": "Med"
+  },
+  {
+    "id": "E2-07",
+    "severity": "P3",
+    "title": "Dead dev.aureon-ai.tech preset still selectable in the app",
+    "subsystem": "client / config",
+    "evidence": [
+      "aura_client/lib/core/config/backend_url_settings.dart:21",
+      "aura_client/lib/core/config/backend_url_policy.dart:17",
+      "docs/status/MOBILE_APP_STATUS.md:46,70 (claims)"
+    ],
+    "current_behavior": "Choosing the development environment points the app at a host that no longer resolves, and setEnvironment() clears tokens without revoking them.",
+    "expected_behavior": "Only reachable presets are offered, or the switch probes /health/ready first and refuses.",
+    "recommendation": "Drop or re-point the dev preset; probe before switching.",
+    "confidence": "Med"
+  },
+  {
+    "id": "E2-08",
+    "severity": "P4",
+    "title": "ADR-032 key fetch depends on migration 0019 while production is claimed at 0016",
+    "subsystem": "client / deploy",
+    "evidence": [
+      "aura_backend/aura_core/api/v3.py:1192-1252",
+      "aura_backend/alembic/versions/0019_user_data_keys.py",
+      "aura_client/lib/core/security/data_key_client.dart:20-23,50-52",
+      "CLAUDE.md (database at 0016, claim)"
+    ],
+    "current_behavior": "Until 0019 is applied live, GET /api/v3/keys/data fails and devices stay on per-device keys; agent writes to the synced tables cannot be read by devices.",
+    "expected_behavior": "Deploy ordering documented and verified: migrate, confirm /health/ready schema.revision 0019, then ship the client.",
+    "recommendation": "Follow CB-28's exit criteria; no code change.",
+    "confidence": "High (code) / Med (live)"
+  }
+]

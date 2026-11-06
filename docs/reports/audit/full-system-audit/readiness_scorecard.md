@@ -1,0 +1,44 @@
+# Readiness scorecard
+
+**Audit:** AURA AI full-system engineering audit · **Baseline:** `main` @ `ffbbb9f` · **Date:** 2026-10-31 · **Author:** lead auditor.
+
+Scale: 0 absent · 1 planned/scaffolded · 2 partially implemented · 3 implemented with meaningful verification but significant gaps · 4 strong implementation with substantial behavioural evidence · 5 production-grade behaviour demonstrated through appropriate verification. Missing verification lowers the score; file count never raises it.
+
+| Dimension | Weight | Score | Weighted | Evidence for the score |
+| --- | ---: | ---: | ---: | --- |
+| Core architecture and correctness | 10 % | **3** | 0.30 | Hexagonal layering enforced by AST fitness tests (pass A re-verified the walker handles relative, absolute and nested imports); AIKernel is the only execution path and model `tool_calls` are never dispatched (ADR-006); `PostgresPool` double-checked under `asyncio.Lock`; runtime-DDL↔Alembic pinned. Held back by: taint lost across delegation (FSA-001), the retrieval-strategy layer and knowledge graph unwired (FSA-050), a second legacy learning/ingestion path still mounted (FSA-043), two stacked rate limiters (FSA-005), and the architecture gate itself not executable on the local venv or in CI (FSA-080). |
+| Models and inference infrastructure | 10 % | **2** | 0.20 | ProviderRouter (5 policies, breakers, pre-first-token failover, sensitivity ceilings) is well built and unit-tested. But on the live target only `hosted1` is healthy and it may not serve SENSITIVE content, so every memory/RAG/tool/Engineer turn has no provider while `hfspace` is 503 (FSA-024); admission/quota are per-process (FSA-025); no weight artefact is revision-pinned (FSA-110); the HF Space image is `:latest` (FSA-111); ADR-030 Phase 6 unproven (FSA-084); only latency number is a September CPU sandbox (FSA-074). |
+| Agents and tool execution | 10 % | **3** | 0.30 | 8 personas are real `AgentSpec`s with grants enforced at advertisement and dispatch, memory scopes, budgets, approval binding by call digest (CB-04 fixed), MCP default-deny. Gaps: delegation taint (FSA-001), `write_files`/`mcp_*` outside the Engineer grant (FSA-057), unwired network/file tools (FSA-047), `remember_fact` in the read set (FSA-017), dead `TOOLS_MAX_CALLS_PER_TURN` (FSA-112); no real-model agent evaluation (FSA-082). |
+| Memory, RAG and knowledge | 10 % | **2** | 0.20 | Hybrid retrieval with score floor, owner scoping, corpus revisions, six memory kinds with provenance and encryption are implemented and unit-tested. But the prompt sees ≤2×280 chars of knowledge (FSA-051), the hash embedder is the default and not refused in production with the live embedder UNKNOWN (FSA-031), the recall gate on refresh is unwired (FSA-053), chunks/vector payloads are plaintext on third-party Qdrant (FSA-018), and all quality numbers are hash-embedder/scripted (FSA-082). |
+| Integrations and end-to-end features | 10 % | **2** | 0.20 | 76 of 120 app routes have a real consumer; chat/stream/sync/voice/knowledge are wired client↔server. But 47 routes are uncalled (FSA-045), the console is unreachable on every live target (FSA-042), D8 isolation is never requested (FSA-040), Projects/Goals are outside the agent store (FSA-052), vision/automation/learning cannot succeed live, and `feature_matrix.md` shows 0 features VERIFIED WORKING end to end. |
+| Security and privacy | 15 % | **2** | 0.30 | Strong source-level posture since the October fixes: JWT iss/aud, prod refuses without secret, demotion revokes sessions/devices, scoped pairing tokens, 60 s WS re-check, hash-pinned lock, socket-proxy `EXEC=0`, owner-scoped queries, no injection path found. Score capped at 2 by two P1s and several P2s: historical GCP key/.env in git with no rotation record (FSA-002), delegation taint bypass (FSA-001), 30-day unscoped desktop token that can fetch the DEK (FSA-004), proxy-keyed limiter on Railway (FSA-005), unconfined trusted-root commands (FSA-006), backup container holding the KEK (FSA-008), opt-in `/metrics` auth (FSA-009), plaintext chunks off-host (FSA-018), KEK with no escrow (FSA-030). |
+| Testing and evaluation | 10 % | **2** | 0.20 | 4,305 deterministic backend tests + 133 legacy, 76 client test files, hostd and Playwright suites, coverage ratchet 82 % on `aura_core`, repo-hygiene and eval gates exist. But nothing has gated a merge since 2026-10-28 (FSA-020/021), every AI-quality gate is scripted (G-02), the local venv cannot even collect the route-auth suite (FSA-080), engine-backed voice/OCR tests never run (FSA-081), Windows jobs are advisory (G-03), hostd Linux CI hangs (G-04), and this audit's own runs were partially blocked by a full temp volume (see `verification_log.md`). |
+| Reliability and performance | 10 % | **2** | 0.20 | Breakers, admission control, graceful drain, three-gate VPS deploy, outbox-backed durable events exist in code. No measurement on the current topology; per-process limits (FSA-025); Railway workers/beat presence unknown (FSA-027); unconsumed Celery queue (FSA-043); no asyncpg command timeout or connection budget (FSA-073); approval/timeout mismatch on host-routed tools (FSA-041); migration rollback assumption unenforced (FSA-090). |
+| Deployment and operations | 10 % | **1** | 0.10 | Production is live on Railway, but: no CI gate and unprotected `main` (FSA-020), Actions dead (FSA-021), Railway ignores `railway.json` (FSA-022), VPS path dead on a changed host key with unknown exposure (FSA-023), no scrape/alerting (FSA-028), no backup/DR for Railway datastores (FSA-029), KEK custody single variable (FSA-030), inference plane down. Backups/alerts/drills exist only for the VPS stack that takes no deploys. |
+| Client and product readiness | 5 % | **2** | 0.10 | Mobile and desktop clients are broadly built (chat, voice, knowledge, Life Hub, IDE, Engineer panel, i18n/RTL foundations, tooltips ratchet) and `flutter analyze` is clean (EXECUTED-HERE). But no device report exists, Android CI build fails on disk, iOS/macOS have no pipeline, macOS lacks the network entitlement (FSA-062), no desktop packaging (FSA-061), dead dev preset (FSA-049), and the Flutter test suite was NOT RUNNABLE here. |
+| **Total** | **100 %** | | **2.10 / 5** | |
+
+**Weighted score: 2.10 / 5 (42 %).**
+
+## The five measurements, kept separate
+
+| Measurement | Verdict | Basis |
+| --- | --- | --- |
+| **Architectural maturity** | **High** (4/5) | Layering, kernel-only execution, provider abstraction, trust channels and ADR discipline are real and enforced in code; the few violations found are wiring gaps, not design regressions. |
+| **Implementation completeness** | **Medium-high** (3/5) | Almost every roadmap capability has code: 41 features inventoried, 3 not implemented. Depth varies: fine-tuning, vision, graph retrieval and Track AP stop short of a usable path. |
+| **Integration completeness** | **Medium-low** (2/5) | 47 uncalled routes, console unreachable, isolation never requested, Projects/Goals outside the agent store, strategies unwired, legacy paths still mounted. |
+| **Operational readiness** | **Low** (1/5) | Single live provider that cannot serve sensitive turns, no CI gate, no alerting/backup for the live datastores, unknown worker presence, dead VPS path, no key escrow. |
+| **Production readiness** | **Not production-ready** | By the repository's own rule ("built and tested are not proven"), zero subsystems are proven on the current target; two P1 security defects and seven P1 production blockers are open. The score above does not offset them. |
+
+## What would move each dimension by one point
+
+- Architecture → 4: FSA-001, FSA-050 (wire or relabel), FSA-043, FSA-080 executable in CI.
+- Models → 3: FSA-024 resolved with readiness reporting sensitive capability; FSA-025 cross-process limiter; FSA-110/111 pins; a Phase 6 live report (FSA-084).
+- Agents → 4: FSA-001, FSA-057, FSA-047, FSA-017 plus one real-model agent-task report.
+- Memory/RAG → 3: FSA-031 refusal + readiness, FSA-051 per-provider budget, FSA-053 recall gate, a real-embedder retrieval report (FSA-082).
+- Integrations → 3: FSA-042 console hosted, FSA-040, FSA-052, decisions on FSA-045.
+- Security → 3: FSA-002 rotation recorded, FSA-001, FSA-004, FSA-005, FSA-008, FSA-009, FSA-030 escrow.
+- Testing → 3: runners back and `main` protected (FSA-020/021), venv-from-lock (FSA-080), engine-backed voice/OCR in CI (FSA-081), Windows jobs gating (G-03).
+- Reliability → 3: FSA-025, FSA-027 heartbeat/outbox on readiness, FSA-041, FSA-073, a load run on the live topology (FSA-074).
+- Deployment → 2: FSA-022 config file linked, FSA-023 VPS decision, FSA-028 scrape, FSA-029 one restore drill against Railway data.
+- Client → 3: one Android device report, macOS entitlement, Flutter suite green in CI, packaging decision.
