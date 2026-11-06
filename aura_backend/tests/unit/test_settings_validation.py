@@ -281,6 +281,9 @@ class TestProductionGate:
         # Dockerfile's build args in every real deploy, so a deployment that reaches production
         # without it has skipped a step -- see test_release_identity.py.
         env.setenv("AURA_GIT_SHA", "0123456789abcdef0123456789abcdef01234567")
+        # Audit FSA-031: the hash embedder is the test-suite default and refused here.
+        env.setenv("AURA_EMBEDDING_PROVIDER", "sentence-transformers")
+        env.setenv("AURA_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
         AuraSettings.from_env().validate()
 
@@ -439,3 +442,31 @@ class TestCaching:
         load_settings(refresh=True, validate=False)
         with pytest.raises(ConfigurationError):
             load_settings(refresh=True, validate=True)
+
+
+class TestEmbedderIsRefusedInProduction:
+    """Audit FSA-031. `HashEmbeddingProvider`'s docstring promised this check for a long time."""
+
+    @pytest.mark.parametrize("environment", ["staging", "production"])
+    def test_the_default_hash_embedder_is_a_problem(self, env, environment: str) -> None:
+        env.setenv("AURA_ENVIRONMENT", environment)
+        problems = _problems(AuraSettings.from_env())
+        assert any("hash embedder" in p for p in problems), problems
+
+    def test_naming_the_hash_model_under_another_provider_is_still_refused(self, env) -> None:
+        env.setenv("AURA_ENVIRONMENT", "production")
+        env.setenv("AURA_EMBEDDING_PROVIDER", "sentence-transformers")
+        env.setenv("AURA_EMBEDDING_MODEL", "hash-embed-v1")
+        problems = _problems(AuraSettings.from_env())
+        assert any("hash embedder" in p for p in problems), problems
+
+    def test_a_real_embedder_is_not_a_problem(self, env) -> None:
+        env.setenv("AURA_ENVIRONMENT", "production")
+        env.setenv("AURA_EMBEDDING_PROVIDER", "sentence-transformers")
+        env.setenv("AURA_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+        problems = _problems(AuraSettings.from_env())
+        assert not any("hash embedder" in p for p in problems), problems
+
+    def test_development_keeps_the_no_model_default(self, env) -> None:
+        env.setenv("AURA_ENVIRONMENT", "development")
+        AuraSettings.from_env().validate()

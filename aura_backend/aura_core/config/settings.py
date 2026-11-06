@@ -1840,6 +1840,22 @@ class AuraSettings:
                 problems.append("security.rate_limit_enabled must be true in staging/production")
             if not self.security.audit_enabled:
                 problems.append("security.audit_enabled must be true in staging/production")
+            # The hash embedder (llm/embeddings.py::HashEmbeddingProvider) is not semantic: two
+            # paraphrases with no shared character n-grams score near zero, so retrieval and
+            # memory recall "work" while returning the wrong chunks. Its own docstring has
+            # always said this check exists; until audit FSA-031 nothing enforced it. It is the
+            # default so the no-model test suite runs, which is exactly why production must
+            # name a real embedder explicitly (AURA_EMBEDDING_PROVIDER=sentence-transformers,
+            # or a configured OpenAI-compatible provider name).
+            if self.llm.embedding_provider == "local-embeddings" or (
+                self.llm.embedding_model == "hash-embed-v1"
+            ):
+                problems.append(
+                    "llm.embedding_provider 'local-embeddings' / model 'hash-embed-v1' is the "
+                    "non-semantic hash embedder and must not run in staging/production: set "
+                    "AURA_EMBEDDING_PROVIDER (sentence-transformers or a configured provider) "
+                    "and AURA_EMBEDDING_MODEL"
+                )
             # BLOCK-03: a production process that cannot name its own source commit makes every
             # later question harder -- "is the fix deployed?", "what is this incident running?",
             # "did the rollback take?".
