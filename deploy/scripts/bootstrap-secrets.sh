@@ -10,6 +10,19 @@ DIR=$(dirname "$0")/../secrets
 mkdir -p "$DIR"
 chmod 700 "$DIR"
 
+# The backup sidecar mounts only this subdirectory (docker-compose.prod.yml `backup:`), never
+# the whole secrets directory -- see the compose comment. Files placed at the old flat
+# location by earlier guides are moved, not copied, so no second copy of an S3 key lingers.
+BACKUP_DIR="$DIR/backup"
+mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
+for name in backup_age_recipients.txt backup_s3_access_key backup_s3_secret_key rclone.conf; do
+    if [ -f "$DIR/$name" ] && [ ! -e "$BACKUP_DIR/$name" ]; then
+        mv "$DIR/$name" "$BACKUP_DIR/$name"
+        echo "moved $name into secrets/backup/"
+    fi
+done
+
 generate() {
     name=$1
     length=${2:-48}

@@ -1208,7 +1208,7 @@ services:
       BACKUP_OFFSITE_RETENTION_DAYS: ${BACKUP_OFFSITE_RETENTION_DAYS:-14}
       # P1.3: encryption is ON by default and fails closed -- with no recipient configured the
       # cycle refuses to run (AuraBackupMisconfigured) rather than write plaintext. Only the age
-      # PUBLIC key goes here or in deploy/secrets/backup_age_recipients.txt; the private key stays
+      # PUBLIC key goes here or in deploy/secrets/backup/backup_age_recipients.txt; the private key stays
       # offline. See docs/guides/maintenance-guide.md "Backup encryption keys".
       BACKUP_ENCRYPTION: ${BACKUP_ENCRYPTION:-age}
       BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
@@ -1234,7 +1234,12 @@ services:
     volumes:
       - ./scripts:/scripts:ro
       - ${BACKUP_PATH:-./backups}:/backups
-      - ./secrets:/run/backup-secrets:ro
+      # Only the backup-specific files (age recipients, S3 keys, rclone.conf), never the
+      # whole secrets directory: this container sits on the egress network running a
+      # third-party sync tool, and the directory above also holds jwt_secret and the
+      # data-encryption KEK (audit FSA-008 / GAP-046 / CB-08). bootstrap-secrets.sh creates
+      # the subdirectory and moves files from the old flat location.
+      - ./secrets/backup:/run/backup-secrets:ro
       - backup_textfile:/textfile
     # data = Postgres/Qdrant/Redis. egress = rclone to S3-compatible storage.
     networks: [data, egress]
