@@ -57,6 +57,16 @@ workspace tools), and a hard denylist no consent tier — including an explicit 
 workspace" mode — is allowed to lift. A path outside every granted root is refused, never merely
 confirmable; the user adds a root instead of the agent working around the boundary.
 
+Containment is a `cwd`-level control for `run_command`, so a shell command's own arguments can
+name a path elsewhere. In an untrusted root the read-only tier already refuses such arguments; in
+a *trusted* root, since the 2026-10-31 audit (FSA-006), the daemon applies the same argument
+containment to a documented set of destructive verbs (remove, move, copy, find, chmod,
+`git clean`/`reset`/`checkout`, … — `command_policy.dart::destructiveVerbPattern`), including
+through a `cd ..` earlier on the same command line. Trust lifts per-call confirmation for the
+checkout's own tooling; it does not let the daemon destroy anything outside the checkout. Still
+open from that finding: with several granted roots and no `cwd` in the request, `run` executes in
+the first root, because the backend does not yet send the IDE's active root.
+
 ### Trust channels and taint are unaffected
 
 `run_command`'s output still carries `tags=("untrusted_content",)` (`tools/coding.py`), so it

@@ -187,4 +187,51 @@ void main() {
       expect(result.isAllowed, isTrue);
     });
   });
+
+  group('evaluateCommand: trusted workspace keeps destructive verbs contained (FSA-006)', () {
+    for (final command in [
+      'rm -r ../outside',
+      'rm -r -f ../outside',
+      'rm --recursive --force build',
+      'rm -f -r build',
+      r'rmdir C:\Users\someone\project',
+      'find /home -name "*.log" -delete',
+      'find ~ -type f -exec rm {} +',
+      'mv src ~/elsewhere',
+      'cp -r . /tmp/copy',
+      'chmod -R 777 /etc',
+      'git clean -fdx ../sibling',
+      'cd .. && rm -r build',
+      'pushd / ; rm -r tmp',
+      'git status && rm -r ../other',
+    ]) {
+      test('refuses `$command`', () {
+        final result = evaluateCommand(command, workspaceTrusted: true);
+        expect(result.decision, CommandDecision.deny, reason: result.reason);
+      });
+    }
+
+    for (final command in [
+      'rm -r build',
+      'rm dist/app.js',
+      'find . -name "*.pyc" -delete',
+      'mv src/old.dart src/new.dart',
+      'git clean -fdx',
+      'git checkout -- lib/main.dart',
+      'cd lib && rm -r generated',
+      'chmod +x scripts/run.sh',
+      'pytest -q',
+      'npm test',
+    ]) {
+      test('still allows in-workspace `$command`', () {
+        final result = evaluateCommand(command, workspaceTrusted: true);
+        expect(result.isAllowed, isTrue, reason: result.reason);
+      });
+    }
+
+    test('describes the refusal in terms of containment', () {
+      final result = evaluateCommand('rm -r ../outside', workspaceTrusted: true);
+      expect(result.reason, contains('containment'));
+    });
+  });
 }
