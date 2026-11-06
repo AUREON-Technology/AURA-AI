@@ -177,6 +177,88 @@
   "@settingsServerEnvironmentSubtitle": {
     "description": "You screen row subtitle"
   },
+  "settingsDevicesSubtitle": "Desktop sign-ins and paired Engineer daemons",
+  "@settingsDevicesSubtitle": {
+    "description": "You screen row subtitle for the desktop devices page"
+  },
+  "devicesTitle": "Desktop devices",
+  "@devicesTitle": {
+    "description": "Desktop devices screen title and You row title"
+  },
+  "devicesIntro": "Every desktop app signed in to your account and every paired Engineer daemon. Revoke one to sign it out at once.",
+  "@devicesIntro": {
+    "description": "Desktop devices screen introduction"
+  },
+  "devicesEmpty": "No desktop devices",
+  "@devicesEmpty": {
+    "description": "Desktop devices empty state title"
+  },
+  "devicesEmptyMessage": "Sign in on the desktop app or pair an Engineer daemon and it will appear here.",
+  "@devicesEmptyMessage": {
+    "description": "Desktop devices empty state message"
+  },
+  "devicesLoadFailed": "Couldn't load your devices",
+  "@devicesLoadFailed": {
+    "description": "Desktop devices load error title"
+  },
+  "devicesRetry": "Try again",
+  "@devicesRetry": {
+    "description": "Desktop devices retry button"
+  },
+  "devicesUnnamed": "Unnamed device",
+  "@devicesUnnamed": {
+    "description": "Fallback device title when the device reported no name"
+  },
+  "devicesKindApp": "Desktop app",
+  "@devicesKindApp": {
+    "description": "Device kind label"
+  },
+  "devicesKindDaemon": "Engineer daemon",
+  "@devicesKindDaemon": {
+    "description": "Device kind label"
+  },
+  "devicesKindUnknown": "Device",
+  "@devicesKindUnknown": {
+    "description": "Device kind label for a device registered before kinds were recorded"
+  },
+  "devicesPairedOn": "since {date}",
+  "@devicesPairedOn": {
+    "description": "When the device was signed in or paired",
+    "placeholders": {
+      "date": {"type": "String"}
+    }
+  },
+  "devicesThisDevice": "this device",
+  "@devicesThisDevice": {
+    "description": "Marks the device the current session belongs to"
+  },
+  "devicesRevoke": "Revoke",
+  "@devicesRevoke": {
+    "description": "Revoke device button"
+  },
+  "devicesKeep": "Keep",
+  "@devicesKeep": {
+    "description": "Cancel button in the revoke confirmation"
+  },
+  "devicesRevokeConfirmTitle": "Revoke this device?",
+  "@devicesRevokeConfirmTitle": {
+    "description": "Revoke confirmation dialog title"
+  },
+  "devicesRevokeConfirmMessage": "{name} will be signed out immediately and will have to sign in or pair again.",
+  "@devicesRevokeConfirmMessage": {
+    "description": "Revoke confirmation dialog message",
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "devicesRevoked": "Device revoked.",
+  "@devicesRevoked": {
+    "description": "Snackbar after a successful revoke"
+  },
+  "devicesRevokeFailed": "Couldn't revoke that device. Try again.",
+  "@devicesRevokeFailed": {
+    "description": "Snackbar after a failed revoke"
+  },
   "settingsKnowledgeSubtitle": "Documents Copilot can search",
   "@settingsKnowledgeSubtitle": {
     "description": "You screen row subtitle"

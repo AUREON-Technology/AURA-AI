@@ -30,6 +30,7 @@ import '../../features/projects/presentation/projects_page.dart';
 import '../../features/goals/presentation/goals_page.dart';
 import '../../features/settings/presentation/backend_environment_page.dart';
 import '../../features/settings/presentation/appearance_page.dart';
+import '../../features/settings/presentation/desktop_devices_page.dart';
 import '../../features/settings/presentation/settings_page.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../../features/voice_live/presentation/live_voice_page.dart';
@@ -379,6 +380,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/server-environment',
             builder: (context, state) => const BackendEnvironmentPage(),
+          ),
+          GoRoute(
+            path: '/desktop-devices',
+            builder: (context, state) => const DesktopDevicesPage(),
           ),
           GoRoute(
             path: '/analytics',

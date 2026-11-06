@@ -36,13 +36,16 @@ REFRESH_TOKEN_TTL = timedelta(days=30)
 ALGORITHM = "HS256"
 _REFRESH_PREFIX = "refresh_token:"
 
-# A desktop-paired device (services/device_pairing.py) has no refresh token at all -- ADR-011's
-# "device-scoped, revocable, and narrower than a full session token" is met differently here than
-# for a mobile/web session: one long-lived, self-contained access token instead of a short-lived
-# access token renewed indefinitely by a long-lived refresh token. Long enough that a desktop
-# daemon someone actually uses day to day doesn't need to be re-paired constantly (aura_hostd has
-# no refresh-on-401 logic to begin with); "revocable" comes from the device-id check below, not
-# from a renewable session the server can decline to renew.
+# A paired *daemon* (services/device_pairing.py, aura_hostd) has no refresh token at all --
+# ADR-011's "device-scoped, revocable, and narrower than a full session token" is met
+# differently there than for a mobile/web session: one long-lived, self-contained access token
+# scoped to the host-agent socket (HOST_AGENT_SCOPE) instead of a short-lived access token
+# renewed by a long-lived refresh token. Long enough that a daemon someone uses day to day
+# doesn't need to be re-paired constantly (aura_hostd has no refresh-on-401 logic); "revocable"
+# comes from the device-id check below. The desktop *app's* own sign-in used to get this same
+# 30-day form unscoped -- a month-long full session that could fetch /keys/data (audit FSA-004).
+# It now gets an ordinary short access token plus a device-bound refresh token
+# (`issue_desktop_session`), so this TTL applies to the scoped daemon token only.
 DEVICE_ACCESS_TOKEN_TTL = timedelta(days=30)
 _REVOKED_DEVICE_PREFIX = "revoked_device:"
 
@@ -235,6 +238,85 @@ def issue_token_pair(user_info: dict) -> Dict[str, Any]:
 
 _DEVICE_OWNER_PREFIX = "device_owner:"
 _local_device_owners: Dict[str, str] = {}
+#: What a device *is*, beside who owns it: ``{"name", "kind", "created_at"}`` so the account
+#: owner can tell their laptop from an unknown machine when listing or revoking (FSA-004).
+#: ``kind`` is ``"app"`` (the desktop app's own sign-in) or ``"daemon"`` (a paired aura_hostd).
+_DEVICE_META_PREFIX = "device_meta:"
+_local_device_meta: Dict[str, Dict[str, Any]] = {}
+DEVICE_NAME_MAX_CHARS = 80
+
+
+def _clean_device_name(name: Optional[str]) -> Optional[str]:
+    if not name:
+        return None
+    cleaned = "".join(ch for ch in str(name) if ch.isprintable()).strip()
+    return cleaned[:DEVICE_NAME_MAX_CHARS] or None
+
+
+def _register_device_meta(device_id: str, *, name: Optional[str], kind: str) -> None:
+    """Record name/kind/created_at for ``device_id`` unless already recorded (a refresh must not
+    rename a device or reset its pairing date). Same TTL as the owner record."""
+    if _device_meta(device_id) is not None:
+        return
+    meta = {
+        "name": _clean_device_name(name),
+        "kind": kind,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        redis_client.setex(
+            f"{_DEVICE_META_PREFIX}{device_id}",
+            int(DEVICE_ACCESS_TOKEN_TTL.total_seconds()),
+            json.dumps(meta),
+        )
+        return
+    _local_device_meta[device_id] = meta
+
+
+def _device_meta(device_id: str) -> Optional[Dict[str, Any]]:
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        raw = redis_client.get(f"{_DEVICE_META_PREFIX}{device_id}")
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    return _local_device_meta.get(device_id)
+
+
+def _owned_device_ids(uid: str) -> list:
+    owned: list = []
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        for key in redis_client.scan_iter(f"{_DEVICE_OWNER_PREFIX}*"):
+            if redis_client.get(key) == uid:
+                owned.append(str(key)[len(_DEVICE_OWNER_PREFIX):])
+    owned += [device for device, owner in _local_device_owners.items() if owner == uid]
+    return list(dict.fromkeys(owned))
+
+
+def list_devices_for_uid(uid: str) -> list:
+    """Every unrevoked desktop device (app sign-in or paired daemon) ``uid`` owns, as
+    ``{"device_id", "name", "kind", "created_at"}`` -- what Settings shows beside a Revoke
+    button (FSA-004). Devices registered before metadata existed appear with ``name`` None and
+    ``kind`` "unknown" rather than being hidden: an unnamed entry the owner cannot place is
+    exactly the one they should be able to revoke."""
+    devices = []
+    for device_id in _owned_device_ids(uid):
+        if is_device_revoked(device_id):
+            continue
+        meta = _device_meta(device_id) or {}
+        devices.append({
+            "device_id": device_id,
+            "name": meta.get("name"),
+            "kind": meta.get("kind") or "unknown",
+            "created_at": meta.get("created_at"),
+        })
+    devices.sort(key=lambda d: d.get("created_at") or "", reverse=True)
+    return devices
 
 
 def _register_device_owner(device_id: str, uid: str) -> None:
@@ -262,6 +344,7 @@ HOST_AGENT_SCOPE = "host_agent"
 
 def issue_device_token(
     user_info: dict, *, device_id: str, scope: Optional[str] = None,
+    device_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """A single long-lived access token for a paired desktop device -- no refresh token, see
     DEVICE_ACCESS_TOKEN_TTL's doc comment. Called once a pairing has been approved by the user on
@@ -276,6 +359,7 @@ def issue_device_token(
         extra["scope"] = scope
     access_token = create_access_token(user_info, ttl=DEVICE_ACCESS_TOKEN_TTL, extra_claims=extra)
     _register_device_owner(device_id, str(user_info["uid"]))
+    _register_device_meta(device_id, name=device_name, kind="daemon" if scope else "app")
     return {
         "access_token": access_token,
         "token_type": "bearer",
@@ -284,8 +368,79 @@ def issue_device_token(
     }
 
 
+def issue_desktop_session(
+    user_info: dict, *, device_id: str, device_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """The desktop *app's* session (audit FSA-004): an ordinary ``ACCESS_TOKEN_TTL`` access
+    token carrying ``platform``/``device_id`` claims, plus a refresh token bound to the device.
+
+    A stolen access token is therefore worth minutes, not a month; the refresh token rotates on
+    every use like a mobile/web one (``consume_refresh_token``), and because the stored identity
+    carries ``device_id``, ``/auth/refresh`` re-issues this same shape and refuses once the device
+    is revoked -- revoking from Settings ends the session at the next refresh at the latest, and
+    ``revoke_device`` also drops the device's outstanding refresh tokens so it cannot renew at
+    all. ``device_name`` (the machine's hostname, supplied by the app) is what the owner sees in
+    the device list."""
+    uid = str(user_info["uid"])
+    extra: Dict[str, Any] = {"platform": "desktop", "device_id": device_id}
+    access_token = create_access_token(user_info, extra_claims=extra)
+    refresh_token = secrets.token_urlsafe(48)
+    stored = dict(user_info)
+    stored["device_id"] = device_id
+    _refresh_store_set(refresh_token, stored, REFRESH_TOKEN_TTL)
+    _register_device_owner(device_id, uid)
+    _register_device_meta(device_id, name=device_name, kind="app")
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "expires_in": int(ACCESS_TOKEN_TTL.total_seconds()),
+        "device_id": device_id,
+    }
+
+
+def reissue_for_refreshed_identity(user_info: dict) -> Optional[Dict[str, Any]]:
+    """Mint the right pair for an identity ``consume_refresh_token`` returned: a desktop-device
+    session when it carries ``device_id`` (``None`` if that device has since been revoked), an
+    ordinary pair otherwise. The ``/auth/refresh`` route and ``refresh_token_pair`` share this
+    so neither can forget the device binding."""
+    device_id = user_info.get("device_id")
+    if not device_id:
+        return issue_token_pair(user_info)
+    if is_device_revoked(device_id):
+        return None
+    clean = {k: v for k, v in user_info.items() if k != "device_id"}
+    return issue_desktop_session(clean, device_id=str(device_id))
+
+
 _local_revoked_devices: set = set()
 _warned_no_redis_revocation = False
+
+
+def _revoke_refresh_tokens_for_device(device_id: str) -> int:
+    """Drop every refresh token bound to ``device_id`` (issued by ``issue_desktop_session``)."""
+    revoked = 0
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        for key in redis_client.scan_iter(f"{_REFRESH_PREFIX}*"):
+            raw = redis_client.get(key)
+            if not raw:
+                continue
+            try:
+                stored = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if stored.get("device_id") == device_id:
+                redis_client.delete(key)
+                revoked += 1
+    stale = [
+        token for token, entry in _local_refresh_store.items()
+        if entry.get("user_info", {}).get("device_id") == device_id
+    ]
+    for token in stale:
+        _local_refresh_store.pop(token, None)
+        revoked += 1
+    return revoked
 
 
 def revoke_device(device_id: str, *, requesting_uid: str) -> bool:
@@ -308,11 +463,14 @@ def revoke_device(device_id: str, *, requesting_uid: str) -> bool:
         redis_client.setex(
             f"{_REVOKED_DEVICE_PREFIX}{device_id}", int(DEVICE_ACCESS_TOKEN_TTL.total_seconds()), "1"
         )
+        # A desktop app session's refresh tokens die with the device (FSA-004).
+        _revoke_refresh_tokens_for_device(device_id)
         return True
     if not _warned_no_redis_revocation:
         logger.warning("Redis unavailable: device revocations are stored in-process only (lost on restart, not shared across workers).")
         _warned_no_redis_revocation = True
     _local_revoked_devices.add(device_id)
+    _revoke_refresh_tokens_for_device(device_id)
     return True
 
 
@@ -369,7 +527,7 @@ def refresh_token_pair(refresh_token: str) -> Optional[Dict[str, Any]]:
         return None
     from services.rbac import stamp_resolved_role
 
-    return issue_token_pair(stamp_resolved_role(fresh))
+    return reissue_for_refreshed_identity(stamp_resolved_role(fresh))
 
 
 def revoke_refresh_token(refresh_token: str) -> None:

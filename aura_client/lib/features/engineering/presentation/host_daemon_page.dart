@@ -155,6 +155,10 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
       if (approveResponse.statusCode != 200) {
         throw StateError('Approval rejected: HTTP ${approveResponse.statusCode} ${approveResponse.body}');
       }
+      // The daemon reports its hostname with the code (FSA-004); naming it here is what lets a
+      // person notice a code that is not their machine's.
+      final approvedName =
+          (jsonDecode(approveResponse.body) as Map<String, dynamic>)['device_name'] as String?;
 
       final deadline = DateTime.now().add(Duration(seconds: expiresIn));
       String? outcome;
@@ -177,7 +181,13 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
       if (outcome == 'approved') {
         ref.invalidate(hostdStatusProvider);
-        if (mounted) AuraSnackbar.show(context, message: 'Paired.', kind: AuraSnackbarKind.success);
+        if (mounted) {
+          AuraSnackbar.show(
+            context,
+            message: approvedName == null ? 'Paired.' : 'Paired $approvedName.',
+            kind: AuraSnackbarKind.success,
+          );
+        }
       } else if (mounted) {
         AuraSnackbar.show(
           context,
