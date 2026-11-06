@@ -14,7 +14,7 @@ from typing import Any, Callable, Mapping
 from ..domain.errors import AuthenticationError
 from ..domain.identifiers import SessionId
 from ..observability.logging import get_logger
-from ..voice import LiveVoiceConfig, LiveVoiceSession
+from ..voice import LiveVoiceConfig, LiveVoiceSession, PcmFrameError
 from . import ws_auth
 from .ws_auth import LiveCredential
 
@@ -207,7 +207,12 @@ def register_voice_live(
                 if message.get("type") == "websocket.disconnect":
                     break
                 if "bytes" in message and message["bytes"] is not None:
-                    await session.push_pcm(message["bytes"])
+                    try:
+                        await session.push_pcm(message["bytes"])
+                    except PcmFrameError:
+                        # An oversized frame is a protocol violation, not audio (FSA-007).
+                        await websocket.close(code=_CLOSE_BAD_REQUEST)
+                        return
                     continue
                 text = message.get("text")
                 if not text:
