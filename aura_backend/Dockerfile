@@ -141,7 +141,13 @@ EXPOSE 8000
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 
 # Workers via AURA_WORKERS, same default as deploy/docker-compose.prod.yml.
+# --forwarded-allow-ips: uvicorn honours X-Forwarded-For/-Proto only from these peers; without
+# it `--proxy-headers` trusts only 127.0.0.1, so on Railway (edge proxy on another host) every
+# request carried the proxy's address and plain-http scheme (audit FSA-005). `*` is right
+# wherever the only path to this port is a proxy we control -- Railway's edge, nginx on the
+# VPS (the compose files already pass the same flag) -- and must be narrowed to the proxy's
+# address if the port is ever exposed directly.
 # This is the command Railway runs. `exec` makes uvicorn PID 1, so the platform's SIGTERM reaches
 # it rather than a shell, and --timeout-graceful-shutdown bounds the drain below railway.json's
 # drainingSeconds (audit F-25; the compose files carry the same pair on the gateway).
-CMD ["sh", "-c", "exec uvicorn aura_service:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${AURA_WORKERS:-4} --proxy-headers --log-level info --timeout-graceful-shutdown ${AURA_GRACEFUL_SHUTDOWN_S:-150}"]
+CMD ["sh", "-c", "exec uvicorn aura_service:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${AURA_WORKERS:-4} --proxy-headers --forwarded-allow-ips ${AURA_FORWARDED_ALLOW_IPS:-*} --log-level info --timeout-graceful-shutdown ${AURA_GRACEFUL_SHUTDOWN_S:-150}"]
