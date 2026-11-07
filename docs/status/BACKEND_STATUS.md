@@ -5,6 +5,15 @@
 
 ## Summary
 
+**Update 2026-11-07 (`main` at `772f9ef`, live probe):** production serves `ffbbb9f` and
+`/health/ready` reports **`schema.revision 0019`**, so open issue 0 below is resolved live and the
+pre-deploy migration path has now (by one route or another) applied real revisions; confirm which in
+the Railway deploy log. Still true: `hfspace` 503 and `hosted1` capped at `internal`, the
+`hash-embed-v1` index live, `/metrics` and `/docs` readable without a token, `main` unprotected,
+Railway auto-deploying, VPS dead. Runners are assigned again (Repo Hygiene, Admin CI executed) but
+Backend CI has had no trigger since 2026-10-31. Full check:
+`docs/reports/AURA_PRODUCTION_READINESS_2026-11-07.md`.
+
 **Production is up and ready (update 2026-10-30).** Railway serves `main` at `6417c43`. On
 2026-10-28 its database sat two migrations behind (`0013`, code expected `0015`; CB-43). On
 2026-10-30 the owner ran `alembic upgrade head` over `railway ssh` (`0013 → 0016`, clean), and live
@@ -76,7 +85,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 ## Open issues (most severe first)
 
 **Operational**
-0. **ADR-032 needs migration `0019` live.** After the merge that carries it, `/health/ready` must
+0. **ADR-032 needs migration `0019` live** — *resolved 2026-11-07: `/health/ready` shows `0019`; the data move script is still unrun.* After the merge that carries it, `/health/ready` must
    show `schema.revision 0019`. Until then the key endpoint and the agent's personal-OS tools
    fail on production, because `aura_user_data_keys` does not exist. `AURA_DATA_ENCRYPTION_KEYS`
    (already required in production) now also wraps every user's data key: losing it loses every

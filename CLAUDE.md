@@ -15,7 +15,8 @@ Four independent apps in one repo:
   `/api/v3/*` routes.
 - **`aura_admin/`** — Next.js operator console served at `/console` (10 pages; `npm run
   dev|build|lint`, `npm run test:e2e` for Playwright against a mock gateway). Built, but not
-  reachable on any live target as of 2026-10-28, and Admin CI has never run.
+  reachable on any live target as of 2026-11-07. Admin CI ran for the first time on 2026-11-07
+  (run #3, dispatched: typecheck, build and Playwright e2e all green).
 - **`aura_hostd/`** — pure-Dart local daemon (no Flutter dependency) that lets the desktop Engineer
   agent act on the user's real files and terminal. Pairs with the backend's
   `/api/v3/host/agent` WebSocket. `dart pub get && dart test` (`.github/workflows/hostd-ci.yml`
@@ -49,7 +50,8 @@ from it change how the paragraph above reads (checked live on 2026-10-28, `main`
 - `aureon-ai.tech` is now served by **Railway** (`server: railway-hikari`), running current
   `main`, with providers `hosted1` (healthy) and `hfspace` (503), and no Ollama.
   `dev.aureon-ai.tech` no longer resolves.
-- **Its database was behind the code until 2026-10-30** (CB-43, resolved): it sat at `0013` while
+- **Its database was behind the code until 2026-10-30** (CB-43, resolved; on 2026-11-07 live
+  `/health/ready` showed `schema.revision 0019`, the current head): it sat at `0013` while
   the code expected `0015`. The owner ran `alembic upgrade head` over `railway ssh` (`0013 → 0016`).
   Live `/health/ready` then showed `healthy: true`, `schema.revision 0016` at `6417c43`. The cause:
   Railway does not run `preDeployCommand` in a shell, so the old inline `echo … && alembic upgrade
@@ -69,10 +71,13 @@ from it change how the paragraph above reads (checked live on 2026-10-28, `main`
   - An unprefixed `=== MIGRATION START ===` in a deploy log means the old command is back.
   - That deploy had nothing to apply. Check `/health/ready`'s `schema` block after the first merge
     that adds a migration.
-- **Railway auto-deploys every `main` push itself, CI or not**, and **CI stopped getting runners
-  again around 19:50 UTC on 2026-10-28** (CB-44: jobs end in 2–4 s with no log). Until that is
-  fixed, a merge ships to production with no CI, and a PR's "CI green" cannot be had — run the
-  suites locally and say so.
+- **Railway auto-deploys every `main` push itself, CI or not.** CI stopped getting runners
+  around 19:50 UTC on 2026-10-28 (CB-44: jobs end in 2–4 s with no log). **Runners were seen
+  assigned again on 2026-11-06/07** (Repo Hygiene executed; Admin CI run #3 executed and passed),
+  but Backend, Client and Host Daemon CI have had no trigger since 2026-10-31, so no application
+  suite has run in CI since `dc87beb`. Until a PR touching `aura_backend/` shows a real run, treat
+  "CI green" as unavailable — run the suites locally and say so. `main` is still unprotected, so a
+  merge ships to production with no gate either way.
 - **Deploy VPS has failed on every run since at least 2026-09-27.** Since 2026-10-18 it fails
   with `Host key verification failed`: 169.58.188.43 presents a new ED25519 key. Do not update
   `deploy/known_hosts` to make it pass. A changed host key is either a reinstall or an
