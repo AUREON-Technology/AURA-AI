@@ -141,6 +141,10 @@ def build_delegation_tools(
             delegation_depth=context.delegation_depth + 1,
             delegated_tool_grant=child_tools,
             delegated_risk_ceiling=child_ceiling,
+            # ADR-006 across the hop: a tainted parent produces a tainted child, so a persona
+            # whose CRUD tools would run unconfirmed on clean input still needs confirmation
+            # here -- which this tool then refuses below rather than silently dropping.
+            inherited_taint=context.tainted,
             # The same person's delegated-connector tokens (AP10): a sub-turn reads as its caller.
             connector_tokens={key.removeprefix(CONNECTOR_TOKEN_PREFIX): token
                               for key, token in context.credentials.items()

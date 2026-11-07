@@ -199,7 +199,10 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         clientId: AppConfig.googleDesktopClientId,
         clientSecret: AppConfig.googleDesktopClientSecret,
       );
-      final deviceToken = await ref.read(tokenManagerProvider).exchangeDesktopLogin(oauthResult.idToken);
+      final deviceToken = await ref.read(tokenManagerProvider).exchangeDesktopLogin(
+        oauthResult.idToken,
+        deviceName: desktopDeviceName(),
+      );
       if (deviceToken == null) {
         throw StateError('The backend did not accept this Google sign-in for desktop login.');
       }
@@ -219,12 +222,12 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       if (profile.photoUrl != null) {
         await _storage.write(key: 'user_photo', value: profile.photoUrl);
       }
-      // The device token itself, not the (short-lived, single-use) Google ID token -- this is
-      // what lets signInCached restore the session on relaunch without another browser round
-      // trip. No refresh token exists to renew it once it expires (ADR-011); the user re-runs
-      // this flow at that point, the same disclosed gap Unit 6's aura_hostd pairing has.
-      await _storage.write(key: _desktopTokenKey, value: deviceToken.accessToken);
-      await _storage.write(key: _desktopTokenExpiryKey, value: deviceToken.expiry.toIso8601String());
+      // The session now carries a device-bound refresh token the TokenManager persists itself
+      // (FSA-004), so signInCached's ordinary `hasCachedRefreshToken` path restores it on
+      // relaunch. The 30-day access token is no longer written; the two keys stay readable
+      // (`_restorePersistedDesktopToken`) only so a token issued before this change keeps
+      // working until it expires, and `expireSession` still deletes them.
+      debugPrint("[AuthNotifier] desktop session until ${deviceToken.expiry.toIso8601String()}");
 
       state = AsyncValue.data(profile);
     } catch (err, stack) {

@@ -124,7 +124,7 @@ class TestDeviceToken(unittest.TestCase):
         jwt_auth._local_revoked_devices.clear()
         jwt_auth._local_device_owners.clear()
 
-    def test_issue_device_token_has_no_refresh_token(self):
+    def test_the_daemon_token_has_no_refresh_token(self):
         token = issue_device_token({"uid": "u1", "email": "a@b.com", "role": "User"}, device_id="d1")
         self.assertIn("access_token", token)
         self.assertNotIn("refresh_token", token)
@@ -295,3 +295,54 @@ class TestDesktopPairingEndpoints(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPairingCarriesTheDeviceName(unittest.TestCase):
+    """Audit FSA-004: the approver sees which machine a code belongs to, and the paired daemon
+    appears in the owner's device list as a named daemon."""
+
+    def setUp(self):
+        device_pairing._local_pairings.clear()
+        device_pairing._local_pairing_codes.clear()
+        jwt_auth._local_revoked_devices.clear()
+        jwt_auth._local_device_owners.clear()
+        jwt_auth._local_device_meta.clear()
+        self._p = patch("services.device_pairing.get_redis_client", return_value=None)
+        self._j = patch("services.jwt_auth.get_redis_client", return_value=None)
+        self._p.start()
+        self._j.start()
+
+    def tearDown(self):
+        self._p.stop()
+        self._j.stop()
+        jwt_auth._local_device_meta.clear()
+
+    def test_start_records_the_name_and_approve_can_read_it(self):
+        start = start_pairing(device_name="build-box")
+        self.assertEqual(device_pairing.pending_device_name(start["user_code"]), "build-box")
+        device_id = approve_pairing(start["user_code"], {"uid": "u1", "email": "a@b.com", "role": "User"})
+        self.assertIsNotNone(device_id)
+        self.assertIsNone(device_pairing.pending_device_name(start["user_code"]))
+        outcome = poll_pairing(start["pairing_id"])
+        self.assertEqual(outcome["device_name"], "build-box")
+
+    def test_the_paired_daemon_is_listed_as_a_named_daemon(self):
+        token = issue_device_token(
+            {"uid": "u1", "email": "a@b.com", "role": "User"}, device_id="d-daemon",
+            scope=jwt_auth.HOST_AGENT_SCOPE, device_name="build-box",
+        )
+        (device,) = jwt_auth.list_devices_for_uid("u1")
+        self.assertEqual(device["device_id"], token["device_id"])
+        self.assertEqual(device["kind"], "daemon")
+        self.assertEqual(device["name"], "build-box")
+
+    def test_a_device_registered_before_metadata_is_still_listed(self):
+        jwt_auth._register_device_owner("legacy", "u1")
+        (device,) = jwt_auth.list_devices_for_uid("u1")
+        self.assertEqual(device["kind"], "unknown")
+        self.assertIsNone(device["name"])
+
+    def test_revoked_devices_drop_out_of_the_list(self):
+        issue_device_token({"uid": "u1", "email": "a@b.com", "role": "User"}, device_id="d1")
+        self.assertTrue(jwt_auth.revoke_device("d1", requesting_uid="u1"))
+        self.assertEqual(jwt_auth.list_devices_for_uid("u1"), [])

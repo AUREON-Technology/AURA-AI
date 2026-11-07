@@ -1780,6 +1780,16 @@ class Container:
                 "live": bool(self.live_voice),
             },
             "environment": str(self.settings.environment),
+            # Which embedder indexes and queries this deployment's knowledge and memory. The
+            # hash embedder is refused in production by AuraSettings.validate(), but a reader
+            # of this payload should not have to infer that: `semantic: false` names it
+            # outright (audit FSA-031). Informational, never gates readiness.
+            "embedding": {
+                "provider": self.settings.llm.embedding_provider,
+                "model": getattr(self.embedder, "model_id", None),
+                "dimension": getattr(self.embedder, "dimension", None),
+                "semantic": not isinstance(self.embedder, HashEmbeddingProvider),
+            },
             "healthy": healthy,
             # Informational, never gates readiness: `healthy` needs any provider, but a turn sent
             # with `require_local` (service callers such as Flame default to it) can only use a

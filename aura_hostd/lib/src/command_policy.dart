@@ -37,6 +37,9 @@ library;
 final List<RegExp> hardDenylistPatterns = [
   RegExp(r'\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\b'), // rm -rf and permutations (-fr, -Rf, ...)
   RegExp(r'\brm\s+-[a-zA-Z]*f[a-zA-Z]*r\b'),
+  // The same two flags given separately (`rm -r -f`, `rm -f -r x`, long spellings), which
+  // the combined-flag patterns above never matched (audit FSA-006).
+  RegExp(r'\brm\b(?=.*\s-(-recursive|[a-zA-Z]*[rR])\b)(?=.*\s-(-force|[a-zA-Z]*f)\b)'),
   RegExp(r':\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;'), // fork bomb
   RegExp(r'\bmkfs\b'),
   RegExp(r'\bdd\s+.*of=/dev/'),
@@ -119,6 +122,72 @@ bool _escapesReadOnlyTier(String command) {
   return false;
 }
 
+/// Verbs that delete, move, overwrite or re-permission files, or run a program on each file
+/// they find. In a *trusted* workspace every other command runs unquestioned, but these keep
+/// argument containment (audit FSA-006): `rm -r ../sibling-project`, `find /home -delete` or
+/// `cd .. && rm -r build` are refused even there. Trust means "this checkout's own tooling
+/// may run"; it never meant "this daemon may destroy things outside the checkout", which is
+/// the only extra power containment removes. Same spelling-based check as the read-only tier,
+/// same limits (a symlink inside the workspace is not seen through).
+final RegExp destructiveVerbPattern = RegExp(
+  r'^(rm|rmdir|unlink|shred|truncate|mv|cp|dd|rsync|chmod|chown|chattr|tee|find'
+  r'|git\s+(clean|reset|checkout|restore|rm|worktree\s+remove))\b',
+);
+
+/// Segment boundaries a trusted command may contain. Quoted operators are not understood; a
+/// false split only makes the check stricter, never looser.
+final RegExp _segmentSeparators = RegExp(r'&&|\|\||;|\||\n');
+
+/// Why a trusted-workspace command is refused by destructive-verb containment, or `null` when
+/// it is not. Each shell segment is judged on its own verb; a `cd`/`pushd` that leaves the
+/// workspace taints every destructive segment in the same command, since their relative paths
+/// would then resolve outside it.
+String? destructiveEscapeReason(String command) {
+  final segments = command
+      .split(_segmentSeparators)
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
+  var changesDirectoryOutside = false;
+  var hasDestructive = false;
+  for (final segment in segments) {
+    if (RegExp(r'^(cd|pushd)\b').hasMatch(segment) &&
+        _argumentTokens(segment).skip(1).any(_leavesWorkspace)) {
+      changesDirectoryOutside = true;
+    }
+    if (destructiveVerbPattern.hasMatch(segment)) {
+      hasDestructive = true;
+      if (_argumentsLeaveWorkspace(segment)) {
+        return 'destructive command names a path outside the workspace; containment applies '
+            'even in a trusted workspace';
+      }
+    }
+  }
+  if (changesDirectoryOutside && hasDestructive) {
+    return 'command changes directory out of the workspace and then runs a destructive '
+        'command; containment applies even in a trusted workspace';
+  }
+  return null;
+}
+
+Iterable<String> _argumentTokens(String command) =>
+    command.split(RegExp(r'\s+')).map((t) => t.replaceAll(RegExp(r'''['"]'''), ''));
+
+/// Whether any argument (including `--flag=value` and attached short-flag values) leaves the
+/// workspace -- the path half of [_escapesReadOnlyTier], shared with [destructiveEscapeReason].
+bool _argumentsLeaveWorkspace(String command) {
+  for (final token in _argumentTokens(command)) {
+    final candidates = <String>[token];
+    final eq = token.indexOf('=');
+    if (token.startsWith('-') && eq > 0) candidates.add(token.substring(eq + 1));
+    if (token.startsWith('-') && !token.startsWith('--') && token.length > 2) {
+      candidates.add(token.substring(2));
+    }
+    if (candidates.any(_leavesWorkspace)) return true;
+  }
+  return false;
+}
+
 bool _leavesWorkspace(String path) {
   if (path.startsWith('/') || path.startsWith('~') || path.startsWith(r'\')) return true;
   if (RegExp(r'^[A-Za-z]:').hasMatch(path)) return true;
@@ -158,6 +227,10 @@ CommandVerdict evaluateCommand(
     }
   }
   if (workspaceTrusted) {
+    final escape = destructiveEscapeReason(trimmed);
+    if (escape != null) {
+      return CommandVerdict(CommandDecision.deny, escape);
+    }
     return const CommandVerdict(CommandDecision.allow, 'workspace is marked trusted');
   }
   if (_shellMetacharacters.hasMatch(trimmed)) {

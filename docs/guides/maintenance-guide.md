@@ -259,7 +259,9 @@ BACKUP_AGE_RECIPIENT=age1...your-public-key...
 ```
 
 or (preferred for multiple keys) one public key per line in
-`deploy/secrets/backup_age_recipients.txt` (gitignored; mounted read-only into the sidecar). Then:
+`deploy/secrets/backup/backup_age_recipients.txt` (gitignored; the `backup/` subdirectory is the
+only part of `deploy/secrets` the sidecar can see -- `deploy/scripts/bootstrap-secrets.sh` creates it
+and moves a file left at the old flat `deploy/secrets/` location). Then:
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build backup
@@ -291,7 +293,7 @@ Rotate yearly, when anyone who had access to the private key leaves, or at once 
 been exposed.
 
 1. Generate a new pair (as above) and store the new private key offline.
-2. Put **both** public keys in `deploy/secrets/backup_age_recipients.txt` (new sets are then
+2. Put **both** public keys in `deploy/secrets/backup/backup_age_recipients.txt` (new sets are then
    decryptable by either key) and recreate the `backup` service.
 3. After the first set sealed with both keys verifies, remove the old public key from the file
    and recreate the service again.

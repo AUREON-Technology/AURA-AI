@@ -124,3 +124,33 @@ async def test_reauth_frame_accepted(container) -> None:
             ws.receive_json()  # state
             ws.send_json({"type": "reauth", "token": "good"})
             ws.send_json({"type": "stop"})
+
+
+@pytest.mark.anyio
+async def test_an_oversized_binary_frame_closes_the_socket_4400(container) -> None:
+    """Audit FSA-007: the endpoint refuses, with a protocol error, rather than buffering it."""
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    await container.startup()
+    with TestClient(_app(container)) as client:
+        ws = client.websocket_connect("/api/v3/voice/live")
+        with ws:
+            ws.send_json({"type": "auth", "token": "good"})
+            ws.send_json({"type": "start", "session_id": "chat-1", "language": "en"})
+            assert ws.receive_json()["type"] == "ready"
+            assert ws.receive_json()["type"] == "state"
+            ws.send_bytes(b"\0" * (LiveVoiceConfig().max_frame_bytes + 2))
+            # Starlette's test client hands the server's close back as a plain
+            # ``websocket.close`` message from ``receive()`` (``receive_json`` would raise
+            # WebSocketDisconnect instead); a state frame or two may precede it.
+            code = None
+            try:
+                for _ in range(5):
+                    message = ws.receive()
+                    if message.get("type") == "websocket.close":
+                        code = message.get("code")
+                        break
+            except WebSocketDisconnect as disconnect:
+                code = disconnect.code
+            assert code == 4400

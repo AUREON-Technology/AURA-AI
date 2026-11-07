@@ -49,10 +49,23 @@ class LiveVoiceConfig:
     min_speech_ms: int = 240
     barge_in_ms: int = 280
     max_utterance_ms: int = 15_000
+    #: Largest single binary frame accepted on the socket (audit FSA-007). One second of
+    #: 16 kHz s16le mono is 32 000 bytes; a well-behaved client sends 20-100 ms frames. The
+    #: endpointer counts every frame as `frame_ms` regardless of its size, so without this a
+    #: client could buffer ~750 arbitrarily large frames per utterance before MAX_UTTERANCE.
+    max_frame_bytes: int = 32_000
     max_output_tokens: int = 400
     playback_sample_rate_hint: int = 22_050
     hold_tts_until_done: bool = True
     english_only_stt: bool = True
+
+
+class PcmFrameError(ValueError):
+    """A binary frame the session refuses to process (audit FSA-007).
+
+    Raised by :meth:`LiveVoiceSession.push_pcm`; the WebSocket endpoint closes the socket with
+    4400 rather than let an oversized frame reach the VAD or the utterance buffer.
+    """
 
 
 @dataclass
@@ -128,7 +141,22 @@ class LiveVoiceSession:
                 continue
             yield item
 
+    @property
+    def max_utterance_bytes(self) -> int:
+        """Byte ceiling for one buffered utterance: `max_utterance_ms` of s16le mono audio.
+
+        The endpointer bounds an utterance in *frames* (`frame_ms` each); this bounds it in
+        bytes, so a client whose frames carry more than `frame_ms` of audio still cannot grow
+        the buffer past what `max_utterance_ms` was meant to allow.
+        """
+        return int(self.config.sample_rate * 2 * self.config.max_utterance_ms / 1000)
+
     async def push_pcm(self, frame: bytes) -> None:
+        if len(frame) > self.config.max_frame_bytes:
+            raise PcmFrameError(
+                f"pcm frame of {len(frame)} bytes exceeds the {self.config.max_frame_bytes}-byte "
+                "limit"
+            )
         if self._closed or self.state is SessionState.AWAITING_CONFIRMATION:
             return
         busy = self.state in (SessionState.THINKING, SessionState.SPEAKING)
@@ -147,6 +175,15 @@ class LiveVoiceSession:
             EndpointEvent.MAX_UTTERANCE,
         ):
             self._pcm_buf.extend(frame)
+        if len(self._pcm_buf) >= self.max_utterance_bytes and event not in (
+            EndpointEvent.SPEECH_ENDED,
+            EndpointEvent.MAX_UTTERANCE,
+        ):
+            # Byte-level MAX_UTTERANCE: finish the turn on what is buffered instead of letting
+            # the buffer outgrow the time ceiling the endpointer thinks it is enforcing.
+            del self._pcm_buf[self.max_utterance_bytes:]
+            self._endpoint.reset()
+            event = EndpointEvent.MAX_UTTERANCE
         if event in (EndpointEvent.SPEECH_ENDED, EndpointEvent.MAX_UTTERANCE):
             await self._emit({"type": "speech_ended"})
             await self._begin_turn(bytes(self._pcm_buf))

@@ -141,6 +141,70 @@ class AppLocalizationsEn extends AppLocalizations {
       'Production or development backend';
 
   @override
+  String get settingsDevicesSubtitle =>
+      'Desktop sign-ins and paired Engineer daemons';
+
+  @override
+  String get devicesTitle => 'Desktop devices';
+
+  @override
+  String get devicesIntro =>
+      'Every desktop app signed in to your account and every paired Engineer daemon. Revoke one to sign it out at once.';
+
+  @override
+  String get devicesEmpty => 'No desktop devices';
+
+  @override
+  String get devicesEmptyMessage =>
+      'Sign in on the desktop app or pair an Engineer daemon and it will appear here.';
+
+  @override
+  String get devicesLoadFailed => 'Couldn\'t load your devices';
+
+  @override
+  String get devicesRetry => 'Try again';
+
+  @override
+  String get devicesUnnamed => 'Unnamed device';
+
+  @override
+  String get devicesKindApp => 'Desktop app';
+
+  @override
+  String get devicesKindDaemon => 'Engineer daemon';
+
+  @override
+  String get devicesKindUnknown => 'Device';
+
+  @override
+  String devicesPairedOn(String date) {
+    return 'since $date';
+  }
+
+  @override
+  String get devicesThisDevice => 'this device';
+
+  @override
+  String get devicesRevoke => 'Revoke';
+
+  @override
+  String get devicesKeep => 'Keep';
+
+  @override
+  String get devicesRevokeConfirmTitle => 'Revoke this device?';
+
+  @override
+  String devicesRevokeConfirmMessage(String name) {
+    return '$name will be signed out immediately and will have to sign in or pair again.';
+  }
+
+  @override
+  String get devicesRevoked => 'Device revoked.';
+
+  @override
+  String get devicesRevokeFailed => 'Couldn\'t revoke that device. Try again.';
+
+  @override
   String get settingsKnowledgeSubtitle => 'Documents Copilot can search';
 
   @override

@@ -182,3 +182,26 @@ class TestEndToEndDelegation:
         assert result.ok, result.content
         assert report.allowed
         assert result.content
+
+
+class TestTaintInheritance:
+    """ADR-006 across the hop (audit FSA-001): a parent turn whose context was quarantined
+    must not be able to launder that by delegating to a persona whose own inputs look clean."""
+
+    async def test_a_tainted_caller_taints_the_child_turn(self) -> None:
+        fake_kernel = _FakeKernel(_ok_result())
+        delegate, _ = _delegate_tool(fake_kernel)
+        await delegate.execute(
+            {"target_agent_id": "finance_advisor", "subtask": "summarise my spending"},
+            _context(tainted=True),
+        )
+        assert fake_kernel.received_request.inherited_taint is True
+
+    async def test_a_clean_caller_leaves_the_child_untainted(self) -> None:
+        fake_kernel = _FakeKernel(_ok_result())
+        delegate, _ = _delegate_tool(fake_kernel)
+        await delegate.execute(
+            {"target_agent_id": "finance_advisor", "subtask": "summarise my spending"},
+            _context(tainted=False),
+        )
+        assert fake_kernel.received_request.inherited_taint is False

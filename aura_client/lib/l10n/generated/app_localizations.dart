@@ -352,6 +352,120 @@ abstract class AppLocalizations {
   /// **'Production or development backend'**
   String get settingsServerEnvironmentSubtitle;
 
+  /// You screen row subtitle for the desktop devices page
+  ///
+  /// In en, this message translates to:
+  /// **'Desktop sign-ins and paired Engineer daemons'**
+  String get settingsDevicesSubtitle;
+
+  /// Desktop devices screen title and You row title
+  ///
+  /// In en, this message translates to:
+  /// **'Desktop devices'**
+  String get devicesTitle;
+
+  /// Desktop devices screen introduction
+  ///
+  /// In en, this message translates to:
+  /// **'Every desktop app signed in to your account and every paired Engineer daemon. Revoke one to sign it out at once.'**
+  String get devicesIntro;
+
+  /// Desktop devices empty state title
+  ///
+  /// In en, this message translates to:
+  /// **'No desktop devices'**
+  String get devicesEmpty;
+
+  /// Desktop devices empty state message
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in on the desktop app or pair an Engineer daemon and it will appear here.'**
+  String get devicesEmptyMessage;
+
+  /// Desktop devices load error title
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t load your devices'**
+  String get devicesLoadFailed;
+
+  /// Desktop devices retry button
+  ///
+  /// In en, this message translates to:
+  /// **'Try again'**
+  String get devicesRetry;
+
+  /// Fallback device title when the device reported no name
+  ///
+  /// In en, this message translates to:
+  /// **'Unnamed device'**
+  String get devicesUnnamed;
+
+  /// Device kind label
+  ///
+  /// In en, this message translates to:
+  /// **'Desktop app'**
+  String get devicesKindApp;
+
+  /// Device kind label
+  ///
+  /// In en, this message translates to:
+  /// **'Engineer daemon'**
+  String get devicesKindDaemon;
+
+  /// Device kind label for a device registered before kinds were recorded
+  ///
+  /// In en, this message translates to:
+  /// **'Device'**
+  String get devicesKindUnknown;
+
+  /// When the device was signed in or paired
+  ///
+  /// In en, this message translates to:
+  /// **'since {date}'**
+  String devicesPairedOn(String date);
+
+  /// Marks the device the current session belongs to
+  ///
+  /// In en, this message translates to:
+  /// **'this device'**
+  String get devicesThisDevice;
+
+  /// Revoke device button
+  ///
+  /// In en, this message translates to:
+  /// **'Revoke'**
+  String get devicesRevoke;
+
+  /// Cancel button in the revoke confirmation
+  ///
+  /// In en, this message translates to:
+  /// **'Keep'**
+  String get devicesKeep;
+
+  /// Revoke confirmation dialog title
+  ///
+  /// In en, this message translates to:
+  /// **'Revoke this device?'**
+  String get devicesRevokeConfirmTitle;
+
+  /// Revoke confirmation dialog message
+  ///
+  /// In en, this message translates to:
+  /// **'{name} will be signed out immediately and will have to sign in or pair again.'**
+  String devicesRevokeConfirmMessage(String name);
+
+  /// Snackbar after a successful revoke
+  ///
+  /// In en, this message translates to:
+  /// **'Device revoked.'**
+  String get devicesRevoked;
+
+  /// Snackbar after a failed revoke
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t revoke that device. Try again.'**
+  String get devicesRevokeFailed;
+
   /// You screen row subtitle
   ///
   /// In en, this message translates to:

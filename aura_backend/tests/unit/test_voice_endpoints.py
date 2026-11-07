@@ -103,3 +103,17 @@ class TestTranscribeEndpointNoEngine:
             )
         assert response.status_code == 503
         assert response.json()["error"] == "dependency_unavailable"
+
+
+class TestReadinessNamesTheEmbedder:
+    """Audit FSA-031: an operator can read which embedder is live without inferring it."""
+
+    async def test_the_embedding_block_is_reported(self, container) -> None:
+        await container.startup()
+        health = await container.health()
+        embedding = health["embedding"]
+        assert embedding["provider"] == container.settings.llm.embedding_provider
+        assert embedding["model"] == container.embedder.model_id
+        assert embedding["dimension"] == container.embedder.dimension
+        # The in-memory test container runs the hash embedder on purpose; readiness says so.
+        assert embedding["semantic"] is False

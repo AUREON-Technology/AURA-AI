@@ -109,6 +109,10 @@ _ALLOWED: dict[tuple[str, str], str] = {
         "com.auraai.aura_client package and its signing SHA-1 -- a console setting this test "
         "cannot see)."
     ),
+    ("docs/reports/audit/full-system-audit/system_architecture.md", "private key"): (
+        "The 2026-10-31 audit report quotes this scan's own PEM header as the pattern a finding "
+        "(A-06) is about. It is the marker text alone, with no key material after it."
+    ),
 }
 
 #: Credential shapes that must never appear as a literal. Kept as patterns rather than values so
@@ -138,7 +142,28 @@ def _is_text_source(path: Path) -> bool:
 
 
 @functools.lru_cache(maxsize=1)
+def _tracked_files() -> frozenset[str] | None:
+    """Repo-relative posix paths git tracks, or None when git cannot answer.
+
+    The test is about *committed* secrets: an operator's untracked `deploy/.env` or a
+    downloaded `credentials.json` beside the checkout is a local hygiene matter (audit
+    FSA-003), not a repository leak, and failing on it hid the real signal. Without git
+    (an exported tarball) every file is scanned, which errs towards reporting.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(_REPO), "ls-files", "-z"],
+            check=True, capture_output=True, timeout=60,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return frozenset(p.decode("utf-8", "surrogateescape") for p in out.split(b"\0") if p)
+
+
 def _scanned_files() -> tuple[Path, ...]:
+    tracked = _tracked_files()
     files: list[Path] = []
     for root in _ROOTS:
         base = _REPO / root
@@ -150,6 +175,8 @@ def _scanned_files() -> tuple[Path, ...]:
             subdirs[:] = [d for d in subdirs if d not in _SKIP_PARTS]
             for name in names:
                 path = Path(directory) / name
+                if tracked is not None and path.relative_to(_REPO).as_posix() not in tracked:
+                    continue
                 if _is_text_source(path) and path.is_file() and path.stat().st_size <= _MAX_BYTES:
                     files.append(path)
     return tuple(sorted(files))

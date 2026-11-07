@@ -120,7 +120,9 @@ class TestDesktopLoginEndpoint(unittest.TestCase):
         self.assertEqual(body["token_type"], "bearer")
         self.assertIn("access_token", body)
         self.assertIn("device_id", body)
-        self.assertNotIn("refresh_token", body)
+        # FSA-004: a short access token plus a device-bound refresh token, not a 30-day token.
+        self.assertIn("refresh_token", body)
+        self.assertLessEqual(body["expires_in"], 15 * 60)
 
     def test_issued_token_verifies_as_a_device_token(self):
         async def identity(request, authorization):
@@ -184,3 +186,117 @@ class TestDesktopLoginEndpoint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDesktopSessionIsShortAndDeviceBound(unittest.TestCase):
+    """Audit FSA-004: the desktop app's sign-in is a device-bound session, not a month-long token."""
+
+    def setUp(self):
+        import services.jwt_auth as jwt_auth
+
+        self._jwt = jwt_auth
+        self._redis = patch("services.jwt_auth.get_redis_client", return_value=None)
+        self._redis.start()
+        self._reset()
+
+    def tearDown(self):
+        self._redis.stop()
+        self._reset()
+
+    def _reset(self):
+        self._jwt._local_refresh_store.clear()
+        self._jwt._local_revoked_devices.clear()
+        self._jwt._local_device_owners.clear()
+        self._jwt._local_device_meta.clear()
+
+    def _client(self) -> TestClient:
+        app = FastAPI()
+        app.include_router(router)
+        return TestClient(app)
+
+    def _refresh(self, client, refresh_token):
+        """/auth/refresh re-resolves the role through the users table; this suite has no
+        database, so the role stamp is replaced with the identity unchanged."""
+        async def stamp(user_info):
+            user_info.setdefault("role", "User")
+            return user_info
+
+        with patch("api.v2.auth.stamp_role", new=stamp):
+            return client.post("/api/v3/auth/refresh", json={"refresh_token": refresh_token})
+
+    def _login(self, client, device_name="anas-laptop"):
+        async def identity(request, authorization):
+            return {"uid": "u9", "email": "u9@example.com", "name": "U9"}
+
+        with patch("api.v2.auth.verify_identity_token", new=identity):
+            return client.post(
+                "/api/v3/auth/desktop/login",
+                headers={"Authorization": "Bearer google-id"},
+                json={"device_name": device_name},
+            )
+
+    def _claims(self, token):
+        from services.jwt_auth import verify_access_token
+
+        return asyncio.run(verify_access_token(FakeRequest(), FakeCredentials(token)))
+
+    def test_access_token_is_short_lived_and_names_the_device(self):
+        body = self._login(self._client()).json()
+        self.assertEqual(body["expires_in"], int(self._jwt.ACCESS_TOKEN_TTL.total_seconds()))
+        self.assertEqual(self._claims(body["access_token"])["device_id"], body["device_id"])
+
+    def test_refresh_keeps_the_device_binding(self):
+        client = self._client()
+        first = self._login(client).json()
+        refreshed = self._refresh(client, first["refresh_token"])
+        self.assertEqual(refreshed.status_code, 200)
+        body = refreshed.json()
+        self.assertNotEqual(body["refresh_token"], first["refresh_token"], "refresh must rotate")
+        self.assertEqual(self._claims(body["access_token"])["device_id"], first["device_id"])
+        again = self._refresh(client, first["refresh_token"])
+        self.assertEqual(again.status_code, 401)
+
+    def test_the_device_is_listed_and_revoke_ends_access_and_renewal(self):
+        client = self._client()
+        issued = self._login(client, device_name="anas-laptop").json()
+        auth = {"Authorization": f"Bearer {issued['access_token']}"}
+
+        listed = client.get("/api/v3/auth/desktop/devices", headers=auth)
+        self.assertEqual(listed.status_code, 200)
+        (device,) = listed.json()["devices"]
+        self.assertEqual(device["device_id"], issued["device_id"])
+        self.assertEqual(device["name"], "anas-laptop")
+        self.assertEqual(device["kind"], "app")
+        self.assertTrue(device["current"])
+        self.assertTrue(device["created_at"])
+
+        revoked = client.post(
+            "/api/v3/auth/desktop/devices/revoke",
+            json={"device_id": issued["device_id"]}, headers=auth,
+        )
+        self.assertEqual(revoked.status_code, 200)
+        self.assertEqual(client.get("/api/v3/auth/desktop/devices", headers=auth).status_code, 401)
+        renew = self._refresh(client, issued["refresh_token"])
+        self.assertEqual(renew.status_code, 401)
+
+    def test_a_revoked_device_cannot_renew_even_with_a_surviving_refresh_token(self):
+        client = self._client()
+        issued = self._login(client).json()
+        self._jwt._local_revoked_devices.add(issued["device_id"])
+        renew = self._refresh(client, issued["refresh_token"])
+        self.assertEqual(renew.status_code, 401)
+
+    def test_an_ordinary_session_refresh_is_unchanged(self):
+        from services.jwt_auth import issue_token_pair
+
+        pair = issue_token_pair({"uid": "m1", "email": "m@example.com", "role": "User"})
+        refreshed = self._refresh(self._client(), pair["refresh_token"])
+        self.assertEqual(refreshed.status_code, 200)
+        self.assertIsNone(self._claims(refreshed.json()["access_token"]).get("device_id"))
+
+    def test_device_name_is_sanitised_and_bounded(self):
+        body = self._login(self._client(), device_name="  evil\x00name" + "x" * 200).json()
+        auth = {"Authorization": f"Bearer {body['access_token']}"}
+        (device,) = self._client().get("/api/v3/auth/desktop/devices", headers=auth).json()["devices"]
+        self.assertNotIn("\x00", device["name"])
+        self.assertLessEqual(len(device["name"]), self._jwt.DEVICE_NAME_MAX_CHARS)

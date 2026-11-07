@@ -15,9 +15,12 @@ from infrastructure.db.user_repo import get_or_create_user
 from services import device_pairing
 from services.jwt_auth import (
     HOST_AGENT_SCOPE,
+    issue_desktop_session,
     issue_device_token,
     issue_token_pair,
     consume_refresh_token,
+    list_devices_for_uid,
+    reissue_for_refreshed_identity,
     revoke_device,
     revoke_refresh_token,
     verify_access_token,
@@ -50,6 +53,12 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class PairingStartRequest(BaseModel):
+    #: The daemon's hostname, shown to whoever approves the code (FSA-004). Optional so an
+    #: older daemon that posts an empty body still pairs.
+    device_name: str | None = None
+
+
 class PairingStartResponse(BaseModel):
     pairing_id: str
     user_code: str
@@ -64,6 +73,7 @@ class PairingApproveRequest(BaseModel):
 class PairingApproveResponse(BaseModel):
     status: str
     device_id: str
+    device_name: str | None = None
 
 
 class PairingPollRequest(BaseModel):
@@ -82,11 +92,29 @@ class DeviceRevokeRequest(BaseModel):
     device_id: str
 
 
+class DesktopLoginRequest(BaseModel):
+    #: The machine's hostname, so the owner can tell this sign-in apart in the device list.
+    device_name: str | None = None
+
+
 class DesktopLoginResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str
     expires_in: int
     device_id: str
+
+
+class DesktopDevice(BaseModel):
+    device_id: str
+    name: str | None = None
+    kind: str
+    created_at: str | None = None
+    current: bool = False
+
+
+class DesktopDevicesResponse(BaseModel):
+    devices: list[DesktopDevice]
 
 
 class RevokeRequest(BaseModel):
@@ -181,7 +209,12 @@ async def refresh(request: RefreshRequest):
     user_info = consume_refresh_token(request.refresh_token)
     if user_info is None:
         raise HTTPException(status_code=401, detail="Refresh token is invalid, expired, or already used.")
-    return issue_token_pair(await stamp_role(user_info))
+    # A desktop app's refresh token is bound to its device (FSA-004): the re-issued pair keeps
+    # the device claims, and a revoked device gets nothing even with a valid refresh token.
+    issued = reissue_for_refreshed_identity(await stamp_role(user_info))
+    if issued is None:
+        raise HTTPException(status_code=401, detail="Device access has been revoked.")
+    return issued
 
 
 @router.post("/revoke")
@@ -199,8 +232,8 @@ async def revoke(request: RevokeRequest):
 
 
 @router.post("/desktop/pair/start", response_model=PairingStartResponse)
-async def start_desktop_pairing():
-    return device_pairing.start_pairing()
+async def start_desktop_pairing(body: PairingStartRequest | None = None):
+    return device_pairing.start_pairing(device_name=body.device_name if body else None)
 
 
 @router.post("/desktop/pair/approve", response_model=PairingApproveResponse)
@@ -210,10 +243,11 @@ async def approve_desktop_pairing(
     """Requires the approving client's own valid access token -- this is what stands in for
     attestation here: proof of an already-authenticated session, not proof of the new device's
     integrity (ADR-011 explains why the latter has no desktop equivalent worth relying on)."""
+    device_name = device_pairing.pending_device_name(body.user_code)
     device_id = device_pairing.approve_pairing(body.user_code, user_info)
     if device_id is None:
         raise HTTPException(status_code=400, detail="Pairing code is invalid, expired, or already used.")
-    return {"status": "approved", "device_id": device_id}
+    return {"status": "approved", "device_id": device_id, "device_name": device_name}
 
 
 @router.post("/desktop/pair/poll", response_model=PairingPollResponse)
@@ -225,8 +259,24 @@ async def poll_desktop_pairing(body: PairingPollRequest):
     await stamp_role(user_info)
     await _persist_user(user_info)
     # The daemon needs only its socket; a pairing code must not be worth the whole account.
-    token = issue_device_token(user_info, device_id=outcome["device_id"], scope=HOST_AGENT_SCOPE)
+    token = issue_device_token(
+        user_info, device_id=outcome["device_id"], scope=HOST_AGENT_SCOPE,
+        device_name=outcome.get("device_name"),
+    )
     return {"status": "approved", **token}
+
+
+@router.get("/desktop/devices", response_model=DesktopDevicesResponse)
+async def list_desktop_devices(user_info: dict = Depends(verify_access_token)):
+    """The caller's own desktop devices -- app sign-ins and paired daemons -- for the Settings
+    device list (FSA-004). Only the authenticated subject's; nothing in the request names a
+    user. ``current`` marks the device the calling token itself belongs to."""
+    current = user_info.get("device_id")
+    devices = [
+        {**d, "current": bool(current) and d["device_id"] == current}
+        for d in list_devices_for_uid(str(user_info["uid"]))
+    ]
+    return {"devices": devices}
 
 
 @router.post("/desktop/devices/revoke")
@@ -243,6 +293,7 @@ async def revoke_desktop_device(
 async def desktop_login(
     request: Request,
     authorization: HTTPAuthorizationCredentials | None = Depends(_web_bearer),
+    body: DesktopLoginRequest | None = None,
 ):
     """The desktop *app's own* login (Unit 7) -- distinct from the pairing flow above, which is
     for aura_hostd, a headless daemon with no browser of its own to run an OAuth flow in.
@@ -252,10 +303,12 @@ async def desktop_login(
     services/security.py's dual-audience check, since a Desktop-type OAuth client is required for
     that redirect and can't be the same client id the mobile/web login path verifies against).
 
-    What it does not have is device attestation -- no desktop equivalent exists (ADR-011). So,
-    like the pairing flow, this mints the narrower, revocable device-scoped token
-    issue_device_token gives aura_hostd rather than a full session pair: a real identity proof
-    without an integrity proof earns a device token, not a session.
+    What it does not have is device attestation -- no desktop equivalent exists (ADR-011). So
+    the session it gets is *device-bound*: a short access token carrying a device_id, and a
+    refresh token that re-issues only for that device and dies with its revocation
+    (issue_desktop_session). Until audit FSA-004 this minted the daemon's 30-day unscoped
+    token instead -- a month-long full session that could fetch /keys/data; revocation, which
+    only a device_id check provided, was reachable from no client screen.
 
     Called as a plain function (not via Depends), matching exchange_web_token just above --
     verify_identity_token has no attestation requirement of its own to enforce as a dependency,
@@ -264,4 +317,6 @@ async def desktop_login(
     await stamp_role(user_info)
     await _persist_user(user_info)
     device_id = secrets.token_urlsafe(16)
-    return issue_device_token(user_info, device_id=device_id)
+    return issue_desktop_session(
+        user_info, device_id=device_id, device_name=body.device_name if body else None,
+    )

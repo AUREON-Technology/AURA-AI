@@ -235,3 +235,14 @@ String _resultPage({required bool success, required String message}) => '''
 </body>
 </html>
 ''';
+
+/// This machine's hostname, sent with the desktop sign-in so the account owner can tell this
+/// device apart in Settings > Desktop devices (FSA-004); `null` when the platform will not say.
+String? desktopDeviceName() {
+  try {
+    final name = Platform.localHostname.trim();
+    return name.isEmpty ? null : name;
+  } catch (_) {
+    return null;
+  }
+}

@@ -126,7 +126,13 @@ class AgentRegistry:
 # A persona naming a tool that is not actually configured in a given deployment (e.g. fetch_url,
 # which needs AURA_HTTP_ALLOWED_HOSTS) simply never has it offered -- ToolRegistry.available()
 # intersects an agent's declarations against what is actually registered.
-_READ_TOOLS = frozenset({"current_datetime", "search_knowledge", "recall_memory", "remember_fact"})
+_READ_TOOLS = frozenset({"current_datetime", "search_knowledge", "recall_memory"})
+
+# `remember_fact` writes a durable memory record (tools/builtin.py) -- a side effect, not a read.
+# It used to sit in _READ_TOOLS, which handed it to every persona including the deliberately
+# read-only `decision_agent` (audit FSA-017). Granted explicitly below to the personas that act
+# on the user's behalf; absent from the ones whose whole point is to not act.
+_MEMORY_WRITE_TOOLS = frozenset({"remember_fact"})
 
 
 def build_default_agent_registry() -> AgentRegistry:
@@ -152,7 +158,7 @@ def build_default_agent_registry() -> AgentRegistry:
                 # propose_* for a client-confirmed write, create_*/list_* (Phase C2) for one this
                 # persona is trusted to make directly -- both reach real storage, the difference
                 # is only whether a human approves first.
-                allowed_tools=_READ_TOOLS | {
+                allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {
                     "propose_task", "propose_event",
                     "create_task", "list_tasks", "update_task", "delete_task",
                     "create_calendar_event", "list_calendar_events",
@@ -164,7 +170,7 @@ def build_default_agent_registry() -> AgentRegistry:
             AgentSpec(
                 id="finance_advisor", name="Finance Advisor",
                 prompt_template_id=AGENT_PROMPT_IDS["finance_advisor"],
-                allowed_tools=_READ_TOOLS | {
+                allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {
                     "calculator", "propose_expense", "propose_income",
                     "create_finance_record", "list_finance_records",
                     "update_finance_record", "delete_finance_record",
@@ -174,7 +180,7 @@ def build_default_agent_registry() -> AgentRegistry:
             AgentSpec(
                 id="health_companion", name="Health Companion",
                 prompt_template_id=AGENT_PROMPT_IDS["health_companion"],
-                allowed_tools=_READ_TOOLS | {
+                allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {
                     "propose_health_log", "create_health_record", "list_health_records",
                     "update_health_record", "delete_health_record",
                 },
@@ -185,13 +191,13 @@ def build_default_agent_registry() -> AgentRegistry:
                 prompt_template_id=AGENT_PROMPT_IDS["research_agent"],
                 # fetch_url is CONFIDENTIAL (reaches the network) and opt-in server-side; naming
                 # it here only matters once a deployment configures AURA_HTTP_ALLOWED_HOSTS.
-                allowed_tools=_READ_TOOLS | {"calculator", "fetch_url"},
+                allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator", "fetch_url"},
                 risk_ceiling=ToolSensitivity.CONFIDENTIAL, memory_scope="shared",
             ),
             AgentSpec(
                 id="coding_agent", name="Coding Agent",
                 prompt_template_id=AGENT_PROMPT_IDS["coding_agent"],
-                allowed_tools=_READ_TOOLS | {"calculator"},
+                allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {"calculator"},
                 risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="shared",
             ),
             AgentSpec(
@@ -199,7 +205,8 @@ def build_default_agent_registry() -> AgentRegistry:
                 prompt_template_id=AGENT_PROMPT_IDS["decision_agent"],
                 # Read-only and deliberately so: a decision-support persona that can also file a
                 # side-effecting propose_* call is a persona that can act on its own advice
-                # before a human has weighed in.
+                # before a human has weighed in. That includes `remember_fact`: a durable write
+                # is a side effect, however small (audit FSA-017).
                 allowed_tools=_READ_TOOLS | {"calculator"},
                 risk_ceiling=ToolSensitivity.PERSONAL, memory_scope="shared",
             ),
@@ -210,7 +217,7 @@ def build_default_agent_registry() -> AgentRegistry:
                 # plus any MCP-bridged tool (registered dynamically at container startup, so a
                 # name here is only meaningful once that server is actually configured -- same
                 # "grant an id, not a guarantee it exists" rule _READ_TOOLS's own comment states).
-                allowed_tools=_READ_TOOLS | {
+                allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {
                     "calculator",
                     "write_file", "edit_file", "run_command", "clone_repository",
                     "git_diff", "git_commit", "git_checkout_branch", "git_status", "git_push",

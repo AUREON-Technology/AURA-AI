@@ -122,13 +122,20 @@ def _generate_user_code() -> str:
     return f"{''.join(chars[:4])}-{''.join(chars[4:])}"
 
 
-def start_pairing() -> Dict[str, Any]:
+def start_pairing(device_name: Optional[str] = None) -> Dict[str, Any]:
     """Begins a pairing session. Unauthenticated by design -- like `/auth/nonce`, this is the raw
     material a real approval later gets bound to, requested before the daemon has any identity at
-    all."""
+    all.
+
+    ``device_name`` is the daemon's self-reported hostname (FSA-004): shown to the approver so
+    they can see *which* machine the code belongs to, and kept on the device record. It is
+    unauthenticated text and is treated as a label, never as identity."""
     pairing_id = secrets.token_urlsafe(32)
     user_code = _generate_user_code()
-    _pairing_set(pairing_id, {"status": "pending", "user_code": user_code})
+    record: Dict[str, Any] = {"status": "pending", "user_code": user_code}
+    if device_name:
+        record["device_name"] = str(device_name)[:80]
+    _pairing_set(pairing_id, record)
     _code_set(user_code, pairing_id)
     return {
         "pairing_id": pairing_id,
@@ -136,6 +143,18 @@ def start_pairing() -> Dict[str, Any]:
         "expires_in": int(PAIRING_TTL.total_seconds()),
         "interval": POLL_INTERVAL_S,
     }
+
+
+def pending_device_name(user_code: str) -> Optional[str]:
+    """The self-reported name of the device behind a still-pending code, for the approver's
+    screen; ``None`` when the code is unknown, used, or came without one."""
+    pairing_id = _code_get(user_code.strip().upper())
+    if pairing_id is None:
+        return None
+    record = _pairing_get(pairing_id)
+    if record is None or record.get("status") != "pending":
+        return None
+    return record.get("device_name")
 
 
 def approve_pairing(user_code: str, user_info: dict) -> Optional[str]:
@@ -190,5 +209,6 @@ def poll_pairing(pairing_id: str) -> Dict[str, Any]:
             "status": "approved",
             "user_info": record.get("user_info") or {},
             "device_id": record.get("device_id"),
+            "device_name": record.get("device_name"),
         }
     return {"status": "expired"}
