@@ -209,8 +209,12 @@ def register_voice_live(
                 if "bytes" in message and message["bytes"] is not None:
                     try:
                         await session.push_pcm(message["bytes"])
-                    except PcmFrameError:
+                    except PcmFrameError as exc:
                         # An oversized frame is a protocol violation, not audio (FSA-007).
+                        logger.warning(
+                            "voice live: closing session on invalid pcm frame",
+                            extra={"reason": str(exc), "user": principal.user_id.value},
+                        )
                         await websocket.close(code=_CLOSE_BAD_REQUEST)
                         return
                     continue

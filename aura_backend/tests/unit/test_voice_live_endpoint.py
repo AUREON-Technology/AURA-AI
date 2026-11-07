@@ -141,8 +141,16 @@ async def test_an_oversized_binary_frame_closes_the_socket_4400(container) -> No
             assert ws.receive_json()["type"] == "ready"
             assert ws.receive_json()["type"] == "state"
             ws.send_bytes(b"\0" * (LiveVoiceConfig().max_frame_bytes + 2))
-            with pytest.raises(WebSocketDisconnect) as closed:
-                # Drain until the close arrives; a state frame or two may precede it.
+            # Starlette's test client hands the server's close back as a plain
+            # ``websocket.close`` message from ``receive()`` (``receive_json`` would raise
+            # WebSocketDisconnect instead); a state frame or two may precede it.
+            code = None
+            try:
                 for _ in range(5):
-                    ws.receive()
-            assert closed.value.code == 4400
+                    message = ws.receive()
+                    if message.get("type") == "websocket.close":
+                        code = message.get("code")
+                        break
+            except WebSocketDisconnect as disconnect:
+                code = disconnect.code
+            assert code == 4400
