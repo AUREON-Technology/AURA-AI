@@ -144,7 +144,7 @@ jobs:
           pip install pip-audit
           grep -E '^[A-Za-z0-9._-]+==' requirements.lock \
             | sed -E 's/[[:space:]]*\\$//; s/\+[A-Za-z0-9.]+$//' > /tmp/audit.lock
-          if grep -q -e '--hash' -e '\\' /tmp/audit.lock || ! grep -qx 'torch==[0-9.]*' /tmp/audit.lock; then
+          if grep -q -e '--hash' -e '[\]' /tmp/audit.lock || ! grep -qx 'torch==[0-9.]*' /tmp/audit.lock; then
             echo "::error::could not reduce requirements.lock to name==version pins for pip-audit"
             exit 1
           fi
