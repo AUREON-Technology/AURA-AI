@@ -20,6 +20,35 @@ import pytest
 # The package lives one directory up; tests run from anywhere.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Say so when this interpreter is not the locked environment (audit G-07 / FSA-080).
+
+    A warning, not a failure: a drifted venv still runs the suite, but its result can no longer
+    pass for the locked one silently. The sanctioned local path is a Python 3.11 venv built from
+    `requirements.lock` and `requirements-dev.lock` (see CLAUDE.md, "Commands").
+    """
+    import importlib.util
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "lock_drift.py"
+    spec = importlib.util.spec_from_file_location("lock_drift", script)
+    if spec is None or spec.loader is None:  # pragma: no cover - the script ships with the tree
+        return
+    lock_drift = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lock_drift)
+    lines = lock_drift.report(script.parents[1])
+    if lines:
+        config.issue_config_time_warning(
+            pytest.PytestWarning(
+                "this interpreter has drifted from requirements.lock / requirements-dev.lock, so "
+                "its results do not stand for the locked environment: "
+                + "; ".join(lines)
+                + ". Rebuild the venv from the locks (CLAUDE.md, Commands > Backend)."
+            ),
+            stacklevel=2,
+        )
+
 # Set before any aura_core import so settings resolve to the test profile.
 os.environ.setdefault("AURA_ENVIRONMENT", "local")
 os.environ.setdefault("AURA_LOG_LEVEL", "WARNING")

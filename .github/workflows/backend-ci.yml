@@ -55,17 +55,18 @@ jobs:
           cache-dependency-path: |
             aura_backend/requirements.lock
             aura_backend/requirements.txt
-            aura_backend/requirements-dev.txt
+            aura_backend/requirements-dev.lock
 
       - name: Install dependencies
         # Hash-checked (F-38): every artefact must match a hash recorded in requirements.lock.
         # The lock names no index; torch's +cpu wheel exists only on PyTorch's CPU index, so it
         # is passed here, and --require-hashes means neither index can substitute a file.
-        # requirements-dev.txt is unhashed test tooling (GAP-033), so it is a second install --
-        # one hash-checked requirement puts pip in hash mode for every file on its command line.
+        # The test tooling is hash-pinned too (G-06 / GAP-033): requirements-dev.lock is compiled
+        # against requirements.lock as a constraint, so a package in both carries one version.
+        # Two installs because pip resolves each command's requirement set on its own.
         run: |
           pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
-          pip install -r requirements-dev.txt
+          pip install --require-hashes -r requirements-dev.lock
 
       - name: Dockerfile boots aura_service (AURA-012)
         run: |
@@ -223,17 +224,18 @@ jobs:
           cache: "pip"
           cache-dependency-path: |
             aura_backend/requirements.lock
-            aura_backend/requirements-dev.txt
+            aura_backend/requirements-dev.lock
 
       - name: Install dependencies
         # Hash-checked (F-38): every artefact must match a hash recorded in requirements.lock.
         # The lock names no index; torch's +cpu wheel exists only on PyTorch's CPU index, so it
         # is passed here, and --require-hashes means neither index can substitute a file.
-        # requirements-dev.txt is unhashed test tooling (GAP-033), so it is a second install --
-        # one hash-checked requirement puts pip in hash mode for every file on its command line.
+        # The test tooling is hash-pinned too (G-06 / GAP-033): requirements-dev.lock is compiled
+        # against requirements.lock as a constraint, so a package in both carries one version.
+        # Two installs because pip resolves each command's requirement set on its own.
         run: |
           pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
-          pip install -r requirements-dev.txt
+          pip install --require-hashes -r requirements-dev.lock
 
       - name: Postgres adapter tests (real database)
         env:

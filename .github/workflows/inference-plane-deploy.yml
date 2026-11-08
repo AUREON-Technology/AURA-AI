@@ -59,10 +59,10 @@ jobs:
       - name: Configuration validation (Control Plane / Inference Plane contract)
         working-directory: aura_backend
         run: |
-          # Two installs: the lock is hash-pinned (F-38) and requirements-dev.txt is not, and pip
-          # refuses to mix them in one command.
+          # Two installs: both locks are hash-pinned (F-38, G-06) and pip resolves each command's
+          # requirement set on its own.
           python -m pip install --quiet --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock 2>/dev/null || true
-          python -m pip install --quiet -r requirements-dev.txt 2>/dev/null || true
+          python -m pip install --quiet --require-hashes -r requirements-dev.lock 2>/dev/null || true
           python -m pytest tests/deployment/test_inference_contract.py -q
 
   # Whether the Space is configured, decided in a step rather than in a job-level `if:`.

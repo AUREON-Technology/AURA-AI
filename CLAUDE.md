@@ -108,8 +108,12 @@ evidence its exit criteria name** — "built" and "tested" are not "proven."
 ### Backend (`cd aura_backend` first)
 
 ```bash
+# The one sanctioned local environment: Python 3.11, both lockfiles, hashes checked (audit G-07).
+# Anything else may run the suite but its result does not stand for the locked one; conftest
+# warns at session start when a watched package differs (scripts/lock_drift.py).
+uv venv --python 3.11 .venv && source .venv/bin/activate
 pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
-pip install -r requirements-dev.txt     # separate: the lock is hash-pinned, dev deps are not (GAP-033)
+pip install --require-hashes -r requirements-dev.lock   # separate: pip resolves each command on its own
 
 pytest                                   # aura_core suite — no Docker, no network, no model
 pytest tests/some_test.py::TestClass::test_name   # single test

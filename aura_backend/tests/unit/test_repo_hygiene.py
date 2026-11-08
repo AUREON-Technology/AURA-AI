@@ -81,13 +81,17 @@ class TestTrackedArtifacts:
         flagged = {p.split(":", 1)[0] for p in checker.find_violations(tmp_path, names)}
         assert flagged == set(names) - {"fine.py"}
 
-    def test_checker_honours_its_allowlist(self, tmp_path: Path) -> None:
+    def test_checker_honours_its_allowlist(self, tmp_path: Path, monkeypatch) -> None:
+        """A synthetic entry: the real allowlist is empty on purpose (FSA-113) and stays so unless
+        someone defends a new entry."""
         checker = _load_checker()
-        allowed = next(iter(checker.ALLOWLIST))
+        allowed = "deploy/kept-on-purpose.log"
+        monkeypatch.setattr(checker, "ALLOWLIST", {allowed: "a test entry"})
         target = tmp_path / allowed
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("ssh-ed25519 AAAA\n")
+        target.write_text("a log kept by decision\n")
         assert checker.find_violations(tmp_path, [allowed]) == []
+        assert checker.find_violations(tmp_path, ["deploy/other.log"]) != []
 
     def test_gitignore_covers_the_artefacts_that_were_committed(self) -> None:
         rules = {line.strip() for line in (REPO / ".gitignore").read_text().splitlines()}
@@ -153,3 +157,74 @@ class TestWorkflowPins:
         assert '"aura_admin/**"' in on_block
         # `next lint` with no ESLint config is an interactive prompt, not a gate.
         assert not re.search(r"^\s*run:\s*npm run lint", text, re.M)
+
+
+class TestTheIndexCarriesNoScratchFiles:
+    """Audit FSA-113: `deploy/vps_known_hosts.tmp` duplicated the stale host-key pin and was carried
+    by an allowlist entry rather than deleted. A `.tmp` is scratch by definition; the guard's
+    allowlist is for files that must stay tracked, never for a scratch file nobody decided on."""
+
+    @pytest.mark.skipif(not _in_git_checkout(), reason="not a git checkout (e.g. a source tarball)")
+    def test_no_tracked_file_is_a_tmp_file_allowlisted_or_not(self) -> None:
+        checker = _load_checker()
+        tracked = checker.tracked_files(REPO)
+        tmp = [p for p in tracked if p.lower().endswith(".tmp")]
+        assert tmp == [], f"scratch files in the index: {tmp}"
+
+    @pytest.mark.skipif(not _in_git_checkout(), reason="not a git checkout (e.g. a source tarball)")
+    def test_every_allowlist_entry_is_a_tracked_non_scratch_file(self) -> None:
+        checker = _load_checker()
+        tracked = set(checker.tracked_files(REPO))
+        for rel in checker.ALLOWLIST:
+            assert rel in tracked, f"stale allowlist entry, file is not tracked: {rel}"
+            assert not rel.lower().endswith(".tmp"), f"a .tmp file may not be allowlisted: {rel}"
+
+
+class TestDevelopmentToolingIsHashPinned:
+    """Audit G-06 / GAP-033: the runtime lock is hash-pinned, the test tooling was `pytest>=8.0` --
+    4,000 tests ran under whatever pytest resolved that day, and a compromised wheel on PyPI would
+    have been installed on every CI run. `requirements-dev.lock` closes that, and every workflow
+    that installs the tooling must install the lock with hashes checked, never the loose file."""
+
+    DEV_LOCK = REPO / "aura_backend" / "requirements-dev.lock"
+
+    def test_the_dev_lock_exists_with_a_hash_for_every_pin(self) -> None:
+        assert self.DEV_LOCK.is_file(), "aura_backend/requirements-dev.lock is missing"
+        text = self.DEV_LOCK.read_text(encoding="utf-8")
+        assert "uv pip compile" in text.splitlines()[1], "the lock must record the command that made it"
+        pins = re.findall(r"^([A-Za-z0-9_.-]+)==", text, re.M)
+        assert "pytest" in pins and "testcontainers" in pins
+        assert text.count("--hash=sha256:") >= len(pins), "every pin needs at least one hash"
+
+    def test_the_dev_lock_is_constrained_by_the_runtime_lock(self) -> None:
+        """A package pinned in both locks must be pinned to the same version, or the second
+        install would silently replace what the first hash-checked."""
+        runtime = dict(re.findall(r"^([A-Za-z0-9_.-]+)==([^ \\\n]+)", (REPO / "aura_backend" / "requirements.lock").read_text(encoding="utf-8"), re.M))
+        dev = dict(re.findall(r"^([A-Za-z0-9_.-]+)==([^ \\\n]+)", self.DEV_LOCK.read_text(encoding="utf-8"), re.M))
+        clashes = {name: (runtime[name], dev[name]) for name in dev if name in runtime and runtime[name] != dev[name]}
+        assert clashes == {}, f"dev lock disagrees with the runtime lock: {clashes}"
+
+    def test_every_workflow_installs_the_dev_lock_with_hashes_checked(self) -> None:
+        installers = []
+        for path in _workflows():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if "requirements-dev" in line and "pip install" in line:
+                    installers.append((path.name, line.strip()))
+        assert installers, "no workflow installs the development tooling"
+        loose = [(n, l) for n, l in installers if "requirements-dev.txt" in l]
+        assert loose == [], f"workflows still install the unhashed requirements-dev.txt: {loose}"
+        unhashed = [(n, l) for n, l in installers if "--require-hashes" not in l]
+        assert unhashed == [], f"dev lock installed without --require-hashes: {unhashed}"
+
+
+class TestWindowsJobsGate:
+    """Audit G-03 / FSA-063: the desktop targets are Windows-first, and the Windows jobs were the
+    only ones allowed to fail silently. Both have been seen green on real runners (client #213-#215,
+    hostd on #221), so neither may stay advisory."""
+
+    @pytest.mark.parametrize("workflow", ["client-ci.yml", "hostd-ci.yml"])
+    def test_no_job_may_fail_without_failing_the_run(self, workflow: str) -> None:
+        text = (WORKFLOWS / workflow).read_text(encoding="utf-8")
+        assert not re.search(r"^\s*continue-on-error:\s*true", text, re.M), (
+            f"{workflow} still has an advisory job; a red Windows job must fail the run"
+        )
