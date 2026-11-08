@@ -12,13 +12,16 @@ on the user's real files and terminal, ADR-011). Evidence scale and refresh step
 Verdict: not production-ready. Runners are assigned again (Repo Hygiene and Admin CI ran on
 11-06/07), but Client CI and Host Daemon CI have had no trigger since 2026-10-31, so no desktop
 suite has run in CI since `dc87beb`. Run locally on Linux with the CI pins:
-- client: analyze clean, 549 passed, 4 skipped (at `6bc04b6`, with the new shell test);
+- client: analyze clean, 549 passed, 4 skipped (at `6bc04b6`, with the new shell test; 563
+  passed, 3 skipped after the scrim fix);
 - hostd: analyze clean, 258 passed (at `6bc04b6`), and the suite exits in 16 s (the PTY hang
   no longer reproduces);
 - PR #185's fixes are on `main`.
 
-A new test pumps the real IDE shell, so it renders at three sizes in LTR and RTL. It found one
-low-severity defect: the floating-panel scrim covers the activity bar. The assessment also
+A new test pumps the real IDE shell, so it renders at all three breakpoints in LTR and RTL. It
+found one low-severity defect, since fixed: the floating-panel scrim covered the activity bar, so
+reaching another destination took two clicks. Client suite after the fix: 563 passed, 3 skipped.
+The assessment also
 flags the per-process `HostAgentRegistry` under the default 4 workers as a functional blocker
 for the Engineer agent, not only a security remainder.
 
