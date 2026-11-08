@@ -80,9 +80,10 @@ from ..execution.agentic_loop import AgentRunContext
 from ..execution.confirmations import PendingConfirmationStore, ResumedTurn
 from ..execution.engine import ExecutionOutcome, StepEvent
 from ..llm.cache import InMemoryCache
+from ..llm.deadline import generation_budget, no_generation_budget
 from ..llm.router import TurnBudget
 from ..llm.sensitivity import DataScope, data_scope, escalate
-from ..llm.workload import workload_for_turn, workload_scope
+from ..llm.workload import effective_workload, workload_for_turn, workload_scope
 from ..observability.logging import LogContext, get_logger
 from ..ports.runtime import ToolContext
 from ..prompts.library import AGENT_PROMPT_IDS
@@ -292,6 +293,19 @@ PLANNING_FAILED_NOTE = (
 )
 
 
+def _consume_shadow_result(task: "asyncio.Task[None]") -> None:
+    """Retrieve a finished shadow task's exception so asyncio never logs it as unhandled.
+
+    `_run_shadow` already records its own failures; anything reaching here escaped that, and is
+    logged at debug for the same reason: shadow traffic must never be noisy on the user path.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.debug("shadow task failed", exc_info=exc)
+
+
 def _stream_error_outcome(exc: AuraError) -> TurnOutcome:
     """The telemetry outcome for an error ending a streamed turn, as ``run`` maps them."""
     if isinstance(exc, UserConcurrencyLimitError):
@@ -312,6 +326,9 @@ class AIKernel:
         self._confirmations = deps.tool_confirmations or PendingConfirmationStore(
             InMemoryCache(max_entries=1024, default_ttl_s=3600)
         )
+        #: The one shadow generation allowed in flight (see `_dispatch_shadow`). Holding the
+        #: reference also keeps the task from being garbage-collected mid-run.
+        self._shadow_task: asyncio.Task[None] | None = None
 
     # -- public API --------------------------------------------------------------------
 
@@ -337,7 +354,7 @@ class AIKernel:
             try:
                 with workload_scope(self._workload_hint(request)), data_scope(
                     *self._baseline_classification(request)
-                ) as scope:
+                ) as scope, generation_budget(self._turn_generation_budget_s(request)):
                     result = await self._run_turn(request, correlation, turn_id, started)
                     await self._remember_session_classification(request, scope)
                     return result
@@ -536,7 +553,7 @@ class AIKernel:
                 policy=request.routing_policy,
                 require_local=request.require_local,
             )
-            await self._run_shadow(request, shadow_completion)
+            self._dispatch_shadow(shadow_completion)
         except Exception:
             logger.debug("shadow dispatch failed", exc_info=True)
 
@@ -668,7 +685,9 @@ class AIKernel:
 
         with LogContext(correlation_id=correlation.value, route=request.route), workload_scope(
             self._workload_hint(request)
-        ), data_scope(*self._baseline_classification(request)) as scope:
+        ), data_scope(*self._baseline_classification(request)) as scope, generation_budget(
+            self._turn_generation_budget_s(request)
+        ):
             try:
                 deps = self._deps
                 budget = TurnBudget(
@@ -947,9 +966,10 @@ class AIKernel:
                     except Exception:
                         logger.warning("failed to persist session state")
 
-                # Fire-and-forget shadow; failures must not fail the turn.
+                # Fire-and-forget shadow, off the turn's critical path (PP-04): failures must not
+                # fail the turn, and its latency must not delay the `done` frame.
                 try:
-                    await self._run_shadow(request, completion)
+                    self._dispatch_shadow(completion)
                 except Exception:
                     logger.debug("shadow dispatch failed", exc_info=True)
 
@@ -1971,6 +1991,25 @@ class AIKernel:
         llm = getattr(self._deps.settings, "llm", None) if self._deps.settings is not None else None
         return int(getattr(llm, "max_prompt_tokens", 400) or 400)
 
+    def _turn_generation_budget_s(self, request: TurnRequest) -> float | None:
+        """The generation budget for this turn (PP-06), or ``None`` for no budget.
+
+        Only for turns a person is waiting on in real time -- chat and voice. An Engineer loop
+        runs many generations over minutes under its own deadline (`engineer_loop_deadline_s`),
+        which a chat-sized budget would cut off; background workloads keep their per-attempt
+        timeouts only. A sub-turn delegated from a chat turn shares the parent's budget
+        (`generation_budget` never replaces an open one).
+        """
+        llm = getattr(self._deps.settings, "llm", None) if self._deps.settings is not None else None
+        seconds = float(getattr(llm, "turn_generation_budget_s", 0.0) or 0.0)
+        if seconds <= 0:
+            return None
+        if self._workload_hint(request).workload not in (
+            WorkloadClass.INTERACTIVE, WorkloadClass.VOICE,
+        ):
+            return None
+        return seconds
+
     def _completion_timeout_s(self) -> float:
         """Router first-token deadline. Must match ``AURA_LLM_TIMEOUT_S``.
 
@@ -2031,10 +2070,44 @@ class AIKernel:
             return None
         return uri
 
-    async def _run_shadow(
-        self, request: TurnRequest, completion: CompletionRequest
-    ) -> None:
-        """Mirror traffic to shadow versions; never surface their output."""
+    def _dispatch_shadow(self, completion: CompletionRequest) -> None:
+        """Start shadow mirroring in the background and return at once (PP-04).
+
+        It used to be awaited inline, after the answer was generated but before the turn
+        returned -- so a registered shadow version added a whole extra generation (up to the
+        router's timeout, times its fallbacks) to every turn, and held the stream's ``done``
+        frame back for as long. The task copies the turn's context, so the shadow call keeps
+        the turn's data classification (a hosted provider still cannot see sensitive content).
+
+        At most one shadow generation runs at a time. Shadow traffic is a sample for comparing
+        versions, not a queue to drain: when one is already running, this turn is not mirrored.
+        """
+        deps = self._deps
+        if deps.models is None or deps.router is None:
+            return
+        if self._shadow_task is not None and not self._shadow_task.done():
+            logger.debug("shadow generation already running; not mirroring this turn")
+            return
+        task = asyncio.get_running_loop().create_task(self._run_shadow(completion))
+        self._shadow_task = task
+        task.add_done_callback(_consume_shadow_result)
+
+    async def wait_for_shadow(self) -> None:
+        """Wait for a running shadow generation, if any. For tests and graceful shutdown."""
+        task = self._shadow_task
+        if task is not None and not task.done():
+            await asyncio.wait({task})
+
+    async def _run_shadow(self, completion: CompletionRequest) -> None:
+        """Mirror traffic to shadow versions; never surface their output.
+
+        Runs with no generation budget: the turn that started it is over, and its spent budget
+        would otherwise cut the shadow call short (PP-06).
+        """
+        with no_generation_budget():
+            await self._mirror_to_shadows(completion)
+
+    async def _mirror_to_shadows(self, completion: CompletionRequest) -> None:
         deps = self._deps
         if deps.models is None or deps.router is None:
             return
@@ -2042,18 +2115,26 @@ class AIKernel:
             shadows = await deps.models.shadow_versions(self._registry_model_id())
         except Exception:
             return
+        # Lowest admission priority, and no user key: a shadow call must never wait ahead of a
+        # person's turn, nor count against that person's concurrent-generation quota.
+        hint = replace(effective_workload(completion), user_key=None, priority_override=9)
         for shadow in shadows:
-            if not shadow.artefact_uri:
+            # The same check the live assignment path applies (`_assigned_model`). A URI that
+            # is not a servable tag fails on every call, and each failure would count against
+            # the circuit breaker of the provider real turns are using.
+            model = self._servable_model_tag(shadow.artefact_uri)
+            if model is None:
                 continue
             try:
                 started = time.perf_counter()
                 shadow_req = CompletionRequest(
                     conversation=completion.conversation,
-                    model=shadow.artefact_uri,
+                    model=model,
                     sampling=completion.sampling,
                     policy=completion.policy,
                     require_local=completion.require_local,
                     tools=(),
+                    workload=hint,
                 )
                 await deps.router.complete(shadow_req)
                 elapsed = (time.perf_counter() - started) * 1000.0

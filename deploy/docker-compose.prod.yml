@@ -460,6 +460,9 @@ services:
       AURA_LLM_ADMISSION_MAX_QUEUE: ${AURA_LLM_ADMISSION_MAX_QUEUE:-4}
       AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S: ${AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S:-90}
       AURA_LLM_USER_MAX_CONCURRENT_GENERATIONS: ${AURA_LLM_USER_MAX_CONCURRENT_GENERATIONS:-2}
+      # Per-turn latency bounds (PP-06/PP-07, aura_core/llm/deadline.py); 0 = off, the code default.
+      AURA_LLM_TURN_GENERATION_BUDGET_S: ${AURA_LLM_TURN_GENERATION_BUDGET_S:-0}
+      AURA_LLM_STREAM_MAX_S: ${AURA_LLM_STREAM_MAX_S:-0}
       # Optional second "large" provider for a GPU-backed vllm node (hybrid setup --
       # docs/reports/OLLAMA_VLLM_COMPARISON.md §4 Option B, docs/guides/gpu-hybrid-setup.md).
       # A no-op until AURA_LLM_PROVIDERS also lists "large": aura_core only builds a

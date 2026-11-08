@@ -49,6 +49,7 @@ class AuraFailureView extends StatelessWidget {
   static IconData iconFor(AuraFailureKind kind) => switch (kind) {
         AuraFailureKind.unreachable => Icons.cloud_off,
         AuraFailureKind.inferenceUnavailable => Icons.memory_outlined,
+        AuraFailureKind.featureUnavailable => Icons.upcoming_outlined,
         AuraFailureKind.busy => Icons.hourglass_top_outlined,
         AuraFailureKind.rateLimited => Icons.speed_outlined,
         AuraFailureKind.turnInFlight => Icons.pending_outlined,
@@ -66,6 +67,8 @@ class AuraFailureView extends StatelessWidget {
   /// an expired session is neither — it is a thing to go and fix.
   static AuraStateTone toneFor(AuraFailureKind kind) => switch (kind) {
         AuraFailureKind.unreachable => AuraStateTone.offline,
+        // Nothing is broken and nothing to fix: a limitation, stated plainly.
+        AuraFailureKind.featureUnavailable => AuraStateTone.neutral,
         AuraFailureKind.busy ||
         AuraFailureKind.rateLimited ||
         AuraFailureKind.turnInFlight ||

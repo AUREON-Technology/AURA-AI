@@ -20,6 +20,10 @@ class SseChatEvent {
   final String? text;
   final List<dynamic>? actions;
   final String? message;
+
+  /// The backend's error slug on an `error` frame (`aura_core/domain/errors.py`'s `kind`,
+  /// e.g. `capability_unavailable`), so a caller can branch on it rather than on prose.
+  final String? errorKind;
   final Object? details;
   final List<dynamic>? citations;
   final String? unknownType;
@@ -31,6 +35,7 @@ class SseChatEvent {
     this.text,
     this.actions,
     this.message,
+    this.errorKind,
     this.details,
     this.citations,
     this.unknownType,
@@ -56,6 +61,7 @@ class SseChatEvent {
         return SseChatEvent._(
           kind: SseEventKind.error,
           message: data['message'] as String?,
+          errorKind: data['error'] as String?,
           details: data['details'],
         );
       case 'done':

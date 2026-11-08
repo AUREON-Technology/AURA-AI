@@ -38,6 +38,7 @@ __all__ = [
     "DependencyUnavailableError",
     "ProviderError",
     "AllProvidersFailedError",
+    "CapabilityUnavailableError",
     "OverloadedError",
     "UserConcurrencyLimitError",
     "EmbeddingError",
@@ -277,6 +278,27 @@ class AllProvidersFailedError(AuraError):
         details.setdefault("attempts", attempts or [])
         super().__init__(message, details=details, **kwargs)
         self.attempts = attempts or []
+
+
+class CapabilityUnavailableError(AllProvidersFailedError):
+    """No provider allowed to receive this turn's content produced an answer.
+
+    Raised instead of a bare :class:`AllProvidersFailedError` when at least one provider was
+    excluded *because of what the turn contains* -- its data classification (ADR-030 §4) or a
+    user image a third party may not see (ADR-031) -- and every provider that would accept that
+    content was unavailable or failed. The deployment is up; it simply has no capacity for this
+    class of content, which is what a chat-only launch looks like when memory, documents, tools
+    or images are involved.
+
+    Not retryable, unlike its parent: sending the same turn again reaches the same providers with
+    the same content, and a "try again" button that can never work is worse than none. A
+    subclass rather than a sibling so every existing ``except AllProvidersFailedError`` still
+    catches it.
+    """
+
+    kind = "capability_unavailable"
+    http_status = 503
+    retryable = False
 
 
 class OverloadedError(AuraError):

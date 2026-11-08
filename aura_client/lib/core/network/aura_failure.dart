@@ -19,6 +19,15 @@ library;
 
 import 'aura_api_error.dart';
 
+/// Copy for [AuraFailureKind.featureUnavailable] (backend slug
+/// `capability_unavailable`). Shared with the chat transcript, which shows a
+/// failed turn as message text rather than through [AuraFailureView].
+/// Owner-approved wording, 2026-11-08.
+const kFeatureUnavailableTitle = "This needs a feature that isn't available yet";
+const kFeatureUnavailableMessage =
+    'AURA can answer plain questions right now. Answers that use your memory, '
+    'documents, tools or images are coming soon.';
+
 /// The kinds of failure that deserve different words and different buttons.
 ///
 /// Anything not worth distinguishing collapses into [unknown] rather than
@@ -31,6 +40,12 @@ enum AuraFailureKind {
   /// AURA answered; its model did not. Inference is down or every provider
   /// failed.
   inferenceUnavailable,
+
+  /// AURA and its model are up, but no model it may use is allowed to see
+  /// this turn's content (memory, documents, tools, images, the Engineer).
+  /// The chat-only launch state. Retrying sends the same content to the same
+  /// refusal, so this never offers a retry.
+  featureUnavailable,
 
   /// AURA is up and busy. Different from [inferenceUnavailable] because
   /// waiting actually helps.
@@ -131,6 +146,14 @@ class AuraFailure {
               'conversations are untouched.',
           canRetry: true,
           retryAfter: error.retryAfter,
+          detail: detail,
+        );
+      case 'capability_unavailable':
+        return AuraFailure(
+          kind: AuraFailureKind.featureUnavailable,
+          title: kFeatureUnavailableTitle,
+          message: kFeatureUnavailableMessage,
+          canRetry: false,
           detail: detail,
         );
       case 'overloaded':

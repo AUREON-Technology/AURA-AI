@@ -34,7 +34,19 @@ from ..domain.messages import Role
 from ..ports.storage import Cache
 from .embeddings import cosine_similarity
 
-__all__ = ["LLMCache", "CacheHit", "InMemoryCache"]
+__all__ = ["LLMCache", "CacheHit", "InMemoryCache", "semantic_tier_useful"]
+
+
+def semantic_tier_useful(embedder: Any) -> bool:
+    """Whether the semantic tier can ever hit with ``embedder`` (PP-08).
+
+    An embedder declares ``is_semantic = False`` when its similarity is not similarity of
+    meaning. With the hash embedder the tier never fires at the default 0.97 threshold --
+    measured 2026-11-08: this module's own example pair, "what's my schedule?" vs "what is my
+    schedule", scores 0.64 -- yet every single-turn miss still paid an embedding and a cache read
+    for it. Undeclared counts as semantic, so a real embedding model keeps the tier on.
+    """
+    return embedder is not None and bool(getattr(embedder, "is_semantic", True))
 
 
 @dataclass(frozen=True, slots=True)

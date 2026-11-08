@@ -18,7 +18,9 @@ import 'turn_meta.dart';
 
 // `interrupted`: the stream ended early (Stop, a drop, or the idle timeout) and whatever text had
 // arrived was kept, marked [TurnMeta.interrupted] -- never replaced by the error bubble.
-enum _SseSendOutcome { succeeded, failed, interrupted }
+/// `unavailable`: the backend refused the turn's content class (`capability_unavailable`, the
+/// chat-only launch). Not a connection error, so it gets plain copy and no Retry card.
+enum _SseSendOutcome { succeeded, failed, interrupted, unavailable }
 
 class _SseResult {
   final _SseSendOutcome outcome;
@@ -256,6 +258,10 @@ class ChatRepository {
 
       if (sseOutcome.outcome == _SseSendOutcome.interrupted) {
         // Partial text, already saved and marked by `_sendViaSse`.
+      } else if (sseOutcome.outcome == _SseSendOutcome.unavailable) {
+        // Deliberately without `kChatConnectionErrorPrefix`: that prefix is what puts a Retry
+        // card on the row, and retrying this turn reaches the same refusal.
+        await _updateMessageText(assistantMsgId, kChatFeatureUnavailableText);
       } else if (sseOutcome.message != null) {
         await _updateMessageText(
           assistantMsgId,
@@ -477,6 +483,16 @@ class ChatRepository {
             }
             if (displayText.isNotEmpty) {
               return keepPartial("stream_error", error: event.message);
+            }
+            if (event.errorKind == 'capability_unavailable') {
+              await _logTelemetry(
+                eventType: "error",
+                isOffline: false,
+                latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
+                modelUsed: "server-sse",
+                errorMessage: 'capability_unavailable',
+              );
+              return const _SseResult(_SseSendOutcome.unavailable);
             }
             await _logTelemetry(
               eventType: "error",

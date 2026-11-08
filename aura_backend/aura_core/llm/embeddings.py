@@ -76,6 +76,10 @@ class HashEmbeddingProvider:
     magnitude), then L2-normalise so cosine similarity is well behaved.
     """
 
+    #: Read by the container (``llm.cache.semantic_tier_useful``): similarity over character
+    #: n-grams is not similarity of meaning, so the semantic cache tier stays off with this.
+    is_semantic = False
+
     def __init__(self, *, dimension: int = 384, model_id: str = "hash-embed-v1") -> None:
         if dimension < 16:
             raise ValueError("dimension must be at least 16")
