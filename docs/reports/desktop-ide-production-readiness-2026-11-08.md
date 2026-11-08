@@ -56,6 +56,9 @@ CI.
 
 4. **No crash recovery.** `HostdSupervisor` is 60 lines that start the daemon and log its exit
    code. Nothing restarts it, and nothing recovers unsaved buffers (CB-26, M8.8).
+   **Update (2026-11-08): the daemon half is built.** The supervisor restarts a crashed daemon
+   with backoff and gives up on a crash loop, and the host panel shows it. A real SIGKILL test
+   passes locally. Unsaved-buffer recovery (hot exit) is still open.
 
 5. **Never proven end to end (GAP-026, M8.13).** No recorded session on a real machine of
    sign in → pair daemon → open repo → agent edit → Agent Review → merge → push. Desktop login has
@@ -111,7 +114,7 @@ in CI, and has not been seen live.
 | M8.5b | Gated on M4 TTFT p95 < 500 ms | OPEN (gate not met) |
 | M8.6 | Test explorer; DAP for ≥ 2 languages | Python DAP only |
 | M8.7 | Security UX review; SEC-02 regressions | BUILT; no review recorded |
-| M8.8 | Kill-daemon / kill-app recovery tests | OPEN |
+| M8.8 | Kill-daemon / kill-app recovery tests | Kill-daemon: BUILT, tested locally. Kill-app (unsaved buffers): OPEN |
 | M8.9 | Measured cold start, 100k-file repo, typing latency, screen reader | OPEN; nothing measured |
 | M8.10 | Signed installer; update + rollback | OPEN |
 | M8.11 | Opt-in content-free telemetry | OPEN |

@@ -148,9 +148,14 @@ weeks with no runner, runs 142–143 executed every step:
 - `build-windows` (`continue-on-error`) fails 10 `path_containment_test.dart` cases on 8.3
   short paths.
 
-So read the `analyze-and-test` job for a client diff, not the run's overall tick. Host Daemon CI
-is red too: on Linux all tests pass, then a `PosixPtySession` isolate hangs until the 15-minute
-timeout; on Windows 5 tests fail.
+**Update 2026-11-08:** all four jobs went green on #213–#215, Android and Windows included, and
+`build-windows` is no longer `continue-on-error`: a red Windows job now fails the run, so the
+run's overall tick means something again. Windows' coarse clock has already exposed one real bug
+(#215), so treat a Windows-only failure as a possible defect, not noise. Host Daemon CI's
+last executed run (`dc87beb`) was red: on Linux a `PosixPtySession` isolate hung until the
+15-minute timeout, and on Windows 5 tests failed. Both are fixed on `main` (#185; the Linux suite
+now exits in about 16 s locally), but no Host Daemon CI run has executed since, because nothing
+under `aura_hostd/` has changed.
 
 No Flutter SDK is preinstalled in the environment a change is usually written in, but one can be
 fetched in about two minutes, and `analyze` + `test` then run exactly as CI would:
