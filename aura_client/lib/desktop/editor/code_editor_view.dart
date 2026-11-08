@@ -74,6 +74,9 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
   EditorController? _controller;
   InMemoryEditorDocument? _document;
   String? _loadError;
+  /// Hot exit (M8.8): set when this tab's text came back from an unsaved-changes backup.
+  String? _restoredNotice;
+  bool _restoredOverChange = false;
   bool _loading = true;
   StreamSubscription<IdeEvent>? _ideEventSubscription;
   StreamSubscription<EditorDocument>? _documentChangeSubscription;
@@ -96,21 +99,41 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
 
   Future<void> _initializeEditor() async {
     final languageId = _getLanguageId(widget.tab.path);
-    final cached = ref.read(editorNotifierProvider.notifier).contentFor(widget.tab.id);
+    final notifier = ref.read(editorNotifierProvider.notifier);
+    final cached = notifier.contentFor(widget.tab.id);
 
     String initialText = cached ?? '';
     String? loadError;
+    String? restoredNotice;
+    var restoredOverChange = false;
+    final root = ref.read(workspaceNotifierProvider).activeWorkspace?.rootPath;
     if (cached == null) {
-      final root = ref.read(workspaceNotifierProvider).activeWorkspace?.rootPath;
       if (root != null) {
         try {
           initialText = await WorkspaceFileService(root).readFile(widget.tab.path);
-          ref.read(editorNotifierProvider.notifier).setContent(widget.tab.id, initialText);
+          notifier.recordDiskBase(widget.tab.id, initialText);
+          notifier.setContent(widget.tab.id, initialText);
         } catch (e) {
           loadError = 'Could not read ${widget.tab.path}: $e';
         }
       } else {
         loadError = 'No active workspace';
+      }
+    } else if (notifier.wasRestored(widget.tab.id)) {
+      // The text is an unsaved buffer from the last session (hot exit). Say so, and check the
+      // file underneath it: if it changed since, saving would overwrite that change.
+      restoredNotice = 'Restored unsaved changes from your last session.';
+      if (root != null) {
+        try {
+          final onDisk = await WorkspaceFileService(root).readFile(widget.tab.path);
+          if (notifier.restoredOverChangedFile(widget.tab.id, onDisk)) {
+            restoredOverChange = true;
+            restoredNotice = 'Restored unsaved changes from your last session. The file has '
+                'changed on disk since; saving will overwrite that change.';
+          }
+        } catch (_) {
+          // Deleted or unreadable since: the restored text is still the user's work.
+        }
       }
     }
 
@@ -130,6 +153,8 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
       // subsequent Save would silently drop it.
       _documentChangeSubscription = _controller!.onDocumentChange.listen((doc) => _handleTextChange(doc.text));
       _loadError = loadError;
+      _restoredNotice = restoredNotice;
+      _restoredOverChange = restoredOverChange;
       _loading = false;
     });
     // Restore the session-persisted cursor/selection (2026-09-25 audit follow-up: these were
@@ -186,6 +211,20 @@ class _EditorContentState extends ConsumerState<_EditorContent> {
       color: AuraPalette.of(context).background,
       child: Column(
         children: [
+          if (_restoredNotice != null)
+            Semantics(
+              liveRegion: true,
+              child: Container(
+                width: double.infinity,
+                color: (_restoredOverChange ? AuraPalette.of(context).warning : AuraPalette.of(context).info)
+                    .withValues(alpha: 0.12),
+                padding: const EdgeInsets.symmetric(horizontal: AuraSpacing.md, vertical: AuraSpacing.xs),
+                child: Text(
+                  _restoredNotice!,
+                  style: TextStyle(color: AuraPalette.of(context).textPrimary, fontSize: 12),
+                ),
+              ),
+            ),
           if (_loadError != null)
             Container(
               width: double.infinity,

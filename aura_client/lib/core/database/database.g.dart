@@ -9307,6 +9307,427 @@ class DesktopAgentStateCompanion
   }
 }
 
+class $DesktopUnsavedBuffersTable extends DesktopUnsavedBuffers
+    with TableInfo<$DesktopUnsavedBuffersTable, DesktopUnsavedBuffer> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DesktopUnsavedBuffersTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _workspaceIdMeta = const VerificationMeta(
+    'workspaceId',
+  );
+  @override
+  late final GeneratedColumn<String> workspaceId = GeneratedColumn<String>(
+    'workspace_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _tabIdMeta = const VerificationMeta('tabId');
+  @override
+  late final GeneratedColumn<String> tabId = GeneratedColumn<String>(
+    'tab_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _pathMeta = const VerificationMeta('path');
+  @override
+  late final GeneratedColumn<String> path = GeneratedColumn<String>(
+    'path',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _contentEncMeta = const VerificationMeta(
+    'contentEnc',
+  );
+  @override
+  late final GeneratedColumn<String> contentEnc = GeneratedColumn<String>(
+    'content_enc',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _baseHashMeta = const VerificationMeta(
+    'baseHash',
+  );
+  @override
+  late final GeneratedColumn<String> baseHash = GeneratedColumn<String>(
+    'base_hash',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    workspaceId,
+    tabId,
+    path,
+    contentEnc,
+    baseHash,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'desktop_unsaved_buffers';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<DesktopUnsavedBuffer> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('workspace_id')) {
+      context.handle(
+        _workspaceIdMeta,
+        workspaceId.isAcceptableOrUnknown(
+          data['workspace_id']!,
+          _workspaceIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_workspaceIdMeta);
+    }
+    if (data.containsKey('tab_id')) {
+      context.handle(
+        _tabIdMeta,
+        tabId.isAcceptableOrUnknown(data['tab_id']!, _tabIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_tabIdMeta);
+    }
+    if (data.containsKey('path')) {
+      context.handle(
+        _pathMeta,
+        path.isAcceptableOrUnknown(data['path']!, _pathMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_pathMeta);
+    }
+    if (data.containsKey('content_enc')) {
+      context.handle(
+        _contentEncMeta,
+        contentEnc.isAcceptableOrUnknown(data['content_enc']!, _contentEncMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_contentEncMeta);
+    }
+    if (data.containsKey('base_hash')) {
+      context.handle(
+        _baseHashMeta,
+        baseHash.isAcceptableOrUnknown(data['base_hash']!, _baseHashMeta),
+      );
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {workspaceId, tabId};
+  @override
+  DesktopUnsavedBuffer map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DesktopUnsavedBuffer(
+      workspaceId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}workspace_id'],
+      )!,
+      tabId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}tab_id'],
+      )!,
+      path: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}path'],
+      )!,
+      contentEnc: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}content_enc'],
+      )!,
+      baseHash: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}base_hash'],
+      ),
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $DesktopUnsavedBuffersTable createAlias(String alias) {
+    return $DesktopUnsavedBuffersTable(attachedDatabase, alias);
+  }
+}
+
+class DesktopUnsavedBuffer extends DataClass
+    implements Insertable<DesktopUnsavedBuffer> {
+  final String workspaceId;
+  final String tabId;
+  final String path;
+  final String contentEnc;
+  final String? baseHash;
+  final DateTime updatedAt;
+  const DesktopUnsavedBuffer({
+    required this.workspaceId,
+    required this.tabId,
+    required this.path,
+    required this.contentEnc,
+    this.baseHash,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['workspace_id'] = Variable<String>(workspaceId);
+    map['tab_id'] = Variable<String>(tabId);
+    map['path'] = Variable<String>(path);
+    map['content_enc'] = Variable<String>(contentEnc);
+    if (!nullToAbsent || baseHash != null) {
+      map['base_hash'] = Variable<String>(baseHash);
+    }
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  DesktopUnsavedBuffersCompanion toCompanion(bool nullToAbsent) {
+    return DesktopUnsavedBuffersCompanion(
+      workspaceId: Value(workspaceId),
+      tabId: Value(tabId),
+      path: Value(path),
+      contentEnc: Value(contentEnc),
+      baseHash: baseHash == null && nullToAbsent
+          ? const Value.absent()
+          : Value(baseHash),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory DesktopUnsavedBuffer.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DesktopUnsavedBuffer(
+      workspaceId: serializer.fromJson<String>(json['workspaceId']),
+      tabId: serializer.fromJson<String>(json['tabId']),
+      path: serializer.fromJson<String>(json['path']),
+      contentEnc: serializer.fromJson<String>(json['contentEnc']),
+      baseHash: serializer.fromJson<String?>(json['baseHash']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'workspaceId': serializer.toJson<String>(workspaceId),
+      'tabId': serializer.toJson<String>(tabId),
+      'path': serializer.toJson<String>(path),
+      'contentEnc': serializer.toJson<String>(contentEnc),
+      'baseHash': serializer.toJson<String?>(baseHash),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  DesktopUnsavedBuffer copyWith({
+    String? workspaceId,
+    String? tabId,
+    String? path,
+    String? contentEnc,
+    Value<String?> baseHash = const Value.absent(),
+    DateTime? updatedAt,
+  }) => DesktopUnsavedBuffer(
+    workspaceId: workspaceId ?? this.workspaceId,
+    tabId: tabId ?? this.tabId,
+    path: path ?? this.path,
+    contentEnc: contentEnc ?? this.contentEnc,
+    baseHash: baseHash.present ? baseHash.value : this.baseHash,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  DesktopUnsavedBuffer copyWithCompanion(DesktopUnsavedBuffersCompanion data) {
+    return DesktopUnsavedBuffer(
+      workspaceId: data.workspaceId.present
+          ? data.workspaceId.value
+          : this.workspaceId,
+      tabId: data.tabId.present ? data.tabId.value : this.tabId,
+      path: data.path.present ? data.path.value : this.path,
+      contentEnc: data.contentEnc.present
+          ? data.contentEnc.value
+          : this.contentEnc,
+      baseHash: data.baseHash.present ? data.baseHash.value : this.baseHash,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesktopUnsavedBuffer(')
+          ..write('workspaceId: $workspaceId, ')
+          ..write('tabId: $tabId, ')
+          ..write('path: $path, ')
+          ..write('contentEnc: $contentEnc, ')
+          ..write('baseHash: $baseHash, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(workspaceId, tabId, path, contentEnc, baseHash, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DesktopUnsavedBuffer &&
+          other.workspaceId == this.workspaceId &&
+          other.tabId == this.tabId &&
+          other.path == this.path &&
+          other.contentEnc == this.contentEnc &&
+          other.baseHash == this.baseHash &&
+          other.updatedAt == this.updatedAt);
+}
+
+class DesktopUnsavedBuffersCompanion
+    extends UpdateCompanion<DesktopUnsavedBuffer> {
+  final Value<String> workspaceId;
+  final Value<String> tabId;
+  final Value<String> path;
+  final Value<String> contentEnc;
+  final Value<String?> baseHash;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const DesktopUnsavedBuffersCompanion({
+    this.workspaceId = const Value.absent(),
+    this.tabId = const Value.absent(),
+    this.path = const Value.absent(),
+    this.contentEnc = const Value.absent(),
+    this.baseHash = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  DesktopUnsavedBuffersCompanion.insert({
+    required String workspaceId,
+    required String tabId,
+    required String path,
+    required String contentEnc,
+    this.baseHash = const Value.absent(),
+    required DateTime updatedAt,
+    this.rowid = const Value.absent(),
+  }) : workspaceId = Value(workspaceId),
+       tabId = Value(tabId),
+       path = Value(path),
+       contentEnc = Value(contentEnc),
+       updatedAt = Value(updatedAt);
+  static Insertable<DesktopUnsavedBuffer> custom({
+    Expression<String>? workspaceId,
+    Expression<String>? tabId,
+    Expression<String>? path,
+    Expression<String>? contentEnc,
+    Expression<String>? baseHash,
+    Expression<DateTime>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (workspaceId != null) 'workspace_id': workspaceId,
+      if (tabId != null) 'tab_id': tabId,
+      if (path != null) 'path': path,
+      if (contentEnc != null) 'content_enc': contentEnc,
+      if (baseHash != null) 'base_hash': baseHash,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  DesktopUnsavedBuffersCompanion copyWith({
+    Value<String>? workspaceId,
+    Value<String>? tabId,
+    Value<String>? path,
+    Value<String>? contentEnc,
+    Value<String?>? baseHash,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return DesktopUnsavedBuffersCompanion(
+      workspaceId: workspaceId ?? this.workspaceId,
+      tabId: tabId ?? this.tabId,
+      path: path ?? this.path,
+      contentEnc: contentEnc ?? this.contentEnc,
+      baseHash: baseHash ?? this.baseHash,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (workspaceId.present) {
+      map['workspace_id'] = Variable<String>(workspaceId.value);
+    }
+    if (tabId.present) {
+      map['tab_id'] = Variable<String>(tabId.value);
+    }
+    if (path.present) {
+      map['path'] = Variable<String>(path.value);
+    }
+    if (contentEnc.present) {
+      map['content_enc'] = Variable<String>(contentEnc.value);
+    }
+    if (baseHash.present) {
+      map['base_hash'] = Variable<String>(baseHash.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DesktopUnsavedBuffersCompanion(')
+          ..write('workspaceId: $workspaceId, ')
+          ..write('tabId: $tabId, ')
+          ..write('path: $path, ')
+          ..write('contentEnc: $contentEnc, ')
+          ..write('baseHash: $baseHash, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -9337,6 +9758,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $DesktopLayoutStateTable(this);
   late final $DesktopAgentStateTable desktopAgentState =
       $DesktopAgentStateTable(this);
+  late final $DesktopUnsavedBuffersTable desktopUnsavedBuffers =
+      $DesktopUnsavedBuffersTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -9362,6 +9785,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     desktopTerminalState,
     desktopLayoutState,
     desktopAgentState,
+    desktopUnsavedBuffers,
   ];
 }
 
@@ -14220,6 +14644,248 @@ typedef $$DesktopAgentStateTableProcessedTableManager =
       DesktopAgentStateData,
       PrefetchHooks Function()
     >;
+typedef $$DesktopUnsavedBuffersTableCreateCompanionBuilder =
+    DesktopUnsavedBuffersCompanion Function({
+      required String workspaceId,
+      required String tabId,
+      required String path,
+      required String contentEnc,
+      Value<String?> baseHash,
+      required DateTime updatedAt,
+      Value<int> rowid,
+    });
+typedef $$DesktopUnsavedBuffersTableUpdateCompanionBuilder =
+    DesktopUnsavedBuffersCompanion Function({
+      Value<String> workspaceId,
+      Value<String> tabId,
+      Value<String> path,
+      Value<String> contentEnc,
+      Value<String?> baseHash,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$DesktopUnsavedBuffersTableFilterComposer
+    extends Composer<_$AppDatabase, $DesktopUnsavedBuffersTable> {
+  $$DesktopUnsavedBuffersTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get workspaceId => $composableBuilder(
+    column: $table.workspaceId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get tabId => $composableBuilder(
+    column: $table.tabId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get path => $composableBuilder(
+    column: $table.path,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get contentEnc => $composableBuilder(
+    column: $table.contentEnc,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get baseHash => $composableBuilder(
+    column: $table.baseHash,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$DesktopUnsavedBuffersTableOrderingComposer
+    extends Composer<_$AppDatabase, $DesktopUnsavedBuffersTable> {
+  $$DesktopUnsavedBuffersTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get workspaceId => $composableBuilder(
+    column: $table.workspaceId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get tabId => $composableBuilder(
+    column: $table.tabId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get path => $composableBuilder(
+    column: $table.path,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get contentEnc => $composableBuilder(
+    column: $table.contentEnc,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get baseHash => $composableBuilder(
+    column: $table.baseHash,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$DesktopUnsavedBuffersTableAnnotationComposer
+    extends Composer<_$AppDatabase, $DesktopUnsavedBuffersTable> {
+  $$DesktopUnsavedBuffersTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get workspaceId => $composableBuilder(
+    column: $table.workspaceId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get tabId =>
+      $composableBuilder(column: $table.tabId, builder: (column) => column);
+
+  GeneratedColumn<String> get path =>
+      $composableBuilder(column: $table.path, builder: (column) => column);
+
+  GeneratedColumn<String> get contentEnc => $composableBuilder(
+    column: $table.contentEnc,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get baseHash =>
+      $composableBuilder(column: $table.baseHash, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$DesktopUnsavedBuffersTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $DesktopUnsavedBuffersTable,
+          DesktopUnsavedBuffer,
+          $$DesktopUnsavedBuffersTableFilterComposer,
+          $$DesktopUnsavedBuffersTableOrderingComposer,
+          $$DesktopUnsavedBuffersTableAnnotationComposer,
+          $$DesktopUnsavedBuffersTableCreateCompanionBuilder,
+          $$DesktopUnsavedBuffersTableUpdateCompanionBuilder,
+          (
+            DesktopUnsavedBuffer,
+            BaseReferences<
+              _$AppDatabase,
+              $DesktopUnsavedBuffersTable,
+              DesktopUnsavedBuffer
+            >,
+          ),
+          DesktopUnsavedBuffer,
+          PrefetchHooks Function()
+        > {
+  $$DesktopUnsavedBuffersTableTableManager(
+    _$AppDatabase db,
+    $DesktopUnsavedBuffersTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DesktopUnsavedBuffersTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$DesktopUnsavedBuffersTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$DesktopUnsavedBuffersTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> workspaceId = const Value.absent(),
+                Value<String> tabId = const Value.absent(),
+                Value<String> path = const Value.absent(),
+                Value<String> contentEnc = const Value.absent(),
+                Value<String?> baseHash = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => DesktopUnsavedBuffersCompanion(
+                workspaceId: workspaceId,
+                tabId: tabId,
+                path: path,
+                contentEnc: contentEnc,
+                baseHash: baseHash,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String workspaceId,
+                required String tabId,
+                required String path,
+                required String contentEnc,
+                Value<String?> baseHash = const Value.absent(),
+                required DateTime updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => DesktopUnsavedBuffersCompanion.insert(
+                workspaceId: workspaceId,
+                tabId: tabId,
+                path: path,
+                contentEnc: contentEnc,
+                baseHash: baseHash,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$DesktopUnsavedBuffersTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $DesktopUnsavedBuffersTable,
+      DesktopUnsavedBuffer,
+      $$DesktopUnsavedBuffersTableFilterComposer,
+      $$DesktopUnsavedBuffersTableOrderingComposer,
+      $$DesktopUnsavedBuffersTableAnnotationComposer,
+      $$DesktopUnsavedBuffersTableCreateCompanionBuilder,
+      $$DesktopUnsavedBuffersTableUpdateCompanionBuilder,
+      (
+        DesktopUnsavedBuffer,
+        BaseReferences<
+          _$AppDatabase,
+          $DesktopUnsavedBuffersTable,
+          DesktopUnsavedBuffer
+        >,
+      ),
+      DesktopUnsavedBuffer,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -14264,4 +14930,6 @@ class $AppDatabaseManager {
       $$DesktopLayoutStateTableTableManager(_db, _db.desktopLayoutState);
   $$DesktopAgentStateTableTableManager get desktopAgentState =>
       $$DesktopAgentStateTableTableManager(_db, _db.desktopAgentState);
+  $$DesktopUnsavedBuffersTableTableManager get desktopUnsavedBuffers =>
+      $$DesktopUnsavedBuffersTableTableManager(_db, _db.desktopUnsavedBuffers);
 }
