@@ -1666,10 +1666,19 @@ def build_app(
     from fastapi import FastAPI, Request
     from fastapi.responses import JSONResponse, Response
 
+    # The interactive docs and the schema are development tooling. Served in production they are
+    # a complete route map (every admin route, every request field) for anyone who asks -- found
+    # live on the Railway target on 2026-11-07, where `/docs` and `/openapi.json` answered 200
+    # anonymously (tests/unit/test_openapi_exposure.py). The routes behind them keep their auth;
+    # the map itself is what goes.
+    publish_schema = not container.settings.environment.is_production_like
     app = FastAPI(
         title="AURA AI Gateway",
         version="3.0.0",
         description="Enterprise AI platform gateway. See docs/architecture/00-overview.md",
+        docs_url="/docs" if publish_schema else None,
+        redoc_url="/redoc" if publish_schema else None,
+        openapi_url="/openapi.json" if publish_schema else None,
     )
     app.include_router(build_router(container, authenticator=authenticator, rate_limiter=rate_limiter))
 
