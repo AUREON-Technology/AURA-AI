@@ -235,6 +235,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         #: a dedicated git worktree keyed by `session_id`, rather than the user's live checkout.
         #: Silently a no-op for any caller without a live desktop pairing.
         desktop_task_isolation: bool = False
+        #: Desktop IDE only (audit FSA-006): the workspace root the IDE currently shows, in the
+        #: user's machine's own path syntax. Forwarded verbatim to the paired daemon as the `cwd`
+        #: of every `run_command`, which runs there only if it lies inside a granted root. Ignored
+        #: by the server-side sandbox; absent, the daemon uses its first granted root as before.
+        workspace_root: str | None = Field(default=None, max_length=1024)
         #: AR-5: evidence for this turn, carried on the DATA channel (fenced, guarded, tainting)
         #: -- never in `message`, which is the USER channel and is read as instructions.
         context: list[ContextEntry] = Field(default_factory=list, max_length=MAX_CALLER_CONTEXT)
@@ -469,6 +474,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             max_output_tokens=payload.max_output_tokens,
             temperature=payload.temperature,
             desktop_task_isolation=payload.desktop_task_isolation,
+            workspace_root=payload.workspace_root,
             # Defence in depth behind use_tools=False: an empty grant intersects to no tools.
             delegated_tool_grant=frozenset() if caller.is_service else None,
             caller_context=caller_context,

@@ -123,7 +123,10 @@ class ChatViewModel extends Notifier<ChatUiState> {
   /// Send-in-flight lock: ignores empty text and overlapping streams. Attached images
   /// (`pendingChatImagesProvider`) go with this message and are cleared once it is sent; with
   /// images and no text, the question defaults to [kDefaultImageQuestion].
-  Future<bool> sendMessage(String text) async {
+  ///
+  /// [workspaceRoot] is the Desktop IDE's active workspace root (FSA-006): the backend forwards
+  /// it to the paired daemon as the `cwd` of every command. Null from any surface without one.
+  Future<bool> sendMessage(String text, {String? workspaceRoot}) async {
     final isStreaming = ref.read(streamingMessageIdProvider) != null;
     final images = ref.read(pendingChatImagesProvider);
     if (!state.canSend(text, isStreaming: isStreaming, hasImages: images.isNotEmpty)) {
@@ -142,6 +145,7 @@ class ChatViewModel extends Notifier<ChatUiState> {
             useMemory: state.useMemory,
             useTools: state.useTools,
             images: images,
+            workspaceRoot: workspaceRoot,
           );
       return true;
     } finally {

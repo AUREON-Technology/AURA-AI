@@ -395,7 +395,8 @@ class _SessionAdapter:
         return self._resolver.bound_repo(correlation_id) if self._resolver else None
 
 async def _drain_streaming_run(
-    runner: StreamingSandboxRunner, handle: Any, command: Sequence[str], *, timeout_s: float
+    runner: StreamingSandboxRunner, handle: Any, command: Sequence[str], *, timeout_s: float,
+    cwd: str | None = None,
 ) -> SandboxResult:
     """Consumes a `StreamingSandboxRunner.run_streaming` sequence into the same `SandboxResult`
     shape `SandboxRunner.run` returns, capping accumulated size at
@@ -411,7 +412,8 @@ async def _drain_streaming_run(
     total_chars = 0
     truncated = False
     exit_code = -1
-    async for event in runner.run_streaming(handle, command, timeout_s=timeout_s):
+    extra = {"cwd": cwd} if cwd else {}
+    async for event in runner.run_streaming(handle, command, timeout_s=timeout_s, **extra):
         if event.kind == "done":
             exit_code = event.exit_code
             break
@@ -591,6 +593,14 @@ def build_sandbox_tools(
     )
     async def run_command(command: str, context: ToolContext, timeout_s: float = 60.0) -> str:
         handle = await sessions.handle(context)
+        # FSA-006 (second half): the Desktop IDE's active workspace root, carried on
+        # `ToolContext.metadata` by the kernel from `TurnRequest.workspace_root`. Passed to the
+        # runner only when present, so every runner that predates the `cwd` parameter is called
+        # exactly as before; the host-agent bridge forwards it and the daemon decides whether it
+        # lies inside a granted root. Without it a user with several granted roots had every
+        # command run in whichever root was granted first, whatever the IDE showed as open.
+        cwd = (context.metadata or {}).get("workspace_root") or None
+        extra = {"cwd": cwd} if cwd else {}
         if isinstance(sandbox_runner, StreamingSandboxRunner):
             # Streaming and non-streaming runners return the same shape either way -- the
             # difference `run_streaming` makes today is bounding memory while output is still
@@ -599,10 +609,12 @@ def build_sandbox_tools(
             # difference yet; that is Unit 5/8's job (a client to actually show live output),
             # not this one's -- see docs/architecture/011-desktop-engineer-agent.md.
             result = await _drain_streaming_run(
-                sandbox_runner, handle, ["sh", "-c", command], timeout_s=timeout_s
+                sandbox_runner, handle, ["sh", "-c", command], timeout_s=timeout_s, **extra
             )
         else:
-            result = await sandbox_runner.run(handle, ["sh", "-c", command], timeout_s=timeout_s)
+            result = await sandbox_runner.run(
+                handle, ["sh", "-c", command], timeout_s=timeout_s, **extra
+            )
         return (
             f"exit_code={result.exit_code}\n"
             f"--- stdout ---\n{result.stdout}\n"
