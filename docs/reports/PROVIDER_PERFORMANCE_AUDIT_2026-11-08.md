@@ -58,7 +58,7 @@ All of this is local; none of it is CI or production evidence.
 | PP-04 | `tests/unit/test_shadow_off_critical_path.py` (5 tests). Against the previous kernel, `run()` times out, the stream hangs, and the URI test fails. |
 | PP-06, PP-07 | `tests/unit/test_turn_deadlines.py` (16 tests); every behaviour test fails on the previous router. |
 | PP-08 | `tests/unit/test_embeddings_and_cache.py::TestSemanticTierNeedsASemanticEmbedder` (4 tests). |
-| Whole suites | Backend `pytest` and the legacy `unittest` tree: see the PR. Client: `flutter analyze` clean; `flutter test` 572 passed, 3 skipped (Flutter 3.44.6). |
+| Whole suites | Backend `pytest`: 4584 collected, 4528 passed, 56 skipped, 0 failed (Python 3.11, includes `tests/architecture`). Legacy `unittest`: 143 run, OK, 37 skipped. Client: `flutter analyze` clean; `flutter test` 572 passed, 3 skipped (Flutter 3.44.6). |
 
 ## What is still not proven
 
