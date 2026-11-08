@@ -1088,6 +1088,11 @@ class InfrastructureSettings:
     document_backend: str = "memory"  # memory | postgres
     memory_backend: str = "memory"  # memory | postgres
     cache_backend: str = "memory"  # memory | redis
+    #: Relay desktop host-agent calls between gateway workers over Redis
+    #: (``adapters/host_agent_relay.py``). On whenever ``redis_url`` is set; ``False`` is the
+    #: kill switch back to single-process behaviour (only the worker holding a daemon's socket
+    #: can reach it).
+    host_agent_relay: bool = True
 
     @classmethod
     def from_env(cls) -> "InfrastructureSettings":
@@ -1100,11 +1105,20 @@ class InfrastructureSettings:
             document_backend=(_env("DOCUMENT_BACKEND", "memory") or "memory").lower(),
             memory_backend=(_env("MEMORY_BACKEND", "memory") or "memory").lower(),
             cache_backend=(_env("CACHE_BACKEND", "memory") or "memory").lower(),
+            host_agent_relay=_bool("HOST_AGENT_RELAY", True),
         )
 
     @property
     def qdrant_api_key(self) -> str:
         return os.environ.get(self.qdrant_api_key_env, "")
+
+    @property
+    def host_agent_relay_secret(self) -> str:
+        """The key the host-agent relay signs with: the deployment's JWT secret, read at call
+        time (it is hydrated from a secret file after settings load, as ``services/jwt_auth``
+        notes). Every gateway worker must share it already, or a token one worker minted would
+        not verify on another."""
+        return os.environ.get("AURA_JWT_SECRET") or os.environ.get("JWT_SECRET") or ""
 
 
 @dataclass(frozen=True, slots=True)
