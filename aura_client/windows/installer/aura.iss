@@ -57,6 +57,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Run]
 Filename: "{app}\aura_client.exe"; Description: "{cm:LaunchProgram,AURA AI}"; Flags: nowait postinstall skipifsilent
+; An in-app update runs this installer with /SILENT (lib/desktop/update/desktop_update.dart) after
+; the app quits; reopen it when the update is done.
+Filename: "{app}\aura_client.exe"; Flags: nowait skipifnotsilent
 
 [UninstallRun]
 ; Stop a daemon this app left running, so its files can be removed. A daemon that is not running

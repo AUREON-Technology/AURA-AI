@@ -15,7 +15,14 @@ name: Desktop Package
 # AURA_WINDOWS_SIGNING_PASSWORD exist. Without them the build is unsigned and says so; it does not
 # fail. Never generate a certificate in CI. Same shape as release-apk.yml's AAB job.
 #
-# Not here yet (M8.10's remainder): an update channel with rollback, and Linux AppImage/deb.
+# Updates (M8.10): a desktop-v<version> tag also publishes a GitHub Release with the artifacts and
+# desktop-update.json (scripts/desktop_update_manifest.py). Builds bake in their version and the
+# URL of the latest release's manifest, so the app (lib/desktop/update/) can offer the update.
+# Rollback: dispatch this workflow with rollback_to=<an earlier desktop-v tag>. That release's
+# manifest is marked "rollback": true and the release is made "latest" again, so installed newer
+# versions offer it. A later, higher tag supersedes it as usual.
+#
+# Not here yet: Linux AppImage/deb.
 
 on:
   workflow_dispatch:
@@ -24,6 +31,10 @@ on:
         description: "Backend URL to bake into the build"
         required: false
         default: "https://aureon-ai.tech"
+      rollback_to:
+        description: "Roll the update channel back to this earlier tag (desktop-vX.Y.Z); builds nothing"
+        required: false
+        default: ""
   push:
     tags: ["desktop-v*"]
   # Runs on changes to the packaging itself, so a broken installer is caught before a release.
@@ -32,6 +43,8 @@ on:
       - ".github/workflows/desktop-package.yml"
       - "aura_client/windows/installer/**"
       - "aura_client/lib/core/hostd/hostd_bundled_path*.dart"
+      - "aura_client/lib/desktop/update/**"
+      - "scripts/desktop_update_manifest.py"
 
 permissions:
   contents: read
@@ -42,9 +55,11 @@ concurrency:
 
 env:
   BACKEND_URL: ${{ github.event.inputs.backend_url || 'https://aureon-ai.tech' }}
+  UPDATE_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/latest/download/desktop-update.json
 
 jobs:
   package-windows:
+    if: github.event.inputs.rollback_to == '' || github.event.inputs.rollback_to == null
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
@@ -78,7 +93,9 @@ jobs:
           flutter config --enable-windows-desktop
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
-          flutter build windows --release --dart-define=BACKEND_URL=$env:BACKEND_URL
+          flutter build windows --release --dart-define=BACKEND_URL=$env:BACKEND_URL `
+            --dart-define=AURA_APP_VERSION=${{ steps.version.outputs.version }} `
+            --dart-define=AURA_UPDATE_MANIFEST_URL=$env:UPDATE_MANIFEST_URL
 
       - name: Bundle aura_hostd next to the app
         run: Copy-Item aura_hostd/build/aura_hostd.exe aura_client/build/windows/x64/runner/Release/
@@ -161,6 +178,7 @@ jobs:
           retention-days: 14
 
   package-linux:
+    if: github.event.inputs.rollback_to == '' || github.event.inputs.rollback_to == null
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -193,7 +211,9 @@ jobs:
           flutter config --enable-linux-desktop
           flutter pub get
           dart run build_runner build --delete-conflicting-outputs
-          flutter build linux --release --dart-define=BACKEND_URL="$BACKEND_URL"
+          flutter build linux --release --dart-define=BACKEND_URL="$BACKEND_URL" \
+            --dart-define=AURA_APP_VERSION="${{ steps.version.outputs.version }}" \
+            --dart-define=AURA_UPDATE_MANIFEST_URL="$UPDATE_MANIFEST_URL"
 
       - name: Bundle aura_hostd next to the app
         run: install -m 0755 aura_hostd/build/aura_hostd aura_client/build/linux/x64/release/bundle/aura_hostd
@@ -219,3 +239,66 @@ jobs:
           name: aura-desktop-linux-x64
           path: dist/
           retention-days: 14
+
+  # A desktop-v<version> tag: publish the release the app's update check reads.
+  publish-release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/desktop-v')
+    needs: [package-windows, package-linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Download this run's packages
+        run: gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" --dir artifacts
+
+      # The script refuses a tag that does not match pubspec.yaml's version, so a mislabelled tag
+      # can never become the channel's "latest".
+      - name: Write desktop-update.json
+        run: |
+          version=$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' aura_client/pubspec.yaml | head -1)
+          win=$(ls artifacts/aura-desktop-windows-x64/*-setup.exe)
+          linux=$(ls artifacts/aura-desktop-linux-x64/*.tar.gz)
+          python3 scripts/desktop_update_manifest.py release \
+            --version "$version" --tag "$TAG" --repo "${{ github.repository }}" \
+            --asset "windows-x64=$win" --asset "linux-x64=$linux" \
+            --output desktop-update.json
+
+      - name: Publish the release
+        run: |
+          gh release create "$TAG" --repo "${{ github.repository }}" --latest \
+            --title "AURA Desktop ${TAG#desktop-v}" \
+            --notes "Installers for Windows and Linux, with aura_hostd bundled. Checksums are alongside each file and in desktop-update.json." \
+            artifacts/aura-desktop-windows-x64/* artifacts/aura-desktop-linux-x64/* desktop-update.json
+
+  # Manual: roll the update channel back to an earlier release.
+  rollback:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.rollback_to != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event.inputs.rollback_to }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Check the tag
+        run: |
+          if ! [[ "$TAG" =~ ^desktop-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "rollback_to must look like desktop-vX.Y.Z, got '$TAG'"; exit 1
+          fi
+          gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null
+
+      - name: Mark that release's manifest as a rollback and make it latest
+        run: |
+          gh release download "$TAG" --repo "${{ github.repository }}" --pattern desktop-update.json --dir old
+          python3 scripts/desktop_update_manifest.py rollback --from old/desktop-update.json --output desktop-update.json
+          gh release upload "$TAG" --repo "${{ github.repository }}" --clobber desktop-update.json
+          gh release edit "$TAG" --repo "${{ github.repository }}" --latest

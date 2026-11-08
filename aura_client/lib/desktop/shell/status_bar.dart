@@ -3,12 +3,17 @@
 /// Shows branch, hostd connection, backend URL, cursor position, etc.
 library;
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
 import 'package:aura_client/desktop/shell/editor_position.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
+import 'package:aura_client/desktop/update/desktop_update.dart';
+import 'package:aura_client/desktop/update/desktop_update_providers.dart';
 import 'package:aura_client/features/chat/presentation/widgets/sandbox_diff_view.dart';
 
 class StatusBar extends ConsumerWidget {
@@ -31,6 +36,7 @@ class StatusBar extends ConsumerWidget {
     // aura_hostd older than the field itself. See HostdStatusSnapshot.backendConnected.
     final backendConnected = status?.backendConnected;
     final pendingApprovals = ref.watch(approvalNotifierProvider).pendingApprovals;
+    final update = ref.watch(desktopUpdateProvider).value;
 
     // Everything below used to be a literal: 'main', 'Ln 1, Col 1', 'LF'.
     // The status bar is the one always-visible readout in the IDE, and a
@@ -109,6 +115,23 @@ class StatusBar extends ConsumerWidget {
               density: ideDensity,
             ),
           const Spacer(),
+          // M8.10: a newer release (or a deliberate rollback) on the update channel. Only ever
+          // an offer -- nothing downloads until the person chooses it.
+          if (update != null)
+            Tooltip(
+              message: update.isRollback
+                  ? 'This version was rolled back to ${update.version}'
+                  : 'AURA ${update.version} is available',
+              child: InkWell(
+                onTap: () => _confirmUpdate(context, ref, update),
+                child: _StatusItem(
+                  icon: update.isRollback ? Icons.history : Icons.system_update_alt,
+                  text: update.isRollback ? 'Roll back to ${update.version}' : 'Update to ${update.version}',
+                  color: palette.warning,
+                  density: ideDensity,
+                ),
+              ),
+            ),
           // Cursor position, encoding and line endings describe the open
           // buffer -- with no tab open there is no buffer to describe, so
           // they are absent rather than showing a default.
@@ -136,6 +159,68 @@ class StatusBar extends ConsumerWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// M8.10: asks before updating. On Windows it downloads (checksum-verified), starts the installer
+/// and quits so the installer can replace the app's files; it relaunches the app when done.
+/// Unsaved buffers are flushed to the hot-exit backup first, so they come back after the update.
+/// On Linux there is no in-app installer: this opens the download instead.
+Future<void> _confirmUpdate(BuildContext context, WidgetRef ref, AvailableUpdate update) async {
+  final updater = ref.read(desktopUpdaterProvider);
+  final windows = Platform.isWindows;
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(update.isRollback ? 'Roll back to AURA ${update.version}?' : 'Update to AURA ${update.version}?'),
+      content: Text(
+        windows
+            ? '${update.isRollback ? 'This version has been rolled back. ' : ''}AURA will close, '
+                'install ${update.version} and reopen. Unsaved changes are kept and restored.'
+            : 'Download AURA ${update.version} for Linux in your browser.',
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Not now')),
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: Text(windows ? 'Install and restart' : 'Download'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+
+  if (!windows) {
+    await launchUrl(update.asset.url, mode: LaunchMode.externalApplication);
+    return;
+  }
+
+  showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => const AlertDialog(
+      content: Row(children: [
+        SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+        SizedBox(width: AuraSpacing.md),
+        Expanded(child: Text('Downloading the update...')),
+      ]),
+    ),
+  );
+  try {
+    final installer = await updater.download(update);
+    await ref.read(editorNotifierProvider.notifier).flushBackups();
+    await updater.install(installer);
+    exit(0);
+  } catch (error) {
+    if (!context.mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+    AuraSnackbar.show(
+      context,
+      message: error is UpdateIntegrityException
+          ? 'The download did not match the release checksum and was deleted. Nothing was installed.'
+          : 'Could not update: $error',
+      kind: AuraSnackbarKind.error,
     );
   }
 }

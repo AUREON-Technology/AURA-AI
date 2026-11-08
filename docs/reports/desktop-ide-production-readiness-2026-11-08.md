@@ -127,7 +127,7 @@ in CI, and has not been seen live.
 | M8.7 | Security UX review; SEC-02 regressions | BUILT; no review recorded |
 | M8.8 | Kill-daemon / kill-app recovery tests | Both BUILT and tested locally (supervisor restart; hot exit). Bundled signed hostd is M8.10 |
 | M8.9 | Measured cold start, 100k-file repo, typing latency, screen reader | OPEN; nothing measured |
-| M8.10 | Signed installer; update + rollback | Unsigned installer and bundled hostd BUILT (signing waits on a certificate); updater OPEN |
+| M8.10 | Signed installer; update + rollback | Unsigned installer, bundled hostd, and update + rollback BUILT and unit-tested; publish/rollback jobs not yet run; signing waits on a certificate |
 | M8.11 | Opt-in content-free telemetry | OPEN |
 | M8.12 | Windows + Linux certification report | OPEN |
 | M8.13 | Recorded golden-path run | OPEN |
