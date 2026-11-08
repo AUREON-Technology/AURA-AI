@@ -89,6 +89,10 @@ class ChatRepository {
   // The in-flight turn's event stream, kept so [stopStreaming] can cancel it, and the assistant
   // message that Stop was pressed for.
   StreamIterator<SseChatEvent>? _activeStream;
+  /// FSA-006: the workspace root each conversation last sent, so a retry (`retryLastFailedTurn`) or an
+  /// approval resend (`confirmPendingCalls`) keeps running in the root the user was looking at
+  /// rather than falling back to the daemon's first granted root.
+  final Map<String, String> _lastWorkspaceRoot = {};
   String? _stoppedMessageId;
 
   ChatRepository(this._db, this._ref);
@@ -177,10 +181,16 @@ class ChatRepository {
     List<String> approvalIds = const [],
     bool persistUserMessage = true,
     List<ChatImageAttachment> images = const [],
+    // The Desktop IDE's active workspace root (FSA-006), or null from any surface without one.
+    // Remembered per conversation so a retry of this message runs its commands in the same place.
+    String? workspaceRoot,
   }) async {
     if (_ref.read(streamingMessageIdProvider) != null) {
       debugPrint("[ChatRepository] ignoring send while a stream is already in flight");
       return;
+    }
+    if (workspaceRoot != null) {
+      _lastWorkspaceRoot[conversationId] = workspaceRoot;
     }
 
     _ref.read(pendingActionsProvider.notifier).clear();
@@ -241,6 +251,7 @@ class ChatRepository {
         approvalIds: approvalIds,
         assistantMsgId: assistantMsgId,
         images: images,
+        workspaceRoot: workspaceRoot ?? _lastWorkspaceRoot[conversationId],
       );
 
       if (sseOutcome.outcome == _SseSendOutcome.interrupted) {
@@ -370,6 +381,7 @@ class ChatRepository {
     List<String> approvalIds = const [],
     required String assistantMsgId,
     List<ChatImageAttachment> images = const [],
+    String? workspaceRoot,
   }) async {
     final stopwatch = Stopwatch()..start();
     String displayText = "";
@@ -409,6 +421,7 @@ class ChatRepository {
         useTools: useTools,
         approvalIds: approvalIds,
         images: images,
+        workspaceRoot: workspaceRoot,
       );
 
       events = StreamIterator(stream);

@@ -34,6 +34,7 @@ class _RecordingSseClient extends SseAgentClient {
     int maxOutputTokens = 1024,
     double temperature = 0.3,
     List<ChatImageAttachment> images = const [],
+    String? workspaceRoot,
   }) async* {
     requests.add((message: message, approvalIds: List.of(approvalIds)));
     yield SseChatEvent.fromWire('token', {'text': 'Done.'});

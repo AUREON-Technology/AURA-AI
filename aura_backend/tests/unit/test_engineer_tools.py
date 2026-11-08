@@ -851,3 +851,93 @@ class TestMcpBridge:
         name = tools[0].spec.name
         assert name == name.lower()
         assert set(name) <= set("abcdefghijklmnopqrstuvwxyz0123456789_")
+
+
+class _RecordingRunner:
+    """A non-streaming `SandboxRunner` that records the keyword arguments `run` receives.
+
+    `run` deliberately has no `cwd` parameter in its signature when `accepts_cwd` is False: that
+    is the shape every pre-FSA-006 runner (and every test fake in this file) has, and `run_command`
+    must keep working against it when no workspace root was named.
+    """
+
+    def __init__(self, *, accepts_cwd: bool) -> None:
+        self.calls: list[dict] = []
+        if accepts_cwd:
+            self.run = self._run_with_cwd  # type: ignore[method-assign]
+
+    async def create_task(self, *, user_id=None, session_id=None, isolate=False):
+        from aura_core.ports.coding import SandboxHandle
+
+        return SandboxHandle(task_id="recording-task")
+
+    async def run(self, handle, command, *, timeout_s):
+        from aura_core.ports.coding import SandboxResult
+
+        self.calls.append({"command": list(command), "timeout_s": timeout_s})
+        return SandboxResult(stdout="", stderr="", exit_code=0)
+
+    async def _run_with_cwd(self, handle, command, *, timeout_s, cwd=None):
+        from aura_core.ports.coding import SandboxResult
+
+        self.calls.append({"command": list(command), "timeout_s": timeout_s, "cwd": cwd})
+        return SandboxResult(stdout="", stderr="", exit_code=0)
+
+    async def write_file(self, handle, path, content):
+        raise NotImplementedError
+
+    async def read_file(self, handle, path):
+        raise NotImplementedError
+
+    async def destroy(self, handle):
+        pass
+
+
+class _RecordingStreamingRunner(_RecordingRunner):
+    async def run(self, handle, command, *, timeout_s, cwd=None):
+        raise AssertionError("run_command must prefer run_streaming when the runner offers it")
+
+    async def run_streaming(self, handle, command, *, timeout_s, cwd=None):
+        from aura_core.ports.coding import SandboxOutputEvent
+
+        self.calls.append({"command": list(command), "timeout_s": timeout_s, "cwd": cwd})
+        yield SandboxOutputEvent(kind="done", exit_code=0)
+
+
+class TestRunCommandWorkspaceRoot:
+    """FSA-006, second half: the IDE's active root reaches the runner as `cwd`."""
+
+    _ROOT = "/home/me/projects/aura"
+
+    def _ctx(self, user, root):
+        return ToolContext(
+            user_id=user, correlation_id="corr-engineer-root", deadline_s=30.0,
+            metadata={"workspace_root": root},
+        )
+
+    async def test_the_root_in_the_tool_context_is_passed_as_cwd(self, user) -> None:
+        runner = _RecordingRunner(accepts_cwd=True)
+        tools = _by_name(build_sandbox_tools(runner))
+
+        await tools["run_command"].execute({"command": "pwd"}, self._ctx(user, self._ROOT))
+
+        assert runner.calls[0]["cwd"] == self._ROOT
+
+    async def test_the_streaming_path_passes_it_too(self, user) -> None:
+        runner = _RecordingStreamingRunner(accepts_cwd=True)
+        tools = _by_name(build_sandbox_tools(runner))
+
+        await tools["run_command"].execute({"command": "pwd"}, self._ctx(user, self._ROOT))
+
+        assert runner.calls[0]["cwd"] == self._ROOT
+
+    async def test_without_a_root_the_runner_is_called_exactly_as_before(self, ctx) -> None:
+        """`ctx` carries no metadata, and this runner's `run` has no `cwd` parameter at all --
+        the shape of every runner that predates this change. It must still be callable."""
+        runner = _RecordingRunner(accepts_cwd=False)
+        tools = _by_name(build_sandbox_tools(runner))
+
+        result = await tools["run_command"].execute({"command": "pwd"}, ctx)
+
+        assert "exit_code=0" in result
+        assert "cwd" not in runner.calls[0]

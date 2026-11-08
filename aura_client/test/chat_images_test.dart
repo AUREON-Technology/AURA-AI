@@ -53,6 +53,21 @@ void main() {
       expect(body.containsKey('images'), isFalse);
     });
 
+    test('a turn with no workspace root has no workspace_root key at all', () {
+      final body = chatStreamBody(message: 'hi', sessionId: 's', agentId: 'engineer');
+      expect(body.containsKey('workspace_root'), isFalse);
+    });
+
+    test("the desktop IDE's active root goes as workspace_root (FSA-006)", () {
+      final body = chatStreamBody(
+        message: 'run the tests',
+        sessionId: 's',
+        agentId: 'engineer',
+        workspaceRoot: '/home/me/projects/aura',
+      );
+      expect(body['workspace_root'], '/home/me/projects/aura');
+    });
+
     test('images go as base64 with the name-implied type', () {
       final body = chatStreamBody(
         message: 'what is this?',

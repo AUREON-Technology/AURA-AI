@@ -156,6 +156,12 @@ class TurnRequest:
     #: IDE only. `False` for every other caller -- see `tools/coding.py::_SandboxSessionCache`'s
     #: `create_task` call for where this actually takes effect.
     desktop_task_isolation: bool = False
+    #: The Desktop IDE's active workspace root (audit FSA-006, second half), in the user's own
+    #: machine's path syntax. Opaque here: it rides `ToolContext.metadata` to `run_command`, which
+    #: hands it to the sandbox runner as `cwd`; only the paired daemon can say whether it lies
+    #: inside a granted root, and refuses it otherwise. `None` for every caller without an open
+    #: desktop workspace, which leaves the daemon on its "first granted root" fallback.
+    workspace_root: str | None = None
     #: Admission class for every generation this turn makes (roadmap P2.4). ``None`` derives it
     #: from ``route``/``agent`` (``llm/workload.py``): Engineer -> coder pool at priority 2,
     #: voice and chat -> general-fast at priority 1. Background callers set it explicitly.
@@ -1544,6 +1550,7 @@ class AIKernel:
             metadata={
                 "session_id": str(request.session_id) if request.session_id else None,
                 "desktop_task_isolation": request.desktop_task_isolation,
+                "workspace_root": request.workspace_root,
             },
         )
 
