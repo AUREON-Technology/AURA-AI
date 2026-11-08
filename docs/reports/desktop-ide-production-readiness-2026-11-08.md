@@ -49,6 +49,11 @@ CI.
    AI half. Railway's `AURA_WORKERS` is a dashboard setting and was not checked.
    *Exit:* a shared registry/routing layer (e.g. Redis pub/sub keyed by user), with a test that
    runs two workers.
+   **Update (2026-11-08): built, not proven live.** The host-agent relay
+   (`aura_core/adapters/host_agent_relay.py`, ADR-011 amendment) lets any worker reach the
+   session over Redis pub/sub, with signed messages. Two-worker tests pass on the in-memory bus
+   and against a real Redis 7.0. It is on whenever `AURA_REDIS_URL` is set. Whether Railway has
+   Redis configured has not been checked, and without it this blocker still holds there.
 
 3. **Not installable.** No installer, no code signing, no updater, and `aura_hostd` is not bundled.
    The user has to type the path to a daemon binary they built themselves
@@ -122,8 +127,8 @@ in CI, and has not been seen live.
 
 1. Run Client CI and Host Daemon CI on `main` (runners are back; the jobs just need a trigger),
    then make the Windows jobs gating. Everything else is unverifiable on Windows until they run.
-2. Shared host-agent registry (blocker 2). It is the only blocker that breaks the product even
-   for a dogfooding user on a correctly built machine.
+2. Shared host-agent registry (blocker 2): built on 2026-11-08 (see blocker 2). What remains is
+   confirming `AURA_REDIS_URL` on Railway and observing a paired daemon there.
 3. M8.13 golden path on one real Windows machine. This is the smallest piece of PROVEN evidence
    and will surface whatever the unit suites cannot.
 4. Bundle and sign hostd, then add a restart-on-crash supervisor (M8.8, M8.10).

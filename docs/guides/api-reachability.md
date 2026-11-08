@@ -123,8 +123,8 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/memory` | `aura_client/lib/core/routing/router.dart:54`, `aura_client/lib/core/routing/router.dart:369` (+6) | — | — | called |  |
 | DELETE | `/api/v3/memory/{memory_id}` | `aura_client/lib/core/sync/remote_deletes.dart:89`, `aura_client/lib/features/chat/data/memory_repository.dart:179` | — | — | called |  |
 | DELETE | `/api/v3/sessions/{session_id}` | `aura_client/lib/core/sync/remote_deletes.dart:90` | — | — | called |  |
-| GET | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:227`, `aura_client/lib/core/database/database.dart:254` (+2) | — | — | called |  |
-| POST | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:227`, `aura_client/lib/core/database/database.dart:254` (+2) | — | — | called |  |
+| GET | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:228`, `aura_client/lib/core/database/database.dart:255` (+2) | — | — | called |  |
+| POST | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:228`, `aura_client/lib/core/database/database.dart:255` (+2) | — | — | called |  |
 | GET | `/api/v3/tools` | — | — | — | none | to wire: tool catalogue is not shown anywhere |
 | WS | `/api/v3/voice/live` | `aura_client/lib/core/ai/voice/live/live_voice_protocol.dart:1`, `aura_client/lib/core/ai/voice/live/live_voice_socket.dart:13` (+1) | — | — | called |  |
 | POST | `/api/v3/voice/speak` | `aura_client/lib/core/ai/voice/speech_text.dart:1`, `aura_client/lib/core/ai/voice/voice_client.dart:12` (+1) | — | — | called |  |

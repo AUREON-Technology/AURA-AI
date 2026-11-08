@@ -156,11 +156,36 @@ class HostAgentSession:
 class HostAgentRegistry:
     """Live host-agent sessions, keyed by user. One connection per user at a time -- a second
     desktop pairing the same account replaces the first (matching the intent of "your own
-    machine", not a pool of workers)."""
+    machine", not a pool of workers).
 
-    def __init__(self) -> None:
+    Sessions are held per process: the daemon's socket lives in exactly one gateway worker. With
+    a ``relay`` (``adapters/host_agent_relay.py``), :meth:`resolve` also finds a session another
+    worker holds and returns a proxy for it, so a deployment can run several workers (ADR-011,
+    "Deployment constraint"). Without one, behaviour is exactly the single-process registry: only
+    the worker holding the socket can see it.
+
+    The relay never makes a local session unreachable. If the bus errors, resolution falls back
+    to this process's own sessions.
+    """
+
+    def __init__(self, *, relay: Any = None) -> None:
         self._sessions: dict[str, HostAgentSession] = {}
         self._lock = asyncio.Lock()
+        self._relay = relay
+        if relay is not None:
+            relay.bind(local_session=self._local, superseded=self._drop_superseded)
+
+    async def _local(self, user_id: UserId) -> HostAgentSession | None:
+        async with self._lock:
+            return self._sessions.get(user_id.value)
+
+    async def _drop_superseded(self, user_id: UserId) -> None:
+        """Another worker now holds this user's session: drop ours, failing its in-flight calls
+        the same way an in-process replacement does."""
+        async with self._lock:
+            previous = self._sessions.pop(user_id.value, None)
+        if previous is not None:
+            previous.fail_all_pending("replaced by a new desktop connection")
 
     async def register(self, session: HostAgentSession) -> None:
         async with self._lock:
@@ -168,17 +193,46 @@ class HostAgentRegistry:
             self._sessions[session.user_id.value] = session
         if previous is not None and previous is not session:
             previous.fail_all_pending("replaced by a new desktop connection")
+        if self._relay is not None:
+            try:
+                await self._relay.claim(session.user_id)
+            except Exception:
+                # Still reachable from this worker; other workers just cannot see it until the
+                # heartbeat's refresh succeeds.
+                logger.warning("host-agent relay claim failed; session is local-only", exc_info=True)
 
     async def unregister(self, session: HostAgentSession) -> None:
         async with self._lock:
             current = self._sessions.get(session.user_id.value)
-            if current is session:
+            was_current = current is session
+            if was_current:
                 del self._sessions[session.user_id.value]
         session.fail_all_pending("desktop app disconnected")
+        if was_current and self._relay is not None:
+            await self._relay.release(session.user_id)
 
-    async def resolve(self, user_id: UserId) -> HostAgentSession | None:
-        async with self._lock:
-            return self._sessions.get(user_id.value)
+    async def resolve(self, user_id: UserId) -> Any:
+        """This worker's session for ``user_id``, a relay proxy to another worker's, or ``None``.
+
+        Returns an object with ``user_id``, ``call`` and ``call_streaming`` either way."""
+        local = await self._local(user_id)
+        if self._relay is None:
+            return local
+        try:
+            owner = await self._relay.owner(user_id)
+        except Exception:
+            logger.warning("host-agent relay lookup failed; resolving locally", exc_info=True)
+            return local
+        if owner is None or owner == self._relay.worker_id:
+            return local
+        # Another worker holds the newest connection. A local session here is a stale one the
+        # superseded notice has not reached yet; the owner is authoritative.
+        return self._relay.remote_session(user_id, owner)
+
+    @property
+    def relay(self) -> Any:
+        """The cross-worker relay, or ``None`` when this registry is single-process."""
+        return self._relay
 
 
 class HostAgentSandboxRunner:

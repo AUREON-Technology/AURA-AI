@@ -109,10 +109,6 @@ _ALLOWED: dict[tuple[str, str], str] = {
         "com.auraai.aura_client package and its signing SHA-1 -- a console setting this test "
         "cannot see)."
     ),
-    ("docs/reports/audit/full-system-audit/system_architecture.md", "private key"): (
-        "The 2026-10-31 audit report quotes this scan's own PEM header as the pattern a finding "
-        "(A-06) is about. It is the marker text alone, with no key material after it."
-    ),
 }
 
 #: Credential shapes that must never appear as a literal. Kept as patterns rather than values so

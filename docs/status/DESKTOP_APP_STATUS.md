@@ -22,8 +22,10 @@ A new test pumps the real IDE shell, so it renders at all three breakpoints in L
 found one low-severity defect, since fixed: the floating-panel scrim covered the activity bar, so
 reaching another destination took two clicks. Client suite after the fix: 563 passed, 3 skipped.
 The assessment also
-flags the per-process `HostAgentRegistry` under the default 4 workers as a functional blocker
-for the Engineer agent, not only a security remainder.
+flagged the per-process `HostAgentRegistry` under the default 4 workers as a functional blocker
+for the Engineer agent, not only a security remainder. A cross-worker relay over Redis now
+addresses it (ADR-011 amendment, 2026-11-08). It is built and tested against a real Redis,
+not seen live.
 
 There is a lot of desktop code, and none of it is proven end to end. GAP-026 is
 `built_not_proven`, and there is no desktop or hostd end-to-end report in `docs/reports/`.
@@ -113,7 +115,10 @@ any of this works.
      - ~~the desktop app's own sign-in token is still a full 30-day session~~: FSA-004 (`ba17ad4`)
        now issues a 15-minute access token plus a device-bound refresh token, with in-app device
        revoke. Tested in its authoring session; not CI-run or seen live;
-     - the session registry is still per process while `AURA_WORKERS=4`.
+     - ~~the session registry is still per process while `AURA_WORKERS=4`~~: the host-agent
+       relay (`adapters/host_agent_relay.py`) reaches a session from any worker when
+       `AURA_REDIS_URL` is set. Built and tested (unit and real-Redis `-m load`); not seen live.
+       Railway needs its Redis plugin's URL for this, which has not been checked.
 4. **Windows defects found by CI (new).**
    - Drive roots other than `C:\` can be granted as workspace roots.
    - 8.3 short-name path mismatches, in the client and in hostd.
@@ -159,8 +164,8 @@ any of this works.
    write denylist, plus an amendment to ADR-014.
 4. Fix the Windows failures (deny every drive root, canonicalize 8.3 paths), then make the Windows
    jobs gating.
-5. F-09 remainder: scope or shorten the desktop app's own token, and share the host-agent
-   registry across workers.
+5. F-09 remainder: both halves now built (FSA-004 token; the host-agent relay). Prove them
+   live: a paired daemon against a deployment running more than one worker.
 6. Build hostd in CI with a checksum (the tracked binaries are gone as of 2026-10-30). Add the
    macOS entitlement, or declare macOS unsupported.
 7. Record the GAP-026 end-to-end session on real Windows and Linux machines, then close #78 and

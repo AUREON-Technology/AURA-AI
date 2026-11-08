@@ -150,11 +150,10 @@ def drain_finetune_queue_task() -> dict:
 
 async def _run_finetune_job(job_id: str) -> dict:
     from infrastructure.secret_hydration import hydrate_secrets_from_files
-    from aura_core.config import load_settings
     from aura_core.container import build_container
 
     hydrate_secrets_from_files()
-    container = build_container(load_settings(refresh=True))
+    container = build_container(_worker_settings())
     job = await container.finetune_jobs.run(job_id)
     return {"status": str(job.status), "job": job.as_dict()}
 
@@ -264,6 +263,23 @@ _worker_container = None
 _worker_started = False
 
 
+def _worker_settings():
+    """Settings for a Celery worker's container: the gateway's, with the host-agent relay off.
+
+    The relay (``aura_core/adapters/host_agent_relay.py``) lets any process that shares Redis
+    reach a user's paired desktop. A background job has no live chat turn behind it, and none
+    today runs a tool, so a worker process gets no route to anyone's machine: its registry stays
+    single-process, where no daemon ever connects. Lifting that is a decision for whoever adds a
+    background job that should reach a desktop, not a side effect of sharing Redis.
+    """
+    import os
+
+    from aura_core.config import load_settings
+
+    os.environ["AURA_HOST_AGENT_RELAY"] = "false"
+    return load_settings(refresh=True)
+
+
 async def _ensure_worker_container():
     """Build the v3 container once per worker process.
 
@@ -272,12 +288,11 @@ async def _ensure_worker_container():
     """
     global _worker_container, _worker_started
     from infrastructure.secret_hydration import hydrate_secrets_from_files
-    from aura_core.config import load_settings
     from aura_core.container import build_container
 
     hydrate_secrets_from_files()
     if _worker_container is None:
-        _worker_container = build_container(load_settings(refresh=True))
+        _worker_container = build_container(_worker_settings())
     if not _worker_started:
         await _worker_container.startup()
         _worker_started = True

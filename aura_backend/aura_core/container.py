@@ -402,7 +402,7 @@ class Container:
 
         from .adapters.host_agent import HostAgentRegistry
 
-        self.host_agent_registry = HostAgentRegistry()
+        self.host_agent_registry = HostAgentRegistry(relay=self._build_host_agent_relay())
         self.sandbox_runner = self._build_sandbox_runner()
         # After the runner, never before: the manager needs it, and a None runner is the signal
         # that this deployment has no workspaces at all.
@@ -1375,6 +1375,36 @@ class Container:
 
         return InMemorySourceRegistry()
 
+    def _build_host_agent_relay(self) -> Any:
+        """The cross-worker relay for desktop host-agent sessions, or ``None``.
+
+        A daemon's socket lives in one gateway worker; without the relay, only that worker can
+        reach it, so with ``--workers 4`` most Engineer turns found no desktop (ADR-011,
+        "Deployment constraint"). Built whenever Redis is configured and a signing secret exists.
+        Nothing connects here -- the relay subscribes on first use.
+        """
+        infra = self.settings.infrastructure
+        reason = ""
+        if not infra.host_agent_relay:
+            reason = "disabled by AURA_HOST_AGENT_RELAY"
+        elif not infra.redis_url:
+            reason = "no AURA_REDIS_URL"
+        elif not infra.host_agent_relay_secret:
+            reason = "no JWT secret to sign relay messages with"
+        if reason:
+            if self.settings.environment.is_production_like:
+                logger.warning(
+                    "host-agent relay off: a paired desktop is reachable only from the gateway "
+                    "worker holding its socket, so run one worker (AURA_WORKERS=1)",
+                    extra={"reason": reason},
+                )
+            return None
+
+        from .adapters.host_agent_relay import HostAgentRelay
+        from .adapters.redis_relay_bus import RedisRelayBus
+
+        return HostAgentRelay(RedisRelayBus(infra.redis_url), infra.host_agent_relay_secret)
+
     async def _host_routed(self, context) -> bool:
         """Whether this caller's sandbox calls go to their paired desktop: the same predicate
         ``CompositeSandboxRunner.create_task`` routes on (a live ``aura_hostd`` session)."""
@@ -1692,6 +1722,7 @@ class Container:
             ("cache", self.cache_backend),  # Redis
             ("vector store", self.vectors),  # Qdrant
             ("docker sandbox", getattr(self, "docker_sandbox_runner", None)),
+            ("host agent relay", getattr(getattr(self, "host_agent_registry", None), "relay", None)),
             ("github client", self.github_client),
             ("mcp client", self.mcp_client),
         ):
