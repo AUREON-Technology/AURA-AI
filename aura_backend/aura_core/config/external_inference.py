@@ -36,6 +36,10 @@ __all__ = [
     "is_hosted_open_weight_host",
     "is_open_weight_model",
     "credential_name_variants",
+    "SANCTIONED_SDK_IMPORTERS",
+    "SANCTIONED_DISTRIBUTIONS",
+    "CLAUDE_PROVIDER_KIND",
+    "is_claude_model",
 ]
 
 
@@ -101,9 +105,11 @@ BANNED_SDK_ROOTS: frozenset[str] = frozenset({
 
 #: Distribution names that must not appear in any requirements file. An unused dependency still
 #: ships in the image and still reads as permission.
+#:
+#: ``anthropic`` is absent on purpose: ADR-033 sanctions it as the one closed-model SDK, for the
+#: one module that may import it. See :data:`SANCTIONED_DISTRIBUTIONS`.
 BANNED_DISTRIBUTIONS: tuple[str, ...] = (
     "openai",
-    "anthropic",
     "google-genai",
     "google-generativeai",
     "cohere",
@@ -164,6 +170,11 @@ BANNED_CREDENTIAL_NAMES: tuple[str, ...] = (
     "OPENAI_API_KEY",
     "AZURE_OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
+    # The Anthropic SDK reads both of these ambiently. ADR-033's provider passes its key
+    # explicitly, from the per-slot AURA_PROVIDER_<NAME>_API_KEY_ENV variable, so the only
+    # sanctioned route for a Claude key is the gated one; provisioning either ambient name would
+    # bypass it.
+    "ANTHROPIC_AUTH_TOKEN",
     "GROQ_API_KEY",
     "OPENROUTER_API_KEY",
     "TOGETHER_API_KEY",
@@ -380,3 +391,44 @@ def is_external_inference_host(host: str) -> str | None:
         if host == banned or host.endswith("." + banned) or banned in host:
             return banned
     return None
+
+
+# --------------------------------------------------------------------------------------
+# ADR-033: the one sanctioned closed-model provider
+# --------------------------------------------------------------------------------------
+#
+# Everything above stays banned. ADR-033 makes a single, named exception -- Anthropic's Claude,
+# reached through Anthropic's official SDK -- and keeps it as narrow as the static scans can make
+# it. Each of the three constants below is one hole in one layer, and each is pinned by a test in
+# ``tests/architecture/test_no_external_inference.py`` so that widening it is a visible diff:
+#
+# * the SDK root ``anthropic`` stays in :data:`BANNED_SDK_ROOTS`; exactly one module may import it;
+# * the distribution ``anthropic`` may be declared, nothing else that ``BANNED_DISTRIBUTIONS``
+#   used to cover (``langchain-anthropic`` stays banned);
+# * ``api.anthropic.com`` stays in :data:`EXTERNAL_INFERENCE_HOSTS`: no ``base_url`` may name it,
+#   for any kind. The ``claude`` kind takes no ``base_url`` at all and uses the SDK's own endpoint.
+#
+# The runtime half lives in ``ProviderConfig._gate_claude``: refused unless
+# ``AURA_ALLOW_CLAUDE_INFERENCE=true``, never local, always third-party (so it gets ADR-030's
+# ``internal`` data ceiling, image refusal and audit record), and only for a ``claude-*`` model.
+
+#: The provider ``kind`` ADR-033 adds. Deliberately not ``anthropic``, which stays in
+#: :data:`BANNED_PROVIDER_KINDS` as the name of the adapter that was removed.
+CLAUDE_PROVIDER_KIND = "claude"
+
+#: SDK root -> the only backend modules (paths relative to ``aura_backend/``) allowed to import it.
+SANCTIONED_SDK_IMPORTERS: dict[str, frozenset[str]] = {
+    "anthropic": frozenset({"aura_core/llm/providers/claude.py"}),
+}
+
+#: Distributions that may be declared even though their SDK root is banned everywhere else.
+SANCTIONED_DISTRIBUTIONS: frozenset[str] = frozenset({"anthropic"})
+
+#: Claude model IDs as Anthropic's first-party API names them (``claude-opus-5-5``,
+#: ``claude-sonnet-5-5``). Anchored, lower-case, no publisher prefix and no ``:variant``.
+_CLAUDE_MODEL_RE = re.compile(r"^claude-[a-z0-9][a-z0-9.-]*$")
+
+
+def is_claude_model(model: str) -> bool:
+    """True when ``model`` is a first-party Claude model ID."""
+    return _CLAUDE_MODEL_RE.match((model or "").strip()) is not None

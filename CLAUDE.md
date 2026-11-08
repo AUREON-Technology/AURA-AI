@@ -200,15 +200,21 @@ behind an `asyncio.Lock` when concurrent callers could race). `PostgresPool._get
 canonical example; match that pattern for any new adapter.
 
 **Self-hosting is a fitness-tested invariant, not a preference.** `aura_core/llm/registry.py`
-only builds `echo`, `openai_compatible` (vLLM/llama.cpp/TGI/Ollama's `/v1`), and `ollama`
-providers. There is no hosted-vendor branch anywhere — adding one fails
-`tests/architecture/test_no_external_inference.py`. The Flutter client is checked too. The one
+builds `echo`, `openai_compatible` (vLLM/llama.cpp/TGI/Ollama's `/v1`), `ollama`, and one gated
+vendor kind, `claude` (ADR-033, below). Any other hosted-vendor branch fails
+`tests/architecture/test_no_external_inference.py`. The Flutter client is checked too. The first
 sanctioned exception is ADR-030 (Proposed). Hosted *open-weight* APIs (Groq, Workers AI,
 OpenRouter, …) are a third host category in `aura_core/config/external_inference.py`. They are
 refused unless `AURA_ALLOW_HOSTED_INFERENCE=true`, only accept open-weight model IDs, can never be
 `is_local`, and may never be named in Python source. One that may train on prompts (any `:free`
 model ID) also needs its slot's `ALLOW_PROMPT_TRAINING=true` and can never be raised to `sensitive`. Closed-model vendors stay banned under
-either opt-in flag. Every generation also has a data classification (`llm/sensitivity.py`). A
+either opt-in flag. The one closed-model exception is ADR-033 (Proposed; built, not proven): provider kind
+`claude` (Anthropic), refused unless `AURA_ALLOW_CLAUDE_INFERENCE=true`, no `base_url` (SDK endpoint
+only), key only via `AURA_PROVIDER_<NAME>_API_KEY_ENV`, third-party semantics (internal ceiling, no
+images, audited), and the `anthropic` SDK importable only from `aura_core/llm/providers/claude.py`
+(`SANCTIONED_SDK_IMPORTERS`). With `AURA_LLM_COMPLEXITY_ROUTING=true`, interactive turns whose message
+scores as complex (`aura_core/llm/complexity.py`) prefer the `reasoning` pool that provider declares;
+everything else routes as before. Every generation also has a data classification (`llm/sensitivity.py`). A
 hosted provider receives only `internal` content by default. An unclassified generation counts
 as `sensitive`, so any new background caller of the router stays local unless it opts in.
 
@@ -241,10 +247,10 @@ permanent platform adapters mounted outside `aura_core` (ADR-002), not legacy co
 removal.
 
 Full ADR list and the ten essential decisions are in `docs/architecture/00-overview.md` and
-`docs/architecture/001-*.md`–`031-*.md` (there is no 012 or 017; 018–028 are Track AP drafts, Proposed); read the relevant one before touching
+`docs/architecture/001-*.md`–`033-*.md` (there is no 012 or 017; 018–028 are Track AP drafts, Proposed); read the relevant one before touching
 retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer workspaces
-(013/014), service keys / caller context / structured output on `/chat` (029), or images on
-`/chat` (031) — each encodes a reason something is shaped the way it is, not just what it does.
+(013/014), service keys / caller context / structured output on `/chat` (029), images on
+`/chat` (031), or the Claude provider and complexity routing (033) — each encodes a reason something is shaped the way it is, not just what it does.
 
 ## Client architecture — the parts that span files
 

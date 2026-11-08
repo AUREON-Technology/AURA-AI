@@ -44,6 +44,8 @@ _REQUIRED_SUFFIXES = (
     "MAX_CONCURRENCY", "RPM", "RPD", "TPM", "TPD", "HEALTH_PATH", "MAX_DATA_CLASSIFICATION",
     "TOKENS_PER_SECOND", "EXTRA_BODY", "SUPPORTS_JSON_MODE", "SUPPORTS_TOOLS",
     "ALLOW_PROMPT_TRAINING",
+    # ADR-033: what a slot needs to serve as the complexity-routed Claude provider.
+    "POOLS", "SUPPORTS_REASONING", "COST_INPUT", "COST_OUTPUT",
 )
 _DEFAULT = re.compile(r"^\$\{[A-Z0-9_]+:-(.*)\}$")
 
@@ -69,7 +71,10 @@ def _provider_services(doc: dict) -> dict[str, dict]:
 
 
 def _slot_env(env: dict) -> dict[str, str]:
-    keys = ("AURA_ALLOW_HOSTED_INFERENCE", "AURA_LLM_ROUTING_POLICY", "AURA_LLM_RATE_LIMIT_COOLDOWN_S")
+    keys = (
+        "AURA_ALLOW_HOSTED_INFERENCE", "AURA_LLM_ROUTING_POLICY", "AURA_LLM_RATE_LIMIT_COOLDOWN_S",
+        "AURA_ALLOW_CLAUDE_INFERENCE", "AURA_LLM_COMPLEXITY_ROUTING", "AURA_LLM_COMPLEXITY_THRESHOLD",
+    )
     return {
         k: str(v) for k, v in env.items()
         if k.startswith("AURA_PROVIDER_HOSTED") or k in keys
@@ -117,11 +122,15 @@ def test_a_slot_is_never_local(compose) -> None:
             )
 
 
-def test_the_opt_in_defaults_to_an_explicit_false(compose) -> None:
+@pytest.mark.parametrize(
+    "flag",
+    ["AURA_ALLOW_HOSTED_INFERENCE", "AURA_ALLOW_CLAUDE_INFERENCE", "AURA_LLM_COMPLEXITY_ROUTING"],
+)
+def test_the_opt_in_defaults_to_an_explicit_false(compose, flag: str) -> None:
     """An empty boolean raises in aura_core, and that error would hide the one explaining the opt-in."""
     label, doc = compose
     for name, service in _provider_services(doc).items():
-        raw = service["environment"]["AURA_ALLOW_HOSTED_INFERENCE"]
+        raw = service["environment"][flag]
         match = _DEFAULT.match(raw)
         assert match and match.group(1) == "false", f"{label}/{name}: {raw!r}"
 
@@ -175,3 +184,28 @@ def test_the_compose_defaults_build_a_valid_provider(n: int, monkeypatch) -> Non
     assert (config.rpm, config.rpd, config.tpm, config.tpd) == (0, 0, 0, 0)
     assert config.health_path == "/models"
     assert config.tokens_per_second == 0.0 and config.extra_body_fields == {}
+
+
+@pytest.mark.parametrize("n", _SLOTS)
+def test_a_slot_can_be_the_complexity_routed_claude_provider(n: int, monkeypatch) -> None:
+    """ADR-033 on the VPS: the slot's own defaults plus the .env lines the runbook gives."""
+    from aura_core.config.settings import ProviderConfig
+    from aura_core.domain.llm import DataClassification, ModelPool
+    from aura_core.llm import capabilities_from_config
+
+    env = _provider_services(_load(_COMPOSE["prod"]))["gateway"]["environment"]
+    for key, raw in env.items():
+        if key.startswith(f"AURA_PROVIDER_HOSTED{n}_"):
+            match = _DEFAULT.match(str(raw))
+            monkeypatch.setenv(key, match.group(1) if match else str(raw))
+    monkeypatch.setenv("AURA_ALLOW_CLAUDE_INFERENCE", "true")
+    monkeypatch.setenv(f"AURA_PROVIDER_HOSTED{n}_KIND", "claude")
+    monkeypatch.setenv(f"AURA_PROVIDER_HOSTED{n}_MODEL", "claude-opus-5-5")
+    monkeypatch.setenv(f"AURA_PROVIDER_HOSTED{n}_POOLS", "reasoning")
+
+    config = ProviderConfig.from_env(f"hosted{n}")
+    caps = capabilities_from_config(config)
+    assert config.kind == "claude" and config.base_url == ""
+    assert caps.third_party and not caps.is_local
+    assert caps.pools == (ModelPool.REASONING,)
+    assert caps.max_data_classification is DataClassification.INTERNAL

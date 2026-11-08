@@ -26,6 +26,12 @@ open-weight models (Groq, Workers AI, OpenRouter, ...). They are refused unless
 source -- a hosted endpoint is configuration, not code. ``TestHostedOpenWeightIsGatedNotSilent``
 pins all of that, including that neither opt-in unlocks the other or a banned vendor.
 
+ADR-033 added the one closed-model exception: Anthropic's Claude, as provider kind ``claude``,
+refused unless ``AURA_ALLOW_CLAUDE_INFERENCE`` is set. It is a hole in exactly three places, each
+pinned by ``TestClaudeIsGatedNotSilent``: one module may import the ``anthropic`` SDK, the
+``anthropic`` distribution may be declared, and the set of kinds includes ``claude``. The host
+``api.anthropic.com`` stays banned as a ``base_url`` for every kind, ``claude`` included.
+
 Layers 4-6 exist because layers 1-3 missed real violations, and it is worth being precise about
 how. Every one of them opens only ``*.py`` files under ``aura_backend/`` and ``requirements*.txt``.
 So:
@@ -70,6 +76,8 @@ from aura_core.config.external_inference import (
     BANNED_PROVIDER_KINDS,
     BANNED_SDK_ROOTS,
     EXTERNAL_INFERENCE_HOSTS,
+    SANCTIONED_DISTRIBUTIONS,
+    SANCTIONED_SDK_IMPORTERS,
     credential_name_variants,
 )
 
@@ -135,6 +143,8 @@ class TestNoHostedInferenceSDKs:
                 pytest.fail(f"{rel} does not parse: {exc}")
             for dotted in sorted(_dotted_imports(tree)):
                 banned = _banned_root(dotted)
+                if banned and rel in SANCTIONED_SDK_IMPORTERS.get(banned, frozenset()):
+                    continue  # ADR-033: pinned by TestClaudeIsGatedNotSilent
                 if banned:
                     offenders.append(f"{rel}: imports {dotted!r} (banned root {banned!r})")
         assert not offenders, (
@@ -509,11 +519,14 @@ class TestProviderConfigRefusesHostedEndpoints:
                 ProviderConfig(name="p", kind=kind, model="m")
             assert "unknown kind" in str(excinfo.value)
 
-    def test_the_supported_kinds_are_exactly_the_self_hosted_ones(self) -> None:
-        """Pins the set, so adding a vendor kind cannot pass unnoticed."""
+    def test_the_supported_kinds_are_the_self_hosted_ones_plus_claude(self) -> None:
+        """Pins the set, so adding a vendor kind cannot pass unnoticed.
+
+        ``claude`` is the single gated vendor kind ADR-033 sanctions.
+        """
         from aura_core.config.settings import ProviderConfig
 
-        assert set(ProviderConfig._KINDS) == {"openai_compatible", "ollama", "echo"}
+        assert set(ProviderConfig._KINDS) == {"openai_compatible", "ollama", "echo", "claude"}
 
 
 class TestHostMatching:
@@ -754,3 +767,127 @@ class TestHostedOpenWeightIsGatedNotSilent:
             "A hosted open-weight endpoint appears in Python source. Configure it through "
             "AURA_PROVIDER_<NAME>_BASE_URL instead (ADR-030).\n  " + "\n  ".join(offenders)
         )
+
+
+class TestClaudeIsGatedNotSilent:
+    """ADR-033: Claude is allowed only on purpose, only through ``kind=claude``, and narrowly.
+
+    Every assertion here pins one edge of the exception, so widening it -- a second importer, a
+    redirectable endpoint, an ambient key, a local flag -- fails a named test rather than passing
+    quietly.
+    """
+
+    @staticmethod
+    def _claude(**overrides):
+        from aura_core.config.settings import ProviderConfig
+
+        fields = {
+            "name": "claude",
+            "kind": "claude",
+            "model": "claude-opus-5-5",
+            "api_key_env": "AURA_CLAUDE_KEY",
+            "quality_tier": 3,
+            "pools": ("reasoning",),
+        }
+        fields.update(overrides)
+        return ProviderConfig(**fields)
+
+    def test_refused_without_the_opt_in(self, monkeypatch) -> None:
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.delenv("AURA_ALLOW_CLAUDE_INFERENCE", raising=False)
+        with pytest.raises(ConfigurationError) as excinfo:
+            self._claude()
+        assert "AURA_ALLOW_CLAUDE_INFERENCE" in str(excinfo.value)
+
+    def test_neither_other_opt_in_unlocks_it(self, monkeypatch) -> None:
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.delenv("AURA_ALLOW_CLAUDE_INFERENCE", raising=False)
+        monkeypatch.setenv("AURA_ALLOW_HOSTED_INFERENCE", "true")
+        monkeypatch.setenv("AURA_ALLOW_REMOTE_INFERENCE", "true")
+        with pytest.raises(ConfigurationError):
+            self._claude()
+
+    def test_permitted_with_the_opt_in_as_a_third_party(self, monkeypatch) -> None:
+        from aura_core.domain.llm import DataClassification
+
+        monkeypatch.setenv("AURA_ALLOW_CLAUDE_INFERENCE", "true")
+        config = self._claude()
+        assert config.third_party
+        assert not config.is_local
+        assert config.data_classification_ceiling is DataClassification.INTERNAL
+
+    def test_the_claude_opt_in_unlocks_no_other_vendor(self, monkeypatch) -> None:
+        """Not the compat endpoint through ``openai_compatible``, not any other banned host."""
+        from aura_core.config.settings import ProviderConfig
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.setenv("AURA_ALLOW_CLAUDE_INFERENCE", "true")
+        for base_url in ("https://api.anthropic.com/v1", "https://api.openai.com/v1"):
+            with pytest.raises(ConfigurationError) as excinfo:
+                ProviderConfig(
+                    name="p", kind="openai_compatible", model="claude-opus-5-5", base_url=base_url
+                )
+            assert "hosted inference service" in str(excinfo.value)
+
+    def test_the_endpoint_cannot_be_redirected(self, monkeypatch) -> None:
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.setenv("AURA_ALLOW_CLAUDE_INFERENCE", "true")
+        with pytest.raises(ConfigurationError) as excinfo:
+            self._claude(base_url="https://proxy.example.com")
+        assert "base_url" in str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        "model", ["gpt-5", "anthropic/claude-sonnet-4", "llama-3.3-70b", "Claude-Opus", ""]
+    )
+    def test_only_a_claude_model_id_is_accepted(self, model: str, monkeypatch) -> None:
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.setenv("AURA_ALLOW_CLAUDE_INFERENCE", "true")
+        with pytest.raises(ConfigurationError):
+            self._claude(model=model)
+
+    def test_the_key_must_come_from_the_slot_variable(self, monkeypatch) -> None:
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.setenv("AURA_ALLOW_CLAUDE_INFERENCE", "true")
+        with pytest.raises(ConfigurationError) as excinfo:
+            self._claude(api_key_env="")
+        assert "API_KEY_ENV" in str(excinfo.value)
+
+    def test_it_can_never_claim_to_be_local(self, monkeypatch) -> None:
+        from aura_core.domain.errors import ConfigurationError
+
+        monkeypatch.setenv("AURA_ALLOW_CLAUDE_INFERENCE", "true")
+        with pytest.raises(ConfigurationError):
+            self._claude(is_local=True)
+
+    def test_exactly_one_module_may_import_the_sdk(self) -> None:
+        assert SANCTIONED_SDK_IMPORTERS == {
+            "anthropic": frozenset({"aura_core/llm/providers/claude.py"})
+        }
+        for root, modules in SANCTIONED_SDK_IMPORTERS.items():
+            assert root in BANNED_SDK_ROOTS, "a sanctioned root stays banned everywhere else"
+            for module in modules:
+                assert (BACKEND / module).is_file(), f"{module} is sanctioned but does not exist"
+
+    def test_the_sanctioned_module_imports_the_sdk_lazily(self) -> None:
+        """Module scope would make ``aura_core`` unimportable without the SDK installed."""
+        path = BACKEND / "aura_core/llm/providers/claude.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                assert "anthropic" not in _dotted_imports(ast.Module(body=[node], type_ignores=[]))
+
+    def test_only_the_anthropic_distribution_is_sanctioned(self) -> None:
+        assert SANCTIONED_DISTRIBUTIONS == frozenset({"anthropic"})
+        assert not SANCTIONED_DISTRIBUTIONS & set(BANNED_DISTRIBUTIONS)
+        assert "langchain-anthropic" in BANNED_DISTRIBUTIONS
+
+    def test_what_stays_banned_stays_banned(self) -> None:
+        assert "api.anthropic.com" in EXTERNAL_INFERENCE_HOSTS
+        assert "anthropic" in BANNED_PROVIDER_KINDS
+        assert "ANTHROPIC_API_KEY" in BANNED_CREDENTIAL_NAMES
+        assert "ANTHROPIC_AUTH_TOKEN" in BANNED_CREDENTIAL_NAMES
