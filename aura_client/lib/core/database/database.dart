@@ -291,6 +291,27 @@ class DesktopWorkspaces extends Table {
   Set<Column> get primaryKey => {id};
 }
 
+/// Hot exit (M8.8): the text of an editor tab with unsaved changes, so killing the app, a crash
+/// or a power cut does not lose them. Local only, like every other `Desktop*` table -- never
+/// synced. Written about a second after the last keystroke, dropped when the tab is saved or its
+/// changes are discarded, read back when the workspace opens again (`EditorNotifier`).
+///
+/// [contentEnc] is the buffer sealed with [EncryptionService.encryptText]: an unsaved buffer is
+/// user content (a half-edited `.env` is a credential), so it is never stored in the clear.
+/// [baseHash] is the SHA-256 of the file as it was on disk when the buffer was loaded, so a
+/// restore can tell the user the file has changed underneath their unsaved edits.
+class DesktopUnsavedBuffers extends Table {
+  TextColumn get workspaceId => text()();
+  TextColumn get tabId => text()();
+  TextColumn get path => text()();
+  TextColumn get contentEnc => text()();
+  TextColumn get baseHash => text().nullable()();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {workspaceId, tabId};
+}
+
 class DesktopEditorState extends Table {
   TextColumn get workspaceId => text()();
   TextColumn get openTabsJson => text()();
@@ -332,7 +353,7 @@ class DesktopAgentState extends Table {
 // Database Connection & Class
 // ----------------------------------------------------
 
-@DriftDatabase(tables: [Tasks, CalendarEvents, FinanceRecords, HealthRecords, Messages, AgentConfigurations, UserMemories, Projects, Goals, PendingDeletes, LearningLogs, OfflineModelWeights, TelemetryLogs, OutboxEntries, SyncMetadata, DesktopWorkspaces, DesktopEditorState, DesktopTerminalState, DesktopLayoutState, DesktopAgentState])
+@DriftDatabase(tables: [Tasks, CalendarEvents, FinanceRecords, HealthRecords, Messages, AgentConfigurations, UserMemories, Projects, Goals, PendingDeletes, LearningLogs, OfflineModelWeights, TelemetryLogs, OutboxEntries, SyncMetadata, DesktopWorkspaces, DesktopEditorState, DesktopTerminalState, DesktopLayoutState, DesktopAgentState, DesktopUnsavedBuffers])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(openConnection());
 
@@ -348,7 +369,7 @@ class AppDatabase extends _$AppDatabase {
   static const Uuid _outboxIds = Uuid();
 
   @override
-  int get schemaVersion => 13;
+  int get schemaVersion => 14;
 
   Future<List<TelemetryLog>> getTelemetry() => select(telemetryLogs).get();
   Future<void> insertTelemetry(TelemetryLogsCompanion log) => into(telemetryLogs).insert(log);
@@ -452,6 +473,9 @@ class AppDatabase extends _$AppDatabase {
       await delete(pendingDeletes).go();
       await delete(outboxEntries).go();
       await delete(syncMetadata).go();
+      // Unsaved editor buffers are the user's content, and sealed with the data key forgotten
+      // below, so they could not be read back by the next account anyway.
+      await delete(desktopUnsavedBuffers).go();
     });
     // The account data key belongs to the account too (ADR-032).
     await EncryptionService.forgetDataKeys();
@@ -580,6 +604,9 @@ class AppDatabase extends _$AppDatabase {
               "DELETE FROM outbox_entries WHERE target_table = 'memories' "
               "AND record_id NOT LIKE '________-____-____-____-____________'",
             );
+          }
+          if (from < 14) {
+            await m.createTable(desktopUnsavedBuffers);
           }
         },
         beforeOpen: (details) async {

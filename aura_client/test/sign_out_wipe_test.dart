@@ -36,6 +36,20 @@ void main() {
     expect(await db.getSyncCursor(), isNull);
   });
 
+  test('wipeUserData removes unsaved editor buffers (hot exit)', () async {
+    await db.into(db.desktopUnsavedBuffers).insert(DesktopUnsavedBuffersCompanion.insert(
+          workspaceId: 'ws-1',
+          tabId: 'tab-1',
+          path: 'lib/main.dart',
+          contentEnc: EncryptionService.encryptText('unsaved'),
+          updatedAt: DateTime.now(),
+        ));
+
+    await db.wipeUserData();
+
+    expect(await db.select(db.desktopUnsavedBuffers).get(), isEmpty);
+  });
+
   test('wipeUserData keeps device-level data such as downloaded model weights', () async {
     await db.into(db.offlineModelWeights).insert(OfflineModelWeightsCompanion.insert(
           id: 'phi-3',
