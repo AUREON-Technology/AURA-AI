@@ -1266,11 +1266,19 @@ class AIKernel:
         capability (and was silently given the orchestrator) is not queued as Engineer work.
         """
         spec = self._resolve_agent(request)
+        llm = getattr(self._deps.settings, "llm", None)
+        threshold = (
+            float(getattr(llm, "complexity_threshold", 0.5))
+            if getattr(llm, "complexity_routing", False)
+            else None
+        )
         return workload_for_turn(
             route=request.route,
             agent=spec.id if spec is not None else request.agent,
             user_key=request.user_id.value,
             workload=request.workload,
+            message=request.message,
+            complexity_threshold=threshold,
         )
 
     def _resolve_agent(self, request: TurnRequest) -> AgentSpec | None:

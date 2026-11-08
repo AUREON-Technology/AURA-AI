@@ -77,7 +77,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/auth/desktop/devices` | `aura_client/lib/core/auth/desktop_devices_client.dart:41` | — | — | called |  |
 | POST | `/api/v3/auth/desktop/devices/revoke` | `aura_client/lib/core/auth/desktop_devices_client.dart:41` | — | — | called |  |
 | POST | `/api/v3/auth/desktop/login` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:57`, `aura_client/lib/core/auth/token_manager.dart:28` (+2) | — | — | called |  |
-| POST | `/api/v3/auth/desktop/pair/approve` | `aura_client/lib/desktop/host/host_panel.dart:280`, `aura_client/lib/features/engineering/presentation/host_daemon_page.dart:148` | — | — | called |  |
+| POST | `/api/v3/auth/desktop/pair/approve` | `aura_client/lib/desktop/host/host_panel.dart:304`, `aura_client/lib/features/engineering/presentation/host_daemon_page.dart:148` | — | — | called |  |
 | POST | `/api/v3/auth/desktop/pair/poll` | — | — | `aura_hostd/lib/src/pairing_client.dart:129`, `aura_hostd/test/pairing_client_test.dart:75` (+4) | called |  |
 | POST | `/api/v3/auth/desktop/pair/start` | — | — | `aura_hostd/lib/src/pairing_client.dart:98`, `aura_hostd/test/pairing_client_test.dart:69` (+3) | called |  |
 | POST | `/api/v3/auth/nonce` | `aura_client/lib/core/security/device_validation_service.dart:139` | — | — | called |  |
@@ -123,8 +123,8 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/memory` | `aura_client/lib/core/routing/router.dart:54`, `aura_client/lib/core/routing/router.dart:369` (+6) | — | — | called |  |
 | DELETE | `/api/v3/memory/{memory_id}` | `aura_client/lib/core/sync/remote_deletes.dart:89`, `aura_client/lib/features/chat/data/memory_repository.dart:179` | — | — | called |  |
 | DELETE | `/api/v3/sessions/{session_id}` | `aura_client/lib/core/sync/remote_deletes.dart:90` | — | — | called |  |
-| GET | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:227`, `aura_client/lib/core/database/database.dart:254` (+2) | — | — | called |  |
-| POST | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:227`, `aura_client/lib/core/database/database.dart:254` (+2) | — | — | called |  |
+| GET | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:228`, `aura_client/lib/core/database/database.dart:255` (+2) | — | — | called |  |
+| POST | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:228`, `aura_client/lib/core/database/database.dart:255` (+2) | — | — | called |  |
 | GET | `/api/v3/tools` | — | — | — | none | to wire: tool catalogue is not shown anywhere |
 | WS | `/api/v3/voice/live` | `aura_client/lib/core/ai/voice/live/live_voice_protocol.dart:1`, `aura_client/lib/core/ai/voice/live/live_voice_socket.dart:13` (+1) | — | — | called |  |
 | POST | `/api/v3/voice/speak` | `aura_client/lib/core/ai/voice/speech_text.dart:1`, `aura_client/lib/core/ai/voice/voice_client.dart:12` (+1) | — | — | called |  |

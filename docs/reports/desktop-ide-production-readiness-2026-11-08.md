@@ -49,6 +49,11 @@ CI.
    AI half. Railway's `AURA_WORKERS` is a dashboard setting and was not checked.
    *Exit:* a shared registry/routing layer (e.g. Redis pub/sub keyed by user), with a test that
    runs two workers.
+   **Update (2026-11-08): built, not proven live.** The host-agent relay
+   (`aura_core/adapters/host_agent_relay.py`, ADR-011 amendment) lets any worker reach the
+   session over Redis pub/sub, with signed messages. Two-worker tests pass on the in-memory bus
+   and against a real Redis 7.0. It is on whenever `AURA_REDIS_URL` is set. Whether Railway has
+   Redis configured has not been checked, and without it this blocker still holds there.
 
 3. **Not installable.** No installer, no code signing, no updater, and `aura_hostd` is not bundled.
    The user has to type the path to a daemon binary they built themselves
@@ -56,6 +61,9 @@ CI.
 
 4. **No crash recovery.** `HostdSupervisor` is 60 lines that start the daemon and log its exit
    code. Nothing restarts it, and nothing recovers unsaved buffers (CB-26, M8.8).
+   **Update (2026-11-08): the daemon half is built.** The supervisor restarts a crashed daemon
+   with backoff and gives up on a crash loop, and the host panel shows it. A real SIGKILL test
+   passes locally. Unsaved-buffer recovery (hot exit) is still open.
 
 5. **Never proven end to end (GAP-026, M8.13).** No recorded session on a real machine of
    sign in → pair daemon → open repo → agent edit → Agent Review → merge → push. Desktop login has
@@ -111,7 +119,7 @@ in CI, and has not been seen live.
 | M8.5b | Gated on M4 TTFT p95 < 500 ms | OPEN (gate not met) |
 | M8.6 | Test explorer; DAP for ≥ 2 languages | Python DAP only |
 | M8.7 | Security UX review; SEC-02 regressions | BUILT; no review recorded |
-| M8.8 | Kill-daemon / kill-app recovery tests | OPEN |
+| M8.8 | Kill-daemon / kill-app recovery tests | Kill-daemon: BUILT, tested locally. Kill-app (unsaved buffers): OPEN |
 | M8.9 | Measured cold start, 100k-file repo, typing latency, screen reader | OPEN; nothing measured |
 | M8.10 | Signed installer; update + rollback | OPEN |
 | M8.11 | Opt-in content-free telemetry | OPEN |
@@ -122,8 +130,8 @@ in CI, and has not been seen live.
 
 1. Run Client CI and Host Daemon CI on `main` (runners are back; the jobs just need a trigger),
    then make the Windows jobs gating. Everything else is unverifiable on Windows until they run.
-2. Shared host-agent registry (blocker 2). It is the only blocker that breaks the product even
-   for a dogfooding user on a correctly built machine.
+2. Shared host-agent registry (blocker 2): built on 2026-11-08 (see blocker 2). What remains is
+   confirming `AURA_REDIS_URL` on Railway and observing a paired daemon there.
 3. M8.13 golden path on one real Windows machine. This is the smallest piece of PROVEN evidence
    and will surface whatever the unit suites cannot.
 4. Bundle and sign hostd, then add a restart-on-crash supervisor (M8.8, M8.10).

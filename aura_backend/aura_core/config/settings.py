@@ -28,6 +28,8 @@ from urllib.parse import urlsplit, urlunsplit
 from ..domain.errors import ConfigurationError
 from ..domain.llm import DataClassification, Modality, ModelPool, RoutingPolicy
 from .external_inference import (
+    CLAUDE_PROVIDER_KIND,
+    is_claude_model,
     is_external_inference_host,
     is_hosted_open_weight_host,
     is_open_weight_model,
@@ -250,7 +252,7 @@ class ProviderConfig:
     """
 
     name: str
-    kind: str  # openai_compatible | ollama | echo
+    kind: str  # openai_compatible | ollama | echo | claude (ADR-033, gated)
     base_url: str = ""
     model: str = ""
     api_key_env: str = ""
@@ -327,11 +329,19 @@ class ProviderConfig:
         "model", "messages", "stream", "stream_options", "max_tokens", "max_completion_tokens",
         "tools", "tool_choice", "functions", "function_call", "response_format", "n",
     })
+    #: Further fields reserved for ``kind=claude`` (ADR-033), whose request shape differs. Its
+    #: ``extra_body`` may carry ``output_config`` (effort), ``fallbacks``, ``inference_geo`` and
+    #: the like; it may not decide what the request is.
+    _CLAUDE_RESERVED_BODY_FIELDS: ClassVar[frozenset[str]] = frozenset({
+        "system", "thinking", "betas", "stop_sequences", "cache_control", "container",
+        "mcp_servers", "thread",
+    })
 
-    # Self-hosted runtimes only. There is deliberately no vendor kind here: `ollama` and
-    # `openai_compatible` between them cover Ollama, vLLM, llama.cpp's server, LocalAI, TGI and
-    # anything else exposing the OpenAI wire format, all of which run on our own hardware.
-    _KINDS = frozenset({"openai_compatible", "ollama", "echo"})
+    # Self-hosted runtimes, plus one gated vendor. `ollama` and `openai_compatible` between them
+    # cover Ollama, vLLM, llama.cpp's server, LocalAI, TGI and anything else exposing the OpenAI
+    # wire format, all of which run on our own hardware. `claude` is the single closed-model kind
+    # ADR-033 sanctions; `_gate_claude` refuses it unless AURA_ALLOW_CLAUDE_INFERENCE=true.
+    _KINDS = frozenset({"openai_compatible", "ollama", "echo", CLAUDE_PROVIDER_KIND})
 
     def __post_init__(self) -> None:
         if self.kind not in self._KINDS:
@@ -346,6 +356,8 @@ class ProviderConfig:
             raise ConfigurationError(f"provider {self.name!r} must declare a model")
         if self.kind in {"openai_compatible", "ollama"} and not self.base_url:
             raise ConfigurationError(f"provider {self.name!r} must declare a base_url")
+        if self.kind == CLAUDE_PROVIDER_KIND:
+            self._gate_claude()
         self._validate_model_metadata()
         if not self.health_path.startswith("/"):
             raise ConfigurationError(
@@ -457,7 +469,19 @@ class ProviderConfig:
                 f"provider {self.name!r} extra_body must be a JSON object",
                 details={"provider": self.name},
             )
-        reserved = sorted(set(parsed) & self._RESERVED_BODY_FIELDS)
+        reserved_fields = self._RESERVED_BODY_FIELDS
+        if self.kind == CLAUDE_PROVIDER_KIND:
+            reserved_fields = reserved_fields | self._CLAUDE_RESERVED_BODY_FIELDS
+            output_config = parsed.get("output_config")
+            if output_config is not None and (
+                not isinstance(output_config, dict) or "format" in output_config
+            ):
+                raise ConfigurationError(
+                    f"provider {self.name!r} extra_body.output_config must be an object without "
+                    f"'format': AURA sets the response format from the request's schema",
+                    details={"provider": self.name},
+                )
+        reserved = sorted(set(parsed) & reserved_fields)
         if reserved:
             raise ConfigurationError(
                 f"provider {self.name!r} extra_body may not set {reserved}: AURA sets those, and "
@@ -472,7 +496,9 @@ class ProviderConfig:
 
     @property
     def third_party(self) -> bool:
-        """Whether a third party runs this provider and can read its prompts (ADR-030)."""
+        """Whether a third party runs this provider and can read its prompts (ADR-030, ADR-033)."""
+        if self.kind == CLAUDE_PROVIDER_KIND:
+            return True
         if not self.base_url:
             return False
         return is_hosted_open_weight_host(urlsplit(self.base_url).hostname or "") is not None
@@ -483,6 +509,77 @@ class ProviderConfig:
         if self.max_data_classification:
             return DataClassification(self.max_data_classification)
         return DataClassification.INTERNAL if self.third_party else DataClassification.SENSITIVE
+
+    def _gate_claude(self) -> None:
+        """ADR-033: Anthropic's Claude, allowed only on purpose and only through the gated path.
+
+        Every refusal names its own reason, because each has a different fix. What this keeps
+        true even with the opt-in set:
+
+        * the endpoint is the SDK's own -- no ``base_url`` may redirect the key or the prompts;
+        * the key comes only from the per-slot ``AURA_PROVIDER_<NAME>_API_KEY_ENV`` variable, so
+          the SDK can never fall back to an ambient credential it finds lying around;
+        * the provider is third-party (``third_party`` is true for this kind), which gives it
+          ADR-030's ``internal`` data ceiling by default, the router's refusal of user images,
+          and an audit record per generation;
+        * it is never ``is_local``, so ``local_first`` and ``require_local`` never pick it.
+        """
+        details = {"provider": self.name, "kind": self.kind, "model": self.model}
+        if not _bool("ALLOW_CLAUDE_INFERENCE", False):
+            raise ConfigurationError(
+                f"provider {self.name!r} is kind {CLAUDE_PROVIDER_KIND!r}: Anthropic's hosted Claude "
+                f"models. This is allowed, but not by accident: every prompt, and any retrieved "
+                f"content the data ceiling admits, is sent to Anthropic, and these turns stop "
+                f"working without internet. Set AURA_ALLOW_CLAUDE_INFERENCE=true to accept that "
+                f"(ADR-033). AURA_ALLOW_HOSTED_INFERENCE does not cover it.",
+                details=details,
+            )
+        if self.base_url:
+            raise ConfigurationError(
+                f"provider {self.name!r} is kind {CLAUDE_PROVIDER_KIND!r} and must not set a "
+                f"base_url: it always uses the Anthropic SDK's own endpoint, so a configuration "
+                f"value can never redirect its key or its prompts elsewhere (ADR-033).",
+                details={**details, "base_url": self.base_url},
+            )
+        if not is_claude_model(self.model):
+            raise ConfigurationError(
+                f"provider {self.name!r} names model {self.model!r}, which is not a Claude model ID "
+                f"(expected e.g. 'claude-opus-5-5', exactly as Anthropic's API names it).",
+                details=details,
+            )
+        if not self.api_key_env:
+            raise ConfigurationError(
+                f"provider {self.name!r} must name the variable holding its key: set "
+                f"AURA_PROVIDER_{self.name.upper()}_API_KEY_ENV. The SDK's ambient credential "
+                f"lookup is never used (ADR-033).",
+                details=details,
+            )
+        if self.is_local:
+            raise ConfigurationError(
+                f"provider {self.name!r} is a hosted Claude model but declares is_local=true. A "
+                f"hosted provider is never local; the flag would let local_first prefer it and let "
+                f"local-only routing send it data it must not see.",
+                details=details,
+            )
+        if self.allow_prompt_training and (
+            self.data_classification_ceiling is DataClassification.SENSITIVE
+        ):
+            raise ConfigurationError(
+                f"provider {self.name!r} may train on its prompts and is also allowed SENSITIVE "
+                f"content. Lower its MAX_DATA_CLASSIFICATION, or drop ALLOW_PROMPT_TRAINING.",
+                details=details,
+            )
+        logger.warning(
+            "Claude inference permitted by AURA_ALLOW_CLAUDE_INFERENCE (ADR-033); prompts within "
+            "this provider's data ceiling are sent to Anthropic",
+            extra={**details, "max_data_classification": self.data_classification_ceiling.value},
+        )
+        if self.data_classification_ceiling is DataClassification.SENSITIVE:
+            logger.warning(
+                "Claude provider may receive SENSITIVE content (documents, memory, tool output, "
+                "Engineer workspaces): AURA_PROVIDER_<NAME>_MAX_DATA_CLASSIFICATION=sensitive",
+                extra=details,
+            )
 
     def _gate_hosted_open_weight(self, host: str, matched: str) -> None:
         """ADR-030: a hosted open-weight API is allowed only on purpose, and only for open weights.
@@ -650,6 +747,12 @@ class LLMSettings:
     #: How long a provider is benched after a ``429`` that names no reset (ADR-030 Phase 2).
     #: When the response carries ``Retry-After`` or ``x-ratelimit-reset*``, that wins.
     rate_limit_cooldown_s: float = 30.0
+    #: Route interactive turns whose message scores as complex to the ``reasoning`` pool
+    #: (aura_core/llm/complexity.py). Off by default, so an existing deployment routes exactly as
+    #: before; ADR-033 pairs it with a Claude provider declaring that pool.
+    #: AURA_LLM_COMPLEXITY_ROUTING / AURA_LLM_COMPLEXITY_THRESHOLD.
+    complexity_routing: bool = False
+    complexity_threshold: float = 0.5
 
     #: Used when nothing is configured, so ``aura_core`` is importable and testable out of the
     #: box. ``validate()`` refuses to let it run in staging/production.
@@ -697,6 +800,10 @@ class LLMSettings:
                 "LLM_USER_MAX_CONCURRENT_GENERATIONS", 0, minimum=0
             ),
             rate_limit_cooldown_s=_float("LLM_RATE_LIMIT_COOLDOWN_S", 30.0, minimum=1.0),
+            complexity_routing=_bool("LLM_COMPLEXITY_ROUTING", False),
+            complexity_threshold=_float(
+                "LLM_COMPLEXITY_THRESHOLD", 0.5, minimum=0.05, maximum=1.0
+            ),
         )
 
     @property
@@ -1088,6 +1195,11 @@ class InfrastructureSettings:
     document_backend: str = "memory"  # memory | postgres
     memory_backend: str = "memory"  # memory | postgres
     cache_backend: str = "memory"  # memory | redis
+    #: Relay desktop host-agent calls between gateway workers over Redis
+    #: (``adapters/host_agent_relay.py``). On whenever ``redis_url`` is set; ``False`` is the
+    #: kill switch back to single-process behaviour (only the worker holding a daemon's socket
+    #: can reach it).
+    host_agent_relay: bool = True
 
     @classmethod
     def from_env(cls) -> "InfrastructureSettings":
@@ -1100,11 +1212,20 @@ class InfrastructureSettings:
             document_backend=(_env("DOCUMENT_BACKEND", "memory") or "memory").lower(),
             memory_backend=(_env("MEMORY_BACKEND", "memory") or "memory").lower(),
             cache_backend=(_env("CACHE_BACKEND", "memory") or "memory").lower(),
+            host_agent_relay=_bool("HOST_AGENT_RELAY", True),
         )
 
     @property
     def qdrant_api_key(self) -> str:
         return os.environ.get(self.qdrant_api_key_env, "")
+
+    @property
+    def host_agent_relay_secret(self) -> str:
+        """The key the host-agent relay signs with: the deployment's JWT secret, read at call
+        time (it is hydrated from a secret file after settings load, as ``services/jwt_auth``
+        notes). Every gateway worker must share it already, or a token one worker minted would
+        not verify on another."""
+        return os.environ.get("AURA_JWT_SECRET") or os.environ.get("JWT_SECRET") or ""
 
 
 @dataclass(frozen=True, slots=True)

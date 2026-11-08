@@ -75,6 +75,10 @@ AURA_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 AURA_EMBEDDING_DIMENSION=384
 
 AURA_DATABASE_URL=<Railway Postgres plugin's connection string>
+# Also what lets a paired desktop (aura_hostd) be reached from every gateway worker: the
+# host-agent relay (ADR-011 amendment, 2026-11-08) is on whenever this and AURA_JWT_SECRET are
+# set. Without it, the image's default 4 workers each see only their own desktop connections, so
+# set AURA_WORKERS=1 instead. AURA_HOST_AGENT_RELAY=false turns the relay off.
 AURA_REDIS_URL=<Railway Redis plugin's connection string, or an external Redis>
 AURA_QDRANT_URL=<Qdrant Cloud or self-hosted Qdrant URL — Railway has no Qdrant plugin>
 AURA_QDRANT_API_KEY=<Qdrant API key>
