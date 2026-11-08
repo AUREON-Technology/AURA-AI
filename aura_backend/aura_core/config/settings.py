@@ -753,6 +753,13 @@ class LLMSettings:
     #: AURA_LLM_COMPLEXITY_ROUTING / AURA_LLM_COMPLEXITY_THRESHOLD.
     complexity_routing: bool = False
     complexity_threshold: float = 0.5
+    #: Wall-clock budget for all of one interactive turn's generations, fallbacks included
+    #: (PP-06, ``llm/deadline.py``). 0 = no budget: each attempt is bounded only by its own
+    #: timeout, which is the behaviour before this existed. AURA_LLM_TURN_GENERATION_BUDGET_S.
+    turn_generation_budget_s: float = 0.0
+    #: The most a stream may run after its first chunk (PP-07). 0 = no total limit; each chunk
+    #: is still bounded by the request timeout. AURA_LLM_STREAM_MAX_S.
+    stream_max_s: float = 0.0
 
     #: Used when nothing is configured, so ``aura_core`` is importable and testable out of the
     #: box. ``validate()`` refuses to let it run in staging/production.
@@ -804,6 +811,8 @@ class LLMSettings:
             complexity_threshold=_float(
                 "LLM_COMPLEXITY_THRESHOLD", 0.5, minimum=0.05, maximum=1.0
             ),
+            turn_generation_budget_s=_float("LLM_TURN_GENERATION_BUDGET_S", 0.0, minimum=0.0),
+            stream_max_s=_float("LLM_STREAM_MAX_S", 0.0, minimum=0.0),
         )
 
     @property

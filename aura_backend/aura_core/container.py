@@ -187,6 +187,7 @@ class Container:
             self.providers,
             default_policy=settings.llm.default_policy,
             default_timeout_s=settings.llm.request_timeout_s,
+            stream_max_s=settings.llm.stream_max_s,
             max_fallbacks=settings.llm.max_fallbacks,
             circuit_failure_threshold=settings.llm.circuit_failure_threshold,
             circuit_open_seconds=settings.llm.circuit_open_seconds,

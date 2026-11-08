@@ -80,6 +80,7 @@ from ..execution.agentic_loop import AgentRunContext
 from ..execution.confirmations import PendingConfirmationStore, ResumedTurn
 from ..execution.engine import ExecutionOutcome, StepEvent
 from ..llm.cache import InMemoryCache
+from ..llm.deadline import generation_budget, no_generation_budget
 from ..llm.router import TurnBudget
 from ..llm.sensitivity import DataScope, data_scope, escalate
 from ..llm.workload import effective_workload, workload_for_turn, workload_scope
@@ -347,7 +348,7 @@ class AIKernel:
             try:
                 with workload_scope(self._workload_hint(request)), data_scope(
                     *self._baseline_classification(request)
-                ) as scope:
+                ) as scope, generation_budget(self._turn_generation_budget_s(request)):
                     result = await self._run_turn(request, correlation, turn_id, started)
                     await self._remember_session_classification(request, scope)
                     return result
@@ -678,7 +679,9 @@ class AIKernel:
 
         with LogContext(correlation_id=correlation.value, route=request.route), workload_scope(
             self._workload_hint(request)
-        ), data_scope(*self._baseline_classification(request)) as scope:
+        ), data_scope(*self._baseline_classification(request)) as scope, generation_budget(
+            self._turn_generation_budget_s(request)
+        ):
             try:
                 deps = self._deps
                 budget = TurnBudget(
@@ -1981,6 +1984,25 @@ class AIKernel:
         llm = getattr(self._deps.settings, "llm", None) if self._deps.settings is not None else None
         return int(getattr(llm, "max_prompt_tokens", 400) or 400)
 
+    def _turn_generation_budget_s(self, request: TurnRequest) -> float | None:
+        """The generation budget for this turn (PP-06), or ``None`` for no budget.
+
+        Only for turns a person is waiting on in real time -- chat and voice. An Engineer loop
+        runs many generations over minutes under its own deadline (`engineer_loop_deadline_s`),
+        which a chat-sized budget would cut off; background workloads keep their per-attempt
+        timeouts only. A sub-turn delegated from a chat turn shares the parent's budget
+        (`generation_budget` never replaces an open one).
+        """
+        llm = getattr(self._deps.settings, "llm", None) if self._deps.settings is not None else None
+        seconds = float(getattr(llm, "turn_generation_budget_s", 0.0) or 0.0)
+        if seconds <= 0:
+            return None
+        if self._workload_hint(request).workload not in (
+            WorkloadClass.INTERACTIVE, WorkloadClass.VOICE,
+        ):
+            return None
+        return seconds
+
     def _completion_timeout_s(self) -> float:
         """Router first-token deadline. Must match ``AURA_LLM_TIMEOUT_S``.
 
@@ -2070,7 +2092,15 @@ class AIKernel:
             await asyncio.wait({task})
 
     async def _run_shadow(self, completion: CompletionRequest) -> None:
-        """Mirror traffic to shadow versions; never surface their output."""
+        """Mirror traffic to shadow versions; never surface their output.
+
+        Runs with no generation budget: the turn that started it is over, and its spent budget
+        would otherwise cut the shadow call short (PP-06).
+        """
+        with no_generation_budget():
+            await self._mirror_to_shadows(completion)
+
+    async def _mirror_to_shadows(self, completion: CompletionRequest) -> None:
         deps = self._deps
         if deps.models is None or deps.router is None:
             return

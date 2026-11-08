@@ -71,6 +71,7 @@ from ..domain.llm import (
 from ..ports.llm import LLMProvider
 from .admission import AdmissionController, AdmissionTicket, PoolLimits
 from .circuit import CircuitBreaker, CircuitState, LatencyTracker, ProviderStats
+from .deadline import time_left
 from .quota import QuotaReservation, QuotaTracker
 from .sensitivity import effective_classification
 from .workload import effective_workload
@@ -208,6 +209,7 @@ class ProviderRouter:
         quota: QuotaTracker | None = None,
         audit: Any = None,
         default_timeout_s: float = 60.0,
+        stream_max_s: float = 0.0,
     ) -> None:
         """``default_max_queue``/``default_queue_timeout_s``/``user_max_concurrent`` default to
         the pre-P2.4 behaviour (unbounded wait, no per-user quota). Each capacity group's slot
@@ -219,6 +221,9 @@ class ProviderRouter:
             raise ValidationError("ProviderRouter requires at least one provider")
         #: The deadline for a request that names none (``CompletionRequest.timeout_s=None``).
         self._default_timeout_s = default_timeout_s
+        #: The most a stream may run after its first chunk (PP-07); 0 = no total limit. Each
+        #: chunk is separately bounded by the request's own timeout, whatever this is.
+        self._stream_max_s = stream_max_s
         self._providers: dict[str, LLMProvider] = {p.name: p for p in providers}
         if len(self._providers) != len(providers):
             raise ValidationError("provider names must be unique")
@@ -406,6 +411,36 @@ class ProviderRouter:
             + 0.10 * ((3 - caps.quality_tier) / 2.0)
             + 0.05 * min(resource / 10.0, 1.0)
         )
+
+    def _attempt_timeout(self, request: CompletionRequest) -> tuple[float, bool]:
+        """This attempt's deadline, and whether the turn's generation budget set it (PP-06).
+
+        The budget only ever shortens an attempt. When it is the binding limit and fires, the
+        provider was not given its normal deadline, so the timeout says nothing about its health:
+        callers record it as ``turn_deadline``, not as a breaker failure.
+        """
+        assert request.timeout_s is not None  # filled in by `_with_timeout`
+        left = time_left(self._clock)
+        if left is not None and left < request.timeout_s:
+            return max(left, 0.0), True
+        return request.timeout_s, False
+
+    def _budget_spent(self) -> bool:
+        left = time_left(self._clock)
+        return left is not None and left <= 0
+
+    def _next_chunk_wait(self, request: CompletionRequest, started: float) -> float:
+        """How long to wait for a stream's next chunk once output has begun (PP-07).
+
+        A gap longer than the request's own deadline is a stall, whatever the provider's HTTP
+        read timeout is (an SDK-based provider may have none). ``stream_max_s`` additionally
+        caps the whole stream.
+        """
+        assert request.timeout_s is not None
+        wait = request.timeout_s
+        if self._stream_max_s > 0:
+            wait = min(wait, self._stream_max_s - (self._clock() - started))
+        return max(wait, 0.0)
 
     def _with_timeout(self, request: CompletionRequest) -> CompletionRequest:
         """``request`` with its deadline filled in: a request that names none gets this
@@ -684,6 +719,11 @@ class ProviderRouter:
         hint = effective_workload(request)
 
         for index, name in enumerate(decision.candidates[:limit]):
+            if self._budget_spent():
+                # The turn's generation budget is gone (PP-06): no attempt starts that could
+                # only be cut short.
+                attempts.append({"provider": name, "error": "turn_deadline"})
+                break
             stats = self._stats[name]
             # Read before `allows_request`, which takes the half-open probe slot as a side
             # effect. Nothing awaits in between, so this is the attempt that holds the slot.
@@ -714,10 +754,9 @@ class ProviderRouter:
             response: CompletionResponse | None = None
             used_tokens: int | None = None
             verdict = False
+            attempt_timeout, budget_bound = self._attempt_timeout(request)
             try:
-                response = await asyncio.wait_for(
-                    provider.complete(request), timeout=request.timeout_s
-                )
+                response = await asyncio.wait_for(provider.complete(request), timeout=attempt_timeout)
                 outcome = "success"
                 used_tokens = response.usage.total_tokens
                 elapsed = (self._clock() - started) * 1000.0
@@ -734,6 +773,15 @@ class ProviderRouter:
                     self._note_fallback(decision.candidates[index - 1], attempts)
                 return replace(response, queue_wait_ms=ticket.queue_wait_ms)
             except asyncio.TimeoutError as exc:
+                if budget_bound:
+                    # Cut short by the turn's budget, not by the provider's own deadline: no
+                    # verdict on its health, and nothing left for a fallback either.
+                    outcome = "turn_deadline"
+                    attempts.append({
+                        "provider": name, "error": "turn_deadline",
+                        "timeout_s": round(attempt_timeout, 1),
+                    })
+                    break
                 outcome = "timeout"
                 verdict = True
                 self._record_failure(name, exc)
@@ -826,6 +874,9 @@ class ProviderRouter:
         hint = effective_workload(request)
 
         for index, name in enumerate(decision.candidates[:limit]):
+            if self._budget_spent():
+                attempts.append({"provider": name, "error": "turn_deadline"})
+                break
             stats = self._stats[name]
             # As in `complete`: whether this attempt holds the half-open probe slot.
             probe = stats.breaker.state is CircuitState.HALF_OPEN
@@ -859,13 +910,14 @@ class ProviderRouter:
             stats.inflight += 1
             if self._metrics is not None:
                 self._metrics.llm_inflight.labels(provider=name).set(stats.inflight)
+            attempt_timeout, budget_bound = self._attempt_timeout(request)
 
             try:
                 iterator = provider.stream(request).__aiter__()
                 # Pull the first chunk here, inside the failover loop: an error raised now is
                 # still recoverable because nothing has reached the caller.
                 try:
-                    first = await asyncio.wait_for(iterator.__anext__(), timeout=request.timeout_s)
+                    first = await asyncio.wait_for(iterator.__anext__(), timeout=attempt_timeout)
                 except StopAsyncIteration:
                     first = None
 
@@ -877,7 +929,15 @@ class ProviderRouter:
                     emitted = True
                     usage = first.usage
                     yield first
-                    async for chunk in iterator:
+                    while True:
+                        # Bounded per chunk and in total (PP-07). The timeout scopes only the
+                        # wait for the provider, never the `yield`, so time the consumer spends
+                        # with a chunk is not charged to the provider.
+                        try:
+                            async with asyncio.timeout(self._next_chunk_wait(request, started)):
+                                chunk = await iterator.__anext__()
+                        except StopAsyncIteration:
+                            break
                         last_chunk_at = self._clock()
                         if chunk.usage is not None:
                             usage = chunk.usage
@@ -931,6 +991,14 @@ class ProviderRouter:
                     used_tokens = 0
                     attempts.append(self._record_rate_limited(name, exc))
                     continue
+                if not emitted and budget_bound and isinstance(exc, asyncio.TimeoutError):
+                    # As in `complete`: the turn's budget cut this short, not the provider.
+                    outcome = "turn_deadline"
+                    attempts.append({
+                        "provider": name, "error": "turn_deadline",
+                        "timeout_s": round(attempt_timeout, 1),
+                    })
+                    break
                 verdict = True
                 self._record_failure(name, exc)
                 kind = getattr(exc, "kind", None) or (
