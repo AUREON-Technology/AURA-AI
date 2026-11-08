@@ -51,6 +51,7 @@ from typing import Any, AsyncIterator, Callable, Mapping, Sequence
 from ..domain.errors import (
     AllProvidersFailedError,
     BudgetExceededError,
+    CapabilityUnavailableError,
     ProviderError,
     ValidationError,
 )
@@ -87,6 +88,34 @@ def _prompt_tokens(request: CompletionRequest) -> int:
 # declared speed tier (tier 2, the default, keeps exactly this value).
 _LATENCY_PRIOR_MS = 1500.0
 _SPEED_TIER_PRIOR = {1: 2.0, 2: 1.0, 3: 0.5}
+
+
+#: Exclusions caused by what a request *contains* rather than by a provider's health or
+#: abilities. When one of these took a provider out and nothing else answered, the turn failed
+#: for lack of capacity for this content, not because inference is down (CapabilityUnavailable).
+_CONTENT_EXCLUSIONS = frozenset({"data_classification", "third_party_image"})
+
+
+def _exhausted(
+    message: str, decision: "RoutingDecision", attempts: Sequence[Mapping[str, Any]]
+) -> AllProvidersFailedError:
+    """The error for a request no provider answered, naming content refusals when there were any.
+
+    A provider excluded for content would have been tried had the turn not contained what it
+    does, so "the model is not answering, retry" is the wrong thing to tell the user: retrying
+    sends the same content to the same refusal.
+    """
+    refused = sorted(n for n, r in decision.excluded.items() if r in _CONTENT_EXCLUSIONS)
+    if refused:
+        return CapabilityUnavailableError(
+            f"{message}; no provider permitted to receive this turn's content answered",
+            attempts=list(attempts),
+            details={
+                "refused_for_content": refused,
+                "data_classification": decision.data_classification,
+            },
+        )
+    return AllProvidersFailedError(message, attempts=list(attempts))
 
 
 def _attempt_summary(attempts: Sequence[Mapping[str, Any]]) -> str:
@@ -644,9 +673,10 @@ class ProviderRouter:
         await self._quota.ensure_hydrated()
         decision = self.plan(request)
         if not decision.candidates:
-            raise AllProvidersFailedError(
+            raise _exhausted(
                 "no provider satisfies this request's requirements",
-                attempts=[{"provider": n, "reason": r} for n, r in decision.excluded.items()],
+                decision,
+                [{"provider": n, "reason": r} for n, r in decision.excluded.items()],
             )
 
         attempts: list[dict[str, Any]] = []
@@ -748,10 +778,10 @@ class ProviderRouter:
                     )
                 )
 
-        raise AllProvidersFailedError(
-            f"all {len(attempts)} provider attempt(s) failed"
-            + _attempt_summary(attempts),
-            attempts=attempts,
+        raise _exhausted(
+            f"all {len(attempts)} provider attempt(s) failed" + _attempt_summary(attempts),
+            decision,
+            attempts,
         )
 
     def _note_fallback(self, failed_provider: str, attempts: Sequence[Mapping[str, Any]]) -> None:
@@ -785,9 +815,10 @@ class ProviderRouter:
         await self._quota.ensure_hydrated()
         decision = self.plan(request)
         if not decision.candidates:
-            raise AllProvidersFailedError(
+            raise _exhausted(
                 "no provider satisfies this request's requirements",
-                attempts=[{"provider": n, "reason": r} for n, r in decision.excluded.items()],
+                decision,
+                [{"provider": n, "reason": r} for n, r in decision.excluded.items()],
             )
 
         attempts: list[dict[str, Any]] = []
@@ -942,10 +973,11 @@ class ProviderRouter:
                     )
                 )
 
-        raise AllProvidersFailedError(
+        raise _exhausted(
             f"all {len(attempts)} provider attempt(s) failed before streaming began"
             + _attempt_summary(attempts),
-            attempts=attempts,
+            decision,
+            attempts,
         )
 
     # -- introspection and lifecycle ---------------------------------------------------
