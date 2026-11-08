@@ -659,26 +659,23 @@ class TestHostAgentApprovalTimeout:
         assert captured["timeout_s"] == 405.0
 
 
-class TestWorkspaceRootAsCwd:
-    """FSA-006, second half: the IDE's active root travels to the daemon as `run`'s `cwd`.
 
-    The daemon has tolerated a `cwd` param on `run` since D5 and refuses one outside every granted
-    root; until now nothing sent it, so `run` always executed in the first granted root.
-    """
+class TestWorkspaceRootBindsTheDaemonTask:
+    """FSA-006, second half: the IDE's active root travels to the daemon once, as `create_task`'s
+    `cwd`, and binds the task; `run` and the file RPCs carry nothing new."""
 
     _ROOT = "/home/me/projects/aura"
 
     @staticmethod
-    def _recording_daemon(registry):
-        seen: list[dict] = []
+    def _recording_daemon():
+        seen: list[tuple[str, dict]] = []
 
         async def send(frame):
             method, call_id, params = frame["method"], frame["id"], frame["params"]
+            seen.append((method, params))
             if method == "create_task":
                 session.resolve({"type": "result", "id": call_id, "result": {"task_id": "task-1"}})
                 return
-            seen.append(params)
-            session.resolve({"type": "stream", "id": call_id, "stream": "stdout", "data": "ok\n"})
             session.resolve({
                 "type": "result", "id": call_id,
                 "result": {"stdout": "ok\n", "stderr": "", "exit_code": 0},
@@ -688,51 +685,62 @@ class TestWorkspaceRootAsCwd:
         return session, seen
 
     @pytest.mark.anyio
-    async def test_run_forwards_the_root_as_cwd(self) -> None:
+    async def test_create_task_sends_the_root_as_cwd(self) -> None:
         registry = HostAgentRegistry()
-        session, seen = self._recording_daemon(registry)
+        session, seen = self._recording_daemon()
         await registry.register(session)
         runner = HostAgentSandboxRunner(registry)
-        handle = await runner.create_task(user_id=UserId("u1"))
 
-        await runner.run(handle, ["sh", "-c", "pwd"], timeout_s=5, cwd=self._ROOT)
+        await runner.create_task(user_id=UserId("u1"), workspace_root=self._ROOT)
 
-        assert seen[0]["cwd"] == self._ROOT
-
-    @pytest.mark.anyio
-    async def test_run_streaming_forwards_the_root_as_cwd(self) -> None:
-        registry = HostAgentRegistry()
-        session, seen = self._recording_daemon(registry)
-        await registry.register(session)
-        runner = HostAgentSandboxRunner(registry)
-        handle = await runner.create_task(user_id=UserId("u1"))
-
-        _ = [e async for e in runner.run_streaming(handle, ["sh", "-c", "pwd"], timeout_s=5, cwd=self._ROOT)]
-
-        assert seen[0]["cwd"] == self._ROOT
+        assert seen == [("create_task", {"cwd": self._ROOT})]
 
     @pytest.mark.anyio
     async def test_no_root_sends_no_cwd_key_so_the_daemon_keeps_its_fallback(self) -> None:
-        """An absent `cwd` is the daemon's "first granted root" path; sending `null` would be a
-        different wire shape that an older daemon has never been exercised against."""
+        """An absent key is the daemon's "first granted root" path; `null` is a wire shape no
+        daemon version has been exercised against."""
         registry = HostAgentRegistry()
-        session, seen = self._recording_daemon(registry)
+        session, seen = self._recording_daemon()
         await registry.register(session)
         runner = HostAgentSandboxRunner(registry)
-        handle = await runner.create_task(user_id=UserId("u1"))
+
+        await runner.create_task(user_id=UserId("u1"))
+
+        assert seen == [("create_task", {})]
+
+    @pytest.mark.anyio
+    async def test_run_carries_no_cwd_the_binding_is_on_the_task(self) -> None:
+        registry = HostAgentRegistry()
+        session, seen = self._recording_daemon()
+        await registry.register(session)
+        runner = HostAgentSandboxRunner(registry)
+        handle = await runner.create_task(user_id=UserId("u1"), workspace_root=self._ROOT)
 
         await runner.run(handle, ["sh", "-c", "pwd"], timeout_s=5)
 
-        assert "cwd" not in seen[0]
+        assert seen[1] == ("run", {"task_id": "task-1", "command": ["sh", "-c", "pwd"], "timeout_s": 5})
 
     @pytest.mark.anyio
-    async def test_the_composite_passes_it_through_to_the_routed_runner(self) -> None:
+    async def test_the_composite_forwards_the_root_to_the_host_runner(self) -> None:
         registry = HostAgentRegistry()
-        session, seen = self._recording_daemon(registry)
+        session, seen = self._recording_daemon()
         await registry.register(session)
         composite = CompositeSandboxRunner(host_runner=HostAgentSandboxRunner(registry), fallback=None)
-        handle = await composite.create_task(user_id=UserId("u1"))
 
-        await composite.run(handle, ["sh", "-c", "pwd"], timeout_s=5, cwd=self._ROOT)
+        await composite.create_task(user_id=UserId("u1"), workspace_root=self._ROOT)
 
-        assert seen[0]["cwd"] == self._ROOT
+        assert seen == [("create_task", {"cwd": self._ROOT})]
+
+    @pytest.mark.anyio
+    async def test_the_composite_never_hands_a_host_path_to_the_server_side_fallback(self) -> None:
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+
+        fallback = InMemorySandboxRunner()
+        composite = CompositeSandboxRunner(
+            host_runner=HostAgentSandboxRunner(HostAgentRegistry()), fallback=fallback
+        )
+
+        handle = await composite.create_task(user_id=UserId("u1"), workspace_root=self._ROOT)
+
+        await composite.write_file(handle, "a.txt", "hi")
+        assert await composite.read_file(handle, "a.txt") == "hi"

@@ -86,3 +86,57 @@ class TestKernelPutsTheRootInTheToolContext:
         context = container.kernel._tool_context(request, tainted=False)
 
         assert context.metadata["workspace_root"] is None
+
+
+class TestAnApprovedTurnKeepsTheRootItWasProposedIn:
+    """Approving a held call must run it where it was proposed. The resume request is built from
+    whatever the client sends *now*; if the user has since opened another workspace, that root
+    would win and a `git reset --hard` approved for repo A would run in repo B -- in a trusted root,
+    without a second prompt. So the root is stored with the pending turn and pinned on resume, the
+    same way the held turn's message and persona already are."""
+
+    async def test_the_store_keeps_the_root_with_the_pending_turn(self) -> None:
+        from aura_core.domain.identifiers import PlanId, StepId
+        from aura_core.domain.planning import Goal, Plan, PlanStep, StepKind
+        from aura_core.execution.confirmations import PendingCall, PendingConfirmationStore
+        from aura_core.llm.cache import InMemoryCache
+
+        held = PlanStep(
+            id=StepId("s1"), kind=StepKind.TOOL, tool="run_command", description="reset",
+            arguments={"command": "git reset --hard"},
+        ).blocked("needs_confirmation")
+        store = PendingConfirmationStore(InMemoryCache())
+        ids = await store.issue(
+            user_id="desktop-user", session_id="s-1", agent="engineer", message="reset it",
+            plan=Plan(id=PlanId.new(), goal=Goal(description="g"), steps=(held,)), tainted=False,
+            calls=[PendingCall("s1", "call_s1", "run_command", {"command": "git reset --hard"})],
+            workspace_root=_ROOT,
+        )
+
+        resumed = await store.claim([ids["call_s1"]], user_id="desktop-user", session_id="s-1")
+
+        assert resumed.workspace_root == _ROOT
+
+    async def test_the_kernel_pins_the_stored_root_over_the_resend_s(self, container) -> None:
+        from dataclasses import replace
+
+        from aura_core.domain.identifiers import PlanId
+        from aura_core.domain.planning import Goal, Plan
+        from aura_core.execution.confirmations import ConfirmationGrant, ResumedTurn
+
+        resumed = ResumedTurn(
+            message="reset it", agent="engineer",
+            plan=Plan(id=PlanId.new(), goal=Goal(description="g"), steps=()),
+            tainted=False, grant=ConfirmationGrant({}, binding="t"), approved_call_ids=(),
+            workspace_root=_ROOT,
+        )
+        resend = TurnRequest(
+            message="approve", user_id=UserId("desktop-user"), workspace_root="/home/me/other-repo",
+        )
+
+        pinned = container.kernel._resumed_request(resend, resumed)
+
+        assert pinned.workspace_root == _ROOT
+        assert replace(pinned, workspace_root=None) == replace(
+            resend, message="reset it", agent="engineer", workspace_root=None
+        )

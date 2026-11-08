@@ -144,6 +144,10 @@ class ResumedTurn:
     grant: ConfirmationGrant
     approved_call_ids: tuple[str, ...]
     origin_turn_id: str | None = None
+    #: The Desktop IDE workspace root the held turn was proposed in (FSA-006). Pinned on resume so
+    #: an approved command runs where the user saw it proposed, not in whatever workspace the
+    #: client has open by the time it sends the approval.
+    workspace_root: str | None = None
 
 
 class PendingConfirmationStore:
@@ -169,6 +173,7 @@ class PendingConfirmationStore:
         tainted: bool,
         calls: Sequence[PendingCall],
         turn_id: str | None = None,
+        workspace_root: str | None = None,
     ) -> dict[str, str]:
         """Store the pending turn; return ``{call_id: approval_id}`` for each held call."""
         if not calls:
@@ -196,6 +201,7 @@ class PendingConfirmationStore:
             "message": message,
             "tainted": bool(tainted),
             "turn_id": turn_id,
+            "workspace_root": workspace_root,
             "plan": _plan_to_dict(plan),
             "calls": entries,
         }
@@ -279,6 +285,7 @@ class PendingConfirmationStore:
             grant=ConfirmationGrant(approved, binding=token),
             approved_call_ids=tuple(approved),
             origin_turn_id=record.get("turn_id"),
+            workspace_root=record.get("workspace_root") or None,
         )
 
 

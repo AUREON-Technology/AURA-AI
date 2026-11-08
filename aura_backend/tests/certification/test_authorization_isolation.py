@@ -58,6 +58,19 @@ _ADMIN_SAFE_WITH_FAKE_TARGET: dict[str, tuple[str, str]] = {
     "/api/v3/admin/jobs/{task_id}": ("GET", f"{SYNTHETIC_PREFIX}-no-such-task"),
     "/api/v3/admin/learning/jobs/{job_id}": ("GET", f"{SYNTHETIC_PREFIX}-no-such-job"),
     "/api/v3/admin/learning/datasets/{digest}": ("GET", f"{SYNTHETIC_PREFIX}-no-such-digest"),
+    # Track AP (ADR-018..028) and service keys (ADR-029): reads only. The route table these are
+    # checked against is the local app's since 2026-11-08, which is what surfaced them.
+    "/api/v3/admin/blueprints": ("GET", ""),
+    "/api/v3/admin/blueprints/active": ("GET", ""),
+    "/api/v3/admin/blueprints/{version}": ("GET", f"{SYNTHETIC_PREFIX}-no-such-version"),
+    "/api/v3/admin/blueprints/{version}/evaluation": ("GET", f"{SYNTHETIC_PREFIX}-no-such-version"),
+    "/api/v3/admin/connectors": ("GET", ""),
+    "/api/v3/admin/connectors/{connector_id}": ("GET", f"{SYNTHETIC_PREFIX}-no-such-connector"),
+    "/api/v3/admin/service-keys": ("GET", ""),
+    "/api/v3/admin/twin/diff": ("GET", ""),
+    "/api/v3/admin/twin/versions": ("GET", ""),
+    "/api/v3/admin/twin/versions/{version}": ("GET", f"{SYNTHETIC_PREFIX}-no-such-version"),
+    "/api/v3/admin/twin/versions/{version}/plan": ("GET", f"{SYNTHETIC_PREFIX}-no-such-version"),
 }
 
 #: Not probed, and why. Each would act on real state if authorization failed, so asking the
@@ -82,6 +95,23 @@ _ADMIN_UNSAFE_TO_PROBE: dict[str, str] = {
     "/api/v3/admin/providers/{name}/reset-circuit": "would reset a live provider circuit breaker",
     "/api/v3/admin/sources/{source_id}": "PATCH/DELETE would modify a real knowledge source",
     "/api/v3/admin/knowledge/documents/{document_id}/cag-pin": "would repin live CAG content",
+    # Track AP (ADR-018..028) and service keys (ADR-029). Each acts on the live Project Blueprint,
+    # a connected system or the key registry if authorization failed.
+    "/api/v3/admin/blueprints/rollback": "would roll the active blueprint back",
+    "/api/v3/admin/blueprints/{version}/approve": "would approve a blueprint version",
+    "/api/v3/admin/blueprints/{version}/deploy": "would deploy a blueprint version",
+    "/api/v3/admin/blueprints/{version}/evaluate": "would run an evaluation against a real version",
+    "/api/v3/admin/blueprints/{version}/request-approval": "would create a real approval request",
+    "/api/v3/admin/connectors": "POST would register a real connector",
+    "/api/v3/admin/connectors/{connector_id}": "DELETE would remove a real connector",
+    "/api/v3/admin/connectors/{connector_id}/activate": "would activate a real connector",
+    "/api/v3/admin/connectors/{connector_id}/disable": "would disable a real connector",
+    "/api/v3/admin/connectors/{connector_id}/discover": "would run discovery against a real system",
+    "/api/v3/admin/connectors/{connector_id}/health": "POST would probe a real connected system",
+    "/api/v3/admin/service-keys": "POST would mint a real service key",
+    "/api/v3/admin/service-keys/{key_id}/revoke": "would revoke a real service key",
+    "/api/v3/admin/twin/snapshot": "would snapshot the live Project Twin",
+    "/api/v3/admin/twin/versions/{version}/compile": "would compile a blueprint from a twin version",
 }
 
 
@@ -413,17 +443,29 @@ class TestANormalUserCannotActAsAdmin:
             f"a User-role token reached an admin route: {explain(response, target)}"
         )
 
-    def test_every_admin_route_is_classified(self, client, target) -> None:
-        """Mirrors the local suite's completeness guard, against what is actually deployed.
+    def test_every_admin_route_is_classified(self) -> None:
+        """Mirrors the local suite's completeness guard against this release's own route table.
 
         A new admin route must be declared either safe to probe or unsafe-with-a-reason before
         this passes. Silence is the failure mode -- an admin route nobody classified is an admin
         route nobody checked.
-        """
-        spec = client.get("/openapi.json")
-        assert spec.status_code == 200, explain(spec, target)
 
-        live_admin = {p for p in spec.json().get("paths", {}) if "/admin/" in p}
+        The table comes from the app this checkout builds, not from the deployment: since
+        2026-11-08 `/openapi.json` is not served in staging or production
+        (`tests/unit/test_openapi_exposure.py`). The suite is run from the release commit it
+        certifies -- the operator's responsibility, which this test cannot check from here -- so
+        the local table is the deployed table.
+        """
+        from aura_core.api import Principal, build_app
+        from aura_core.config import load_settings
+        from aura_core.container import Container
+        from aura_core.domain import UserId
+
+        async def authenticate(request) -> Principal:
+            return Principal(user_id=UserId("cert-route-table"), role="Admin")
+
+        app = build_app(Container(load_settings(refresh=True, validate=False)), authenticator=authenticate)
+        live_admin = {p for p in app.openapi().get("paths", {}) if "/admin/" in p}
         classified = set(_ADMIN_SAFE_WITH_FAKE_TARGET) | set(_ADMIN_UNSAFE_TO_PROBE)
         unclassified = sorted(live_admin - classified)
 

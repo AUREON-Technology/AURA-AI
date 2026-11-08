@@ -70,6 +70,11 @@ class TaskHandler {
   /// cut. Constructing one with a fresh `GitService` when not supplied preserves every existing
   /// `TaskHandler(roots, approvals, gitService)` call site's exact behavior.
   final IsolatedTaskRegistry _isolatedTasks;
+
+  /// Non-isolated tasks bound to the IDE's active root at `create_task` (FSA-006); isolated
+  /// tasks are bound through [_isolatedTasks] instead. Never reaped: a task_id is minted per
+  /// turn and the entries are two strings each, like [_activeTaskIds].
+  final Map<String, WorkspaceRoot> _boundRoots = {};
   final Set<String> _activeTaskIds = {};
 
   Future<Map<String, Object?>> createTask(Map<String, dynamic> params) async {
@@ -81,7 +86,35 @@ class TaskHandler {
     if (isolate && taskKey != null) {
       _isolatedTasks.registerConfig(taskId, taskKey: taskKey, baseBranch: params['base_branch'] as String?);
     }
+    // FSA-006: the Desktop IDE's active workspace root, sent by the backend as `cwd`
+    // (aura_backend/aura_core/adapters/host_agent.py::create_task). It binds this task to that
+    // root for every RPC made on the task_id -- run, write, read, git -- so a user with several
+    // granted roots gets the Engineer in the one the IDE shows, not in whichever root was granted
+    // first. A path outside every granted root is refused here, before anything runs. Absent
+    // (older backend, no open workspace) nothing is bound and each RPC falls back to its own
+    // lookup, as before.
+    final cwdParam = params['cwd'] as String?;
+    if (cwdParam != null) {
+      final root = _roots.findContainingRoot(cwdParam);
+      if (root == null) {
+        throw RpcError('no granted workspace root contains "$cwdParam" -- grant it first');
+      }
+      if (isolate && taskKey != null) {
+        // The worktree is carved out of the root the IDE shows, not out of the first granted one.
+        await _isolatedTasks.resolve(taskId, cwdParam);
+      } else {
+        _boundRoots[taskId] = root;
+      }
+    }
     return {'task_id': taskId, 'isolated': isolate && taskKey != null};
+  }
+
+  /// The root a task_id was bound to at `create_task` (FSA-006): an isolated task's worktree, or
+  /// the IDE root a non-isolated task was created with. `null` for a task created without one,
+  /// whose RPCs each resolve their own root as they always have.
+  WorkspaceRoot? _boundRootFor(String? taskId) {
+    if (taskId == null) return null;
+    return _isolatedTasks.boundRoot(taskId) ?? _boundRoots[taskId];
   }
 
   /// D6 plan section C.3 (the write-gating retrofit): the agent-facing write RPC now goes through
@@ -92,7 +125,7 @@ class TaskHandler {
     final path = _requireString(params, 'path');
     final content = _requireString(params, 'content');
     final taskId = params['task_id'] as String?;
-    var root = _isolatedTasks.boundRoot(taskId);
+    var root = _boundRootFor(taskId);
     if (root == null && _isolatedTasks.needsResolution(taskId)) {
       root = await _isolatedTasks.resolve(taskId, path);
     }
@@ -134,7 +167,7 @@ class TaskHandler {
     // Resolved once, from the first operation's path, then reused for every operation below --
     // once a task_id is bound to an ephemeral root, every path in this batch must resolve only
     // against it (D8 plan Part B.2.3), never fall back to searching other granted roots.
-    var taskRoot = _isolatedTasks.boundRoot(taskId);
+    var taskRoot = _boundRootFor(taskId);
     if (taskRoot == null && _isolatedTasks.needsResolution(taskId)) {
       final firstPath = rawOps.isNotEmpty && rawOps.first is Map
           ? (Map<String, dynamic>.from(rawOps.first as Map)['path'] as String?)
@@ -209,7 +242,7 @@ class TaskHandler {
   Future<Map<String, Object?>> readFile(Map<String, dynamic> params) async {
     final path = _requireString(params, 'path');
     final taskId = params['task_id'] as String?;
-    var root = _isolatedTasks.boundRoot(taskId);
+    var root = _boundRootFor(taskId);
     if (root == null && _isolatedTasks.needsResolution(taskId)) {
       root = await _isolatedTasks.resolve(taskId, path);
     }
@@ -238,15 +271,17 @@ class TaskHandler {
     if (commandArgv.isEmpty) {
       throw RpcError('"command" must be a non-empty list of arguments');
     }
-    // The Desktop IDE's active workspace root, sent by the backend's `run_command` since the
-    // FSA-006 follow-up (aura_core/tools/coding.py). Resolved and contained below exactly like a
-    // path the agent named itself; absent (older backend, no open workspace) the first granted
-    // root is used, as before.
+    // A per-call `cwd` is tolerated for callers that do not bind their task at `create_task`
+    // (FSA-006): resolved and contained exactly like a path the agent named itself. For a bound
+    // task -- the backend since the FSA-006 follow-up -- the binding is authoritative and a
+    // per-call `cwd` is ignored: an isolated task's worktree lies outside the parent root the IDE
+    // names, and honouring the parent would either escape the worktree or refuse the command.
     final cwdParam = params['cwd'] as String?;
     final requestedTimeout = (params['timeout_s'] as num?)?.toDouble() ?? 60.0;
     final taskId = params['task_id'] as String?;
 
-    var root = _isolatedTasks.boundRoot(taskId);
+    var root = _boundRootFor(taskId);
+    final bound = root != null;
     if (root == null && _isolatedTasks.needsResolution(taskId)) {
       root = await _isolatedTasks.resolve(taskId, cwdParam);
     }
@@ -260,7 +295,9 @@ class TaskHandler {
             : 'no workspace root is granted -- run `aura_hostd grant <path>` first',
       );
     }
-    final cwd = cwdParam != null ? _roots.requireContained(root, cwdParam) : root.canonicalPath;
+    final cwd = cwdParam != null && !bound
+        ? _roots.requireContained(root, cwdParam)
+        : root.canonicalPath;
 
     final commandForPolicy = _effectiveShellCommand(commandArgv);
     final verdict = evaluateCommand(commandForPolicy, workspaceTrusted: root.trusted);
@@ -353,7 +390,7 @@ class TaskHandler {
 
     return {
       'stdout': stdoutBuf.toString(),
-      'stderr': stderrBuf.toString(),
+      'stderr': nameMissingExecutable(stderrBuf.toString(), exitCode, commandArgv),
       'exit_code': exitCode,
     };
   }
@@ -496,6 +533,28 @@ String _effectiveShellCommand(List<String> argv) {
       (argv[0] == 'sh' || argv[0] == 'bash' || argv[0] == 'cmd.exe') &&
       (argv[1] == '-c' || argv[1] == '/c');
   return looksLikeShellWrapper ? argv[2] : argv.join(' ');
+}
+
+/// Make a missing executable name itself, whatever `stdbuf` said.
+///
+/// `_lineBuffered` wraps every command in `stdbuf -oL -eL` where it exists. When the wrapped
+/// program cannot be executed, GNU coreutils reports
+/// `stdbuf: failed to run command 'prog': No such file or directory` -- the name is there -- but
+/// uutils coreutils (the `stdbuf` on `ubuntu-latest` since Ubuntu 26.04) reports
+/// `stdbuf: failed to execute process: No such file or directory`, which names nothing. The
+/// contract the Engineer agent and the user rely on is "a missing executable tells you which one"
+/// (`task_handler_test.dart`), so when the wrapper's own exec failure comes back without the
+/// program's name, this appends it. Anything else -- a command that ran, a shell's own `not
+/// found`, a wrapper message that already names the program -- is returned untouched.
+String nameMissingExecutable(String stderr, int exitCode, List<String> commandArgv) {
+  if (exitCode != 126 && exitCode != 127) return stderr;
+  if (!stderr.startsWith('stdbuf:')) return stderr;
+  if (commandArgv.isEmpty) return stderr;
+  final program = commandArgv.first;
+  if (stderr.contains(program)) return stderr;
+  final separator = stderr.isEmpty || stderr.endsWith('\n') ? '' : '\n';
+  return "$stderr$separator[aura_hostd] could not execute '$program': not found on PATH or not "
+      'executable\n';
 }
 
 bool? _stdbufAvailableCache;

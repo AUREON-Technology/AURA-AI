@@ -38,10 +38,13 @@ PUBLIC = {
     # with no configuration in it -- see test_release_identity.py.
     ("GET", "/health/version"): "release identity -- deploy verification, no credential yet",
     ("GET", "/metrics"): "Prometheus scrape; refused publicly at nginx (SEC-12)",
-    ("GET", "/openapi.json"): "schema, no data",
-    ("GET", "/docs"): "schema UI, no data",
-    ("GET", "/docs/oauth2-redirect"): "schema UI, no data",
-    ("GET", "/redoc"): "schema UI, no data",
+    # The four schema routes exist only when the environment is not production-like: this suite
+    # builds a development app, where they are public; in staging/production they are not mounted
+    # at all (tests/unit/test_openapi_exposure.py).
+    ("GET", "/openapi.json"): "schema, no data; development only",
+    ("GET", "/docs"): "schema UI, no data; development only",
+    ("GET", "/docs/oauth2-redirect"): "schema UI, no data; development only",
+    ("GET", "/redoc"): "schema UI, no data; development only",
     ("POST", "/api/v3/auth/nonce"): "attestation nonce, issued before a session can exist",
     ("POST", "/api/v3/auth/refresh"): "authenticated by the refresh token in the body",
     ("POST", "/api/v3/auth/revoke"): "authenticated by the refresh token in the body",

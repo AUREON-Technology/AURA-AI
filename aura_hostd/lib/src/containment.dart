@@ -246,18 +246,25 @@ class WorkspaceRoots {
     return resolved;
   }
 
-  /// Finds the first granted root that contains [rawPath] once fully resolved, or `null` if none
-  /// does. Used when a call does not name which root it means (paths are workspace-relative from
-  /// the tool layer's point of view) and the daemon must find it among everything granted.
+  /// Finds the granted root that contains [rawPath] once fully resolved, or `null` if none does.
+  /// Used when a call does not name which root it means (paths are workspace-relative from the
+  /// tool layer's point of view) and the daemon must find it among everything granted.
+  ///
+  /// When granted roots nest, the most specific (longest) containing root wins, whatever the
+  /// grant order: trust is per root, and a path under an untrusted `/work/vendor` granted after a
+  /// trusted `/work` must not inherit the outer root's trust just because it was granted first.
   WorkspaceRoot? findContainingRoot(String rawPath) {
+    WorkspaceRoot? best;
     for (final root in _roots) {
       try {
         requireContained(root, rawPath);
-        return root;
       } on ContainmentViolation {
         continue;
       }
+      if (best == null || root.canonicalPath.length > best.canonicalPath.length) {
+        best = root;
+      }
     }
-    return null;
+    return best;
   }
 }

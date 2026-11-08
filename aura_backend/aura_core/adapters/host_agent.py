@@ -257,6 +257,7 @@ class HostAgentSandboxRunner:
         user_id: UserId | None = None,
         session_id: str | None = None,
         isolate: bool = False,
+        workspace_root: str | None = None,
     ) -> SandboxHandle:
         if user_id is None:
             raise SandboxError("the host-agent sandbox requires a caller identity")
@@ -275,6 +276,13 @@ class HostAgentSandboxRunner:
         if isolate and session_id:
             params["isolate"] = True
             params["task_key"] = session_id
+        # FSA-006: the IDE's active root binds the task on the daemon (`task_handler.dart::
+        # createTask`), so every RPC on this handle resolves against it. A key only when the
+        # caller named one: the daemon's fallback for an absent key is "the first granted root",
+        # and an explicit `null` is a wire shape no daemon version has been exercised against.
+        # The daemon resolves and contains the path; this side never interprets it.
+        if workspace_root:
+            params["cwd"] = workspace_root
         result = await session.call("create_task", params, timeout_s=self._call_timeout_s)
         task_id = str((result or {}).get("task_id") or uuid.uuid4().hex)
         self._handle_owners[task_id] = user_id
@@ -289,14 +297,11 @@ class HostAgentSandboxRunner:
             raise SandboxError("the desktop app disconnected -- reconnect and try again")
         return session
 
-    async def run(
-        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float,
-        cwd: str | None = None,
-    ) -> SandboxResult:
+    async def run(self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float) -> SandboxResult:
         session = await self._session_for(handle)
         result = await session.call(
             "run",
-            self._run_params(handle, command, timeout_s, cwd),
+            {"task_id": handle.task_id, "command": list(command), "timeout_s": timeout_s},
             # A little slack over the tool's own timeout so a daemon-side timeout response
             # (which the daemon is expected to enforce itself) has time to arrive before this
             # side gives up first and reports a less specific transport timeout instead. Also
@@ -362,25 +367,8 @@ class HostAgentSandboxRunner:
             timeout_s=max(self._call_timeout_s, 330.0),  # daemon-side approval can wait up to 5m
         )
 
-    @staticmethod
-    def _run_params(
-        handle: SandboxHandle, command: Sequence[str], timeout_s: float, cwd: str | None
-    ) -> dict[str, Any]:
-        """The `run` RPC's params. `cwd` (the IDE's active root, audit FSA-006) is a key only when
-        the caller named one: the daemon's own fallback for an absent key is "the first granted
-        root" (`task_handler.dart`), and an explicit `null` is a wire shape no daemon version has
-        been exercised against. The daemon resolves and contains the path; this side never
-        interprets it."""
-        params: dict[str, Any] = {
-            "task_id": handle.task_id, "command": list(command), "timeout_s": timeout_s,
-        }
-        if cwd:
-            params["cwd"] = cwd
-        return params
-
     async def run_streaming(
-        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float,
-        cwd: str | None = None,
+        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
     ) -> AsyncIterator[SandboxOutputEvent]:
         """`StreamingSandboxRunner` capability -- see that Protocol's docstring. The wire shape a
         `stream` frame carries is ``{"type": "stream", "id": ..., "stream": "stdout"|"stderr",
@@ -390,7 +378,7 @@ class HostAgentSandboxRunner:
         session = await self._session_for(handle)
         async for frame in session.call_streaming(
             "run",
-            self._run_params(handle, command, timeout_s, cwd),
+            {"task_id": handle.task_id, "command": list(command), "timeout_s": timeout_s},
             # Idle timeout between frames, not an overall deadline -- see call_streaming's
             # docstring. The daemon is expected to send at least one frame (even just the
             # terminal result) well within this window once it has started the command -- except
@@ -453,9 +441,15 @@ class CompositeSandboxRunner:
         user_id: UserId | None = None,
         session_id: str | None = None,
         isolate: bool = False,
+        workspace_root: str | None = None,
     ) -> SandboxHandle:
         if user_id is not None and await self._host.has_session(user_id):
-            handle = await self._host.create_task(user_id=user_id, session_id=session_id, isolate=isolate)
+            # `workspace_root` (FSA-006) is a path on the user's machine: meaningful to the paired
+            # daemon, never to the server-side fallback below, which does not get it.
+            extra = {"workspace_root": workspace_root} if workspace_root else {}
+            handle = await self._host.create_task(
+                user_id=user_id, session_id=session_id, isolate=isolate, **extra
+            )
             self._handle_runner[handle.task_id] = self._host
             return handle
         if self._fallback is None:
@@ -491,18 +485,11 @@ class CompositeSandboxRunner:
             return self._fallback
         raise SandboxError(f"unknown sandbox task {handle.task_id!r}")
 
-    async def run(
-        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float,
-        cwd: str | None = None,
-    ) -> SandboxResult:
-        # Forwarded only when set, like every caller of the port: the routed runner may predate
-        # the parameter (a test fake, an older adapter) and must not be handed a kwarg it lacks.
-        extra = {"cwd": cwd} if cwd else {}
-        return await self._runner_for(handle).run(handle, command, timeout_s=timeout_s, **extra)
+    async def run(self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float) -> SandboxResult:
+        return await self._runner_for(handle).run(handle, command, timeout_s=timeout_s)
 
     async def run_streaming(
-        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float,
-        cwd: str | None = None,
+        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
     ) -> AsyncIterator[SandboxOutputEvent]:
         """Always present structurally (so `isinstance(composite, StreamingSandboxRunner)` is
         always true for a `CompositeSandboxRunner`), but the routing decision is per-handle, not
@@ -513,12 +500,11 @@ class CompositeSandboxRunner:
         need two code paths, they just see one chunk instead of many.
         """
         runner = self._runner_for(handle)
-        extra = {"cwd": cwd} if cwd else {}
         if isinstance(runner, StreamingSandboxRunner):
-            async for event in runner.run_streaming(handle, command, timeout_s=timeout_s, **extra):
+            async for event in runner.run_streaming(handle, command, timeout_s=timeout_s):
                 yield event
             return
-        result = await runner.run(handle, command, timeout_s=timeout_s, **extra)
+        result = await runner.run(handle, command, timeout_s=timeout_s)
         if result.stdout:
             yield SandboxOutputEvent(kind="stdout", data=result.stdout)
         if result.stderr:

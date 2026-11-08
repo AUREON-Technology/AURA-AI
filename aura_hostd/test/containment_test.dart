@@ -172,6 +172,20 @@ void main() {
       expect(found?.canonicalPath, root.canonicalPath);
     });
 
+    test('prefers the most specific root when granted roots nest', () {
+      // Trust is per root. With /work trusted and /work/vendor granted untrusted, a path under
+      // vendor must resolve to vendor, not to the first-granted outer root, or the inner root's
+      // narrower trust is silently lost (FSA-006 follow-up).
+      final roots = WorkspaceRoots(const []);
+      final outer = roots.addRoot(workspaceDir.path);
+      final innerDir = Directory(p.join(workspaceDir.path, 'vendor'))..createSync();
+      final inner = roots.addRoot(innerDir.path);
+      expect(roots.findContainingRoot(p.join(innerDir.path, 'x.txt'))?.canonicalPath,
+          inner.canonicalPath);
+      expect(roots.findContainingRoot(p.join(workspaceDir.path, 'y.txt'))?.canonicalPath,
+          outer.canonicalPath);
+    });
+
     test('returns null when no granted root contains the path', () {
       final roots = WorkspaceRoots(const []);
       roots.addRoot(workspaceDir.path);
