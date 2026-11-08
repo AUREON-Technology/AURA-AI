@@ -7,6 +7,21 @@ on the user's real files and terminal, ADR-011). Evidence scale and refresh step
 
 ## Summary
 
+**Update 2026-11-08 (`main` at `772f9ef`):** production-readiness assessment in
+[`docs/reports/desktop-ide-production-readiness-2026-11-08.md`](../reports/desktop-ide-production-readiness-2026-11-08.md).
+Verdict: not production-ready. Runners are assigned again (Repo Hygiene and Admin CI ran on
+11-06/07), but Client CI and Host Daemon CI have had no trigger since 2026-10-31, so no desktop
+suite has run in CI since `dc87beb`. Run locally on Linux with the CI pins:
+- client: analyze clean, 549 passed, 4 skipped (at `6bc04b6`, with the new shell test);
+- hostd: analyze clean, 258 passed (at `6bc04b6`), and the suite exits in 16 s (the PTY hang
+  no longer reproduces);
+- PR #185's fixes are on `main`.
+
+A new test pumps the real IDE shell, so it renders at three sizes in LTR and RTL. It found one
+low-severity defect: the floating-panel scrim covers the activity bar. The assessment also
+flags the per-process `HostAgentRegistry` under the default 4 workers as a functional blocker
+for the Engineer agent, not only a security remainder.
+
 There is a lot of desktop code, and none of it is proven end to end. GAP-026 is
 `built_not_proven`, and there is no desktop or hostd end-to-end report in `docs/reports/`.
 
@@ -48,12 +63,12 @@ any of this works.
 | macOS build | BUILT, unverified | No CI job. `macos/Runner/Release.entitlements` turns on the app sandbox without `com.apple.security.network.client`, so a sandboxed build likely cannot reach the backend (code-read). |
 | Desktop login (Windows/Linux) | BUILT; unit-TESTED | Loopback PKCE (`core/auth/desktop_oauth_client_io.dart`) plus `POST /api/v3/auth/desktop/login`. One recorded live run failed with `client_secret is missing` (ADR-011); `34f0fc4` changed that since, but it is unproven end to end. macOS uses `google_sign_in`. |
 | Sign-out wipe and revoke | TESTED | `5153394` (F-05), `test/sign_out_wipe_test.dart`. Desktop-only `Desktop*` tables are not wiped. |
-| Desktop IDE (explorer, editor, git, debug, diagnostics, palette) | BUILT | Enabled on Windows only (`core/platform/aura_platform.dart:14`). Widget tests run on Linux CI. Phase-0 audit rows are code-read only. |
+| Desktop IDE (explorer, editor, git, debug, diagnostics, palette) | BUILT | Enabled on Windows only (`core/platform/aura_platform.dart:14`). Widget tests run on Linux CI. Phase-0 audit rows are code-read only. Since 2026-11-08, `test/desktop/desktop_shell_smoke_test.dart` renders the whole shell (forced Windows, 3 sizes, LTR/RTL); passes locally, not CI-run. Client modules `agent`, `control_center`, `debug`, `git`, `host`, `output`, `terminal` have no tests. |
 | Engineer agent panel / host panel / pairing approval | BUILT | `lib/desktop/agent/agent_panel.dart`, `lib/desktop/host/host_panel.dart`, `host_daemon_page.dart:147` |
 | hostd: pairing, RPC, approval queue, consent tiers, DAP debug | TESTED (Linux) | Host Daemon CI 40719101516, Linux: 220 passed |
 | hostd: containment / command policy | TESTED on Linux; failing on Windows | `627a03d` (F-01 daemon half). On Windows, "rejects the filesystem root" fails because the denylist names only `C:\` and the runner's root is `D:\` (`containment.dart:27-44`). |
 | hostd: git and per-task worktrees (D8) | TESTED on Linux; failing on Windows | 8.3 path mismatch, and errno 32 file locks in the fetch-timeout test |
-| hostd: PTY (ConPTY, POSIX) | BUILT | The POSIX reader isolate (`PosixPtySession._readLoop`) hangs the Linux test process until the 15-minute CI timeout |
+| hostd: PTY (ConPTY, POSIX) | BUILT | The POSIX reader-isolate hang is fixed on `main` (`4b1968e`): the Linux suite exits in 20 s locally (2026-11-08). Not CI-run; ConPTY unverified. |
 | hostd: supervisor / restart-on-crash | OPEN | `core/hostd/hostd_supervisor_io.dart` has no restart logic (CB-26) |
 | Packaging / installer / signing / updater | OPEN | No installer, signing or updater, and hostd is not bundled (CB-26, M8.10). Only local scripts exist (`scripts/deploy_client_desktop.{sh,ps1}`). |
 | Desktop Engineer end to end | OPEN | GAP-026; M9 needs a committed real-machine report |
@@ -92,7 +107,9 @@ any of this works.
      a lost `engineer_agent` closes them with 4401.
    - On 4401, hostd stops and asks to be paired again.
    - Still open:
-     - the desktop app's own sign-in token is still a full 30-day session;
+     - ~~the desktop app's own sign-in token is still a full 30-day session~~: FSA-004 (`ba17ad4`)
+       now issues a 15-minute access token plus a device-bound refresh token, with in-app device
+       revoke. Tested in its authoring session; not CI-run or seen live;
      - the session registry is still per process while `AURA_WORKERS=4`.
 4. **Windows defects found by CI (new).**
    - Drive roots other than `C:\` can be granted as workspace roots.
@@ -115,7 +132,7 @@ any of this works.
 7. **Stale PRs #78 and #88.** Open drafts last touched in 2026-09, with no merge base with `main`.
    Their features already landed by other routes. Close them as superseded.
 
-## Fixed on PR #185 (not merged)
+## Fixed on PR #185 (merged; not CI-run)
 
 - **Client, Windows:** `path_containment.dart` canonicalizes the root like the candidate, so 8.3
   short paths match. Client CI run 145 was fully green, including Windows tests and the Windows
@@ -133,7 +150,7 @@ any of this works.
 
 ## Next steps
 
-1. Fix the `PosixPtySession._readLoop` hang so Host Daemon CI is green on Linux (M8.0).
+1. ~~Fix the `PosixPtySession._readLoop` hang~~ (fixed in `4b1968e`, passes locally). Once CI runs again, get Host Daemon CI green on Linux and Windows (M8.0).
 2. Fix F-21: accumulate `stream` frames until `result`. Add a backend test with a fake daemon.
 3. Finish F-01: a routing-aware `workspace_local` exemption and a `.git/hooks` / `.git/config`
    write denylist, plus an amendment to ADR-014.
