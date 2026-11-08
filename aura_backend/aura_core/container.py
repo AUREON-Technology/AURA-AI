@@ -57,7 +57,7 @@ from .knowledge.extraction import RuleEntityExtractor
 from .knowledge.index_manager import IndexManager, PromotionGate
 from .knowledge.reranking import build_reranker
 from .kernel.kernel import AIKernel, KernelDependencies
-from .llm.cache import InMemoryCache, LLMCache
+from .llm.cache import InMemoryCache, LLMCache, semantic_tier_useful
 from .llm.embeddings import HashEmbeddingProvider
 from .llm.quota import QuotaTracker
 from .llm.registry import (
@@ -214,7 +214,11 @@ class Container:
             self.cache_backend,
             embedder=self.embedder,
             enabled=settings.llm.cache_enabled,
-            semantic_enabled=settings.llm.semantic_cache_enabled,
+            # PP-08: off when the embedder is not semantic (the hash embedder), where it can never
+            # hit but costs an embedding and a cache read on every single-turn miss.
+            semantic_enabled=(
+                settings.llm.semantic_cache_enabled and semantic_tier_useful(self.embedder)
+            ),
             similarity_threshold=settings.llm.semantic_cache_threshold,
             ttl_s=settings.llm.cache_ttl_s,
             metrics=self.metrics,
