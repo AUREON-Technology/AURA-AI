@@ -26,7 +26,7 @@ from aura_core.domain.identifiers import UserId, is_reserved_principal
 from aura_core.domain.service_keys import looks_like_service_token
 from aura_core.observability.logging import get_logger
 from aura_core.security import SlidingWindowRateLimiter
-from infrastructure.http_limits import PayloadSizeLimitMiddleware, RateLimitMiddleware
+from infrastructure.http_limits import PayloadSizeLimitMiddleware
 from infrastructure.secret_hydration import hydrate_secrets_from_files
 
 logger = get_logger("service")
@@ -232,7 +232,12 @@ def _apply_http_limits(app, settings) -> None:
         max_bytes=5 * 1024 * 1024,
         route_limits={"/api/v3/knowledge/documents/upload": upload_limit},
     )
-    app.add_middleware(RateLimitMiddleware, requests_per_minute=100)
+    # No second, legacy per-IP limiter here (audit FSA-005). `infrastructure.http_limits.
+    # RateLimitMiddleware` keyed on `request.client.host`, which behind Railway's edge (and
+    # behind nginx on the VPS, before uvicorn trusted forwarded headers) is the proxy address,
+    # so every user shared one 100 req/min bucket. The one limiter is the aura_core
+    # SlidingWindowRateLimiter wired into the v3 router below, keyed on `extract_client_ip`
+    # with `security.trusted_proxy_count` (and on the caller once authenticated).
 
 
 def _apply_cors(app) -> None:

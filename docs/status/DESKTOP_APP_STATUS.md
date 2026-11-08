@@ -9,11 +9,12 @@ on the user's real files and terminal, ADR-011). Evidence scale and refresh step
 
 **Update 2026-11-08 (`main` at `772f9ef`):** production-readiness assessment in
 [`docs/reports/desktop-ide-production-readiness-2026-11-08.md`](../reports/desktop-ide-production-readiness-2026-11-08.md).
-Verdict: not production-ready. CI is still not executing (CB-44: Client CI #170–#174 and Host
-Daemon CI #62–#66 end in 2–4 s with no log). Run locally on Linux with the CI pins:
-- client: analyze clean, 544 passed, 4 skipped;
-- hostd: analyze clean, 232 passed, and the suite exits in 20 s (the PTY hang no longer
-  reproduces);
+Verdict: not production-ready. Runners are assigned again (Repo Hygiene and Admin CI ran on
+11-06/07), but Client CI and Host Daemon CI have had no trigger since 2026-10-31, so no desktop
+suite has run in CI since `dc87beb`. Run locally on Linux with the CI pins:
+- client: analyze clean, 549 passed, 4 skipped (at `6bc04b6`, with the new shell test);
+- hostd: analyze clean, 258 passed (at `6bc04b6`), and the suite exits in 16 s (the PTY hang
+  no longer reproduces);
 - PR #185's fixes are on `main`.
 
 A new test pumps the real IDE shell, so it renders at three sizes in LTR and RTL. It found one
@@ -106,7 +107,9 @@ any of this works.
      a lost `engineer_agent` closes them with 4401.
    - On 4401, hostd stops and asks to be paired again.
    - Still open:
-     - the desktop app's own sign-in token is still a full 30-day session;
+     - ~~the desktop app's own sign-in token is still a full 30-day session~~: FSA-004 (`ba17ad4`)
+       now issues a 15-minute access token plus a device-bound refresh token, with in-app device
+       revoke. Tested in its authoring session; not CI-run or seen live;
      - the session registry is still per process while `AURA_WORKERS=4`.
 4. **Windows defects found by CI (new).**
    - Drive roots other than `C:\` can be granted as workspace roots.

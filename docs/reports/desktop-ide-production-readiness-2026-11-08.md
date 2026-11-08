@@ -2,12 +2,16 @@
 
 **Scope:** the Desktop IDE (`aura_client/lib/desktop/`, the `/ide` routes), the daemon it depends on
 (`aura_hostd/`), and the backend half of the Engineer agent's host connection
-(`aura_core/adapters/host_agent.py`). `main` at `772f9ef`.
+(`aura_core/adapters/host_agent.py`). Assessed at `772f9ef`, re-checked after merging `main` at
+`6bc04b6` (Phase 0 fixes FSA-001…031, including FSA-004 and FSA-006, which touch the desktop). The
+whole-system view at `772f9ef` is [`AURA_PRODUCTION_READINESS_2026-11-07.md`](AURA_PRODUCTION_READINESS_2026-11-07.md);
+this report goes deeper on the desktop only.
 
 **Verdict: not production-ready.** The IDE is fit for internal dogfooding on Windows by someone who
 builds it from source and points it at a hand-built `aura_hostd`. It is not fit for any user who
 expects to install it. M8 (Desktop IDE Productization) has not passed any of its sub-milestone exit
-criteria: M8.0, the re-baseline, still needs green Windows CI, and CI has not run since 2026-10-28.
+criteria: M8.0, the re-baseline, still needs green Windows CI, and no desktop suite has run in CI
+since `dc87beb`.
 
 Evidence labels follow [`docs/status/README.md`](../status/README.md): PROVEN / TESTED / BUILT /
 OPEN. "Local" means run in this session on Linux (Flutter 3.44.6 / Dart 3.12.2, the CI pins), not in
@@ -17,11 +21,11 @@ CI.
 
 | Check | Result |
 | --- | --- |
-| CI state | **Not executing.** Latest Client CI (#170–#174) and Host Daemon CI (#62–#66) jobs all end in 2–4 s with no log (CB-44). Nothing merged since `dc87beb` has been CI-run, including all of PR #185's Windows and hostd fixes (which *are* on `main`: `bbc028a`, `130b58f`, `4b1968e`, `e512b4e`). |
+| CI state | **Runners are back; the desktop suites have not run.** Repo Hygiene and Admin CI executed on 2026-11-06/07, so CB-44's runner block has lifted. Client CI and Host Daemon CI have had no trigger since 2026-10-31 (path filters), and their latest runs (#170–#174, #62–#66) still show the no-runner signature. Nothing merged since `dc87beb` has been CI-run on desktop, including all of PR #185's Windows and hostd fixes (which *are* on `main`: `bbc028a`, `130b58f`, `4b1968e`, `e512b4e`). |
 | `aura_client`: `flutter analyze` | Local: no issues. |
-| `aura_client`: `flutter test` | Local: **538 passed, 3 skipped, 0 failed** before this change; **544 passed, 4 skipped, 0 failed** with the new shell smoke test (6 cases plus 1 skipped known-defect test). |
+| `aura_client`: `flutter test` | Local: **538 passed, 3 skipped, 0 failed** before this change; **544 passed, 4 skipped, 0 failed** with the new shell smoke test (6 cases plus 1 skipped known-defect test). After merging `main` at `6bc04b6`: **549 passed, 4 skipped, 0 failed**; analyze still clean. |
 | `aura_hostd`: `dart analyze --fatal-infos` | Local: no issues. |
-| `aura_hostd`: `dart test` (Linux) | Local: **232 passed** (231 + the debugpy case once `debugpy` is installed, as CI does). The run **exits in 20 s**: the `PosixPtySession` isolate hang that held Linux CI to its 15-minute timeout no longer reproduces at `4b1968e`. |
+| `aura_hostd`: `dart test` (Linux) | Local: **232 passed** (231 + the debugpy case once `debugpy` is installed, as CI does); **258 passed** after merging `main` at `6bc04b6` (FSA-006 adds command-policy cases). The run **exits in 16–20 s**: the `PosixPtySession` isolate hang that held Linux CI to its 15-minute timeout no longer reproduces at `4b1968e`. |
 | `aura_hostd` on Windows | Not runnable here. The last CI run that executed (on `dc87beb`) had 5 failures; the fixes have never run on Windows. |
 | Does the IDE shell render? (new) | Local: **yes.** `test/desktop/desktop_shell_smoke_test.dart` pumps the real `DesktopShell` with the platform forced to Windows at 1920×1080, 1280×800 and 1024×700, LTR and RTL. It opens all five activity-bar destinations with hit-test misses made fatal. 6 passed, no exceptions, no overflow. No earlier test pumped the shell; individual parts only. |
 | Defect found by that check | At 1024 px the AI panel floats, and its scrim (`desktop_shell.dart`, `_ShellBody`, `Positioned.fill`) covers the activity bar too. The next activity-bar click only closes the panel, so reaching e.g. Control Center takes two clicks. The scrim's own comment expects the activity bar to stay usable. Recorded as a skipped test in the same file, confirmed to fail when un-skipped. Severity: low. |
@@ -29,16 +33,16 @@ CI.
 
 ## Blockers (must be fixed before any external user)
 
-1. **CI does not run (CB-44).** Desktop code has not been verified on Windows by CI since
-   2026-09-11, and hostd's Windows job has never been green. No claim about the Windows build,
-   the only platform the IDE runs on, can be stronger than BUILT until runners return.
+1. **No CI run on the desktop code since `dc87beb`.** Runners are assigned again, but Client and
+   Host Daemon CI have not been triggered since. Desktop code has not been verified on Windows by
+   CI since 2026-09-11, and hostd's Windows job has never been green. No claim about the Windows
+   build, the only platform the IDE runs on, can be stronger than BUILT until those jobs run.
    *Exit:* Client CI `build-windows` and Host Daemon CI `analyze-and-test-windows` green on
    `main`, then made gating (M8.0).
 
 2. **The Engineer agent reaches the daemon only by luck on a multi-worker backend** (code-read).
    `HostAgentRegistry` (`aura_core/adapters/host_agent.py:156`) is an in-process dict. The backend
-   defaults to `--workers ${AURA_WORKERS:-4}` (`aura_backend/Dockerfile:147`,
-   `deploy/docker-compose.prod.yml:403`). The daemon's WebSocket lives on one worker, and a chat
+   defaults to `--workers ${AURA_WORKERS:-4}` (`aura_backend/Dockerfile:153`, `deploy/docker-compose.prod.yml:403`). The daemon's WebSocket lives on one worker, and a chat
    request lands on any of them. So with four workers, about three out of four Engineer turns
    would see "no desktop connected" while the IDE shows the daemon as connected. The status file
    lists this under F-09 as a security remainder. It is first a functional blocker for the IDE's
@@ -58,9 +62,13 @@ CI.
    one recorded live attempt, and it failed (`client_secret is missing`). The fix (`34f0fc4`) is
    unproven.
 
-6. **The desktop sign-in token is still a full 30-day session** (F-09 remainder, per
-   `DESKTOP_APP_STATUS.md`; not re-checked here). A desktop app with local file and terminal
-   access is the highest-value token holder in the system.
+
+Fixed on `main` since this assessment began, but not proven: **the 30-day desktop session token**
+(the F-09 remainder). FSA-004 (`ba17ad4`) has desktop sign-in return a 15-minute access token plus
+a refresh token bound to the device. Revoking the device drops its refresh tokens, and Settings ›
+Desktop devices lists and revokes devices. The 30-day form survives only for the daemon's
+`host_agent`-scoped token. It is TESTED in its authoring session (11 backend, 5 client cases), not
+in CI, and has not been seen live.
 
 ## Should fix before a beta
 
@@ -114,7 +122,8 @@ CI.
 
 ## Suggested order
 
-1. Restore CI (CB-44). Everything else is unverifiable on Windows until it runs.
+1. Run Client CI and Host Daemon CI on `main` (runners are back; the jobs just need a trigger),
+   then make the Windows jobs gating. Everything else is unverifiable on Windows until they run.
 2. Shared host-agent registry (blocker 2). It is the only blocker that breaks the product even
    for a dogfooding user on a correctly built machine.
 3. M8.13 golden path on one real Windows machine. This is the smallest piece of PROVEN evidence

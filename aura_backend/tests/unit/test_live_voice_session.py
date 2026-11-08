@@ -200,3 +200,63 @@ async def test_voice_confirms_by_the_held_approval_id_never_by_name() -> None:
     await session.confirm(None)
     assert len(streamer.requests) == 2
     await session.close()
+
+
+def _idle_session(**config) -> LiveVoiceSession:
+    return LiveVoiceSession(
+        stt=InMemoryStt(default="hello"),
+        tts=InMemoryTts(sample_rate=22_050),
+        turn_streamer=EchoStreamer([{"type": "done", "needs_confirmation": []}]),
+        user_id=UserId("u1"),
+        session_id=SessionId("s1"),
+        nlp=NlpEngine(),
+        config=LiveVoiceConfig(**config),
+    )
+
+
+@pytest.mark.anyio
+async def test_an_oversized_frame_is_refused_before_it_reaches_the_vad() -> None:
+    """Audit FSA-007: one frame larger than `max_frame_bytes` is a protocol violation."""
+    from aura_core.voice import PcmFrameError
+
+    session = _idle_session()
+    await session.start()
+    with pytest.raises(PcmFrameError):
+        await session.push_pcm(b"\0" * (session.config.max_frame_bytes + 2))
+    # A frame at the limit is still audio.
+    await session.push_pcm(b"\0" * session.config.max_frame_bytes)
+
+
+@pytest.mark.anyio
+async def test_the_utterance_buffer_is_capped_in_bytes_not_only_in_frames() -> None:
+    """The endpointer counts every frame as `frame_ms`; a client sending 100 ms of audio per
+    frame would otherwise buffer five times `max_utterance_ms` before MAX_UTTERANCE fired."""
+    session = _idle_session(min_speech_ms=40, silence_hangover_ms=10_000, max_utterance_ms=1_000)
+    await session.start()
+    ceiling = session.max_utterance_bytes
+    assert ceiling == 16_000 * 2  # one second of 16 kHz s16le mono
+
+    # The energy VAD is tuned for 20 ms frames (its zero-crossing band would reject a 100 ms
+    # sine outright), so stub it: every frame is speech. What is under test is the byte
+    # ceiling, which must hold regardless of how the VAD classifies oversized frames.
+    from aura_core.voice import VadDecision
+
+    session._vad.decide = lambda frame, *, elevated=False: VadDecision(
+        is_speech=True, rms=1000.0, zero_crossings=10
+    )
+    big_frame = _loud_pcm(100)  # 3 200 bytes, counted as 20 ms by the endpointer
+    for frame in _frames(_loud_pcm(1_600), frame_bytes=len(big_frame)):
+        await session.push_pcm(frame)
+        assert len(session._pcm_buf) <= ceiling
+    # The turn was begun on the capped buffer rather than waiting for the frame-count ceiling.
+    async def _until_speech_ended() -> list:
+        seen = []
+        async for item in session.events():
+            seen.append(item)
+            if isinstance(item, dict) and item.get("type") == "speech_ended":
+                return seen
+        return seen
+
+    events = await asyncio.wait_for(_until_speech_ended(), timeout=5.0)
+    assert any(isinstance(e, dict) and e.get("type") == "speech_ended" for e in events)
+    await session.close()

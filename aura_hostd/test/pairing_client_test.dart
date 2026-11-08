@@ -49,6 +49,11 @@ class _FakeAuthServer {
 }
 
 void main() {
+  test('localDeviceName is the hostname or null, never empty', () {
+    final name = localDeviceName();
+    expect(name == null || name.trim().isNotEmpty, isTrue);
+  });
+
   late _FakeAuthServer server;
 
   setUp(() async {

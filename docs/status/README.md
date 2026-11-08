@@ -1,16 +1,16 @@
 # AURA system status
 
-**As of 2026-10-28 (evening), `main` at `2337577`.** These files record what is true now: what runs
+**As of 2026-11-07, `main` at `772f9ef` (live probe and CI re-read in `docs/reports/AURA_PRODUCTION_READINESS_2026-11-07.md`; the per-component files below were last fully refreshed 2026-10-28 at `2337577`).** These files record what is true now: what runs
 where, what CI says, what is proven, and what is next. They are snapshots, not a roadmap. When
 they disagree with the code, the CI history or a live probe, those win, and the file should be
 corrected in the same change.
 
 | Component | File | One line |
 | --- | --- | --- |
-| Backend (`aura_backend/`, `deploy/`) | [BACKEND_STATUS.md](BACKEND_STATUS.md) | Live on Railway at `main` (`6417c43`), **ready since 2026-10-30**: DB migrated to `0016` (CB-43 resolved); `hfspace` 503; CI not executing; VPS deploy blocked |
+| Backend (`aura_backend/`, `deploy/`) | [BACKEND_STATUS.md](BACKEND_STATUS.md) | Live on Railway at `ffbbb9f`, ready, **schema `0019` (head) since at latest 2026-11-07**; `hfspace` 503 so only `internal`-ceiling inference is up; `/metrics` and `/docs` open; runners assigned again but no application suite CI-run since `dc87beb`; VPS deploy blocked |
 | Desktop app (`aura_client` desktop + `aura_hostd`) | [DESKTOP_APP_STATUS.md](DESKTOP_APP_STATUS.md) | Linux built in CI at `dc87beb`; Windows/hostd fixes merged but never CI-run; nothing packaged. 2026-11-08 assessment: not production-ready |
 | Mobile app (`aura_client` Android/iOS) | [MOBILE_APP_STATUS.md](MOBILE_APP_STATUS.md) | 381 tests green at `dc87beb`; sync/approval fixes merged since, not CI-run; no iOS pipeline |
-| Web console (`aura_admin/`) | [WEB_CONSOLE_STATUS.md](WEB_CONSOLE_STATUS.md) | Built and wired into both stacks; not served anywhere reachable; CI never ran |
+| Web console (`aura_admin/`) | [WEB_CONSOLE_STATUS.md](WEB_CONSOLE_STATUS.md) | Built and wired into both stacks; not served anywhere reachable; **Admin CI green once** (run #3, dispatched 2026-11-07: typecheck, build, Playwright e2e) |
 
 ## The evidence scale
 
@@ -23,6 +23,30 @@ uses the strongest evidence that exists:
 - **OPEN**: planned or missing.
 
 ## System-wide facts (checked live on 2026-10-28, ~21:20 UTC)
+
+- **Update 2026-11-07 (live probe, `main` at `772f9ef`; full detail in
+  `docs/reports/AURA_PRODUCTION_READINESS_2026-11-07.md`):**
+  - `aureon-ai.tech` serves `ffbbb9f`; `/health/ready` is `healthy: true` with **`schema.revision
+    0019`**, the code's head. The ADR-032 item below is no longer pending live. How `0017`→`0019`
+    was applied (dashboard pre-deploy step or a manual upgrade) is not recorded; the Railway deploy
+    log for the #206/#207 deploys settles it. `scripts/move_personal_os_records.py` has no run record.
+  - `hosted1` healthy, `hfspace` still **503**, no Ollama. `hosted1`'s ceiling is `internal`, so
+    memory, RAG, tool, Engineer and image turns have no eligible provider (FSA-024). The live
+    retrieval index is `hash-embed-v1` (FSA-031).
+  - **`GET /metrics` returns 200 without a token** (`AURA_METRICS_TOKEN` unset on Railway, FSA-009)
+    and **`GET /docs` returns 200** (FastAPI default, never disabled). Auth on `/api/v3/*` holds (401).
+  - **Runners are assigned again.** Repo Hygiene executed on 2026-11-06 (#16, failed on SC1003,
+    fixed by #210) and 2026-11-07 (#21, green). Admin CI run #3 (dispatched 2026-11-07) executed
+    and is green, its first run ever. Backend, Client, Host Daemon and Agent Evaluation CI have had
+    **no trigger since 2026-10-31** (path filters), so no application suite has run in CI since
+    `dc87beb`; their last runs still show the no-runner signature.
+  - Local suites on `772f9ef` (not CI): backend pytest green apart from one architecture test that
+    the 2026-10-31 audit docs themselves tripped (a quoted PEM marker; fixed in the same change as
+    this note); legacy unittest 133 OK (37 skipped); `flutter analyze` clean, `flutter test` 538
+    passed, 3 skipped; hostd `dart analyze --fatal-infos` clean, `dart test` 231 run, 230 passed; the one failure
+    (debug console) passes once `debugpy` is installed as CI does; admin `next build` OK.
+  - Deploy Control Plane and Deploy VPS still fail on every run (`preflight` / `blocked` jobs).
+    `main` is still unprotected. Open PR: #208 (draft, client).
 
 - **Pending, 2026-10-31: ADR-032 adds migration `0019` (`aura_user_data_keys`).** It is not on
   `main` yet. After the merge that carries it, the Railway pre-deploy step must take production to
@@ -63,7 +87,7 @@ uses the strongest evidence that exists:
   three red jobs merged in #185 and are unverified by CI. Admin CI and Verify Hosted Inference have
   never run.
 - **Local run on `2337577` (this session, not CI):** pytest 3943 passed, 56 skipped, 0 failed; legacy unittest 106 OK (10 skipped). No Flutter or Dart run.
-- **Open pull requests: none.** #78 (desktop loopback login) and #88 (D8 per-task worktrees) were
+- **Open pull requests (as of 2026-10-28): none.** (2026-11-07: #208 is open, draft.) #78 (desktop loopback login) and #88 (D8 per-task worktrees) were
   closed as superseded: both features landed on `main` later in reworked form (Unit 7's
   `desktop_oauth_client_io.dart`; D8/D9's `isolated_task_registry.dart` + Agent Review). #78's one
   piece `main` lacked, the audience test, was ported as

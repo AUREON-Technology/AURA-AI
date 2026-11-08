@@ -35,3 +35,6 @@ Future<DesktopOAuthResult> signInWithGoogleLoopback({
     'Loopback OAuth login is not available on this platform.',
   );
 }
+
+/// No `dart:io` here, so no hostname: the web build signs in without a device name.
+String? desktopDeviceName() => null;

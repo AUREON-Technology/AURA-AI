@@ -64,6 +64,16 @@ AURA_CACHE_BACKEND=redis
 AURA_TRUSTED_PROXY_COUNT=1          # Railway's own edge proxy is the one trusted hop
 DEBUG_MODE=false
 
+# Embedder for knowledge retrieval and memory recall. REQUIRED: the code default is the
+# non-semantic hash embedder used by the test suite, and AuraSettings.validate() refuses to
+# boot staging/production with it (audit FSA-031). The image ships sentence-transformers;
+# /health/ready reports the live value under "embedding" ("semantic": true expected).
+# Changing model or dimension after documents exist means re-indexing (see the knowledge
+# engine's index manager); the dimension must match the model (bge-small = 384).
+AURA_EMBEDDING_PROVIDER=sentence-transformers
+AURA_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+AURA_EMBEDDING_DIMENSION=384
+
 AURA_DATABASE_URL=<Railway Postgres plugin's connection string>
 AURA_REDIS_URL=<Railway Redis plugin's connection string, or an external Redis>
 AURA_QDRANT_URL=<Qdrant Cloud or self-hosted Qdrant URL — Railway has no Qdrant plugin>

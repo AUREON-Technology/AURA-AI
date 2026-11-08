@@ -145,6 +145,13 @@ class TurnRequest:
     #: its own persona ever declares). `None` for every ordinary turn (no override).
     delegated_tool_grant: frozenset[str] | None = None
     delegated_risk_ceiling: ToolSensitivity | None = None
+    #: Set by `delegate_to_agent` to the delegating turn's own taint (``ToolContext.tainted``).
+    #: OR'd into the child turn's taint before planning, so ADR-006 holds across kernel hops: a
+    #: parent whose context was quarantined (a poisoned chunk, `fetch_url` output) cannot launder
+    #: that by delegating to a persona whose `create_*`/`update_*`/`delete_*` tools would then run
+    #: without confirmation because the child's *own* inputs looked clean. `False` for every
+    #: ordinary, non-delegated turn.
+    inherited_taint: bool = False
     #: D8 (docs/architecture/015-desktop-ide.md): opt-in per-task isolated git worktree, Desktop
     #: IDE only. `False` for every other caller -- see `tools/coding.py::_SandboxSessionCache`'s
     #: `create_task` call for where this actually takes effect.
@@ -423,7 +430,10 @@ class AIKernel:
             ) * 1000.0
         caller_context, context_quarantined = await self._guard_caller_context(request, turn_id)
         quarantined_count += context_quarantined
-        tainted = tainted or bool(request.caller_context) or bool(resume and resume.tainted)
+        tainted = (
+            tainted or bool(request.caller_context) or bool(resume and resume.tainted)
+            or request.inherited_taint
+        )
 
         # 6. Plan and execute --------------------------------------------------------
         tool_telemetry: list[ToolTelemetry] = []
@@ -733,6 +743,7 @@ class AIKernel:
                 quarantined_count += context_quarantined
                 tainted = (
                     tainted or bool(request.caller_context) or bool(resume and resume.tainted)
+                    or request.inherited_taint
                 )
 
                 tool_declarations = await self._tool_declarations(request)

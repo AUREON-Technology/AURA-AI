@@ -76,16 +76,24 @@ class TestSecurityHardening(unittest.TestCase):
         self.assertIn("Payload Too Large", response.text)
 
     def test_rate_limiting(self):
-        """Verify rate limiter blocks request volume exceeding 100 req/min with HTTP 429."""
-        # Make 100 requests (the limit)
-        for i in range(100):
-            response = self.client.get("/api/v3/learning/export")
-            self.assertNotEqual(response.status_code, 429)
+        """One limiter, keyed on the real client (audit FSA-005).
 
-        # The 101st request should be rate-limited
-        response = self.client.get("/api/v3/learning/export")
-        self.assertEqual(response.status_code, 429)
-        self.assertIn("Rate limit exceeded", response.text)
+        The legacy per-IP ``RateLimitMiddleware`` keyed on ``request.client.host``, which behind
+        Railway's edge is the proxy address, so every user shared a single 100 req/min bucket.
+        It must stay unwired; the aura_core ``SlidingWindowRateLimiter`` handed to the v3 router
+        (keyed via ``extract_client_ip`` and ``security.trusted_proxy_count``, and per caller once
+        authenticated) is the only limiter. ``tests/unit/test_providers_and_platform.py`` and the v3
+        router's own tests cover its behaviour; this pins the wiring.
+        """
+        wired = [m.cls for m in app.user_middleware]
+        self.assertNotIn(RateLimitMiddleware, wired)
+        import inspect
+
+        import aura_service
+
+        source = inspect.getsource(aura_service)
+        self.assertIn("SlidingWindowRateLimiter.from_settings", source)
+        self.assertNotIn("add_middleware(RateLimitMiddleware", source)
 
     # ----------------------------------------------------
     # Device Attestation Tests

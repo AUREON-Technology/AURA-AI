@@ -51,6 +51,13 @@ class SettingsPage extends ConsumerWidget {
                   subtitle: l10n.settingsServerEnvironmentSubtitle,
                   onTap: () => context.push('/server-environment'),
                 ),
+                const _RowDivider(),
+                AuraListTile(
+                  icon: Icons.devices_outlined,
+                  title: l10n.devicesTitle,
+                  subtitle: l10n.settingsDevicesSubtitle,
+                  onTap: () => context.push('/desktop-devices'),
+                ),
               ],
             ),
           ),

@@ -272,21 +272,27 @@ class TokenManager {
   }
 
   /// Exchanges a real Google ID token obtained from the desktop loopback OAuth flow
-  /// (`core/auth/desktop_oauth_client.dart`, ADR-011 Unit 7) for a device-scoped access token via
+  /// (`core/auth/desktop_oauth_client.dart`, ADR-011 Unit 7) for a *device-bound session* via
   /// `POST /api/v3/auth/desktop/login` -- distinct from [_tryExchange]'s `/token` path, which
   /// needs `google_sign_in` (unavailable on Linux/Windows) and device attestation (no desktop
-  /// equivalent exists). The response has no `refresh_token` (same shape Unit 6's pairing flow
-  /// issues to `aura_hostd` -- ADR-011 explains why: revocability comes from a device_id check,
-  /// not a renewable session), so [_applyTokenResponse] doesn't apply here. Returns the issued
-  /// token and its expiry (or null on failure) so the caller
-  /// (`AuthNotifier.signInWithDesktopOAuth`) can persist it for reuse across launches --
-  /// [getValidAccessToken]'s normal refresh/re-exchange machinery has nothing to fall back to
-  /// once this one expires, since there is no refresh token.
-  Future<DesktopDeviceToken?> exchangeDesktopLogin(String googleIdToken) async {
+  /// equivalent exists). Since audit FSA-004 the response is an ordinary short-lived access
+  /// token plus a refresh token bound to this device (before, a 30-day token with no refresh),
+  /// so it goes through [_applyTokenResponse] like every other sign-in and
+  /// [getValidAccessToken]'s refresh machinery keeps the session alive across launches. The
+  /// server lists the device under [deviceName] in Settings > Desktop devices, where it can be
+  /// revoked; revocation ends the session at the next refresh.
+  Future<DesktopDeviceToken?> exchangeDesktopLogin(
+    String googleIdToken, {
+    String? deviceName,
+  }) async {
     try {
       final response = await _post(
         "$_authUrl/desktop/login",
-        headers: {"Authorization": "Bearer $googleIdToken"},
+        headers: {
+          "Authorization": "Bearer $googleIdToken",
+          "Content-Type": "application/json",
+        },
+        body: jsonEncode({"device_name": ?deviceName}),
       );
       if (response.statusCode != 200) {
         debugPrint(
@@ -296,13 +302,16 @@ class TokenManager {
         return null;
       }
       final body = jsonDecode(response.body) as Map<String, dynamic>;
-      final accessToken = body['access_token'] as String;
-      final expiry = DateTime.now().add(Duration(seconds: body['expires_in'] as int));
-      _accessToken = accessToken;
-      _accessTokenExpiry = expiry;
+      if (body['refresh_token'] is String) {
+        await _applyTokenResponse(body);
+      } else {
+        // An older backend still answering with the refresh-less 30-day token.
+        _accessToken = body['access_token'] as String;
+        _accessTokenExpiry = DateTime.now().add(Duration(seconds: body['expires_in'] as int));
+      }
       _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.none);
       debugPrint("[TokenManager] desktop login succeeded");
-      return DesktopDeviceToken(accessToken: accessToken, expiry: expiry);
+      return DesktopDeviceToken(accessToken: _accessToken!, expiry: _accessTokenExpiry!);
     } catch (e) {
       debugPrint("[TokenManager] desktop login failed: $e");
       _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.other);

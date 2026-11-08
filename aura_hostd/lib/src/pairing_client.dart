@@ -76,13 +76,28 @@ class PairingGone implements PairingPollOutcome {
   final String reason;
 }
 
+/// This machine's hostname, or `null` when the platform will not say. Sent with a pairing start
+/// so the approver and the device list can tell machines apart; never used as identity.
+String? localDeviceName() {
+  try {
+    final name = Platform.localHostname.trim();
+    return name.isEmpty ? null : name;
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Starts a pairing session against [backendUrl] and returns the code to show the user plus the
 /// session details a caller needs to poll it later.
 Future<PairingSession> startPairing(String backendUrl, {HttpClient? httpClient}) async {
   final client = httpClient ?? HttpClient();
   final ownsClient = httpClient == null;
   try {
-    final start = await _postJson(client, backendUrl, '/api/v3/auth/desktop/pair/start', {});
+    // The hostname is a label for the person approving the code -- "which machine is this?" --
+    // and for the owner's device list later (FSA-004). The backend treats it as untrusted text.
+    final start = await _postJson(client, backendUrl, '/api/v3/auth/desktop/pair/start', {
+      'device_name': localDeviceName(),
+    });
     return PairingSession(
       pairingId: start['pairing_id'] as String,
       userCode: start['user_code'] as String,

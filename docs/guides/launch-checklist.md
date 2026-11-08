@@ -14,7 +14,7 @@ Package IDs that Play Integrity / App Attest verify:
 
 **Apple App Attest.** App ID `com.auraai.auraClient` with the App Attest capability; `APPLE_TEAM_ID` in `deploy/.env`; Xcode team signing. Debug entitlements use the development App Attest environment; Release uses production.
 
-**rclone offsite.** S3-compatible bucket; `BACKUP_S3_URI` in `.env`; credentials as `deploy/secrets/rclone.conf` **or** `deploy/secrets/backup_s3_access_key` + `backup_s3_secret_key`. Rebuild the backup image after pull (`docker compose build backup`). Leave `BACKUP_S3_URI` empty to skip offsite.
+**rclone offsite.** S3-compatible bucket; `BACKUP_S3_URI` in `.env`; credentials as `deploy/secrets/backup/rclone.conf` **or** `deploy/secrets/backup/backup_s3_access_key` + `backup_s3_secret_key` (the `backup/` subdirectory is all the sidecar mounts). Rebuild the backup image after pull (`docker compose build backup`). Leave `BACKUP_S3_URI` empty to skip offsite.
 
 ## Security flags
 

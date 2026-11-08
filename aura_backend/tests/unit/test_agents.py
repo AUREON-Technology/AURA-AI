@@ -277,3 +277,21 @@ class TestKernelAgentWiring:
             )
         }
         assert declared == {"calculator"}
+
+
+class TestMemoryWriteGrant:
+    """Audit FSA-017: `remember_fact` writes a durable record and is not a read tool."""
+
+    def test_the_read_only_decision_agent_cannot_remember(self) -> None:
+        spec = build_default_agent_registry().get("decision_agent")
+        assert "remember_fact" not in spec.allowed_tools
+        assert "recall_memory" in spec.allowed_tools
+
+    @pytest.mark.parametrize(
+        "agent_id",
+        ["task_planner", "finance_advisor", "health_companion", "research_agent",
+         "coding_agent", "engineer"],
+    )
+    def test_acting_personas_keep_the_grant(self, agent_id: str) -> None:
+        spec = build_default_agent_registry().get(agent_id)
+        assert "remember_fact" in spec.allowed_tools

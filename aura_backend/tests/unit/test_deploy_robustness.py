@@ -444,3 +444,33 @@ class TestDeployGate:
 
     def test_a_stack_without_postgres_needs_no_schema_block(self, serve) -> None:
         assert serve(200, {"healthy": True}, expect_schema=False) == (0, "READY")
+
+
+# ---------------------------------------------------------------- forwarded headers (FSA-005)
+
+
+class TestOneLimiterBehindATrustedHop:
+    """Audit FSA-005: behind Railway's edge every request used to arrive with the proxy's
+    address, so the legacy per-IP middleware put every user in one bucket and audit rows
+    recorded the proxy. uvicorn must trust the edge's forwarded headers, and only the
+    aura_core limiter (keyed on `extract_client_ip`) may be wired."""
+
+    def test_the_image_command_trusts_forwarded_headers(self) -> None:
+        cmd = next(
+            ln for ln in (_BACKEND / "Dockerfile").read_text(encoding="utf-8").splitlines()
+            if ln.startswith("CMD")
+        )
+        assert "--proxy-headers" in cmd
+        assert "--forwarded-allow-ips" in cmd, "without it --proxy-headers trusts 127.0.0.1 only"
+
+    def test_both_compose_gateways_trust_forwarded_headers(self, compose) -> None:
+        name, data = compose
+        command = data["services"][_GATEWAY[name]]["command"]
+        text = command if isinstance(command, str) else " ".join(command)
+        assert "--proxy-headers" in text and "--forwarded-allow-ips" in text
+
+    def test_the_legacy_per_ip_middleware_is_not_wired(self) -> None:
+        source = (_BACKEND / "aura_service.py").read_text(encoding="utf-8")
+        assert "add_middleware(RateLimitMiddleware" not in source
+        # The one limiter: SlidingWindowRateLimiter handed to the v3 router.
+        assert "SlidingWindowRateLimiter.from_settings" in source
