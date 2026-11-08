@@ -184,7 +184,10 @@ class _ShellBody extends ConsumerWidget {
             children: [
               SizedBox(
                 width: ideDensity.activityBarWidth,
-                child: const ActivityBar(),
+                child: ActivityBar(
+                  agentPanelFloating: regions.secondaryFloating,
+                  sidebarFloating: regions.primaryFloating,
+                ),
               ),
               if (regions.primaryDocked) ...[
                 SizedBox(
@@ -260,7 +263,16 @@ class _ShellBody extends ConsumerWidget {
         // there is no indication that the content behind it is not the thing
         // being interacted with, and no way to dismiss it by pointer except
         // by finding the same activity-bar item again.
-        Positioned.fill(
+        //
+        // The scrim starts after the activity bar. Covering it too meant a
+        // click on any activity-bar item only closed the panel, so reaching
+        // another destination took two clicks; the activity bar now handles
+        // floating panels itself (see ActivityBar._openPrimary).
+        PositionedDirectional(
+          start: ideDensity.activityBarWidth,
+          top: 0,
+          end: 0,
+          bottom: 0,
           child: _OverlayScrim(onDismiss: () => _dismissTopPanel(ref, regions)),
         ),
         if (regions.primaryFloating && !regions.secondaryFloating)

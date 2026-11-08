@@ -27,8 +27,8 @@ CI.
 | `aura_hostd`: `dart analyze --fatal-infos` | Local: no issues. |
 | `aura_hostd`: `dart test` (Linux) | Local: **232 passed** (231 + the debugpy case once `debugpy` is installed, as CI does); **258 passed** after merging `main` at `6bc04b6` (FSA-006 adds command-policy cases). The run **exits in 16–20 s**: the `PosixPtySession` isolate hang that held Linux CI to its 15-minute timeout no longer reproduces at `4b1968e`. |
 | `aura_hostd` on Windows | Not runnable here. The last CI run that executed (on `dc87beb`) had 5 failures; the fixes have never run on Windows. |
-| Does the IDE shell render? (new) | Local: **yes.** `test/desktop/desktop_shell_smoke_test.dart` pumps the real `DesktopShell` with the platform forced to Windows at 1920×1080, 1280×800 and 1024×700, LTR and RTL. It opens all five activity-bar destinations with hit-test misses made fatal. 6 passed, no exceptions, no overflow. No earlier test pumped the shell; individual parts only. |
-| Defect found by that check | At 1024 px the AI panel floats, and its scrim (`desktop_shell.dart`, `_ShellBody`, `Positioned.fill`) covers the activity bar too. The next activity-bar click only closes the panel, so reaching e.g. Control Center takes two clicks. The scrim's own comment expects the activity bar to stay usable. Recorded as a skipped test in the same file, confirmed to fail when un-skipped. Severity: low. |
+| Does the IDE shell render? (new) | Local: **yes.** `test/desktop/desktop_shell_smoke_test.dart` pumps the real `DesktopShell` with the platform forced to Windows at 1920×1080, 1280×800, 1024×700 and 800×600 (wide, wide edge, standard, compact), LTR and RTL. It clicks all five activity-bar destinations back to back with hit-test misses made fatal. No exceptions, no overflow. No earlier test pumped the shell; individual parts only. |
+| Defect found by that check (**fixed**) | Below the wide breakpoint the AI panel floats, and its scrim (`desktop_shell.dart`, `_ShellBody`) was `Positioned.fill`, covering the activity bar too. The next activity-bar click only closed the panel, so reaching e.g. Control Center took two clicks. Severity: low. Fixed in this PR. The scrim now starts after the activity bar. The activity bar also closes a floating AI panel before opening a primary panel, which is otherwise drawn underneath it, and closes whatever floats before showing the bottom panel. So moving the scrim alone was not enough. 14 new cases fail on the old code and pass on the fix; the shell test file has 20 cases in all. Full client suite after the fix: 563 passed, 3 skipped. |
 | Client test coverage of IDE modules | 7 of 14 modules under `lib/desktop/` have **no** test that imports them: `agent` (255 lines), `control_center` (541), `debug` (658), `git` (684), `host` (403), `output` (215), `terminal` (186): about 2,900 lines, including the Agent Review merge/discard panel. Their hostd counterparts are tested; the client halves are not. |
 
 ## Blockers (must be fixed before any external user)
@@ -81,8 +81,6 @@ in CI, and has not been seen live.
 - `/ide` renders `SizedBox.shrink()` on Linux and macOS (`core/routing/router.dart:420`). The IDE is
   Windows-only by design (ADR-015), but a Linux user who deep-links there sees a blank window.
   Redirect instead.
-- The scrim defect above. A one-line fix (`PositionedDirectional(start: activityBarWidth, …)`)
-  plus un-skipping the test.
 - Stale `aura_hostd/README.md` (still says there is no PTY and no pairing).
 
 ## What is in good shape
@@ -97,7 +95,7 @@ in CI, and has not been seen live.
   rather than followed. hostd stays the authoritative boundary, per ADR-015 §3.
 - **Agent Review** (D9): discard asks for confirmation, merge disables its own buttons while in
   flight, and a conflict is reported rather than auto-resolved (code-read).
-- **The shell renders** at three window sizes in both text directions without layout errors
+- **The shell renders** at all three breakpoints (four window sizes) in both text directions without layout errors
   (new test). This is the first executed evidence for F-36's RTL work on the IDE shell.
 
 ## M8 sub-milestones against their exit criteria
@@ -129,7 +127,7 @@ in CI, and has not been seen live.
 3. M8.13 golden path on one real Windows machine. This is the smallest piece of PROVEN evidence
    and will surface whatever the unit suites cannot.
 4. Bundle and sign hostd, then add a restart-on-crash supervisor (M8.8, M8.10).
-5. Fill the client test gaps, and fix the scrim and macOS items.
+5. Fill the client test gaps, and fix the macOS items.
 
 ## Not checked
 
