@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'package:drift/drift.dart';
+import 'package:uuid/uuid.dart';
 
 import 'package:aura_client/core/database/connection/open_connection.dart';
 import 'package:aura_client/core/security/encryption_service.dart';
@@ -338,6 +339,14 @@ class AppDatabase extends _$AppDatabase {
   /// In-memory / test executor. Production uses [openConnection].
   AppDatabase.forTesting(super.e);
 
+  /// The clock [enqueueOutbox] stamps rows with. A test sets it to a fixed
+  /// instant to reproduce two writes landing on the same clock tick, which
+  /// Windows' coarse `DateTime.now()` produces in practice.
+  @visibleForTesting
+  DateTime Function() outboxClock = DateTime.now;
+
+  static const Uuid _outboxIds = Uuid();
+
   @override
   int get schemaVersion => 13;
 
@@ -359,10 +368,16 @@ class AppDatabase extends _$AppDatabase {
     required String operation,
     Map<String, dynamic>? payload,
   }) async {
-    final now = DateTime.now();
+    final now = outboxClock();
     await into(outboxEntries).insert(
       OutboxEntriesCompanion.insert(
-        id: '${table}_${recordId}_${now.microsecondsSinceEpoch}',
+        // The key used to end in the microsecond timestamp. Windows' clock can
+        // return the same microsecond for back-to-back calls, so two writes to
+        // one record (save, then forget) collided on the primary key and the
+        // second change was lost. The key is local only -- the server is sent
+        // `recordId` -- so a random suffix is safe; the prefix is kept for
+        // readability when inspecting the table.
+        id: '${table}_${recordId}_${_outboxIds.v4()}',
         targetTable: table,
         recordId: recordId,
         operation: operation,
@@ -374,10 +389,19 @@ class AppDatabase extends _$AppDatabase {
   }
 
   /// Outbox rows still being sent, oldest first. Parked rows are left out.
+  ///
+  /// `createdAt` is stored in whole seconds, so a save and the delete that
+  /// undoes it often tie. SQL leaves the order of ties undefined; SQLite
+  /// happens to return them in insertion order today, and `rowid` makes that a
+  /// guarantee, so a record's changes always reach the server in the order
+  /// they were made.
   Future<List<OutboxEntry>> pendingOutbox() {
     return (select(outboxEntries)
           ..where((t) => t.attempts.isSmallerThanValue(kMaxOutboxAttempts))
-          ..orderBy([(t) => OrderingTerm(expression: t.createdAt)]))
+          ..orderBy([
+            (t) => OrderingTerm(expression: t.createdAt),
+            (t) => OrderingTerm(expression: t.rowId),
+          ]))
         .get();
   }
 
