@@ -58,6 +58,10 @@ CI.
 3. **Not installable.** No installer, no code signing, no updater, and `aura_hostd` is not bundled.
    The user has to type the path to a daemon binary they built themselves
    (`core/hostd/hostd_supervisor_io.dart:25-28`). (CB-26, M8.10.)
+   **Update (2026-11-08): installers built, unsigned, no updater.** `desktop-package.yml`
+   produces a Windows installer and a Linux tar.gz with `aura_hostd` bundled, and the app uses
+   the bundled daemon by default. Signing is wired to secrets that do not exist yet. An update
+   channel with rollback is still open.
 
 4. **No crash recovery.** `HostdSupervisor` is 60 lines that start the daemon and log its exit
    code. Nothing restarts it, and nothing recovers unsaved buffers (CB-26, M8.8).
@@ -123,7 +127,7 @@ in CI, and has not been seen live.
 | M8.7 | Security UX review; SEC-02 regressions | BUILT; no review recorded |
 | M8.8 | Kill-daemon / kill-app recovery tests | Both BUILT and tested locally (supervisor restart; hot exit). Bundled signed hostd is M8.10 |
 | M8.9 | Measured cold start, 100k-file repo, typing latency, screen reader | OPEN; nothing measured |
-| M8.10 | Signed installer; update + rollback | OPEN |
+| M8.10 | Signed installer; update + rollback | Unsigned installer and bundled hostd BUILT (signing waits on a certificate); updater OPEN |
 | M8.11 | Opt-in content-free telemetry | OPEN |
 | M8.12 | Windows + Linux certification report | OPEN |
 | M8.13 | Recorded golden-path run | OPEN |

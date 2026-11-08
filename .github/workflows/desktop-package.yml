@@ -1,0 +1,221 @@
+name: Desktop Package
+
+# M8.10: installable AURA Desktop builds with aura_hostd bundled, so nobody has to build the
+# daemon and type its path into Settings before the desktop Engineer agent can start.
+#
+# - Windows: an Inno Setup installer (aura_client/windows/installer/aura.iss). Per-user, no admin.
+#   Inno rather than MSIX because an unsigned Inno installer still installs (with a SmartScreen
+#   prompt), while an unsigned MSIX does not install at all -- and there is no certificate yet.
+# - Linux: a tar.gz of the Flutter bundle.
+# - aura_hostd is compiled with the Dart that Flutter 3.44.6 ships (3.12.2, hostd-ci.yml's pin)
+#   and placed next to the app executable, where lib/core/hostd/hostd_bundled_path_io.dart looks.
+# - Every artifact gets a .sha256 file.
+#
+# Signing (Windows): only when the secrets AURA_WINDOWS_SIGNING_CERT (base64 of a .pfx) and
+# AURA_WINDOWS_SIGNING_PASSWORD exist. Without them the build is unsigned and says so; it does not
+# fail. Never generate a certificate in CI. Same shape as release-apk.yml's AAB job.
+#
+# Not here yet (M8.10's remainder): an update channel with rollback, and Linux AppImage/deb.
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_url:
+        description: "Backend URL to bake into the build"
+        required: false
+        default: "https://aureon-ai.tech"
+  push:
+    tags: ["desktop-v*"]
+  # Runs on changes to the packaging itself, so a broken installer is caught before a release.
+  pull_request:
+    paths:
+      - ".github/workflows/desktop-package.yml"
+      - "aura_client/windows/installer/**"
+      - "aura_client/lib/core/hostd/hostd_bundled_path*.dart"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  BACKEND_URL: ${{ github.event.inputs.backend_url || 'https://aureon-ai.tech' }}
+
+jobs:
+  package-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.44.6"
+
+      - name: Read the app version
+        id: version
+        run: |
+          $line = Select-String -Path aura_client/pubspec.yaml -Pattern '^version:\s*(\S+)' | Select-Object -First 1
+          $version = ($line.Matches[0].Groups[1].Value -split '\+')[0]
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Compile aura_hostd
+        working-directory: aura_hostd
+        run: |
+          dart pub get
+          # `dart compile exe` does not create the output directory.
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          dart compile exe bin/aura_hostd.dart -o build/aura_hostd.exe
+
+      - name: Build the Windows release
+        working-directory: aura_client
+        run: |
+          flutter config --enable-windows-desktop
+          flutter pub get
+          dart run build_runner build --delete-conflicting-outputs
+          flutter build windows --release --dart-define=BACKEND_URL=$env:BACKEND_URL
+
+      - name: Bundle aura_hostd next to the app
+        run: Copy-Item aura_hostd/build/aura_hostd.exe aura_client/build/windows/x64/runner/Release/
+
+      # No arguments prints usage and exits 64 (bin/aura_hostd.dart): proof the bundled binary
+      # starts at all, without connecting anywhere.
+      - name: Check the bundled daemon runs
+        run: |
+          & aura_client/build/windows/x64/runner/Release/aura_hostd.exe *> $null
+          if ($LASTEXITCODE -ne 64) { throw "aura_hostd exited $LASTEXITCODE, expected 64 (usage)" }
+          # Actions ends a pwsh step with `exit $LASTEXITCODE`; the 64 was the expected answer.
+          $global:LASTEXITCODE = 0
+
+      - name: Detect signing secrets
+        id: signing
+        env:
+          CERT_B64: ${{ secrets.AURA_WINDOWS_SIGNING_CERT }}
+          CERT_PASSWORD: ${{ secrets.AURA_WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          if ($env:CERT_B64 -and $env:CERT_PASSWORD) {
+            "enabled=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "enabled=false" >> $env:GITHUB_OUTPUT
+            Write-Host "::notice::No Windows signing certificate configured; building unsigned."
+          }
+
+      - name: Sign the executables
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          CERT_B64: ${{ secrets.AURA_WINDOWS_SIGNING_CERT }}
+          CERT_PASSWORD: ${{ secrets.AURA_WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_B64))
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' | Sort-Object FullName | Select-Object -Last 1
+          $release = 'aura_client/build/windows/x64/runner/Release'
+          foreach ($exe in "$release/aura_client.exe", "$release/aura_hostd.exe") {
+            & $signtool.FullName sign /f $pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $exe
+            if ($LASTEXITCODE -ne 0) { throw "signing $exe failed" }
+          }
+          Remove-Item $pfx
+
+      - name: Build the installer
+        run: |
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          $release = (Resolve-Path aura_client/build/windows/x64/runner/Release).Path
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $dist = (Resolve-Path dist).Path
+          & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" "/DSourceDir=$release" "/DOutputDir=$dist" aura_client/windows/installer/aura.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+
+      - name: Sign the installer
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          CERT_B64: ${{ secrets.AURA_WINDOWS_SIGNING_CERT }}
+          CERT_PASSWORD: ${{ secrets.AURA_WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_B64))
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' | Sort-Object FullName | Select-Object -Last 1
+          foreach ($setup in Get-ChildItem dist/*.exe) {
+            & $signtool.FullName sign /f $pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $setup.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signing $($setup.Name) failed" }
+          }
+          Remove-Item $pfx
+
+      - name: Write checksums
+        run: |
+          foreach ($file in Get-ChildItem dist/*.exe) {
+            $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($file.Name)" | Set-Content -NoNewline -Path "$($file.FullName).sha256"
+          }
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aura-desktop-windows-x64
+          path: dist/
+          retention-days: 14
+
+  package-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: "3.44.6"
+
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgtk-3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libsecret-1-dev libasound2-dev
+
+      - name: Read the app version
+        id: version
+        run: echo "version=$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' aura_client/pubspec.yaml | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Compile aura_hostd
+        working-directory: aura_hostd
+        run: |
+          dart pub get
+          # `dart compile exe` does not create the output directory.
+          mkdir -p build
+          dart compile exe bin/aura_hostd.dart -o build/aura_hostd
+
+      - name: Build the Linux release
+        working-directory: aura_client
+        run: |
+          flutter config --enable-linux-desktop
+          flutter pub get
+          dart run build_runner build --delete-conflicting-outputs
+          flutter build linux --release --dart-define=BACKEND_URL="$BACKEND_URL"
+
+      - name: Bundle aura_hostd next to the app
+        run: install -m 0755 aura_hostd/build/aura_hostd aura_client/build/linux/x64/release/bundle/aura_hostd
+
+      - name: Check the bundled daemon runs
+        run: |
+          set +e
+          aura_client/build/linux/x64/release/bundle/aura_hostd > /dev/null 2>&1
+          code=$?
+          set -e
+          if [ "$code" -ne 64 ]; then echo "aura_hostd exited $code, expected 64 (usage)"; exit 1; fi
+
+      - name: Package and write checksums
+        run: |
+          mkdir -p dist
+          name="aura-desktop-linux-x64-${{ steps.version.outputs.version }}"
+          tar -C aura_client/build/linux/x64/release -czf "dist/$name.tar.gz" --transform "s,^bundle,$name," bundle
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          ls -l dist
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aura-desktop-linux-x64
+          path: dist/
+          retention-days: 14

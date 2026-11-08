@@ -277,8 +277,8 @@ class _HostDaemonPageState extends ConsumerState<HostDaemonPage> {
           Text('aura_hostd executable', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: AuraSpacing.xs),
           Text(
-            'No binary is bundled with this app -- point this at wherever you built or installed '
-            'aura_hostd (see aura_hostd/README.md).',
+            'Installed builds use the aura_hostd that ships with this app. To use another one, '
+            'point this at it (see aura_hostd/README.md); clear it to go back to the bundled one.',
             style: TextStyle(color: palette.textSecondary, fontSize: 12),
           ),
           const SizedBox(height: AuraSpacing.md),
