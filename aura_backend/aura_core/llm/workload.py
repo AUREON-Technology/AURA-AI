@@ -19,10 +19,14 @@ the router treats the request as unhinted, which routes exactly as it did before
 from __future__ import annotations
 
 import contextlib
+import logging
 from contextvars import ContextVar
 from typing import Iterator
 
 from ..domain.llm import CompletionRequest, ModelPool, WorkloadClass, WorkloadHint
+from .complexity import assess_complexity
+
+logger = logging.getLogger("aura_core.llm.workload")
 
 __all__ = [
     "DEFAULT_WORKLOAD",
@@ -71,10 +75,36 @@ def workload_for_turn(
     agent: str | None,
     user_key: str | None,
     workload: WorkloadClass | None = None,
+    message: str | None = None,
+    complexity_threshold: float | None = None,
 ) -> WorkloadHint:
-    """The hint for one kernel turn. ``workload`` overrides the route/persona derivation."""
+    """The hint for one kernel turn. ``workload`` overrides the route/persona derivation.
+
+    With ``complexity_threshold`` set (``AURA_LLM_COMPLEXITY_ROUTING``, ADR-033), an
+    *interactive* turn whose ``message`` scores at or above it asks for the ``reasoning`` pool
+    instead of ``general-fast``. Only interactive turns: voice is latency-bound, Engineer turns
+    already ask for ``coder``, background work already asks for ``general-quality``, and a
+    caller that set ``workload`` explicitly has already said what it wants. The pool is a
+    preference, never ``strict_pool``: with no ``reasoning`` provider eligible (none
+    configured, circuit open, quota spent, or the turn's content too private for it), the
+    router falls back to generalist and ``general-*`` providers, ordered by the routing policy.
+    """
     cls = workload or workload_class_for_turn(route, agent)
-    return WorkloadHint(workload=cls, pool=_POOL_FOR_WORKLOAD[cls], user_key=user_key)
+    pool = _POOL_FOR_WORKLOAD[cls]
+    if (
+        complexity_threshold is not None
+        and workload is None
+        and cls is WorkloadClass.INTERACTIVE
+        and message
+    ):
+        assessment = assess_complexity(message)
+        if assessment.is_complex(complexity_threshold):
+            pool = ModelPool.REASONING
+            logger.info(
+                "complex turn routed to the reasoning pool",
+                extra={"complexity_score": assessment.score, "signals": list(assessment.signals)},
+            )
+    return WorkloadHint(workload=cls, pool=pool, user_key=user_key)
 
 
 def hint_for(workload: WorkloadClass, *, user_key: str | None = None) -> WorkloadHint:

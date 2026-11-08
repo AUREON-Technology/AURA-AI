@@ -7,13 +7,17 @@ dependency surfaces as a clear configuration error rather than an ImportError at
 This is what makes "add an inference node" a config change (ADR-003): nothing above this file
 knows which runtimes exist.
 
-**Every kind here is built for our own hardware.** There is no hosted-vendor branch, and adding one
-would fail ``tests/architecture/test_no_external_inference.py``. ``openai_compatible`` covers
-vLLM, llama.cpp's server, LocalAI and TGI; ``ollama`` covers Ollama's native API. The wire
-format being shared with hosted services is why ``ProviderConfig`` also refuses their hostnames
--- see ``ProviderConfig._reject_external_base_url``. The one gated exception, hosted open-weight
-APIs behind ``AURA_ALLOW_HOSTED_INFERENCE`` (ADR-030), still goes through ``openai_compatible``;
-it is a base URL an operator chose, not a branch here.
+**Every kind but one is built for our own hardware.** ``openai_compatible`` covers vLLM,
+llama.cpp's server, LocalAI and TGI; ``ollama`` covers Ollama's native API. The wire format being
+shared with hosted services is why ``ProviderConfig`` also refuses their hostnames -- see
+``ProviderConfig._reject_external_base_url``. Hosted open-weight APIs behind
+``AURA_ALLOW_HOSTED_INFERENCE`` (ADR-030) still go through ``openai_compatible``; they are a base
+URL an operator chose, not a branch here.
+
+The one vendor branch is ``claude`` (ADR-033): Anthropic's hosted models, refused at
+configuration unless ``AURA_ALLOW_CLAUDE_INFERENCE=true``. Any other vendor branch still fails
+``tests/architecture/test_no_external_inference.py``, which confines the ``anthropic`` SDK import
+to ``providers/claude.py`` and pins the set of kinds.
 """
 
 from __future__ import annotations
@@ -152,10 +156,23 @@ def build_provider(config: ProviderConfig, *, model_allowlist: Sequence[str] = (
             model_allowlist=model_allowlist,
         )
 
+    if config.kind == "claude":
+        from .providers.claude import ClaudeProvider
+
+        return ClaudeProvider(
+            name=config.name,
+            model=config.model,
+            api_key=config.api_key,
+            capabilities=capabilities,
+            timeout_s=config.timeout_s,
+            health_timeout_s=config.health_timeout_s,
+            extra_body=config.extra_body_fields,
+        )
+
     raise ConfigurationError(
         f"provider {config.name!r} has unsupported kind {config.kind!r}",
         details={
-            "supported": ["openai_compatible", "ollama", "echo"],
+            "supported": ["openai_compatible", "ollama", "echo", "claude"],
             "note": (
                 "hosted inference providers were removed deliberately; point `openai_compatible` "
                 "at a local vLLM, llama.cpp, LocalAI or TGI server instead"
