@@ -5,7 +5,7 @@ import 'package:aura_client/core/hostd/hostd_supervisor.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-class _FakeSupervisor implements HostdSupervisor {
+class _FakeSupervisor extends HostdSupervisor {
   final StreamController<String> _controller = StreamController<String>.broadcast();
 
   @override
@@ -13,6 +13,15 @@ class _FakeSupervisor implements HostdSupervisor {
 
   @override
   bool get isSpawnedHere => true;
+
+  @override
+  HostdSupervisorState get state => HostdSupervisorState.idle;
+
+  @override
+  int? get pid => null;
+
+  @override
+  Stream<HostdSupervisorState> get states => const Stream.empty();
 
   @override
   Future<void> start(String executablePath) async {}

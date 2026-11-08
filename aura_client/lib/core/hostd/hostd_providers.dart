@@ -70,6 +70,16 @@ final hostdSupervisorProvider = Provider<HostdSupervisor>((ref) {
   return supervisor;
 });
 
+/// What the supervisor is doing with the daemon it started: running, restarting after a crash,
+/// or given up (M8.8). `/status` polling cannot tell those apart -- a daemon between restarts and
+/// one that will never come back both just fail to answer -- so the screens read this alongside
+/// [hostdStatusProvider].
+final hostdSupervisorStateProvider = StreamProvider<HostdSupervisorState>((ref) async* {
+  final supervisor = ref.watch(hostdSupervisorProvider);
+  yield supervisor.state;
+  yield* supervisor.states;
+});
+
 /// Polls `GET /status` every few seconds while something is watching it (the daemon screen) --
 /// cheap enough locally that this doesn't need anything smarter, and stops entirely
 /// (`.autoDispose`) once nobody's looking, rather than polling forever in the background.

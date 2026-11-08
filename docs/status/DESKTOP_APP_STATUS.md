@@ -64,7 +64,7 @@ any of this works.
 | Area | Status | Evidence |
 | --- | --- | --- |
 | Linux client build | TESTED (build only) | Client CI 40719101490: `build-linux` produced `build/linux/x64/release/bundle/aura_client`; not packaged |
-| Windows client build | BUILT; CI red (non-gating) | `build-windows` is `continue-on-error`. 371 passed, 10 failed, all in `test/core/security/path_containment_test.dart` (8.3 short path `RUNNER~1` vs the long path). The build step never ran. |
+| Windows client build | TESTED (CI, gating) | Green on 2026-11-08: tests and the release bundle on #213 (Client CI run 177), #214 and #215. `continue-on-error` removed (M8), so a red Windows job now fails the run. It blocks a merge only once branch protection requires it (N1, owner). |
 | macOS build | BUILT, unverified | No CI job. `macos/Runner/Release.entitlements` turns on the app sandbox without `com.apple.security.network.client`, so a sandboxed build likely cannot reach the backend (code-read). |
 | Desktop login (Windows/Linux) | BUILT; unit-TESTED | Loopback PKCE (`core/auth/desktop_oauth_client_io.dart`) plus `POST /api/v3/auth/desktop/login`. One recorded live run failed with `client_secret is missing` (ADR-011); `34f0fc4` changed that since, but it is unproven end to end. macOS uses `google_sign_in`. |
 | Sign-out wipe and revoke | TESTED | `5153394` (F-05), `test/sign_out_wipe_test.dart`. Desktop-only `Desktop*` tables are not wiped. |
@@ -74,15 +74,14 @@ any of this works.
 | hostd: containment / command policy | TESTED on Linux; failing on Windows | `627a03d` (F-01 daemon half). On Windows, "rejects the filesystem root" fails because the denylist names only `C:\` and the runner's root is `D:\` (`containment.dart:27-44`). |
 | hostd: git and per-task worktrees (D8) | TESTED on Linux; failing on Windows | 8.3 path mismatch, and errno 32 file locks in the fetch-timeout test |
 | hostd: PTY (ConPTY, POSIX) | BUILT | The POSIX reader-isolate hang is fixed on `main` (`4b1968e`): the Linux suite exits in 20 s locally (2026-11-08). Not CI-run; ConPTY unverified. |
-| hostd: supervisor / restart-on-crash | OPEN | `core/hostd/hostd_supervisor_io.dart` has no restart logic (CB-26) |
+| hostd: supervisor / restart-on-crash | BUILT; TESTED locally (M8.8, part) | `core/hostd/hostd_supervisor_io.dart` restarts a crashed daemon with exponential backoff (1 s up to 30 s), never after exit 0 (deliberate shutdown), gives up on exit 64 or after 5 crashes in a row, and the IDE host panel shows "restarting" or "stopped after repeated crashes". `test/core/hostd/hostd_supervisor_io_test.dart` includes a real process killed with SIGKILL and restarted (POSIX). Not CI-run yet. Hot-exit and unsaved-buffer recovery (the rest of M8.8) are open. |
 | Packaging / installer / signing / updater | OPEN | No installer, signing or updater, and hostd is not bundled (CB-26, M8.10). Only local scripts exist (`scripts/deploy_client_desktop.{sh,ps1}`). |
 | Desktop Engineer end to end | OPEN | GAP-026; M9 needs a committed real-machine report |
 
 ## Build, release and verification
 
-- **Client CI** (`client-ci.yml`, Flutter 3.44.6): `analyze-and-test` and `build-linux` are
-  green. `build-windows` is red. The run as a whole is red because `build-android` runs out of
-  disk.
+- **Client CI** (`client-ci.yml`, Flutter 3.44.6): all four jobs were green on 2026-11-08
+  (#213, #214, #215), Windows and Android included. `build-windows` now gates the run.
 - **Host Daemon CI** (`hostd-ci.yml`): no green run since 2026-09-11. Pinned to Dart 3.12.2 on
   2026-10-30 (was 3.11.4), the SDK Flutter 3.44.6 ships, so daemon and client share a toolchain.
   Locally on 3.12.2: `dart analyze --fatal-infos` clean; `dart test` 231 passed, 1 failed (the
@@ -136,7 +135,7 @@ any of this works.
      picks the landing screen after sign-in, the IDE palette has "Leave IDE (Open Today)", and
      the Home palette has "Open Desktop IDE".
    - F-29 / GAP-010: tracked binaries.
-   - CB-26: no restart-on-crash, no signed bundle, no installer.
+   - CB-26: no signed bundle, no installer. Restart-on-crash is built (see the capability table).
 7. **Stale PRs #78 and #88.** Open drafts last touched in 2026-09, with no merge base with `main`.
    Their features already landed by other routes. Close them as superseded.
 
