@@ -38,6 +38,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
     final palette = AuraPalette.of(context);
     final statusAsync = ref.watch(hostdStatusProvider);
     final supervisor = ref.watch(hostdSupervisorProvider);
+    final supervisorState = ref.watch(hostdSupervisorStateProvider).value ?? supervisor.state;
 
     return Padding(
       padding: const EdgeInsets.all(AuraSpacing.md),
@@ -60,7 +61,7 @@ class _HostPanelState extends ConsumerState<HostPanel> {
           ),
           const SizedBox(height: AuraSpacing.sm),
           statusAsync.when(
-            data: (status) => _buildStatusCard(context, ref, palette, status, supervisor),
+            data: (status) => _buildStatusCard(context, ref, palette, status, supervisor, supervisorState),
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (error, _) => Text('Error: ${describeHostdError(error)}', style: TextStyle(color: palette.danger, fontSize: 12)),
           ),
@@ -76,8 +77,13 @@ class _HostPanelState extends ConsumerState<HostPanel> {
     AuraPalette palette,
     HostdStatusSnapshot status,
     HostdSupervisor supervisor,
+    HostdSupervisorState supervisorState,
   ) {
     final isRunning = status.reachable;
+    // `/status` cannot tell a daemon between crash restarts from one that will never come back:
+    // both just fail to answer. The supervisor can, for a daemon this app started (M8.8).
+    final restarting = !isRunning && supervisorState.phase == HostdSupervisorPhase.restarting;
+    final gaveUp = !isRunning && supervisorState.phase == HostdSupervisorPhase.failed;
     final isPaired = status.authenticated;
     // Paired (has a stored token) but not yet connected happens right after a drop -- a backend
     // redeploy, a network blip -- while the daemon's reconnect loop is in backoff. Every tool
@@ -93,14 +99,22 @@ class _HostPanelState extends ConsumerState<HostPanel> {
           children: [
             Icon(
               isRunning ? Icons.circle : Icons.circle_outlined,
-              color: !isRunning
-                  ? palette.textSecondary
-                  : (isPaired && isConnected != true ? palette.warning : palette.success),
+              color: gaveUp
+                  ? palette.danger
+                  : restarting
+                      ? palette.warning
+                      : !isRunning
+                          ? palette.textSecondary
+                          : (isPaired && isConnected != true ? palette.warning : palette.success),
               size: 10,
             ),
             const SizedBox(width: AuraSpacing.xs),
             Text(
-              !isRunning
+              gaveUp
+                  ? 'Stopped after repeated crashes'
+                  : restarting
+                      ? 'Crashed, restarting in ${supervisorState.nextRestartIn?.inSeconds ?? 0}s...'
+                      : !isRunning
                   ? 'Not running'
                   : !isPaired
                       ? 'Running, not paired'
@@ -113,6 +127,10 @@ class _HostPanelState extends ConsumerState<HostPanel> {
             ),
           ],
         ),
+        if (gaveUp && supervisorState.reason != null) ...[
+          const SizedBox(height: AuraSpacing.xs),
+          Text(supervisorState.reason!, style: TextStyle(fontSize: 10, color: palette.danger)),
+        ],
         if (status.backendUrl != null) ...[
           const SizedBox(height: AuraSpacing.xs),
           Text('Backend: ${status.backendUrl}', style: TextStyle(fontSize: 10, color: palette.textSecondary)),
@@ -123,9 +141,15 @@ class _HostPanelState extends ConsumerState<HostPanel> {
           children: [
             if (!isRunning)
               _SmallAuraButton(
-                label: _starting ? 'Starting...' : 'Start',
+                label: _starting ? 'Starting...' : (restarting ? 'Start now' : 'Start'),
                 icon: Icons.play_arrow,
                 onPressed: _starting ? null : () => _startDaemon(context, ref),
+              ),
+            if (restarting)
+              _SmallAuraButton(
+                label: 'Cancel restart',
+                icon: Icons.stop,
+                onPressed: supervisor.stop,
               ),
             if (isRunning)
               _SmallAuraButton(

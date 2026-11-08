@@ -110,14 +110,14 @@ jobs:
         run: flutter build apk --release --dart-define=BACKEND_URL=https://staging.placeholder.invalid
 
   build-windows:
-    # docs/architecture/015-desktop-ide.md (Desktop IDE, Phase K) — build-only gate for the
-    # Windows desktop target the Desktop IDE work targets first. Non-blocking for the Desktop
-    # IDE's D1-D3 merge until proven green here (see scripts/run_desktop_stack.ps1's own docs);
-    # required from D4 onward. Does not run or package aura_hostd, same as build-linux.
+    # docs/architecture/015-desktop-ide.md (Desktop IDE, Phase K) — test and build gate for the
+    # Windows desktop target, the only platform the Desktop IDE runs on. Was continue-on-error
+    # "until proven green here"; it now is: green on 2026-11-08 for #213 (run 177), #214 (after
+    # #215 fixed the outbox key collision Windows' coarse clock exposed) and #215, so it gates the
+    # run (M8 in the master roadmap). Does not run or package aura_hostd, same as build-linux.
     runs-on: windows-latest
     timeout-minutes: 60
     needs: analyze-and-test
-    continue-on-error: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 

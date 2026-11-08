@@ -121,7 +121,10 @@ class SseFrameParser {
 }
 
 /// The `/api/v3/chat/stream` request body. `images` is omitted when empty, so a text turn is
-/// exactly the body it was before images existed.
+/// exactly the body it was before images existed. `workspaceRoot` is omitted when null for the
+/// same reason: it is the Desktop IDE's active workspace root (audit FSA-006), forwarded by the
+/// backend to the paired daemon as the `cwd` of every command, and a turn from a surface with no
+/// open workspace must look exactly as it did before the field existed.
 Map<String, dynamic> chatStreamBody({
   required String message,
   required String sessionId,
@@ -133,6 +136,7 @@ Map<String, dynamic> chatStreamBody({
   int maxOutputTokens = 1024,
   double temperature = 0.3,
   List<ChatImageAttachment> images = const [],
+  String? workspaceRoot,
 }) {
   return {
     "message": message,
@@ -145,6 +149,7 @@ Map<String, dynamic> chatStreamBody({
     "max_output_tokens": maxOutputTokens,
     "temperature": temperature,
     if (images.isNotEmpty) "images": [for (final image in images) image.toWire()],
+    "workspace_root": ?workspaceRoot,
   };
 }
 
@@ -187,6 +192,9 @@ class SseAgentClient {
     double temperature = 0.3,
     // ADR-031: images for this turn only. Sent as base64 and never persisted on either side.
     List<ChatImageAttachment> images = const [],
+    // FSA-006: the Desktop IDE's active workspace root, so the daemon runs commands there and
+    // not in whichever root was granted first. Null from every surface without one.
+    String? workspaceRoot,
   }) {
     final ownsClient = _httpClient == null;
     final client = _httpClient ?? http.Client();
@@ -208,6 +216,7 @@ class SseAgentClient {
           maxOutputTokens: maxOutputTokens,
           temperature: temperature,
           images: images,
+          workspaceRoot: workspaceRoot,
         ).listen(controller.add, onError: controller.addError, onDone: controller.close);
       },
       onPause: () => inner?.pause(),
@@ -239,6 +248,7 @@ class SseAgentClient {
     required int maxOutputTokens,
     required double temperature,
     required List<ChatImageAttachment> images,
+    required String? workspaceRoot,
   }) async* {
     final cid = correlationId ?? _uuid.v4();
     try {
@@ -265,6 +275,7 @@ class SseAgentClient {
         maxOutputTokens: maxOutputTokens,
         temperature: temperature,
         images: images,
+        workspaceRoot: workspaceRoot,
       ));
 
       var response = await client.send(request).timeout(kLlmConnectTimeout);

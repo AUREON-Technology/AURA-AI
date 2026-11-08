@@ -142,6 +142,34 @@ void main() {
       expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isTrue);
     });
 
+    test('runs in the cwd the backend names when it lies inside a granted root', () async {
+      // FSA-006, second half: the backend now sends the IDE's active root as `cwd`
+      // (aura_backend/aura_core/tools/coding.py::run_command), so a user with several granted
+      // roots gets the command in the one the IDE shows, not in whichever root was granted first.
+      final sub = Directory(p.join(workspaceDir.path, 'pkg'))..createSync();
+      final result = await handler.run({
+        'command': ['sh', '-c', 'pwd'],
+        'cwd': sub.path,
+        'timeout_s': 5.0,
+      });
+      expect(result['exit_code'], 0);
+      expect((result['stdout'] as String).trim(), sub.path);
+    }, testOn: '!windows');
+
+    test('a cwd outside every granted root is refused, not silently replaced', () async {
+      final elsewhere = Directory(p.join(tempDir.path, 'elsewhere'))..createSync();
+      expect(
+        () => handler.run({
+          'command': ['sh', '-c', 'pwd'],
+          'cwd': elsewhere.path,
+          'timeout_s': 5.0,
+        }),
+        throwsA(isA<RpcError>().having(
+          (e) => e.message, 'message', contains('no granted workspace root contains'),
+        )),
+      );
+    });
+
     test('refuses rm -rf even in a trusted workspace', () async {
       roots.setTrusted(workspaceDir.path, true);
       expect(

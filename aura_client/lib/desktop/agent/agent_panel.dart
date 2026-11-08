@@ -72,7 +72,11 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
     if (!chat.canSend(text, isStreaming: isStreaming, hasImages: hasImages)) return;
 
     _controller.clear();
-    final sent = await ref.read(chatViewModelProvider.notifier).sendMessage(text);
+    // FSA-006: the workspace this panel sits beside is where the Engineer's commands run.
+    final workspaceRoot = ref.read(workspaceNotifierProvider).activeWorkspace?.rootPath;
+    final sent = await ref
+        .read(chatViewModelProvider.notifier)
+        .sendMessage(text, workspaceRoot: workspaceRoot);
     if (!sent || !mounted) return;
     Future.delayed(const Duration(milliseconds: 100), () {
       if (mounted) _scrollToBottom();

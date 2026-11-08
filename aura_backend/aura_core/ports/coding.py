@@ -212,8 +212,17 @@ class SandboxRunner(Protocol):
         ...
 
     async def run(
-        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
+        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float,
+        cwd: str | None = None,
     ) -> SandboxResult:
+        """``cwd`` is the Desktop IDE's active workspace root, in the *user's machine's* path
+        syntax (audit FSA-006): the host-agent bridge forwards it to the daemon, which runs the
+        command there if -- and only if -- it lies inside a granted root, and refuses otherwise.
+        Every other runner accepts and ignores it: a path on the user's machine means nothing to a
+        server-side container, and the IDE sends one whenever a workspace is open, paired daemon
+        or not. Callers pass it only when they have one, so a runner written before this
+        parameter existed keeps working unchanged.
+        """
         ...
 
     async def write_file(self, handle: SandboxHandle, path: str, content: str) -> None:
@@ -323,8 +332,10 @@ class StreamingSandboxRunner(Protocol):
     """
 
     def run_streaming(
-        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
+        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float,
+        cwd: str | None = None,
     ) -> AsyncIterator[SandboxOutputEvent]:
+        """``cwd`` as on :meth:`SandboxRunner.run`."""
         ...
 
 

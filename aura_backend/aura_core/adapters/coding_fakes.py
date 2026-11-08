@@ -63,8 +63,11 @@ class InMemorySandboxRunner:
         return candidate
 
     async def run(
-        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
+        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float,
+        cwd: str | None = None,
     ) -> SandboxResult:
+        # `cwd` is a path on the user's machine (FSA-006); this runner's workspace is its own
+        # scratch directory, so the only correct thing to do with it is nothing.
         root = self._scratch(handle)
         try:
             process = await asyncio.create_subprocess_exec(

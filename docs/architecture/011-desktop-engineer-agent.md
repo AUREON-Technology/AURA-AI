@@ -63,9 +63,14 @@ a *trusted* root, since the 2026-10-31 audit (FSA-006), the daemon applies the s
 containment to a documented set of destructive verbs (remove, move, copy, find, chmod,
 `git clean`/`reset`/`checkout`, … — `command_policy.dart::destructiveVerbPattern`), including
 through a `cd ..` earlier on the same command line. Trust lifts per-call confirmation for the
-checkout's own tooling; it does not let the daemon destroy anything outside the checkout. Still
-open from that finding: with several granted roots and no `cwd` in the request, `run` executes in
-the first root, because the backend does not yet send the IDE's active root.
+checkout's own tooling; it does not let the daemon destroy anything outside the checkout. The
+other half of that finding closed on 2026-11-08: the IDE sends the workspace it currently shows as
+`workspace_root` on `/api/v3/chat/stream`, the kernel carries it on `ToolContext.metadata`,
+`run_command` hands it to the runner as `cwd`, and the host-agent bridge forwards it on the `run`
+RPC. The daemon runs the command there only if the path lies inside a granted root and refuses it
+otherwise (`task_handler.dart`); the backend never interprets the path. With no root sent (mobile,
+an older desktop build, no open workspace) the daemon keeps its first-granted-root fallback, and
+the server-side sandbox ignores the value, since a path on the user's machine means nothing there.
 
 ### Trust channels and taint are unaffected
 

@@ -316,9 +316,15 @@ class DockerSandboxRunner:
         return run_kwargs
 
     async def run(
-        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
+        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float,
+        cwd: str | None = None,
     ) -> SandboxResult:
         """Run one command in a container of its own, over this handle's workspace directory.
+
+        ``cwd`` (the Desktop IDE's active root, audit FSA-006) is accepted and ignored: it is a
+        path on the user's machine, and this container's workspace is the checkout on the host,
+        so there is nothing it could sensibly name here. The IDE sends it whenever a workspace is
+        open, paired daemon or not, and the composite runner falls back here when none is paired.
 
         **Deliberately not ``docker exec``.** The gateway reaches the daemon through
         ``docker-socket-proxy`` with ``EXEC: "0"`` in both compose files, so

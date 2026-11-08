@@ -238,7 +238,11 @@ class TaskHandler {
     if (commandArgv.isEmpty) {
       throw RpcError('"command" must be a non-empty list of arguments');
     }
-    final cwdParam = params['cwd'] as String?; // not sent by the current backend; tolerated
+    // The Desktop IDE's active workspace root, sent by the backend's `run_command` since the
+    // FSA-006 follow-up (aura_core/tools/coding.py). Resolved and contained below exactly like a
+    // path the agent named itself; absent (older backend, no open workspace) the first granted
+    // root is used, as before.
+    final cwdParam = params['cwd'] as String?;
     final requestedTimeout = (params['timeout_s'] as num?)?.toDouble() ?? 60.0;
     final taskId = params['task_id'] as String?;
 
