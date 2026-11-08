@@ -197,8 +197,18 @@ class SandboxRunner(Protocol):
         user_id: UserId | None = None,
         session_id: str | None = None,
         isolate: bool = False,
+        workspace_root: str | None = None,
     ) -> SandboxHandle:
-        """``session_id``/``isolate`` are D8's per-task isolated-workspace request (Desktop IDE
+        """``workspace_root`` is the Desktop IDE's active workspace root (audit FSA-006), in the
+        *user's machine's* path syntax, and binds the task to that root for every call made on the
+        handle -- run, write, read, git -- so a user with several granted roots gets the Engineer
+        in the one the IDE shows, not in whichever root was granted first. The host-agent bridge
+        sends it to the daemon, which binds the task only if the path lies inside a granted root
+        and refuses otherwise; every other runner accepts and ignores it, because a path on the
+        user's machine means nothing to a server-side checkout. Callers pass it only when they
+        have one, so a runner written before this parameter existed keeps working unchanged.
+
+        ``session_id``/``isolate`` are D8's per-task isolated-workspace request (Desktop IDE
         only): ``isolate=True`` asks the host-agent bridge's daemon to carve out a dedicated git
         worktree for this task rather than writing into the user's live checkout, keyed by
         ``session_id`` (stable across a chat session's many turns, unlike the fresh ``task_id``
@@ -212,17 +222,8 @@ class SandboxRunner(Protocol):
         ...
 
     async def run(
-        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float,
-        cwd: str | None = None,
+        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
     ) -> SandboxResult:
-        """``cwd`` is the Desktop IDE's active workspace root, in the *user's machine's* path
-        syntax (audit FSA-006): the host-agent bridge forwards it to the daemon, which runs the
-        command there if -- and only if -- it lies inside a granted root, and refuses otherwise.
-        Every other runner accepts and ignores it: a path on the user's machine means nothing to a
-        server-side container, and the IDE sends one whenever a workspace is open, paired daemon
-        or not. Callers pass it only when they have one, so a runner written before this
-        parameter existed keeps working unchanged.
-        """
         ...
 
     async def write_file(self, handle: SandboxHandle, path: str, content: str) -> None:
@@ -332,10 +333,8 @@ class StreamingSandboxRunner(Protocol):
     """
 
     def run_streaming(
-        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float,
-        cwd: str | None = None,
+        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
     ) -> AsyncIterator[SandboxOutputEvent]:
-        """``cwd`` as on :meth:`SandboxRunner.run`."""
         ...
 
 

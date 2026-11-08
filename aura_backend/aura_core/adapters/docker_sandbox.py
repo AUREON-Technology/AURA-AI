@@ -236,8 +236,11 @@ class DockerSandboxRunner:
                 )
 
     async def create_task(
-        self, *, user_id: Any | None = None, session_id: str | None = None, isolate: bool = False
+        self, *, user_id: Any | None = None, session_id: str | None = None, isolate: bool = False,
+        workspace_root: str | None = None,
     ) -> SandboxHandle:
+        # `workspace_root` (FSA-006) is a path on the user's machine; this sandbox's workspace is
+        # the checkout on the host, so there is nothing it could sensibly name here: ignored.
         # `user_id`/`session_id`/`isolate` are accepted for `SandboxRunner` protocol conformance
         # and ignored: this server-side sandbox has its own durable-workspace story
         # (`open_workspace`/`pause_workspace`), not D8's per-task git worktrees, which only the
@@ -316,15 +319,9 @@ class DockerSandboxRunner:
         return run_kwargs
 
     async def run(
-        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float,
-        cwd: str | None = None,
+        self, handle: SandboxHandle, command: Sequence[str], *, timeout_s: float
     ) -> SandboxResult:
         """Run one command in a container of its own, over this handle's workspace directory.
-
-        ``cwd`` (the Desktop IDE's active root, audit FSA-006) is accepted and ignored: it is a
-        path on the user's machine, and this container's workspace is the checkout on the host,
-        so there is nothing it could sensibly name here. The IDE sends it whenever a workspace is
-        open, paired daemon or not, and the composite runner falls back here when none is paired.
 
         **Deliberately not ``docker exec``.** The gateway reaches the daemon through
         ``docker-socket-proxy`` with ``EXEC: "0"`` in both compose files, so

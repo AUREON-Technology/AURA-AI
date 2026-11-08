@@ -1737,9 +1737,16 @@ class AIKernel:
 
     @staticmethod
     def _resumed_request(request: TurnRequest, resume: ResumedTurn) -> TurnRequest:
-        """The held turn's own message and persona, not whatever the resuming request carried:
-        the plan, its grants and the answer all belong to the turn the user approved."""
-        return replace(request, message=resume.message or request.message, agent=resume.agent)
+        """The held turn's own message, persona and workspace root, not whatever the resuming
+        request carried: the plan, its grants and the answer all belong to the turn the user
+        approved, and so does the place its commands run (FSA-006) -- the client may have opened
+        another workspace since the hold, and an approved `git reset --hard` must not follow it."""
+        return replace(
+            request,
+            message=resume.message or request.message,
+            agent=resume.agent,
+            workspace_root=resume.workspace_root,
+        )
 
     async def _hold_for_confirmation(
         self, request: TurnRequest, turn_id: TurnId, outcome: Any
@@ -1761,6 +1768,7 @@ class AIKernel:
                     tainted=bool(getattr(outcome, "tainted", False)),
                     calls=calls,
                     turn_id=turn_id.value,
+                    workspace_root=request.workspace_root,
                 )
             except Exception:
                 # Fails closed: with no stored pending turn there is nothing to approve, so the

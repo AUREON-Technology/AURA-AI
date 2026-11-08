@@ -64,13 +64,20 @@ containment to a documented set of destructive verbs (remove, move, copy, find, 
 `git clean`/`reset`/`checkout`, … — `command_policy.dart::destructiveVerbPattern`), including
 through a `cd ..` earlier on the same command line. Trust lifts per-call confirmation for the
 checkout's own tooling; it does not let the daemon destroy anything outside the checkout. The
-other half of that finding closed on 2026-11-08: the IDE sends the workspace it currently shows as
-`workspace_root` on `/api/v3/chat/stream`, the kernel carries it on `ToolContext.metadata`,
-`run_command` hands it to the runner as `cwd`, and the host-agent bridge forwards it on the `run`
-RPC. The daemon runs the command there only if the path lies inside a granted root and refuses it
-otherwise (`task_handler.dart`); the backend never interprets the path. With no root sent (mobile,
-an older desktop build, no open workspace) the daemon keeps its first-granted-root fallback, and
-the server-side sandbox ignores the value, since a path on the user's machine means nothing there.
+other half of that finding is **built and tested, not proven** (2026-11-08): the IDE sends the
+workspace it currently shows as `workspace_root` on `/api/v3/chat/stream`; the kernel carries it
+on `ToolContext.metadata`; the sandbox session binds the task to it once, at `create_task`, and the
+host-agent bridge sends it to the daemon as that call's `cwd`. The daemon binds the task only if
+the path lies inside a granted root (refusing otherwise), and every RPC on that task -- `run`,
+`write_file`, `read_file`, `write_files`, hence every git tool -- resolves against the bound root.
+When granted roots nest, the most specific root wins, so an inner root's narrower trust is kept.
+A held turn stores the root it was proposed in and the kernel pins it on approval, so an approved
+command cannot follow the user into another workspace. The backend never interprets the path. With
+no root sent (mobile, an older desktop build, no open workspace) the daemon keeps its
+first-granted-root fallback, and the server-side sandbox ignores the value, since a path on the
+user's machine means nothing there. What proves it: a paired desktop with two granted roots, the
+second one open in the IDE, and an Engineer turn whose `run_command`, `write_file` and
+`git_commit` all land in the open root -- recorded under `docs/reports/`. Until then it is BUILT.
 
 ### Trust channels and taint are unaffected
 
