@@ -10,12 +10,12 @@ Qdrant, Redis or model -- so a throwaway local cluster is enough::
     AURA_TEST_DATABASE_URL='postgresql://aura@localhost:55435/aura_kg' \\
         pytest tests/load/test_knowledge_graph_postgres.py -m load -q
 
-Store and engine tests each run in a freshly created schema (selected through the DSN's
-``search_path``) that is dropped afterwards. The Alembic tests create and drop their own
-databases, because a migration chain is per database.
+Every test runs in a freshly created database, dropped afterwards. Store and engine tests get one
+migrated with ``alembic upgrade head``: the adapter creates no tables (CB-20), so the schema they
+run on is the one production gets.
 
 What the fake-connection unit tests (``tests/unit/test_postgres_graph.py``) cannot show and this
-does: the DDL and backfill actually execute; foreign keys and ``ON DELETE CASCADE`` hold;
+does: migration 0007's DDL and legacy-row backfill actually execute; foreign keys and ``ON DELETE CASCADE`` hold;
 ``DELETE ... RETURNING`` / ``IS DISTINCT FROM $3::integer`` bind correctly under asyncpg; JSONB
 and TIMESTAMPTZ round-trip into the domain types; and ingest -> supersede -> delete through the
 real ``KnowledgeEngine`` leaves the tables in the state the port promises, per owner.
@@ -29,7 +29,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 
@@ -41,6 +41,7 @@ from aura_core.domain.knowledge import Entity, GraphDelta, Relation
 from aura_core.knowledge import KnowledgeEngine, RuleEntityExtractor
 from aura_core.knowledge.index_manager import IndexManager
 from aura_core.llm.embeddings import HashEmbeddingProvider
+from tests.postgres_migrations import migrate, migrated_database
 
 pytestmark = pytest.mark.load
 
@@ -54,38 +55,23 @@ ORG_CHART = (
 )
 
 
-def _with_search_path(url: str, schema: str) -> str:
-    """asyncpg passes unrecognised DSN query parameters through as server settings."""
-    parts = urlsplit(url)
-    query = dict(parse_qsl(parts.query))
-    query["search_path"] = schema
-    return urlunsplit(parts._replace(query=urlencode(query)))
-
-
 def _with_database(url: str, database: str) -> str:
     parts = urlsplit(url)
     return urlunsplit(parts._replace(path=f"/{database}"))
 
 
 @pytest.fixture
-async def schema_url():
+async def database():
+    """A fresh database migrated to head."""
     if not _URL:
         pytest.skip("AURA_TEST_DATABASE_URL is not set")
-    import asyncpg
-
-    schema = f"kg_test_{uuid.uuid4().hex[:12]}"
-    admin = await asyncpg.connect(_URL)
-    await admin.execute(f'CREATE SCHEMA "{schema}"')
-    try:
-        yield _with_search_path(_URL, schema), schema
-    finally:
-        await admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
-        await admin.close()
+    async with migrated_database(_URL, "kg_test") as url:
+        yield url
 
 
 @pytest.fixture
-async def store(schema_url):
-    url, _schema = schema_url
+async def store(database):
+    url = database
     pool = PostgresPool(url, min_size=1, max_size=4)
     graph = PostgresGraphStore(url, pool=pool)
     try:
@@ -96,11 +82,10 @@ async def store(schema_url):
 
 
 @pytest.fixture
-async def raw(schema_url):
+async def raw(database):
     import asyncpg
 
-    url, _schema = schema_url
-    conn = await asyncpg.connect(url)
+    conn = await asyncpg.connect(database)
     try:
         yield conn
     finally:
@@ -133,7 +118,7 @@ def _relation(s: str, p: str, o: str, source: str, confidence: float = 0.7) -> R
 
 
 class TestPostgresGraphStore:
-    async def test_the_schema_creates_and_seeds_the_vocabulary(self, store, raw) -> None:
+    async def test_the_migrated_schema_has_the_tables_and_the_vocabulary(self, store, raw) -> None:
         await store.find_entities(owner_id=ALICE)
         tables = {
             r["table_name"] for r in await raw.fetch(
@@ -149,7 +134,7 @@ class TestPostgresGraphStore:
         predicates = {r["predicate"] for r in await raw.fetch(
             "SELECT predicate FROM aura_graph_relation_types")}
         assert {"works_at", "reports_to", "depends_on"} <= predicates
-        # Running the schema again (a second gateway worker) is a no-op, not an error.
+        # A second store on the same pool (a second gateway worker) needs no setup of its own.
         second = PostgresGraphStore("", pool=store._pool)
         await second.find_entities(owner_id=ALICE)
 
@@ -319,11 +304,28 @@ _LEGACY_DDL = (
 
 
 class TestLegacyRows:
-    async def test_pre_phase_11_rows_are_backfilled_and_then_purgeable(self, store, raw) -> None:
-        """A production database already holds graph rows written by the old adapter."""
-        for statement in _LEGACY_DDL:
-            await raw.execute(statement)
+    async def test_pre_phase_11_rows_are_backfilled_and_then_purgeable(self) -> None:
+        """A production database already holds graph rows written by the old adapter; migration
+        0007 backfills their provenance and aliases, and the store then reads and purges them."""
+        import asyncpg
 
+        if not _URL:
+            pytest.skip("AURA_TEST_DATABASE_URL is not set")
+        async with migrated_database(_URL, "kg_legacy", revision="0006") as url:
+            raw = await asyncpg.connect(url)
+            pool = PostgresPool(url, min_size=1, max_size=2)
+            try:
+                for statement in _LEGACY_DDL:
+                    await raw.execute(statement)
+                migrate(url)
+                await self._check(PostgresGraphStore(url, pool=pool), raw)
+            finally:
+                await raw.close()
+                if pool._pool is not None:
+                    await pool._pool.close()
+
+    @staticmethod
+    async def _check(store, raw) -> None:
         assert await store.find_entities(owner_id=ALICE, name="s. chen")
         (prov,) = await store.provenance(owner_id=ALICE, entity_key="person:sarah-chen")
         assert (prov.document_id, prov.document_version) == ("old-doc", 3)

@@ -13,9 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
-import uuid
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 
@@ -25,6 +23,7 @@ from aura_core.domain.blueprint import KnowledgeSection
 from aura_core.knowledge.engine import KnowledgeEngine
 from aura_core.knowledge.index_manager import IndexManager
 from aura_core.llm.embeddings import HashEmbeddingProvider
+from tests.postgres_migrations import migrated_database
 from tests.unit.test_adaptation_project_knowledge import CONNECTOR, HR_DOCS, _compiled, _opener, _project, _with_docs
 
 pytestmark = pytest.mark.load
@@ -36,16 +35,8 @@ _URL = os.environ.get("AURA_TEST_DATABASE_URL", "")
 async def database_url():
     if not _URL:
         pytest.skip("AURA_TEST_DATABASE_URL is not set")
-    import asyncpg
-
-    name = f"ap10_{uuid.uuid4().hex[:10]}"
-    admin = await asyncpg.connect(_URL)
-    await admin.execute(f'CREATE DATABASE "{name}"')
-    try:
-        yield urlunsplit(urlsplit(_URL)._replace(path=f"/{name}"))
-    finally:
-        await admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-        await admin.close()
+    async with migrated_database(_URL, "ap10") as url:
+        yield url
 
 
 async def test_sync_converges_and_leaves_global_documents_alone(database_url, tmp_path: Path) -> None:

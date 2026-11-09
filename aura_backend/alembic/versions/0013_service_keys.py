@@ -6,8 +6,7 @@ Create Date: 2026-10-05
 
 Adds `aura_service_keys`: one row per issued service key. Only a SHA-256 digest of the token is
 stored; the token itself is shown once at issue and never persisted. `revoked_at` is read on
-every request the key makes, so a revocation takes effect on the next call. Kept textually in
-step with `PostgresServiceKeyStore.SERVICE_KEYS_SCHEMA` (`tests/unit/test_service_keys.py`).
+every request the key makes, so a revocation takes effect on the next call. (The adapter's copy was removed when Alembic became the only schema authority, CB-20.)
 """
 from typing import Sequence, Union
 

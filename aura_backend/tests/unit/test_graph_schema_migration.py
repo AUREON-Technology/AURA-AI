@@ -1,9 +1,10 @@
-"""Migration 0007 and ``PostgresGraphStore`` must build the same knowledge-graph schema.
+"""Migration 0007 builds the knowledge-graph schema and seeds its vocabulary.
 
-Both create it -- the migration for an operator running ``alembic upgrade head``, the adapter on
-first use for a gateway that got there first -- so a column or index added to one and not the
-other would leave two production databases with different schemas depending on which ran first.
-And the seeded vocabulary must be exactly what the ingestion pipeline validates against.
+It is the only thing that does: ``PostgresGraphStore`` used to run the same DDL on first use, and
+this file pinned the two copies together. The adapter's copy is gone (CB-20; see
+``tests/architecture/test_no_runtime_ddl.py``), so what stays pinned here is that the seeded
+vocabulary is exactly what the ingestion pipeline validates against, and that every fact table is
+owner-scoped.
 """
 
 from __future__ import annotations
@@ -11,7 +12,6 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-from aura_core.adapters.postgres_graph import GRAPH_SCHEMA, graph_type_seed_statements
 from aura_core.domain.graph import DEFAULT_GRAPH_SCHEMA
 
 _MIGRATION = Path(__file__).resolve().parents[2] / "alembic" / "versions" / "0007_knowledge_graph.py"
@@ -25,22 +25,16 @@ def _migration():
     return module
 
 
-def _norm(sql: str) -> str:
-    return " ".join(sql.split())
-
-
 def test_the_migration_chains_after_idempotency_keys() -> None:
     migration = _migration()
     assert migration.revision == "0007"
     assert migration.down_revision == "0006"
 
 
-def test_the_migration_and_the_adapter_issue_the_same_ddl() -> None:
-    migration = _migration()
-    assert [_norm(s) for s in migration.STATEMENTS] == [_norm(s) for s in GRAPH_SCHEMA]
-
-
 def test_the_seeded_vocabulary_is_the_schema_the_pipeline_validates_against() -> None:
+    # Nothing re-seeds at runtime any more, so a change to DEFAULT_GRAPH_SCHEMA needs a new
+    # migration that upserts the new vocabulary (editing 0007 would never reach a database that
+    # already ran it) -- and this test then reads that migration instead of 0007.
     migration = _migration()
     assert [(n, lit) for n, lit, _d in migration.ENTITY_TYPES] == [
         (t.name, t.literal) for t in DEFAULT_GRAPH_SCHEMA.entity_types
@@ -49,13 +43,12 @@ def test_the_seeded_vocabulary_is_the_schema_the_pipeline_validates_against() ->
         (r.predicate, set(r.subject_types), set(r.object_types))
         for r in DEFAULT_GRAPH_SCHEMA.relation_types
     ]
-    assert migration.seed_statements() == graph_type_seed_statements()
 
 
 def test_every_graph_table_is_owner_scoped() -> None:
     """The vocabulary tables are global by design; every table holding facts leads with owner."""
     fact_tables = [
-        s for s in GRAPH_SCHEMA
+        s for s in _migration().STATEMENTS
         if "CREATE TABLE" in s and "_types" not in s
     ]
     assert len(fact_tables) == 5

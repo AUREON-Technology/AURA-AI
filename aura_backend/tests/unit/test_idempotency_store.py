@@ -44,10 +44,11 @@ async def store(request):
         pytest.skip("AURA_TEST_POSTGRES_URL not set (opt-in: needs a throwaway Postgres)")
     from aura_core.adapters.postgres_idempotency import PostgresIdempotencyStore
     from aura_core.adapters.postgres_store import PostgresPool
+    from tests.postgres_migrations import migrate
 
     pool = PostgresPool(PG_URL)
     adapter = PostgresIdempotencyStore(PG_URL, pool=pool)
-    await adapter._ensure_schema()
+    migrate(PG_URL)  # the adapter creates nothing; Alembic owns the schema (CB-20)
     raw = await pool._get_pool()
     async with raw.acquire() as conn:
         await conn.execute("TRUNCATE aura_idempotency_keys")

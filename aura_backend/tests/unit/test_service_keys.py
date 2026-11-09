@@ -8,15 +8,12 @@ does, so a Super Admin can issue keys through the HTTP API.
 
 from __future__ import annotations
 
-import importlib.util
 import logging
-from pathlib import Path
 
 import pytest
 
 import services.jwt_auth as jwt_auth
 import services.rbac as rbac
-from aura_core.adapters.postgres_service_keys import SERVICE_KEYS_SCHEMA
 from aura_core.adapters.service_keys import InMemoryServiceKeyStore
 from aura_core.api import build_app
 from aura_core.domain.errors import AuthenticationError, ValidationError
@@ -24,7 +21,6 @@ from aura_core.domain.service_keys import ServiceKey, new_token, parse_token, to
 from aura_core.security.service_keys import ServiceKeyService
 from aura_service import _build_authenticator
 
-BACKEND = Path(__file__).resolve().parents[2]
 ADMIN = {"authorization": "Bearer person-jwt"}
 
 
@@ -91,13 +87,6 @@ class TestDomain:
         forged = token[:-4] + ("AAAA" if not token.endswith("AAAA") else "BBBB")
         with pytest.raises(AuthenticationError):
             await service.authenticate(forged)
-
-
-def test_postgres_schema_matches_its_migration() -> None:
-    spec = importlib.util.spec_from_file_location("m0013", BACKEND / "alembic" / "versions" / "0013_service_keys.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    assert module.UPGRADE_STATEMENTS == SERVICE_KEYS_SCHEMA
 
 
 # ------------------------------------------------------------------------------------- over HTTP

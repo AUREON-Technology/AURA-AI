@@ -177,7 +177,7 @@ Severity: **Critical** (blocks everything / live exposure) · **High** (blocks a
 | CB-17 | High | Inference capacity | `NUM_PARALLEL=1`, CPU, p95 70.5 s (A4) | Pinned GPU pool + failover | Cutover + failure reports | M4 |
 | CB-18 | High | Supply chain | LLM by tag; embedder/STT no revision; HF Space `vllm:latest`; licenses unrecorded (GAP-030/031/042) | Pin + startup check + license table | Test + MODEL_REGISTRY | M4 |
 | CB-19 | High | Capacity | No load matrix (GAP-041); Phase-3 numbers are echo artifacts | 1→100 matrix + soak on prod topology | Report | M5 |
-| CB-20 | High | Schema | 26 runtime-DDL tables outside Alembic; readiness checks Alembic only | Alembic baseline; forbid runtime DDL; downgrade tests | Fitness test | M6 |
+| CB-20 | High | Schema | 26 runtime-DDL tables outside Alembic; readiness checks Alembic only | Alembic baseline; forbid runtime DDL; downgrade tests | Fitness test | M6 · **2026-11-09: BUILT and TESTED locally, not CI-run, not deployed.** Baseline `0016` (F-27). Runtime DDL removed from all 16 adapters: a PG16 schema diff (head vs head + the old bootstrap) was identical. `test_no_runtime_ddl.py` forbids it. `test_migration_roundtrip_postgres.py` downgrades and re-applies every revision; each after `0016` restores its parent exactly. Closes once the Backend CI `postgres` job runs it green. |
 | CB-21 | High | DR | No offsite restore drill; no RPO/RTO (GAP-028) | Drill onto fresh host | Report | M6 |
 | CB-22 | Medium | Data residency | Railway/Qdrant Cloud plaintext chunks (SEC-12); chunks outside encryption ADR | Encryption ADR covers chunks & third parties | ADR | M6 |
 

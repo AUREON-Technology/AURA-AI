@@ -8,8 +8,7 @@ Adds `aura_connectors` (registered connectors: the non-secret descriptor plus li
 `aura_connector_credentials` (vaulted connector credentials -- ciphertext only, enforced by a
 CHECK on the `aura-enc:v1:` envelope). Both are owned by this migration alone: the adapter
 (`aura_core/adapters/postgres_adaptation.py`) issues no DDL, following master-roadmap principle 9
-(one schema authority). Its `ADAPTATION_SCHEMA` is kept textually in step with the statements
-below (`tests/unit/test_adaptation_connectors.py` asserts it).
+(one schema authority).
 
 `project_id` defaults to `p0`: one project per install (ADR-019), carried as a key so a later
 multi-project change needs no table rewrite. No API accepts it.

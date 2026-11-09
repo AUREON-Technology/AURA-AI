@@ -97,8 +97,9 @@ Stage 2.
 
 The graph is a third retrieval signal beside BM25 and dense vectors, stored in Postgres; no
 separate graph database was introduced. Entities, relations, aliases and a type vocabulary live
-in owner-scoped `aura_graph_*` tables (Alembic `0007`, mirrored by `PostgresGraphStore`'s
-`IF NOT EXISTS` bootstrap), with an equivalent in-memory adapter for the default test run.
+in owner-scoped `aura_graph_*` tables (Alembic `0007`, which also seeds the type vocabulary; the
+adapter's own `IF NOT EXISTS` bootstrap was removed with CB-20, so a vocabulary change needs a new
+migration), with an equivalent in-memory adapter for the default test run.
 
 **No fact enters long-term knowledge without its evidence.** Every ingest runs extract → normalize
 (case, whitespace, aliases) → validate against `DEFAULT_GRAPH_SCHEMA`'s allowed entity and

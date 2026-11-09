@@ -7,11 +7,9 @@ Create Date: 2026-09-25
 Adds `aura_agent_runs` (one row per bounded agent loop, any persona) and `aura_agent_steps` (its
 append-only observations, decisions, tool calls, approvals, evaluations, failure and completion).
 Both are written by `aura_core/adapters/postgres_engineer_runs.py` -- the engineer-runs adapter,
-extended rather than duplicated -- and the SQL below is kept textually in step with that module's
-`AGENT_RUNS_SCHEMA` (`tests/unit/test_agent_run_store.py` asserts it). Like every other `aura_*`
-table the adapter also creates these on first use, so this migration is `IF NOT EXISTS`
-throughout: a gateway that recorded a run before the migration ran must not make
-`alembic upgrade head` fail.
+extended rather than duplicated. At the time the adapter also created these on first use, so this
+migration is `IF NOT EXISTS` throughout: a gateway that recorded a run before the migration ran
+must not make `alembic upgrade head` fail. (The adapter's copy was removed when Alembic became the only schema authority, CB-20.)
 
 Written in parallel with the knowledge-graph migration (`0007`) and re-chained after it when the
 two were merged.
