@@ -21,6 +21,9 @@ trusted to mean "this change regressed quality" rather than "the model sampled d
   accuracy, iteration headroom, budget adherence, replan success and unsafe-action prevention,
   read from the durable ``AgentRun`` each scripted scenario records
   (``aura_core/evaluation/agent_runs.py``, ``evaluation/suites/agent_runs.jsonl``).
+* ``guard_precision`` -- precision, recall and specificity of the leak, groundedness, injection
+  and jailbreak guards on a hand-labelled corpus (EV-7, ``aura_core/evaluation/guards.py``,
+  ``evaluation/suites/guard_cases.jsonl``), run through the guards the container's settings build.
 
 The wiring deliberately mirrors ``tests/e2e/test_docs_corpus_gate.py`` and
 ``test_agent_tasks_gate.py`` (same container construction, same ``k``, same tolerances) so the
@@ -78,6 +81,7 @@ from aura_core.evaluation.agent_runs import (  # noqa: E402
     AgentRunEvaluator,
     load_agent_run_scenarios,
 )
+from aura_core.evaluation.guards import GuardEvaluator, load_guard_cases  # noqa: E402
 from aura_core.llm.providers.echo import ContextGroundedProvider  # noqa: E402
 
 from evaluation.suites.docs_corpus_sources import load_docs_corpus_sources  # noqa: E402
@@ -94,6 +98,14 @@ AGENT_RUN_TOLERANCES: Mapping[str, float] = {
         "iteration_headroom", "budget_adherence", "replan_success", "unsafe_prevention_rate",
     )
 }
+
+#: Guards are pure functions of their input, so any movement is a real change in what they
+#: decide -- the tolerance is only float rounding.
+GUARD_TOLERANCES: Mapping[str, float] = {
+    f"{guard}.{metric}": 0.001
+    for guard in ("system_prompt_leak", "groundedness", "prompt_injection", "jailbreak")
+    for metric in ("precision", "recall", "specificity")
+} | {"accuracy": 0.001}
 
 
 @dataclass(slots=True)
@@ -206,6 +218,11 @@ async def _score_agent_runs(container: Container) -> Any:
     return await evaluator.run(scenarios)
 
 
+async def _score_guards(container: Container) -> Any:
+    cases = load_guard_cases(SUITE_DIR / "guard_cases.jsonl")
+    return GuardEvaluator(pipeline=container.safety, prompts=container.prompts).run(cases)
+
+
 @dataclass(frozen=True, slots=True)
 class GateSpec:
     name: str
@@ -224,6 +241,10 @@ GATES: tuple[GateSpec, ...] = (
     GateSpec(
         "agent_runs", "agent_runs_baseline.json", _score_agent_runs,
         tolerances=AGENT_RUN_TOLERANCES,
+    ),
+    GateSpec(
+        "guard_precision", "guard_cases_baseline.json", _score_guards,
+        tolerances=GUARD_TOLERANCES,
     ),
 )
 

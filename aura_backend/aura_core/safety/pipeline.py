@@ -117,6 +117,10 @@ class SafetyPipeline:
             audit=audit,
         )
 
+    def guards(self, stage: GuardStage) -> tuple[Guard, ...]:
+        """The guards configured for ``stage`` (read-only; used by the EV-7 guard evaluation)."""
+        return self._by_stage.get(stage, ())
+
     # -- core ---------------------------------------------------------------------------
 
     async def evaluate(
