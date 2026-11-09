@@ -394,3 +394,46 @@ class TestPersonalOsStoreEncryptsFields:
         }
         listed = await store.list_for_owner(UserId("alice"))
         assert [r.fields for r in listed] == [{"title": "Call mum"}]
+
+
+class TestLegacyPlaintextReadsAreCounted:
+    """Audit FSA-094: rows written before a key was configured are read silently, so nothing said
+    how many remained or whether ``scripts/reencrypt_fields.py`` had ever run. Every plaintext
+    read under a configured key is counted, on the cipher and in the metrics registry."""
+
+    def test_each_plaintext_read_is_counted_when_a_key_is_configured(self) -> None:
+        cipher = FieldCipher([Fernet.generate_key().decode()])
+        assert cipher.decrypt("legacy value") == "legacy value"
+        assert cipher.decrypt_mapping({"a": 1}) == {"a": 1}
+        assert cipher.legacy_plaintext_reads == 2
+        cipher.decrypt(cipher.encrypt("sealed"))
+        cipher.decrypt_mapping(cipher.encrypt_mapping({"b": 2}))
+        assert cipher.legacy_plaintext_reads == 2, "sealed values are not legacy reads"
+
+    def test_a_disabled_cipher_counts_nothing(self) -> None:
+        """Without a key every value is plaintext by design; counting would only be noise."""
+        cipher = FieldCipher.disabled()
+        cipher.decrypt("plain")
+        cipher.decrypt_mapping({"a": 1})
+        assert cipher.legacy_plaintext_reads == 0
+
+    def test_the_count_reaches_the_metrics_registry_by_kind(self) -> None:
+        from aura_core.observability.metrics import Metrics
+
+        metrics = Metrics()
+        cipher = FieldCipher([Fernet.generate_key().decode()], metrics=metrics)
+        cipher.decrypt("legacy value")
+        cipher.decrypt_mapping({"a": 1})
+        cipher.decrypt_mapping({"b": 2})
+        rendered = metrics.render().decode()
+        assert 'aura_field_crypto_legacy_plaintext_reads_total{kind="text"} 1.0' in rendered
+        assert 'aura_field_crypto_legacy_plaintext_reads_total{kind="mapping"} 2.0' in rendered
+
+    def test_the_container_s_cipher_reports_to_the_container_s_metrics(self, monkeypatch) -> None:
+        from aura_core.observability.metrics import Metrics
+
+        monkeypatch.setenv("AURA_DATA_ENCRYPTION_KEYS", Fernet.generate_key().decode())
+        metrics = Metrics()
+        cipher = build_field_cipher(AuraSettings.from_env(), metrics=metrics)
+        cipher.decrypt("legacy value")
+        assert 'aura_field_crypto_legacy_plaintext_reads_total{kind="text"} 1.0' in metrics.render().decode()

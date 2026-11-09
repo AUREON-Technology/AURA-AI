@@ -926,7 +926,7 @@ class Container:
     def _field_cipher(self) -> Any:
         """The data-at-rest cipher shared by every store that encrypts a column. Memoised."""
         if self._cipher is None:
-            self._cipher = build_field_cipher(self.settings)
+            self._cipher = build_field_cipher(self.settings, metrics=self.metrics)
         return self._cipher
 
     def _build_document_store(self) -> Any:
@@ -1844,7 +1844,7 @@ class Container:
         return payload
 
 
-def build_field_cipher(settings: AuraSettings) -> Any:
+def build_field_cipher(settings: AuraSettings, *, metrics: Any = None) -> Any:
     """Load the data-at-rest keys and build the cipher (P1.2/P5.1).
 
     The only place ``AURA_DATA_ENCRYPTION_KEYS`` is turned into a key object -- the stores and
@@ -1862,7 +1862,7 @@ def build_field_cipher(settings: AuraSettings) -> Any:
 
     keys = data_encryption_keys()
     if keys:
-        cipher = FieldCipher(keys)
+        cipher = FieldCipher(keys, metrics=metrics)
         logger.info(
             "data encryption at rest enabled",
             extra={"primary_key_id": cipher.primary_key_id, "key_count": len(keys)},
