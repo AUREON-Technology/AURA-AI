@@ -119,14 +119,22 @@ def _feedback_rows() -> list[tuple[str, str, str, str, str, datetime]]:
     return rows
 
 
-async def _ensure_loop_b_schema(container: object) -> None:
-    """Loop B tables are created by Postgres adapters on first use, not Alembic."""
-    c = container  # type: ignore[attr-defined]
-    await c.feedback._ensure_schema()
-    await c.approvals._store._ensure_schema()
-    await c.finetune_jobs._jobs._ensure_schema()
-    await c.models._store._ensure_schema()
-    await c.experiments._store._ensure_schema()
+async def _require_loop_b_schema(pool: object) -> None:
+    """Refuse to seed a database whose Loop B tables do not exist.
+
+    Alembic creates them (the 0016 baseline); no adapter does any more (CB-20), so an unmigrated
+    database is an operator step missed, not something this script should paper over.
+    """
+    conn_cm = await pool.acquire()  # type: ignore[attr-defined]
+    async with conn_cm as conn:
+        missing = [
+            table for table in _WIPE_TABLES
+            if await conn.fetchval("SELECT to_regclass($1)", f"public.{table}") is None
+        ]
+    if missing:
+        raise SystemExit(
+            f"Loop B tables missing ({', '.join(missing)}): run `alembic upgrade head` first"
+        )
 
 
 async def _wipe_loop_b(pool: object, dataset_dir: Path) -> None:
@@ -247,7 +255,7 @@ async def _main() -> int:
 
     pool = container.postgres_pool()
     dataset_dir = Path(settings.learning.dataset_dir)
-    await _ensure_loop_b_schema(container)
+    await _require_loop_b_schema(pool)
     await _wipe_loop_b(pool, dataset_dir)
 
     inserted = await _seed_feedback(container)
