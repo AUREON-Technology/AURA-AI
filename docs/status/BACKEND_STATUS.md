@@ -73,7 +73,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 | Backup / DR | TESTED in a sandbox; OPEN on any live target | A2 sandbox (`phase-a2-restore-drill.md`); GAP-028, GAP-046 |
 | 50-user capacity | OPEN | GAP-011 (P0), GAP-041 |
 | Real-model evaluation gates | OPEN | GAP-021; GAP-006 (`eval-ci.yml` is dispatch-only) |
-| Schema / migrations | TESTED (local PG16, `0001`→`0017`); production at `0016` until the ADR-032 change deploys | Alembic `0001`→`0017`, single head; F-27 built: `0016` baselines the 16 runtime-only tables, `env.py` keeps autogenerate off `aura_*`, and a fitness test requires a migration for every runtime table. `0017` (ADR-032) adds `aura_user_data_keys`; `upgrade → downgrade -1 → upgrade` checked on PG16 |
+| Schema / migrations | TESTED (local PG16, `0001`→`0019`); production at `0019` (2026-11-07 probe). One schema authority (CB-20) BUILT and TESTED locally 2026-11-09, **not CI-run, not deployed** | Alembic `0001`→`0019`, single head. F-27: `0016` baselines the 16 runtime-only tables. **CB-20: the adapters no longer issue DDL**: no `CREATE TABLE IF NOT EXISTS` on first use, no runtime vocabulary seeding. Before removing it, a fresh PG16 at `head` and the same database after every adapter's old bootstrap gave identical `pg_dump --schema-only` and identical seed rows. `tests/architecture/test_no_runtime_ddl.py` forbids DDL under `aura_core` and requires a migration for every `aura_*` table the code queries. `tests/load/test_migration_roundtrip_postgres.py` undoes and re-applies all 19 revisions; `0017`–`0019` restore their parent exactly, and `0007`/`0016` keep only their named pre-existing tables. Consequence: an unmigrated database now fails requests, not just `/health/ready` |
 | Personal-OS single store (ADR-032, CB-28 / F-18) | BUILT and TESTED locally (pytest, legacy unittest, real PG16); **not deployed, not CI-run** | Owner chose Option A (server-held per-user data key) on 2026-10-31. The agent's `create_/list_/update_/delete_*` tools now read and write the synced `tasks`/`calendar_events`/`finance_records`/`health_records` rows, encrypted `gcm2` with the user's data key; `GET /api/v3/keys/data` hands that key to the user's devices. **The synced fields are no longer zero-knowledge** (threat-model table in ADR-032). Old rows: `scripts/move_personal_os_records.py` (not yet run anywhere) |
 | Learning / fine-tuning | BUILT | GAP-017; GAP-018 (a failed train is recorded as success) |
 | Voice | BUILT | GAP-020: speech-to-text is English-only while an Arabic voice ships |
@@ -173,7 +173,8 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 - F-22 and F-27 are built and tested locally, not CI-run:
   - F-22: one configured LLM deadline, an SSE keep-alive every 15 s, and `/api/v3/chat` given
     600 s at nginx.
-  - F-27: migration `0016` baselines the 16 runtime-only tables.
+  - F-27: migration `0016` baselines the 16 runtime-only tables. CB-20 (2026-11-09) then removed
+    the runtime DDL itself (see the schema row).
 - **GAP-011, GAP-041 (P0):** inference is single-slot and no load matrix exists.
 
 **Medium:** F-16, F-17, F-23, F-24, F-26, F-28, F-33–F-38. F-25 and F-30 are built (above), not proven. F-18 is built (ADR-032), tested locally, not CI-run or deployed.
