@@ -10,7 +10,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/v3/admin/approvals` | — | `aura_admin/app/(console)/approvals/page.tsx:14`, `aura_admin/app/(console)/models/page.tsx:28` (+1) | — | called |  |
 | POST | `/api/v3/admin/approvals/{approval_id}/decide` | — | `aura_admin/app/(console)/approvals/page.tsx:68`, `aura_admin/app/(console)/approvals/page.tsx:82` | — | called |  |
-| GET | `/api/v3/admin/audit` | — | `aura_admin/app/(console)/audit/page.tsx:15` | — | called |  |
+| GET | `/api/v3/admin/audit` | — | `aura_admin/app/(console)/audit/page.tsx:17` | — | called |  |
 | GET | `/api/v3/admin/blueprints` | — | — | — | none | to wire: Console blueprint review and deploy are Track AP phase AP9 |
 | GET | `/api/v3/admin/blueprints/active` | — | — | — | none | to wire: Console blueprint review and deploy are Track AP phase AP9 |
 | POST | `/api/v3/admin/blueprints/rollback` | — | — | — | none | to wire: Console blueprint review and deploy are Track AP phase AP9 |
