@@ -39,6 +39,69 @@ __all__ = [
 ]
 
 
+# --------------------------------------------------------------------------------------
+# Arabic matching (EV-7 finding: no guard had an Arabic pattern, so an Arabic injection or
+# jailbreak passed untouched while the product ships an Arabic UI and Arabic speech)
+# --------------------------------------------------------------------------------------
+
+_ARABIC_LETTER = re.compile(r"[\u0600-\u06FF]")
+#: Harakat, Quranic marks, superscript alef and tatweel: optional in written Arabic, so a pattern
+#: must not depend on whether the writer used them.
+_ARABIC_STRIP = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640]")
+#: Letters written interchangeably in practice: hamza-carrying alefs, alef maqsura, teh marbuta.
+_ARABIC_FOLD = str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ٱ": "ا", "ى": "ي", "ة": "ه"})
+
+
+def _arabic_view(text: str) -> tuple[str, list[int]] | None:
+    """``text`` with diacritics removed and letter variants folded, plus each kept character's
+    index in ``text`` (so a match maps back to an accurate span). ``None`` if there is no Arabic."""
+    if not _ARABIC_LETTER.search(text):
+        return None
+    kept: list[str] = []
+    index: list[int] = []
+    for position, char in enumerate(text):
+        if _ARABIC_STRIP.match(char):
+            continue
+        kept.append(char.translate(_ARABIC_FOLD))
+        index.append(position)
+    return "".join(kept), index
+
+
+def _scan(
+    text: str,
+    patterns: Sequence[tuple[re.Pattern[str], float, str]],
+    arabic_patterns: Sequence[tuple[re.Pattern[str], float, str]],
+) -> tuple[list[Span], dict[str, float]]:
+    """Run ``patterns`` on ``text`` and ``arabic_patterns`` on its normalised Arabic view.
+
+    Both families share labels, and only the strongest weight per label counts, so the same
+    signal written in two languages is one signal, not two.
+    """
+    spans: list[Span] = []
+    weights: dict[str, float] = {}
+    for pattern, weight, label in patterns:
+        match = pattern.search(text)
+        if match:
+            spans.append(Span(match.start(), match.end(), label, match.group(0)[:80]))
+            weights[label] = max(weights.get(label, 0.0), weight)
+    view = _arabic_view(text) if arabic_patterns else None
+    if view is not None:
+        normalised, index = view
+        for pattern, weight, label in arabic_patterns:
+            match = pattern.search(normalised)
+            if match:
+                start, end = index[match.start()], index[match.end() - 1] + 1
+                while end < len(text) and _ARABIC_STRIP.match(text[end]):
+                    end += 1  # keep the last letter's own diacritics inside the span
+                spans.append(Span(start, end, label, text[start:end][:80]))
+                weights[label] = max(weights.get(label, 0.0), weight)
+    return spans, weights
+
+
+#: Optional conjunction prefix (wa-/fa-) written attached to the next word.
+_AR_CONJ = r"(?<!\w)[وف]?"
+
+
 class Guard:
     """Base class. Subclasses implement :meth:`_evaluate`.
 
@@ -211,27 +274,39 @@ class PromptInjectionGuard(Guard):
          0.5, "prompt_extraction"),
         (re.compile(r"\b(?:call|invoke|execute|run)\s+(?:the\s+)?(?:tool|function|command)\b", re.I),
          0.35, "tool_directive"),
-        (re.compile(r"\bdo\s+not\s+(?:tell|inform|mention\s+to)\s+the\s+user\b", re.I), 0.6, "concealment"),
-        (re.compile(r"\bwithout\s+(?:asking|telling|informing)\s+the\s+user\b", re.I), 0.55, "concealment"),
+        (re.compile(r"\bdo\s+not\s+(?:tell|inform|mention\s+to)\s+the\s+user\b(?!\s+base\b)", re.I),
+         0.6, "concealment"),
+        (re.compile(r"\bwithout\s+(?:asking|telling|informing)\s+the\s+user\b(?!\s+base\b)", re.I),
+         0.55, "concealment"),
         (re.compile(r"\bsend\s+(?:all|the)\s+.{0,30}\bto\s+https?://", re.I), 0.7, "exfiltration"),
         (re.compile(r"\bAURA-DATA\b|<<<END-AURA-DATA", re.I), 0.75, "fence_escape"),
+    )
+
+    #: The same signal families in Arabic, matched against :func:`_arabic_view` (no diacritics;
+    #: alef/yeh/teh-marbuta variants folded), with the same weights as their English twins.
+    _ARABIC_PATTERNS: tuple[tuple[re.Pattern[str], float, str], ...] = (
+        (re.compile(_AR_CONJ + r"[تا]?تجاهل(?:ي|وا)?\s+(?:جميع\s+|كل\s+|كافه\s+)?(?:ال)?"
+                    r"(?:تعليمات|اوامر|توجيهات|قواعد)\s+(?:ال)?(?:سابقه|اعلاه)"), 0.55, "ignore_previous"),
+        (re.compile(_AR_CONJ + r"(?:ا)?نس(?:ي|وا)?\s+(?:كل|جميع)\s+(?:ما|شيء)\s+(?:سبق|قبل|اعلاه)"),
+         0.45, "forget_all"),
+        (re.compile(_AR_CONJ + r"انت(?:ي)?\s+الان\s+(?!في\s)\w"), 0.4, "role_reassignment"),
+        (re.compile(r"(?:ال)?تعليمات\s+(?:ال)?جديده\s*:"), 0.5, "new_instructions"),
+        (re.compile(_AR_CONJ + r"(?:اكشف|اظهر|اعرض|اطبع)(?:ي)?\s+(?:لي\s+)?(?:\S+\s+)?"
+                    r"(?:(?:تعليمات|موجه|اوامر)\s+(?:ال)?نظام|تعليماتك|موجهك)"), 0.5, "prompt_extraction"),
+        (re.compile(_AR_CONJ + r"(?:نفذ|شغل|استدع)(?:ي)?\s+(?:ال)?(?:اداه|امر|داله)"), 0.35, "tool_directive"),
+        (re.compile(_AR_CONJ + r"(?:لا|دون|بدون)\s+(?:ان\s+)?(?:تخبر|تعلم|تبلغ|اخبار|ابلاغ|اعلام|علم)\s+"
+                    r"(?:ال)?مستخدم(?!ين)"), 0.6, "concealment"),
+        (re.compile(_AR_CONJ + r"(?:ارسل|انقل)(?:ي)?\s+(?:جميع|كل)\s+.{0,40}?(?:الي|ل)\s*https?://"),
+         0.7, "exfiltration"),
     )
 
     def __init__(self, *, threshold: float = 0.6) -> None:
         self._threshold = threshold
 
     def _evaluate(self, text: str, *, stage: GuardStage, context: dict) -> GuardVerdict:
-        spans: list[Span] = []
-        labels: dict[str, float] = {}
-
-        for pattern, weight, label in self._PATTERNS:
-            match = pattern.search(text)
-            if match is None:
-                continue
-            spans.append(Span(match.start(), match.end(), label, match.group(0)[:80]))
-            # Keep the strongest weight per label so five variants of "ignore previous" do not
-            # sum to a false certainty.
-            labels[label] = max(labels.get(label, 0.0), weight)
+        # Strongest weight per label, so five variants of "ignore previous" (in either language)
+        # do not sum to a false certainty.
+        spans, labels = _scan(text, self._PATTERNS, self._ARABIC_PATTERNS)
 
         if not labels:
             return GuardVerdict.allow(self.name)
@@ -295,17 +370,25 @@ class JailbreakGuard(Guard):
                     r"\b(?:illegal|weapon|malware|exploit)\b", re.I), 0.4, "pretext"),
     )
 
+    #: Arabic forms of the same framings, against :func:`_arabic_view`.
+    _ARABIC_PATTERNS: tuple[tuple[re.Pattern[str], float, str], ...] = (
+        (re.compile(r"(?:تفعيل|تشغيل)\s+وضع\s+(?:ال)?(?:مطور|مطورين|اله|مسوول|مسؤول|مدير)"
+                    r"|وضع\s+(?:ال)?(?:مطور|اله|مسوول|مسؤول|مدير)\s+(?:مفعل|نشط|مشغل)"
+                    r"|انت(?:ي)?\s+(?:الان\s+)?في\s+وضع\s+(?:ال)?(?:مطور|اله|مسوول|مسؤول|مدير)"), 0.55, "fake_mode"),
+        (re.compile(_AR_CONJ + r"تظاهر(?:ي)?\s+(?:ب)?(?:ان|انك|انكي).{0,50}(?:بلا|بدون|دون)\s+(?:اي\s+)?"
+                    r"(?:قواعد|قيود|فلاتر|ضوابط)"), 0.6, "roleplay_bypass"),
+        (re.compile(_AR_CONJ + r"(?:ليس\s+لديك|لا\s+توجد\s+لديك|لا\s+تملك)\s+(?:اي\s+)?"
+                    r"(?:قيود|قواعد|فلاتر|ضوابط)"), 0.6, "unrestricted"),
+        # "without restrictions ON <something>" describes a thing, not the assistant.
+        (re.compile(r"(?<!\w)(?:بدون|دون|بلا)\s+(?:اي\s+)?(?:قيود|فلاتر|ضوابط)(?!\s+(?:علي|في|ل))"),
+         0.55, "unrestricted"),
+    )
+
     def __init__(self, *, threshold: float = 0.7) -> None:
         self._threshold = threshold
 
     def _evaluate(self, text: str, *, stage: GuardStage, context: dict) -> GuardVerdict:
-        spans: list[Span] = []
-        weights: dict[str, float] = {}
-        for pattern, weight, label in self._PATTERNS:
-            match = pattern.search(text)
-            if match:
-                spans.append(Span(match.start(), match.end(), label, match.group(0)[:80]))
-                weights[label] = max(weights.get(label, 0.0), weight)
+        spans, weights = _scan(text, self._PATTERNS, self._ARABIC_PATTERNS)
 
         if not weights:
             return GuardVerdict.allow(self.name)
