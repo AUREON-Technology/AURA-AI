@@ -92,8 +92,8 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/chat/stream` | `aura_client/lib/core/ai/online_agents/llm_timeouts.dart:10`, `aura_client/lib/core/ai/online_agents/sse_agent_client.dart:16` (+5) | — | — | called |  |
 | POST | `/api/v3/complete` | `aura_client/lib/core/ai/inline_completion_client.dart:9`, `aura_client/lib/core/ai/inline_completion_client.dart:25` | — | — | called |  |
 | GET | `/api/v3/engineering/runs` | `aura_client/lib/features/engineering/data/engineer_run_repository.dart:7`, `aura_client/lib/features/engineering/data/engineer_run_repository.dart:69` | — | — | called |  |
-| GET | `/api/v3/engineering/workspaces` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:53`, `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:76` (+1) | — | — | called |  |
-| DELETE | `/api/v3/engineering/workspaces/{workspace_id}` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:132` | — | — | called |  |
+| GET | `/api/v3/engineering/workspaces` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:54`, `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:77` (+1) | — | — | called |  |
+| DELETE | `/api/v3/engineering/workspaces/{workspace_id}` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:133` | — | — | called |  |
 | POST | `/api/v3/feedback` | `aura_client/lib/features/chat/data/feedback_repository.dart:33` | — | — | called |  |
 | WS | `/api/v3/host/agent` | — | — | `aura_hostd/lib/src/config.dart:21`, `aura_hostd/lib/src/config.dart:26` (+1) | called |  |
 | GET | `/api/v3/insights` | `aura_client/lib/core/insights/insights_client.dart:11`, `aura_client/lib/core/insights/insights_client.dart:48` | — | — | called |  |
@@ -105,24 +105,24 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/integrations/github/disconnect` | `aura_client/lib/features/engineering/data/github_integration_repository.dart:76`, `aura_client/lib/features/engineering/data/github_integration_repository.dart:81` | — | — | called |  |
 | GET | `/api/v3/integrations/github/status` | `aura_client/lib/features/engineering/data/github_integration_repository.dart:7`, `aura_client/lib/features/engineering/data/github_integration_repository.dart:43` | — | — | called |  |
 | GET | `/api/v3/keys/data` | `aura_client/lib/core/security/data_key_client.dart:12`, `aura_client/lib/core/security/data_key_client.dart:44` (+2) | — | — | called |  |
-| GET | `/api/v3/knowledge/cag` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:280` | — | — | called |  |
-| GET | `/api/v3/knowledge/documents` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:101`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:139` (+1) | — | — | called |  |
-| POST | `/api/v3/knowledge/documents` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:101`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:139` (+1) | — | — | called |  |
-| POST | `/api/v3/knowledge/documents/upload` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:185`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:197` | — | — | called |  |
-| DELETE | `/api/v3/knowledge/documents/{document_id}` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:256` | — | — | called |  |
-| DELETE | `/api/v3/knowledge/documents/{document_id}/cag-pin` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:269` | — | — | called |  |
-| POST | `/api/v3/knowledge/documents/{document_id}/cag-pin` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:269` | — | — | called |  |
+| GET | `/api/v3/knowledge/cag` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:293` | — | — | called |  |
+| GET | `/api/v3/knowledge/documents` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:114`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:152` (+1) | — | — | called |  |
+| POST | `/api/v3/knowledge/documents` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:114`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:152` (+1) | — | — | called |  |
+| POST | `/api/v3/knowledge/documents/upload` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:198`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:210` | — | — | called |  |
+| DELETE | `/api/v3/knowledge/documents/{document_id}` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:269` | — | — | called |  |
+| DELETE | `/api/v3/knowledge/documents/{document_id}/cag-pin` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:282` | — | — | called |  |
+| POST | `/api/v3/knowledge/documents/{document_id}/cag-pin` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:282` | — | — | called |  |
 | GET | `/api/v3/knowledge/graph` | — | — | — | none | to wire: knowledge-graph read API (wave 2) has no view yet |
 | GET | `/api/v3/knowledge/graph/entities/{entity_key}` | — | — | — | none | to wire: knowledge-graph read API (wave 2) has no view yet |
-| POST | `/api/v3/knowledge/search` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:117`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:166` (+1) | — | — | called |  |
+| POST | `/api/v3/knowledge/search` | `aura_client/lib/core/ai/knowledge/knowledge_center.dart:130`, `aura_client/lib/core/ai/knowledge/knowledge_center.dart:179` (+1) | — | — | called |  |
 | POST | `/api/v3/learning/build_dataset` | — | — | — | none | to wire or remove: learning surface with no caller (GAP-013) |
 | GET | `/api/v3/learning/evaluate` | — | — | — | none | to wire or remove: learning surface with no caller (GAP-013) |
 | GET | `/api/v3/learning/export` | — | — | — | none | to wire or remove: learning surface with no caller (GAP-013) |
 | POST | `/api/v3/learning/log` | — | — | — | none | to wire or remove: learning surface with no caller (GAP-013) |
-| GET | `/api/v3/memory` | `aura_client/lib/core/sync/sync_client.dart:27`, `aura_client/lib/features/chat/data/memory_repository.dart:41` | — | — | called |  |
-| POST | `/api/v3/memory` | `aura_client/lib/core/sync/sync_client.dart:27`, `aura_client/lib/features/chat/data/memory_repository.dart:41` | — | — | called |  |
-| DELETE | `/api/v3/memory/{memory_id}` | `aura_client/lib/core/sync/remote_deletes.dart:89`, `aura_client/lib/features/chat/data/memory_repository.dart:179` | — | — | called |  |
-| DELETE | `/api/v3/sessions/{session_id}` | `aura_client/lib/core/sync/remote_deletes.dart:90` | — | — | called |  |
+| GET | `/api/v3/memory` | `aura_client/lib/core/sync/sync_client.dart:27`, `aura_client/lib/features/chat/data/memory_repository.dart:42` | — | — | called |  |
+| POST | `/api/v3/memory` | `aura_client/lib/core/sync/sync_client.dart:27`, `aura_client/lib/features/chat/data/memory_repository.dart:42` | — | — | called |  |
+| DELETE | `/api/v3/memory/{memory_id}` | `aura_client/lib/core/sync/remote_deletes.dart:95`, `aura_client/lib/features/chat/data/memory_repository.dart:187` | — | — | called |  |
+| DELETE | `/api/v3/sessions/{session_id}` | `aura_client/lib/core/sync/remote_deletes.dart:96` | — | — | called |  |
 | GET | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:228`, `aura_client/lib/core/database/database.dart:255` (+2) | — | — | called |  |
 | POST | `/api/v3/sync` | `aura_client/lib/core/database/database.dart:228`, `aura_client/lib/core/database/database.dart:255` (+2) | — | — | called |  |
 | GET | `/api/v3/tools` | — | — | — | none | to wire: tool catalogue is not shown anywhere |
@@ -132,7 +132,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/docs` | — | — | — | infra |  |
 | GET | `/docs/oauth2-redirect` | — | — | — | infra |  |
 | GET | `/health/live` | — | — | — | infra |  |
-| GET | `/health/ready` | `aura_client/lib/core/network/aura_api_client.dart:124` | — | — | infra |  |
+| GET | `/health/ready` | `aura_client/lib/core/network/aura_api_client.dart:128` | — | — | infra |  |
 | GET | `/health/version` | — | — | — | infra |  |
 | GET | `/metrics` | — | — | — | infra |  |
 | GET | `/openapi.json` | — | — | — | infra |  |

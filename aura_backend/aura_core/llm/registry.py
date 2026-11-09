@@ -118,6 +118,23 @@ def admission_limits_from_settings(settings: LLMSettings) -> dict[str, PoolLimit
             else settings.admission_queue_timeout_s
         )
         limits[group] = PoolLimits(max_concurrent=cap, max_queue=max_queue, queue_timeout_s=timeout)
+    processes = max(1, settings.admission_processes)
+    if processes > 1:
+        # Audit FSA-025: the cap is per process, and the gateway runs several. Divide it so the
+        # processes together hold what the model server was declared to bear; a cap smaller than
+        # the process count cannot be divided and keeps one slot per process, said out loud.
+        for group, lim in list(limits.items()):
+            per_process = lim.max_concurrent // processes
+            if per_process < 1:
+                per_process = 1
+                logger.warning(
+                    "capacity group %r declares %d slot(s) but AURA_LLM_ADMISSION_PROCESSES=%d "
+                    "processes share it: each keeps one slot, so the server sees up to %d",
+                    group, lim.max_concurrent, processes, processes,
+                )
+            limits[group] = PoolLimits(
+                max_concurrent=per_process, max_queue=lim.max_queue, queue_timeout_s=lim.queue_timeout_s
+            )
     return limits
 
 

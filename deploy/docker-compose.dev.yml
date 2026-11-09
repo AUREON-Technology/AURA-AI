@@ -324,6 +324,9 @@ services:
       # work -- and is refused with 503 + Retry-After after the timeout, instead of piling up
       # invisibly inside Ollama until the 180s provider timeout cancels it mid-generation.
       # Per *process*: the effective cap on Ollama is this x AURA_WORKERS (+ Celery workers).
+      # Audit FSA-025: the declared cap is divided among the gateway's uvicorn workers, so the
+      # server sees the cap, not cap x AURA_WORKERS. Keep in step with --workers above.
+      AURA_LLM_ADMISSION_PROCESSES: ${AURA_WORKERS:-2}
       AURA_LLM_ADMISSION_MAX_QUEUE: ${AURA_LLM_ADMISSION_MAX_QUEUE:-4}
       AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S: ${AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S:-90}
       AURA_LLM_USER_MAX_CONCURRENT_GENERATIONS: ${AURA_LLM_USER_MAX_CONCURRENT_GENERATIONS:-2}
