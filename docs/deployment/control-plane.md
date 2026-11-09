@@ -95,6 +95,11 @@ AURA_DATABASE_URL=<Railway Postgres plugin's connection string>
 AURA_REDIS_URL=<Railway Redis plugin's connection string, or an external Redis>
 AURA_QDRANT_URL=<Qdrant Cloud or self-hosted Qdrant URL — Railway has no Qdrant plugin>
 AURA_QDRANT_API_KEY=<Qdrant API key>
+# Recorded decision for this target (audit FSA-018 / CB-22): with an off-host Qdrant (any dotted
+# public hostname, e.g. Qdrant Cloud) no readable chunk text or memory subject is written into
+# vector payloads; retrieval resolves the text from Postgres. /health/ready reports it under
+# "vectors.payload_content". AURA_KNOWLEDGE_VECTOR_PAYLOAD_CONTENT=true|false overrides the rule.
+# Existing payloads keep their text until the index is rebuilt (knowledge refresh / re-index).
 AURA_JWT_SECRET=<random>
 AURA_SECRETS_ENCRYPTION_KEY=<random>
 

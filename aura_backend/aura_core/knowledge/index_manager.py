@@ -132,11 +132,15 @@ class IndexManager:
         metrics: Any = None,
         event_bus: Any = None,
         batch_size: int = 64,
+        payload_content: bool = True,
     ) -> None:
         self._vectors = vectors
         self._documents = documents
         self._embedder = embedder
         self._alias = alias
+        #: Whether chunk text is copied into the vector payload (audit FSA-018). Off for an
+        #: off-host vector store: the engine resolves text from the document store instead.
+        self.payload_content = payload_content
         self._schema_version = schema_version
         self._gate = gate or PromotionGate()
         self._metrics = metrics
@@ -236,7 +240,7 @@ class IndexManager:
                 VectorPoint(
                     id=chunk.id.value,
                     vector=vector,
-                    payload=self._payload_for(chunk),
+                    payload=self.payload_for(chunk),
                 )
                 for chunk, vector in zip(batch, embeddings.vectors)
             ]
@@ -273,9 +277,10 @@ class IndexManager:
         )
         return report
 
-    @staticmethod
-    def _payload_for(chunk: Chunk) -> dict[str, Any]:
-        return {
+    def payload_for(self, chunk: Chunk) -> dict[str, Any]:
+        """The vector payload for a chunk: identity, scope and provenance always; the text only
+        when :attr:`payload_content` allows it (audit FSA-018)."""
+        payload = {
             "chunk_id": chunk.id.value,
             "document_id": chunk.document_id.value,
             "document_version": chunk.document_version,
@@ -283,9 +288,11 @@ class IndexManager:
             "owner_id": chunk.owner_id.value if chunk.owner_id else GLOBAL_OWNER,
             "heading_path": list(chunk.heading_path),
             "trust_tier": int(chunk.trust_tier),
-            "content": chunk.content,
             **{k: v for k, v in chunk.metadata.items() if isinstance(v, (str, int, float, bool))},
         }
+        if self.payload_content:
+            payload["content"] = chunk.content
+        return payload
 
     # -- promotion ---------------------------------------------------------------------
 

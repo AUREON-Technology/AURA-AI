@@ -353,6 +353,9 @@ services:
       # Retention for personal data in the logs (audit FSA-016): audit events (actor, source IP)
       # and turn telemetry (conversation ids). 0 keeps a table forever. Applied daily by
       # purge_audit_and_telemetry_task on the realtime worker.
+      # Readable chunk text in vector payloads (audit FSA-018): empty decides by where Qdrant
+      # runs -- on this host (the compose service) keeps it, an off-host Qdrant never sees it.
+      AURA_KNOWLEDGE_VECTOR_PAYLOAD_CONTENT: ${AURA_KNOWLEDGE_VECTOR_PAYLOAD_CONTENT:-}
       AURA_AUDIT_RETENTION_DAYS: ${AURA_AUDIT_RETENTION_DAYS:-365}
       AURA_TELEMETRY_RETENTION_DAYS: ${AURA_TELEMETRY_RETENTION_DAYS:-90}
       AURA_DATABASE_URL_FILE: /run/secrets/postgres_password
@@ -590,6 +593,9 @@ services:
       # Retention for personal data in the logs (audit FSA-016): audit events (actor, source IP)
       # and turn telemetry (conversation ids). 0 keeps a table forever. Applied daily by
       # purge_audit_and_telemetry_task on the realtime worker.
+      # Readable chunk text in vector payloads (audit FSA-018): empty decides by where Qdrant
+      # runs -- on this host (the compose service) keeps it, an off-host Qdrant never sees it.
+      AURA_KNOWLEDGE_VECTOR_PAYLOAD_CONTENT: ${AURA_KNOWLEDGE_VECTOR_PAYLOAD_CONTENT:-}
       AURA_AUDIT_RETENTION_DAYS: ${AURA_AUDIT_RETENTION_DAYS:-365}
       AURA_TELEMETRY_RETENTION_DAYS: ${AURA_TELEMETRY_RETENTION_DAYS:-90}
       AURA_DATABASE_URL_FILE: /run/secrets/postgres_password

@@ -441,7 +441,7 @@ class KnowledgeEngine:
             await self._vectors.upsert(
                 identity,
                 [
-                    VectorPoint(id=c.id.value, vector=v, payload=IndexManager._payload_for(c))
+                    VectorPoint(id=c.id.value, vector=v, payload=self._indexes.payload_for(c))
                     for c, v in zip(batch, embeddings.vectors)
                 ],
             )

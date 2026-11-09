@@ -40,6 +40,7 @@ from .adapters.runtime import (
 )
 from .cag import CagEngine
 from .config.settings import (
+    vector_payload_content_enabled,
     DATA_ENCRYPTION_KEYS_ENV,
     AuraSettings,
     data_encryption_keys,
@@ -250,12 +251,15 @@ class Container:
             max_knowledge_items=settings.knowledge.retrieval_top_k,
         )
 
+        # Audit FSA-018: readable content in vector payloads only when the vector store is on-host.
+        self.vector_payload_content = vector_payload_content_enabled(settings.knowledge, settings.infrastructure)
         self.index_manager = IndexManager(
             vectors=self.vectors,
             documents=self.documents,
             embedder=self.embedder,
             alias=settings.knowledge.index_alias,
             schema_version=settings.knowledge.schema_version,
+            payload_content=self.vector_payload_content,
             gate=PromotionGate(
                 max_recall_drop=settings.learning.gate_max_recall_drop,
                 max_error_rate=settings.learning.gate_max_error_rate,
@@ -371,6 +375,7 @@ class Container:
                 max_records_per_owner=settings.memory.max_records_per_user,
                 duplicate_threshold=settings.memory.duplicate_threshold,
                 clock=self.clock,
+                payload_content=self.vector_payload_content,
             )
             if settings.memory.enabled
             else None
@@ -1856,6 +1861,12 @@ class Container:
             # hash embedder is refused in production by AuraSettings.validate(), but a reader
             # of this payload should not have to infer that: `semantic: false` names it
             # outright (audit FSA-031). Informational, never gates readiness.
+            # Audit FSA-018: whether chunk text travels into vector payloads, decided by where the
+            # vector store runs (settings.vector_payload_content_enabled). Informational.
+            "vectors": {
+                "backend": self.settings.infrastructure.vector_backend,
+                "payload_content": self.vector_payload_content,
+            },
             "embedding": {
                 "provider": self.settings.llm.embedding_provider,
                 "model": getattr(self.embedder, "model_id", None),

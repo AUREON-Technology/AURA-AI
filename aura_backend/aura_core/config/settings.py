@@ -874,10 +874,20 @@ class KnowledgeSettings:
     #: generator; it can never opt *in* to an engine that was never present.
     ocr_enabled: bool = True
     ocr_lang: str = "eng"
+    #: Whether chunk text (and a memory's ``subject``) is copied into the vector payload (audit
+    #: FSA-018 / CB-22). ``None`` decides by where the vector store runs
+    #: (:func:`vector_payload_content_enabled`): on-host stores keep it for speed; an off-host
+    #: Qdrant never sees readable content, and retrieval resolves the text from the owner-scoped
+    #: document store instead. ``True``/``False`` override the rule.
+    vector_payload_content: bool | None = None
 
     @classmethod
     def from_env(cls) -> "KnowledgeSettings":
         return cls(
+            vector_payload_content=(
+                None if not _env("KNOWLEDGE_VECTOR_PAYLOAD_CONTENT", "")
+                else _bool("KNOWLEDGE_VECTOR_PAYLOAD_CONTENT", True)
+            ),
             index_alias=_env("KNOWLEDGE_INDEX_ALIAS", "aura_knowledge") or "aura_knowledge",
             schema_version=_int("KNOWLEDGE_SCHEMA_VERSION", 1, minimum=1),
             chunk_target_tokens=_int("KNOWLEDGE_CHUNK_TOKENS", 320, minimum=32, maximum=2048),
@@ -1201,6 +1211,37 @@ class SecuritySettings:
             idempotency_ttl_hours=_int("IDEMPOTENCY_TTL_HOURS", 24, minimum=1, maximum=24 * 30),
             idempotency_lease_s=_int("IDEMPOTENCY_LEASE_S", 900, minimum=30, maximum=86_400),
         )
+
+
+def _vector_store_is_on_host(url: str) -> bool:
+    """Whether a vector-store URL points at this deployment's own network: empty (in-memory), a
+    loopback or private address, a bare Docker service name, or a ``.internal``/``.local`` name.
+    A dotted public hostname (Qdrant Cloud, any SaaS) is off-host."""
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    if not url:
+        return True
+    host = (urlsplit(url if "//" in url else f"//{url}").hostname or "").lower()
+    if not host or host in ("localhost",):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_private or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        pass
+    if "." not in host:
+        return True
+    return host.endswith((".internal", ".local", ".localdomain"))
+
+
+def vector_payload_content_enabled(knowledge: "KnowledgeSettings", infrastructure: "InfrastructureSettings") -> bool:
+    """The recorded decision per target (audit FSA-018): readable content travels into vector
+    payloads only when the vector store is on-host, unless the operator says otherwise."""
+    if knowledge.vector_payload_content is not None:
+        return bool(knowledge.vector_payload_content)
+    if infrastructure.vector_backend != "qdrant":
+        return True
+    return _vector_store_is_on_host(infrastructure.qdrant_url)
 
 
 @dataclass(frozen=True, slots=True)
