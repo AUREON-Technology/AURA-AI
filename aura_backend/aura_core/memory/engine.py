@@ -180,6 +180,9 @@ class MemoryEngine:
                         "owner_id": owner_id.value,
                         "subject": subject or "",
                         "scope": scope or SHARED_MEMORY_SCOPE,
+                        # What forget_source filters on (audit FSA-066): without it the rows
+                        # went and every vector point stayed behind.
+                        "source": source,
                     },
                 )
             ],

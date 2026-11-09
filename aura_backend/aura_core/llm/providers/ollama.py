@@ -120,6 +120,17 @@ class OllamaProvider(BaseProvider):
         return payload
 
     @staticmethod
+    def _finish_reason(body: Mapping[str, Any], tool_calls: Any) -> FinishReason:
+        """Ollama's ``done_reason`` (``stop`` or ``length``), mapped (audit FSA-093). Reporting
+        every completion as ``stop`` hid truncation at ``num_predict`` from the kernel, which
+        then treated a cut-off answer as complete."""
+        if tool_calls:
+            return FinishReason.TOOL_CALLS
+        if str(body.get("done_reason") or "").lower() == "length":
+            return FinishReason.LENGTH
+        return FinishReason.STOP
+
+    @staticmethod
     def _usage(body: Mapping[str, Any]) -> TokenUsage:
         return TokenUsage(
             prompt_tokens=int(body.get("prompt_eval_count", 0) or 0),
@@ -163,13 +174,14 @@ class OllamaProvider(BaseProvider):
         if usage.total_tokens == 0:
             usage = self._estimate_usage(request, text)
 
+        tool_calls = self._tool_calls_from(message)
         return CompletionResponse(
             text=text,
             provider=self.name,
             model=body.get("model") or self._model,
-            finish_reason=FinishReason.STOP,
+            finish_reason=self._finish_reason(body, tool_calls),
             usage=usage,
-            tool_calls=self._tool_calls_from(message),
+            tool_calls=tool_calls,
             latency_ms=(time.perf_counter() - started) * 1000.0,
             cost_usd=0.0,
         )
@@ -186,6 +198,7 @@ class OllamaProvider(BaseProvider):
             await self._raise_for_status(response, operation="stream")
             usage = TokenUsage()
             tool_calls: tuple = ()
+            final: Mapping[str, Any] = {}
             async for line in response.aiter_lines():
                 if not line.strip():
                     continue
@@ -201,9 +214,10 @@ class OllamaProvider(BaseProvider):
                     tool_calls = self._tool_calls_from(message)
                 if event.get("done"):
                     usage = self._usage(event)
+                    final = event
             yield StreamChunk(
                 tool_calls=tool_calls,
-                finish_reason=FinishReason.TOOL_CALLS if tool_calls else FinishReason.STOP,
+                finish_reason=self._finish_reason(final, tool_calls),
                 usage=usage,
                 provider=self.name,
                 model=self._model,

@@ -22,6 +22,7 @@ to ``providers/claude.py`` and pins the set of kinds.
 
 from __future__ import annotations
 
+import logging
 from typing import Sequence
 
 from ..config.settings import LLMSettings, ProviderConfig
@@ -181,6 +182,9 @@ def build_provider(config: ProviderConfig, *, model_allowlist: Sequence[str] = (
     )
 
 
+logger = logging.getLogger("aura.llm.registry")
+
+
 def build_providers(
     settings: LLMSettings, *, model_allowlist: Sequence[str] = ()
 ) -> list[LLMProvider]:
@@ -188,6 +192,18 @@ def build_providers(
         build_provider(config, model_allowlist=model_allowlist)
         for config in settings.enabled_providers
     ]
+    if providers and not any(c.supports_json_mode for c in settings.enabled_providers):
+        # Audit FSA-092: the router excludes every provider left at SUPPORTS_JSON_MODE=false from
+        # a structured-output request ("no_json_mode" in the routing decision), so with every
+        # slot at the default the first planner call that asks for a schema finds no eligible
+        # provider. Said once here, at boot, instead of on that first call.
+        logger.warning(
+            "no enabled provider declares SUPPORTS_JSON_MODE=true: structured-output "
+            "(json_schema) requests will find no eligible provider. Set "
+            "AURA_PROVIDER_<NAME>_SUPPORTS_JSON_MODE=true on a provider whose model honours "
+            "response_format (deploy/.env.example shows the hosted-slot example).",
+            extra={"providers": [c.name for c in settings.enabled_providers]},
+        )
     if not providers:
         raise ConfigurationError("no LLM providers are enabled")
     return providers

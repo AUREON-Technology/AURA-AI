@@ -1628,6 +1628,12 @@ class AIKernel:
         if agent is None or deps.agentic_executor is None:
             return None
         budget = agent.budget
+        # TOOLS_MAX_CALLS_PER_TURN (audit FSA-112): the per-turn tool cap for a persona that
+        # declares no tool_budget of its own; 0 keeps "not bounded by this". A persona's own
+        # figure (engineer: 216) is never overridden.
+        per_turn = int(getattr(getattr(deps.settings, "tools", None), "max_calls_per_turn", 0) or 0)
+        if budget.tool_budget is None and per_turn > 0:
+            budget = replace(budget, tool_budget=per_turn)
         return {
             "max_iterations": budget.max_iterations,
             "deadline_s": self._agentic_loop_deadline_s(),

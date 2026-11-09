@@ -401,6 +401,20 @@ class TestForgetting:
 
         assert await engine.recall(MemoryQuery(owner_id=user, text="fact from the doc")) == []
 
+    async def test_forgetting_a_source_removes_its_vector_points(self, engine, vectors, user) -> None:
+        """Audit FSA-066: the delete filtered on a payload key (`source`) that was never written,
+        so the rows went and every vector point stayed -- invisible to recall only because recall
+        drops hits whose row is gone, but still in the index and still searchable by anyone who
+        reaches the vector store directly."""
+        await engine.remember(owner_id=user, content="Fact A from the doc.", source="doc:1")
+        await engine.remember(owner_id=user, content="Fact B from the doc.", source="doc:1")
+        await engine.remember(owner_id=user, content="Unrelated fact.", source="turn:9")
+        assert await vectors.count(engine._identity, owner_id=user) == 3
+
+        await engine.forget_source(owner_id=user, source="doc:1")
+
+        assert await vectors.count(engine._identity, owner_id=user) == 1
+
     async def test_forgetting_an_unknown_source_is_zero(self, engine, user) -> None:
         assert await engine.forget_source(owner_id=user, source="never-seen") == 0
 
