@@ -176,8 +176,16 @@ x-hosted-providers: &hosted_providers
 
 networks:
   # Ingress-facing. nginx, the gateway, and the operator console attach.
+  # The fixed subnet exists so nginx can hold a static address (below): the gateway trusts
+  # X-Forwarded-For from that one address only (audit FSA-012). uvicorn's --forwarded-allow-ips
+  # takes addresses, never names, and nginx is force-recreated on every deploy, so a dynamic
+  # address would be stale after the first one. 10.77.0.0/16 is outside Docker's default pools
+  # (172.17-31/16, 192.168/16), so these cannot overlap a network Docker assigned on its own.
   edge:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 10.77.10.0/24
   # Data tier. internal=true means no route to the host or the internet at all, so a
   # compromised datastore cannot call out.
   data:
@@ -194,9 +202,14 @@ networks:
   egress:
     driver: bridge
   # Cross-compose bridge: prod nginx + ollama share this with aura-dev gateway/console.
+  # Fixed subnet for the same reason as `edge`: the dev gateway trusts forwarded headers from
+  # nginx's static address here (docker-compose.dev.yml), and only from it.
   aura_edge:
     name: aura_edge
     driver: bridge
+    ipam:
+      config:
+        - subnet: 10.77.11.0/24
   # Engineer agent (AURA_SANDBOX_ENABLED, off by default): gateway <-> docker-socket-proxy only.
   # No other service attaches here, and the proxy is the only thing with the real socket -- the
   # gateway container never gets host-root-equivalent access itself, only the restricted API
@@ -329,7 +342,15 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d
       - nginx_certs:/etc/letsencrypt
       - ./nginx/www:/var/www/certbot:ro
-    networks: [edge, observability, aura_edge]
+    # Static addresses: what the prod gateway (edge) and the dev gateway (aura_edge) name in
+    # --forwarded-allow-ips. Change one and change the other in the same commit; pinned by
+    # tests/unit/test_compose_security_parity.py.
+    networks:
+      edge:
+        ipv4_address: 10.77.10.10
+      observability: {}
+      aura_edge:
+        ipv4_address: 10.77.11.10
     # service_started, never service_healthy (audit F-25). The edge must come up whether or not
     # the gateway is ready: readiness needs a working LLM provider, so with `service_healthy` an
     # Ollama outage plus any nginx recreate (vps-update.sh force-recreates it on every deploy)
@@ -420,7 +441,7 @@ services:
       uvicorn aura_service:app
       --host 0.0.0.0 --port 8000
       --workers ${AURA_WORKERS:-4}
-      --proxy-headers --forwarded-allow-ips='*'
+      --proxy-headers --forwarded-allow-ips=10.77.10.10
       --timeout-keep-alive 65
       --timeout-graceful-shutdown ${AURA_GRACEFUL_SHUTDOWN_S:-150}
     environment:
@@ -535,7 +556,10 @@ services:
       # (and the cert / client BACKEND_URL). Add extra origins in deploy/.env if the
       # web bundle is hosted off this box.
       AURA_DOMAIN: ${AURA_DOMAIN}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:8080,http://127.0.0.1:8080,https://${AURA_DOMAIN}}
+      # Production origins only (audit FSA-010): a localhost origin here, with credentials
+      # allowed, lets a page on a developer's machine call production as the signed-in user.
+      # Local Flutter web against this stack is what the dev stack and `deploy/.env` are for.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://${AURA_DOMAIN}}
       # Debug Flutter APKs send aura_dev_attestation. Release builds send a
       # Play Integrity / App Attest token. Must stay false in production.
       ALLOW_MOCK_ATTESTATION: ${ALLOW_MOCK_ATTESTATION:-false}

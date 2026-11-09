@@ -293,7 +293,7 @@ services:
       uvicorn aura_service:app
       --host 0.0.0.0 --port 8000
       --workers ${AURA_WORKERS:-2}
-      --proxy-headers --forwarded-allow-ips='*'
+      --proxy-headers --forwarded-allow-ips=10.77.11.10
       --timeout-keep-alive 65
       --timeout-graceful-shutdown ${AURA_GRACEFUL_SHUTDOWN_S:-150}
     environment:
@@ -352,7 +352,9 @@ services:
       FIREBASE_SERVICE_ACCOUNT_PATH: /run/secrets/firebase_credentials
       AURA_DOMAIN: ${AURA_DOMAIN}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:8080,http://127.0.0.1:8080,https://${AURA_DOMAIN}}
-      ALLOW_MOCK_ATTESTATION: ${ALLOW_MOCK_ATTESTATION:-true}
+      # Same default as prod (audit FSA-100): a debug APK's fake attestation is accepted only
+      # when deploy/.env.dev says so, not because this is the dev stack.
+      ALLOW_MOCK_ATTESTATION: ${ALLOW_MOCK_ATTESTATION:-false}
       DEBUG_MODE: "false"
       APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
       AURA_IOS_BUNDLE_ID: ${AURA_IOS_BUNDLE_ID:-com.auraai.auraClient}
@@ -384,7 +386,15 @@ services:
       # Built by `sandbox-image` below (not pulled) so IMAGES stays off the socket proxy.
       AURA_SANDBOX_IMAGE: ${AURA_SANDBOX_IMAGE:-aura-sandbox:latest}
       AURA_SANDBOX_PROXY_URL: ${AURA_SANDBOX_PROXY_URL:-http://sandbox-proxy:8888}
-      AURA_SANDBOX_NETWORK: sandbox_egress
+      # Compose prefixes the network key with the project name (`aura-dev`), so this is the name
+      # Docker actually creates; the bare key never matched anything (audit FSA-100).
+      AURA_SANDBOX_NETWORK: ${AURA_SANDBOX_NETWORK:-aura-dev_sandbox_egress}
+      # Same limits as prod -- the two stacks share this host.
+      AURA_SANDBOX_MEMORY_LIMIT: ${AURA_SANDBOX_MEMORY_LIMIT:-512m}
+      AURA_SANDBOX_CPU_LIMIT: ${AURA_SANDBOX_CPU_LIMIT:-1.0}
+      AURA_SANDBOX_HOT_IDLE_S: ${AURA_SANDBOX_HOT_IDLE_S:-900}
+      AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB: ${AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB:-2048}
+      AURA_SANDBOX_MIN_FREE_MEMORY_MB: ${AURA_SANDBOX_MIN_FREE_MEMORY_MB:-1024}
       # Its own root, never prod's: the dev stack shares this host with prod, and one directory
       # for both would let a dev workspace collide with a production one. Bind-mounted at the
       # same path -- see docker-compose.prod.yml's AURA_SANDBOX_HOST_ROOT for why that matters.
