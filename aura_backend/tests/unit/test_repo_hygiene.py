@@ -17,6 +17,7 @@ Needs only the checkout and ``git``: no Docker, no network.
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import shutil
 import subprocess
@@ -155,8 +156,11 @@ class TestWorkflowPins:
         on_block = text.split("\non:\n", 1)[1].split("\njobs:\n", 1)[0]
         assert re.search(r"^  pull_request:", on_block, re.M), "admin-ci.yml must run on pull_request"
         assert '"aura_admin/**"' in on_block
-        # `next lint` with no ESLint config is an interactive prompt, not a gate.
-        assert not re.search(r"^\s*run:\s*npm run lint", text, re.M)
+        # Audit G-10: the console has an ESLint config now (eslint.config.mjs) and lint is a gate.
+        assert re.search(r"^\s*run:\s*npm run lint", text, re.M), "admin-ci.yml must run the lint"
+        assert (REPO / "aura_admin" / "eslint.config.mjs").is_file()
+        package = json.loads((REPO / "aura_admin" / "package.json").read_text(encoding="utf-8"))
+        assert "--max-warnings 0" in package["scripts"]["lint"], "a warning must fail the gate"
 
 
 class TestTheIndexCarriesNoScratchFiles:
@@ -265,3 +269,39 @@ class TestEngineBackedVoiceAndOcrTestsRunInCi:
             assert re.search(rf"apt-get install[^\n]*\b{re.escape(package)}\b", test_job), (
                 f"the test job must apt-get install {package}"
             )
+
+
+class TestARealModelEvaluationExists:
+    """Audit FSA-082 / G-02 / G-09: every AI-quality number in the repository came from the hash
+    embedder and scripted providers; the deterministic gate is right as a merge gate and useless as
+    a measurement. A separate workflow runs the agent suite and the vision evaluator against a real
+    provider and the production embedder, on a schedule and on demand, and skips with a notice,
+    not a pass, when the credentials it needs are absent."""
+
+    WORKFLOW = WORKFLOWS / "real-model-eval.yml"
+
+    def test_the_workflow_exists_and_is_both_scheduled_and_dispatchable(self) -> None:
+        assert self.WORKFLOW.is_file(), "no real-model evaluation workflow"
+        text = self.WORKFLOW.read_text(encoding="utf-8")
+        on_block = text.split("\non:\n", 1)[1].split("\njobs:\n", 1)[0]
+        assert re.search(r"^  workflow_dispatch:", on_block, re.M)
+        assert re.search(r"^  schedule:", on_block, re.M)
+
+    def test_it_runs_the_real_embedder_not_the_hash_one(self) -> None:
+        text = self.WORKFLOW.read_text(encoding="utf-8")
+        assert "AURA_EMBEDDING_PROVIDER: sentence-transformers" in text
+        assert "hash-embed" not in text
+
+    def test_it_runs_the_evaluator_against_a_hosted_provider_with_the_key_from_a_secret(self) -> None:
+        text = self.WORKFLOW.read_text(encoding="utf-8")
+        assert "python -m evaluation.runner" in text
+        assert "python -m evaluation.vision_eval run" in text
+        assert "AURA_ALLOW_HOSTED_INFERENCE: \"true\"" in text
+        assert "secrets.AURA_HOSTED1_API_KEY" in text
+        assert "--baseline" not in text.split("evaluation.runner", 1)[1].split("\n", 2)[0], (
+            "the scripted baselines are tautological; a real-model run reports, it does not gate"
+        )
+
+    def test_missing_credentials_skip_with_a_notice_instead_of_passing(self) -> None:
+        text = self.WORKFLOW.read_text(encoding="utf-8")
+        assert "::notice::" in text and "configured" in text
