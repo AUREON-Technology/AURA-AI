@@ -509,15 +509,6 @@ class TestTwinService:
             LabelingSummary(eligible=3, model=1, reused=1, degraded=0)
 
 
-def test_postgres_schema_matches_its_migration() -> None:
-    from aura_core.adapters.postgres_adaptation import TWIN_SCHEMA
-
-    spec = importlib.util.spec_from_file_location("m0010", BACKEND / "alembic" / "versions" / "0010_adaptation_twin.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    assert tuple(module.UPGRADE_STATEMENTS) == TWIN_SCHEMA
-
-
 # ------------------------------------------------------------------------------- HTTP
 
 

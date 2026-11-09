@@ -32,25 +32,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["PostgresPersonalOsStore"]
 
-_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_personal_os_records (
-        id          TEXT        PRIMARY KEY,
-        owner_id    TEXT        NOT NULL,
-        kind        TEXT        NOT NULL,
-        fields      JSONB       NOT NULL DEFAULT '{}'::jsonb,
-        source      TEXT        NOT NULL DEFAULT 'kernel',
-        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-    """,
-    # The shape `list_for_owner` asks for: this owner, optionally this kind, newest first.
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_personal_os_owner_kind
-        ON aura_personal_os_records (owner_id, kind, created_at DESC)
-    """,
-)
-
 
 def _unavailable(message: str, **details: Any) -> DependencyUnavailableError:
     return DependencyUnavailableError(message, dependency="postgres", details=details or None)
@@ -67,25 +48,12 @@ class PostgresPersonalOsStore:
         self, url: str, *, pool: PostgresPool | None = None, cipher: FieldCipher | None = None,
     ) -> None:
         self._pool = pool or PostgresPool(url)
-        self._schema_ready = False
         self._cipher = cipher or FieldCipher.disabled()
 
     @staticmethod
     def encryption_context(record_id: str, owner_id: str) -> str:
         """What sealed ``fields`` are bound to: copying them into another row fails to decrypt."""
         return f"aura_personal_os_records:{record_id}:{owner_id}"
-
-    async def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-        pool = await self._pool._get_pool()
-        try:
-            async with pool.acquire() as conn:
-                for statement in _SCHEMA:
-                    await conn.execute(statement)
-        except Exception as exc:
-            raise _unavailable(f"could not create the personal-OS schema: {exc}") from exc
-        self._schema_ready = True
 
     @staticmethod
     def _record(row: Mapping[str, Any], cipher: FieldCipher | None = None) -> PersonalOsRecord:
@@ -107,7 +75,6 @@ class PostgresPersonalOsStore:
         )
 
     async def put(self, record: PersonalOsRecord) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -133,7 +100,6 @@ class PostgresPersonalOsStore:
     async def get(
         self, record_id: PersonalOsRecordId, *, owner_id: UserId
     ) -> PersonalOsRecord | None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -148,7 +114,6 @@ class PostgresPersonalOsStore:
     async def list_for_owner(
         self, owner_id: UserId, *, kind: RecordKind | None = None, limit: int = 100,
     ) -> list[PersonalOsRecord]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -178,7 +143,6 @@ class PostgresPersonalOsStore:
         await self.put(record)
 
     async def delete(self, record_id: PersonalOsRecordId, *, owner_id: UserId) -> bool:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:

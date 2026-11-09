@@ -18,11 +18,11 @@ confidence, and so deleting or superseding a document can remove or expire what 
   ``aura_core.domain.graph.DEFAULT_GRAPH_SCHEMA``;
 * a backfill of provenance and aliases from the pre-existing ``sources``/``aliases`` JSONB.
 
-Written as raw idempotent SQL rather than ``op.create_table`` and kept textually in step with
-``aura_core/adapters/postgres_graph.py``'s ``GRAPH_SCHEMA`` (pinned by
-``tests/unit/test_graph_schema_migration.py``): the adapter creates the same objects on first use,
-so a gateway that wrote graph rows before this migration ran must not make ``alembic upgrade
-head`` fail, and a fresh database must end up identical either way.
+Written as raw idempotent SQL rather than ``op.create_table``: at the time the adapter created the
+same objects on first use, so a gateway that wrote graph rows before this migration ran must not
+make ``alembic upgrade head`` fail. (The adapter's copy, and its runtime vocabulary seeding, were
+removed when Alembic became the only schema authority, CB-20; a vocabulary change now needs a new
+migration -- see ``tests/unit/test_graph_schema_migration.py``.)
 
 Every table is owner-scoped with ``owner_id`` TEXT (the v3 ``UserId`` value, ``''`` for global),
 the same convention as ``aura_documents.owner_id``.

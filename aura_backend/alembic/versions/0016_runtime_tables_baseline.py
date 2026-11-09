@@ -12,9 +12,9 @@ would have emitted a DROP for each (none is in ``Base.metadata``; ``env.py`` now
 
 These are the adapters' own statements, copied verbatim on this date and all ``IF NOT EXISTS``,
 so on a database where the adapters already created the tables this migration changes nothing.
-The adapters still run their DDL on first use; ``tests/architecture/test_runtime_tables_have_migrations.py``
-fails if an adapter creates a table no migration does, and pins these statements to the
-adapters' current text.
+At the time the adapters still ran their DDL on first use. That DDL has since been removed, making
+Alembic the only schema authority (CB-20 / roadmap M6); ``tests/architecture/test_no_runtime_ddl.py``
+keeps it out of ``aura_core``.
 """
 from typing import Sequence, Union
 

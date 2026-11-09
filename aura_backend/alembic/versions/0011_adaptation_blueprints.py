@@ -9,9 +9,8 @@ generated evaluation suites and what the compiler dropped, as one JSONB `record`
 columns a lifecycle query needs (`state`, `digest`, `twin_version`). AP6 only appends `proposed`
 versions; the approve / deploy / rollback transitions are AP7's.
 
-Owned by this migration alone: `aura_core/adapters/postgres_adaptation.py` issues no DDL, and its
-`BLUEPRINT_SCHEMA` is kept textually in step with the statements below
-(`tests/unit/test_adaptation_compiler.py` asserts it). `project_id` defaults to `p0` (ADR-019).
+Owned by this migration alone: `aura_core/adapters/postgres_adaptation.py` issues no DDL.
+`project_id` defaults to `p0` (ADR-019).
 """
 from typing import Sequence, Union
 

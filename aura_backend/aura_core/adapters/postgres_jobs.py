@@ -19,33 +19,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["PostgresJobStore"]
 
-_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_finetune_jobs (
-        id               TEXT        PRIMARY KEY,
-        approval_id      TEXT        NOT NULL,
-        dataset_digest   TEXT        NOT NULL,
-        base_model       TEXT        NOT NULL DEFAULT '',
-        status           TEXT        NOT NULL,
-        model_id         TEXT        NOT NULL DEFAULT 'aura-ft',
-        version          TEXT        NOT NULL DEFAULT '',
-        artefact_uri     TEXT        NOT NULL DEFAULT '',
-        provider_kind    TEXT        NOT NULL DEFAULT 'ollama',
-        run_id           TEXT,
-        error            TEXT,
-        metrics          JSONB       NOT NULL DEFAULT '{}'::jsonb,
-        parameters       JSONB       NOT NULL DEFAULT '{}'::jsonb,
-        created_at       TIMESTAMPTZ NOT NULL,
-        started_at       TIMESTAMPTZ,
-        finished_at      TIMESTAMPTZ
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_finetune_jobs_status
-        ON aura_finetune_jobs (status, created_at DESC)
-    """,
-)
-
 
 def _unavailable(message: str, **details: Any) -> DependencyUnavailableError:
     return DependencyUnavailableError(message, dependency="postgres", details=details or None)
@@ -62,22 +35,8 @@ def _utc(value: datetime | None) -> datetime | None:
 class PostgresJobStore:
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)
-        self._schema_ready = False
-
-    async def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-        pool = await self._pool._get_pool()
-        try:
-            async with pool.acquire() as conn:
-                for statement in _SCHEMA:
-                    await conn.execute(statement)
-        except Exception as exc:
-            raise _unavailable(f"could not create the finetune jobs schema: {exc}") from exc
-        self._schema_ready = True
 
     async def put(self, job: FineTuneJob) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -126,7 +85,6 @@ class PostgresJobStore:
             raise _unavailable(f"could not write fine-tune job {job.id!r}: {exc}", job=job.id) from exc
 
     async def get(self, job_id: str) -> FineTuneJob | None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -144,7 +102,6 @@ class PostgresJobStore:
         return self._row(row) if row else None
 
     async def list(self, *, limit: int = 50) -> Sequence[FineTuneJob]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:

@@ -506,7 +506,7 @@ M3 + M5 + M6 + M7 + M9 + M10 (+ M8.13) ─► M15 Certification ─► canary �
 | M3 | Observability foundation | High | M0, M2 | Medium | Low | Partial (turn metrics) | observability/, deploy/prometheus | All SLOs measurable |
 | M4 | Inference platform | Critical | M1, M3, ADR-017 | High | High | Built (config), unproven | llm/, deploy/spaces, compose gpu | Pinned GPU pool in prod + failure report |
 | M5 | Capacity evidence | Critical | M3, M4 | Medium | Medium | Harness built | tests/load | 50-user SLO report |
-| M6 | Data protection & DR | High | M1, M2 | High | High (schema) | Partial (built, not deployed) | adapters, alembic, backup | Offsite drill + no runtime DDL |
+| M6 | Data protection & DR | High | M1, M2 | High | High (schema) | Partial: one schema authority + downgrade tests built and tested locally (CB-20, 2026-11-09); offsite drill not started | adapters, alembic, backup | Offsite drill + no runtime DDL |
 | M7 | Evaluation gates | High | M0, M4 | Medium | Medium | Scripted gates only | evaluation/ | EV baselines gated |
 | M8 | Desktop IDE productization | High (product) | M0, M1 | High | Medium | Linux built + 381 tests at `dc87beb`; Windows/hostd fixes merged, not CI-run | aura_client/desktop, aura_hostd | M8.13 golden path |
 | M9 | Engineer execution proof | Medium | M1, M2, M8.7 | Medium | Medium | Built, unproven | sandbox, hostd | Two reports |

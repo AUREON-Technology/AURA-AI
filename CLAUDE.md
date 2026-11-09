@@ -252,6 +252,15 @@ pinned to the in-memory substrate on purpose (see its own docstring). Real Postg
 adapters exist for production and are only exercised by the opt-in `tests/load` suite and
 targeted integration tests using `testcontainers`.
 
+**Alembic is the only schema authority (CB-20).** No adapter creates or alters a table; the old
+`CREATE TABLE IF NOT EXISTS`-on-first-use bootstrap is gone, and
+`tests/architecture/test_no_runtime_ddl.py` fails on any DDL string under `aura_core`. A schema
+change is a new migration in `alembic/versions/` with a working `downgrade()`;
+`tests/load/test_migration_roundtrip_postgres.py` undoes and re-applies every revision on a real
+Postgres and requires each one after `0016` to restore its parent's schema exactly. An unmigrated
+database now fails requests as well as `/health/ready`, so both deploy targets must keep running
+`alembic upgrade head` before the app starts (Railway's pre-deploy command, `vps-update.sh`).
+
 **v3 is the only live HTTP surface.** `aura_service.py` is a v3-only gateway that never imports
 the legacy `main.py`-era app. `api/v2/{auth,sync,insights}` are a deliberate exception —
 permanent platform adapters mounted outside `aura_core` (ADR-002), not legacy code awaiting
@@ -363,3 +372,6 @@ retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer work
 - When a change touches a Postgres-backed adapter, verify it against a real (even throwaway)
   Postgres instance before considering it done — asyncpg's type mapping (e.g. `Decimal` from
   `avg()`/`percentile_cont`) has caused real bugs the in-memory adapter can't surface.
+- A real-Postgres test must build its database with `alembic upgrade head`
+  (`tests/postgres_migrations.py`: `migrated_database()`, `migrate()`), never by letting an
+  adapter create its tables — adapters no longer do.

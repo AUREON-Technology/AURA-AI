@@ -204,9 +204,11 @@ jobs:
   # The `*_postgres` tests under tests/load (audit F-37). They are opt-in (`-m load`) and skip
   # unless AURA_TEST_DATABASE_URL is set, so before this job no CI run had ever executed them --
   # against CLAUDE.md's own rule that a Postgres-backed change is verified against a real Postgres.
-  # Each test creates its own database and migrates it with `alembic upgrade head`, so this also
-  # proves the migration chain applies to an empty database. Only the Postgres files are selected:
-  # the rest of tests/load needs Qdrant, Redis, Ollama or Docker.
+  # Each test creates its own database and migrates it with `alembic upgrade head`
+  # (tests/postgres_migrations.py) -- the adapters create no tables (CB-20) -- so this also proves
+  # the migration chain applies to an empty database, and test_migration_roundtrip_postgres.py
+  # undoes and re-applies every revision. Only the Postgres files are selected: the rest of
+  # tests/load needs Qdrant, Redis, Ollama or Docker.
   postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 30

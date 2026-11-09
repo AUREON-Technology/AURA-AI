@@ -361,8 +361,7 @@ class AgentRunStore(EngineerRunStore, Protocol):
 
     An extension of the engineer-runs port rather than a parallel one: the same adapter holds
     both ledgers (``aura_engineer_runs`` for per-engineer-tool-call rows, ``aura_agent_runs`` /
-    ``aura_agent_steps`` for per-run state of any persona), shares one connection pool and one
-    schema bootstrap, and a deployment that wires one has wired both.
+    ``aura_agent_steps`` for per-run state of any persona), shares one connection pool, and a deployment that wires one has wired both.
 
     Every read is owner-scoped by construction -- ``user_id`` is a required argument, not a
     filter a caller may forget -- so a run id guessed or leaked across users reads as absent.

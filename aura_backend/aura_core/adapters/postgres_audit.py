@@ -22,31 +22,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["PostgresAuditSink"]
 
-_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_audit_events (
-        id              TEXT        PRIMARY KEY,
-        at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-        actor           TEXT        NOT NULL,
-        actor_role      TEXT        NOT NULL DEFAULT '',
-        action          TEXT        NOT NULL,
-        resource        TEXT        NOT NULL DEFAULT '',
-        outcome         TEXT        NOT NULL,
-        correlation_id  TEXT        NOT NULL DEFAULT '',
-        source_ip       TEXT,
-        detail          JSONB       NOT NULL DEFAULT '{}'::jsonb
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_audit_events_at
-        ON aura_audit_events (at)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_audit_events_actor_at
-        ON aura_audit_events (actor, at)
-    """,
-)
-
 
 def _unavailable(message: str, **details: Any) -> DependencyUnavailableError:
     return DependencyUnavailableError(message, dependency="postgres", details=details or None)
@@ -64,22 +39,8 @@ class PostgresAuditSink:
     def __init__(self, url: str, *, pool: PostgresPool | None = None, clock=None) -> None:
         self._pool = pool or PostgresPool(url)
         self._clock = clock or SystemClock()
-        self._schema_ready = False
-
-    async def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-        pool = await self._pool._get_pool()
-        try:
-            async with pool.acquire() as conn:
-                for statement in _SCHEMA:
-                    await conn.execute(statement)
-        except Exception as exc:
-            raise _unavailable(f"could not create the audit schema: {exc}") from exc
-        self._schema_ready = True
 
     async def record(self, event: AuditEvent) -> None:
-        await self._ensure_schema()
         if event.at is None:
             event.at = self._clock.now()
         pool = await self._pool._get_pool()
@@ -114,7 +75,6 @@ class PostgresAuditSink:
         since: datetime | None = None,
         limit: int = 100,
     ) -> Sequence[AuditEvent]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:

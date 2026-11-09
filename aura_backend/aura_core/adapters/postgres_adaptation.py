@@ -37,45 +37,8 @@ __all__ = [
     "PostgresCiphertextStore",
     "PostgresTwinStore",
     "PostgresBlueprintStore",
-    "ADAPTATION_SCHEMA",
-    "TWIN_SCHEMA",
-    "BLUEPRINT_SCHEMA",
-    "ACTIVE_SCHEMA",
 ]
 
-#: Kept textually in step with ``alembic/versions/0009_adaptation_connectors.py``
-#: (``tests/unit/test_adaptation_connectors.py`` asserts it).
-ADAPTATION_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_connectors (
-        id              TEXT        PRIMARY KEY,
-        project_id      TEXT        NOT NULL DEFAULT 'p0',
-        kind            TEXT        NOT NULL,
-        identity_mode   TEXT        NOT NULL,
-        display_name    TEXT        NOT NULL,
-        endpoint        TEXT        NOT NULL,
-        options         JSONB       NOT NULL DEFAULT '{}'::jsonb,
-        secret_ref      TEXT        NULL,
-        max_concurrency INTEGER     NOT NULL,
-        timeout_s       DOUBLE PRECISION NOT NULL,
-        row_cap         INTEGER     NOT NULL,
-        state           TEXT        NOT NULL,
-        approval_id     TEXT        NULL,
-        registered_by   TEXT        NOT NULL,
-        registered_at   TIMESTAMPTZ NOT NULL,
-        activated_by    TEXT        NULL,
-        activated_at    TIMESTAMPTZ NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS aura_connector_credentials (
-        secret_ref  TEXT        PRIMARY KEY,
-        project_id  TEXT        NOT NULL DEFAULT 'p0',
-        ciphertext  TEXT        NOT NULL CHECK (ciphertext LIKE 'aura-enc:v1:%'),
-        created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-    """,
-)
 
 _MISSING_TABLE = "42P01"  # undefined_table
 
@@ -233,40 +196,6 @@ class PostgresCiphertextStore:
         return status.endswith(" 1")
 
 
-#: Kept textually in step with ``alembic/versions/0010_adaptation_twin.py``
-#: (``tests/unit/test_adaptation_twin.py`` asserts it).
-TWIN_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_adaptation_twin_versions (
-        project_id      TEXT        NOT NULL DEFAULT 'p0',
-        version         INTEGER     NOT NULL CHECK (version >= 1),
-        digest          TEXT        NOT NULL CHECK (digest LIKE 'sha256:%'),
-        parent_version  INTEGER     NULL,
-        created_at      TIMESTAMPTZ NOT NULL,
-        created_by      TEXT        NOT NULL,
-        element_count   INTEGER     NOT NULL,
-        record          JSONB       NOT NULL,
-        PRIMARY KEY (project_id, version)
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS aura_adaptation_twin_elements (
-        project_id  TEXT    NOT NULL DEFAULT 'p0',
-        version     INTEGER NOT NULL,
-        element_id  TEXT    NOT NULL,
-        kind        TEXT    NOT NULL,
-        body        JSONB   NOT NULL,
-        PRIMARY KEY (project_id, version, element_id),
-        FOREIGN KEY (project_id, version)
-            REFERENCES aura_adaptation_twin_versions (project_id, version) ON DELETE CASCADE
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS aura_adaptation_twin_elements_kind
-        ON aura_adaptation_twin_elements (project_id, version, kind)
-    """,
-)
-
 _UNIQUE_VIOLATION = "23505"
 
 
@@ -365,41 +294,6 @@ class PostgresTwinStore:
 
 def _json(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else value
-
-
-#: Kept textually in step with ``alembic/versions/0011_adaptation_blueprints.py``
-#: (``tests/unit/test_adaptation_compiler.py`` asserts it).
-BLUEPRINT_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_adaptation_blueprints (
-        project_id    TEXT        NOT NULL DEFAULT 'p0',
-        version       INTEGER     NOT NULL CHECK (version >= 1),
-        state         TEXT        NOT NULL,
-        digest        TEXT        NOT NULL CHECK (digest LIKE 'sha256:%'),
-        twin_version  INTEGER     NOT NULL,
-        created_at    TIMESTAMPTZ NOT NULL,
-        created_by    TEXT        NOT NULL,
-        record        JSONB       NOT NULL,
-        PRIMARY KEY (project_id, version)
-    )
-    """,
-)
-
-
-#: Kept textually in step with ``alembic/versions/0012_adaptation_blueprint_active.py``.
-ACTIVE_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_adaptation_blueprint_active (
-        project_id        TEXT        PRIMARY KEY DEFAULT 'p0',
-        version           INTEGER     NOT NULL,
-        digest            TEXT        NOT NULL CHECK (digest LIKE 'sha256:%'),
-        activated_at      TIMESTAMPTZ NOT NULL,
-        activated_by      TEXT        NOT NULL,
-        previous_version  INTEGER     NULL,
-        FOREIGN KEY (project_id, version) REFERENCES aura_adaptation_blueprints (project_id, version)
-    )
-    """,
-)
 
 
 async def _record_for_update(conn: Any, project_id: str, version: int) -> BlueprintRecord | None:

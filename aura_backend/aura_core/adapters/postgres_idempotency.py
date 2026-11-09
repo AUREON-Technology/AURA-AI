@@ -1,8 +1,7 @@
 """Postgres implementation of the ``IdempotencyStore`` port (roadmap P1.4).
 
-Shares the container's ``PostgresPool`` like every other ``postgres_*.py`` adapter, and owns its
-table (``CREATE TABLE IF NOT EXISTS`` on first use, mirrored by Alembic revision 0006 so a
-migrated database and a self-created one are the same shape).
+Shares the container's ``PostgresPool`` like every other ``postgres_*.py`` adapter. Its table is owned
+by Alembic revision 0006; the adapter issues no DDL (CB-20).
 
 **Atomic claim without a transaction-spanning lock.** The claim is at most three single
 statements, each atomic on its own:
@@ -39,34 +38,8 @@ from .postgres_store import PostgresPool
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["PostgresIdempotencyStore", "IDEMPOTENCY_SCHEMA"]
+__all__ = ["PostgresIdempotencyStore"]
 
-#: Kept identical to ``alembic/versions/0006_idempotency_keys.py``. Both use ``IF NOT EXISTS``, so
-#: whichever runs first wins and the other is a no-op.
-IDEMPOTENCY_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_idempotency_keys (
-        user_id           TEXT        NOT NULL,
-        operation         TEXT        NOT NULL,
-        idem_key          TEXT        NOT NULL,
-        request_hash      TEXT        NOT NULL,
-        status            TEXT        NOT NULL
-            CHECK (status IN ('in_progress', 'completed', 'failed')),
-        claim_token       TEXT        NOT NULL,
-        response_status   INTEGER,
-        response_body     BYTEA,
-        response_headers  JSONB,
-        created_at        TIMESTAMPTZ NOT NULL,
-        updated_at        TIMESTAMPTZ NOT NULL,
-        expires_at        TIMESTAMPTZ NOT NULL,
-        PRIMARY KEY (user_id, operation, idem_key)
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_idempotency_keys_expires_at
-        ON aura_idempotency_keys (expires_at)
-    """,
-)
 
 _MAX_CLAIM_ATTEMPTS = 4
 
@@ -92,19 +65,6 @@ def _affected(status: str) -> int:
 class PostgresIdempotencyStore:
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)
-        self._schema_ready = False
-
-    async def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-        pool = await self._pool._get_pool()
-        try:
-            async with pool.acquire() as conn:
-                for statement in IDEMPOTENCY_SCHEMA:
-                    await conn.execute(statement)
-        except Exception as exc:
-            raise _unavailable(f"could not create the idempotency schema: {exc}") from exc
-        self._schema_ready = True
 
     @staticmethod
     def _record(row: Mapping[str, Any]) -> IdempotencyRecord:
@@ -142,7 +102,6 @@ class PostgresIdempotencyStore:
         ttl: timedelta,
         lease: timedelta,
     ) -> ClaimResult:
-        await self._ensure_schema()
         now = _utc(now)
         expires_at = now + ttl
         stale_before = now - lease
@@ -233,7 +192,6 @@ class PostgresIdempotencyStore:
         response: StoredResponse,
         now: datetime,
     ) -> bool:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -265,7 +223,6 @@ class PostgresIdempotencyStore:
         claim_token: str,
         now: datetime,
     ) -> bool:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -282,7 +239,6 @@ class PostgresIdempotencyStore:
         return _affected(status) == 1
 
     async def purge_expired(self, *, now: datetime) -> int:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:

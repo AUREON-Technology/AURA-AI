@@ -519,15 +519,6 @@ def test_a_record_must_carry_exactly_its_declared_suites(compiled) -> None:
                         "sa", "sha256:" + "0" * 64, "sha256:" + "0" * 64, result.blueprint, suites=result.suites[:1])
 
 
-def test_postgres_schema_matches_its_migration() -> None:
-    from aura_core.adapters.postgres_adaptation import BLUEPRINT_SCHEMA
-
-    spec = importlib.util.spec_from_file_location("m0011", BACKEND / "alembic" / "versions" / "0011_adaptation_blueprints.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    assert tuple(module.UPGRADE_STATEMENTS) == BLUEPRINT_SCHEMA
-
-
 def test_super_admin_compiles_and_reads_a_blueprint(monkeypatch) -> None:
     from fastapi.testclient import TestClient
 

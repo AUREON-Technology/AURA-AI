@@ -19,31 +19,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["PostgresModelStore"]
 
-_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_model_versions (
-        model_id         TEXT        NOT NULL,
-        version          TEXT        NOT NULL,
-        provider_kind    TEXT        NOT NULL,
-        base_model       TEXT        NOT NULL DEFAULT '',
-        stage            TEXT        NOT NULL,
-        artefact_uri     TEXT        NOT NULL DEFAULT '',
-        dataset_digest   TEXT        NOT NULL DEFAULT '',
-        approval_id      TEXT,
-        metrics          JSONB       NOT NULL DEFAULT '{}'::jsonb,
-        canary_percent   INTEGER     NOT NULL DEFAULT 0,
-        created_at       TIMESTAMPTZ NOT NULL,
-        promoted_at      TIMESTAMPTZ,
-        notes            TEXT        NOT NULL DEFAULT '',
-        PRIMARY KEY (model_id, version)
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_model_versions_stage
-        ON aura_model_versions (model_id, stage, created_at DESC)
-    """,
-)
-
 
 def _unavailable(message: str, **details: Any) -> DependencyUnavailableError:
     return DependencyUnavailableError(message, dependency="postgres", details=details or None)
@@ -60,22 +35,8 @@ def _utc(value: datetime | None) -> datetime | None:
 class PostgresModelStore:
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)
-        self._schema_ready = False
-
-    async def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-        pool = await self._pool._get_pool()
-        try:
-            async with pool.acquire() as conn:
-                for statement in _SCHEMA:
-                    await conn.execute(statement)
-        except Exception as exc:
-            raise _unavailable(f"could not create the model registry schema: {exc}") from exc
-        self._schema_ready = True
 
     async def put(self, version: ModelVersion) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -119,7 +80,6 @@ class PostgresModelStore:
             ) from exc
 
     async def get(self, model_id: str, version: str) -> ModelVersion | None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -141,7 +101,6 @@ class PostgresModelStore:
     async def list(
         self, *, model_id: str | None = None, stage: ModelStage | None = None
     ) -> Sequence[ModelVersion]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         clauses: list[str] = []
         params: list[Any] = []
