@@ -99,6 +99,42 @@ class TestACallSplitAcrossLinesStillCounts:
         assert any(whole.search(t) for t in joined)
 
 
+class TestTriageMatchesExactlyUnlessWrittenAsAPrefix:
+    """`TRIAGE` explains why an uncalled route has no caller. A pattern ending in `$` explains
+    exactly that route, one ending in `/` everything under it, and a bare pattern the route and
+    its own sub-resources. The chat entry is exact: otherwise its "server-to-server" note would
+    be printed for any future uncalled `/api/v3/chat/...` route, and nobody would see "untriaged"."""
+
+    def test_the_chat_note_applies_to_the_chat_route_only(self, reach) -> None:
+        assert reach.triage_note("/api/v3/chat").startswith("server-to-server")
+        assert reach.triage_note("/api/v3/chat/anything-new") == "untriaged"
+        assert reach.triage_note("/api/v3/chatter") == "untriaged"
+
+    def test_a_trailing_slash_marks_a_prefix(self, reach) -> None:
+        assert reach.triage_note("/api/v3/admin/some/new/page").startswith("to wire")
+        assert reach.triage_note("/api/v3/auth/desktop/pair").startswith("to wire")
+
+    def test_a_bare_pattern_still_covers_its_own_sub_resources(self, reach) -> None:
+        """`/api/v3/agents/runs` explains `/api/v3/agents/runs/{run_id}` too: one feature, one note.
+        A bare pattern matches at a segment boundary, not at the character."""
+        assert reach.triage_note("/api/v3/agents/runs/{run_id}").startswith("to wire")
+        assert reach.triage_note("/api/v3/agents/runsheet") == "untriaged"
+
+
+class TestTheSkipListIsRelativeToTheScannedTree:
+    def test_a_checkout_under_a_directory_named_tests_is_still_scanned(self, reach, tmp_path) -> None:
+        """`SKIP_PARTS` names `test`, `tests` and `e2e`. Matched against the absolute path they
+        would skip every source file of a checkout at `/…/tests/AURA-AI` and make the
+        committed-matrix test fail for a reason nobody could see."""
+        root = tmp_path / "tests" / "repo"
+        page = root / "aura_admin" / "app" / "page.tsx"
+        page.parent.mkdir(parents=True)
+        page.write_text('const r = await api("/admin/approvals");\n', encoding="utf-8")
+        lines = reach.scan_tree(root / "aura_admin", (".tsx",), root=root)
+        assert lines, "a source file was skipped because the checkout's own path contains 'tests'"
+        assert lines[0][0] == "aura_admin/app/page.tsx"
+
+
 class TestTestsAreNotCallers:
     def test_test_directories_are_skipped(self, reach) -> None:
         skipped = reach.SKIP_PARTS

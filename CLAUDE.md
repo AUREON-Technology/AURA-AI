@@ -15,7 +15,7 @@ Four independent apps in one repo:
   `/api/v3/*` routes.
 - **`aura_admin/`** — Next.js operator console served at `/console` (10 pages; `npm run
   dev|build|lint`, `npm run test:e2e` for Playwright against a mock gateway; `lint` is ESLint
-  with Next's rule sets, warnings fail it, and Admin CI runs it since 2026-11-09). Built, but not
+  with Next's rule sets, warnings fail it, and Admin CI runs it from PR #226 on -- no run with that step had executed when this was written). Built, but not
   reachable on any live target as of 2026-11-07. Admin CI ran for the first time on 2026-11-07
   (run #3, dispatched: typecheck, build and Playwright e2e all green).
 - **`aura_hostd/`** — pure-Dart local daemon (no Flutter dependency) that lets the desktop Engineer

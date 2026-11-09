@@ -113,6 +113,10 @@ jobs:
           AURA_PROVIDER_HOSTED1_KIND: openai_compatible
           AURA_PROVIDER_HOSTED1_BASE_URL: ${{ env.HOSTED1_BASE_URL }}
           AURA_PROVIDER_HOSTED1_MODEL: ${{ env.HOSTED1_MODEL }}
+          # ProviderConfig reads the key from the variable *named here*, and from nowhere else
+          # (settings.py: the key is a property, never a field). Without this line every
+          # completion goes out unauthenticated while the provider still looks healthy.
+          AURA_PROVIDER_HOSTED1_API_KEY_ENV: AURA_PROVIDER_HOSTED1_API_KEY
           AURA_PROVIDER_HOSTED1_API_KEY: ${{ secrets.AURA_HOSTED1_API_KEY }}
           AURA_PROVIDER_HOSTED1_ALLOW_PROMPT_TRAINING: ${{ env.HOSTED1_ALLOW_TRAINING }}
           AURA_PROVIDER_HOSTED1_EXTRA_BODY: ${{ env.HOSTED1_EXTRA_BODY }}
@@ -125,7 +129,15 @@ jobs:
           AURA_EMBEDDING_MODEL: BAAI/bge-small-en-v1.5
           AURA_EMBEDDING_DIMENSION: "384"
         run: |
+          set -o pipefail
           python -m evaluation.runner --suite "$EVAL_SUITE" --output "real-model-eval-$EVAL_SUITE.json" --max-turns 8 --timeout 120 | tee "real-model-eval-$EVAL_SUITE.log"
+          # Every case failing is a wiring fault (key, base URL, a ceiling that leaves every turn
+          # without a provider), not a measurement of the model. The runner exits 0 without a
+          # baseline, so refuse that result here rather than upload it as GAP-021 evidence.
+          if grep -q "Pass rate: 0.00%" "real-model-eval-$EVAL_SUITE.log"; then
+            echo "::error::Every case failed. A 0% pass rate is a wiring fault, not a measurement -- this run is not GAP-021 evidence."
+            exit 1
+          fi
 
       - name: Summarise
         if: always() && steps.check.outputs.configured == 'true'
@@ -199,6 +211,7 @@ jobs:
         env:
           AURA_EVAL_TOKEN: ${{ secrets.AURA_EVAL_TOKEN }}
         run: |
+          set -o pipefail
           mkdir -p vision-report
           python -m evaluation.vision_eval run --target gateway --base-url "$VISION_BASE_URL" \
             --label "$VISION_LABEL" --report-dir vision-report | tee vision-report/run.log

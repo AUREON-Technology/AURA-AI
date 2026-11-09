@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -220,6 +221,16 @@ class TestDevelopmentToolingIsHashPinned:
         unhashed = [(n, l) for n, l in installers if "--require-hashes" not in l]
         assert unhashed == [], f"dev lock installed without --require-hashes: {unhashed}"
 
+    def test_no_hash_checked_install_is_allowed_to_fail_silently(self) -> None:
+        """`pip install --require-hashes … || true` turns a hash mismatch -- the one event the
+        flag exists to catch -- into a quiet no-op followed by a confusing later failure."""
+        swallowed = []
+        for path in _workflows():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if "pip install" in line and "--require-hashes" in line and "|| true" in line:
+                    swallowed.append((path.name, line.strip()))
+        assert swallowed == [], f"hash-checked installs whose failure is ignored: {swallowed}"
+
 
 class TestWindowsJobsGate:
     """Audit G-03 / FSA-063: the desktop targets are Windows-first, and the Windows jobs were the
@@ -256,6 +267,16 @@ class TestTheLegacyTreeIsMeasuredAndItsPostgresTestsRun:
             "the postgres job must discover aura_backend/test_*_integration.py"
         )
         assert "AURA_TEST_DATABASE_URL" in postgres_job
+
+    def test_the_legacy_integration_step_fails_when_a_suite_fails(self) -> None:
+        """The step pipes unittest into `tee`. Under GitHub's default `bash -e {0}` a pipeline's
+        status is the last command's, so without `pipefail` a run ending `FAILED (errors=7)`
+        passed -- and the only assertion was that nothing *skipped*. The step must set pipefail
+        and require unittest's own `OK` line."""
+        text = self.BACKEND_CI.read_text(encoding="utf-8")
+        step = text.split("name: Legacy integration suites (real database)", 1)[1].split("\n      - name:", 1)[0]
+        assert "pipefail" in step, "the legacy integration step pipes into tee without pipefail"
+        assert re.search(r'grep -q "\^OK"', step), "the step must require unittest's `OK` line"
 
 
 class TestEngineBackedVoiceAndOcrTestsRunInCi:
@@ -305,3 +326,69 @@ class TestARealModelEvaluationExists:
     def test_missing_credentials_skip_with_a_notice_instead_of_passing(self) -> None:
         text = self.WORKFLOW.read_text(encoding="utf-8")
         assert "::notice::" in text and "configured" in text
+
+    def _run_step(self) -> dict:
+        yaml = pytest.importorskip("yaml")
+        workflow = yaml.safe_load(self.WORKFLOW.read_text(encoding="utf-8"))
+        job = workflow["jobs"]["agent-eval"]
+        step = next(s for s in job["steps"] if "evaluation.runner" in s.get("run", ""))
+        return {"job_env": job.get("env", {}), "step": step}
+
+    def test_the_run_step_s_environment_gives_the_provider_its_key(self, monkeypatch) -> None:
+        """`ProviderConfig` reads the key from the variable *named by* `AURA_PROVIDER_<SLOT>_API_KEY_ENV`
+        and from nowhere else (`aura_core/config/settings.py`). A step that exports only
+        `AURA_PROVIDER_HOSTED1_API_KEY` sends every completion out unauthenticated, and -- because
+        OpenRouter's public `/models` still answers -- the provider looks healthy while every case
+        fails. This resolves the step's env the way the runner would see it and asks the real
+        settings code for the key."""
+        from aura_core.config.settings import ProviderConfig
+
+        parts = self._run_step()
+        job_env = {
+            k: re.sub(r"\$\{\{\s*vars\.\w+\s*\|\|\s*'([^']*)'\s*\}\}", r"\1", str(v))
+            for k, v in parts["job_env"].items()
+        }
+        resolved: dict[str, str] = {}
+        for key, value in parts["step"].get("env", {}).items():
+            value = str(value)
+            value = re.sub(r"\$\{\{\s*env\.(\w+)\s*\}\}", lambda m: job_env[m.group(1)], value)
+            value = value.replace("${{ secrets.AURA_HOSTED1_API_KEY }}", "the-real-key")
+            resolved[key] = value
+        for key in list(os.environ):
+            if key.startswith("AURA_PROVIDER_"):
+                monkeypatch.delenv(key)
+        for key, value in resolved.items():
+            monkeypatch.setenv(key, value)
+        provider = ProviderConfig.from_env("hosted1")
+        assert provider.api_key == "the-real-key", (
+            f"the step's environment leaves the hosted1 key empty (api_key_env={provider.api_key_env!r}); "
+            "every completion would go out unauthenticated and the report would show only failures"
+        )
+
+    def test_a_zero_pass_rate_fails_the_step_as_a_wiring_fault_not_a_measurement(self) -> None:
+        """A suite where every case fails is far likelier to be a wiring fault (no key, wrong
+        base URL, the ceiling leaving every turn without a provider) than a measurement of the
+        model. The runner exits 0 without a baseline, so the step itself must refuse that result."""
+        run = self._run_step()["step"]["run"]
+        assert "pipefail" in run, "the runner is piped into tee; without pipefail its exit code is lost"
+        assert "Pass rate: 0.00%" in run and "exit 1" in run, (
+            "the step must fail on a 0% pass rate instead of uploading an all-failures report as evidence"
+        )
+
+
+class TestPipesDoNotHideFailures:
+    """GitHub runs a `run:` step with `bash -e {0}` -- `-e` but no `pipefail` -- so the status of
+    `cmd | tee log` is tee's, always 0. Every step that pipes into tee must opt in to pipefail
+    (or declare `shell: bash`, which adds it)."""
+
+    def test_every_tee_pipe_has_pipefail(self) -> None:
+        yaml = pytest.importorskip("yaml")
+        unguarded = []
+        for path in _workflows():
+            workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+            for job_name, job in (workflow.get("jobs") or {}).items():
+                for step in job.get("steps", []):
+                    run = step.get("run") or ""
+                    if "| tee" in run and "pipefail" not in run and step.get("shell") != "bash":
+                        unguarded.append((path.name, job_name, step.get("name", "<unnamed>")))
+        assert unguarded == [], f"steps whose piped command's failure tee would hide: {unguarded}"

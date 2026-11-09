@@ -40,11 +40,14 @@ METHOD_BLIND_NOTE = (
 )
 
 # Why a route with no caller has none -- decided by a person, kept here so a re-run keeps it.
-# Matched by prefix on the path; the first match wins. Anything uncalled and unlisted reads
-# "untriaged", which is the signal to come and decide.
+# The first matching pattern wins. Anything uncalled and unlisted reads "untriaged", which is
+# the signal to come and decide.
+# A pattern ending in `$` explains exactly that route; one ending in `/` explains everything under
+# it; any other explains the route and its own sub-resources (`/x`, `/x/...`), never a sibling that
+# merely shares the spelling (`/xy`). See triage_note().
 TRIAGE = (
     ("/api/v3/integrations/github/callback", "server-only: OAuth redirect target, reached by the browser"),
-    ("/api/v3/chat", "server-to-server: the non-streaming turn is for integrating systems (ADR-029 service keys, AR-6 structured output); the app streams via /chat/stream"),
+    ("/api/v3/chat$", "server-to-server: the non-streaming turn is for integrating systems (ADR-029 service keys, AR-6 structured output); the app streams via /chat/stream"),
     ("/api/v3/auth/desktop/", "to wire: desktop pairing flow (ADR-011), no caller in client or hostd yet"),
     ("/api/v3/agents/runs", "to wire: agent-run history (wave 2) has no client or admin view yet"),
     ("/api/v3/knowledge/graph", "to wire: knowledge-graph read API (wave 2) has no view yet"),
@@ -103,7 +106,8 @@ def scan_tree(base: Path, exts: tuple[str, ...], *, root: Path = ROOT) -> list[t
         return out
     # rglob order is filesystem-dependent; sorted keeps the committed matrix identical on every OS.
     for path in sorted(base.rglob("*")):
-        if path.suffix not in exts or SKIP_PARTS & set(path.parts):
+        # Parts below the scanned tree only: a checkout living under `/…/tests/` is not test code.
+        if path.suffix not in exts or SKIP_PARTS & set(path.relative_to(base).parts):
             continue
         rel = path.relative_to(root).as_posix()
         carry = ""
@@ -113,6 +117,20 @@ def scan_tree(base: Path, exts: tuple[str, ...], *, root: Path = ROOT) -> list[t
             if "/" in text:
                 out.append((rel, i, text))
     return out
+
+
+def triage_note(path: str) -> str:
+    """Why an uncalled route has no caller, from TRIAGE, or `untriaged`."""
+    for pattern, why in TRIAGE:
+        if pattern.endswith("$"):
+            matched = path == pattern[:-1]
+        elif pattern.endswith("/"):
+            matched = path.startswith(pattern)
+        else:
+            matched = path == pattern or path.startswith(pattern + "/")
+        if matched:
+            return why
+    return "untriaged"
 
 
 def sources() -> dict[str, list[tuple[str, int, str]]]:
@@ -192,8 +210,7 @@ def render() -> tuple[str, Counter]:
         else:
             status = "none"
         counts[status] += 1
-        note = next((why for prefix, why in TRIAGE if path.startswith(prefix)), "untriaged") \
-            if status == "none" else ""
+        note = triage_note(path) if status == "none" else ""
         rows.append(
             f"| {method} | `{path}` | {callers['flutter'] or '—'} | {callers['admin'] or '—'} "
             f"| {callers['hostd'] or '—'} | {status} | {note} |"

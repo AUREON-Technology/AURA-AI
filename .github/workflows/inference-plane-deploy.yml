@@ -60,9 +60,10 @@ jobs:
         working-directory: aura_backend
         run: |
           # Two installs: both locks are hash-pinned (F-38, G-06) and pip resolves each command's
-          # requirement set on its own.
-          python -m pip install --quiet --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock 2>/dev/null || true
-          python -m pip install --quiet --require-hashes -r requirements-dev.lock 2>/dev/null || true
+          # requirement set on its own. Their failure is a failure: a swallowed hash mismatch is the
+          # one event --require-hashes exists to surface.
+          python -m pip install --quiet --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
+          python -m pip install --quiet --require-hashes -r requirements-dev.lock
           python -m pytest tests/deployment/test_inference_contract.py -q
 
   # Whether the Space is configured, decided in a step rather than in a job-level `if:`.

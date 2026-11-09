@@ -65,3 +65,11 @@ class TestTheSuitesUseIt:
         assert "PostgresContainer(" not in text, f"{suite} still constructs its own container"
         assert "def _docker_available" not in text, f"{suite} still has its own Docker probe"
         assert "legacy_postgres" in text
+
+    @pytest.mark.parametrize("suite", sorted(p.name for p in BACKEND.glob("test_*_integration.py")))
+    def test_every_suite_drops_its_database_even_when_set_up_class_fails(self, suite: str) -> None:
+        """If `setUpClass` raises after `start()`, unittest never runs `tearDownClass`, and an
+        `aura_legacy_*` database stays behind on the server. Harmless on CI's throwaway service;
+        on a developer's local server they accumulate. `addClassCleanup` runs either way."""
+        text = (BACKEND / suite).read_text(encoding="utf-8")
+        assert "cls.addClassCleanup(cls.postgres.stop)" in text, f"{suite} does not register the drop as a cleanup"

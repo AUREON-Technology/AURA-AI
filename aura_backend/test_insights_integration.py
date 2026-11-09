@@ -22,6 +22,9 @@ class TestInsightsIntegration(unittest.TestCase):
     def setUpClass(cls):
         cls.postgres = legacy_postgres.container()
         cls.postgres.start()
+        # Registered as a cleanup, not left to tearDownClass: if setUpClass raises below, unittest
+        # never runs tearDownClass and the database would stay behind on the server.
+        cls.addClassCleanup(cls.postgres.stop)
 
         sync_url = cls.postgres.get_connection_url()
         async_url = sync_url.replace("postgresql+psycopg2", "postgresql+asyncpg")
@@ -34,10 +37,6 @@ class TestInsightsIntegration(unittest.TestCase):
 
         db_base._engine = None
         db_base._session_factory = None
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.postgres.stop()
 
     def setUp(self):
         import asyncio

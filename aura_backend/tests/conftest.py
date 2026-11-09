@@ -32,8 +32,10 @@ def pytest_configure(config: pytest.Config) -> None:
     import importlib.util
 
     script = Path(__file__).resolve().parents[1] / "scripts" / "lock_drift.py"
+    if not script.is_file():  # pragma: no cover - the script ships with the tree
+        return
     spec = importlib.util.spec_from_file_location("lock_drift", script)
-    if spec is None or spec.loader is None:  # pragma: no cover - the script ships with the tree
+    if spec is None or spec.loader is None:  # pragma: no cover
         return
     lock_drift = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(lock_drift)

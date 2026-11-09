@@ -3,7 +3,7 @@
 **As of 2026-10-28 (evening), `main` at `2337577`.** Covers `aura_backend/` and the deploy stack under
 `deploy/`. Evidence scale and refresh steps: [README.md](README.md).
 
-**Verified against commit:** `b2e14c4` (2026-11-08) for every row dated 2026-11-07 or later; older rows carry the commit they were checked at. Refresh this line whenever a row is re-verified (audit FSA-120).
+**Re-read against commit:** `b2e14c4` (2026-11-08) for every row dated 2026-11-07 or later (their live checks came first; the re-read confirmed that tree holds what they describe); older rows carry the commit they were checked at. Refresh this line whenever a row is re-verified (audit FSA-120).
 
 ## Summary
 

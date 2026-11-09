@@ -26,6 +26,9 @@ class TestErasureIntegration(unittest.TestCase):
     def setUpClass(cls):
         cls.postgres = legacy_postgres.container()
         cls.postgres.start()
+        # Registered as a cleanup, not left to tearDownClass: if setUpClass raises below, unittest
+        # never runs tearDownClass and the database would stay behind on the server.
+        cls.addClassCleanup(cls.postgres.stop)
         from config import settings
 
         settings.database_url = cls.postgres.get_connection_url().replace(
@@ -45,10 +48,6 @@ class TestErasureIntegration(unittest.TestCase):
             await engine.dispose()
 
         asyncio.run(create())
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.postgres.stop()
 
     def setUp(self):
         import infrastructure.db.base as db_base

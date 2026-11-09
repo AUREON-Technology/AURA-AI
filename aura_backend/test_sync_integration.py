@@ -28,6 +28,9 @@ class TestSyncApiIntegration(unittest.TestCase):
     def setUpClass(cls):
         cls.postgres = legacy_postgres.container()
         cls.postgres.start()
+        # Registered as a cleanup, not left to tearDownClass: if setUpClass raises below, unittest
+        # never runs tearDownClass and the database would stay behind on the server.
+        cls.addClassCleanup(cls.postgres.stop)
 
         # testcontainers gives a psycopg2 URL by default; the app's async
         # engine (infrastructure/db/base.py) needs the asyncpg dialect.
@@ -45,10 +48,6 @@ class TestSyncApiIntegration(unittest.TestCase):
 
         db_base._engine = None
         db_base._session_factory = None
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.postgres.stop()
 
     def setUp(self):
         """Give each test its own engine, and hand it over with an empty pool.

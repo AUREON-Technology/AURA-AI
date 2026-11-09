@@ -77,9 +77,16 @@ class TestTheRealLocks:
         missing = [name for name in lock_drift.WATCHED if name not in pins]
         assert missing == [], f"watched but pinned in neither lock: {missing}"
 
-    def test_the_report_names_only_packages_that_differ(self, lock_drift) -> None:
-        """Whatever this interpreter has installed, the report is one line per drifted package
-        and empty when they all match -- the sanctioned venv built from the locks reports nothing."""
-        report = lock_drift.report(BACKEND)
-        for line in report:
-            assert ": installed " in line or ": not installed" in line, line
+    def test_the_report_names_exactly_the_packages_that_differ(self, lock_drift, monkeypatch) -> None:
+        """Against the real locks, with the interpreter's inventory scripted: one package drifted
+        and the rest at their pins -> one line, naming that package and both versions."""
+        pins = lock_drift.locked_pins(BACKEND)
+        inventory = {name: pins[name] for name in lock_drift.WATCHED}
+        inventory["fastapi"] = "0.136.3"
+        monkeypatch.setattr(lock_drift, "installed_versions", lambda names: {n: inventory[n] for n in names})
+        assert lock_drift.report(BACKEND) == [f"fastapi: installed 0.136.3, lock pins {pins['fastapi']}"]
+
+    def test_an_interpreter_at_the_pins_reports_nothing(self, lock_drift, monkeypatch) -> None:
+        pins = lock_drift.locked_pins(BACKEND)
+        monkeypatch.setattr(lock_drift, "installed_versions", lambda names: {n: pins[n] for n in names})
+        assert lock_drift.report(BACKEND) == []

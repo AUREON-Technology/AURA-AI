@@ -129,18 +129,25 @@ jobs:
       - name: Wait for readiness
         env:
           RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL }}
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
           origin="${RAILWAY_HEALTH_URL%%/health*}"; origin="${origin%/}"
-          for i in $(seq 1 30); do
-            if curl -fsS --max-time 15 "$origin/health/live" | grep -q '"alive"'; then
-              echo "Control Plane is live at $origin."
+          # `railway up --detach` returns before the build finishes, and Railway keeps the previous
+          # deployment serving until the new one is healthy -- so /health/live answers "alive" from
+          # the OLD container first. Ready means the revision this run deployed is the one serving;
+          # a build plus health check takes several minutes, hence the 10-minute budget.
+          for i in $(seq 1 60); do
+            live_sha="$(curl -fsS --max-time 5 "$origin/health/version" 2>/dev/null \
+              | sed -n 's/.*"git_sha"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true)"
+            if [ "$live_sha" = "$EXPECTED_SHA" ]; then
+              echo "Control Plane is serving $EXPECTED_SHA at $origin."
               exit 0
             fi
-            echo "Not live yet ($i/30)..."
+            echo "Serving ${live_sha:-<none>}, waiting for $EXPECTED_SHA ($i/60)..."
             sleep 10
           done
-          echo "Control Plane did not come up in time ($origin/health/live)." >&2
+          echo "Control Plane never served $EXPECTED_SHA within 10 minutes ($origin/health/version)." >&2
           exit 1
 
       # BLOCK-03: prove the revision now serving is the one this run deployed. Without it, a

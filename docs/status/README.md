@@ -5,7 +5,7 @@ where, what CI says, what is proven, and what is next. They are snapshots, not a
 they disagree with the code, the CI history or a live probe, those win, and the file should be
 corrected in the same change.
 
-**Verified against commit:** `b2e14c4` (2026-11-08) for every row dated 2026-11-07 or later; older rows carry the commit they were checked at. Refresh this line whenever a row is re-verified (audit FSA-120).
+**Re-read against commit:** `b2e14c4` (2026-11-08) for every row dated 2026-11-07 or later (their live checks came first; the re-read confirmed that tree holds what they describe); older rows carry the commit they were checked at. Refresh this line whenever a row is re-verified (audit FSA-120).
 
 | Component | File | One line |
 | --- | --- | --- |

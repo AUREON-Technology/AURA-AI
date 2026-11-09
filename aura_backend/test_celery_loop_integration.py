@@ -20,11 +20,10 @@ class TestCeleryLoopIntegration(unittest.TestCase):
     def setUpClass(cls):
         cls.postgres = legacy_postgres.container()
         cls.postgres.start()
+        # Registered as a cleanup, not left to tearDownClass: if setUpClass raises below, unittest
+        # never runs tearDownClass and the database would stay behind on the server.
+        cls.addClassCleanup(cls.postgres.stop)
         cls.url = cls.postgres.get_connection_url().replace("postgresql+psycopg2", "postgresql")
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.postgres.stop()
 
     def _three_tasks(self, runner):
         from aura_core.adapters.postgres_store import PostgresPool

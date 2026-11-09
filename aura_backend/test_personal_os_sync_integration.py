@@ -50,6 +50,9 @@ class TestPersonalOsSyncIntegration(unittest.TestCase):
         from cryptography.fernet import Fernet
         cls.postgres = legacy_postgres.container()
         cls.postgres.start()
+        # Registered as a cleanup, not left to tearDownClass: if setUpClass raises below, unittest
+        # never runs tearDownClass and the database would stay behind on the server.
+        cls.addClassCleanup(cls.postgres.stop)
         raw = cls.postgres.get_connection_url()
         cls.async_url = raw.replace("postgresql+psycopg2", "postgresql+asyncpg")
         cls.dsn = raw.replace("postgresql+psycopg2", "postgresql")
@@ -68,10 +71,6 @@ class TestPersonalOsSyncIntegration(unittest.TestCase):
         from config import settings
 
         settings.database_url = cls.async_url
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.postgres.stop()
 
     @classmethod
     async def _scalar(cls, sql, *args):
