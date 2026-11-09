@@ -245,6 +245,10 @@ def _apply_cors(app) -> None:
 
     origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
     allow_all = "*" in origins
+    if not origins:
+        # The production-like default (config.default_allowed_origins). Native clients are
+        # unaffected; a Flutter web bundle needs its origin named in ALLOWED_ORIGINS.
+        logger.warning("ALLOWED_ORIGINS is empty: no browser origin may call this API until one is named.")
     if allow_all:
         logger.warning(
             "ALLOWED_ORIGINS contains '*' — disabling allow_credentials to avoid "
