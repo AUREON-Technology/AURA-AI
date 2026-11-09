@@ -172,7 +172,7 @@ class TestRevocationReadsAnIndexNotTheWholeKeyspace:
         assert jwt_auth.revoke_all_for_uid("alice") == 1, "a pre-index token escaped revocation"
         assert "old-device" in {d["device_id"] for d in jwt_auth.list_devices_for_uid("alice")}
         since = datetime.fromisoformat(redis.values[jwt_auth._INDEX_SINCE_KEY])
-        assert abs((since - NOW).total_seconds()) < 60
+        assert abs((since - datetime.now(timezone.utc)).total_seconds()) < 60, "marker is 'first run here'"
 
     def test_the_first_run_marker_is_set_once_and_kept(self, redis: FakeRedis) -> None:
         stamp = (NOW - timedelta(days=3)).isoformat()
