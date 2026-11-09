@@ -35,6 +35,13 @@ pytest-cov>=5.0
 # both requirement files, so the Postgres integration test still runs there.
 testcontainers[postgres]>=4.0.0
 
+# This file is the *input*; CI installs requirements-dev.lock, its hash-pinned compilation
+# (audit G-06 / GAP-033), constrained by requirements.lock so a package in both carries one
+# version. After editing this file, regenerate the lock and commit both:
+#   uv pip compile --python-version 3.11 --python-platform linux --strip-extras --generate-hashes -c requirements.lock --output-file requirements-dev.lock requirements-dev.txt
+# Install it the same way CI does:
+#   pip install --require-hashes -r requirements-dev.lock
+#
 # Lockfile regeneration (runtime pins only; run on Linux 3.11 or with uv's platform flags).
 # --torch-backend cpu sends only the PyTorch packages to PyTorch's CPU index and everything else
 # to PyPI (no --extra-index-url / unsafe-best-match, which let either index serve any name), and

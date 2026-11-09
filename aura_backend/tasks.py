@@ -47,7 +47,12 @@ def _run_async(coro):
                 pass
         raise
 
-@celery_app.task(name="tasks.ingest_document_task")
+# Audit FSA-043 / Phase 1 regression (tests/unit/test_celery_queue_consumers.py): a task that
+# names no queue lands on Celery's default `celery` queue, which no compose worker consumes, so it
+# is accepted by the broker and never runs. Both ingestion tasks go to the `ingestion` queue
+# that worker-ingestion already listens on. `build_lora_dataset_task` stays unrouted on purpose
+# and is listed there with its reason.
+@celery_app.task(name="tasks.ingest_document_task", queue="ingestion")
 def ingest_document_task(doc_id: str, content: str, metadata: dict) -> bool:
     """Task to ingest plain text document into Qdrant vector store in the background."""
     logger.info(f"Celery task: Ingesting document {doc_id} in background...")
@@ -58,7 +63,7 @@ def ingest_document_task(doc_id: str, content: str, metadata: dict) -> bool:
         logger.error(f"Failed to ingest document in task: {e}")
         return False
 
-@celery_app.task(name="tasks.ingest_pdf_task")
+@celery_app.task(name="tasks.ingest_pdf_task", queue="ingestion")
 def ingest_pdf_task(file_id: str, file_name: str, local_path: str, user_id: str) -> bool:
     """Ingest a Drive PDF already downloaded into the shared workspace.
 

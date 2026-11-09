@@ -67,10 +67,10 @@ jobs:
     # Windows-specific code (ConPTY via win32/ffi in pty_session.dart, containment.dart's
     # symlink/junction resolution) that had zero Windows CI coverage before this job existed --
     # nothing Windows-specific here had ever actually run anywhere but a contributor's own
-    # machine. continue-on-error until a green run is observed, matching client-ci.yml's own
-    # build-windows job precedent for the same "Windows-first but unproven" situation.
+    # machine. It was continue-on-error until a green run was observed; that run was PR #221
+    # (2026-11-08, run 42518363353), so a red Windows job now fails the run, as client-ci.yml's
+    # build-windows already does (audit G-03 / FSA-063).
     runs-on: windows-latest
-    continue-on-error: true
     timeout-minutes: 15
     defaults:
       run:

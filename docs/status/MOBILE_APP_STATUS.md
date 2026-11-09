@@ -6,6 +6,8 @@ iOS:
 - Riverpod for state, `go_router` for navigation;
 - Drift for local data, synced through `/api/v3/sync`.
 
+**Re-read against commit:** `b2e14c4` (2026-11-08) for every row dated 2026-11-07 or later (their live checks came first; the re-read confirmed that tree holds what they describe); older rows carry the commit they were checked at. Refresh this line whenever a row is re-verified (audit FSA-120).
+
 Evidence scale and refresh steps: [README.md](README.md).
 
 ## Summary

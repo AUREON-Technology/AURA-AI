@@ -295,3 +295,27 @@ class TestMemoryWriteGrant:
     def test_acting_personas_keep_the_grant(self, agent_id: str) -> None:
         spec = build_default_agent_registry().get(agent_id)
         assert "remember_fact" in spec.allowed_tools
+
+
+class TestTheEngineerGrantCoversItsOwnTools:
+    """Audit FSA-057 (Phase 1 regression): `write_files` -- the D6 atomic multi-file edit -- was
+    registered under the `engineer_agent` capability but missing from the Engineer persona's grant,
+    so the persona could never call it, while its tests bypassed the grant with hand-built
+    contexts. The grant must name every tool the sandbox and code-host builders register for that
+    capability; a new Engineer tool that is not granted is a tool nobody can use."""
+
+    def test_every_engineer_capability_tool_is_in_the_engineer_grant(self) -> None:
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+        from aura_core.tools.coding import build_github_tools, build_sandbox_tools
+
+        registry = build_default_agent_registry()
+        engineer = registry.get("engineer")
+        assert engineer is not None and engineer.allowed_tools is not None
+
+        tools = build_sandbox_tools(InMemorySandboxRunner()) + build_github_tools(lambda *_: None)
+        engineer_tools = {
+            t.spec.name for t in tools if t.spec.required_capability == "engineer_agent"
+        }
+        assert "write_files" in engineer_tools, "the regression this pins would be vacuous"
+        missing = sorted(engineer_tools - engineer.allowed_tools)
+        assert missing == [], f"registered for engineer_agent but not granted to the persona: {missing}"

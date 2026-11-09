@@ -366,7 +366,7 @@ class TestKernelWiring:
         # neither of which this default container configures, so they are genuinely unregistered.
         conditionally_registered = {
             "fetch_url",
-            "write_file", "edit_file", "run_command", "clone_repository",
+            "write_file", "write_files", "edit_file", "run_command", "clone_repository",
             "git_diff", "git_commit", "git_checkout_branch", "git_status", "git_push",
             # Persistent workspaces (ADR-013) additionally need a workspace manager, which this
             # default container has no sandbox runner to build one from.
@@ -382,7 +382,9 @@ class TestKernelWiring:
         # them with no server-side Docker sandbox configured at all. `create_task` is what fails
         # at call time if neither a desktop session nor `sandbox.enabled` is actually usable.
         engineer_sandbox_tools = {
-            "write_file", "edit_file", "run_command",
+            # write_files (D6) joined the grant with audit FSA-057; it is registered exactly as
+            # write_file is, so it belongs in both sets here.
+            "write_file", "write_files", "edit_file", "run_command",
             "git_diff", "git_commit", "git_checkout_branch",
         }
         registered_for_engineer = {

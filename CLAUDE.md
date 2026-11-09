@@ -14,7 +14,8 @@ Four independent apps in one repo:
 - **`aura_client/`** — Flutter app (Android/iOS/macOS/web/desktop) that talks to the backend's
   `/api/v3/*` routes.
 - **`aura_admin/`** — Next.js operator console served at `/console` (10 pages; `npm run
-  dev|build|lint`, `npm run test:e2e` for Playwright against a mock gateway). Built, but not
+  dev|build|lint`, `npm run test:e2e` for Playwright against a mock gateway; `lint` is ESLint
+  with Next's rule sets, warnings fail it, and Admin CI runs it from PR #226 on -- no run with that step had executed when this was written). Built, but not
   reachable on any live target as of 2026-11-07. Admin CI ran for the first time on 2026-11-07
   (run #3, dispatched: typecheck, build and Playwright e2e all green).
 - **`aura_hostd/`** — pure-Dart local daemon (no Flutter dependency) that lets the desktop Engineer
@@ -32,8 +33,9 @@ Four independent apps in one repo:
   because the default suite's sandbox runner never touches the Docker API.
 
 Supporting directories: `deploy/` (production stack), `docs/` (architecture, guides, reports),
-`infra/` (Terraform), `scripts/` (client build and Firebase helpers). Historical docs live under
-`docs/archive/`.
+`scripts/` (client build and Firebase helpers). There is no `infra/` directory (audit FSA-120: an
+earlier version of this file named a Terraform tree that does not exist). Historical docs live
+under `docs/archive/`.
 
 The production stack above (Contabo VPS, `docker-compose.prod.yml`, `deploy-backend.yml`) is
 one of two supported deploy targets. `docs/deployment/` documents the other: a Railway Control
@@ -108,8 +110,12 @@ evidence its exit criteria name** — "built" and "tested" are not "proven."
 ### Backend (`cd aura_backend` first)
 
 ```bash
+# The one sanctioned local environment: Python 3.11, both lockfiles, hashes checked (audit G-07).
+# Anything else may run the suite but its result does not stand for the locked one; conftest
+# warns at session start when a watched package differs (scripts/lock_drift.py).
+uv venv --python 3.11 .venv && source .venv/bin/activate
 pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
-pip install -r requirements-dev.txt     # separate: the lock is hash-pinned, dev deps are not (GAP-033)
+pip install --require-hashes -r requirements-dev.lock   # separate: pip resolves each command on its own
 
 pytest                                   # aura_core suite — no Docker, no network, no model
 pytest tests/some_test.py::TestClass::test_name   # single test
@@ -294,8 +300,10 @@ retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer work
   images are built rather than pulled) — they share a host, so hardening applied to only one of
   them leaves the weaker stack as the real attack surface. Change a security-relevant key in one
   and change it in the other in the same commit.
-- **`nginx` is the only container with a published port** (SEC-12) — `gateway` binds no host
-  port, so reaching it directly means `docker exec`-ing into another container on the same
+- **On the VPS stack, `nginx` is the only container with a published port** (SEC-12) — `gateway`
+  binds no host port there. On Railway there is no nginx: uvicorn is the edge, which is why the
+  header floor and the metrics gate live in `build_app` (`tests/unit/test_security_headers.py`).
+  Reaching the VPS gateway directly means `docker exec`-ing into another container on the same
   Docker network (or using `deploy/nginx/host-proxy.conf.example`'s override pattern for a
   shared-host setup).
 - **Never re-add `http2 on;` to the HTTPS server blocks in
@@ -333,7 +341,11 @@ retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer work
   `IMAGES: "0"` stay off the socket proxy's allowlist — adding a runtime `docker pull` would
   silently require putting it back.
 - **The self-hosted LLM (`qwen2.5:3b-instruct-q4_K_M` on Ollama, CPU-only) sustains roughly
-  5–10 tokens/sec in production**, degrading further as context grows. Any new completion call
+  5–10 tokens/sec on the VPS stack**, degrading further as context grows. The Railway target that
+  serves `aureon-ai.tech` today runs no Ollama at all: its only healthy provider is the hosted
+  open-weight slot `hosted1` (ADR-030), so "production" throughput is that provider's, not this.
+  The sizing rule below still binds every completion call, because the VPS stack is a supported
+  target. Any new completion call
   needs its `max_output_tokens` sized so a worst-case generation actually finishes inside its
   `timeout_s` at that throughput, or the provider call gets hard-cancelled mid-generation
   (`AllProvidersFailedError`) before ever returning something parseable.

@@ -111,7 +111,7 @@ jobs:
           cache-dependency-path: |
             aura_backend/requirements.lock
             aura_backend/requirements.txt
-            aura_backend/requirements-dev.txt
+            aura_backend/requirements-dev.lock
 
       - name: Install dependencies
         # Hash-checked (F-38): every artefact must match a hash recorded in requirements.lock.
@@ -121,7 +121,7 @@ jobs:
         # one hash-checked requirement puts pip in hash mode for every file on its command line.
         run: |
           pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
-          pip install -r requirements-dev.txt
+          pip install --require-hashes -r requirements-dev.lock
 
       - name: Run deterministic evaluation gate
         # No AURA_LLM_PROVIDERS / AURA_DATABASE_URL / AURA_REDIS_URL / AURA_QDRANT_URL on purpose:
@@ -160,7 +160,7 @@ jobs:
           cache-dependency-path: |
             aura_backend/requirements.lock
             aura_backend/requirements.txt
-            aura_backend/requirements-dev.txt
+            aura_backend/requirements-dev.lock
 
       - name: Install dependencies
         # Hash-checked (F-38): every artefact must match a hash recorded in requirements.lock.
@@ -170,7 +170,7 @@ jobs:
         # one hash-checked requirement puts pip in hash mode for every file on its command line.
         run: |
           pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
-          pip install -r requirements-dev.txt
+          pip install --require-hashes -r requirements-dev.lock
 
       - name: Run agent evaluation
         # Inputs arrive through env, never interpolated into the script text, so a crafted input

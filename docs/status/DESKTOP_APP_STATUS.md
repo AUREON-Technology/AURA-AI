@@ -5,6 +5,8 @@ Windows, Linux and macOS, plus `aura_hostd/` (the local daemon that lets the Eng
 on the user's real files and terminal, ADR-011). Evidence scale and refresh steps:
 [README.md](README.md).
 
+**Re-read against commit:** `b2e14c4` (2026-11-08) for every row dated 2026-11-07 or later (their live checks came first; the re-read confirmed that tree holds what they describe); older rows carry the commit they were checked at. Refresh this line whenever a row is re-verified (audit FSA-120).
+
 ## Summary
 
 **Update 2026-11-08 (`main` at `772f9ef`):** production-readiness assessment in

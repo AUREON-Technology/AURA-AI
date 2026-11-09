@@ -23,21 +23,13 @@ import os
 import subprocess
 import sys
 import unittest
+
+import legacy_postgres
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-
-
-def _docker_available() -> bool:
-    try:
-        import docker
-
-        docker.from_env().ping()
-        return True
-    except Exception:
-        return False
 
 
 def _alembic(url: str, *args: str) -> str:
@@ -51,15 +43,16 @@ def _alembic(url: str, *args: str) -> str:
     return done.stdout + done.stderr
 
 
-@unittest.skipUnless(_docker_available(), "Docker is not available -- needs a real Postgres 16.")
+@unittest.skipUnless(legacy_postgres.available(), legacy_postgres.SKIP_REASON)
 class TestPersonalOsSyncIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from cryptography.fernet import Fernet
-        from testcontainers.postgres import PostgresContainer
-
-        cls.postgres = PostgresContainer("postgres:16-alpine")
+        cls.postgres = legacy_postgres.container()
         cls.postgres.start()
+        # Registered as a cleanup, not left to tearDownClass: if setUpClass raises below, unittest
+        # never runs tearDownClass and the database would stay behind on the server.
+        cls.addClassCleanup(cls.postgres.stop)
         raw = cls.postgres.get_connection_url()
         cls.async_url = raw.replace("postgresql+psycopg2", "postgresql+asyncpg")
         cls.dsn = raw.replace("postgresql+psycopg2", "postgresql")
@@ -78,10 +71,6 @@ class TestPersonalOsSyncIntegration(unittest.TestCase):
         from config import settings
 
         settings.database_url = cls.async_url
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.postgres.stop()
 
     @classmethod
     async def _scalar(cls, sql, *args):
