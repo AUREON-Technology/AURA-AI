@@ -1,8 +1,7 @@
 """Postgres :class:`~aura_core.ports.service_keys.ServiceKeyStore` (AR-4).
 
 Shares the container's ``PostgresPool`` like every other ``postgres_*.py`` adapter. The table is
-owned by Alembic revision 0013; ``SERVICE_KEYS_SCHEMA`` is kept textually identical and run with
-``IF NOT EXISTS`` on first use, so a migrated database and a self-created one are the same shape.
+owned by Alembic revision 0013; the adapter issues no DDL (one schema authority, CB-20).
 
 ``get`` runs on every request a service key makes. It is one primary-key lookup with no cache in
 front of it -- that is what makes a revocation take effect on the next call, on every worker.
@@ -13,28 +12,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
-from ..domain.errors import ConflictError, DependencyUnavailableError
+from ..domain.errors import ConflictError
 from ..domain.service_keys import ServiceKey
 from .postgres_store import PostgresPool
 
-__all__ = ["PostgresServiceKeyStore", "SERVICE_KEYS_SCHEMA"]
+__all__ = ["PostgresServiceKeyStore"]
 
-#: Kept identical to ``alembic/versions/0013_service_keys.py``.
-SERVICE_KEYS_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_service_keys (
-        key_id           TEXT        PRIMARY KEY CHECK (key_id ~ '^[0-9a-f]{16}$'),
-        name             TEXT        NOT NULL,
-        digest           TEXT        NOT NULL CHECK (digest LIKE 'sha256:%'),
-        routes           TEXT[]      NOT NULL,
-        rate_per_minute  INTEGER     NOT NULL CHECK (rate_per_minute BETWEEN 1 AND 600),
-        created_at       TIMESTAMPTZ NOT NULL,
-        created_by       TEXT        NOT NULL,
-        revoked_at       TIMESTAMPTZ NULL,
-        revoked_by       TEXT        NULL
-    )
-    """,
-)
 
 _COLUMNS = "key_id, name, digest, routes, rate_per_minute, created_at, created_by, revoked_at, revoked_by"
 
@@ -48,21 +31,9 @@ def _utc(value: datetime | None) -> datetime | None:
 class PostgresServiceKeyStore:
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)
-        self._schema_ready = False
 
     async def _conn(self) -> Any:
-        pool = await self._pool._get_pool()
-        if not self._schema_ready:
-            try:
-                async with pool.acquire() as conn:
-                    for statement in SERVICE_KEYS_SCHEMA:
-                        await conn.execute(statement)
-            except Exception as exc:
-                raise DependencyUnavailableError(
-                    f"could not create the service key schema: {type(exc).__name__}", dependency="postgres"
-                ) from exc
-            self._schema_ready = True
-        return pool
+        return await self._pool._get_pool()
 
     @staticmethod
     def _key(row: Mapping[str, Any]) -> ServiceKey:

@@ -10,8 +10,7 @@ JSONB row per AUSM element of that snapshot). A version is never updated -- a ba
 superseded by the next -- so there is no UPDATE path in the adapter at all.
 
 Owned by this migration alone: the adapter (`aura_core/adapters/postgres_adaptation.py`) issues no
-DDL. Its `TWIN_SCHEMA` is kept textually in step with the statements below
-(`tests/unit/test_adaptation_twin.py` asserts it). `project_id` defaults to `p0` (ADR-019).
+DDL. `project_id` defaults to `p0` (ADR-019).
 """
 from typing import Sequence, Union
 

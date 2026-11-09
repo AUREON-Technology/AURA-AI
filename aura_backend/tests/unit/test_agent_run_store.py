@@ -17,11 +17,8 @@ class), so the engineer-run ledger is exercised alongside to show the two coexis
 
 from __future__ import annotations
 
-import importlib.util
 import os
-import re
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -41,7 +38,6 @@ from aura_core.domain.identifiers import AgentRunId, AgentStepId, EngineerRunId,
 from aura_core.ports.coding import AgentRunStore, EngineerRunStore
 
 PG_URL = os.environ.get("AURA_TEST_POSTGRES_URL", "")
-BACKEND = Path(__file__).resolve().parents[2]
 
 T0 = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc)
 ALICE = UserId("alice")
@@ -57,10 +53,11 @@ async def store(request):
         pytest.skip("AURA_TEST_POSTGRES_URL not set (opt-in: needs a throwaway Postgres)")
     from aura_core.adapters.postgres_engineer_runs import PostgresAgentRunStore
     from aura_core.adapters.postgres_store import PostgresPool
+    from tests.postgres_migrations import migrate
 
     pool = PostgresPool(PG_URL)
     adapter = PostgresAgentRunStore(PG_URL, pool=pool)
-    await adapter._ensure_schema()
+    migrate(PG_URL)  # the adapter creates nothing; Alembic owns the schema (CB-20)
     raw = await pool._get_pool()
     async with raw.acquire() as conn:
         await conn.execute("TRUNCATE aura_agent_steps, aura_agent_runs, aura_engineer_runs")
@@ -209,24 +206,3 @@ class TestDomain:
     def test_single_pass_run_has_no_iteration_utilization(self) -> None:
         m = run_metrics(_run(status=AgentRunStatus.COMPLETED))
         assert m["iteration_utilization"] is None and m["partial_completion"] == 1.0
-
-
-def _normalise(sql: str) -> str:
-    return re.sub(r"\s+", " ", sql).strip()
-
-
-def test_the_migration_mirrors_the_adapter_schema() -> None:
-    """``0008_agent_runs`` and the adapter's lazy bootstrap must create the same tables, or a
-    migrated database and a first-use database would differ."""
-    from aura_core.adapters.postgres_engineer_runs import AGENT_RUNS_SCHEMA
-
-    spec = importlib.util.spec_from_file_location(
-        "mig_0008", BACKEND / "alembic" / "versions" / "0008_agent_runs.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    assert module.revision == "0008"
-    assert module.down_revision == "0007"
-    assert [_normalise(s) for s in module.UPGRADE_STATEMENTS] == [
-        _normalise(s) for s in AGENT_RUNS_SCHEMA
-    ]

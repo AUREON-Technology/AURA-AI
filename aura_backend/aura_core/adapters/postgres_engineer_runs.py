@@ -1,7 +1,7 @@
 """Postgres implementation of the ``EngineerRunStore`` port, and of the ``AgentRunStore``
 extension that generalises it to every persona's run (GAP-024).
 
-Its own table, its own schema management, sharing only the connection pool -- the same pattern
+Its own table, sharing only the connection pool -- the same pattern
 ``postgres_personal_os.py`` uses. See ``aura_core/domain/engineering.py`` for why this is a
 plaintext, server-owned table rather than an extension of the client-encrypted synced tables.
 
@@ -13,10 +13,9 @@ schema (``infrastructure/db/models.py``): those tables key ``user_id`` to the v2
 dedicated endpoint (``GET /api/v3/engineering/runs``) instead.
 
 Agent runs (``aura_agent_runs``) and their steps (``aura_agent_steps``) live beside it in the same
-adapter -- same pool, same lazy schema bootstrap -- and are mirrored by Alembic revision
-``0008_agent_runs``, kept textually in step with :data:`AGENT_RUNS_SCHEMA` below so that a gateway
-that already created the tables on first use does not make ``alembic upgrade head`` fail. Every
-read filters on ``user_id`` in SQL, not after the fetch.
+adapter, on the same pool. Alembic owns all three tables (``0008_agent_runs`` and the ``0016``
+baseline); the adapter issues no DDL (CB-20). Every read filters on ``user_id`` in SQL, not after
+the fetch.
 """
 
 from __future__ import annotations
@@ -34,91 +33,7 @@ from .postgres_store import PostgresPool
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["PostgresEngineerRunStore", "PostgresAgentRunStore", "AGENT_RUNS_SCHEMA"]
-
-_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_engineer_runs (
-        id                  TEXT        PRIMARY KEY,
-        user_id             TEXT        NOT NULL,
-        turn_id             TEXT        NOT NULL,
-        correlation_id      TEXT        NOT NULL,
-        persona             TEXT        NOT NULL,
-        tool                TEXT        NOT NULL,
-        call_id             TEXT        NOT NULL,
-        status              TEXT        NOT NULL,
-        pr_url              TEXT        NULL,
-        branch              TEXT        NULL,
-        commit_sha          TEXT        NULL,
-        sandbox_transcript  TEXT        NULL,
-        created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-        updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-    """,
-    # The shape `list_for_user` asks for: this user, optionally since some time, newest first.
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_engineer_runs_user_created
-        ON aura_engineer_runs (user_id, created_at DESC)
-    """,
-)
-
-
-#: Mirrored by ``alembic/versions/0008_agent_runs.py`` -- keep the two in step.
-AGENT_RUNS_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_agent_runs (
-        id                   TEXT             PRIMARY KEY,
-        user_id              TEXT             NOT NULL,
-        agent_id             TEXT             NOT NULL,
-        turn_id              TEXT             NOT NULL,
-        correlation_id       TEXT             NOT NULL,
-        status               TEXT             NOT NULL,
-        goal_digest          TEXT             NOT NULL DEFAULT '',
-        goal_chars           INTEGER          NOT NULL DEFAULT 0,
-        budget               JSONB            NOT NULL DEFAULT '{}'::jsonb,
-        iterations           INTEGER          NOT NULL DEFAULT 0,
-        replans              INTEGER          NOT NULL DEFAULT 0,
-        replans_recovered    INTEGER          NOT NULL DEFAULT 0,
-        tokens_used          INTEGER          NOT NULL DEFAULT 0,
-        tool_calls           INTEGER          NOT NULL DEFAULT 0,
-        tool_calls_ok        INTEGER          NOT NULL DEFAULT 0,
-        risk_spent           INTEGER          NOT NULL DEFAULT 0,
-        elapsed_s            DOUBLE PRECISION NOT NULL DEFAULT 0,
-        unsafe_prevented     INTEGER          NOT NULL DEFAULT 0,
-        plan_steps_total     INTEGER          NOT NULL DEFAULT 0,
-        plan_steps_succeeded INTEGER          NOT NULL DEFAULT 0,
-        stop_reason          TEXT             NULL,
-        exhausted_budget     TEXT             NULL,
-        created_at           TIMESTAMPTZ      NOT NULL,
-        updated_at           TIMESTAMPTZ      NOT NULL,
-        finished_at          TIMESTAMPTZ      NULL
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_agent_runs_user_created
-        ON aura_agent_runs (user_id, created_at DESC)
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS aura_agent_steps (
-        id                TEXT        PRIMARY KEY,
-        run_id            TEXT        NOT NULL REFERENCES aura_agent_runs (id) ON DELETE CASCADE,
-        user_id           TEXT        NOT NULL,
-        seq               INTEGER     NOT NULL,
-        iteration         INTEGER     NOT NULL,
-        phase             TEXT        NOT NULL,
-        kind              TEXT        NOT NULL,
-        status            TEXT        NOT NULL DEFAULT '',
-        tool              TEXT        NULL,
-        call_id           TEXT        NULL,
-        error_kind        TEXT        NULL,
-        arguments_digest  TEXT        NULL,
-        risk_cost         INTEGER     NOT NULL DEFAULT 0,
-        detail            JSONB       NOT NULL DEFAULT '{}'::jsonb,
-        created_at        TIMESTAMPTZ NOT NULL,
-        UNIQUE (run_id, seq)
-    )
-    """,
-)
+__all__ = ["PostgresEngineerRunStore", "PostgresAgentRunStore"]
 
 
 def _json(value: Any) -> dict[str, Any]:
@@ -142,19 +57,6 @@ def _utc(value: datetime | None) -> datetime | None:
 class PostgresEngineerRunStore:
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)
-        self._schema_ready = False
-
-    async def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-        pool = await self._pool._get_pool()
-        try:
-            async with pool.acquire() as conn:
-                for statement in (*_SCHEMA, *AGENT_RUNS_SCHEMA):
-                    await conn.execute(statement)
-        except Exception as exc:
-            raise _unavailable(f"could not create the engineer-runs schema: {exc}") from exc
-        self._schema_ready = True
 
     @staticmethod
     def _run(row: Mapping[str, Any]) -> EngineerRun:
@@ -176,7 +78,6 @@ class PostgresEngineerRunStore:
         )
 
     async def record(self, run: EngineerRun) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -203,7 +104,6 @@ class PostgresEngineerRunStore:
     async def list_for_user(
         self, user_id: UserId, *, since: datetime | None = None, limit: int = 200,
     ) -> Sequence[EngineerRun]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -291,7 +191,6 @@ class PostgresEngineerRunStore:
         )
 
     async def save_run(self, run: AgentRun) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -336,7 +235,6 @@ class PostgresEngineerRunStore:
             raise ValueError("agent run id already belongs to another user")
 
     async def append_step(self, step: AgentStep) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -357,7 +255,6 @@ class PostgresEngineerRunStore:
             raise _unavailable(f"could not write agent step: {exc}") from exc
 
     async def get_run(self, run_id: AgentRunId, *, user_id: UserId) -> AgentRun | None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -377,7 +274,6 @@ class PostgresEngineerRunStore:
         status: str | None = None,
         limit: int = 50,
     ) -> Sequence[AgentRun]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -399,7 +295,6 @@ class PostgresEngineerRunStore:
     async def list_steps(
         self, run_id: AgentRunId, *, user_id: UserId, limit: int = 500,
     ) -> Sequence[AgentStep]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -420,4 +315,3 @@ class PostgresEngineerRunStore:
 
 #: The same adapter under the name of the port it now fully implements.
 PostgresAgentRunStore = PostgresEngineerRunStore
-

@@ -434,15 +434,6 @@ class TestStartupAndSync:
         assert not any(n.startswith("bp1_") for n in tools.names())
 
 
-def test_postgres_schema_matches_its_migration() -> None:
-    from aura_core.adapters.postgres_adaptation import ACTIVE_SCHEMA
-
-    spec = importlib.util.spec_from_file_location("m0012", BACKEND / "alembic" / "versions" / "0012_adaptation_blueprint_active.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    assert tuple(module.UPGRADE_STATEMENTS) == ACTIVE_SCHEMA
-
-
 # ------------------------------------------------------------------------------- HTTP
 
 

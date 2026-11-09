@@ -21,30 +21,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["PostgresSourceRegistry"]
 
-_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_knowledge_sources (
-        id                      TEXT        PRIMARY KEY,
-        type                    TEXT        NOT NULL,
-        uri                     TEXT        NOT NULL,
-        owner_id                TEXT,
-        trust_tier              INTEGER     NOT NULL DEFAULT 2,
-        enabled                 BOOLEAN     NOT NULL DEFAULT TRUE,
-        cursor                  TEXT,
-        max_documents           INTEGER     NOT NULL DEFAULT 1000,
-        max_bytes_per_document  INTEGER     NOT NULL DEFAULT 5242880,
-        schedule_cron           TEXT        NOT NULL DEFAULT '0 2 * * *',
-        credentials_ref         TEXT,
-        last_success_at         TIMESTAMPTZ,
-        metadata                JSONB       NOT NULL DEFAULT '{}'::jsonb
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_knowledge_sources_enabled
-        ON aura_knowledge_sources (enabled)
-    """,
-)
-
 
 def _unavailable(message: str, **details: Any) -> DependencyUnavailableError:
     return DependencyUnavailableError(message, dependency="postgres", details=details or None)
@@ -69,19 +45,6 @@ def _json_value(value: Any, default: Any) -> Any:
 class PostgresSourceRegistry:
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)
-        self._schema_ready = False
-
-    async def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-        pool = await self._pool._get_pool()
-        try:
-            async with pool.acquire() as conn:
-                for statement in _SCHEMA:
-                    await conn.execute(statement)
-        except Exception as exc:
-            raise _unavailable(f"could not create the source registry schema: {exc}") from exc
-        self._schema_ready = True
 
     async def list_enabled(self) -> Sequence[KnowledgeSource]:
         """Enabled sources only, filtered in SQL rather than in Python.
@@ -100,7 +63,6 @@ class PostgresSourceRegistry:
 
     async def _fetch_sources(self, sql: str) -> Sequence[KnowledgeSource]:
         """Shared read path. ``sql`` is always a literal from this module, never caller input."""
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -110,7 +72,6 @@ class PostgresSourceRegistry:
         return [self._source(row) for row in rows]
 
     async def get(self, source_id: str) -> KnowledgeSource | None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -122,7 +83,6 @@ class PostgresSourceRegistry:
         return self._source(row) if row is not None else None
 
     async def register(self, source: KnowledgeSource) -> None:
-        await self._ensure_schema()
         if await self.get(source.id) is not None:
             raise ValidationError(
                 f"source {source.id!r} is already registered",
@@ -161,7 +121,6 @@ class PostgresSourceRegistry:
         )
 
     async def remove(self, source_id: str) -> bool:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -173,7 +132,6 @@ class PostgresSourceRegistry:
         return str(result).endswith("1")
 
     async def set_enabled(self, source_id: str, enabled: bool) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -188,7 +146,6 @@ class PostgresSourceRegistry:
             raise NotFoundError(f"unknown source {source_id!r}")
 
     async def record_success(self, source_id: str, *, cursor: str | None, at: datetime) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:

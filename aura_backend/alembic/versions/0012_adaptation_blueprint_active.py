@@ -7,8 +7,7 @@ Create Date: 2026-10-04
 Adds `aura_adaptation_blueprint_active`: one row per project naming the live blueprint version.
 A deploy or rollback changes this row and the two affected `aura_adaptation_blueprints` rows in
 one transaction (`PostgresBlueprintStore.activate`), so a reader never sees two active versions or
-a pointer to a version that is not active. Owned by this migration; the adapter issues no DDL and
-its `ACTIVE_SCHEMA` is kept textually in step (`tests/unit/test_adaptation_runtime.py`).
+a pointer to a version that is not active. Owned by this migration; the adapter issues no DDL.
 """
 from typing import Sequence, Union
 
