@@ -1209,9 +1209,31 @@ class InfrastructureSettings:
     #: kill switch back to single-process behaviour (only the worker holding a daemon's socket
     #: can reach it).
     host_agent_relay: bool = True
+    #: The one asyncpg pool every aura_core store in a process shares (``PostgresPool``), and
+    #: the legacy SQLAlchemy engine beside it (``infrastructure/db/base.py``). Per *process*:
+    #: every uvicorn worker and every Celery prefork child holds its own, so a deployment's
+    #: connection budget is ``processes x postgres_connections_per_process`` and must fit under
+    #: Postgres's ``max_connections`` with headroom (audit FSA-073;
+    #: tests/unit/test_postgres_connection_budget.py computes it for both compose files).
+    postgres_pool_min_size: int = 2
+    postgres_pool_max_size: int = 10
+    #: A statement that runs longer than this is cancelled and its connection returned; without
+    #: it a hung query held a pooled connection forever.
+    postgres_command_timeout_s: float = 60.0
+    #: Idle pooled connections are closed after this long, so a burst does not pin its peak.
+    postgres_max_inactive_connection_lifetime_s: float = 300.0
+    legacy_db_pool_size: int = 5
+    legacy_db_max_overflow: int = 10
 
     @classmethod
     def from_env(cls) -> "InfrastructureSettings":
+        pool_min = _int("POSTGRES_POOL_MIN_SIZE", 2, minimum=0)
+        pool_max = _int("POSTGRES_POOL_MAX_SIZE", 10, minimum=1)
+        if pool_min > pool_max:
+            raise ConfigurationError(
+                "AURA_POSTGRES_POOL_MIN_SIZE must not exceed AURA_POSTGRES_POOL_MAX_SIZE",
+                details={"min": pool_min, "max": pool_max},
+            )
         return cls(
             database_url=_env("DATABASE_URL", "") or "",
             redis_url=_env("REDIS_URL", "") or "",
@@ -1222,7 +1244,20 @@ class InfrastructureSettings:
             memory_backend=(_env("MEMORY_BACKEND", "memory") or "memory").lower(),
             cache_backend=(_env("CACHE_BACKEND", "memory") or "memory").lower(),
             host_agent_relay=_bool("HOST_AGENT_RELAY", True),
+            postgres_pool_min_size=pool_min,
+            postgres_pool_max_size=pool_max,
+            postgres_command_timeout_s=_float("POSTGRES_COMMAND_TIMEOUT_S", 60.0, minimum=1.0),
+            postgres_max_inactive_connection_lifetime_s=_float(
+                "POSTGRES_MAX_INACTIVE_CONNECTION_LIFETIME_S", 300.0, minimum=0.0
+            ),
+            legacy_db_pool_size=_int("LEGACY_DB_POOL_SIZE", 5, minimum=0),
+            legacy_db_max_overflow=_int("LEGACY_DB_MAX_OVERFLOW", 10, minimum=0),
         )
+
+    @property
+    def postgres_connections_per_process(self) -> int:
+        """The most Postgres connections one process can hold with every pool full."""
+        return self.postgres_pool_max_size + self.legacy_db_pool_size + self.legacy_db_max_overflow
 
     @property
     def qdrant_api_key(self) -> str:

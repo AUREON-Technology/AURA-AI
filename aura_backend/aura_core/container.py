@@ -913,7 +913,14 @@ class Container:
         if self._pg_pool is None:
             from .adapters.postgres_store import PostgresPool
 
-            self._pg_pool = PostgresPool(self.settings.infrastructure.database_url)
+            infra = self.settings.infrastructure
+            self._pg_pool = PostgresPool(
+                infra.database_url,
+                min_size=infra.postgres_pool_min_size,
+                max_size=infra.postgres_pool_max_size,
+                command_timeout_s=infra.postgres_command_timeout_s,
+                max_inactive_connection_lifetime_s=infra.postgres_max_inactive_connection_lifetime_s,
+            )
         return self._pg_pool
 
     def _field_cipher(self) -> Any:

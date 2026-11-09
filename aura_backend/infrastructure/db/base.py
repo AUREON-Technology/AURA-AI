@@ -66,9 +66,34 @@ def get_engine():
                 "DATABASE_URL is not configured. Set it in .env / the environment "
                 "to enable Postgres-backed sync (see docker-compose.yml's postgres service)."
             )
-        _engine = create_async_engine(with_asyncpg_driver(url), pool_pre_ping=True, echo=False)
+        # Pool bounds are part of the deployment's connection budget (audit FSA-073): every
+        # process holds this pool beside aura_core's asyncpg pool, and the compose files size
+        # both so the worst case fits under Postgres's max_connections. Same defaults as
+        # SQLAlchemy's own (5 + 10) when unset.
+        _engine = create_async_engine(
+            with_asyncpg_driver(url),
+            pool_pre_ping=True,
+            echo=False,
+            pool_size=int(os.environ.get("AURA_LEGACY_DB_POOL_SIZE") or 5),
+            max_overflow=int(os.environ.get("AURA_LEGACY_DB_MAX_OVERFLOW") or 10),
+            pool_recycle=int(os.environ.get("AURA_LEGACY_DB_POOL_RECYCLE_S") or 1800),
+        )
         logger.info("Postgres async engine initialized.")
     return _engine
+
+
+async def dispose_engine() -> None:
+    """Close the engine's connections and forget it, so the next use builds a fresh one.
+
+    Called at gateway shutdown and when a Celery child exits (audit FSA-073): before this the
+    legacy engine was never disposed, and every recycled worker left its connections for the
+    server to time out. Safe when no engine was ever built.
+    """
+    global _engine, _session_factory
+    engine, _engine = _engine, None
+    _session_factory = None
+    if engine is not None:
+        await engine.dispose()
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:

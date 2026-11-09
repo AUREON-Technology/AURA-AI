@@ -327,6 +327,12 @@ def create_app():
 
     # Exposed so Celery tasks and the CLI can reach the same wired graph without rebuilding it.
     app.state.aura = container
+    # The legacy SQLAlchemy engine (api/v2 sync, insights) lives outside the container and was
+    # never disposed at shutdown (audit FSA-073). Registered after build_app's own handler, so
+    # it runs after the container's pools close, once uvicorn's graceful drain has finished.
+    from infrastructure.db.base import dispose_engine
+
+    app.on_event("shutdown")(dispose_engine)
     return app
 
 

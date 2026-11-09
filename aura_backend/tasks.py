@@ -321,6 +321,14 @@ def _shutdown_worker_container(**_: object) -> None:
     global _worker_container, _worker_started, _worker_loop
     container, _worker_container = _worker_container, None
     _worker_started = False
+    # The legacy SQLAlchemy engine (insights, sync, erasure tasks) is per process too and was
+    # never disposed (audit FSA-073).
+    try:
+        from infrastructure.db.base import dispose_engine
+
+        _run_async(dispose_engine())
+    except Exception:  # noqa: BLE001 -- see the docstring
+        logger.exception("legacy engine dispose failed")
     if container is None:
         return
     try:

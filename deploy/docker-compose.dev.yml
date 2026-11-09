@@ -334,6 +334,14 @@ services:
       AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
       AURA_MODEL_ALLOWLIST: ${AURA_MODEL_ALLOWLIST:-}
+      # Connection budget (audit FSA-073). Per uvicorn worker: asyncpg pool + legacy SQLAlchemy
+      # pool (size + overflow) = 10 + 5 + 5 = 20. With AURA_WORKERS gateway processes and the
+      # Celery children below (4 each), the worst case must fit under postgresql.conf's
+      # max_connections with headroom for alembic, the backup job and psql.
+      # tests/unit/test_postgres_connection_budget.py does that arithmetic on this file.
+      AURA_POSTGRES_POOL_MAX_SIZE: ${AURA_POSTGRES_POOL_MAX_SIZE:-10}
+      AURA_LEGACY_DB_POOL_SIZE: ${AURA_LEGACY_DB_POOL_SIZE:-5}
+      AURA_LEGACY_DB_MAX_OVERFLOW: ${AURA_LEGACY_DB_MAX_OVERFLOW:-5}
       AURA_DATABASE_URL_FILE: /run/secrets/postgres_password
       AURA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
       AURA_QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
@@ -557,6 +565,12 @@ services:
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
       AURA_LEARNING_REFRESH_ENABLED: ${AURA_LEARNING_REFRESH_ENABLED:-true}
       AURA_LEARNING_REFRESH_CRON: ${AURA_LEARNING_REFRESH_CRON:-0 2 * * *}
+      # Connection budget (audit FSA-073): each prefork child (`-c N`) holds its own pools, so a
+      # worker process gets 2 + 1 + 1 = 4 connections. See the gateway's block for the arithmetic.
+      AURA_POSTGRES_POOL_MIN_SIZE: ${AURA_WORKER_POSTGRES_POOL_MIN_SIZE:-1}
+      AURA_POSTGRES_POOL_MAX_SIZE: ${AURA_WORKER_POSTGRES_POOL_MAX_SIZE:-2}
+      AURA_LEGACY_DB_POOL_SIZE: ${AURA_WORKER_LEGACY_DB_POOL_SIZE:-1}
+      AURA_LEGACY_DB_MAX_OVERFLOW: ${AURA_WORKER_LEGACY_DB_MAX_OVERFLOW:-1}
       AURA_DATABASE_URL_FILE: /run/secrets/postgres_password
       AURA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
       AURA_QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key

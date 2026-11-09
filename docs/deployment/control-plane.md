@@ -75,6 +75,13 @@ AURA_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 AURA_EMBEDDING_DIMENSION=384
 
 AURA_DATABASE_URL=<Railway Postgres plugin's connection string>
+# Connection budget (audit FSA-073). Every uvicorn worker holds one asyncpg pool plus the legacy
+# SQLAlchemy pool: AURA_POSTGRES_POOL_MAX_SIZE (10) + AURA_LEGACY_DB_POOL_SIZE (5) +
+# AURA_LEGACY_DB_MAX_OVERFLOW (10) = 25 connections per worker by default, so AURA_WORKERS=4 can
+# open 100 -- plus any Celery workers (per prefork child). Size these against the Railway
+# Postgres plan's connection limit, leaving room for the pre-deploy `alembic upgrade head`.
+# AURA_POSTGRES_COMMAND_TIMEOUT_S (60) cancels a hung statement; idle pooled connections close
+# after AURA_POSTGRES_MAX_INACTIVE_CONNECTION_LIFETIME_S (300).
 # Also what lets a paired desktop (aura_hostd) be reached from every gateway worker: the
 # host-agent relay (ADR-011 amendment, 2026-11-08) is on whenever this and AURA_JWT_SECRET are
 # set. Without it, the image's default 4 workers each see only their own desktop connections, so
