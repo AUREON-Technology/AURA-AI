@@ -15,34 +15,18 @@ Docker isn't reachable, so `python -m unittest discover` stays green
 locally without ever having actually run this test's assertions.
 """
 import unittest
+
+import legacy_postgres
 import uuid
 
 
-def _docker_available() -> bool:
-    try:
-        import docker
-
-        client = docker.from_env()
-        client.ping()
-        return True
-    except Exception:
-        return False
 
 
-DOCKER_AVAILABLE = _docker_available()
-
-
-@unittest.skipUnless(
-    DOCKER_AVAILABLE,
-    "Docker is not available — this integration test needs it to run a real "
-    "Postgres 16 container. Runs in CI (backend-ci.yml); skipped locally here.",
-)
+@unittest.skipUnless(legacy_postgres.available(), legacy_postgres.SKIP_REASON)
 class TestSyncApiIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        from testcontainers.postgres import PostgresContainer
-
-        cls.postgres = PostgresContainer("postgres:16-alpine")
+        cls.postgres = legacy_postgres.container()
         cls.postgres.start()
 
         # testcontainers gives a psycopg2 URL by default; the app's async

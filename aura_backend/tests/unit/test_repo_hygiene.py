@@ -228,3 +228,40 @@ class TestWindowsJobsGate:
         assert not re.search(r"^\s*continue-on-error:\s*true", text, re.M), (
             f"{workflow} still has an advisory job; a red Windows job must fail the run"
         )
+
+
+class TestTheLegacyTreeIsMeasuredAndItsPostgresTestsRun:
+    """Audit G-05: the coverage ratchet measured `aura_core` only, and the legacy tree's seven
+    Postgres-backed integration suites (`aura_backend/test_*_integration.py`) ran only where a
+    Docker daemon happened to be -- never in the `postgres` job that already has a real server."""
+
+    BACKEND_CI = WORKFLOWS / "backend-ci.yml"
+
+    def test_the_legacy_suite_runs_under_coverage_for_the_platform_packages(self) -> None:
+        text = self.BACKEND_CI.read_text(encoding="utf-8")
+        legacy = text.split("name: Legacy suite (unittest)", 1)[1].split("\n      - name:", 1)[0]
+        assert "coverage run" in legacy, "the legacy step must run under coverage (no floor yet)"
+        for package in ("api", "services", "infrastructure"):
+            assert package in legacy, f"legacy coverage must include {package}/"
+        assert "coverage report" in legacy
+
+    def test_the_postgres_job_runs_the_legacy_integration_suites_against_its_service(self) -> None:
+        text = self.BACKEND_CI.read_text(encoding="utf-8")
+        postgres_job = text.split("\n  postgres:\n", 1)[1].split("\n  docker-build:\n", 1)[0]
+        assert 'test_*_integration.py' in postgres_job, (
+            "the postgres job must discover aura_backend/test_*_integration.py"
+        )
+        assert "AURA_TEST_DATABASE_URL" in postgres_job
+
+
+class TestEngineBackedVoiceAndOcrTestsRunInCi:
+    """Audit FSA-081: every real-engine speech and OCR test is skipif-gated on a binary, and CI
+    installed neither, so none of them had ever run anywhere but a contributor's machine."""
+
+    def test_backend_ci_installs_the_speech_and_ocr_engines(self) -> None:
+        text = (WORKFLOWS / "backend-ci.yml").read_text(encoding="utf-8")
+        test_job = text.split("\n  test:\n", 1)[1].split("\n  pip-audit:\n", 1)[0]
+        for package in ("espeak-ng", "tesseract-ocr"):
+            assert re.search(rf"apt-get install[^\n]*\b{re.escape(package)}\b", test_job), (
+                f"the test job must apt-get install {package}"
+            )

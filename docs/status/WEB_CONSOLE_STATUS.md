@@ -5,6 +5,8 @@
 different thing: it is built locally but deployed nowhere. Evidence scale and refresh steps:
 [README.md](README.md).
 
+**Verified against commit:** `b2e14c4` (2026-11-08) for every row dated 2026-11-07 or later; older rows carry the commit they were checked at. Refresh this line whenever a row is re-verified (audit FSA-120).
+
 ## Summary
 
 The console is built: 10 pages, Google sign-in for Developer+ roles, and a same-origin proxy that

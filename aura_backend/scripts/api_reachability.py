@@ -29,13 +29,22 @@ OUT = ROOT / "docs" / "guides" / "api-reachability.md"
 CLIENT_DIRS = {"flutter": (ROOT / "aura_client" / "lib", (".dart",)),
                "admin": (ROOT / "aura_admin", (".ts", ".tsx")),
                "hostd": (ROOT / "aura_hostd", (".dart",))}
-SKIP_PARTS = {"node_modules", ".next", "build", ".dart_tool"}
+# Test code is not a caller (audit FSA-083): a Playwright spec or a daemon test that spells an API
+# path proves nothing about the shipped app.
+SKIP_PARTS = {"node_modules", ".next", "build", ".dart_tool", "test", "tests", "e2e", "integration_test"}
+
+#: What the heuristic cannot tell, stated in the document rather than guessed at (audit FSA-083).
+METHOD_BLIND_NOTE = (
+    "The match is by path only: a caller of one HTTP method on a path credits every method the "
+    "gateway serves on it, so a `called` row for a DELETE or PATCH may rest on a GET caller alone."
+)
 
 # Why a route with no caller has none -- decided by a person, kept here so a re-run keeps it.
 # Matched by prefix on the path; the first match wins. Anything uncalled and unlisted reads
 # "untriaged", which is the signal to come and decide.
 TRIAGE = (
     ("/api/v3/integrations/github/callback", "server-only: OAuth redirect target, reached by the browser"),
+    ("/api/v3/chat", "server-to-server: the non-streaming turn is for integrating systems (ADR-029 service keys, AR-6 structured output); the app streams via /chat/stream"),
     ("/api/v3/auth/desktop/", "to wire: desktop pairing flow (ADR-011), no caller in client or hostd yet"),
     ("/api/v3/agents/runs", "to wire: agent-run history (wave 2) has no client or admin view yet"),
     ("/api/v3/knowledge/graph", "to wire: knowledge-graph read API (wave 2) has no view yet"),
@@ -82,27 +91,44 @@ def routes() -> list[tuple[str, str]]:
     return sorted(found, key=lambda r: (r[1], r[0]))
 
 
-def sources() -> dict[str, list[tuple[str, int, str]]]:
-    lines: dict[str, list[tuple[str, int, str]]] = {}
-    for name, (base, exts) in CLIENT_DIRS.items():
-        out = lines.setdefault(name, [])
-        if not base.is_dir():
+# A wrapper call left open at the end of a line (`await api(` -- the formatter put the argument on
+# the next line) is carried onto that next line, so the matcher sees `api(\`/admin/...\`` as one call.
+_OPEN_WRAPPER = re.compile(r"\bapi(?:<.*>)?\(\s*$")
+
+
+def scan_tree(base: Path, exts: tuple[str, ...], *, root: Path = ROOT) -> list[tuple[str, int, str]]:
+    """`(repo-relative file, line number, text)` for every line that could hold a path."""
+    out: list[tuple[str, int, str]] = []
+    if not base.is_dir():
+        return out
+    # rglob order is filesystem-dependent; sorted keeps the committed matrix identical on every OS.
+    for path in sorted(base.rglob("*")):
+        if path.suffix not in exts or SKIP_PARTS & set(path.parts):
             continue
-        # rglob order is filesystem-dependent; sorted keeps the committed matrix identical on every OS.
-        for path in sorted(base.rglob("*")):
-            if path.suffix not in exts or SKIP_PARTS & set(path.parts):
-                continue
-            rel = path.relative_to(ROOT).as_posix()
-            for i, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
-                if "/" in line:
-                    out.append((rel, i, line))
-    return lines
+        rel = path.relative_to(root).as_posix()
+        carry = ""
+        for i, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
+            text = carry + line.lstrip() if carry else line
+            carry = "api(" if _OPEN_WRAPPER.search(line) else ""
+            if "/" in text:
+                out.append((rel, i, text))
+    return out
+
+
+def sources() -> dict[str, list[tuple[str, int, str]]]:
+    return {name: scan_tree(base, exts) for name, (base, exts) in CLIENT_DIRS.items()}
 
 
 # A path ends at a quote, a literal query string, end of line, or an interpolated query suffix
 # (the admin console's `/admin/audit${query}`).
 _END = r"(?=['\"`?]|$|\$\{?\w*[qQ]uery)"
 _INTERP = r"(?:\$\{[^}]+\}|\$[A-Za-z_]\w*)"
+# A whole path counts only on an API base: the literal `/api/vN`; an interpolated base such as
+# `$_baseUrl` / `${backend}` that the file resolves elsewhere; or the admin console's `api(...)`
+# wrapper (`aura_admin/src/lib/api.ts` prepends `/api/v3` to the path it is given). A bare
+# `'/chat'` is a UI route (go_router, Next.js) and used to credit `/api/v3/chat` (audit FSA-083).
+_WRAPPER = r"\bapi(?:<.*>)?\(\s*[\"'`]"
+_BASE = rf"(?:/api/v\d+|{_INTERP}|{_WRAPPER})"
 
 
 def _segments(path: str) -> list[str]:
@@ -125,7 +151,7 @@ def matchers(path: str) -> list[tuple[re.Pattern[str], re.Pattern[str] | None]]:
     segs = _segments(path)
     if not segs:
         return []
-    out = [(re.compile(_join(segs, literal_params=True) + _END), None)]
+    out = [(re.compile(_BASE + _join(segs, literal_params=True) + _END), None)]
     for k in range(1, len(segs)):
         prefix = segs[:k]
         if any(s.startswith("{") for s in prefix):
@@ -181,7 +207,7 @@ def render() -> tuple[str, Counter]:
         "builds its path. Generated by a "
         "string heuristic, not a call graph: a path assembled from several constants reads as "
         "`none`, so confirm a `none` by hand before wiring or removing it. `infra` routes serve "
-        "probes, Prometheus or API docs, not an app client.\n\n"
+        "probes, Prometheus or API docs, not an app client. " + METHOD_BLIND_NOTE + "\n\n"
         f"**Totals:** {sum(counts.values())} routes — {counts['called']} called, "
         f"{counts['none']} with no caller found, {counts['infra']} infrastructure.\n\n"
         "| Method | Path | Flutter caller | Admin caller | hostd caller | Status | Triage |\n"

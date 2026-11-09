@@ -5,6 +5,8 @@ where, what CI says, what is proven, and what is next. They are snapshots, not a
 they disagree with the code, the CI history or a live probe, those win, and the file should be
 corrected in the same change.
 
+**Verified against commit:** `b2e14c4` (2026-11-08) for every row dated 2026-11-07 or later; older rows carry the commit they were checked at. Refresh this line whenever a row is re-verified (audit FSA-120).
+
 | Component | File | One line |
 | --- | --- | --- |
 | Backend (`aura_backend/`, `deploy/`) | [BACKEND_STATUS.md](BACKEND_STATUS.md) | Live on Railway at `ffbbb9f`, ready, **schema `0019` (head) since at latest 2026-11-07**; `hfspace` 503 so only `internal`-ceiling inference is up; `/metrics` and `/docs` open; runners assigned again but no application suite CI-run since `dc87beb`; VPS deploy blocked |

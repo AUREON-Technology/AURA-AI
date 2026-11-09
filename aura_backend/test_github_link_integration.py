@@ -14,17 +14,9 @@ import asyncio
 import os
 import re
 import unittest
+
+import legacy_postgres
 import uuid
-
-
-def _docker_available() -> bool:
-    try:
-        import docker
-
-        docker.from_env().ping()
-        return True
-    except Exception:
-        return False
 
 
 _ENV = {
@@ -35,14 +27,12 @@ _ENV = {
 }
 
 
-@unittest.skipUnless(_docker_available(), "Docker is not available -- needs a real Postgres 16.")
+@unittest.skipUnless(legacy_postgres.available(), legacy_postgres.SKIP_REASON)
 class TestGitHubLinkIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from cryptography.fernet import Fernet
-        from testcontainers.postgres import PostgresContainer
-
-        cls.postgres = PostgresContainer("postgres:16-alpine")
+        cls.postgres = legacy_postgres.container()
         cls.postgres.start()
         from config import settings
 

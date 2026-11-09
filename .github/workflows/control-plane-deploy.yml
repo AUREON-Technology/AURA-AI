@@ -121,20 +121,26 @@ jobs:
           RAILWAY_SERVICE_GATEWAY: ${{ vars.RAILWAY_SERVICE_GATEWAY }}
         run: railway up --service "$RAILWAY_SERVICE_GATEWAY" --detach aura_backend
 
+      # Audit FSA-048: the variable has been stored as `/health`, `/health/live` and `/health/ready`
+      # at different times, and the old steps could not pass for any of them (no `/health` route;
+      # `/health/ready` never says "status"; `/health/live` broke the version URL below). So the
+      # origin is derived from whatever path the variable carries, and both probes name their own
+      # route. tests/unit/test_control_plane_deploy_probes.py runs the derivation for every shape.
       - name: Wait for readiness
         env:
           RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL }}
         run: |
           set -euo pipefail
+          origin="${RAILWAY_HEALTH_URL%%/health*}"; origin="${origin%/}"
           for i in $(seq 1 30); do
-            if curl -fsS "$RAILWAY_HEALTH_URL" | grep -q '"status"'; then
-              echo "Control Plane is ready."
+            if curl -fsS --max-time 15 "$origin/health/live" | grep -q '"alive"'; then
+              echo "Control Plane is live at $origin."
               exit 0
             fi
-            echo "Not ready yet ($i/30)..."
+            echo "Not live yet ($i/30)..."
             sleep 10
           done
-          echo "Control Plane did not become ready in time." >&2
+          echo "Control Plane did not come up in time ($origin/health/live)." >&2
           exit 1
 
       # BLOCK-03: prove the revision now serving is the one this run deployed. Without it, a
@@ -146,8 +152,9 @@ jobs:
           EXPECTED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
-          version_url="${RAILWAY_HEALTH_URL%/health}/health/version"
-          live_sha="$(curl -fsS --max-time 15 "$version_url" \
+          origin="${RAILWAY_HEALTH_URL%%/health*}"; origin="${origin%/}"
+          version_url="$origin/health/version"
+          live_sha="$(curl -fsS --max-time 15 "$origin/health/version" \
             | sed -n 's/.*"git_sha"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
           echo "expected: $EXPECTED_SHA"
           echo "serving:  ${live_sha:-<none>}"

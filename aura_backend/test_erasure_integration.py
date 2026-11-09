@@ -11,30 +11,20 @@ Skips itself cleanly when Docker isn't reachable.
 import asyncio
 import os
 import unittest
+
+import legacy_postgres
 import uuid
 from datetime import datetime, timezone
-
-
-def _docker_available() -> bool:
-    try:
-        import docker
-
-        docker.from_env().ping()
-        return True
-    except Exception:
-        return False
 
 
 ROOT = "root-erase@example.com"
 
 
-@unittest.skipUnless(_docker_available(), "Docker is not available -- needs a real Postgres 16.")
+@unittest.skipUnless(legacy_postgres.available(), legacy_postgres.SKIP_REASON)
 class TestErasureIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        from testcontainers.postgres import PostgresContainer
-
-        cls.postgres = PostgresContainer("postgres:16-alpine")
+        cls.postgres = legacy_postgres.container()
         cls.postgres.start()
         from config import settings
 

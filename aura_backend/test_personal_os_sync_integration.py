@@ -23,21 +23,13 @@ import os
 import subprocess
 import sys
 import unittest
+
+import legacy_postgres
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-
-
-def _docker_available() -> bool:
-    try:
-        import docker
-
-        docker.from_env().ping()
-        return True
-    except Exception:
-        return False
 
 
 def _alembic(url: str, *args: str) -> str:
@@ -51,14 +43,12 @@ def _alembic(url: str, *args: str) -> str:
     return done.stdout + done.stderr
 
 
-@unittest.skipUnless(_docker_available(), "Docker is not available -- needs a real Postgres 16.")
+@unittest.skipUnless(legacy_postgres.available(), legacy_postgres.SKIP_REASON)
 class TestPersonalOsSyncIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from cryptography.fernet import Fernet
-        from testcontainers.postgres import PostgresContainer
-
-        cls.postgres = PostgresContainer("postgres:16-alpine")
+        cls.postgres = legacy_postgres.container()
         cls.postgres.start()
         raw = cls.postgres.get_connection_url()
         cls.async_url = raw.replace("postgresql+psycopg2", "postgresql+asyncpg")

@@ -11,31 +11,20 @@ Skips itself cleanly when Docker isn't reachable.
 import asyncio
 import os
 import unittest
+
+import legacy_postgres
 import uuid
 
 
-def _docker_available() -> bool:
-    try:
-        import docker
-
-        docker.from_env().ping()
-        return True
-    except Exception:
-        return False
-
-
-DOCKER_AVAILABLE = _docker_available()
 ROOT = "root@example.com"
 ENV_ADMIN = "env-admin@example.com"
 
 
-@unittest.skipUnless(DOCKER_AVAILABLE, "Docker is not available -- needs a real Postgres 16.")
+@unittest.skipUnless(legacy_postgres.available(), legacy_postgres.SKIP_REASON)
 class TestRoleAssignmentIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        from testcontainers.postgres import PostgresContainer
-
-        cls.postgres = PostgresContainer("postgres:16-alpine")
+        cls.postgres = legacy_postgres.container()
         cls.postgres.start()
         async_url = cls.postgres.get_connection_url().replace(
             "postgresql+psycopg2", "postgresql+asyncpg"
