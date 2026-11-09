@@ -392,3 +392,52 @@ class TestPipesDoNotHideFailures:
                     if "| tee" in run and "pipefail" not in run and step.get("shell") != "bash":
                         unguarded.append((path.name, job_name, step.get("name", "<unnamed>")))
         assert unguarded == [], f"steps whose piped command's failure tee would hide: {unguarded}"
+
+
+class TestContainerImagesArePinnedByDigest:
+    """Audit FSA-111 / F2-13: nginx, postgres, redis, tinyproxy and the socket proxy floated
+    within a tag, and the Hugging Face Space built on `vllm/vllm-openai:latest` with the model
+    revision optional -- so a deploy could pull something nobody had tested, and the inference
+    node could start serving different weights after an upstream push. Every pulled image names
+    a digest; every image a compose service builds itself is exempt; the Space requires the
+    model revision."""
+
+    COMPOSE = (REPO / "deploy" / "docker-compose.prod.yml", REPO / "deploy" / "docker-compose.dev.yml")
+    SPACE = REPO / "deploy" / "spaces" / "inference-vllm"
+    DIGEST = re.compile(r"@sha256:[0-9a-f]{64}(\}|$)")
+
+    @pytest.mark.parametrize("compose", COMPOSE, ids=lambda p: p.name)
+    def test_every_pulled_compose_image_names_a_digest(self, compose: Path) -> None:
+        yaml = pytest.importorskip("yaml")
+        services = yaml.safe_load(compose.read_text(encoding="utf-8"))["services"]
+        built = {str(svc.get("image")) for svc in services.values() if svc.get("build")}
+        unpinned = {
+            name: svc["image"] for name, svc in services.items()
+            if "image" in svc and not svc.get("build") and svc["image"] not in built
+            and not self.DIGEST.search(str(svc["image"]))
+        }
+        assert unpinned == {}, f"{compose.name}: images that float within a tag: {unpinned}"
+
+    def test_the_space_image_builds_on_a_digest_pinned_base(self) -> None:
+        froms = [l for l in (self.SPACE / "Dockerfile").read_text(encoding="utf-8").splitlines() if l.startswith("FROM ")]
+        assert froms, "no FROM line"
+        for line in froms:
+            assert ":latest" not in line, line
+            assert re.search(r"@sha256:[0-9a-f]{64}", line), f"base image is not digest-pinned: {line}"
+
+    def test_the_space_refuses_to_boot_without_a_model_revision(self) -> None:
+        text = (self.SPACE / "entrypoint.sh").read_text(encoding="utf-8")
+        api_key_check = text.index('if [ -z "${VLLM_API_KEY:-}" ]')
+        revision_check = text.find('if [ -z "$MODEL_REVISION" ]')
+        assert revision_check != -1, "the entrypoint does not require VLLM_MODEL_REVISION"
+        assert revision_check > api_key_check, (
+            "the API-key check must come first: inference-plane-deploy.yml's startup validation "
+            "expects its message when both are unset"
+        )
+        block = text[revision_check:revision_check + 600]
+        assert "VLLM_MODEL_REVISION" in block and "exit 1" in block
+
+    def test_the_space_docs_say_the_revision_is_required(self) -> None:
+        readme = (self.SPACE / "README.md").read_text(encoding="utf-8")
+        row = next(l for l in readme.splitlines() if l.startswith("| `VLLM_MODEL_REVISION`"))
+        assert "required" in row.lower() and "(unset)" not in row, row

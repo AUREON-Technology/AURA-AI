@@ -470,7 +470,7 @@ services:
   # `sandbox-image` builds the workspace image locally. See prod's docker-socket-proxy comment.
   docker-socket-proxy:
     profiles: [sandbox]
-    image: tecnativa/docker-socket-proxy:0.3.0
+    image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
     <<: *restart
     logging: *logging
     environment:
@@ -516,7 +516,7 @@ services:
 
   sandbox-proxy:
     profiles: [sandbox]
-    image: ${AURA_SANDBOX_PROXY_IMAGE:-vimagick/tinyproxy:latest}
+    image: ${AURA_SANDBOX_PROXY_IMAGE:-vimagick/tinyproxy:latest@sha256:72b441b95ee1e641af948f68f09492f9f795ead72b73954414e339168c98ad8c}
     <<: *restart
     logging: *logging
     volumes:
@@ -668,7 +668,7 @@ services:
         limits: {cpus: "0.25", memory: 256M}
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     <<: *restart
     logging: *logging
     environment:
@@ -692,7 +692,7 @@ services:
         limits: {cpus: "0.75", memory: 1536M}
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:c5d34a98396a4775e223c74e929162c35c5a2182901ba26b50ade939941ce14b
     <<: *restart
     logging: *logging
     command: >

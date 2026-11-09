@@ -18,7 +18,10 @@
 # reason as the sibling Space: HF rebuilds on push, and a stale digest is a silent build
 # failure at the worst moment. Pin the digest yourself if you want reproducibility and are
 # willing to bump it deliberately.
-FROM vllm/vllm-openai:latest
+# Tag plus digest (audit FSA-111): the same vLLM release the VPS `vllm` service pins in
+# docker-compose.prod.yml, so both inference targets run one tested server build. Bump the
+# two together.
+FROM vllm/vllm-openai:v0.29.0@sha256:c2914767605584b6d8f45686b82de173ecc99e781897aa3d0a66dacd72c51ae1
 
 USER root
 

@@ -19,8 +19,8 @@ VLLM_MODEL="${VLLM_MODEL:-Qwen/Qwen2.5-7B-Instruct-AWQ}"
 PORT="${PORT:-7860}"
 MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-8192}"
 GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.90}"
-# Pin the weights (a Hub commit SHA). Empty serves whatever the repo's main branch is today,
-# which is how an unannounced upstream push silently changes what answers.
+# The weights' Hub commit SHA. Required below: empty would serve whatever the repo's main branch
+# is today, which is how an unannounced upstream push silently changes what answers.
 MODEL_REVISION="${VLLM_MODEL_REVISION:-}"
 # ADR-031 image understanding. 0 (the default) keeps this a text-only server whatever model it
 # runs. A positive value is the per-prompt image cap, which must be >= the gateway's
@@ -45,6 +45,24 @@ endpoint. Set it as a Space secret:
     Value: <a long random string>
 
 Then set the SAME value on the AURA gateway as AURA_PROVIDER_HFSPACE_API_KEY.
+ERR
+    exit 1
+fi
+
+# Required, not recommended (audit FSA-111): without a pinned revision an upstream push to the
+# model repo silently changes what answers. The gateway sets AURA_PROVIDER_HFSPACE_MODEL_REVISION
+# to the same value, so the two sides can be compared.
+if [ -z "$MODEL_REVISION" ]; then
+    cat >&2 <<'ERR'
+FATAL: VLLM_MODEL_REVISION is not set.
+
+Pin the weights to a commit of the model repo (Hub -> Files and versions -> copy the commit SHA):
+
+    Space -> Settings -> Variables and secrets -> New variable
+    Name:  VLLM_MODEL_REVISION
+    Value: <the commit SHA>
+
+Then set AURA_PROVIDER_HFSPACE_MODEL_REVISION to the same value on the AURA gateway.
 ERR
     exit 1
 fi
