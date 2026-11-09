@@ -33,7 +33,14 @@ class FasterWhisperEngine:
     one-time cost of pulling the model from the Hugging Face Hub if it is not already cached.
     """
 
-    def __init__(self, *, model_size: str = "tiny.en", device: str = "cpu", compute_type: str = "int8") -> None:
+    def __init__(
+        self,
+        *,
+        model_size: str = "tiny.en",
+        device: str = "cpu",
+        compute_type: str = "int8",
+        revision: str = "",
+    ) -> None:
         if not faster_whisper_available():
             raise DependencyUnavailableError(
                 "FasterWhisperEngine requires the faster-whisper package", dependency="faster-whisper",
@@ -41,12 +48,20 @@ class FasterWhisperEngine:
         self._model_size = model_size
         self._device = device
         self._compute_type = compute_type
+        # Hub commit of the weights (audit FSA-110); shown in `name`, so /health/ready reports it.
+        self._revision = revision
         self._model = None
         self._lock = asyncio.Lock()
 
     @property
     def name(self) -> str:
-        return f"faster-whisper-{self._model_size}"
+        base = f"faster-whisper-{self._model_size}"
+        return f"{base}@{self._revision}" if self._revision else base
+
+    async def warm(self) -> None:
+        """Load the model now (audit FSA-110): the container calls this at startup in production
+        so the first live-voice turn of a fresh container does not pay the Hub download."""
+        await self._ensure_model()
 
     async def _ensure_model(self):
         if self._model is not None:
@@ -60,7 +75,12 @@ class FasterWhisperEngine:
         from faster_whisper import WhisperModel
 
         try:
-            return WhisperModel(self._model_size, device=self._device, compute_type=self._compute_type)
+            return WhisperModel(
+                self._model_size,
+                device=self._device,
+                compute_type=self._compute_type,
+                revision=self._revision or None,
+            )
         except Exception as exc:
             raise DependencyUnavailableError(
                 f"could not load the faster-whisper model {self._model_size!r}",

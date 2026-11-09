@@ -522,6 +522,9 @@ services:
       AURA_PROVIDER_HFSPACE_API_KEY_ENV: ${AURA_PROVIDER_HFSPACE_API_KEY_ENV:-}
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
       AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      # Hub commit of the embedding weights (audit FSA-110). Part of the index identity: changing
+      # it builds and promotes a new index. Empty = the repo's head, as before.
+      AURA_EMBEDDING_MODEL_REVISION: ${AURA_EMBEDDING_MODEL_REVISION:-}
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
       # Read directly by huggingface_hub/sentence-transformers, not by aura_core -- avoids the
       # Hub's anonymous rate limit on embedding-model (and Piper ONNX asset) downloads. Optional.
@@ -533,6 +536,11 @@ services:
       # Celery children below (4 each), the worst case must fit under postgresql.conf's
       # max_connections with headroom for alembic, the backup job and psql.
       # tests/unit/test_postgres_connection_budget.py does that arithmetic on this file.
+      # Hub commit of the Whisper weights (audit FSA-110); shown as the STT engine name in
+      # /health/ready. Whisper is also loaded at startup in production so the first live-voice
+      # turn of a fresh container does not pay the download (AURA_VOICE_STT_WARM_ON_STARTUP).
+      AURA_VOICE_STT_MODEL_REVISION: ${AURA_VOICE_STT_MODEL_REVISION:-}
+      AURA_KNOWLEDGE_RERANK_MODEL_REVISION: ${AURA_KNOWLEDGE_RERANK_MODEL_REVISION:-}
       AURA_POSTGRES_POOL_MAX_SIZE: ${AURA_POSTGRES_POOL_MAX_SIZE:-10}
       AURA_LEGACY_DB_POOL_SIZE: ${AURA_LEGACY_DB_POOL_SIZE:-5}
       AURA_LEGACY_DB_MAX_OVERFLOW: ${AURA_LEGACY_DB_MAX_OVERFLOW:-5}
@@ -871,6 +879,9 @@ services:
       AURA_PROVIDER_HFSPACE_API_KEY_FILE: /run/secrets/hfspace_api_key
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
       AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      # Hub commit of the embedding weights (audit FSA-110). Part of the index identity: changing
+      # it builds and promotes a new index. Empty = the repo's head, as before.
+      AURA_EMBEDDING_MODEL_REVISION: ${AURA_EMBEDDING_MODEL_REVISION:-}
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
       # See the matching line on `gateway` above -- same anonymous-rate-limit concern applies to
       # the learning-queue worker's own embedding calls (refresh/consolidate).

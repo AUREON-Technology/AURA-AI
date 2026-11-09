@@ -73,6 +73,12 @@ DEBUG_MODE=false
 AURA_EMBEDDING_PROVIDER=sentence-transformers
 AURA_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 AURA_EMBEDDING_DIMENSION=384
+# Pin the weights to a Hub commit (audit FSA-110): the revision is part of the index identity,
+# so changing it builds and promotes a new index rather than silently re-reading the live one.
+# AURA_KNOWLEDGE_RERANK_MODEL_REVISION and AURA_VOICE_STT_MODEL_REVISION pin the cross-encoder
+# and Whisper the same way; /health/ready reports all three. Whisper loads at startup in
+# production-like environments (AURA_VOICE_STT_WARM_ON_STARTUP overrides).
+AURA_EMBEDDING_MODEL_REVISION=<commit SHA from the model repo's Files and versions>
 
 AURA_DATABASE_URL=<Railway Postgres plugin's connection string>
 # Connection budget (audit FSA-073). Every uvicorn worker holds one asyncpg pool plus the legacy

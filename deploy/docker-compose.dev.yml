@@ -332,6 +332,9 @@ services:
       AURA_LLM_STREAM_MAX_S: ${AURA_LLM_STREAM_MAX_S:-0}
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
       AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      # Hub commit of the embedding weights (audit FSA-110). Part of the index identity: changing
+      # it builds and promotes a new index. Empty = the repo's head, as before.
+      AURA_EMBEDDING_MODEL_REVISION: ${AURA_EMBEDDING_MODEL_REVISION:-}
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
       AURA_MODEL_ALLOWLIST: ${AURA_MODEL_ALLOWLIST:-}
       # Connection budget (audit FSA-073). Per uvicorn worker: asyncpg pool + legacy SQLAlchemy
@@ -339,6 +342,11 @@ services:
       # Celery children below (4 each), the worst case must fit under postgresql.conf's
       # max_connections with headroom for alembic, the backup job and psql.
       # tests/unit/test_postgres_connection_budget.py does that arithmetic on this file.
+      # Hub commit of the Whisper weights (audit FSA-110); shown as the STT engine name in
+      # /health/ready. Whisper is also loaded at startup in production so the first live-voice
+      # turn of a fresh container does not pay the download (AURA_VOICE_STT_WARM_ON_STARTUP).
+      AURA_VOICE_STT_MODEL_REVISION: ${AURA_VOICE_STT_MODEL_REVISION:-}
+      AURA_KNOWLEDGE_RERANK_MODEL_REVISION: ${AURA_KNOWLEDGE_RERANK_MODEL_REVISION:-}
       AURA_POSTGRES_POOL_MAX_SIZE: ${AURA_POSTGRES_POOL_MAX_SIZE:-10}
       AURA_LEGACY_DB_POOL_SIZE: ${AURA_LEGACY_DB_POOL_SIZE:-5}
       AURA_LEGACY_DB_MAX_OVERFLOW: ${AURA_LEGACY_DB_MAX_OVERFLOW:-5}
@@ -562,6 +570,9 @@ services:
       AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S: ${AURA_LLM_WORKER_ADMISSION_QUEUE_TIMEOUT_S:-300}
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
       AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      # Hub commit of the embedding weights (audit FSA-110). Part of the index identity: changing
+      # it builds and promotes a new index. Empty = the repo's head, as before.
+      AURA_EMBEDDING_MODEL_REVISION: ${AURA_EMBEDDING_MODEL_REVISION:-}
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
       AURA_LEARNING_REFRESH_ENABLED: ${AURA_LEARNING_REFRESH_ENABLED:-true}
       AURA_LEARNING_REFRESH_CRON: ${AURA_LEARNING_REFRESH_CRON:-0 2 * * *}

@@ -722,6 +722,9 @@ class LLMSettings:
     default_policy: RoutingPolicy = RoutingPolicy.BALANCED
     embedding_provider: str = "local-embeddings"
     embedding_model: str = "hash-embed-v1"
+    #: Hub commit of the embedding weights (audit FSA-110). Part of the embedder's ``model_id``
+    #: and so of the index identity: a new revision is a new physical index (ADR-007).
+    embedding_model_revision: str = ""
     embedding_dimension: int = 384
     embedding_batch_size: int = 64
     request_timeout_s: float = 60.0
@@ -789,6 +792,7 @@ class LLMSettings:
             default_policy=policy,
             embedding_provider=_env("EMBEDDING_PROVIDER", "local-embeddings") or "local-embeddings",
             embedding_model=_env("EMBEDDING_MODEL", "hash-embed-v1") or "hash-embed-v1",
+            embedding_model_revision=_env("EMBEDDING_MODEL_REVISION", "") or "",
             embedding_dimension=_int("EMBEDDING_DIMENSION", 384, minimum=16),
             embedding_batch_size=_int("EMBEDDING_BATCH_SIZE", 64, minimum=1, maximum=1024),
             request_timeout_s=_float("LLM_TIMEOUT_S", 60.0, minimum=1.0),
@@ -839,6 +843,8 @@ class KnowledgeSettings:
     #: zero-dependency heuristic remains the default.
     rerank_provider: str = "heuristic"
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    #: Hub commit of the cross-encoder weights (audit FSA-110); empty loads the repo's head.
+    rerank_model_revision: str = ""
     mmr_lambda: float = 0.7
     graph_enabled: bool = True
     #: Adds the model-backed extractor after the rule extractor. Off by default: it costs one
@@ -887,6 +893,7 @@ class KnowledgeSettings:
             rrf_k=_int("KNOWLEDGE_RRF_K", 60, minimum=1),
             rerank_enabled=_bool("KNOWLEDGE_RERANK_ENABLED", True),
             rerank_provider=(_env("KNOWLEDGE_RERANK_PROVIDER", "heuristic") or "heuristic").lower(),
+            rerank_model_revision=_env("KNOWLEDGE_RERANK_MODEL_REVISION", "") or "",
             rerank_model=_env("KNOWLEDGE_RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
             or "cross-encoder/ms-marco-MiniLM-L-6-v2",
             mmr_lambda=_float("KNOWLEDGE_MMR_LAMBDA", 0.7, minimum=0.0, maximum=1.0),
@@ -1654,6 +1661,12 @@ class VoiceSettings:
 
     stt_enabled: bool = True
     stt_model: str = "tiny.en"
+    #: Hub commit of the Whisper weights (audit FSA-110); empty loads the repo's head.
+    stt_model_revision: str = ""
+    #: Load Whisper at container startup instead of on the first transcription of every fresh
+    #: container. ``None`` means "in production-like environments only", which keeps a local or
+    #: test container from ever pulling weights.
+    stt_warm_on_startup: bool | None = None
     tts_enabled: bool = True
     tts_voice: str = "en-us"
     tts_rate_wpm: int = 142
@@ -1686,6 +1699,10 @@ class VoiceSettings:
         return cls(
             stt_enabled=_bool("VOICE_STT_ENABLED", True),
             stt_model=_env("VOICE_STT_MODEL", "tiny.en") or "tiny.en",
+            stt_model_revision=_env("VOICE_STT_MODEL_REVISION", "") or "",
+            stt_warm_on_startup=(
+                None if not _env("VOICE_STT_WARM_ON_STARTUP", "") else _bool("VOICE_STT_WARM_ON_STARTUP", True)
+            ),
             tts_enabled=_bool("VOICE_TTS_ENABLED", True),
             tts_voice=_env("VOICE_TTS_VOICE", "en-us") or "en-us",
             tts_rate_wpm=_int("VOICE_TTS_RATE_WPM", 142, minimum=80, maximum=250),

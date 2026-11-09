@@ -236,6 +236,7 @@ class Container:
         self.blueprint_deployment = None
         self.project_knowledge = None
         self._blueprint_sync_task = None
+        self._stt_warm_task = None
 
         self.safety = SafetyPipeline.from_settings(
             settings.safety, metrics=self.metrics, event_bus=self.events, audit=self.audit
@@ -287,6 +288,7 @@ class Container:
                 settings.knowledge.rerank_provider,
                 model=settings.knowledge.rerank_model,
                 metrics=self.metrics,
+                revision=settings.knowledge.rerank_model_revision,
             ),
             rrf_k=settings.knowledge.rrf_k,
             mmr_lambda=settings.knowledge.mmr_lambda,
@@ -706,6 +708,7 @@ class Container:
             return SentenceTransformerProvider(
                 model=model, dimension=dimension,
                 max_batch_size=self.settings.llm.embedding_batch_size,
+                revision=self.settings.llm.embedding_model_revision,
             )
         # Anything else is treated as the name of a configured provider whose base_url serves an
         # OpenAI-compatible /v1/embeddings endpoint.
@@ -1145,7 +1148,10 @@ class Container:
 
         if not faster_whisper_available():
             return None
-        return FasterWhisperEngine(model_size=self.settings.voice.stt_model)
+        return FasterWhisperEngine(
+            model_size=self.settings.voice.stt_model,
+            revision=self.settings.voice.stt_model_revision,
+        )
 
     def _build_tts_engine(self) -> Any:
         """`None` unless opted in (`voice.tts_enabled`) and espeak-ng is on PATH.
@@ -1669,7 +1675,27 @@ class Container:
             # Never raises: a blueprint that cannot load leaves the core personas serving.
             await self.blueprint_deployment.startup()
             self._blueprint_sync_task = asyncio.get_running_loop().create_task(self._sync_blueprints())
+        if self._should_warm_stt():
+            # In the background: readiness must not wait on a Hub download, but the first
+            # live-voice turn of a fresh container should not pay for it either (audit FSA-110).
+            self._stt_warm_task = asyncio.get_running_loop().create_task(self._warm_stt())
         logger.info("container startup complete")
+
+    def _should_warm_stt(self) -> bool:
+        engine = self.stt_engine
+        if engine is None or not hasattr(engine, "warm"):
+            return False
+        explicit = self.settings.voice.stt_warm_on_startup
+        return self.settings.environment.is_production_like if explicit is None else bool(explicit)
+
+    async def _warm_stt(self) -> None:
+        try:
+            await self.stt_engine.warm()
+            logger.info("speech-to-text model warmed", extra={"stt": getattr(self.stt_engine, "name", None)})
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("speech-to-text warm-up failed; the first transcription will load the model")
 
     async def _sync_blueprints(self) -> None:
         """Keep this worker on the store's active blueprint (a deploy swaps only its own process)."""
@@ -1712,6 +1738,9 @@ class Container:
         """``(name, zero-argument coroutine function)`` for each resource to release."""
         closers: list[tuple[str, Any]] = []
 
+        warm, self._stt_warm_task = self._stt_warm_task, None
+        if warm is not None and not warm.done():
+            warm.cancel()
         task, self._blueprint_sync_task = self._blueprint_sync_task, None
         if task is not None:
             task.cancel()
@@ -1830,6 +1859,7 @@ class Container:
             "embedding": {
                 "provider": self.settings.llm.embedding_provider,
                 "model": getattr(self.embedder, "model_id", None),
+                "revision": self.settings.llm.embedding_model_revision or None,
                 "dimension": getattr(self.embedder, "dimension", None),
                 "semantic": not isinstance(self.embedder, HashEmbeddingProvider),
             },
