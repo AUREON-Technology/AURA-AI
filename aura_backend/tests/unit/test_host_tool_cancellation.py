@@ -134,3 +134,47 @@ class TestTheServerWaitsForTheApprovalWindow:
 
         assert HOST_APPROVAL_WINDOW_S >= 330.0
         assert ReasoningSettings().engineer_loop_deadline_s >= 605.0 + HOST_APPROVAL_WINDOW_S
+
+
+class TestHostRoutedCallsDoNotHoldTheSandboxSlots:
+    async def test_a_pending_approval_does_not_block_other_users_tools(self, user) -> None:
+        """One registry per gateway process, `max_parallel` slots. A host-routed write waits up
+        to the approval window for a human; if it held a slot meanwhile, a few people away from
+        their desks would stall every other user's knowledge search in that process."""
+        from aura_core.tools.registry import ToolRegistry
+
+        tools = ToolRegistry(max_parallel=1, host_routed=_on_the_users_machine)
+        tools.host_approval_window_s = 5.0
+        approved = asyncio.Event()
+
+        @tool(
+            "host_write", "Writes on the user's machine after a human approves.",
+            category=ToolCategory.DEVELOPMENT, sensitivity=ToolSensitivity.PERSONAL,
+            side_effecting=True, workspace_local=True, timeout_s=0.05,
+        )
+        async def host_write(context: ToolContext) -> str:
+            await approved.wait()
+            return "written"
+
+        @tool("quick_lookup", "Reads something.", category=ToolCategory.KNOWLEDGE,
+              sensitivity=ToolSensitivity.PUBLIC)
+        async def quick_lookup(context: ToolContext) -> str:
+            return "found"
+
+        tools.register(host_write)
+        tools.register(quick_lookup)
+        context = ToolContext(user_id=user, correlation_id="c", deadline_s=5.0)
+        pending = asyncio.create_task(
+            tools.execute(ToolCall(id=ToolCallId("1"), name="host_write", arguments={}), context)
+        )
+        await asyncio.sleep(0.01)
+        try:
+            result, _ = await asyncio.wait_for(
+                tools.execute(ToolCall(id=ToolCallId("2"), name="quick_lookup", arguments={}), context),
+                timeout=1.0,
+            )
+        finally:
+            approved.set()
+        assert result.ok and result.content == "found"
+        written, _ = await pending
+        assert written.ok

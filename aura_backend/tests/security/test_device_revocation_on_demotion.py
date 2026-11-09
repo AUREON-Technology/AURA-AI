@@ -20,6 +20,12 @@ class _Redis:
         self.data: dict[str, str] = {}
         self.sets: dict[str, set] = {}
 
+    def set(self, key: str, value: str, nx: bool = False):
+        if nx and key in self.data:
+            return None
+        self.data[key] = value
+        return True
+
     def setex(self, key: str, ttl: int, value: str) -> None:
         self.data[key] = value
 

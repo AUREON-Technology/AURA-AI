@@ -63,6 +63,14 @@ class _LatentRedis:
     def _rtt(self) -> None:
         time.sleep(self._latency)
 
+    def set(self, key: str, value: str, nx: bool = False):
+        self._rtt()
+        with self._lock:
+            if nx and key in self._data:
+                return None
+            self._data[key] = value
+            return True
+
     def setex(self, key: str, ttl: int, value: str) -> None:
         self._rtt()
         with self._lock:

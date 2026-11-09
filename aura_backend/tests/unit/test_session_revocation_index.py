@@ -30,6 +30,7 @@ import pytest
 from services import jwt_auth
 
 PAST = datetime(2000, 1, 1, tzinfo=timezone.utc)
+NOW = datetime.now(timezone.utc)
 FUTURE = datetime(2999, 1, 1, tzinfo=timezone.utc)
 
 
@@ -45,8 +46,11 @@ class FakeRedis:
     def setex(self, key, ttl, value):
         self.values[key] = value
 
-    def set(self, key, value, ex=None):
+    def set(self, key, value, ex=None, nx=False):
+        if nx and key in self.values:
+            return None
         self.values[key] = value
+        return True
 
     def get(self, key):
         return self.values.get(key)
@@ -94,6 +98,10 @@ def redis(monkeypatch) -> FakeRedis:
     fake = FakeRedis()
     monkeypatch.setattr(jwt_auth, "get_redis_client", lambda: fake)
     monkeypatch.setattr(jwt_auth, "_legacy_tokens_until", lambda: PAST)
+    # A mature deployment: the indexed code first ran here longer ago than any record lives,
+    # so nothing predating the index can still exist and the fallback scan is off.
+    monkeypatch.setattr(jwt_auth, "_index_marker_noted", False)
+    fake.set(jwt_auth._INDEX_SINCE_KEY, (NOW - timedelta(days=45)).isoformat())
     return fake
 
 
@@ -148,6 +156,30 @@ class TestRevocationReadsAnIndexNotTheWholeKeyspace:
         redis.setex(f"{jwt_auth._REFRESH_PREFIX}old-token", 100, json.dumps(_user("alice")))
         assert jwt_auth.revoke_all_for_uid("alice") == 0
         assert redis.scans == 0
+
+    def test_pre_index_records_are_swept_for_their_whole_lifetime_whatever_the_date(
+        self, redis: FakeRedis
+    ) -> None:
+        """The legacy cut-off is a fixed date; a refresh token or paired daemon written the day
+        before this code deployed lives 30 days from then. If the deploy lands late, the scan
+        must still back the index up until every pre-index record has expired -- else demotion
+        or erasure leaves a daemon signed in. The window is anchored on when the indexed code
+        first ran, recorded once in Redis."""
+        assert jwt_auth._legacy_tokens_until() == PAST
+        del redis.values[jwt_auth._INDEX_SINCE_KEY]  # the indexed code has not run here before
+        redis.setex(f"{jwt_auth._REFRESH_PREFIX}old-token", 100, json.dumps(_user("alice")))
+        redis.setex(f"{jwt_auth._DEVICE_OWNER_PREFIX}old-device", 100, "alice")
+        assert jwt_auth.revoke_all_for_uid("alice") == 1, "a pre-index token escaped revocation"
+        assert "old-device" in {d["device_id"] for d in jwt_auth.list_devices_for_uid("alice")}
+        since = datetime.fromisoformat(redis.values[jwt_auth._INDEX_SINCE_KEY])
+        assert abs((since - NOW).total_seconds()) < 60
+
+    def test_the_first_run_marker_is_set_once_and_kept(self, redis: FakeRedis) -> None:
+        stamp = (NOW - timedelta(days=3)).isoformat()
+        redis.set(jwt_auth._INDEX_SINCE_KEY, stamp)
+        jwt_auth.issue_token_pair(_user("alice"))
+        jwt_auth.revoke_all_for_uid("alice")
+        assert redis.values[jwt_auth._INDEX_SINCE_KEY] == stamp
 
 
 @pytest.mark.parametrize("store", ["redis", "local"])

@@ -375,8 +375,14 @@ class ToolRegistry:
             # -- and a late Approve then executed with nothing upstream expecting it (FSA-041).
             timeout = max(timeout, self.host_approval_window_s)
         try:
-            async with self._semaphore:
+            if host_routed:
+                # The work happens on the user's own machine, and most of the wait is a human
+                # deciding. Holding one of this process's few sandbox slots for that would let a
+                # handful of pending approvals stall every other user's tool calls here.
                 raw = await asyncio.wait_for(tool.execute(arguments, context), timeout=timeout)
+            else:
+                async with self._semaphore:
+                    raw = await asyncio.wait_for(tool.execute(arguments, context), timeout=timeout)
         except asyncio.TimeoutError:
             duration = (time.perf_counter() - started) * 1000.0
             self._observe(name, outcome="timeout", duration_ms=duration)

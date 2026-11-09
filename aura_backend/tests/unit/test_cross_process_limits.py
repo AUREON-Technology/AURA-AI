@@ -55,7 +55,18 @@ class TestTheAdmissionCapIsSharedAcrossProcesses:
         monkeypatch.setenv("AURA_LLM_ADMISSION_PROCESSES", "3")
         assert LLMSettings.from_env().admission_processes == 3
         monkeypatch.delenv("AURA_LLM_ADMISSION_PROCESSES")
+        monkeypatch.delenv("AURA_WORKERS", raising=False)
         assert LLMSettings.from_env().admission_processes == 1
+
+    def test_unset_it_follows_the_gateway_s_worker_count(self, monkeypatch) -> None:
+        """Railway runs the image's `--workers ${AURA_WORKERS:-4}` with no compose file to set
+        the division; the gateway's own worker count is the right default there. An explicit
+        value still wins, and a Celery worker (no AURA_WORKERS) keeps one process."""
+        monkeypatch.delenv("AURA_LLM_ADMISSION_PROCESSES", raising=False)
+        monkeypatch.setenv("AURA_WORKERS", "4")
+        assert LLMSettings.from_env().admission_processes == 4
+        monkeypatch.setenv("AURA_LLM_ADMISSION_PROCESSES", "2")
+        assert LLMSettings.from_env().admission_processes == 2
 
 
 class TestTheDailyQuotaIsSharedAcrossProcesses:

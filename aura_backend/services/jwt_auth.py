@@ -183,10 +183,48 @@ _local_refresh_used: Dict[str, str] = {}
 _local_refresh_families: Dict[str, set] = {}
 
 
+#: When the indexed code first ran against this Redis, written once (SET NX) and kept. The
+#: fallback scan for records written before the index stays on until every such record has
+#: expired -- the longest record lifetime after that moment -- whatever the calendar says.
+_INDEX_SINCE_KEY = "refresh_index:since"
+_INDEX_FREE_RECORD_TTL = max(REFRESH_TOKEN_TTL, DEVICE_ACCESS_TOKEN_TTL)
+_index_marker_noted = False
+
+
+def _note_index_deployed(redis_client) -> datetime:
+    """Record (once) when the indexed code first ran, and return that moment. A marker that
+    cannot be parsed counts as now: the conservative reading, which keeps the scan on."""
+    global _index_marker_noted
+    now = datetime.now(timezone.utc)
+    if not _index_marker_noted:
+        try:
+            redis_client.set(_INDEX_SINCE_KEY, now.isoformat(), nx=True)
+            _index_marker_noted = True
+        except Exception:  # noqa: BLE001 -- a lost marker only keeps the scan on longer
+            logger.warning("could not record the revocation-index deploy marker", exc_info=True)
+    raw = redis_client.get(_INDEX_SINCE_KEY)
+    if not raw:
+        return now
+    try:
+        since = datetime.fromisoformat(raw.decode() if isinstance(raw, bytes) else str(raw))
+    except ValueError:
+        return now
+    return since if since.tzinfo else since.replace(tzinfo=timezone.utc)
+
+
 def _index_free_records_possible() -> bool:
     """Whether records predating the revocation index may still be live, so the old full scan
-    must back the index up. Bounded by the same cut-off as claimless tokens (F-03)."""
-    return datetime.now(timezone.utc) < _legacy_tokens_until()
+    must back the index up: until the claimless-token cut-off (F-03), and in any case until
+    every record written before the indexed code first ran here has expired (FSA-015). The
+    cut-off is a fixed date; a deploy that lands late must not strand a 30-day daemon pairing
+    outside both the index and the scan."""
+    now = datetime.now(timezone.utc)
+    if now < _legacy_tokens_until():
+        return True
+    redis_client = get_redis_client()
+    if redis_client is None:
+        return False
+    return now < _note_index_deployed(redis_client) + _INDEX_FREE_RECORD_TTL
 
 
 def _refresh_store_set(token: str, user_info: dict, ttl: timedelta) -> None:
@@ -198,6 +236,8 @@ def _refresh_store_set(token: str, user_info: dict, ttl: timedelta) -> None:
     device_id = info.get("device_id")
     redis_client = get_redis_client()
     if redis_client is not None:
+        if not _index_marker_noted:
+            _note_index_deployed(redis_client)
         redis_client.setex(
             f"{_REFRESH_PREFIX}{token}", ttl_s, json.dumps({"user_info": info, "family": family})
         )

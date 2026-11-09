@@ -439,6 +439,10 @@ class TestContainerImagesArePinnedByDigest:
             assert ":latest" not in line, line
             assert re.search(r"@sha256:[0-9a-f]{64}", line), f"base image is not digest-pinned: {line}"
 
+    def test_the_space_dockerfile_no_longer_says_it_is_pinned_by_tag(self) -> None:
+        text = (self.SPACE / "Dockerfile").read_text(encoding="utf-8")
+        assert "Pinned by tag, not digest" not in text, "stale comment above the digest pin"
+
     def test_the_space_refuses_to_boot_without_a_model_revision(self) -> None:
         text = (self.SPACE / "entrypoint.sh").read_text(encoding="utf-8")
         api_key_check = text.index('if [ -z "${VLLM_API_KEY:-}" ]')

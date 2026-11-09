@@ -73,9 +73,49 @@ class TestKnowledgePayloads:
         await engine.ingest(title="notes", content="# Notes\n\nThe Cairo office opens at nine.", owner_id=owner)
         points = _points(vectors, index_manager.identity_for_current_embedder())
         assert points and all("content" not in p.payload for p in points)
+        # "No readable content" means no text at all: the document's title and its section
+        # headings read as well as the body does. Only identity, scope and filterable
+        # provenance stay in the payload.
+        for point in points:
+            assert "heading_path" not in point.payload, point.payload
+            assert "title" not in point.payload, point.payload
+            identity = {"chunk_id", "document_id", "owner_id"}
+            assert not any(
+                isinstance(v, str) and k not in identity and k not in IndexManager.OFF_HOST_PAYLOAD_KEYS
+                for k, v in point.payload.items()
+            ), point.payload
         result = await engine.retrieve("when does the Cairo office open", owner_id=owner)
         assert result.chunks, "nothing retrieved"
-        assert any("Cairo office opens at nine" in c.chunk.content for c in result.chunks)
+        hit = next(c for c in result.chunks if "Cairo office opens at nine" in c.chunk.content)
+        assert hit.chunk.heading_path == ("Notes",), "heading comes back from the document store"
+        assert hit.chunk.metadata.get("title") == "notes", "title comes back from the document store"
+
+    async def test_off_host_retrieval_reads_each_document_once_not_once_per_candidate(
+        self, vectors, documents, embedder, safety, graph, metrics
+    ) -> None:
+        """With the text off the payload every dense hit is resolved from the document store.
+        Twenty candidates from five documents must cost five chunk fetches, not twenty: each
+        fetch is a full SELECT of the document's chunks, decrypted when field encryption is on."""
+        engine, _ = await self._engine(
+            vectors, documents, embedder, safety, graph, metrics, payload_content=False
+        )
+        owner = UserId("alice")
+        content = "\n\n".join(
+            f"# Section {i}\n\nThe Cairo office opens at nine on day {i} and closes at five."
+            for i in range(4)
+        )
+        await engine.ingest(title="hours", content=content, owner_id=owner)
+        fetched: list[tuple[str, int]] = []
+        original = documents.chunks_for
+
+        async def counting(document_id, version):
+            fetched.append((document_id.value, version))
+            return await original(document_id, version)
+
+        documents.chunks_for = counting
+        result = await engine.retrieve("when does the Cairo office open", owner_id=owner)
+        assert len(result.chunks) >= 2, "the test needs several candidates from one document"
+        assert len(fetched) == len(set(fetched)), f"a document was fetched more than once: {fetched}"
 
     async def test_on_host_payloads_still_carry_the_text(
         self, vectors, documents, embedder, safety, graph, metrics

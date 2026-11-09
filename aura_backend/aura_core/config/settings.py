@@ -747,7 +747,8 @@ class LLMSettings:
     #: How many processes share each capacity group's declared cap (audit FSA-025): the gateway's
     #: ``AURA_WORKERS``. Each process gets the cap divided by this (floored at one slot), so the
     #: sum over the gateway's workers is the cap the model server was declared to bear. 1 keeps
-    #: the per-process behaviour.
+    #: the per-process behaviour. ``AURA_LLM_ADMISSION_PROCESSES`` sets it; unset, it follows
+    #: ``AURA_WORKERS`` (the image's uvicorn worker count), so Railway divides too.
     admission_processes: int = 1
     #: Concurrent generations one user may hold across all pools (and queue as many more);
     #: 0 disables the quota.
@@ -812,7 +813,11 @@ class LLMSettings:
             max_prompt_tokens=_int("LLM_MAX_PROMPT_TOKENS", 400, minimum=64, maximum=32768),
             admission_max_queue=_int("LLM_ADMISSION_MAX_QUEUE", -1, minimum=-1),
             admission_queue_timeout_s=_float("LLM_ADMISSION_QUEUE_TIMEOUT_S", 0.0, minimum=0.0),
-            admission_processes=_int("LLM_ADMISSION_PROCESSES", 1, minimum=1, maximum=256),
+            # Unset, the gateway's own worker count: Railway runs the image's
+            # `--workers ${AURA_WORKERS:-4}` with no compose file to set the division.
+            admission_processes=_int(
+                "LLM_ADMISSION_PROCESSES", _int("WORKERS", 1, minimum=1), minimum=1, maximum=256
+            ),
             user_max_concurrent_generations=_int(
                 "LLM_USER_MAX_CONCURRENT_GENERATIONS", 0, minimum=0
             ),

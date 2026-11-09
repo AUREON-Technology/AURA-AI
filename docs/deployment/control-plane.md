@@ -230,10 +230,14 @@ AURA_LLM_MAX_PROMPT_TOKENS=<rule below>
 
 Why each value:
 
-- **`AURA_WORKERS`.** Every admission limit, and every provider's `MAX_CONCURRENCY`, is per
-  gateway process. The image runs `AURA_WORKERS` processes (4 by default), so the upstream really
-  sees up to `MAX_CONCURRENCY × AURA_WORKERS` calls at once. Divide by the worker count when
-  sizing anything below.
+- **`AURA_WORKERS`.** Every provider's `MAX_CONCURRENCY` is declared per capacity group, and the
+  image runs `AURA_WORKERS` processes (4 by default). Since audit FSA-025 the gateway divides each
+  group's cap among its processes: `AURA_LLM_ADMISSION_PROCESSES` defaults to `AURA_WORKERS` when
+  unset, so a declared cap of 4 is 1 slot in each of 4 workers and the upstream sees 4, not 16.
+  Declare the cap the upstream should see in total; a cap below the worker count keeps one slot per
+  worker and the boot log says so. The per-minute arithmetic below still has to account for every
+  worker, because each worker's slot is independently busy. Daily and per-minute quotas
+  (`RPM`/`RPD`/`TPM`/`TPD`) are shared counters in Redis across every process.
 - **`AURA_PROVIDER_HOSTED1_MAX_CONCURRENCY`.** A generation that takes `d` seconds, held at
   concurrency `c`, sends `c × 60 / d` requests a minute. To stay under the provider's `RPM`, use
   `c ≤ RPM × d / (60 × AURA_WORKERS)`, rounded down, and never below 1.

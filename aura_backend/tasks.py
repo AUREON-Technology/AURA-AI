@@ -280,6 +280,10 @@ def _worker_settings():
     from aura_core.config import load_settings
 
     os.environ["AURA_HOST_AGENT_RELAY"] = "false"
+    # No background job transcribes, yet every prefork child builds a container and runs
+    # startup(). Warming Whisper there (audit FSA-110's startup warm) would load the model into
+    # four realtime children under a 1 GB limit for nothing; the gateway's workers warm it.
+    os.environ["AURA_VOICE_STT_WARM_ON_STARTUP"] = "false"
     return load_settings(refresh=True)
 
 

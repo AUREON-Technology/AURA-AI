@@ -14,13 +14,11 @@
 # host like this at all.
 #
 # Requires a PAID GPU hardware tier when the Space is created (e.g. t4-small, a10g-small) --
-# vLLM needs CUDA, so this will not run on cpu-basic. Pinned by tag, not digest, for the same
-# reason as the sibling Space: HF rebuilds on push, and a stale digest is a silent build
-# failure at the worst moment. Pin the digest yourself if you want reproducibility and are
-# willing to bump it deliberately.
+# vLLM needs CUDA, so this will not run on cpu-basic.
 # Tag plus digest (audit FSA-111): the same vLLM release the VPS `vllm` service pins in
 # docker-compose.prod.yml, so both inference targets run one tested server build. Bump the
-# two together.
+# two together. HF rebuilds on every push, so a digest the registry has dropped fails the
+# build loudly rather than serving an untested image -- the trade the audit asked for.
 FROM vllm/vllm-openai:v0.29.0@sha256:c2914767605584b6d8f45686b82de173ecc99e781897aa3d0a66dacd72c51ae1
 
 USER root

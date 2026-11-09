@@ -16,6 +16,8 @@ which is how a model ends up grounding a confident answer in noise.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import asyncio
 import hashlib
 import time
@@ -601,14 +603,16 @@ class KnowledgeEngine:
 
         # A chunk that only the lexical retriever found has no payload from the vector search;
         # fetch its content from the document store so it can be reranked and returned.
-        contents = await self._resolve_contents(candidate_ids, payloads)
+        contents, stored = await self._resolve_contents(candidate_ids, payloads)
 
         scored = await self._rerank(text, candidate_ids, contents)
 
         results: list[RetrievedChunk] = []
         below: list[RetrievedChunk] = []
         for chunk_id, score in scored:
-            chunk = await self._chunk_from(chunk_id, payloads.get(chunk_id), contents.get(chunk_id))
+            chunk = await self._chunk_from(
+                chunk_id, payloads.get(chunk_id), contents.get(chunk_id), stored.get(chunk_id)
+            )
             if chunk is None:
                 continue
             retrieved = RetrievedChunk(
@@ -796,8 +800,17 @@ class KnowledgeEngine:
 
     async def _resolve_contents(
         self, chunk_ids: Sequence[str], payloads: Mapping[str, Mapping[str, Any]]
-    ) -> dict[str, str]:
+    ) -> tuple[dict[str, str], dict[str, Chunk]]:
+        """Each candidate's text, and the stored chunk for every candidate whose payload did not
+        carry it (lexical-only hits, and every hit when the payload content is off -- FSA-018).
+
+        One store read per document version, not per candidate: ``chunks_for`` is a full SELECT
+        of the document's chunks, decrypted when field encryption is on, and twenty candidates
+        from five documents must cost five of those, not twenty.
+        """
         contents: dict[str, str] = {}
+        stored: dict[str, Chunk] = {}
+        fetched: dict[tuple[str, int], dict[int, Chunk]] = {}
         for chunk_id in chunk_ids:
             payload = payloads.get(chunk_id)
             if payload and payload.get("content"):
@@ -806,11 +819,15 @@ class KnowledgeEngine:
             document_id, version, index = self._parse_chunk_id(chunk_id)
             if document_id is None:
                 continue
-            for chunk in await self._documents.chunks_for(DocumentId(document_id), version):
-                if chunk.index == index:
-                    contents[chunk_id] = chunk.content
-                    break
-        return contents
+            key = (document_id, version)
+            if key not in fetched:
+                chunks = await self._documents.chunks_for(DocumentId(document_id), version)
+                fetched[key] = {chunk.index: chunk for chunk in chunks}
+            chunk = fetched[key].get(index)
+            if chunk is not None:
+                contents[chunk_id] = chunk.content
+                stored[chunk_id] = chunk
+        return contents, stored
 
     @staticmethod
     def _parse_chunk_id(chunk_id: str) -> tuple[str | None, int, int]:
@@ -908,8 +925,21 @@ class KnowledgeEngine:
         return selected
 
     async def _chunk_from(
-        self, chunk_id: str, payload: Mapping[str, Any] | None, content: str | None
+        self,
+        chunk_id: str,
+        payload: Mapping[str, Any] | None,
+        content: str | None,
+        stored: Chunk | None = None,
     ) -> Chunk | None:
+        if stored is not None:
+            # The chunk came back from the document store (the payload carried no text, or the
+            # hit was lexical-only): it already has its heading path, title and content. Keep any
+            # filterable provenance the payload has that the store did not persist.
+            if payload:
+                extra = {k: payload[k] for k in _PROVENANCE_KEYS if k in payload and k not in stored.metadata}
+                if extra:
+                    return replace(stored, metadata={**stored.metadata, **extra})
+            return stored
         if payload:
             from ..domain.identifiers import ChunkId
 

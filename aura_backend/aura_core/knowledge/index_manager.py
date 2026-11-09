@@ -277,21 +277,35 @@ class IndexManager:
         )
         return report
 
+    #: The only string-valued metadata an off-host payload may carry: filterable provenance
+    #: (what kind of source, which modality), never document text. A title or a heading reads
+    #: as well as the body does, so with the content off they stay in the document store too.
+    OFF_HOST_PAYLOAD_KEYS = frozenset({"source_type", "modality", "page", "needs_ocr"})
+
     def payload_for(self, chunk: Chunk) -> dict[str, Any]:
-        """The vector payload for a chunk: identity, scope and provenance always; the text only
-        when :attr:`payload_content` allows it (audit FSA-018)."""
-        payload = {
+        """The vector payload for a chunk: identity and scope always; headings, title and the
+        text only when :attr:`payload_content` allows it (audit FSA-018). Off-host the engine
+        rebuilds the chunk from the owner-scoped document store on retrieval."""
+        payload: dict[str, Any] = {
             "chunk_id": chunk.id.value,
             "document_id": chunk.document_id.value,
             "document_version": chunk.document_version,
             "chunk_index": chunk.index,
             "owner_id": chunk.owner_id.value if chunk.owner_id else GLOBAL_OWNER,
-            "heading_path": list(chunk.heading_path),
             "trust_tier": int(chunk.trust_tier),
-            **{k: v for k, v in chunk.metadata.items() if isinstance(v, (str, int, float, bool))},
         }
         if self.payload_content:
+            payload["heading_path"] = list(chunk.heading_path)
+            payload.update(
+                {k: v for k, v in chunk.metadata.items() if isinstance(v, (str, int, float, bool))}
+            )
             payload["content"] = chunk.content
+        else:
+            payload.update({
+                k: v for k, v in chunk.metadata.items()
+                if isinstance(v, (int, float, bool)) and not isinstance(v, str)
+                or (isinstance(v, str) and k in self.OFF_HOST_PAYLOAD_KEYS)
+            })
         return payload
 
     # -- promotion ---------------------------------------------------------------------

@@ -356,8 +356,12 @@ retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer work
   prod and dev gateways trust `X-Forwarded-For` from exactly those (`--forwarded-allow-ips`), never
   `'*'` (audit FSA-012). Change an address in one place and change it in the other in the same
   commit; `tests/unit/test_compose_security_parity.py` pins both and that each address lies in its
-  network's declared subnet. Applying a subnet change recreates the network, so attached services
-  restart once.
+  network's declared subnet. Compose does not recreate an existing network whose `ipam` changed:
+  it stops with "network needs to be recreated", and `aura_edge` is shared with the dev stack's
+  containers. The first deploy after a subnet change is therefore manual: stop the dev stack,
+  `docker network rm aura_edge` (and `edge` if it changed), deploy prod, start dev. Until that is
+  done nginx cannot start, because a static address needs a user-configured subnet, and nginx is
+  the only published port. Reasoned from Compose's behaviour, not yet run on the VPS.
 - **The Postgres connection budget is arithmetic, not a comment.** Every uvicorn worker and every
   Celery prefork child holds one asyncpg pool plus the legacy SQLAlchemy pool
   (`InfrastructureSettings.postgres_connections_per_process`); both compose files size them per
