@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "version": "3.0.2",
+  "tag": "desktop-v3.0.2",
+  "rollback": false,
+  "platforms": {
+    "linux-x64": {
+      "url": "https://github.com/anasibrahimgnedy-collab/AURA-AI/releases/download/desktop-v3.0.2/aura-desktop-linux-x64-3.0.2.tar.gz",
+      "sha256": "6ac51ceb31de5b786d8a66ac33ab8a1fab7efbba2f39bc19db0b0536ae710daf",
+      "size": 18
+    },
+    "windows-x64": {
+      "url": "https://github.com/anasibrahimgnedy-collab/AURA-AI/releases/download/desktop-v3.0.2/aura-desktop-windows-x64-3.0.2-setup.exe",
+      "sha256": "d8cc9b30dff922bc1ec576c8bba4e2273e4c1a57d0664e0d1862807f63576b34",
+      "size": 23
+    }
+  }
+}
