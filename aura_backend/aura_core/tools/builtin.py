@@ -439,12 +439,20 @@ async def _assert_resolves_publicly(host: str, tool_name: str) -> None:
             )
 
 
-def build_http_tool(*, allowed_hosts: Sequence[str], timeout_s: float = 15.0) -> list[Tool]:
+def build_http_tool(
+    *, allowed_hosts: Sequence[str], timeout_s: float = 15.0, max_body_bytes: int = 1_000_000
+) -> list[Tool]:
     """Fetch a page from an allowlisted host.
 
     Returns an empty list when no hosts are configured: an HTTP tool with an empty allowlist
     would be advertised to the model and then refuse every call, which wastes a generation and
     teaches the model a capability it does not have.
+
+    ``max_body_bytes`` is the most of a response body that is ever read (audit FSA-011). The body
+    is streamed and reading stops at the budget, so an allowlisted host serving a huge or endless
+    response costs at most this much memory; a ``Content-Length`` over the budget is refused
+    before a byte is read. The budget is deliberately larger than ``max_result_chars``: tags are
+    stripped after reading, so a page's text is a fraction of its bytes.
     """
     allowlist = frozenset(h.lower().lstrip(".") for h in allowed_hosts if h.strip())
     if not allowlist:
@@ -479,21 +487,36 @@ def build_http_tool(*, allowed_hosts: Sequence[str], timeout_s: float = 15.0) ->
         ) as client:
             # Redirects are not followed: a redirect is a trivial allowlist bypass, since the
             # allowed host can redirect to an internal address.
-            response = await client.get(url)
-            if response.is_redirect:
-                raise ToolExecutionError(
-                    "the URL redirected; redirects are not followed", tool="fetch_url"
-                )
-            if response.status_code >= 400:
-                raise ToolExecutionError(
-                    f"HTTP {response.status_code}", tool="fetch_url"
-                )
-            content_type = response.headers.get("content-type", "")
-            if not any(t in content_type for t in ("text/", "json", "xml")):
-                raise ToolExecutionError(
-                    f"unsupported content type {content_type!r}", tool="fetch_url"
-                )
-            text = response.text
+            async with client.stream("GET", url) as response:
+                if response.is_redirect:
+                    raise ToolExecutionError(
+                        "the URL redirected; redirects are not followed", tool="fetch_url"
+                    )
+                if response.status_code >= 400:
+                    raise ToolExecutionError(
+                        f"HTTP {response.status_code}", tool="fetch_url"
+                    )
+                content_type = response.headers.get("content-type", "")
+                if not any(t in content_type for t in ("text/", "json", "xml")):
+                    raise ToolExecutionError(
+                        f"unsupported content type {content_type!r}", tool="fetch_url"
+                    )
+                declared = response.headers.get("content-length")
+                if declared and declared.isdigit() and int(declared) > max_body_bytes:
+                    raise ToolExecutionError(
+                        f"the response is {int(declared):,} bytes, over the {max_body_bytes:,}-byte "
+                        "budget; not read",
+                        tool="fetch_url",
+                    )
+                # Streamed, and stopped at the budget: the server's size claim (if any) is not
+                # what bounds memory here, the count of bytes actually received is.
+                received = bytearray()
+                async for chunk in response.aiter_bytes():
+                    room = max_body_bytes - len(received)
+                    received += chunk[:room]
+                    if len(chunk) >= room:
+                        break
+                text = received.decode(response.encoding or "utf-8", errors="replace")
         # Crude tag strip: this content is fenced as untrusted data downstream, so the goal is
         # readability, not sanitisation.
         text = re.sub(r"<script.*?</script>|<style.*?</style>", " ", text, flags=re.S | re.I)

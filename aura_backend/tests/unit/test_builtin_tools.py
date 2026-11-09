@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import socket
 
+import httpx
 import pytest
 
 from aura_core.domain.errors import ToolExecutionError
@@ -456,6 +457,96 @@ class TestHttpTool:
         (fetch,) = build_http_tool(allowed_hosts=["example.com"])
         with pytest.raises(ToolExecutionError):
             await fetch.execute({"url": "https://example.com/"}, ctx)
+
+
+class TestFetchUrlReadsWithinAByteBudget:
+    """Audit FSA-011: the tool read the whole body into memory and only then cut it to
+    ``max_result_chars``, so an allowlisted host serving a multi-gigabyte (or endless) response
+    could exhaust the gateway. The body is now streamed and reading stops at the byte budget."""
+
+    @staticmethod
+    def _client_with(monkeypatch: pytest.MonkeyPatch, handler) -> None:
+        import functools
+        import httpx
+
+        real = httpx.AsyncClient
+        monkeypatch.setattr(
+            httpx, "AsyncClient",
+            functools.partial(real, transport=httpx.MockTransport(handler)),
+        )
+        monkeypatch.setattr(
+            socket, "getaddrinfo", TestDnsRebindingGuard._fake_getaddrinfo("93.184.216.34"),
+        )
+
+    async def test_an_endless_body_is_cut_at_the_budget_without_being_read_further(
+        self, ctx, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import httpx
+
+        pulled = {"chunks": 0}
+
+        async def endless():
+            while True:
+                pulled["chunks"] += 1
+                yield b"<p>" + b"x" * 1021 + b"\n"  # 1 KiB per chunk, forever
+
+        def handler(request):
+            return httpx.Response(200, headers={"content-type": "text/html"}, stream=_AsyncStream(endless()))
+
+        self._client_with(monkeypatch, handler)
+        (fetch,) = build_http_tool(allowed_hosts=["example.com"], max_body_bytes=8 * 1024)
+        text = await fetch.execute({"url": "https://example.com/endless"}, ctx)
+        assert "x" in text
+        assert pulled["chunks"] <= 9, f"kept reading past the budget: {pulled['chunks']} KiB pulled"
+
+    async def test_a_declared_oversize_body_is_refused_before_a_byte_is_read(
+        self, ctx, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import httpx
+
+        pulled = {"chunks": 0}
+
+        async def body():
+            pulled["chunks"] += 1
+            yield b"never read"
+
+        def handler(request):
+            return httpx.Response(
+                200, headers={"content-type": "text/plain", "content-length": str(10_000_000)},
+                stream=_AsyncStream(body()),
+            )
+
+        self._client_with(monkeypatch, handler)
+        (fetch,) = build_http_tool(allowed_hosts=["example.com"], max_body_bytes=1024)
+        with pytest.raises(ToolExecutionError, match="budget"):
+            await fetch.execute({"url": "https://example.com/big"}, ctx)
+        assert pulled["chunks"] == 0
+
+    async def test_a_small_page_still_comes_back_whole(self, ctx, monkeypatch: pytest.MonkeyPatch) -> None:
+        import httpx
+
+        def handler(request):
+            return httpx.Response(200, headers={"content-type": "text/html"}, text="<h1>Hello</h1> <p>world</p>")
+
+        self._client_with(monkeypatch, handler)
+        (fetch,) = build_http_tool(allowed_hosts=["example.com"])
+        assert await fetch.execute({"url": "https://example.com/"}, ctx) == "Hello world"
+
+
+class _AsyncStream(httpx.AsyncByteStream):
+    """An httpx async byte stream over any async iterator (httpx wants its own stream type)."""
+
+    def __init__(self, iterator) -> None:
+        self._iterator = iterator
+
+    async def __aiter__(self):
+        async for chunk in self._iterator:
+            yield chunk
+
+    async def aclose(self) -> None:
+        aclose = getattr(self._iterator, "aclose", None)
+        if aclose is not None:
+            await aclose()
 
 
 class TestWeatherTool:
