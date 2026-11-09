@@ -161,20 +161,83 @@ def _decode_access_token(token: str) -> Dict[str, Any]:
 _local_refresh_store: Dict[str, Dict[str, Any]] = {}
 _warned_no_redis = False
 
+# --- Revocation index and refresh-token families (audit FSA-015) -----------------------------
+# Every refresh token is also a member of three sets -- its user's, its device's (desktop
+# sessions) and its *family's* -- so revoking an account, a device or a compromised rotation
+# chain reads one set instead of SCANning every key in Redis and decoding every value. A family
+# is one rotation chain: the token minted at sign-in and every successor `consume_refresh_token`
+# rotated it into. A consumed token leaves a `refresh_used:` marker naming its family for as long
+# as it could have lived; presenting it again is a replay (two holders of one chain, one of them a
+# thief), and the whole family is revoked. Records written before the index existed (no set
+# membership, bare user_info under the key) are still swept by the old scan, but only until the
+# legacy-token cut-off `_legacy_tokens_until` -- after it, only indexed records count.
+_REFRESH_BY_UID_PREFIX = "refresh_by_uid:"
+_REFRESH_BY_DEVICE_PREFIX = "refresh_by_device:"
+_REFRESH_FAMILY_PREFIX = "refresh_family:"
+_REFRESH_USED_PREFIX = "refresh_used:"
+_DEVICES_BY_UID_PREFIX = "devices_by_uid:"
+#: Private key carried on the identity `consume_refresh_token` returns, so the pair minted next
+#: joins the same family. Never a claim: `create_access_token` copies named keys only.
+_FAMILY_KEY = "_refresh_family"
+_local_refresh_used: Dict[str, str] = {}
+_local_refresh_families: Dict[str, set] = {}
+
+
+def _index_free_records_possible() -> bool:
+    """Whether records predating the revocation index may still be live, so the old full scan
+    must back the index up. Bounded by the same cut-off as claimless tokens (F-03)."""
+    return datetime.now(timezone.utc) < _legacy_tokens_until()
+
 
 def _refresh_store_set(token: str, user_info: dict, ttl: timedelta) -> None:
     global _warned_no_redis
+    info = dict(user_info)
+    family = info.pop(_FAMILY_KEY, None) or secrets.token_urlsafe(16)
+    ttl_s = int(ttl.total_seconds())
+    uid = str(info.get("uid", ""))
+    device_id = info.get("device_id")
     redis_client = get_redis_client()
     if redis_client is not None:
-        redis_client.setex(f"{_REFRESH_PREFIX}{token}", int(ttl.total_seconds()), json.dumps(user_info))
+        redis_client.setex(
+            f"{_REFRESH_PREFIX}{token}", ttl_s, json.dumps({"user_info": info, "family": family})
+        )
+        for key in (
+            f"{_REFRESH_BY_UID_PREFIX}{uid}",
+            f"{_REFRESH_FAMILY_PREFIX}{family}",
+            *([f"{_REFRESH_BY_DEVICE_PREFIX}{device_id}"] if device_id else []),
+        ):
+            redis_client.sadd(key, token)
+            # The set outlives its newest member by nothing: a stale member is harmless (the
+            # token key itself is gone), an unbounded set is not.
+            redis_client.expire(key, ttl_s)
         return
     if not _warned_no_redis:
         logger.warning("Redis unavailable: refresh tokens are stored in-process only (lost on restart, not shared across workers).")
         _warned_no_redis = True
-    _local_refresh_store[token] = {"user_info": user_info, "expires_at": datetime.now(timezone.utc) + ttl}
+    _local_refresh_store[token] = {
+        "user_info": info, "expires_at": datetime.now(timezone.utc) + ttl, "family": family,
+    }
+    _local_refresh_families.setdefault(family, set()).add(token)
 
 
 _local_refresh_lock = threading.Lock()
+
+
+def _parse_refresh_entry(raw: str) -> tuple[dict, Optional[str]]:
+    """``(user_info, family)`` from a stored value, in either shape: the indexed one
+    (``{"user_info", "family"}``) or the bare user_info written before the index."""
+    entry = json.loads(raw)
+    if isinstance(entry, dict) and "user_info" in entry:
+        return dict(entry["user_info"]), entry.get("family")
+    return dict(entry), None
+
+
+def _unindex(redis_client: Any, token: str, user_info: dict, family: Optional[str]) -> None:
+    redis_client.srem(f"{_REFRESH_BY_UID_PREFIX}{user_info.get('uid', '')}", token)
+    if user_info.get("device_id"):
+        redis_client.srem(f"{_REFRESH_BY_DEVICE_PREFIX}{user_info['device_id']}", token)
+    if family:
+        redis_client.srem(f"{_REFRESH_FAMILY_PREFIX}{family}", token)
 
 
 def _refresh_store_take(token: str) -> Optional[dict]:
@@ -184,23 +247,86 @@ def _refresh_store_take(token: str) -> Optional[dict]:
     runs several workers sharing Redis) could all read it before any deleted it, and each mint a
     session -- the stolen-token race rotation exists to close. GETDEL (Redis >= 6.2; production
     runs 7) is one command, so exactly one caller gets the value.
+
+    The identity comes back carrying ``_FAMILY_KEY`` so the successor joins the same family, and
+    the consumed token leaves a ``refresh_used:`` marker for replay detection.
     """
     redis_client = get_redis_client()
     if redis_client is not None:
         raw = redis_client.getdel(f"{_REFRESH_PREFIX}{token}")
-        return json.loads(raw) if raw else None
+        if not raw:
+            return None
+        user_info, family = _parse_refresh_entry(raw)
+        _unindex(redis_client, token, user_info, family)
+        if family:
+            redis_client.setex(f"{_REFRESH_USED_PREFIX}{token}", int(REFRESH_TOKEN_TTL.total_seconds()), family)
+            user_info[_FAMILY_KEY] = family
+        return user_info
     with _local_refresh_lock:
         entry = _local_refresh_store.pop(token, None)
     if entry is None or entry["expires_at"] < datetime.now(timezone.utc):
         return None
-    return entry["user_info"]
+    family = entry.get("family")
+    user_info = dict(entry["user_info"])
+    if family:
+        _local_refresh_families.get(family, set()).discard(token)
+        _local_refresh_used[token] = family
+        user_info[_FAMILY_KEY] = family
+    return user_info
 
 
-def _refresh_store_delete(token: str) -> None:
+def _refresh_store_delete(token: str) -> bool:
+    """Drop one refresh token and its index entries. True when it existed."""
     redis_client = get_redis_client()
     if redis_client is not None:
-        redis_client.delete(f"{_REFRESH_PREFIX}{token}")
-    _local_refresh_store.pop(token, None)
+        raw = redis_client.getdel(f"{_REFRESH_PREFIX}{token}")
+        if not raw:
+            return False
+        user_info, family = _parse_refresh_entry(raw)
+        _unindex(redis_client, token, user_info, family)
+        return True
+    entry = _local_refresh_store.pop(token, None)
+    if entry is None:
+        return False
+    if entry.get("family"):
+        _local_refresh_families.get(entry["family"], set()).discard(token)
+    return True
+
+
+def _used_family(token: str) -> Optional[str]:
+    """The family of an already-consumed token, if it was consumed within its lifetime."""
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        return redis_client.get(f"{_REFRESH_USED_PREFIX}{token}")
+    return _local_refresh_used.get(token)
+
+
+def _revoke_family(family: str) -> int:
+    """Drop every live token in a rotation chain. Returns how many."""
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        tokens = set(redis_client.smembers(f"{_REFRESH_FAMILY_PREFIX}{family}"))
+        revoked = sum(1 for token in tokens if _refresh_store_delete(token))
+        redis_client.delete(f"{_REFRESH_FAMILY_PREFIX}{family}")
+        return revoked
+    tokens = _local_refresh_families.pop(family, set())
+    return sum(1 for token in list(tokens) if _refresh_store_delete(token))
+
+
+def _scan_refresh_tokens(redis_client: Any, predicate) -> list:
+    """The pre-index sweep: every refresh key whose stored identity satisfies ``predicate``."""
+    found = []
+    for key in redis_client.scan_iter(f"{_REFRESH_PREFIX}*"):
+        raw = redis_client.get(key)
+        if not raw:
+            continue
+        try:
+            user_info, _family = _parse_refresh_entry(raw)
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            continue
+        if predicate(user_info):
+            found.append(str(key)[len(_REFRESH_PREFIX):])
+    return found
 
 
 def create_access_token(
@@ -291,9 +417,15 @@ def _owned_device_ids(uid: str) -> list:
     owned: list = []
     redis_client = get_redis_client()
     if redis_client is not None:
-        for key in redis_client.scan_iter(f"{_DEVICE_OWNER_PREFIX}*"):
-            if redis_client.get(key) == uid:
-                owned.append(str(key)[len(_DEVICE_OWNER_PREFIX):])
+        # The index may name a device whose owner record has since expired; the record decides.
+        owned += [
+            device_id for device_id in sorted(redis_client.smembers(f"{_DEVICES_BY_UID_PREFIX}{uid}"))
+            if redis_client.get(f"{_DEVICE_OWNER_PREFIX}{device_id}") == uid
+        ]
+        if _index_free_records_possible():
+            for key in redis_client.scan_iter(f"{_DEVICE_OWNER_PREFIX}*"):
+                if redis_client.get(key) == uid:
+                    owned.append(str(key)[len(_DEVICE_OWNER_PREFIX):])
     owned += [device for device, owner in _local_device_owners.items() if owner == uid]
     return list(dict.fromkeys(owned))
 
@@ -326,7 +458,10 @@ def _register_device_owner(device_id: str, uid: str) -> None:
     its own `exp` claim anyway, there is nothing left for a revoke to protect against."""
     redis_client = get_redis_client()
     if redis_client is not None:
-        redis_client.setex(f"{_DEVICE_OWNER_PREFIX}{device_id}", int(DEVICE_ACCESS_TOKEN_TTL.total_seconds()), uid)
+        ttl_s = int(DEVICE_ACCESS_TOKEN_TTL.total_seconds())
+        redis_client.setex(f"{_DEVICE_OWNER_PREFIX}{device_id}", ttl_s, uid)
+        redis_client.sadd(f"{_DEVICES_BY_UID_PREFIX}{uid}", device_id)
+        redis_client.expire(f"{_DEVICES_BY_UID_PREFIX}{uid}", ttl_s)
         return
     _local_device_owners[device_id] = uid
 
@@ -422,24 +557,20 @@ def _revoke_refresh_tokens_for_device(device_id: str) -> int:
     revoked = 0
     redis_client = get_redis_client()
     if redis_client is not None:
-        for key in redis_client.scan_iter(f"{_REFRESH_PREFIX}*"):
-            raw = redis_client.get(key)
-            if not raw:
-                continue
-            try:
-                stored = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if stored.get("device_id") == device_id:
-                redis_client.delete(key)
-                revoked += 1
+        indexed = set(redis_client.smembers(f"{_REFRESH_BY_DEVICE_PREFIX}{device_id}"))
+        revoked += sum(1 for token in indexed if _refresh_store_delete(token))
+        redis_client.delete(f"{_REFRESH_BY_DEVICE_PREFIX}{device_id}")
+        if _index_free_records_possible():
+            for token in _scan_refresh_tokens(redis_client, lambda info: info.get("device_id") == device_id):
+                if token not in indexed and _refresh_store_delete(token):
+                    revoked += 1
     stale = [
         token for token, entry in _local_refresh_store.items()
         if entry.get("user_info", {}).get("device_id") == device_id
     ]
     for token in stale:
-        _local_refresh_store.pop(token, None)
-        revoked += 1
+        if _refresh_store_delete(token):
+            revoked += 1
     return revoked
 
 
@@ -481,14 +612,7 @@ def revoke_all_devices_for_uid(uid: str) -> int:
     revoking someone's refresh tokens alone leaves a paired desktop signed in -- with whatever role
     it was issued under -- for the rest of that month. Demotion and erasure call this too.
     """
-    owned: list[str] = []
-    redis_client = get_redis_client()
-    if redis_client is not None:
-        for key in redis_client.scan_iter(f"{_DEVICE_OWNER_PREFIX}*"):
-            if redis_client.get(key) == uid:
-                owned.append(str(key)[len(_DEVICE_OWNER_PREFIX):])
-    owned += [device for device, owner in _local_device_owners.items() if owner == uid]
-    return sum(1 for device_id in dict.fromkeys(owned) if revoke_device(device_id, requesting_uid=uid))
+    return sum(1 for device_id in _owned_device_ids(uid) if revoke_device(device_id, requesting_uid=uid))
 
 
 def is_device_revoked(device_id: str) -> bool:
@@ -509,6 +633,15 @@ def consume_refresh_token(refresh_token: str) -> Optional[Dict[str, Any]]:
     """
     user_info = _refresh_store_take(refresh_token)
     if user_info is None:
+        family = _used_family(refresh_token)
+        if family:
+            # Replay (audit FSA-015): this token was already rotated. Whoever holds the live
+            # successor may be the thief, so the whole chain ends and the user signs in again.
+            revoked = _revoke_family(family)
+            logger.warning(
+                "refresh token replayed after rotation; its family was revoked",
+                extra={"revoked": revoked},
+            )
         return None
     fresh = dict(user_info)
     fresh.pop("role", None)
@@ -539,25 +672,21 @@ def revoke_all_for_uid(uid: str) -> int:
     revoked = 0
     redis_client = get_redis_client()
     if redis_client is not None:
-        for key in redis_client.scan_iter(f"{_REFRESH_PREFIX}*"):
-            raw = redis_client.get(key)
-            if not raw:
-                continue
-            try:
-                stored = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if stored.get("uid") == uid:
-                redis_client.delete(key)
-                revoked += 1
+        indexed = set(redis_client.smembers(f"{_REFRESH_BY_UID_PREFIX}{uid}"))
+        revoked += sum(1 for token in indexed if _refresh_store_delete(token))
+        redis_client.delete(f"{_REFRESH_BY_UID_PREFIX}{uid}")
+        if _index_free_records_possible():
+            for token in _scan_refresh_tokens(redis_client, lambda info: info.get("uid") == uid):
+                if token not in indexed and _refresh_store_delete(token):
+                    revoked += 1
     stale = [
         token
         for token, entry in _local_refresh_store.items()
         if entry.get("user_info", {}).get("uid") == uid
     ]
     for token in stale:
-        _local_refresh_store.pop(token, None)
-        revoked += 1
+        if _refresh_store_delete(token):
+            revoked += 1
     return revoked
 
 
