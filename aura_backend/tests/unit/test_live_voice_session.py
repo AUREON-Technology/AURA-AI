@@ -150,6 +150,43 @@ async def test_language_gate_rejects_arabic_on_english_only() -> None:
     assert session.check_language() is not None
 
 
+def _session(language: str, *, english_only: bool) -> LiveVoiceSession:
+    return LiveVoiceSession(
+        stt=InMemoryStt(),
+        tts=InMemoryTts(),
+        turn_streamer=EchoStreamer([]),
+        user_id=UserId("u1"),
+        session_id=SessionId("s1"),
+        language=language,
+        config=LiveVoiceConfig(english_only_stt=english_only),
+    )
+
+
+class TestTheLanguageCodeIsValidatedBeforeItReachesWhisper:
+    """Audit FSA-059: the start frame's ``language`` went to Whisper as typed. Only ISO-639-1
+    codes Whisper knows are accepted; a region tag is folded to its language."""
+
+    def test_an_unknown_code_is_refused_even_on_a_multilingual_model(self) -> None:
+        err = _session("zz", english_only=False).check_language()
+        assert err is not None and "zz" in err
+
+    def test_a_string_that_is_not_a_code_at_all_is_refused(self) -> None:
+        assert _session("../../etc/passwd", english_only=False).check_language() is not None
+
+    def test_a_region_tag_normalises_to_its_language(self) -> None:
+        session = _session("EN-US", english_only=True)
+        assert session.check_language() is None
+        assert session.stt_language == "en"
+
+    def test_a_supported_language_passes_on_a_multilingual_model(self) -> None:
+        session = _session("ar", english_only=False)
+        assert session.check_language() is None
+        assert session.stt_language == "ar"
+
+    def test_the_english_only_gate_still_applies_after_validation(self) -> None:
+        assert _session("ar", english_only=True).check_language() is not None
+
+
 class _RecordingStreamer:
     """Holds one call on the first turn; records every request it is given."""
 

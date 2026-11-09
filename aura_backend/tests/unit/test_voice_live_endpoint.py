@@ -111,6 +111,23 @@ async def test_english_only_rejects_arabic_start(container) -> None:
 
 
 @pytest.mark.anyio
+async def test_an_unknown_language_code_is_refused_at_start(container) -> None:
+    """Audit FSA-059: the code is validated against Whisper's ISO-639-1 set, not just the
+    English-only gate, so the message names the code rather than the model."""
+    from fastapi.testclient import TestClient
+
+    await container.startup()
+    with TestClient(_app(container)) as client:
+        with client.websocket_connect("/api/v3/voice/live") as ws:
+            ws.send_json({"type": "auth", "token": "good"})
+            ws.send_json({"type": "start", "session_id": "chat-1", "language": "zz"})
+            err = ws.receive_json()
+            assert err["type"] == "error"
+            assert err["error"] == "language_unsupported"
+            assert "zz" in err["message"]
+
+
+@pytest.mark.anyio
 async def test_reauth_frame_accepted(container) -> None:
     from fastapi.testclient import TestClient
 
