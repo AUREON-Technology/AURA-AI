@@ -98,6 +98,20 @@ def test_every_aura_table_the_code_queries_is_created_by_a_migration() -> None:
     assert not missing, f"tables queried by aura_core that no migration creates: {missing}"
 
 
+def test_nothing_in_the_backend_still_calls_the_removed_schema_bootstrap() -> None:
+    """The adapters' ``_ensure_schema`` methods are gone; a caller outside ``aura_core`` (a script,
+    a service) would only fail at run time, as ``scripts/seed_dev_console.py`` did after #225."""
+    callers = []
+    for path in sorted(BACKEND.rglob("*.py")):
+        parts = path.relative_to(BACKEND).parts
+        if parts[0] in {"tests", "alembic"} or "__pycache__" in parts or path.name.startswith("test_"):
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if "._ensure_schema(" in line:
+                callers.append(f"{path.relative_to(BACKEND)}:{number}")
+    assert not callers, f"calls to a schema bootstrap that no longer exists: {callers}"
+
+
 class TestTheScanItself:
     """The detector is the whole test, so check that it fires on what it must and only that."""
 
