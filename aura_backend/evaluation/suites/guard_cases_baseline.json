@@ -1,0 +1,18 @@
+{
+  "suite": "guard_cases",
+  "metrics": {
+    "system_prompt_leak.precision": 0.7273,
+    "system_prompt_leak.recall": 0.8,
+    "system_prompt_leak.specificity": 0.7857,
+    "groundedness.precision": 0.8889,
+    "groundedness.recall": 1.0,
+    "groundedness.specificity": 0.9,
+    "prompt_injection.precision": 0.8333,
+    "prompt_injection.recall": 0.8333,
+    "prompt_injection.specificity": 0.8333,
+    "jailbreak.precision": 1.0,
+    "jailbreak.recall": 0.375,
+    "jailbreak.specificity": 1.0,
+    "accuracy": 0.8171
+  }
+}

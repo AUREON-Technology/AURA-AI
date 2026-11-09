@@ -606,6 +606,10 @@ gaps:
       The first time guards ran on real model output (A4), SystemPromptLeakGuard blocked 3 of 15
       concurrency-test turns and GroundednessGuard flagged 9 (phase-a4-load-test.md:103-116).
       Whether the blocks were true leaks or false positives was never established.
+      2026-11-09 (docs/reports/ev7-guard-precision-2026-11-09.md): an EV-7 harness scores the leak,
+      groundedness, injection and jailbreak guards on 82 hand-labelled cases, gated in the PR-time
+      evaluation gate. The A4 leak blocks reproduce as the pre-86e122c bug (answers compared with
+      retrieved text as well as instructions), since fixed. Not yet run on real model output.
     target_state: Guard precision/recall measured on real model output; false-positive rate bounded.
     owner: security
     dependencies: [GAP-021]
