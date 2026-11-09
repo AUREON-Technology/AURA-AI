@@ -473,6 +473,38 @@ async def _run_idempotency_purge() -> dict:
     return {"status": "ok", "purged": purged}
 
 
+async def _run_retention_purge() -> dict:
+    """Apply the audit and telemetry retention (audit FSA-016). ``0`` days keeps a table."""
+    from datetime import timedelta
+
+    container = await _ensure_worker_container()
+    now = container.clock.now()
+    observability = container.settings.observability
+    audit_purged = telemetry_purged = 0
+    if observability.audit_retention_days > 0:
+        audit_purged = await container.audit.purge_before(now - timedelta(days=observability.audit_retention_days))
+    if observability.telemetry_retention_days > 0:
+        telemetry_purged = await container.telemetry_sink.purge_before(
+            now - timedelta(days=observability.telemetry_retention_days)
+        )
+    return {"status": "ok", "audit_purged": audit_purged, "telemetry_purged": telemetry_purged}
+
+
+@celery_app.task(name="tasks.purge_audit_and_telemetry_task", queue="realtime")
+def purge_audit_and_telemetry_task() -> dict:
+    """Delete audit events and turn telemetry past their retention (audit FSA-016).
+
+    Both tables hold personal data (actor email or subject and source IP; a user's conversation
+    ids) and were kept forever. Retention is AURA_AUDIT_RETENTION_DAYS / AURA_TELEMETRY_RETENTION_DAYS.
+    """
+    logger.info("Celery task: Purging audit events and telemetry past retention...")
+    try:
+        return _run_async(_run_retention_purge())
+    except Exception as e:
+        logger.error("Retention purge task failed: %s", e, exc_info=True)
+        return {"status": "error", "error": type(e).__name__}
+
+
 @celery_app.task(name="tasks.purge_idempotency_keys_task", queue="realtime")
 def purge_idempotency_keys_task() -> dict:
     """Delete `Idempotency-Key` records past their TTL (roadmap P1.4).

@@ -1111,10 +1111,19 @@ class ObservabilitySettings:
     #: found /metrics world-readable there, publishing which safety bypasses are on and which
     #: dependencies are down.
     metrics_token: str = ""
+    #: How long audit events and turn telemetry are kept (audit FSA-016). Both hold personal
+    #: data (the audit actor is an email or subject, with a source IP; telemetry names a user's
+    #: conversations) and were kept forever. ``0`` keeps rows indefinitely. The daily
+    #: ``purge_audit_and_telemetry_task`` applies these; erasure pseudonymises the audit actor
+    #: and drops the user's conversations' telemetry regardless of age.
+    audit_retention_days: int = 365
+    telemetry_retention_days: int = 90
 
     @classmethod
     def from_env(cls) -> "ObservabilitySettings":
         return cls(
+            audit_retention_days=_int("AUDIT_RETENTION_DAYS", 365, minimum=0),
+            telemetry_retention_days=_int("TELEMETRY_RETENTION_DAYS", 90, minimum=0),
             log_level=(_env("LOG_LEVEL", "INFO") or "INFO").upper(),
             log_format=(_env("LOG_FORMAT", "json") or "json").lower(),
             metrics_enabled=_bool("METRICS_ENABLED", True),

@@ -2,7 +2,8 @@
 
 A separate module from ``postgres_store.py`` so that file does not keep growing.
 Selected when the document backend is postgres; shares ``PostgresPool``.
-Append-only: this adapter never updates or deletes rows.
+Append-only in normal operation; the only writes after insert are the retention purge and the
+erasure pseudonymisation (audit FSA-016).
 """
 
 from __future__ import annotations
@@ -97,6 +98,29 @@ class PostgresAuditSink:
         except Exception as exc:
             raise _unavailable(f"could not query audit events: {exc}") from exc
         return [self._event(row) for row in rows]
+
+    async def purge_before(self, cutoff: datetime) -> int:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                status = await conn.execute("DELETE FROM aura_audit_events WHERE at < $1", _utc(cutoff))
+        except Exception as exc:
+            raise _unavailable(f"could not purge audit events: {exc}") from exc
+        # asyncpg reports the command tag ("DELETE 3"); the count is its last word.
+        return int(str(status).rsplit(" ", 1)[-1] or 0)
+
+    async def pseudonymise_actor(self, actor: str, replacement: str) -> int:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                status = await conn.execute(
+                    "UPDATE aura_audit_events SET actor = $2, source_ip = NULL WHERE actor = $1",
+                    actor, replacement,
+                )
+        except Exception as exc:
+            raise _unavailable(f"could not pseudonymise audit events: {exc}") from exc
+        # asyncpg reports the command tag ("UPDATE 3"); the count is its last word.
+        return int(str(status).rsplit(" ", 1)[-1] or 0)
 
     @staticmethod
     def _event(row: Mapping[str, Any]) -> AuditEvent:

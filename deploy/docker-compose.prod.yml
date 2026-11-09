@@ -544,6 +544,11 @@ services:
       AURA_POSTGRES_POOL_MAX_SIZE: ${AURA_POSTGRES_POOL_MAX_SIZE:-10}
       AURA_LEGACY_DB_POOL_SIZE: ${AURA_LEGACY_DB_POOL_SIZE:-5}
       AURA_LEGACY_DB_MAX_OVERFLOW: ${AURA_LEGACY_DB_MAX_OVERFLOW:-5}
+      # Retention for personal data in the logs (audit FSA-016): audit events (actor, source IP)
+      # and turn telemetry (conversation ids). 0 keeps a table forever. Applied daily by
+      # purge_audit_and_telemetry_task on the realtime worker.
+      AURA_AUDIT_RETENTION_DAYS: ${AURA_AUDIT_RETENTION_DAYS:-365}
+      AURA_TELEMETRY_RETENTION_DAYS: ${AURA_TELEMETRY_RETENTION_DAYS:-90}
       AURA_DATABASE_URL_FILE: /run/secrets/postgres_password
       AURA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
       AURA_QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
@@ -894,6 +899,11 @@ services:
       AURA_POSTGRES_POOL_MAX_SIZE: ${AURA_WORKER_POSTGRES_POOL_MAX_SIZE:-2}
       AURA_LEGACY_DB_POOL_SIZE: ${AURA_WORKER_LEGACY_DB_POOL_SIZE:-1}
       AURA_LEGACY_DB_MAX_OVERFLOW: ${AURA_WORKER_LEGACY_DB_MAX_OVERFLOW:-1}
+      # Retention for personal data in the logs (audit FSA-016): audit events (actor, source IP)
+      # and turn telemetry (conversation ids). 0 keeps a table forever. Applied daily by
+      # purge_audit_and_telemetry_task on the realtime worker.
+      AURA_AUDIT_RETENTION_DAYS: ${AURA_AUDIT_RETENTION_DAYS:-365}
+      AURA_TELEMETRY_RETENTION_DAYS: ${AURA_TELEMETRY_RETENTION_DAYS:-90}
       AURA_DATABASE_URL_FILE: /run/secrets/postgres_password
       AURA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
       AURA_QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
