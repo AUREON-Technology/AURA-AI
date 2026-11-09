@@ -415,6 +415,21 @@ void main() {
       expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isFalse);
     });
 
+    test(
+        'cancelling the call while it waits for approval throws, delists the approval and never '
+        'runs the command (FSA-041)', () async {
+      final future = handler.run({
+        'command': ['sh', '-c', 'mkdir newdir'],
+        'timeout_s': 5.0,
+      }, callId: 'call-1');
+      expect(approvals.list(), hasLength(1));
+      handler.cancel('call-1');
+      await expectLater(future, throwsA(isA<RpcError>()));
+      expect(approvals.list(), isEmpty);
+      // A human answering after the server gave up changes nothing.
+      expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isFalse);
+    });
+
     test('a trusted workspace never queues -- the command runs immediately', () async {
       roots.setTrusted(workspaceDir.path, true);
       final result = await handler.run({

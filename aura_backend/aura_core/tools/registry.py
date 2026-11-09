@@ -42,6 +42,12 @@ from ..ports.runtime import Tool, ToolContext
 from .policy import ToolPolicy
 from .schema import validate_arguments
 
+#: The daemon waits up to five minutes for a human to approve a host-routed call
+#: (aura_hostd/lib/src/approval_queue.dart's approvalTimeout) -- this is that window plus slack,
+#: the floor on a host-routed tool's server-side budget (audit FSA-041). The Engineer loop's
+#: deadline must cover it on top of the longest tool run (settings.reasoning.engineer_loop_deadline_s).
+HOST_APPROVAL_WINDOW_S = 330.0
+
 __all__ = ["ToolRegistry", "ToolExecutionReport"]
 
 logger = get_logger("tools")
@@ -123,6 +129,8 @@ class ToolRegistry:
         # sandbox; None when no desktop routing exists. Only asked for workspace_local side
         # effects, the one place the answer changes the policy (ToolPolicy.evaluate).
         self._host_routed = host_routed
+        #: The least a host-routed call may wait: the daemon's approval window plus slack.
+        self.host_approval_window_s = HOST_APPROVAL_WINDOW_S
 
     # -- registration ------------------------------------------------------------------
 
@@ -359,6 +367,13 @@ class ToolRegistry:
 
         # 4. Sandboxed execution
         timeout = min(spec.timeout_s or self._default_timeout, context.deadline_s or spec.timeout_s)
+        if host_routed:
+            # On the user's own machine the daemon queues this call for a human's approval and
+            # waits up to its five-minute window (aura_hostd approval_queue.dart). The spec's
+            # timeout is sized for a sandbox write or command, not for a person: cutting the
+            # call off at 15 s told the model the write had failed while the daemon kept waiting
+            # -- and a late Approve then executed with nothing upstream expecting it (FSA-041).
+            timeout = max(timeout, self.host_approval_window_s)
         try:
             async with self._semaphore:
                 raw = await asyncio.wait_for(tool.execute(arguments, context), timeout=timeout)

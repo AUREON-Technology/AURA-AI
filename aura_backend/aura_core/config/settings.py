@@ -1067,8 +1067,11 @@ class ReasoningSettings:
     verification_enabled: bool = True
     #: Wall-clock cap on the engineer agent's plan-act-observe-replan loop
     #: (`aura_core/execution/agentic_loop.py`), independent of any single execution
-    #: pass's own `deadline_s` -- this bounds the whole multi-iteration turn.
-    engineer_loop_deadline_s: float = 600.0
+    #: pass's own `deadline_s` -- this bounds the whole multi-iteration turn. At least the
+    #: longest host-routed tool (run_command, 605 s) plus the daemon's approval window (330 s,
+    #: tools/registry.py HOST_APPROVAL_WINDOW_S), or an approved command is cut off mid-run
+    #: (audit FSA-041).
+    engineer_loop_deadline_s: float = 960.0
     #: How many `delegate_to_agent` hops a call tree may contain (`aura_core/tools/delegation.py`).
     #: `1` means a delegating persona's own sub-turn cannot itself delegate further -- the default
     #: ceiling, combined with only `orchestrator` holding the tool, caps recursion at exactly one
@@ -1093,7 +1096,7 @@ class ReasoningSettings:
             tot_max_nodes=_int("REASONING_TOT_MAX_NODES", 12, minimum=2, maximum=64),
             verification_enabled=_bool("REASONING_VERIFICATION_ENABLED", True),
             engineer_loop_deadline_s=_float(
-                "REASONING_ENGINEER_LOOP_DEADLINE_S", 600.0, minimum=10.0, maximum=3600.0
+                "REASONING_ENGINEER_LOOP_DEADLINE_S", 960.0, minimum=10.0, maximum=3600.0
             ),
             max_delegation_depth=_int(
                 "REASONING_MAX_DELEGATION_DEPTH", 1, minimum=0, maximum=4

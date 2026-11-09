@@ -126,6 +126,24 @@ void main() {
     expect((response['result'] as Map)['task_id'], isNotEmpty);
   });
 
+  test('a cancel frame for an in-flight call reaches the task handler (FSA-041)', () async {
+    final handler = _RecordingHandler();
+    final client = HostAgentClient(
+      wsUrl: server.wsUrl,
+      authToken: 't',
+      taskHandler: handler,
+      logger: (_) {},
+    );
+    unawaited(client.run());
+    addTearDown(client.stop);
+    final socket = await server.clientSocket;
+    final frames = StreamQueue(socket.map((m) => jsonDecode(m as String) as Map<String, dynamic>));
+    await frames.next; // auth frame
+    socket.add(jsonEncode({'type': 'cancel', 'id': 'abc123'}));
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(handler.cancelled, ['abc123']);
+  });
+
   test('answers an unknown method with an error frame rather than dropping the connection',
       () async {
     final handler = TaskHandler(WorkspaceRoots(const []));
@@ -353,5 +371,17 @@ class StreamQueue<T> {
       throw StateError('stream closed before the expected frame arrived');
     }
     return _iterator.current;
+  }
+}
+
+
+class _RecordingHandler extends TaskHandler {
+  _RecordingHandler() : super(WorkspaceRoots(const []));
+  final List<String> cancelled = [];
+
+  @override
+  void cancel(String callId) {
+    cancelled.add(callId);
+    super.cancel(callId);
   }
 }
