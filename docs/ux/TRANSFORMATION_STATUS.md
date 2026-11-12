@@ -11,7 +11,7 @@ for fetching the Flutter version `client-ci.yml` pins and running `analyze` + `t
 which is how every "awaiting CI" row below became a measured result instead of a hope.
 
 **Last local run** (Flutter 3.44.6 / Dart 3.12.2, the CI pin):
-`flutter analyze` → **No issues found!**; `flutter test` → **552 passed, 0 failed, 3 skipped**.
+`flutter analyze` → **No issues found!**; `flutter test` → **656 passed, 0 failed, 3 skipped**.
 `test/ux/` is no longer only this transformation's: the parallel workstream has added suites
 there too (the i18n and RTL ratchets below among them), so a count of that directory is no longer
 a measure of this work. The suite grew past the 381 this transformation last measured
@@ -40,7 +40,7 @@ is actually available on demand.
 | 4 | Explorer + Editor | **PARTIALLY IMPLEMENTED** | F-08 closed (unimplemented editor commands now throw). Explorer search/filter, editor breadcrumbs, symbols and the selection→AURA actions NOT STARTED |
 | 5 | Command system, Terminal, Git, Diff | **PARTIALLY IMPLEMENTED** | F-07 closed — Ctrl/Cmd+Shift+P over a shared palette component, 28 tests. Terminal, Git and Diff UX untouched; mobile's palette not yet migrated onto the shared component |
 | 6 | Problems + Tests + Debug | **PARTIALLY IMPLEMENTED** | F-09 closed — the problem count is now visible with the panel collapsed. Test Explorer and the unified diagnostics experience NOT STARTED |
-| 7 | AURA AI interaction | **PARTIALLY IMPLEMENTED — not by this transformation** | Much of rule 12's progressive disclosure exists in `features/chat/presentation/widgets/`: `step_log_panel.dart` renders the plan/tool steps from the backend's `step` SSE frames, `tool_call_chip.dart` and `turn_status_row.dart` the execution, `citation_chip.dart` / `user_facing_citations.dart` the sources, `streaming_message_skeleton.dart` the wait. This transformation added the two signals that were arriving and rendering nowhere: `TurnMeta.tainted` (the turn's context was quarantined, ADR-006) and the **plan** — specifically the steps that did not complete, which is rule 15's "what remains". Still missing: **context inspection**, what AURA *knows* for this turn (current file, relevant files, diagnostics, git state), and rule 13's structured response sections |
+| 7 | AURA AI interaction | **PARTIALLY IMPLEMENTED — not by this transformation** | Much of rule 12's progressive disclosure exists in `features/chat/presentation/widgets/`: `step_log_panel.dart` renders the plan/tool steps from the backend's `step` SSE frames, `tool_call_chip.dart` and `turn_status_row.dart` the execution, `citation_chip.dart` / `user_facing_citations.dart` the sources, `streaming_message_skeleton.dart` the wait. This transformation added the three signals that were arriving and rendering nowhere: `TurnMeta.tainted` (context quarantined, ADR-006), the **plan**'s unfinished steps (rule 15's "what remains"), and **`degraded_reasons`** — so a degraded turn now says *why* instead of only that it ran "in a reduced mode". Still missing: **context inspection**, what AURA *knows* for this turn (current file, relevant files, diagnostics, git state), and rule 13's structured response sections |
 | 8 | Agent Workspace | **PARTIALLY IMPLEMENTED — not by this transformation** | The pieces exist as message-level widgets: `sandbox_diff_view.dart`, `sandbox_file_view.dart`, `sandbox_terminal_view.dart`, `pending_actions_card.dart`, `engineer_confirmation_card.dart`, `github_branch_summary.dart`. What rule 15 asks for and does not exist is the **run as a first-class view**: task, plan with a current step, changed-file set, test status and security state as regions you can look at, rather than fragments scattered down a transcript you have to scroll |
 | 9 | Approval + Security UX | **BLOCKED** | F-03: the approval payload carries `command`, `root`, `paths`, `diff_preview` and nothing else. Reason, risk and reversibility are not transmitted, and inventing them client-side would be fabrication. Protocol change across backend + hostd + client is the prerequisite |
 | 10 | Host Management | **NOT STARTED** | |
@@ -109,6 +109,34 @@ And a status this document did not earn should not read as if it had.
 The lesson for this file: a status table is only worth the date of its last measurement. Both
 phases above were re-checked against the tree on 2026-10-30, by reading the widgets and their
 mount points — not inferred from the roadmap.
+
+## The same pattern, a third time: a field sent for the client, unread
+
+The kernel's `done` frame carries `degraded_reasons` — bounded slugs
+(`provider_fallback`, `tainted_context`, `empty_retrieval`, `tool_failure`, `planning_failed`,
+`empty_generation_fallback`) — and the comment where it sends them says they are there *"so a
+client can say why"*. No client read them, so every degraded turn said only "AURA ran this turn in
+a reduced mode."
+
+Found by diffing the `done` frame's keys against the keys `TurnMeta.fromJson` reads. That diff is
+cheap and it has now paid three times (`tainted`, the plan's key mismatch, this), so it is worth
+repeating whenever the backend's turn payload changes:
+
+```bash
+# in aura_backend: the frame's keys
+sed -n '/"type": "done"/,/^                }/p' aura_core/kernel/kernel.py | grep -oP '^\s+"\w+":'
+# in aura_client: the keys the client actually reads
+grep -oP "json\['\w+'\]" lib/features/chat/data/turn_meta.dart
+```
+
+Two restraints went in with it. A reason that already has its own note (`tainted_context` is the
+quarantine line, `empty_retrieval` is the library-empty line) is not repeated; and a slug this
+client does not recognise is dropped rather than printed, so a future backend adding one cannot
+leak a raw identifier onto the screen — the generic line still covers the turn.
+
+Still unread from that frame, and not yet judged worth rendering: `agent_run_id`,
+`empty_generation_fallback` as a standalone flag (it is already a degradation reason), and
+`vision`.
 
 ## A key mismatch meant the plan never reached the client
 

@@ -1443,6 +1443,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{step} — {status}'**
   String planStepWithStatus(String step, String status);
+
+  /// Degradation reason: the router fell back to a different provider
+  ///
+  /// In en, this message translates to:
+  /// **'The first model AURA tried didn\'t answer, so it used another.'**
+  String get degradedProviderFallback;
+
+  /// Degradation reason: at least one tool call did not succeed
+  ///
+  /// In en, this message translates to:
+  /// **'A tool AURA ran failed.'**
+  String get degradedToolFailure;
+
+  /// Degradation reason: planning or execution raised, and the turn answered without a plan
+  ///
+  /// In en, this message translates to:
+  /// **'AURA couldn\'t plan this turn, so it answered directly.'**
+  String get degradedPlanningFailed;
+
+  /// Degradation reason: the generation came back empty and a fallback answer was used
+  ///
+  /// In en, this message translates to:
+  /// **'The model returned nothing, so AURA fell back.'**
+  String get degradedEmptyGeneration;
 }
 
 class _AppLocalizationsDelegate

@@ -751,4 +751,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String planStepWithStatus(String step, String status) {
     return '$step — $status';
   }
+
+  @override
+  String get degradedProviderFallback =>
+      'The first model AURA tried didn\'t answer, so it used another.';
+
+  @override
+  String get degradedToolFailure => 'A tool AURA ran failed.';
+
+  @override
+  String get degradedPlanningFailed =>
+      'AURA couldn\'t plan this turn, so it answered directly.';
+
+  @override
+  String get degradedEmptyGeneration =>
+      'The model returned nothing, so AURA fell back.';
 }

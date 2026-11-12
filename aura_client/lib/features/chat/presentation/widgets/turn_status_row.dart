@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/features/chat/data/turn_meta.dart';
+import 'package:aura_client/l10n/l10n.dart';
 
 class TurnStatusRow extends StatelessWidget {
   final TurnMeta meta;
@@ -28,13 +29,43 @@ class TurnStatusRow extends StatelessWidget {
   static const quarantinedContextCopy =
       'AURA treated the content it read as untrusted, so nothing with side '
       'effects can run without your confirmation.';
+  /// Said only when the backend named no reason this client can explain.
+  /// `degraded_reasons` usually does name one — see [explainDegradation].
   static const reducedModeCopy = 'AURA ran this turn in a reduced mode.';
   static const ungroundedCopy = 'Ungrounded — no sources attached.';
   static const interruptedCopy = 'Interrupted — this answer is incomplete.';
 
+  /// Turns the backend's degradation slugs into sentences, dropping the two
+  /// that already have their own note above (`tainted_context` is the
+  /// quarantine line, `empty_retrieval` is the library-empty line) so the row
+  /// does not say the same thing twice.
+  ///
+  /// An unrecognised slug is dropped rather than printed: a future backend
+  /// adding `some_new_reason` must not leak a raw identifier into the UI, and
+  /// the generic [reducedModeCopy] still covers the turn.
+  static List<String> explainDegradation(AppLocalizations l10n, List<String> reasons) {
+    final out = <String>[];
+    for (final reason in reasons) {
+      final sentence = switch (reason) {
+        'provider_fallback' => l10n.degradedProviderFallback,
+        'tool_failure' => l10n.degradedToolFailure,
+        'planning_failed' => l10n.degradedPlanningFailed,
+        'empty_generation_fallback' => l10n.degradedEmptyGeneration,
+        // Already said, by its own note.
+        'tainted_context' || 'empty_retrieval' => null,
+        _ => null,
+      };
+      if (sentence != null && !out.contains(sentence)) out.add(sentence);
+    }
+    return out;
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = AuraPalette.of(context);
+    final explained = explainDegradation(context.l10n, meta.degradedReasons);
+    final degradedText =
+        explained.isEmpty ? reducedModeCopy : explained.join(' ');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -68,13 +99,18 @@ class TurnStatusRow extends StatelessWidget {
           _Note(
             icon: Icons.link_off,
             color: palette.textSecondary,
-            text: libraryEmptyCopy,
+            // An empty library was not necessarily the only thing that went
+            // wrong; any other named reason is appended rather than hidden
+            // behind this one.
+            text: explained.isEmpty
+                ? libraryEmptyCopy
+                : '$libraryEmptyCopy ${explained.join(' ')}',
           )
         else if (meta.degraded)
           _Note(
             icon: Icons.cloud_queue,
             color: palette.textSecondary,
-            text: reducedModeCopy,
+            text: degradedText,
           )
         else if (!hasCitations)
           _Note(

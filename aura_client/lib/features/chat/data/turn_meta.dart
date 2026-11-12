@@ -6,6 +6,15 @@ class TurnMeta {
   final String? correlationId;
   final double? confidence;
   final bool degraded;
+
+  /// Why [degraded] is true, as the backend's own bounded slugs
+  /// (`provider_fallback`, `tainted_context`, `empty_retrieval`,
+  /// `tool_failure`, `planning_failed`, `empty_generation_fallback`).
+  ///
+  /// The kernel's comment where it sends these says they exist "so a client
+  /// can say *why*" — and no client read them, so every degraded turn said
+  /// only that it ran "in a reduced mode".
+  final List<String> degradedReasons;
   final bool needsConfirmation;
   final bool tainted;
   final bool guardsComplete;
@@ -29,6 +38,7 @@ class TurnMeta {
     this.correlationId,
     this.confidence,
     this.degraded = false,
+    this.degradedReasons = const [],
     this.needsConfirmation = false,
     this.tainted = false,
     this.guardsComplete = false,
@@ -49,6 +59,7 @@ class TurnMeta {
     String? correlationId,
     double? confidence,
     bool? degraded,
+    List<String>? degradedReasons,
     bool? needsConfirmation,
     bool? tainted,
     bool? guardsComplete,
@@ -66,6 +77,7 @@ class TurnMeta {
       correlationId: correlationId ?? this.correlationId,
       confidence: confidence ?? this.confidence,
       degraded: degraded ?? this.degraded,
+      degradedReasons: degradedReasons ?? this.degradedReasons,
       needsConfirmation: needsConfirmation ?? this.needsConfirmation,
       tainted: tainted ?? this.tainted,
       guardsComplete: guardsComplete ?? this.guardsComplete,
@@ -85,6 +97,7 @@ class TurnMeta {
         'correlation_id': correlationId,
         'confidence': confidence,
         'degraded': degraded,
+        'degraded_reasons': degradedReasons,
         'needs_confirmation': needsConfirmation,
         'tainted': tainted,
         'guards_complete': guardsComplete,
@@ -114,6 +127,10 @@ class TurnMeta {
       correlationId: json['correlation_id']?.toString(),
       confidence: _asDouble(json['confidence']),
       degraded: json['degraded'] == true,
+      degradedReasons: switch (json['degraded_reasons']) {
+        final List<dynamic> raw => raw.map((e) => e.toString()).toList(),
+        _ => const <String>[],
+      },
       needsConfirmation: _readNeedsConfirmation(json['needs_confirmation']),
       tainted: json['tainted'] == true,
       guardsComplete: json['guards_complete'] == true,

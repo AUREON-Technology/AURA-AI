@@ -225,7 +225,9 @@
   "@devicesPairedOn": {
     "description": "When the device was signed in or paired",
     "placeholders": {
-      "date": {"type": "String"}
+      "date": {
+        "type": "String"
+      }
     }
   },
   "devicesThisDevice": "this device",
@@ -248,7 +250,9 @@
   "@devicesRevokeConfirmMessage": {
     "description": "Revoke confirmation dialog message",
     "placeholders": {
-      "name": {"type": "String"}
+      "name": {
+        "type": "String"
+      }
     }
   },
   "devicesRevoked": "Device revoked.",
@@ -1007,5 +1011,21 @@
         "type": "String"
       }
     }
+  },
+  "degradedProviderFallback": "The first model AURA tried didn't answer, so it used another.",
+  "@degradedProviderFallback": {
+    "description": "Degradation reason: the router fell back to a different provider"
+  },
+  "degradedToolFailure": "A tool AURA ran failed.",
+  "@degradedToolFailure": {
+    "description": "Degradation reason: at least one tool call did not succeed"
+  },
+  "degradedPlanningFailed": "AURA couldn't plan this turn, so it answered directly.",
+  "@degradedPlanningFailed": {
+    "description": "Degradation reason: planning or execution raised, and the turn answered without a plan"
+  },
+  "degradedEmptyGeneration": "The model returned nothing, so AURA fell back.",
+  "@degradedEmptyGeneration": {
+    "description": "Degradation reason: the generation came back empty and a fallback answer was used"
   }
 }
