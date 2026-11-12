@@ -1425,6 +1425,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Tip: Google Sign-In failed. To test locally without registering SHA-1 fingerprints in the Google Console, use the \"Access Developer Environment\" bypass option above.'**
   String get loginDeveloperTip;
+
+  /// Shown under an answer when the turn planned steps that did not finish
+  ///
+  /// In en, this message translates to:
+  /// **'{gaps, plural, =1{AURA planned {total} steps and one did not complete.} other{AURA planned {total} steps and {gaps} did not complete.}}'**
+  String planIncompleteHeadline(int total, int gaps);
+
+  /// Second sentence of the screen-reader announcement for an incomplete plan
+  ///
+  /// In en, this message translates to:
+  /// **'This answer was given without them.'**
+  String get planIncompleteAnnouncement;
+
+  /// One unfinished plan step and the backend's own status word
+  ///
+  /// In en, this message translates to:
+  /// **'{step} — {status}'**
+  String planStepWithStatus(String step, String status);
 }
 
 class _AppLocalizationsDelegate

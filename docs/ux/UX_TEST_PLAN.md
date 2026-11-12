@@ -133,6 +133,19 @@ label on a narrow surface still leaves the status in a live-region announcement,
 shows a spinner and no button at all rather than a disabled one, and that the view is read-only
 when given no callback.
 
+### `test/ux/incomplete_plan_test.dart` — Phase 7 (rules 12 and 15)
+
+Both halves of the finding. The plumbing: that the plan parses from the streamed `plan_summary`
+key *and* the non-streaming `plan` key, and that neither present is simply an empty plan — the
+first of those is the bug, since reading only `plan` left this empty on every streamed turn.
+
+Then the rule: `succeeded` and `skipped` are settled (a skipped step is a planner decision, not an
+omission), `failed`/`blocked`/`pending`/`ready`/`running` are gaps, and an absent or unknown
+status raises nothing it cannot justify. The notice is silent on a clean plan and zero-sized,
+counts gaps against the whole plan, keeps the backend's own status word per step rather than
+flattening blocked and failed into "incomplete", falls back to the step kind when the planner gave
+no description, and announces that the answer came without them.
+
 ### `test/ux/turn_trust_notes_test.dart` — Phase 7 (rules 14 and 46)
 
 That a quarantined turn is reported at all, that an ordinary one stays silent, that the copy names

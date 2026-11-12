@@ -11,8 +11,10 @@ for fetching the Flutter version `client-ci.yml` pins and running `analyze` + `t
 which is how every "awaiting CI" row below became a measured result instead of a hope.
 
 **Last local run** (Flutter 3.44.6 / Dart 3.12.2, the CI pin):
-`flutter analyze` → **No issues found!**; `flutter test` → **477 passed, 0 failed, 3 skipped**,
-including the 138 in `test/ux/`. The suite grew past the 381 this transformation last measured
+`flutter analyze` → **No issues found!**; `flutter test` → **552 passed, 0 failed, 3 skipped**.
+`test/ux/` is no longer only this transformation's: the parallel workstream has added suites
+there too (the i18n and RTL ratchets below among them), so a count of that directory is no longer
+a measure of this work. The suite grew past the 381 this transformation last measured
 because other work landed alongside it; the UX figure is the one this document is accountable
 for.
 
@@ -38,7 +40,7 @@ is actually available on demand.
 | 4 | Explorer + Editor | **PARTIALLY IMPLEMENTED** | F-08 closed (unimplemented editor commands now throw). Explorer search/filter, editor breadcrumbs, symbols and the selection→AURA actions NOT STARTED |
 | 5 | Command system, Terminal, Git, Diff | **PARTIALLY IMPLEMENTED** | F-07 closed — Ctrl/Cmd+Shift+P over a shared palette component, 28 tests. Terminal, Git and Diff UX untouched; mobile's palette not yet migrated onto the shared component |
 | 6 | Problems + Tests + Debug | **PARTIALLY IMPLEMENTED** | F-09 closed — the problem count is now visible with the panel collapsed. Test Explorer and the unified diagnostics experience NOT STARTED |
-| 7 | AURA AI interaction | **PARTIALLY IMPLEMENTED — not by this transformation** | Much of rule 12's progressive disclosure exists in `features/chat/presentation/widgets/`: `step_log_panel.dart` renders the plan/tool steps from the backend's `step` SSE frames, `tool_call_chip.dart` and `turn_status_row.dart` the execution, `citation_chip.dart` / `user_facing_citations.dart` the sources, `streaming_message_skeleton.dart` the wait. This transformation added the one trust signal that was arriving and rendering nowhere: `TurnMeta.tainted`, i.e. the turn's context was quarantined (ADR-006). Still missing: **context inspection** — what AURA *knows* for this turn (current file, relevant files, diagnostics, git state) — and rule 13's structured response sections |
+| 7 | AURA AI interaction | **PARTIALLY IMPLEMENTED — not by this transformation** | Much of rule 12's progressive disclosure exists in `features/chat/presentation/widgets/`: `step_log_panel.dart` renders the plan/tool steps from the backend's `step` SSE frames, `tool_call_chip.dart` and `turn_status_row.dart` the execution, `citation_chip.dart` / `user_facing_citations.dart` the sources, `streaming_message_skeleton.dart` the wait. This transformation added the two signals that were arriving and rendering nowhere: `TurnMeta.tainted` (the turn's context was quarantined, ADR-006) and the **plan** — specifically the steps that did not complete, which is rule 15's "what remains". Still missing: **context inspection**, what AURA *knows* for this turn (current file, relevant files, diagnostics, git state), and rule 13's structured response sections |
 | 8 | Agent Workspace | **PARTIALLY IMPLEMENTED — not by this transformation** | The pieces exist as message-level widgets: `sandbox_diff_view.dart`, `sandbox_file_view.dart`, `sandbox_terminal_view.dart`, `pending_actions_card.dart`, `engineer_confirmation_card.dart`, `github_branch_summary.dart`. What rule 15 asks for and does not exist is the **run as a first-class view**: task, plan with a current step, changed-file set, test status and security state as regions you can look at, rather than fragments scattered down a transcript you have to scroll |
 | 9 | Approval + Security UX | **BLOCKED** | F-03: the approval payload carries `command`, `root`, `paths`, `diff_preview` and nothing else. Reason, risk and reversibility are not transmitted, and inventing them client-side would be fabrication. Protocol change across backend + hostd + client is the prerequisite |
 | 10 | Host Management | **NOT STARTED** | |
@@ -108,6 +110,27 @@ The lesson for this file: a status table is only worth the date of its last meas
 phases above were re-checked against the tree on 2026-10-30, by reading the widgets and their
 mount points — not inferred from the roadmap.
 
+## A key mismatch meant the plan never reached the client
+
+`TurnMeta.plan` is the plan as it stood when execution ended, with a final status per step — which
+is what makes "AURA planned four steps, ran two and answered anyway" visible at all. It was
+parsed from `json['plan']`.
+
+The streamed `done` frame does not use that key. `kernel.py` sends `plan_summary`; only the
+non-streaming `/chat` body sends `plan` (`v3.py`), and the SSE endpoint serialises the kernel's
+frame unchanged. So on the path chat actually uses, `TurnMeta.plan` was empty for every real turn,
+and anything built on it would have rendered nothing. `PlanStep`'s own docstring says it is "one
+entry from the backend's whole-turn `plan_summary`", so the intent was never in doubt — just the
+key.
+
+`fromJson` now accepts either, which also keeps it working against a backend older than the fix.
+`incomplete_plan_test.dart` pins both keys, because a test that only covered the key the client
+happened to read is how this survived in the first place.
+
+This is the `CLAUDE.md` warning in its exact form: *a backend endpoint shipping does not mean the
+client can reach it.* Worth checking the key, not just the field, for any other signal this
+document calls "arriving".
+
 ## One trust signal that cannot be rendered yet
 
 `TurnMeta.guardsComplete` parses as `json['guards_complete'] == true`. A backend that never sends
@@ -138,3 +161,20 @@ which is what the two `shell_ia_test` overrides pay for.
 Making the engine lazy — no timer until something asks it to sync — would remove that tax for
 every future shell test. It is a change to `features/sync/`, not to UX, so it is recorded here
 rather than done here.
+
+## Conventions this transformation now has to meet
+
+The parallel workstream added source-scanning ratchets under `test/ux/` after this work began, and
+new UX code has to satisfy them. Both caught this transformation's own additions on the first full
+run, which is the argument for running the whole suite rather than the file you touched:
+
+- **`hardcoded_text_ratchet_test.dart`** — counts `Text('...')` literals under `lib/features/`
+  against a ceiling that may only go *down*. New user-facing copy belongs in `lib/l10n/app_en.arb`
+  and is read through `context.l10n`, which falls back to English with no delegate in the tree, so
+  widget tests need no extra setup. ICU plurals work: `planIncompleteHeadline` uses one.
+- **`rtl_layout_test.dart`** — scans `lib/` for physical `left`/`right` in layout. Use
+  `EdgeInsetsDirectional`, `AlignmentDirectional`, `PositionedDirectional`,
+  `BorderRadiusDirectional`. There is no Arabic UI yet, only Arabic TTS (GAP-020); the point is
+  that adding one stays a translation file rather than a hunt through every inset.
+
+Raising either ceiling to get green would defeat the purpose. Conform instead.

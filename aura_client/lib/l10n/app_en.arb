@@ -979,5 +979,33 @@
   "loginDeveloperTip": "Tip: Google Sign-In failed. To test locally without registering SHA-1 fingerprints in the Google Console, use the \"Access Developer Environment\" bypass option above.",
   "@loginDeveloperTip": {
     "description": "Debug-only hint after a failed Google sign-in"
+  },
+  "planIncompleteHeadline": "{gaps, plural, =1{AURA planned {total} steps and one did not complete.} other{AURA planned {total} steps and {gaps} did not complete.}}",
+  "@planIncompleteHeadline": {
+    "description": "Shown under an answer when the turn planned steps that did not finish",
+    "placeholders": {
+      "total": {
+        "type": "int"
+      },
+      "gaps": {
+        "type": "int"
+      }
+    }
+  },
+  "planIncompleteAnnouncement": "This answer was given without them.",
+  "@planIncompleteAnnouncement": {
+    "description": "Second sentence of the screen-reader announcement for an incomplete plan"
+  },
+  "planStepWithStatus": "{step} — {status}",
+  "@planStepWithStatus": {
+    "description": "One unfinished plan step and the backend's own status word",
+    "placeholders": {
+      "step": {
+        "type": "String"
+      },
+      "status": {
+        "type": "String"
+      }
+    }
   }
 }
