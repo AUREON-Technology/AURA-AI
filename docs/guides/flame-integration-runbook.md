@@ -18,7 +18,8 @@ link works. In that repository, Flame's entry point for this integration is `doc
 | AR-8 | Re-discovery on contract change | this runbook, §4 |
 
 **Built is not proven.** Link 2 (§2) has run once against a live Flame API, on Railway on
-2026-10-07, and that report lacks items §2.6 asks for. Link 1 (§3) has not run. The integration
+2026-10-07, at an earlier Flame contract (8 tools), and that report lacks items §2.6 asks for. It
+has not run against contract 0.6.0 (16 tools). Link 1 (§3) has not run. The integration
 counts as proven only when complete reports for §2.6 and §3.4 exist.
 
 All admin calls need a Super Admin token: `ADMIN="Authorization: Bearer $SUPERADMIN_JWT"`.
@@ -63,9 +64,24 @@ AURA_BACKEND=/path/to/AURA-AI/aura_backend python tests/integration/aura_bluepri
 ```
 
 It must exit 0 with all 16 tools `ACCEPTED`, report 10 operations excluded by `x-aura-exclude`, and
-print no `not reachable by AURA` lines. Checked on 2026-11-12 against Flame contract 0.6.0
-(`FCDS-College/Nasa` `main` at `80b9c21`) and both AURA `ad215d3` (`main`) and `d696fad` (the
-revision Flame's `AURA Link 2 Contract` CI job pins).
+print no `not reachable by AURA` lines. Last checked on 2026-11-12 against Flame contract 0.6.0
+(`FCDS-College/Nasa` `main` at `dcc89dc`) and both AURA `667c7c4` (`main`) and `d696fad` (the
+revision Flame's `AURA Link 2 Contract` CI job pins). Earlier the same day: Flame `80b9c21`
+against AURA `ad215d3` and `d696fad`, with the same result.
+
+**Prepare Flame's reranker model.** Since Flame PR #30, `/api/search` reranks its top 10 results
+with a local cross-encoder, which adds about 0.7 s per search on CPU. The first search after Flame
+starts downloads that model (about 90 MB, 5–7 s) unless a Flame operator has prepared it:
+
+```bash
+# in a Flame checkout, on the Flame host
+python -m ai.providers.local.cross_encoder prepare --cache-dir "$FLAME_EMBEDDING_CACHE_DIR"
+```
+
+Both fit inside the connector's default `timeout_s` of 15 s, but prepare the model before the
+gate's probes (§2.3) or a live question (§2.5) hit `api_search`. An offline Flame that has not
+prepared it answers in fused order with `retrieval.reranking.status = "unavailable"`: correct
+results, just not reranked.
 
 ## 2. Link 2: AURA reads Flame (AR-7)
 
@@ -160,6 +176,11 @@ marked operation. The 16 compiled read tools are `api_get_health`, `api_get_dash
   - `api_get_graph_entity`: one entity and its neighbourhood up to 3 hops. Every edge carries the
     `evidence_id` of the table cell it was read from, so an answer built on it can cite that cell.
     The graph holds only what Flame's tables record: no platforms, instruments or report links.
+  - A person can check a graph answer by opening the same entity in Flame's web app: the
+    Knowledge Graph page, `<flame web>/knowledge?id=<entity ULID>` (Flame PR #32). Each link there
+    opens its evidence cell. The page walks at most 2 hops and shows at most 200 links, while the
+    tool allows `depth` up to 3 and `max_edges` up to 500 (default 200), so a deeper tool answer
+    has more links than the page shows.
 - Also from contract 0.6.0, `api_search`'s `retrieval` block reports the query rewrite and whether
   Flame's reranker reordered the results (`reranking.status`). The tool's parameters are unchanged.
 
@@ -204,6 +225,9 @@ Write `docs/reports/flame-link2-live.md` with the following:
 - the question;
 - the tool call (from `GET /api/v3/admin/audit?action=tool.bp<N>_api_search`);
 - the answer, with the Flame `evidence_id` it cites.
+  - Check that the ID resolves: `GET /api/evidence/<id>` on Flame, with the same read key.
+  - If the answer came from `bp<N>_api_get_graph_entity`, also open the entity on Flame's
+    Knowledge Graph page (§2.3a) and record that the cited link and its evidence cell appear there.
 
 **That report is AR-7.** `docs/reports/flame-link2-live.md` (2026-10-07) is the first one. It is
 missing items from the list above: the deploy audit entries, the tool-call audit record, full
