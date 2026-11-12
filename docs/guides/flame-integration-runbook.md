@@ -2,7 +2,7 @@
 
 How to connect AURA to Flame in Freefall (`FCDS-College/Nasa`) and produce the evidence that each
 link works. In that repository, Flame's entry point for this integration is `docs/integration/README.md`
-(current for Flame contract 0.5.0), its side of the contract is
+(current for Flame contract 0.6.0), its side of the contract is
 `docs/integration/AURA_INTEGRATION_REQUIREMENTS.md`, and its per-endpoint reference is
 `docs/integration/API_INTEGRATION_REFERENCE.md`; the AURA requirements it names (AR-1…AR-8) are built in this repository:
 
@@ -62,9 +62,9 @@ will deploy:
 AURA_BACKEND=/path/to/AURA-AI/aura_backend python tests/integration/aura_blueprint_dryrun.py
 ```
 
-It must exit 0 with all 14 tools `ACCEPTED`, report 8 operations excluded by `x-aura-exclude`, and
-print no `not reachable by AURA` lines. Checked on 2026-11-07 against Flame contract 0.5.0
-(`FCDS-College/Nasa` `main` at `cd185e3`) and both AURA `ced341b` (`main`) and `d696fad` (the
+It must exit 0 with all 16 tools `ACCEPTED`, report 10 operations excluded by `x-aura-exclude`, and
+print no `not reachable by AURA` lines. Checked on 2026-11-12 against Flame contract 0.6.0
+(`FCDS-College/Nasa` `main` at `80b9c21`) and both AURA `ad215d3` (`main`) and `d696fad` (the
 revision Flame's `AURA Link 2 Contract` CI job pins).
 
 ## 2. Link 2: AURA reads Flame (AR-7)
@@ -110,7 +110,7 @@ curl -X POST "$AURA/api/v3/admin/twin/versions/$TWIN/compile" -H "$ADMIN"
 curl -X POST "$AURA/api/v3/admin/blueprints/$BP/evaluate" -H "$ADMIN"
 ```
 
-- The compiled blueprint should hold the same 14 tools as the dry run. `api_search` should take
+- The compiled blueprint should hold the same 16 tools as the dry run. `api_search` should take
   `q` plus the optional `type`, `source_id`, `experiment_id`, `domain`, `page` and `page_size`.
 - A `tool_contract` case that cannot reach a replica is `not_run`, never a pass. Record the gate
   report as it is.
@@ -119,14 +119,19 @@ curl -X POST "$AURA/api/v3/admin/blueprints/$BP/evaluate" -H "$ADMIN"
 
 From Flame contract 0.2.0, `docs/api/openapi.json` also describes `POST /api/chat` and Flame's
 admin operations. Flame marks those operations with the vendor extension `x-aura-exclude: true`.
-As of contract 0.5.0, 8 operations carry it:
+As of contract 0.6.0, 10 operations carry it:
 - `POST /api/chat`;
 - `GET /api/ai/providers`;
 - `PUT /api/admin/ai/mode`;
 - `GET /api/admin/files` and `POST /api/admin/files/{file_id}/reprocess`;
 - `GET /api/admin/ingestion-runs`;
 - `PUT /api/admin/evidence/{evidence_id}/review`;
-- `GET /api/admin/audit`.
+- `GET /api/admin/audit`;
+- `GET /api/admin/graph/consistency` (0.6.0);
+- `POST /api/analyses/{analysis_id}/cancel` (0.6.0): AURA never changes a user's jobs.
+
+From contract 0.6.0, every `/api/admin/` operation needs a Flame key with the `admin` scope, but AURA
+never needs one: it holds a read-scoped key and calls none of them.
 
 The OpenAPI connector's discovery (`aura_core/adapters/connectors/openapi.py`) skips any
 operation, or any whole path item, that carries the literal `true`. Each skipped operation is
@@ -135,21 +140,31 @@ exclusion appears in the discovery report and the twin diff rather than vanishin
 
 The reason is that Flame's `/api/chat` itself calls AURA's `/api/v3/chat` (Link 1). A tool compiled
 from it would let AURA call back into its own caller. Expect one `operation_excluded` issue per
-marked operation. The 14 compiled read tools are `api_get_health`, `api_get_dashboard_counts`,
+marked operation. The 16 compiled read tools are `api_get_health`, `api_get_dashboard_counts`,
 `api_search`, `api_list_documents`, `api_get_document`, `api_list_experiments`,
 `api_get_experiment`, `api_get_evidence`, `api_list_analyses`, `api_get_analysis`,
-`api_list_investigations`, `api_get_investigation`, `api_list_insights` and
-`api_estimate_flex_outcome`.
+`api_list_investigations`, `api_get_investigation`, `api_list_insights`,
+`api_estimate_flex_outcome`, `api_list_graph_entities` and `api_get_graph_entity`.
 - From contract 0.3.0, `api_get_analysis` also returns video analyses
   (`analysis_type: flame_video`).
-- The last four come from contract 0.5.0 (Flame's fire-safety dashboard):
+- `api_list_investigations`, `api_get_investigation`, `api_list_insights` and `api_estimate_flex_outcome`
+  come from contract 0.5.0 (Flame's fire-safety dashboard):
   - investigations ranked by evidence relevance to a cabin atmosphere;
   - NASA's cited investigation summaries;
   - computed fire-safety insights with evidence IDs;
   - a FLEX droplet-flame outcome estimate. Its `probabilities` is `null` outside the
     flight-tested domain, so pass that refusal on rather than guessing.
+- `api_list_graph_entities` and `api_get_graph_entity` come from contract 0.6.0 (Flame's knowledge graph, Flame ADR-007):
+  - `api_list_graph_entities`: investigations, experiments, fuels, condition variables,
+    phenomena and documents, by type or name;
+  - `api_get_graph_entity`: one entity and its neighbourhood up to 3 hops. Every edge carries the
+    `evidence_id` of the table cell it was read from, so an answer built on it can cite that cell.
+    The graph holds only what Flame's tables record: no platforms, instruments or report links.
+- Also from contract 0.6.0, `api_search`'s `retrieval` block reports the query rewrite and whether
+  Flame's reranker reordered the results (`reranking.status`). The tool's parameters are unchanged.
 
-A blueprint deployed before contract 0.5.0 has only the first 10 tools until re-discovery (§4).
+A blueprint deployed before contract 0.5.0 has only the first 10 tools until re-discovery (§4), and
+one deployed before 0.6.0 has 14.
 Writes (`POST /api/analyses`) and the binary artifact download are never compiled.
 
 Flame's own entry point for this integration is `docs/integration/README.md` in `FCDS-College/Nasa`.
