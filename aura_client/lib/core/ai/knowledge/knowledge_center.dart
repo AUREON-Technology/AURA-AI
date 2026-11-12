@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:aura_client/core/network/idempotency.dart';
 import '../../config/backend_url_provider.dart';
 import '../../auth/token_manager.dart';
 import '../../network/aura_api_error.dart';
@@ -44,10 +45,13 @@ class KnowledgeCenter {
     String? body,
   }) async {
     final tokens = _ref.read(tokenManagerProvider);
+    // One key per logical write, shared by the 401 re-send below (audit FSA-046).
+    final idempotencyKey = isSideEffecting(method) ? newIdempotencyKey() : null;
     Future<http.Response> once() async {
       final token = await tokens.getValidAccessToken();
       final headers = await _headers(token);
       if (body == null) headers.remove('Content-Type');
+      if (idempotencyKey != null) headers[idempotencyKeyHeader] = idempotencyKey;
       final uri = Uri.parse("$_backendUrl$path");
       final client = _http;
       switch (method) {
@@ -74,11 +78,20 @@ class KnowledgeCenter {
 
   /// One 401 retry after dropping the cached access token, matching
   /// [SyncClient] / [SseAgentClient].
-  Future<http.Response> _sendAuthenticated(String path, Map<String, dynamic> payload) async {
+  Future<http.Response> _sendAuthenticated(
+    String path,
+    Map<String, dynamic> payload, {
+    bool write = true,
+  }) async {
     final tokens = _ref.read(tokenManagerProvider);
+    // One key per logical write, shared by the 401 re-send below (audit FSA-046). A search is
+    // a POST that writes nothing, so it carries none.
+    final idempotencyKey = write ? newIdempotencyKey() : null;
     Future<http.Response> send() async {
       final token = await tokens.getValidAccessToken();
-      return _post(path, body: jsonEncode(payload), headers: await _headers(token));
+      final headers = await _headers(token);
+      if (idempotencyKey != null) headers[idempotencyKeyHeader] = idempotencyKey;
+      return _post(path, body: jsonEncode(payload), headers: headers);
     }
 
     var response = await send();
@@ -114,7 +127,7 @@ class KnowledgeCenter {
   /// Queries the v3 knowledge index for matching passages.
   Future<List<Map<String, dynamic>>> queryKnowledge(String query, {int limit = 3}) async {
     try {
-      final response = await _sendAuthenticated("/search", {
+      final response = await _sendAuthenticated("/search", write: false, {
         "query": query,
         "limit": limit,
       });
@@ -163,7 +176,7 @@ class KnowledgeCenter {
 
   Future<KnowledgeSearchResult> searchKnowledge(String query, {int limit = 6}) async {
     try {
-      final response = await _sendAuthenticated("/search", {
+      final response = await _sendAuthenticated("/search", write: false, {
         "query": query,
         "limit": limit,
       });

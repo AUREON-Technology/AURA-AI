@@ -98,9 +98,9 @@ class InMemoryCache:
     async def delete(self, key: str) -> None:
         self._data.pop(key, None)
 
-    async def incr(self, key: str, *, ttl_s: int | None = None) -> int:
+    async def incr(self, key: str, *, ttl_s: int | None = None, amount: int = 1) -> int:
         raw = await self.get(key)
-        value = int(raw) + 1 if raw else 1
+        value = (int(raw) if raw else 0) + int(amount)
         await self.set(key, str(value).encode(), ttl_s=ttl_s)
         return value
 

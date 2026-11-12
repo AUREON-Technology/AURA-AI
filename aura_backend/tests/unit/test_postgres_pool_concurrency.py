@@ -59,7 +59,7 @@ class _FakeCreatePool:
         self._fail_times = fail_times
         self.created: list[_FakePool] = []
 
-    async def __call__(self, dsn: str, *, min_size: int, max_size: int) -> _FakePool:
+    async def __call__(self, dsn: str, *, min_size: int, max_size: int, **_bounds: object) -> _FakePool:
         self.calls += 1
         call_index = self.calls
         # A real create_pool does real I/O; sleeping (rather than returning immediately) is what

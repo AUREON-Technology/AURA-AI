@@ -22,6 +22,7 @@ to ``providers/claude.py`` and pins the set of kinds.
 
 from __future__ import annotations
 
+import logging
 from typing import Sequence
 
 from ..config.settings import LLMSettings, ProviderConfig
@@ -117,6 +118,23 @@ def admission_limits_from_settings(settings: LLMSettings) -> dict[str, PoolLimit
             else settings.admission_queue_timeout_s
         )
         limits[group] = PoolLimits(max_concurrent=cap, max_queue=max_queue, queue_timeout_s=timeout)
+    processes = max(1, settings.admission_processes)
+    if processes > 1:
+        # Audit FSA-025: the cap is per process, and the gateway runs several. Divide it so the
+        # processes together hold what the model server was declared to bear; a cap smaller than
+        # the process count cannot be divided and keeps one slot per process, said out loud.
+        for group, lim in list(limits.items()):
+            per_process = lim.max_concurrent // processes
+            if per_process < 1:
+                per_process = 1
+                logger.warning(
+                    "capacity group %r declares %d slot(s) but AURA_LLM_ADMISSION_PROCESSES=%d "
+                    "processes share it: each keeps one slot, so the server sees up to %d",
+                    group, lim.max_concurrent, processes, processes,
+                )
+            limits[group] = PoolLimits(
+                max_concurrent=per_process, max_queue=lim.max_queue, queue_timeout_s=lim.queue_timeout_s
+            )
     return limits
 
 
@@ -181,6 +199,9 @@ def build_provider(config: ProviderConfig, *, model_allowlist: Sequence[str] = (
     )
 
 
+logger = logging.getLogger("aura.llm.registry")
+
+
 def build_providers(
     settings: LLMSettings, *, model_allowlist: Sequence[str] = ()
 ) -> list[LLMProvider]:
@@ -188,6 +209,18 @@ def build_providers(
         build_provider(config, model_allowlist=model_allowlist)
         for config in settings.enabled_providers
     ]
+    if providers and not any(c.supports_json_mode for c in settings.enabled_providers):
+        # Audit FSA-092: the router excludes every provider left at SUPPORTS_JSON_MODE=false from
+        # a structured-output request ("no_json_mode" in the routing decision), so with every
+        # slot at the default the first planner call that asks for a schema finds no eligible
+        # provider. Said once here, at boot, instead of on that first call.
+        logger.warning(
+            "no enabled provider declares SUPPORTS_JSON_MODE=true: structured-output "
+            "(json_schema) requests will find no eligible provider. Set "
+            "AURA_PROVIDER_<NAME>_SUPPORTS_JSON_MODE=true on a provider whose model honours "
+            "response_format (deploy/.env.example shows the hosted-slot example).",
+            extra={"providers": [c.name for c in settings.enabled_providers]},
+        )
     if not providers:
         raise ConfigurationError("no LLM providers are enabled")
     return providers

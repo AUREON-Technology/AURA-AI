@@ -56,8 +56,10 @@ class CrossEncoderReranker:
         timeout_s: float = 10.0,
         fallback: Any = None,
         metrics: Any = None,
+        revision: str = "",
     ) -> None:
         self._model_name = model_name
+        self._revision = revision  # Hub commit of the weights (audit FSA-110); empty = repo head
         self._batch_size = batch_size
         # Hard ceiling on how many pairs reach the model. Scoring is linear in candidates, so an
         # unbounded list turns a caller's mistake into a multi-second stall in the request path.
@@ -101,8 +103,13 @@ class CrossEncoderReranker:
             try:
                 # to_thread because loading reads weights from disk and builds a torch graph;
                 # doing that on the event loop stalls every other in-flight request.
-                self._model = await asyncio.to_thread(CrossEncoder, self._model_name)
-                logger.info("cross-encoder loaded", extra={"model": self._model_name})
+                self._model = await asyncio.to_thread(
+                    CrossEncoder, self._model_name, revision=self._revision or None
+                )
+                logger.info(
+                    "cross-encoder loaded",
+                    extra={"model": self._model_name, "revision": self._revision or None},
+                )
             except Exception as exc:
                 logger.warning(
                     "cross-encoder failed to load; falling back to the heuristic reranker",
@@ -203,6 +210,7 @@ def build_reranker(
     *,
     model: str = DEFAULT_CROSS_ENCODER,
     metrics: Any = None,
+    revision: str = "",
 ) -> Any:
     """Construct the configured reranker.
 
@@ -221,7 +229,7 @@ def build_reranker(
     if normalised in {"heuristic", "", "none"}:
         return HeuristicReranker()
     if normalised in {"cross_encoder", "cross-encoder", "crossencoder"}:
-        return CrossEncoderReranker(model, metrics=metrics)
+        return CrossEncoderReranker(model, metrics=metrics, revision=revision)
     raise ConfigurationError(
         f"unknown rerank provider {provider!r}",
         details={"supported": ["heuristic", "cross_encoder"]},

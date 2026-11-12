@@ -98,10 +98,15 @@ class FieldCipher:
     :class:`ConfigurationError` rather than returning ciphertext.
     """
 
-    def __init__(self, keys: Sequence[str] = (), *, setting: str = _KEY_ENV) -> None:
+    def __init__(self, keys: Sequence[str] = (), *, setting: str = _KEY_ENV, metrics: Any = None) -> None:
         #: The environment variable the keys came from, named in every error so an operator
         #: fixes the right one (the connector vault uses this class with a different key).
         self._setting = setting
+        #: Plaintext values read while a key is configured (audit FSA-094): rows written before
+        #: the key existed that ``scripts/reencrypt_fields.py`` has not sealed yet. Counted here
+        #: and, when a registry is given, as ``aura_field_crypto_legacy_plaintext_reads_total``.
+        self.legacy_plaintext_reads = 0
+        self._metrics = metrics
         self._fernets: list[tuple[str, Any]] = []
         seen: set[str] = set()
         for position, key in enumerate(keys):
@@ -177,8 +182,16 @@ class FieldCipher:
         payload = f"{len(context)}:{context}{plaintext}".encode("utf-8")
         return f"{ENVELOPE_PREFIX}{kid}:{fernet.encrypt(payload).decode('ascii')}"
 
+    def _legacy_read(self, kind: str) -> None:
+        if not self.enabled:
+            return  # without a key every value is plaintext by design, not a leftover
+        self.legacy_plaintext_reads += 1
+        if self._metrics is not None:
+            self._metrics.observe_legacy_plaintext_read(kind)
+
     def decrypt(self, stored: str, *, context: str = "") -> str:
         if not self.is_encrypted(stored):
+            self._legacy_read("text")
             return stored  # legacy plaintext row, written before a key was configured
         if not self._fernets:
             raise ConfigurationError(
@@ -258,4 +271,5 @@ class FieldCipher:
                     details={"reason": "malformed_payload"},
                 )
             return value
+        self._legacy_read("mapping")
         return dict(stored)  # legacy plaintext mapping

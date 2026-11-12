@@ -80,7 +80,15 @@ class PostgresPool:
     validation and in every test that constructs one, and neither should require a database.
     """
 
-    def __init__(self, url: str, *, min_size: int = 2, max_size: int = 10) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        min_size: int = 2,
+        max_size: int = 10,
+        command_timeout_s: float | None = 60.0,
+        max_inactive_connection_lifetime_s: float = 300.0,
+    ) -> None:
         if not url:
             raise ConfigurationError(
                 "postgres backends require AURA_DATABASE_URL",
@@ -89,6 +97,11 @@ class PostgresPool:
         self._dsn = _dsn(url)
         self._min = min_size
         self._max = max_size
+        # Audit FSA-073: a statement past ``command_timeout_s`` is cancelled instead of holding
+        # its connection forever, and an idle connection is closed after the lifetime so a
+        # burst does not pin its peak connection count. Both come from InfrastructureSettings.
+        self._command_timeout_s = command_timeout_s
+        self._max_inactive_connection_lifetime_s = max_inactive_connection_lifetime_s
         self._pool: Any = None
         # Guards pool *creation* only. N concurrent first callers must produce exactly one
         # asyncpg pool -- without this, each sees ``self._pool is None`` before any of them
@@ -115,7 +128,11 @@ class PostgresPool:
                         ) from exc
                     try:
                         self._pool = await asyncpg.create_pool(
-                            self._dsn, min_size=self._min, max_size=self._max
+                            self._dsn,
+                            min_size=self._min,
+                            max_size=self._max,
+                            command_timeout=self._command_timeout_s,
+                            max_inactive_connection_lifetime=self._max_inactive_connection_lifetime_s,
                         )
                     except Exception as exc:
                         raise _unavailable(f"could not connect to Postgres: {exc}") from exc

@@ -67,6 +67,15 @@ class HostAgentSession:
         self._pending: dict[str, "asyncio.Future[Any]"] = {}
         self._streams: dict[str, "asyncio.Queue[Any]"] = {}
 
+    async def _cancel(self, call_id: str) -> None:
+        """Tell the daemon this side has given up on ``call_id`` (audit FSA-041). The daemon
+        marks the call's pending approval cancelled, so a human answering later executes
+        nothing. Best effort: the socket may already be gone."""
+        try:
+            await self._send({"type": "cancel", "id": call_id})
+        except Exception:  # noqa: BLE001 -- nothing above can act on a failed courtesy frame
+            logger.debug("could not send cancel frame", extra={"call_id": call_id})
+
     async def call(self, method: str, params: Mapping[str, Any], *, timeout_s: float) -> Any:
         call_id = uuid.uuid4().hex
         future: "asyncio.Future[Any]" = asyncio.get_event_loop().create_future()
@@ -80,6 +89,10 @@ class HostAgentSession:
             ) from exc
         finally:
             self._pending.pop(call_id, None)
+            # No answer arrived -- this side timed out, or the tool registry's own timeout
+            # cancelled us -- so the daemon must stop waiting for its human too (FSA-041).
+            if future.cancelled() or not future.done():
+                await self._cancel(call_id)
 
     async def call_streaming(
         self, method: str, params: Mapping[str, Any], *, timeout_s: float
@@ -97,6 +110,7 @@ class HostAgentSession:
         call_id = uuid.uuid4().hex
         queue: "asyncio.Queue[Any]" = asyncio.Queue()
         self._streams[call_id] = queue
+        finished = False
         try:
             await self._send({"type": "call", "id": call_id, "method": method, "params": dict(params)})
             while True:
@@ -107,15 +121,24 @@ class HostAgentSession:
                         f"desktop app did not respond to {method!r} within {timeout_s:.0f}s"
                     ) from exc
                 if frame is _STREAM_DISCONNECTED:
+                    finished = True
                     raise SandboxError("desktop app disconnected mid-stream")
                 ftype = frame.get("type")
                 if ftype == "error":
+                    finished = True
                     raise SandboxError(str(frame.get("message") or "host agent error"))
+                if ftype != "stream":
+                    finished = True
                 yield frame
                 if ftype != "stream":
                     return
         finally:
             self._streams.pop(call_id, None)
+            if not finished:
+                # Idle timeout, cancellation by the tool registry, or the consumer stopped
+                # reading: the daemon must not keep waiting on (or run) an approval nobody is
+                # listening for (FSA-041).
+                await self._cancel(call_id)
 
     def resolve(self, frame: Mapping[str, Any]) -> None:
         """Feed one inbound `stream`/`result`/`error` frame. Unknown or already-resolved ids are

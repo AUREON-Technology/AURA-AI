@@ -232,12 +232,30 @@ class AuditSink(Protocol):
     ) -> Sequence[AuditEvent]:
         ...
 
+    async def purge_before(self, cutoff: datetime) -> int:
+        """Delete events recorded before ``cutoff``; returns how many (retention, audit FSA-016)."""
+        ...
+
+    async def pseudonymise_actor(self, actor: str, replacement: str) -> int:
+        """Replace ``actor`` with ``replacement`` and drop the source IP on every event it made
+        (erasure). The events stay: who did what to the system is a security record; the identity
+        in it is personal data. Returns how many were changed."""
+        ...
+
 
 @runtime_checkable
 class TelemetrySink(Protocol):
     """Where :class:`TurnTelemetry` goes: Prometheus, structured logs, and durable storage."""
 
     async def record_turn(self, telemetry: TurnTelemetry) -> None:
+        ...
+
+    async def purge_before(self, cutoff: datetime) -> int:
+        """Delete turns started before ``cutoff``; returns how many (retention, audit FSA-016)."""
+        ...
+
+    async def purge_sessions(self, session_ids: Any) -> int:
+        """Delete every turn of the given conversations (erasure); returns how many."""
         ...
 
 

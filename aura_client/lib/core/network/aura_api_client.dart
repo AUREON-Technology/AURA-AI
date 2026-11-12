@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:aura_client/core/network/idempotency.dart';
 import 'package:uuid/uuid.dart';
 
 import '../auth/token_manager.dart';
@@ -50,12 +51,15 @@ class AuraApiClient {
         ? Uri.parse(path)
         : Uri.parse('$_backendUrl$path');
     final tokens = _ref.read(tokenManagerProvider);
+    // One key per logical write, shared by the 401 re-send below (audit FSA-046).
+    final idempotencyKey = isSideEffecting(method) ? newIdempotencyKey() : null;
 
     Future<http.Response> send() async {
       final headers = await _headers(
         jsonBody: body != null,
         correlationId: correlationId,
       );
+      if (idempotencyKey != null) headers[idempotencyKeyHeader] = idempotencyKey;
       final encoded = body == null ? null : jsonEncode(body);
       final client = _http;
       switch (method) {

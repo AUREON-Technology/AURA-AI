@@ -352,6 +352,22 @@ retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer work
   `PlanningEngine.plan()`'s call (`aura_core/planning/engine.py`) is the worked example — 700
   tokens against the deployed 180s `request_timeout_s`, with the full reasoning in its own
   comment — after the previous 1200-token ceiling was measured taking up to 240s in production.
+- **nginx holds static addresses** (`10.77.10.10` on `edge`, `10.77.11.10` on `aura_edge`) and the
+  prod and dev gateways trust `X-Forwarded-For` from exactly those (`--forwarded-allow-ips`), never
+  `'*'` (audit FSA-012). Change an address in one place and change it in the other in the same
+  commit; `tests/unit/test_compose_security_parity.py` pins both and that each address lies in its
+  network's declared subnet. Compose does not recreate an existing network whose `ipam` changed:
+  it stops with "network needs to be recreated", and `aura_edge` is shared with the dev stack's
+  containers. The first deploy after a subnet change is therefore manual: stop the dev stack,
+  `docker network rm aura_edge` (and `edge` if it changed), deploy prod, start dev. Until that is
+  done nginx cannot start, because a static address needs a user-configured subnet, and nginx is
+  the only published port. Reasoned from Compose's behaviour, not yet run on the VPS.
+- **The Postgres connection budget is arithmetic, not a comment.** Every uvicorn worker and every
+  Celery prefork child holds one asyncpg pool plus the legacy SQLAlchemy pool
+  (`InfrastructureSettings.postgres_connections_per_process`); both compose files size them per
+  service (gateway 20 per worker, Celery children 4) so prod's worst case is 108 against
+  `max_connections = 120`. `tests/unit/test_postgres_connection_budget.py` recomputes it from the
+  compose files and `postgresql.conf` and fails when a change breaks it (audit FSA-073).
 - Push-triggered pipeline: `Deploy VPS` (`.github/workflows/deploy-backend.yml`) fires via
   `workflow_run` only after `Backend CI` succeeds on `main` — merging to `main` is the entire
   deploy action, there is no separate manual step. `Deploy Control Plane (Railway)` fires the

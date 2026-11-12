@@ -3,6 +3,7 @@ import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:aura_client/core/network/idempotency.dart';
 import 'package:aura_client/core/database/database.dart';
 import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/config/backend_url_provider.dart';
@@ -52,11 +53,18 @@ class MemoryRepository {
     return headers;
   }
 
-  Future<http.Response> _send(Future<http.Response> Function(Map<String, String> headers) send) async {
+  Future<http.Response> _send(
+    Future<http.Response> Function(Map<String, String> headers) send, {
+    bool write = false,
+  }) async {
     final tokens = _ref.read(tokenManagerProvider);
+    // One key per logical write, shared by the 401 re-send below (audit FSA-046).
+    final idempotencyKey = write ? newIdempotencyKey() : null;
     Future<http.Response> once() async {
       final token = await tokens.getValidAccessToken();
-      return send(await _headers(token, jsonBody: true));
+      final headers = await _headers(token, jsonBody: true);
+      if (idempotencyKey != null) headers[idempotencyKeyHeader] = idempotencyKey;
+      return send(headers);
     }
 
     var response = await once();
@@ -233,7 +241,7 @@ class MemoryRepository {
             ? client.post(uri, headers: headers, body: body)
             : http.post(uri, headers: headers, body: body);
         return sent.timeout(const Duration(seconds: 20));
-      });
+      }, write: true);
       final serverId = response.statusCode == 200 ? _serverId(response.body) : null;
       if (serverId == null) {
         debugPrint("Failed to save memory remotely: ${response.statusCode} ${response.body}");

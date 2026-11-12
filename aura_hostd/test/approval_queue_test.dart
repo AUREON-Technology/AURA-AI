@@ -200,4 +200,38 @@ void main() {
       expect(redactForDisplay(command), command);
     });
   });
+  _cancelGroup();
+}
+
+
+
+// Audit FSA-041: the server cancels a call it has given up on; the daemon must stop waiting for
+// the human and must never execute a late Approve.
+void _cancelGroup() {
+  group('cancel (FSA-041)', () {
+    test('cancelling a pending approval resolves its decision as cancelled and delists it', () async {
+      final queue = ApprovalQueue();
+      final approval = queue.createForCommand(canonicalCommand: 'make', cwd: '/w', rootPath: '/w');
+      expect(queue.cancel(approval.id), isTrue);
+      expect(await approval.decision, ApprovalStatus.cancelled);
+      expect(queue.list(), isEmpty);
+    });
+
+    test('a late Approve after cancellation is ignored', () async {
+      final queue = ApprovalQueue();
+      final approval = queue.createForCommand(canonicalCommand: 'make', cwd: '/w', rootPath: '/w');
+      queue.cancel(approval.id);
+      expect(queue.respond(approval.id, true), isTrue); // known id, no-op
+      expect(approval.status, ApprovalStatus.cancelled);
+    });
+
+    test('cancelling an unknown or already-decided approval changes nothing', () {
+      final queue = ApprovalQueue();
+      expect(queue.cancel('appr_nope'), isFalse);
+      final approval = queue.createForCommand(canonicalCommand: 'make', cwd: '/w', rootPath: '/w');
+      queue.respond(approval.id, true);
+      expect(queue.cancel(approval.id), isTrue);
+      expect(approval.status, ApprovalStatus.approved);
+    });
+  });
 }

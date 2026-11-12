@@ -70,7 +70,11 @@ class MemoryEngine:
         max_records_per_owner: int = 20_000,
         duplicate_threshold: float = 0.94,
         clock: Any = None,
+        payload_content: bool = True,
     ) -> None:
+        #: Whether a record's ``subject`` travels into the vector payload (audit FSA-018). Recall
+        #: reads the record from the store anyway, so off-host nothing readable needs to go.
+        self.payload_content = payload_content
         self._store = store
         self._vectors = vectors
         self._embedder = embedder
@@ -178,8 +182,11 @@ class MemoryEngine:
                         "memory_id": record.id.value,
                         "kind": str(kind),
                         "owner_id": owner_id.value,
-                        "subject": subject or "",
+                        **({"subject": subject or ""} if self.payload_content else {}),
                         "scope": scope or SHARED_MEMORY_SCOPE,
+                        # What forget_source filters on (audit FSA-066): without it the rows
+                        # went and every vector point stayed behind.
+                        "source": source,
                     },
                 )
             ],

@@ -154,20 +154,18 @@ def drain_finetune_queue_task() -> dict:
 
 
 async def _run_finetune_job(job_id: str) -> dict:
-    from infrastructure.secret_hydration import hydrate_secrets_from_files
-    from aura_core.container import build_container
-
-    hydrate_secrets_from_files()
-    container = build_container(_worker_settings())
+    container = await _ensure_worker_container()
     job = await container.finetune_jobs.run(job_id)
     return {"status": str(job.status), "job": job.as_dict()}
 
 
 async def _drain_finetune_queue() -> dict:
-    from aura_core.container import build_container
+    """Audit FSA-091: this used to build a fresh container -- an asyncpg pool, a Redis client,
+    every provider -- on every 120 s beat tick and never close it. The worker's one container
+    (``_ensure_worker_container``) serves it like every other task."""
     from aura_core.learning.finetune import FineTuneJobStatus
 
-    container = build_container()
+    container = await _ensure_worker_container()
     ran = []
     for job in await container.finetune_jobs.list(limit=20):
         if job.status is FineTuneJobStatus.QUEUED:
@@ -282,6 +280,10 @@ def _worker_settings():
     from aura_core.config import load_settings
 
     os.environ["AURA_HOST_AGENT_RELAY"] = "false"
+    # No background job transcribes, yet every prefork child builds a container and runs
+    # startup(). Warming Whisper there (audit FSA-110's startup warm) would load the model into
+    # four realtime children under a 1 GB limit for nothing; the gateway's workers warm it.
+    os.environ["AURA_VOICE_STT_WARM_ON_STARTUP"] = "false"
     return load_settings(refresh=True)
 
 
@@ -323,6 +325,14 @@ def _shutdown_worker_container(**_: object) -> None:
     global _worker_container, _worker_started, _worker_loop
     container, _worker_container = _worker_container, None
     _worker_started = False
+    # The legacy SQLAlchemy engine (insights, sync, erasure tasks) is per process too and was
+    # never disposed (audit FSA-073).
+    try:
+        from infrastructure.db.base import dispose_engine
+
+        _run_async(dispose_engine())
+    except Exception:  # noqa: BLE001 -- see the docstring
+        logger.exception("legacy engine dispose failed")
     if container is None:
         return
     try:
@@ -465,6 +475,38 @@ async def _run_idempotency_purge() -> dict:
         return {"status": "skipped", "reason": "idempotency_not_configured"}
     purged = await store.purge_expired(now=container.clock.now())
     return {"status": "ok", "purged": purged}
+
+
+async def _run_retention_purge() -> dict:
+    """Apply the audit and telemetry retention (audit FSA-016). ``0`` days keeps a table."""
+    from datetime import timedelta
+
+    container = await _ensure_worker_container()
+    now = container.clock.now()
+    observability = container.settings.observability
+    audit_purged = telemetry_purged = 0
+    if observability.audit_retention_days > 0:
+        audit_purged = await container.audit.purge_before(now - timedelta(days=observability.audit_retention_days))
+    if observability.telemetry_retention_days > 0:
+        telemetry_purged = await container.telemetry_sink.purge_before(
+            now - timedelta(days=observability.telemetry_retention_days)
+        )
+    return {"status": "ok", "audit_purged": audit_purged, "telemetry_purged": telemetry_purged}
+
+
+@celery_app.task(name="tasks.purge_audit_and_telemetry_task", queue="realtime")
+def purge_audit_and_telemetry_task() -> dict:
+    """Delete audit events and turn telemetry past their retention (audit FSA-016).
+
+    Both tables hold personal data (actor email or subject and source IP; a user's conversation
+    ids) and were kept forever. Retention is AURA_AUDIT_RETENTION_DAYS / AURA_TELEMETRY_RETENTION_DAYS.
+    """
+    logger.info("Celery task: Purging audit events and telemetry past retention...")
+    try:
+        return _run_async(_run_retention_purge())
+    except Exception as e:
+        logger.error("Retention purge task failed: %s", e, exc_info=True)
+        return {"status": "error", "error": type(e).__name__}
 
 
 @celery_app.task(name="tasks.purge_idempotency_keys_task", queue="realtime")

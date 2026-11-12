@@ -73,8 +73,21 @@ DEBUG_MODE=false
 AURA_EMBEDDING_PROVIDER=sentence-transformers
 AURA_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 AURA_EMBEDDING_DIMENSION=384
+# Pin the weights to a Hub commit (audit FSA-110): the revision is part of the index identity,
+# so changing it builds and promotes a new index rather than silently re-reading the live one.
+# AURA_KNOWLEDGE_RERANK_MODEL_REVISION and AURA_VOICE_STT_MODEL_REVISION pin the cross-encoder
+# and Whisper the same way; /health/ready reports all three. Whisper loads at startup in
+# production-like environments (AURA_VOICE_STT_WARM_ON_STARTUP overrides).
+AURA_EMBEDDING_MODEL_REVISION=<commit SHA from the model repo's Files and versions>
 
 AURA_DATABASE_URL=<Railway Postgres plugin's connection string>
+# Connection budget (audit FSA-073). Every uvicorn worker holds one asyncpg pool plus the legacy
+# SQLAlchemy pool: AURA_POSTGRES_POOL_MAX_SIZE (10) + AURA_LEGACY_DB_POOL_SIZE (5) +
+# AURA_LEGACY_DB_MAX_OVERFLOW (10) = 25 connections per worker by default, so AURA_WORKERS=4 can
+# open 100 -- plus any Celery workers (per prefork child). Size these against the Railway
+# Postgres plan's connection limit, leaving room for the pre-deploy `alembic upgrade head`.
+# AURA_POSTGRES_COMMAND_TIMEOUT_S (60) cancels a hung statement; idle pooled connections close
+# after AURA_POSTGRES_MAX_INACTIVE_CONNECTION_LIFETIME_S (300).
 # Also what lets a paired desktop (aura_hostd) be reached from every gateway worker: the
 # host-agent relay (ADR-011 amendment, 2026-11-08) is on whenever this and AURA_JWT_SECRET are
 # set. Without it, the image's default 4 workers each see only their own desktop connections, so
@@ -82,6 +95,11 @@ AURA_DATABASE_URL=<Railway Postgres plugin's connection string>
 AURA_REDIS_URL=<Railway Redis plugin's connection string, or an external Redis>
 AURA_QDRANT_URL=<Qdrant Cloud or self-hosted Qdrant URL — Railway has no Qdrant plugin>
 AURA_QDRANT_API_KEY=<Qdrant API key>
+# Recorded decision for this target (audit FSA-018 / CB-22): with an off-host Qdrant (any dotted
+# public hostname, e.g. Qdrant Cloud) no readable chunk text or memory subject is written into
+# vector payloads; retrieval resolves the text from Postgres. /health/ready reports it under
+# "vectors.payload_content". AURA_KNOWLEDGE_VECTOR_PAYLOAD_CONTENT=true|false overrides the rule.
+# Existing payloads keep their text until the index is rebuilt (knowledge refresh / re-index).
 AURA_JWT_SECRET=<random>
 AURA_SECRETS_ENCRYPTION_KEY=<random>
 
@@ -212,10 +230,14 @@ AURA_LLM_MAX_PROMPT_TOKENS=<rule below>
 
 Why each value:
 
-- **`AURA_WORKERS`.** Every admission limit, and every provider's `MAX_CONCURRENCY`, is per
-  gateway process. The image runs `AURA_WORKERS` processes (4 by default), so the upstream really
-  sees up to `MAX_CONCURRENCY × AURA_WORKERS` calls at once. Divide by the worker count when
-  sizing anything below.
+- **`AURA_WORKERS`.** Every provider's `MAX_CONCURRENCY` is declared per capacity group, and the
+  image runs `AURA_WORKERS` processes (4 by default). Since audit FSA-025 the gateway divides each
+  group's cap among its processes: `AURA_LLM_ADMISSION_PROCESSES` defaults to `AURA_WORKERS` when
+  unset, so a declared cap of 4 is 1 slot in each of 4 workers and the upstream sees 4, not 16.
+  Declare the cap the upstream should see in total; a cap below the worker count keeps one slot per
+  worker and the boot log says so. The per-minute arithmetic below still has to account for every
+  worker, because each worker's slot is independently busy. Daily and per-minute quotas
+  (`RPM`/`RPD`/`TPM`/`TPD`) are shared counters in Redis across every process.
 - **`AURA_PROVIDER_HOSTED1_MAX_CONCURRENCY`.** A generation that takes `d` seconds, held at
   concurrency `c`, sends `c × 60 / d` requests a minute. To stay under the provider's `RPM`, use
   `c ≤ RPM × d / (60 × AURA_WORKERS)`, rounded down, and never below 1.

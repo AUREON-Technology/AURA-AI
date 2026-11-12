@@ -391,3 +391,105 @@ class TestContainerWiring:
 
         assert settings.infrastructure.host_agent_relay is False
         assert Container(settings).host_agent_registry.relay is None
+
+
+class _FrameDaemon:
+    """A daemon that records every frame it is sent and answers nothing."""
+
+    def __init__(self, user: UserId = _USER) -> None:
+        self.frames: list[dict[str, Any]] = []
+        self.session = HostAgentSession(user, self._send)
+
+    async def _send(self, frame: dict[str, Any]) -> None:
+        self.frames.append(dict(frame))
+
+    def call_id(self) -> str:
+        return next(f["id"] for f in self.frames if f["type"] == "call")
+
+    def cancelled(self) -> bool:
+        return any(f["type"] == "cancel" and f["id"] == self.call_id() for f in self.frames)
+
+    async def wait_for_call(self) -> None:
+        for _ in range(200):
+            if any(f["type"] == "call" for f in self.frames):
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError("the daemon never received the call")
+
+
+async def _eventually(predicate, *, what: str) -> None:
+    for _ in range(200):
+        if predicate():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(what)
+
+
+class TestACallerThatGivesUpReachesTheDaemonThroughTheRelay:
+    """Audit FSA-041, across workers. Most desktop calls are relayed (one worker holds the
+    socket, four take turns). When the calling worker stops waiting -- the tool timeout, a
+    cancelled turn, a client that went away -- the worker holding the socket must stop its own
+    wait and send the daemon the `cancel` frame, or a late Approve runs with nobody listening."""
+
+    @pytest.mark.anyio
+    async def test_a_cancelled_relayed_call_cancels_the_daemon_s_approval(self, workers) -> None:
+        _, a, b = workers
+        daemon = _FrameDaemon()
+        await a.register(daemon.session)
+        remote = await b.resolve(_USER)
+
+        call = asyncio.create_task(remote.call("write_file", {"path": "a.txt"}, timeout_s=60))
+        await daemon.wait_for_call()
+        call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await call
+        await _eventually(daemon.cancelled, what=f"no cancel frame reached the daemon: {daemon.frames}")
+
+    @pytest.mark.anyio
+    async def test_a_relayed_call_that_times_out_cancels_the_daemon_s_approval(self, workers) -> None:
+        _, a, b = workers
+        daemon = _FrameDaemon()
+        await a.register(daemon.session)
+        remote = await b.resolve(_USER)
+
+        with pytest.raises(SandboxError):
+            await remote.call("write_file", {"path": "a.txt"}, timeout_s=0.05)
+        await _eventually(daemon.cancelled, what=f"no cancel frame reached the daemon: {daemon.frames}")
+
+    @pytest.mark.anyio
+    async def test_an_abandoned_relayed_stream_cancels_the_daemon_s_approval(self, workers) -> None:
+        _, a, b = workers
+        daemon = _FrameDaemon()
+        await a.register(daemon.session)
+        remote = await b.resolve(_USER)
+
+        stream = remote.call_streaming("run", {"command": ["make"]}, timeout_s=60)
+        reader = asyncio.create_task(stream.__anext__())
+        await daemon.wait_for_call()
+        reader.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await reader
+        await stream.aclose()
+        await _eventually(daemon.cancelled, what=f"no cancel frame reached the daemon: {daemon.frames}")
+
+    @pytest.mark.anyio
+    async def test_an_answered_relayed_call_sends_no_cancel(self, workers) -> None:
+        _, a, b = workers
+        daemon = _Daemon()
+        await a.register(daemon.session)
+        remote = await b.resolve(_USER)
+        assert await remote.call("create_task", {}, timeout_s=5) == {"task_id": "task-1"}
+        await asyncio.sleep(0.05)
+        assert daemon.calls == ["create_task"]
+
+
+class TestACeleryWorkerDoesNotWarmWhisper:
+    def test_worker_settings_turn_the_startup_warm_off(self, monkeypatch) -> None:
+        """Every prefork child builds a container and runs `startup()`; none transcribes. Loading
+        Whisper into each of them (realtime runs four under a 1 GB limit) is memory for nothing."""
+        import tasks
+
+        monkeypatch.delenv("AURA_VOICE_STT_WARM_ON_STARTUP", raising=False)
+        settings = tasks._worker_settings()
+        monkeypatch.delenv("AURA_VOICE_STT_WARM_ON_STARTUP", raising=False)
+        assert settings.voice.stt_warm_on_startup is False

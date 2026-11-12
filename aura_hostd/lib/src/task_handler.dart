@@ -57,6 +57,9 @@ class TaskHandler {
         _isolatedTasks = isolatedTasks ?? IsolatedTaskRegistry(_roots, gitService);
 
   final WorkspaceRoots _roots;
+  /// Pending approvals by the RPC call id that is waiting on them, so a `cancel` frame from the
+  /// server (audit FSA-041) can resolve the right approval.
+  final Map<String, String> _approvalByCall = {};
 
   /// D5's interactive consent queue -- see `approval_queue.dart`. Defaults to a private instance
   /// when not supplied, so every pre-D5 call site (a single positional `TaskHandler(roots)`, in
@@ -121,7 +124,7 @@ class TaskHandler {
   /// the same trust/approval-queue gate `run()` already had since D5 -- previously this and
   /// `edit_file` (which routes through this same RPC on the backend, see `coding.py::edit_file`)
   /// were the one place an agent could freely mutate any file in a granted-but-untrusted root.
-  Future<Map<String, Object?>> writeFile(Map<String, dynamic> params) async {
+  Future<Map<String, Object?>> writeFile(Map<String, dynamic> params, {String? callId}) async {
     final path = _requireString(params, 'path');
     final content = _requireString(params, 'content');
     final taskId = params['task_id'] as String?;
@@ -142,7 +145,12 @@ class TaskHandler {
 
     final verdict = evaluateWrite(workspaceTrusted: root.trusted);
     if (verdict.decision == CommandDecision.needsApproval) {
-      await _awaitWriteApproval([WriteOp(path: path, finalContent: content)], cwd: root.canonicalPath, root: root);
+      await _awaitWriteApproval(
+        [WriteOp(path: path, finalContent: content)],
+        cwd: root.canonicalPath,
+        root: root,
+        callId: callId,
+      );
     }
 
     final file = File(resolved);
@@ -158,7 +166,7 @@ class TaskHandler {
   /// start once every operation is already known-good). All operations in one call must resolve
   /// within the same granted root -- a cross-root atomic batch would need per-operation trust
   /// gating, which is out of this phase's scope.
-  Future<Map<String, Object?>> writeFiles(Map<String, dynamic> params) async {
+  Future<Map<String, Object?>> writeFiles(Map<String, dynamic> params, {String? callId}) async {
     final rawOps = params['operations'];
     if (rawOps is! List || rawOps.isEmpty) {
       throw RpcError('"operations" must be a non-empty list');
@@ -225,7 +233,7 @@ class TaskHandler {
     final root = sharedRoot!;
     final verdict = evaluateWrite(workspaceTrusted: root.trusted);
     if (verdict.decision == CommandDecision.needsApproval) {
-      await _awaitWriteApproval(resolved, cwd: root.canonicalPath, root: root);
+      await _awaitWriteApproval(resolved, cwd: root.canonicalPath, root: root, callId: callId);
     }
 
     var totalBytes = 0;
@@ -261,6 +269,7 @@ class TaskHandler {
   Future<Map<String, Object?>> run(
     Map<String, dynamic> params, {
     OutputChunkCallback? onChunk,
+    String? callId,
   }) async {
     // The caller (`aura_backend/aura_core/tools/coding.py::run_command`) always sends
     // `["sh", "-c", "<shell command>"]` -- a full argv, not a bare string -- so it can be
@@ -305,7 +314,7 @@ class TaskHandler {
       throw RpcError('command refused: ${verdict.reason}');
     }
     if (verdict.decision == CommandDecision.needsApproval) {
-      await _awaitApproval(commandForPolicy, cwd: cwd, root: root);
+      await _awaitApproval(commandForPolicy, cwd: cwd, root: root, callId: callId);
     }
 
     final timeout = Duration(
@@ -395,6 +404,22 @@ class TaskHandler {
     };
   }
 
+  /// The server gave up on [callId] (its tool timed out or the turn was cancelled). If the call
+  /// is waiting for a human, the approval is cancelled and the call throws instead of executing;
+  /// a call that already ran is unaffected (audit FSA-041).
+  void cancel(String callId) {
+    final approvalId = _approvalByCall.remove(callId);
+    if (approvalId != null) _approvals.cancel(approvalId);
+  }
+
+  void _trackApproval(String? callId, PendingApproval approval) {
+    if (callId != null) _approvalByCall[callId] = approval.id;
+  }
+
+  void _untrackApproval(String? callId) {
+    if (callId != null) _approvalByCall.remove(callId);
+  }
+
   /// Queues [command] for interactive approval and blocks until a human answers or it times out
   /// (`approval_queue.dart`'s [approvalTimeout]). On approval, re-derives the command's identity
   /// hash from the *current* call context and compares it against the hash the approval was
@@ -403,9 +428,20 @@ class TaskHandler {
   /// executing something the human no longer sees the same context for (D5 plan design decision
   /// 5). Throws [RpcError] on rejection, expiry, or a revalidation mismatch; returns normally only
   /// when the exact operation that was approved is still safe to run.
-  Future<void> _awaitApproval(String command, {required String cwd, required WorkspaceRoot root}) async {
+  Future<void> _awaitApproval(
+    String command, {
+    required String cwd,
+    required WorkspaceRoot root,
+    String? callId,
+  }) async {
     final approval = _approvals.createForCommand(canonicalCommand: command, cwd: cwd, rootPath: root.canonicalPath);
-    final status = await _approvals.awaitDecision(approval);
+    _trackApproval(callId, approval);
+    final ApprovalStatus status;
+    try {
+      status = await _approvals.awaitDecision(approval);
+    } finally {
+      _untrackApproval(callId);
+    }
     switch (status) {
       case ApprovalStatus.approved:
         break;
@@ -447,6 +483,7 @@ class TaskHandler {
     List<WriteOp> operations, {
     required String cwd,
     required WorkspaceRoot root,
+    String? callId,
   }) async {
     final beforeSnapshots = <String, String>{};
     final diffParts = <String>[];
@@ -464,7 +501,13 @@ class TaskHandler {
       rootPath: root.canonicalPath,
     );
     final pathList = operations.map((o) => o.path).join(', ');
-    final status = await _approvals.awaitDecision(approval);
+    _trackApproval(callId, approval);
+    final ApprovalStatus status;
+    try {
+      status = await _approvals.awaitDecision(approval);
+    } finally {
+      _untrackApproval(callId);
+    }
     switch (status) {
       case ApprovalStatus.approved:
         break;

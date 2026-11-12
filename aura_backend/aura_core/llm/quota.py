@@ -296,7 +296,7 @@ class QuotaTracker:
         state.window.append(entry)
         state.day_requests += 1
         state.day_tokens += estimated
-        self._persist(name)
+        self._share(name, state.day, requests=1, tokens=estimated)
         return QuotaReservation(
             provider=name, day=state.day, estimated_tokens=estimated, _entry=entry
         ), None
@@ -319,7 +319,7 @@ class QuotaTracker:
         state = self._states.get(reservation.provider)
         if state is not None and state.day == reservation.day:
             state.day_tokens = max(0, state.day_tokens + delta)
-            self._persist(reservation.provider)
+            self._share(reservation.provider, reservation.day, tokens=delta)
 
     def cooldown(self, name: str, seconds: float | None, *, reason: str = "rate_limited") -> float:
         """Bench ``name`` for ``seconds`` (the provider's own reset when it gave one).
@@ -373,6 +373,46 @@ class QuotaTracker:
     def _day_key(self, name: str, day: str) -> str:
         return f"{_KEY_PREFIX}:{name}:day:{day}"
 
+    def _shared_key(self, name: str, day: str, kind: str) -> str:
+        """One atomic counter per provider, day and kind (``requests``/``tokens``), shared by
+        every process (audit FSA-025)."""
+        return f"{_KEY_PREFIX}:{name}:day:{day}:{kind}"
+
+    def _apply_shared(self, name: str, day: str, kind: str, total: int) -> None:
+        """A process learns the global spend from the counter's returned total."""
+        state = self._states.get(name)
+        if state is None or state.day != day:
+            return
+        if kind == "requests":
+            state.day_requests = max(state.day_requests, int(total))
+        else:
+            state.day_tokens = max(state.day_tokens, int(total))
+
+    def _share(self, name: str, day: str, *, requests: int = 0, tokens: int = 0) -> None:
+        """Add this process's spend to the shared counters and fold the totals back in. Fire and
+        forget, like ``_persist``: the cache must never delay or fail a generation."""
+        if self._store is None or (not requests and not tokens):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        store = self._store
+
+        async def share() -> None:
+            for kind, amount in (("requests", requests), ("tokens", tokens)):
+                if not amount:
+                    continue
+                try:
+                    total = await store.incr(self._shared_key(name, day, kind), amount=amount, ttl_s=2 * 86400)
+                except Exception:  # best-effort: the Cache port's contract
+                    return
+                self._apply_shared(name, day, kind, total)
+
+        task = loop.create_task(share())
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
+
     def _cooldown_key(self, name: str) -> str:
         return f"{_KEY_PREFIX}:{name}:cooldown"
 
@@ -406,15 +446,22 @@ class QuotaTracker:
             keys[self._cooldown_key(name)] = (name, "cooldown")
             if self.limits(name).declared:
                 keys[self._day_key(name, today)] = (name, "day")
+                keys[self._shared_key(name, today, "requests")] = (name, "shared_requests")
+                keys[self._shared_key(name, today, "tokens")] = (name, "shared_tokens")
         if not keys:
             return
         found = await self._store.get_many(list(keys))
         for key, raw in (found or {}).items():
             name, kind = keys[key]
-            data = json.loads(raw)
+            data = json.loads(raw)  # a bare integer for the shared counters, an object otherwise
             state = self._state(name)
             self._roll(state, now)
-            if kind == "day":
+            if kind == "shared_requests":
+                state.day_requests = max(state.day_requests, int(data))
+            elif kind == "shared_tokens":
+                state.day_tokens = max(state.day_tokens, int(data))
+            elif kind == "day":
+                # Written by processes before the shared counters existed; read until they age out.
                 state.day_requests = max(state.day_requests, int(data.get("requests", 0)))
                 state.day_tokens = max(state.day_tokens, int(data.get("tokens", 0)))
             elif float(data.get("until", 0.0)) > now and float(data["until"]) > state.cooldown_until:
@@ -438,9 +485,8 @@ class QuotaTracker:
             return
         now = self._wall()
         writes: list[tuple[str, bytes, int]] = []
-        if self.limits(name).declared:
-            payload = {"requests": state.day_requests, "tokens": state.day_tokens}
-            writes.append((self._day_key(name, state.day), json.dumps(payload).encode(), 2 * 86400))
+        # The day's spend is no longer written here: it is an atomic shared counter that every
+        # process increments (``_share``, audit FSA-025), not a per-process figure to overwrite.
         if state.cooldown_until > now:
             payload = {"until": state.cooldown_until, "reason": state.cooldown_reason}
             ttl = max(1, int(state.cooldown_until - now) + 1)

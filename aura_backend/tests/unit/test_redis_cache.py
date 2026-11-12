@@ -76,7 +76,13 @@ class FakePipeline:
         self.queued: list[tuple] = []
 
     def incr(self, key):
-        self.queued.append(("incr", key))
+        self.queued.append(("incr", key, 1))
+        return self
+
+    def incrby(self, key, amount):
+        # The adapter issues INCRBY (one command, atomic) so it can add a token count as well as
+        # a request; INCR is the amount-1 case of the same op.
+        self.queued.append(("incr", key, int(amount)))
         return self
 
     def expire(self, key, ttl, nx=False):
@@ -88,8 +94,8 @@ class FakePipeline:
         results = []
         for op in self.queued:
             if op[0] == "incr":
-                key = op[1]
-                current = int(self.client.store.get(key, b"0")) + 1
+                key, amount = op[1], op[2]
+                current = int(self.client.store.get(key, b"0")) + amount
                 self.client.store[key] = str(current).encode()
                 results.append(current)
             elif op[0] == "expire":

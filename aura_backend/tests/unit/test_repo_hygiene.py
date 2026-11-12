@@ -185,6 +185,20 @@ class TestTheIndexCarriesNoScratchFiles:
             assert not rel.lower().endswith(".tmp"), f"a .tmp file may not be allowlisted: {rel}"
 
 
+class TestTheRepositoryRootCarriesNoTestModules:
+    """A `test_*.py` at the repository root is a scratch script that was committed by accident
+    (one was: `test_personal_os.py`, 2025-11-07, running store code at import). pytest collects
+    it whenever someone runs from the root, and it is no suite's test. Suites live under
+    `aura_backend/tests/` and `aura_backend/test_*_integration.py`."""
+
+    @pytest.mark.skipif(not _in_git_checkout(), reason="needs the git index")
+    def test_no_tracked_test_module_sits_at_the_repository_root(self) -> None:
+        tracked = subprocess.run(
+            ["git", "ls-files", "--", "test_*.py", "*_test.py"], cwd=REPO, capture_output=True, text=True, check=True,
+        ).stdout.split()
+        assert tracked == [], f"test modules tracked at the repository root: {tracked}"
+
+
 class TestDevelopmentToolingIsHashPinned:
     """Audit G-06 / GAP-033: the runtime lock is hash-pinned, the test tooling was `pytest>=8.0` --
     4,000 tests ran under whatever pytest resolved that day, and a compromised wheel on PyPI would
@@ -392,3 +406,56 @@ class TestPipesDoNotHideFailures:
                     if "| tee" in run and "pipefail" not in run and step.get("shell") != "bash":
                         unguarded.append((path.name, job_name, step.get("name", "<unnamed>")))
         assert unguarded == [], f"steps whose piped command's failure tee would hide: {unguarded}"
+
+
+class TestContainerImagesArePinnedByDigest:
+    """Audit FSA-111 / F2-13: nginx, postgres, redis, tinyproxy and the socket proxy floated
+    within a tag, and the Hugging Face Space built on `vllm/vllm-openai:latest` with the model
+    revision optional -- so a deploy could pull something nobody had tested, and the inference
+    node could start serving different weights after an upstream push. Every pulled image names
+    a digest; every image a compose service builds itself is exempt; the Space requires the
+    model revision."""
+
+    COMPOSE = (REPO / "deploy" / "docker-compose.prod.yml", REPO / "deploy" / "docker-compose.dev.yml")
+    SPACE = REPO / "deploy" / "spaces" / "inference-vllm"
+    DIGEST = re.compile(r"@sha256:[0-9a-f]{64}(\}|$)")
+
+    @pytest.mark.parametrize("compose", COMPOSE, ids=lambda p: p.name)
+    def test_every_pulled_compose_image_names_a_digest(self, compose: Path) -> None:
+        yaml = pytest.importorskip("yaml")
+        services = yaml.safe_load(compose.read_text(encoding="utf-8"))["services"]
+        built = {str(svc.get("image")) for svc in services.values() if svc.get("build")}
+        unpinned = {
+            name: svc["image"] for name, svc in services.items()
+            if "image" in svc and not svc.get("build") and svc["image"] not in built
+            and not self.DIGEST.search(str(svc["image"]))
+        }
+        assert unpinned == {}, f"{compose.name}: images that float within a tag: {unpinned}"
+
+    def test_the_space_image_builds_on_a_digest_pinned_base(self) -> None:
+        froms = [l for l in (self.SPACE / "Dockerfile").read_text(encoding="utf-8").splitlines() if l.startswith("FROM ")]
+        assert froms, "no FROM line"
+        for line in froms:
+            assert ":latest" not in line, line
+            assert re.search(r"@sha256:[0-9a-f]{64}", line), f"base image is not digest-pinned: {line}"
+
+    def test_the_space_dockerfile_no_longer_says_it_is_pinned_by_tag(self) -> None:
+        text = (self.SPACE / "Dockerfile").read_text(encoding="utf-8")
+        assert "Pinned by tag, not digest" not in text, "stale comment above the digest pin"
+
+    def test_the_space_refuses_to_boot_without_a_model_revision(self) -> None:
+        text = (self.SPACE / "entrypoint.sh").read_text(encoding="utf-8")
+        api_key_check = text.index('if [ -z "${VLLM_API_KEY:-}" ]')
+        revision_check = text.find('if [ -z "$MODEL_REVISION" ]')
+        assert revision_check != -1, "the entrypoint does not require VLLM_MODEL_REVISION"
+        assert revision_check > api_key_check, (
+            "the API-key check must come first: inference-plane-deploy.yml's startup validation "
+            "expects its message when both are unset"
+        )
+        block = text[revision_check:revision_check + 600]
+        assert "VLLM_MODEL_REVISION" in block and "exit 1" in block
+
+    def test_the_space_docs_say_the_revision_is_required(self) -> None:
+        readme = (self.SPACE / "README.md").read_text(encoding="utf-8")
+        row = next(l for l in readme.splitlines() if l.startswith("| `VLLM_MODEL_REVISION`"))
+        assert "required" in row.lower() and "(unset)" not in row, row

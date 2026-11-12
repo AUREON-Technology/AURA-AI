@@ -18,6 +18,13 @@ class _Redis:
 
     def __init__(self) -> None:
         self.data: dict[str, str] = {}
+        self.sets: dict[str, set] = {}
+
+    def set(self, key: str, value: str, nx: bool = False):
+        if nx and key in self.data:
+            return None
+        self.data[key] = value
+        return True
 
     def setex(self, key: str, ttl: int, value: str) -> None:
         self.data[key] = value
@@ -30,6 +37,31 @@ class _Redis:
 
     def scan_iter(self, pattern: str):
         return [k for k in list(self.data) if fnmatch.fnmatch(k, pattern)]
+
+    # The revocation index (FSA-015) keeps per-user sets beside the string records.
+    def sadd(self, key: str, *members: str) -> int:
+        bucket = self.sets.setdefault(key, set())
+        before = len(bucket)
+        bucket.update(members)
+        return len(bucket) - before
+
+    def srem(self, key: str, *members: str) -> int:
+        bucket = self.sets.get(key, set())
+        before = len(bucket)
+        bucket.difference_update(members)
+        return before - len(bucket)
+
+    def smembers(self, key: str) -> set:
+        return set(self.sets.get(key, set()))
+
+    def expire(self, key: str, ttl: int) -> int:
+        return 1
+
+    def delete(self, *keys: str) -> int:
+        return sum(int(self.data.pop(k, None) is not None) + int(self.sets.pop(k, None) is not None) for k in keys)
+
+    def getdel(self, key: str):
+        return self.data.pop(key, None)
 
 
 @pytest.fixture(params=["redis", "in_process"])

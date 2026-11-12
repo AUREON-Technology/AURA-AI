@@ -355,7 +355,7 @@ class FineTuneJobEngine:
         version: str | None = None,
     ) -> FineTuneJob:
         """Create a queued job after verifying the approval binds to the dataset."""
-        approval = await self._approvals._store.get(approval_id)
+        approval = await self._approvals.get(approval_id)
         if approval is None:
             raise NotFoundError(f"unknown approval {approval_id!r}")
         digest = dataset_digest or approval.artefact_digest

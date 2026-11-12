@@ -289,7 +289,18 @@ class _CallContext:
         return self._queue
 
     async def __aexit__(self, *exc_info: Any) -> None:
-        self._relay._waiters.pop(self._message["call_id"], None)
+        call_id = self._message["call_id"]
+        self._relay._waiters.pop(call_id, None)
+        if exc_info[0] is not None:
+            # Leaving with an exception means this side stopped waiting before a terminal frame
+            # (its timeout, a cancelled turn, a consumer that closed the stream). The worker
+            # holding the socket is still waiting on the daemon, and the daemon on a human; tell
+            # the owner so it cancels its serving task, whose own cleanup sends the daemon the
+            # `cancel` frame (FSA-041). Best effort: nothing above can act on a lost courtesy.
+            try:
+                await self._relay._publish(self._owner, {"op": "cancel", "call_id": call_id})
+            except Exception:  # noqa: BLE001
+                logger.debug("could not relay cancel", extra={"call_id": call_id})
 
 
 class HostAgentRelay:
@@ -320,6 +331,8 @@ class HostAgentRelay:
         self._waiters: dict[str, "asyncio.Queue[Mapping[str, Any]]"] = {}
         self._seen_calls: dict[str, float] = {}
         self._serving: set["asyncio.Task[None]"] = set()
+        #: Relayed calls this worker is serving right now, so a caller's cancel can stop one.
+        self._serving_calls: dict[str, "asyncio.Task[None]"] = {}
         self._owned: set[str] = set()
         self._listener: "asyncio.Task[None] | None" = None
         self._heartbeat: "asyncio.Task[None] | None" = None
@@ -500,7 +513,15 @@ class HostAgentRelay:
                 return
             task = asyncio.create_task(self._serve(message))
             self._serving.add(task)
+            self._serving_calls[call_id] = task
             task.add_done_callback(self._serving.discard)
+            task.add_done_callback(lambda t, cid=call_id: self._serving_calls.pop(cid, None))
+        elif op == "cancel":
+            task = self._serving_calls.get(str(message.get("call_id") or ""))
+            if task is not None:
+                # Cancelling the serving task lands in HostAgentSession.call/call_streaming's
+                # own cleanup, which sends the daemon the `cancel` frame.
+                task.cancel()
         elif op == "superseded":
             user = str(message.get("user_id") or "")
             if user and self._superseded is not None:

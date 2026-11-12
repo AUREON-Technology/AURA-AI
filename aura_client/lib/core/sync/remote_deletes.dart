@@ -2,6 +2,7 @@ import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:aura_client/core/network/idempotency.dart';
 
 import '../auth/token_manager.dart';
 import '../config/backend_url_provider.dart';
@@ -63,7 +64,12 @@ class RemoteDeletes {
 
   Future<bool> _attempt(RemoteDeleteKind kind, String id) async {
     try {
-      final response = await _delete(Uri.parse(_url(kind, id)));
+      // Stable across retries (audit FSA-046): the server then replays its first answer for
+      // this delete instead of answering 404 to the retry of a delete it already did.
+      final response = await _delete(
+        Uri.parse(_url(kind, id)),
+        idempotencyKey: stableIdempotencyKey('delete-${kind.name}', id),
+      );
       if (response == null) return false;
       // 200: deleted. 404: never reached the server, or already gone. 422: an
       // id the server can never accept (a pre-UUID local memory id), so
@@ -91,12 +97,15 @@ class RemoteDeletes {
     };
   }
 
-  Future<http.Response?> _delete(Uri uri) async {
+  Future<http.Response?> _delete(Uri uri, {required String idempotencyKey}) async {
     final tokens = _ref.read(tokenManagerProvider);
     Future<http.Response?> once() async {
       final token = await tokens.getValidAccessToken();
       if (token == null) return null;
-      final headers = <String, String>{"Authorization": "Bearer $token"};
+      final headers = <String, String>{
+        "Authorization": "Bearer $token",
+        idempotencyKeyHeader: idempotencyKey,
+      };
       headers.addAll(await DeviceValidationService.getAttestationHeaders(backendUrl: _ref.read(backendUrlProvider)));
       final client = _http;
       final sent = client != null ? client.delete(uri, headers: headers) : http.delete(uri, headers: headers);

@@ -722,6 +722,9 @@ class LLMSettings:
     default_policy: RoutingPolicy = RoutingPolicy.BALANCED
     embedding_provider: str = "local-embeddings"
     embedding_model: str = "hash-embed-v1"
+    #: Hub commit of the embedding weights (audit FSA-110). Part of the embedder's ``model_id``
+    #: and so of the index identity: a new revision is a new physical index (ADR-007).
+    embedding_model_revision: str = ""
     embedding_dimension: int = 384
     embedding_batch_size: int = 64
     request_timeout_s: float = 60.0
@@ -741,6 +744,12 @@ class LLMSettings:
     #: until an operator opts in (the production compose file does).
     admission_max_queue: int = -1
     admission_queue_timeout_s: float = 0.0
+    #: How many processes share each capacity group's declared cap (audit FSA-025): the gateway's
+    #: ``AURA_WORKERS``. Each process gets the cap divided by this (floored at one slot), so the
+    #: sum over the gateway's workers is the cap the model server was declared to bear. 1 keeps
+    #: the per-process behaviour. ``AURA_LLM_ADMISSION_PROCESSES`` sets it; unset, it follows
+    #: ``AURA_WORKERS`` (the image's uvicorn worker count), so Railway divides too.
+    admission_processes: int = 1
     #: Concurrent generations one user may hold across all pools (and queue as many more);
     #: 0 disables the quota.
     user_max_concurrent_generations: int = 0
@@ -789,6 +798,7 @@ class LLMSettings:
             default_policy=policy,
             embedding_provider=_env("EMBEDDING_PROVIDER", "local-embeddings") or "local-embeddings",
             embedding_model=_env("EMBEDDING_MODEL", "hash-embed-v1") or "hash-embed-v1",
+            embedding_model_revision=_env("EMBEDDING_MODEL_REVISION", "") or "",
             embedding_dimension=_int("EMBEDDING_DIMENSION", 384, minimum=16),
             embedding_batch_size=_int("EMBEDDING_BATCH_SIZE", 64, minimum=1, maximum=1024),
             request_timeout_s=_float("LLM_TIMEOUT_S", 60.0, minimum=1.0),
@@ -803,6 +813,11 @@ class LLMSettings:
             max_prompt_tokens=_int("LLM_MAX_PROMPT_TOKENS", 400, minimum=64, maximum=32768),
             admission_max_queue=_int("LLM_ADMISSION_MAX_QUEUE", -1, minimum=-1),
             admission_queue_timeout_s=_float("LLM_ADMISSION_QUEUE_TIMEOUT_S", 0.0, minimum=0.0),
+            # Unset, the gateway's own worker count: Railway runs the image's
+            # `--workers ${AURA_WORKERS:-4}` with no compose file to set the division.
+            admission_processes=_int(
+                "LLM_ADMISSION_PROCESSES", _int("WORKERS", 1, minimum=1), minimum=1, maximum=256
+            ),
             user_max_concurrent_generations=_int(
                 "LLM_USER_MAX_CONCURRENT_GENERATIONS", 0, minimum=0
             ),
@@ -839,6 +854,8 @@ class KnowledgeSettings:
     #: zero-dependency heuristic remains the default.
     rerank_provider: str = "heuristic"
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    #: Hub commit of the cross-encoder weights (audit FSA-110); empty loads the repo's head.
+    rerank_model_revision: str = ""
     mmr_lambda: float = 0.7
     graph_enabled: bool = True
     #: Adds the model-backed extractor after the rule extractor. Off by default: it costs one
@@ -868,10 +885,20 @@ class KnowledgeSettings:
     #: generator; it can never opt *in* to an engine that was never present.
     ocr_enabled: bool = True
     ocr_lang: str = "eng"
+    #: Whether chunk text (and a memory's ``subject``) is copied into the vector payload (audit
+    #: FSA-018 / CB-22). ``None`` decides by where the vector store runs
+    #: (:func:`vector_payload_content_enabled`): on-host stores keep it for speed; an off-host
+    #: Qdrant never sees readable content, and retrieval resolves the text from the owner-scoped
+    #: document store instead. ``True``/``False`` override the rule.
+    vector_payload_content: bool | None = None
 
     @classmethod
     def from_env(cls) -> "KnowledgeSettings":
         return cls(
+            vector_payload_content=(
+                None if not _env("KNOWLEDGE_VECTOR_PAYLOAD_CONTENT", "")
+                else _bool("KNOWLEDGE_VECTOR_PAYLOAD_CONTENT", True)
+            ),
             index_alias=_env("KNOWLEDGE_INDEX_ALIAS", "aura_knowledge") or "aura_knowledge",
             schema_version=_int("KNOWLEDGE_SCHEMA_VERSION", 1, minimum=1),
             chunk_target_tokens=_int("KNOWLEDGE_CHUNK_TOKENS", 320, minimum=32, maximum=2048),
@@ -887,6 +914,7 @@ class KnowledgeSettings:
             rrf_k=_int("KNOWLEDGE_RRF_K", 60, minimum=1),
             rerank_enabled=_bool("KNOWLEDGE_RERANK_ENABLED", True),
             rerank_provider=(_env("KNOWLEDGE_RERANK_PROVIDER", "heuristic") or "heuristic").lower(),
+            rerank_model_revision=_env("KNOWLEDGE_RERANK_MODEL_REVISION", "") or "",
             rerank_model=_env("KNOWLEDGE_RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
             or "cross-encoder/ms-marco-MiniLM-L-6-v2",
             mmr_lambda=_float("KNOWLEDGE_MMR_LAMBDA", 0.7, minimum=0.0, maximum=1.0),
@@ -1050,8 +1078,11 @@ class ReasoningSettings:
     verification_enabled: bool = True
     #: Wall-clock cap on the engineer agent's plan-act-observe-replan loop
     #: (`aura_core/execution/agentic_loop.py`), independent of any single execution
-    #: pass's own `deadline_s` -- this bounds the whole multi-iteration turn.
-    engineer_loop_deadline_s: float = 600.0
+    #: pass's own `deadline_s` -- this bounds the whole multi-iteration turn. At least the
+    #: longest host-routed tool (run_command, 605 s) plus the daemon's approval window (330 s,
+    #: tools/registry.py HOST_APPROVAL_WINDOW_S), or an approved command is cut off mid-run
+    #: (audit FSA-041).
+    engineer_loop_deadline_s: float = 960.0
     #: How many `delegate_to_agent` hops a call tree may contain (`aura_core/tools/delegation.py`).
     #: `1` means a delegating persona's own sub-turn cannot itself delegate further -- the default
     #: ceiling, combined with only `orchestrator` holding the tool, caps recursion at exactly one
@@ -1076,7 +1107,7 @@ class ReasoningSettings:
             tot_max_nodes=_int("REASONING_TOT_MAX_NODES", 12, minimum=2, maximum=64),
             verification_enabled=_bool("REASONING_VERIFICATION_ENABLED", True),
             engineer_loop_deadline_s=_float(
-                "REASONING_ENGINEER_LOOP_DEADLINE_S", 600.0, minimum=10.0, maximum=3600.0
+                "REASONING_ENGINEER_LOOP_DEADLINE_S", 960.0, minimum=10.0, maximum=3600.0
             ),
             max_delegation_depth=_int(
                 "REASONING_MAX_DELEGATION_DEPTH", 1, minimum=0, maximum=4
@@ -1104,10 +1135,19 @@ class ObservabilitySettings:
     #: found /metrics world-readable there, publishing which safety bypasses are on and which
     #: dependencies are down.
     metrics_token: str = ""
+    #: How long audit events and turn telemetry are kept (audit FSA-016). Both hold personal
+    #: data (the audit actor is an email or subject, with a source IP; telemetry names a user's
+    #: conversations) and were kept forever. ``0`` keeps rows indefinitely. The daily
+    #: ``purge_audit_and_telemetry_task`` applies these; erasure pseudonymises the audit actor
+    #: and drops the user's conversations' telemetry regardless of age.
+    audit_retention_days: int = 365
+    telemetry_retention_days: int = 90
 
     @classmethod
     def from_env(cls) -> "ObservabilitySettings":
         return cls(
+            audit_retention_days=_int("AUDIT_RETENTION_DAYS", 365, minimum=0),
+            telemetry_retention_days=_int("TELEMETRY_RETENTION_DAYS", 90, minimum=0),
             log_level=(_env("LOG_LEVEL", "INFO") or "INFO").upper(),
             log_format=(_env("LOG_FORMAT", "json") or "json").lower(),
             metrics_enabled=_bool("METRICS_ENABLED", True),
@@ -1187,6 +1227,37 @@ class SecuritySettings:
         )
 
 
+def _vector_store_is_on_host(url: str) -> bool:
+    """Whether a vector-store URL points at this deployment's own network: empty (in-memory), a
+    loopback or private address, a bare Docker service name, or a ``.internal``/``.local`` name.
+    A dotted public hostname (Qdrant Cloud, any SaaS) is off-host."""
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    if not url:
+        return True
+    host = (urlsplit(url if "//" in url else f"//{url}").hostname or "").lower()
+    if not host or host in ("localhost",):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_private or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        pass
+    if "." not in host:
+        return True
+    return host.endswith((".internal", ".local", ".localdomain"))
+
+
+def vector_payload_content_enabled(knowledge: "KnowledgeSettings", infrastructure: "InfrastructureSettings") -> bool:
+    """The recorded decision per target (audit FSA-018): readable content travels into vector
+    payloads only when the vector store is on-host, unless the operator says otherwise."""
+    if knowledge.vector_payload_content is not None:
+        return bool(knowledge.vector_payload_content)
+    if infrastructure.vector_backend != "qdrant":
+        return True
+    return _vector_store_is_on_host(infrastructure.qdrant_url)
+
+
 @dataclass(frozen=True, slots=True)
 class InfrastructureSettings:
     """Connection strings. Empty means "use the in-memory adapter".
@@ -1209,9 +1280,31 @@ class InfrastructureSettings:
     #: kill switch back to single-process behaviour (only the worker holding a daemon's socket
     #: can reach it).
     host_agent_relay: bool = True
+    #: The one asyncpg pool every aura_core store in a process shares (``PostgresPool``), and
+    #: the legacy SQLAlchemy engine beside it (``infrastructure/db/base.py``). Per *process*:
+    #: every uvicorn worker and every Celery prefork child holds its own, so a deployment's
+    #: connection budget is ``processes x postgres_connections_per_process`` and must fit under
+    #: Postgres's ``max_connections`` with headroom (audit FSA-073;
+    #: tests/unit/test_postgres_connection_budget.py computes it for both compose files).
+    postgres_pool_min_size: int = 2
+    postgres_pool_max_size: int = 10
+    #: A statement that runs longer than this is cancelled and its connection returned; without
+    #: it a hung query held a pooled connection forever.
+    postgres_command_timeout_s: float = 60.0
+    #: Idle pooled connections are closed after this long, so a burst does not pin its peak.
+    postgres_max_inactive_connection_lifetime_s: float = 300.0
+    legacy_db_pool_size: int = 5
+    legacy_db_max_overflow: int = 10
 
     @classmethod
     def from_env(cls) -> "InfrastructureSettings":
+        pool_min = _int("POSTGRES_POOL_MIN_SIZE", 2, minimum=0)
+        pool_max = _int("POSTGRES_POOL_MAX_SIZE", 10, minimum=1)
+        if pool_min > pool_max:
+            raise ConfigurationError(
+                "AURA_POSTGRES_POOL_MIN_SIZE must not exceed AURA_POSTGRES_POOL_MAX_SIZE",
+                details={"min": pool_min, "max": pool_max},
+            )
         return cls(
             database_url=_env("DATABASE_URL", "") or "",
             redis_url=_env("REDIS_URL", "") or "",
@@ -1222,7 +1315,20 @@ class InfrastructureSettings:
             memory_backend=(_env("MEMORY_BACKEND", "memory") or "memory").lower(),
             cache_backend=(_env("CACHE_BACKEND", "memory") or "memory").lower(),
             host_agent_relay=_bool("HOST_AGENT_RELAY", True),
+            postgres_pool_min_size=pool_min,
+            postgres_pool_max_size=pool_max,
+            postgres_command_timeout_s=_float("POSTGRES_COMMAND_TIMEOUT_S", 60.0, minimum=1.0),
+            postgres_max_inactive_connection_lifetime_s=_float(
+                "POSTGRES_MAX_INACTIVE_CONNECTION_LIFETIME_S", 300.0, minimum=0.0
+            ),
+            legacy_db_pool_size=_int("LEGACY_DB_POOL_SIZE", 5, minimum=0),
+            legacy_db_max_overflow=_int("LEGACY_DB_MAX_OVERFLOW", 10, minimum=0),
         )
+
+    @property
+    def postgres_connections_per_process(self) -> int:
+        """The most Postgres connections one process can hold with every pool full."""
+        return self.postgres_pool_max_size + self.legacy_db_pool_size + self.legacy_db_max_overflow
 
     @property
     def qdrant_api_key(self) -> str:
@@ -1619,6 +1725,12 @@ class VoiceSettings:
 
     stt_enabled: bool = True
     stt_model: str = "tiny.en"
+    #: Hub commit of the Whisper weights (audit FSA-110); empty loads the repo's head.
+    stt_model_revision: str = ""
+    #: Load Whisper at container startup instead of on the first transcription of every fresh
+    #: container. ``None`` means "in production-like environments only", which keeps a local or
+    #: test container from ever pulling weights.
+    stt_warm_on_startup: bool | None = None
     tts_enabled: bool = True
     tts_voice: str = "en-us"
     tts_rate_wpm: int = 142
@@ -1651,6 +1763,10 @@ class VoiceSettings:
         return cls(
             stt_enabled=_bool("VOICE_STT_ENABLED", True),
             stt_model=_env("VOICE_STT_MODEL", "tiny.en") or "tiny.en",
+            stt_model_revision=_env("VOICE_STT_MODEL_REVISION", "") or "",
+            stt_warm_on_startup=(
+                None if not _env("VOICE_STT_WARM_ON_STARTUP", "") else _bool("VOICE_STT_WARM_ON_STARTUP", True)
+            ),
             tts_enabled=_bool("VOICE_TTS_ENABLED", True),
             tts_voice=_env("VOICE_TTS_VOICE", "en-us") or "en-us",
             tts_rate_wpm=_int("VOICE_TTS_RATE_WPM", 142, minimum=80, maximum=250),
