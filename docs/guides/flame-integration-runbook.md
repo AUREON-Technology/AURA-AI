@@ -276,6 +276,7 @@ curl -X POST "$AURA/api/v3/admin/service-keys" -H "$ADMIN" -d '{"name": "svc-fla
 | 422 `output_invalid` | From Flame PR #21 (FCDS-College/Nasa), Flame's router falls back to its local model; if none answers, `interpretation.status="unavailable"` with `INTERPRETATION_UNAVAILABLE`. Not retried at AURA |
 | 429 | `retryable=true`; honour `Retry-After` |
 | 401 | key revoked or wrong; page an operator |
+| 503 `capability_unavailable` | No model AURA may give this turn to answered (below). Flame falls back like any 503 and logs `upstream=capability_unavailable`. Not retryable: the same request reaches the same models |
 | 503 | `INTERPRETATION_UNAVAILABLE` |
 
 Idempotency. Flame sends `Idempotency-Key: <analysis or request id>:<16 hex of the body's SHA-256>`
@@ -284,9 +285,29 @@ request rather than `422 idempotency_key_reused`. AURA does not store a 429 or a
 answer, so a retry after a refusal runs the turn again.
 
 `require_local`. Flame sends `require_local: true` by default. `/health/ready` reports
-`local_healthy`; when it is false every Flame call fails with 503 while `healthy` is still true.
-Either run a provider marked local, or set Flame's `FLAME_AURA_REQUIRE_LOCAL=false` where AURA's
-model is remote by design.
+`local_healthy`. When it is false, every Flame call would fail with 503 while `healthy` is still
+true. Flame reads it (from FCDS-College/Nasa#34), marks AURA down (`no_local_provider`) and does
+not call. Either run a
+provider marked local, or set Flame's `FLAME_AURA_REQUIRE_LOCAL=false` where AURA's model is
+remote by design. That alone is not enough; see the next paragraph.
+
+**Data classification.** Every Flame request carries `context`, so the kernel classifies the turn
+SENSITIVE (`caller_evidence`, ADR-030 §4). It may go only to a provider whose ceiling is
+`sensitive`:
+- a local provider has that ceiling by default;
+- a hosted open-weight slot and the Claude provider default to `internal`.
+
+On a deployment with no local model, Flame's calls therefore end in 503 `capability_unavailable`
+unless the operator sets `AURA_PROVIDER_<NAME>_MAX_DATA_CLASSIFICATION=sensitive` on a slot and
+Flame sets `FLAME_AURA_REQUIRE_LOCAL=false`.
+- That sends Flame's evidence to the third party. NASA's data is public, but the rule covers all
+  caller evidence, so it is the operator's decision.
+- AURA refuses `sensitive` for a slot that may train on prompts (`:free`).
+- The Claude provider allows it with a warning.
+
+**Guards.** AURA's default context guards were run over every evidence excerpt in Flame's database
+(10,562), at `d696fad` and at `667c7c4`. All passed, and none was quarantined. 67 PDF passages are
+NFKC-normalised.
 
 On the CPU deployment, 400 tokens at 5–10 tok/s plus one possible repair is roughly 40–160 s. That
 is why Flame's 120 s timeout must stay off the dashboard path (NR-1).
