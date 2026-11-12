@@ -110,6 +110,40 @@ be worth blocking helpful answers for is the owner's decision. The prompts are i
   it alone reaches the 0.6 threshold. A one-word lookahead would fix this case. It is listed here
   rather than changed, so the guard isn't tuned to a hand-written corpus.
 
+## Addendum (same day): Arabic patterns and the `concealment` fix
+
+Two of the findings above had no security trade-off, so they were fixed. The proportional leak
+threshold (finding 2) was left for the owner.
+
+**Arabic coverage.** `PromptInjectionGuard` and `JailbreakGuard` now also match Arabic.
+- The text is matched after normalisation: diacritics and tatweel are removed, and the alef, yeh
+  and teh-marbuta variants are folded. An index map takes each match back to the original text,
+  so spans stay exact.
+- Arabic patterns share labels and weights with their English twins, so one signal written in
+  both languages counts once.
+- To avoid fitting the patterns to the corpus, 13 new Arabic cases were written **before** any
+  pattern existed:
+  - 4 injections and 4 benign documents using the same vocabulary (a manual's "previous
+    instructions", a runbook's "run the command", an article quoting an attack, a privacy policy);
+  - 2 jailbreaks and 3 benign questions ("developer mode" on Android, travel "without
+    restrictions on luggage", a poem "without strict rhyme rules").
+- The corpus is now 95 cases.
+
+**`concealment`.** "do not tell the user" no longer matches "the user base" (`inject-17`).
+
+| Guard | Before (95 cases) | After |
+|---|---|---|
+| prompt_injection | precision 0.833, recall 0.625, specificity 0.875 | **0.938 / 0.938 / 0.938** |
+| jailbreak | precision 1.000, recall 0.300, specificity 1.000 | **1.000 / 0.600 / 1.000** |
+
+- **Arabic attacks:** every one is now caught (5 injections, 3 jailbreaks).
+- **Arabic benign cases:** none are wrongly flagged.
+- **Remaining misses** are the shapes this approach can't see: a polite paraphrased injection
+  (`inject-09`), the attack-quoting training material (`inject-16`), single-signal jailbreaks
+  below the 0.7 threshold, and fiction or dual-persona framings.
+- The baseline in `guard_cases_baseline.json` is re-recorded, so a regression from these numbers
+  fails the gate.
+
 ## What would make this PROVEN
 
 1. Capture real outputs: the `SafetyTriggered` events and a sample of allowed turns from the live
