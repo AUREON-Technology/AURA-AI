@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:aura_client/core/auth/account_client.dart';
 import 'package:aura_client/core/auth/desktop_oauth_client.dart';
 import 'package:aura_client/core/auth/platform_login_support.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
@@ -352,12 +353,59 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       debugPrint("[Auth] final push before sign-out failed (continuing): $e");
     }
 
-    // Revokes the refresh token server-side, then clears TokenManager's
-    // in-memory access/refresh token cache — without the latter, a
-    // still-valid (up to 15min) cached v2 access token from the outgoing
-    // session could authenticate v2 API calls as the wrong user if a
-    // different account signs in before the app restarts.
-    await ref.read(tokenManagerProvider).clear(revoke: true);
+    await _clearThisDevice(revoke: true);
+  }
+
+  /// Deletes the account on the server -- memories, documents, synced
+  /// records, conversations, every session and device -- then clears this
+  /// device the way [signOut] does. Irreversible; the caller confirms first.
+  ///
+  /// If the server call fails (offline, 5xx) this throws and nothing local
+  /// changes, so the user is still signed in and can try again. Once the
+  /// server has answered, this device signs out whatever the answer: the
+  /// server revokes the sessions even when it reports a store it could not
+  /// erase ([AccountDeletionResult.forgotten] false), and retrying then means
+  /// signing in again, which the result's copy says.
+  ///
+  /// Unlike [signOut] there is no final push: the account is gone, and an
+  /// upload made with the still-unexpired access token would write rows back
+  /// for it. Deletes waiting out their Undo window are dropped for the same
+  /// reason.
+  Future<AccountDeletionResult> deleteAccount() async {
+    final current = state.value;
+    if (current == null) throw StateError('not signed in');
+    if (current.id == _mockUserId) {
+      // The developer bypass has no server account to delete.
+      await signOut();
+      return const AccountDeletionResult(forgotten: true);
+    }
+    final result = await ref.read(accountClientProvider).deleteAccount();
+    // From here the account is gone on the server: whatever fails locally, this ends signed
+    // out, and the result is still returned, so the screen does not say "not deleted".
+    state = const AsyncValue.loading();
+    try {
+      ref.read(undoableDeletesProvider.notifier).discardAll();
+      try {
+        await _googleSignIn.signOut();
+      } catch (_) {}
+      _currentAccount = null;
+      // The server already revoked every refresh token of the account.
+      await _clearThisDevice(revoke: false);
+    } catch (e) {
+      debugPrint("[Auth] local cleanup after account deletion failed: $e");
+    } finally {
+      state = const AsyncValue.data(null);
+    }
+    return result;
+  }
+
+  Future<void> _clearThisDevice({required bool revoke}) async {
+    // Revokes the refresh token server-side (when [revoke]), then clears
+    // TokenManager's in-memory access/refresh token cache — without the
+    // latter, a still-valid (up to 15min) cached v2 access token from the
+    // outgoing session could authenticate v2 API calls as the wrong user if
+    // a different account signs in before the app restarts.
+    await ref.read(tokenManagerProvider).clear(revoke: revoke);
 
     // The local DB is not keyed by user, so the next account to sign in
     // would otherwise inherit this one's data, unsynced outbox and cursor.

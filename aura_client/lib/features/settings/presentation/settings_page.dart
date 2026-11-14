@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:aura_client/core/config/backend_url_settings.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/platform/aura_platform.dart';
+import 'package:aura_client/features/auth/presentation/delete_account_confirmation.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 /// "You" — account, knowledge, memory, feedback, and appearance.
@@ -44,13 +46,17 @@ class SettingsPage extends ConsumerWidget {
                   subtitle: l10n.settingsAppearanceSubtitle,
                   onTap: () => context.push('/appearance'),
                 ),
-                const _RowDivider(),
-                AuraListTile(
-                  icon: Icons.dns_outlined,
-                  title: l10n.serverEnvironmentTitle,
-                  subtitle: l10n.settingsServerEnvironmentSubtitle,
-                  onTap: () => context.push('/server-environment'),
-                ),
+                // A release build has one server to offer, so no picker (see
+                // BackendUrlSettings.selectableEnvironments).
+                if (BackendUrlSettings.offersEnvironmentChoice) ...[
+                  const _RowDivider(),
+                  AuraListTile(
+                    icon: Icons.dns_outlined,
+                    title: l10n.serverEnvironmentTitle,
+                    subtitle: l10n.settingsServerEnvironmentSubtitle,
+                    onTap: () => context.push('/server-environment'),
+                  ),
+                ],
                 const _RowDivider(),
                 AuraListTile(
                   icon: Icons.devices_outlined,
@@ -58,6 +64,8 @@ class SettingsPage extends ConsumerWidget {
                   subtitle: l10n.settingsDevicesSubtitle,
                   onTap: () => context.push('/desktop-devices'),
                 ),
+                const _RowDivider(),
+                const DeleteAccountTile(),
               ],
             ),
           ),

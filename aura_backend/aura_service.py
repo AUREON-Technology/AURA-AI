@@ -122,6 +122,7 @@ def _build_authenticator(settings: Any, *, service_keys: Any = None):
 
 
 def _mount_platform_routers(app) -> None:
+    from api.account import router as account_router
     from api.admin_platform import router as admin_platform_router
     from api.automation import router as automation_router
     from api.learning import router as learning_router
@@ -136,6 +137,7 @@ def _mount_platform_routers(app) -> None:
     app.include_router(automation_router)
     app.include_router(learning_router)
     app.include_router(admin_platform_router)
+    app.include_router(account_router)
     app.include_router(github_integration_router)
 
 
@@ -222,15 +224,40 @@ def _register_inference_budget_handler(app) -> None:
 _UPLOAD_FRAMING_BYTES = 1024 * 1024
 
 
+#: The text part of a chat turn (message, history hints, approval ids) beside its images.
+_CHAT_TEXT_BYTES = 1024 * 1024
+
+
+def chat_body_limit(vision) -> int | None:
+    """The body ceiling for ``/api/v3/chat`` and ``/api/v3/chat/stream`` when images are on.
+
+    Images travel base64-encoded inside the JSON body (ADR-031), a third larger than the bytes
+    ``/capabilities`` advertises (``max_image_bytes``, ``max_request_image_bytes``). Under the
+    flat 5MB cap one ordinary phone photo above ~3.7MB was refused with a 413 the vision engine
+    would have accepted, and the app showed a Retry that could never succeed. ``None`` while
+    vision is off: images are refused anyway, so chat keeps the default cap.
+    """
+    if not vision.enabled:
+        return None
+    encoded = (vision.max_request_image_bytes * 4 + 2) // 3
+    return encoded + _CHAT_TEXT_BYTES
+
+
 def _apply_http_limits(app, settings) -> None:
     # Document upload has its own ceiling, ``knowledge.max_document_bytes`` (8MB by default); the
     # flat 5MB cap used to refuse every document between the two with a 413 the knowledge
-    # engine would have accepted. nginx's ``client_max_body_size 20m`` stays above both.
+    # engine would have accepted. nginx's ``client_max_body_size 20m`` stays above both, and
+    # above the chat ceiling with vision's defaults (12MB of images -> ~17MB of body).
     upload_limit = settings.knowledge.max_document_bytes + _UPLOAD_FRAMING_BYTES
+    route_limits = {"/api/v3/knowledge/documents/upload": upload_limit}
+    chat_limit = chat_body_limit(settings.vision)
+    if chat_limit is not None:
+        # A prefix match: covers /api/v3/chat and /api/v3/chat/stream.
+        route_limits["/api/v3/chat"] = chat_limit
     app.add_middleware(
         PayloadSizeLimitMiddleware,
         max_bytes=5 * 1024 * 1024,
-        route_limits={"/api/v3/knowledge/documents/upload": upload_limit},
+        route_limits=route_limits,
     )
     # No second, legacy per-IP limiter here (audit FSA-005). `infrastructure.http_limits.
     # RateLimitMiddleware` keyed on `request.client.host`, which behind Railway's edge (and

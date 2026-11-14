@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 
-from services.jwt_auth import revoke_all_devices_for_uid, revoke_all_for_uid
+from services.jwt_auth import mark_account_erased, revoke_all_devices_for_uid, revoke_all_for_uid
 from services.rbac import (
     CONSOLE_MIN_ROLE,
     ROLE_HIERARCHY,
@@ -309,15 +309,8 @@ async def _erase_core(
     return counts, failed
 
 
-@router.post("/users/{subject}/forget")
-async def forget_user(
-    subject: str, request: Request, user_info: dict = Depends(require_role("SuperAdmin")),
-):
-    """Erase a user. Returns counts only — never content.
-
-    Used to soft-delete six sync tables and answer ``forgotten: true`` while the user's memories
-    (and their vectors), knowledge documents, server-side transcripts, agent-written records,
-    projects and goals, device tokens and the ciphertext itself all stayed. Now:
+async def erase_account(container, subject: str, *, unknown_user_ok: bool = False) -> dict:
+    """Erase the user ``subject`` names (an auth subject or an email). Returns counts only.
 
     1. the aura_core stores are erased (``_erase_core``);
     2. refresh tokens and every paired device are revoked;
@@ -325,13 +318,17 @@ async def forget_user(
        tables, insights, the GitHub link -- through the schema's ``ON DELETE CASCADE``.
 
     If any store fails, the ``users`` row is kept so the same call can be retried, and the
-    response says ``forgotten: false`` and which stores failed. What erasure still does not
-    reach is listed in ``not_erased`` on every response.
+    result says ``forgotten: false`` and which stores failed. What erasure still does not reach
+    is listed in ``not_erased`` on every result.
+
+    Shared by the operator route below and the user's own ``POST /api/v3/account/delete``
+    (``api/account.py``). ``unknown_user_ok`` is for the latter: a caller holding a valid token
+    for a subject with no ``users`` row (one that never synced) still has aura_core data and
+    sessions to erase, where an operator's unknown subject is more likely a typo -- 404.
     """
     from infrastructure.db.base import get_session_factory, is_configured
     from infrastructure.db.models import Message, User
 
-    container = getattr(request.app.state, "aura", None)
     counts: dict = {"sessions": 0, "devices": 0, "user": 0}
     failed: list = []
 
@@ -346,6 +343,13 @@ async def forget_user(
             failed.append("aura_core stores (no container on this app)")
         counts["sessions"] = revoke_all_for_uid(auth_subject)
         counts["devices"] = revoke_all_devices_for_uid(auth_subject)
+        # Live access tokens too, so another signed-in device cannot recreate the account
+        # in the minutes before its token expires.
+        try:
+            mark_account_erased(auth_subject)
+        except Exception:
+            logger.exception("erasure step failed", extra={"step": "access_tokens"})
+            failed.append("access_tokens")
 
     if is_configured():
         async with get_session_factory()() as db:
@@ -354,24 +358,27 @@ async def forget_user(
             )
             user = result.scalar_one_or_none()
             if user is None:
-                raise HTTPException(status_code=404, detail="user not found")
-            current, _ = effective_role(user)
-            if current == "SuperAdmin":
-                blocked = last_superadmin_block(
-                    target_role=current, remaining=await _superadmin_count(db), action="forget",
+                if not unknown_user_ok:
+                    raise HTTPException(status_code=404, detail="user not found")
+                await erase_everything_but_the_row(subject, set())
+            else:
+                current, _ = effective_role(user)
+                if current == "SuperAdmin":
+                    blocked = last_superadmin_block(
+                        target_role=current, remaining=await _superadmin_count(db), action="forget",
+                    )
+                    if blocked:
+                        raise _forbid(blocked)
+                conversation_ids = set(
+                    (await db.execute(
+                        select(Message.conversation_id).where(Message.user_id == user.id).distinct()
+                    )).scalars()
                 )
-                if blocked:
-                    raise _forbid(blocked)
-            conversation_ids = set(
-                (await db.execute(
-                    select(Message.conversation_id).where(Message.user_id == user.id).distinct()
-                )).scalars()
-            )
-            await erase_everything_but_the_row(user.auth_subject, conversation_ids, user.email)
-            if not failed:
-                await db.delete(user)
-                await db.commit()
-                counts["user"] = 1
+                await erase_everything_but_the_row(user.auth_subject, conversation_ids, user.email)
+                if not failed:
+                    await db.delete(user)
+                    await db.commit()
+                    counts["user"] = 1
     else:
         await erase_everything_but_the_row(subject, set())
     return {
@@ -380,6 +387,20 @@ async def forget_user(
         "failed": failed,
         "not_erased": list(NOT_ERASED),
     }
+
+
+@router.post("/users/{subject}/forget")
+async def forget_user(
+    subject: str, request: Request, user_info: dict = Depends(require_role("SuperAdmin")),
+):
+    """Erase a user. Returns counts only — never content.
+
+    Used to soft-delete six sync tables and answer ``forgotten: true`` while the user's memories
+    (and their vectors), knowledge documents, server-side transcripts, agent-written records,
+    projects and goals, device tokens and the ciphertext itself all stayed. What it does now is
+    ``erase_account``'s docstring.
+    """
+    return await erase_account(getattr(request.app.state, "aura", None), subject)
 
 
 @router.get("/jobs/{task_id}")

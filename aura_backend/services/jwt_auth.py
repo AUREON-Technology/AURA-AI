@@ -655,6 +655,47 @@ def revoke_all_devices_for_uid(uid: str) -> int:
     return sum(1 for device_id in _owned_device_ids(uid) if revoke_device(device_id, requesting_uid=uid))
 
 
+_ERASED_ACCOUNT_PREFIX = "erased_account:"
+_local_erased_accounts: Dict[str, float] = {}
+
+
+def mark_account_erased(uid: str) -> None:
+    """Refuse every access token issued to ``uid`` up to now (account erasure).
+
+    Erasure revokes the refresh tokens and paired devices, but an ordinary access token stays
+    valid until it expires (``ACCESS_TOKEN_TTL``): another phone still signed in to the account
+    could sync or chat in that window, and ``get_or_create_user`` would recreate the ``users``
+    row and write data back into an account that was just deleted. ``verify_access_token``
+    refuses a token whose ``iat`` is not after this moment. Kept for the longest access-token
+    lifetime (a device token's), after which no such token can exist. Signing in again later
+    issues newer tokens and starts a fresh account, as it should.
+    """
+    now = datetime.now(timezone.utc).timestamp()
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        redis_client.setex(
+            f"{_ERASED_ACCOUNT_PREFIX}{uid}", int(DEVICE_ACCESS_TOKEN_TTL.total_seconds()), str(now)
+        )
+        return
+    _local_erased_accounts[uid] = now
+
+
+def _account_erased_at(uid: str) -> Optional[float]:
+    redis_client = get_redis_client()
+    if redis_client is not None:
+        try:
+            raw = redis_client.get(f"{_ERASED_ACCOUNT_PREFIX}{uid}")
+        except Exception:
+            # The same store backs refresh tokens; if it is down, sign-in is down too. Do not
+            # turn every authenticated request into a 500 over this one check.
+            logger.warning("erased-account check unavailable (redis error)")
+            return None
+        if raw is None:
+            return None
+        return float(raw.decode() if isinstance(raw, bytes) else raw)
+    return _local_erased_accounts.get(uid)
+
+
 def is_device_revoked(device_id: str) -> bool:
     redis_client = get_redis_client()
     if redis_client is not None:
@@ -751,6 +792,11 @@ async def verify_access_token(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Access token expired. Use /api/v3/auth/refresh.")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token.")
+
+    subject = payload.get("sub")
+    erased_at = _account_erased_at(str(subject)) if subject else None
+    if erased_at is not None and float(payload.get("iat") or 0) <= erased_at:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="This account has been deleted.")
 
     device_id = payload.get("device_id")
     if device_id and is_device_revoked(device_id):
