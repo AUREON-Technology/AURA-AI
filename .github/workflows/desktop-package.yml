@@ -30,7 +30,7 @@ on:
       backend_url:
         description: "Backend URL to bake into the build"
         required: false
-        default: "https://aureon-ai.tech"
+        default: "https://api.aureon-ai.tech"
       rollback_to:
         description: "Roll the update channel back to this earlier tag (desktop-vX.Y.Z); builds nothing"
         required: false
@@ -54,7 +54,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  BACKEND_URL: ${{ github.event.inputs.backend_url || 'https://aureon-ai.tech' }}
+  BACKEND_URL: ${{ github.event.inputs.backend_url || 'https://api.aureon-ai.tech' }}
   UPDATE_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/latest/download/desktop-update.json
 
 jobs:
