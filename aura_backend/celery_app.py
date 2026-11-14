@@ -192,6 +192,13 @@ _beat_schedule = {
         "schedule": 3600.0,
         "options": {"queue": "realtime"},
     },
+    # Audit FSA-016: audit events and turn telemetry past AURA_AUDIT_RETENTION_DAYS /
+    # AURA_TELEMETRY_RETENTION_DAYS. Daily, off the hour, after the 02:30 consolidation.
+    "purge-audit-and-telemetry": {
+        "task": "tasks.purge_audit_and_telemetry_task",
+        "schedule": crontab(minute=20, hour=3),
+        "options": {"queue": "realtime"},
+    },
     # Loop B: pick up fine-tune jobs left QUEUED when launch used run_inline=false.
     # The `training` queue is consumed only by `worker-training` (compose profile `training`),
     # the one service built with requirements-train.txt and AURA_FINETUNE_TRAINER=local. It

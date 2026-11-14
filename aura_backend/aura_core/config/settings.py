@@ -28,6 +28,8 @@ from urllib.parse import urlsplit, urlunsplit
 from ..domain.errors import ConfigurationError
 from ..domain.llm import DataClassification, Modality, ModelPool, RoutingPolicy
 from .external_inference import (
+    CLAUDE_PROVIDER_KIND,
+    is_claude_model,
     is_external_inference_host,
     is_hosted_open_weight_host,
     is_open_weight_model,
@@ -250,7 +252,7 @@ class ProviderConfig:
     """
 
     name: str
-    kind: str  # openai_compatible | ollama | echo
+    kind: str  # openai_compatible | ollama | echo | claude (ADR-033, gated)
     base_url: str = ""
     model: str = ""
     api_key_env: str = ""
@@ -327,11 +329,19 @@ class ProviderConfig:
         "model", "messages", "stream", "stream_options", "max_tokens", "max_completion_tokens",
         "tools", "tool_choice", "functions", "function_call", "response_format", "n",
     })
+    #: Further fields reserved for ``kind=claude`` (ADR-033), whose request shape differs. Its
+    #: ``extra_body`` may carry ``output_config`` (effort), ``fallbacks``, ``inference_geo`` and
+    #: the like; it may not decide what the request is.
+    _CLAUDE_RESERVED_BODY_FIELDS: ClassVar[frozenset[str]] = frozenset({
+        "system", "thinking", "betas", "stop_sequences", "cache_control", "container",
+        "mcp_servers", "thread",
+    })
 
-    # Self-hosted runtimes only. There is deliberately no vendor kind here: `ollama` and
-    # `openai_compatible` between them cover Ollama, vLLM, llama.cpp's server, LocalAI, TGI and
-    # anything else exposing the OpenAI wire format, all of which run on our own hardware.
-    _KINDS = frozenset({"openai_compatible", "ollama", "echo"})
+    # Self-hosted runtimes, plus one gated vendor. `ollama` and `openai_compatible` between them
+    # cover Ollama, vLLM, llama.cpp's server, LocalAI, TGI and anything else exposing the OpenAI
+    # wire format, all of which run on our own hardware. `claude` is the single closed-model kind
+    # ADR-033 sanctions; `_gate_claude` refuses it unless AURA_ALLOW_CLAUDE_INFERENCE=true.
+    _KINDS = frozenset({"openai_compatible", "ollama", "echo", CLAUDE_PROVIDER_KIND})
 
     def __post_init__(self) -> None:
         if self.kind not in self._KINDS:
@@ -346,6 +356,8 @@ class ProviderConfig:
             raise ConfigurationError(f"provider {self.name!r} must declare a model")
         if self.kind in {"openai_compatible", "ollama"} and not self.base_url:
             raise ConfigurationError(f"provider {self.name!r} must declare a base_url")
+        if self.kind == CLAUDE_PROVIDER_KIND:
+            self._gate_claude()
         self._validate_model_metadata()
         if not self.health_path.startswith("/"):
             raise ConfigurationError(
@@ -457,7 +469,19 @@ class ProviderConfig:
                 f"provider {self.name!r} extra_body must be a JSON object",
                 details={"provider": self.name},
             )
-        reserved = sorted(set(parsed) & self._RESERVED_BODY_FIELDS)
+        reserved_fields = self._RESERVED_BODY_FIELDS
+        if self.kind == CLAUDE_PROVIDER_KIND:
+            reserved_fields = reserved_fields | self._CLAUDE_RESERVED_BODY_FIELDS
+            output_config = parsed.get("output_config")
+            if output_config is not None and (
+                not isinstance(output_config, dict) or "format" in output_config
+            ):
+                raise ConfigurationError(
+                    f"provider {self.name!r} extra_body.output_config must be an object without "
+                    f"'format': AURA sets the response format from the request's schema",
+                    details={"provider": self.name},
+                )
+        reserved = sorted(set(parsed) & reserved_fields)
         if reserved:
             raise ConfigurationError(
                 f"provider {self.name!r} extra_body may not set {reserved}: AURA sets those, and "
@@ -472,7 +496,9 @@ class ProviderConfig:
 
     @property
     def third_party(self) -> bool:
-        """Whether a third party runs this provider and can read its prompts (ADR-030)."""
+        """Whether a third party runs this provider and can read its prompts (ADR-030, ADR-033)."""
+        if self.kind == CLAUDE_PROVIDER_KIND:
+            return True
         if not self.base_url:
             return False
         return is_hosted_open_weight_host(urlsplit(self.base_url).hostname or "") is not None
@@ -483,6 +509,77 @@ class ProviderConfig:
         if self.max_data_classification:
             return DataClassification(self.max_data_classification)
         return DataClassification.INTERNAL if self.third_party else DataClassification.SENSITIVE
+
+    def _gate_claude(self) -> None:
+        """ADR-033: Anthropic's Claude, allowed only on purpose and only through the gated path.
+
+        Every refusal names its own reason, because each has a different fix. What this keeps
+        true even with the opt-in set:
+
+        * the endpoint is the SDK's own -- no ``base_url`` may redirect the key or the prompts;
+        * the key comes only from the per-slot ``AURA_PROVIDER_<NAME>_API_KEY_ENV`` variable, so
+          the SDK can never fall back to an ambient credential it finds lying around;
+        * the provider is third-party (``third_party`` is true for this kind), which gives it
+          ADR-030's ``internal`` data ceiling by default, the router's refusal of user images,
+          and an audit record per generation;
+        * it is never ``is_local``, so ``local_first`` and ``require_local`` never pick it.
+        """
+        details = {"provider": self.name, "kind": self.kind, "model": self.model}
+        if not _bool("ALLOW_CLAUDE_INFERENCE", False):
+            raise ConfigurationError(
+                f"provider {self.name!r} is kind {CLAUDE_PROVIDER_KIND!r}: Anthropic's hosted Claude "
+                f"models. This is allowed, but not by accident: every prompt, and any retrieved "
+                f"content the data ceiling admits, is sent to Anthropic, and these turns stop "
+                f"working without internet. Set AURA_ALLOW_CLAUDE_INFERENCE=true to accept that "
+                f"(ADR-033). AURA_ALLOW_HOSTED_INFERENCE does not cover it.",
+                details=details,
+            )
+        if self.base_url:
+            raise ConfigurationError(
+                f"provider {self.name!r} is kind {CLAUDE_PROVIDER_KIND!r} and must not set a "
+                f"base_url: it always uses the Anthropic SDK's own endpoint, so a configuration "
+                f"value can never redirect its key or its prompts elsewhere (ADR-033).",
+                details={**details, "base_url": self.base_url},
+            )
+        if not is_claude_model(self.model):
+            raise ConfigurationError(
+                f"provider {self.name!r} names model {self.model!r}, which is not a Claude model ID "
+                f"(expected e.g. 'claude-opus-5-5', exactly as Anthropic's API names it).",
+                details=details,
+            )
+        if not self.api_key_env:
+            raise ConfigurationError(
+                f"provider {self.name!r} must name the variable holding its key: set "
+                f"AURA_PROVIDER_{self.name.upper()}_API_KEY_ENV. The SDK's ambient credential "
+                f"lookup is never used (ADR-033).",
+                details=details,
+            )
+        if self.is_local:
+            raise ConfigurationError(
+                f"provider {self.name!r} is a hosted Claude model but declares is_local=true. A "
+                f"hosted provider is never local; the flag would let local_first prefer it and let "
+                f"local-only routing send it data it must not see.",
+                details=details,
+            )
+        if self.allow_prompt_training and (
+            self.data_classification_ceiling is DataClassification.SENSITIVE
+        ):
+            raise ConfigurationError(
+                f"provider {self.name!r} may train on its prompts and is also allowed SENSITIVE "
+                f"content. Lower its MAX_DATA_CLASSIFICATION, or drop ALLOW_PROMPT_TRAINING.",
+                details=details,
+            )
+        logger.warning(
+            "Claude inference permitted by AURA_ALLOW_CLAUDE_INFERENCE (ADR-033); prompts within "
+            "this provider's data ceiling are sent to Anthropic",
+            extra={**details, "max_data_classification": self.data_classification_ceiling.value},
+        )
+        if self.data_classification_ceiling is DataClassification.SENSITIVE:
+            logger.warning(
+                "Claude provider may receive SENSITIVE content (documents, memory, tool output, "
+                "Engineer workspaces): AURA_PROVIDER_<NAME>_MAX_DATA_CLASSIFICATION=sensitive",
+                extra=details,
+            )
 
     def _gate_hosted_open_weight(self, host: str, matched: str) -> None:
         """ADR-030: a hosted open-weight API is allowed only on purpose, and only for open weights.
@@ -625,6 +722,9 @@ class LLMSettings:
     default_policy: RoutingPolicy = RoutingPolicy.BALANCED
     embedding_provider: str = "local-embeddings"
     embedding_model: str = "hash-embed-v1"
+    #: Hub commit of the embedding weights (audit FSA-110). Part of the embedder's ``model_id``
+    #: and so of the index identity: a new revision is a new physical index (ADR-007).
+    embedding_model_revision: str = ""
     embedding_dimension: int = 384
     embedding_batch_size: int = 64
     request_timeout_s: float = 60.0
@@ -644,12 +744,31 @@ class LLMSettings:
     #: until an operator opts in (the production compose file does).
     admission_max_queue: int = -1
     admission_queue_timeout_s: float = 0.0
+    #: How many processes share each capacity group's declared cap (audit FSA-025): the gateway's
+    #: ``AURA_WORKERS``. Each process gets the cap divided by this (floored at one slot), so the
+    #: sum over the gateway's workers is the cap the model server was declared to bear. 1 keeps
+    #: the per-process behaviour. ``AURA_LLM_ADMISSION_PROCESSES`` sets it; unset, it follows
+    #: ``AURA_WORKERS`` (the image's uvicorn worker count), so Railway divides too.
+    admission_processes: int = 1
     #: Concurrent generations one user may hold across all pools (and queue as many more);
     #: 0 disables the quota.
     user_max_concurrent_generations: int = 0
     #: How long a provider is benched after a ``429`` that names no reset (ADR-030 Phase 2).
     #: When the response carries ``Retry-After`` or ``x-ratelimit-reset*``, that wins.
     rate_limit_cooldown_s: float = 30.0
+    #: Route interactive turns whose message scores as complex to the ``reasoning`` pool
+    #: (aura_core/llm/complexity.py). Off by default, so an existing deployment routes exactly as
+    #: before; ADR-033 pairs it with a Claude provider declaring that pool.
+    #: AURA_LLM_COMPLEXITY_ROUTING / AURA_LLM_COMPLEXITY_THRESHOLD.
+    complexity_routing: bool = False
+    complexity_threshold: float = 0.5
+    #: Wall-clock budget for all of one interactive turn's generations, fallbacks included
+    #: (PP-06, ``llm/deadline.py``). 0 = no budget: each attempt is bounded only by its own
+    #: timeout, which is the behaviour before this existed. AURA_LLM_TURN_GENERATION_BUDGET_S.
+    turn_generation_budget_s: float = 0.0
+    #: The most a stream may run after its first chunk (PP-07). 0 = no total limit; each chunk
+    #: is still bounded by the request timeout. AURA_LLM_STREAM_MAX_S.
+    stream_max_s: float = 0.0
 
     #: Used when nothing is configured, so ``aura_core`` is importable and testable out of the
     #: box. ``validate()`` refuses to let it run in staging/production.
@@ -679,6 +798,7 @@ class LLMSettings:
             default_policy=policy,
             embedding_provider=_env("EMBEDDING_PROVIDER", "local-embeddings") or "local-embeddings",
             embedding_model=_env("EMBEDDING_MODEL", "hash-embed-v1") or "hash-embed-v1",
+            embedding_model_revision=_env("EMBEDDING_MODEL_REVISION", "") or "",
             embedding_dimension=_int("EMBEDDING_DIMENSION", 384, minimum=16),
             embedding_batch_size=_int("EMBEDDING_BATCH_SIZE", 64, minimum=1, maximum=1024),
             request_timeout_s=_float("LLM_TIMEOUT_S", 60.0, minimum=1.0),
@@ -693,10 +813,21 @@ class LLMSettings:
             max_prompt_tokens=_int("LLM_MAX_PROMPT_TOKENS", 400, minimum=64, maximum=32768),
             admission_max_queue=_int("LLM_ADMISSION_MAX_QUEUE", -1, minimum=-1),
             admission_queue_timeout_s=_float("LLM_ADMISSION_QUEUE_TIMEOUT_S", 0.0, minimum=0.0),
+            # Unset, the gateway's own worker count: Railway runs the image's
+            # `--workers ${AURA_WORKERS:-4}` with no compose file to set the division.
+            admission_processes=_int(
+                "LLM_ADMISSION_PROCESSES", _int("WORKERS", 1, minimum=1), minimum=1, maximum=256
+            ),
             user_max_concurrent_generations=_int(
                 "LLM_USER_MAX_CONCURRENT_GENERATIONS", 0, minimum=0
             ),
             rate_limit_cooldown_s=_float("LLM_RATE_LIMIT_COOLDOWN_S", 30.0, minimum=1.0),
+            complexity_routing=_bool("LLM_COMPLEXITY_ROUTING", False),
+            complexity_threshold=_float(
+                "LLM_COMPLEXITY_THRESHOLD", 0.5, minimum=0.05, maximum=1.0
+            ),
+            turn_generation_budget_s=_float("LLM_TURN_GENERATION_BUDGET_S", 0.0, minimum=0.0),
+            stream_max_s=_float("LLM_STREAM_MAX_S", 0.0, minimum=0.0),
         )
 
     @property
@@ -723,6 +854,8 @@ class KnowledgeSettings:
     #: zero-dependency heuristic remains the default.
     rerank_provider: str = "heuristic"
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    #: Hub commit of the cross-encoder weights (audit FSA-110); empty loads the repo's head.
+    rerank_model_revision: str = ""
     mmr_lambda: float = 0.7
     graph_enabled: bool = True
     #: Adds the model-backed extractor after the rule extractor. Off by default: it costs one
@@ -752,10 +885,20 @@ class KnowledgeSettings:
     #: generator; it can never opt *in* to an engine that was never present.
     ocr_enabled: bool = True
     ocr_lang: str = "eng"
+    #: Whether chunk text (and a memory's ``subject``) is copied into the vector payload (audit
+    #: FSA-018 / CB-22). ``None`` decides by where the vector store runs
+    #: (:func:`vector_payload_content_enabled`): on-host stores keep it for speed; an off-host
+    #: Qdrant never sees readable content, and retrieval resolves the text from the owner-scoped
+    #: document store instead. ``True``/``False`` override the rule.
+    vector_payload_content: bool | None = None
 
     @classmethod
     def from_env(cls) -> "KnowledgeSettings":
         return cls(
+            vector_payload_content=(
+                None if not _env("KNOWLEDGE_VECTOR_PAYLOAD_CONTENT", "")
+                else _bool("KNOWLEDGE_VECTOR_PAYLOAD_CONTENT", True)
+            ),
             index_alias=_env("KNOWLEDGE_INDEX_ALIAS", "aura_knowledge") or "aura_knowledge",
             schema_version=_int("KNOWLEDGE_SCHEMA_VERSION", 1, minimum=1),
             chunk_target_tokens=_int("KNOWLEDGE_CHUNK_TOKENS", 320, minimum=32, maximum=2048),
@@ -771,6 +914,7 @@ class KnowledgeSettings:
             rrf_k=_int("KNOWLEDGE_RRF_K", 60, minimum=1),
             rerank_enabled=_bool("KNOWLEDGE_RERANK_ENABLED", True),
             rerank_provider=(_env("KNOWLEDGE_RERANK_PROVIDER", "heuristic") or "heuristic").lower(),
+            rerank_model_revision=_env("KNOWLEDGE_RERANK_MODEL_REVISION", "") or "",
             rerank_model=_env("KNOWLEDGE_RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
             or "cross-encoder/ms-marco-MiniLM-L-6-v2",
             mmr_lambda=_float("KNOWLEDGE_MMR_LAMBDA", 0.7, minimum=0.0, maximum=1.0),
@@ -934,8 +1078,11 @@ class ReasoningSettings:
     verification_enabled: bool = True
     #: Wall-clock cap on the engineer agent's plan-act-observe-replan loop
     #: (`aura_core/execution/agentic_loop.py`), independent of any single execution
-    #: pass's own `deadline_s` -- this bounds the whole multi-iteration turn.
-    engineer_loop_deadline_s: float = 600.0
+    #: pass's own `deadline_s` -- this bounds the whole multi-iteration turn. At least the
+    #: longest host-routed tool (run_command, 605 s) plus the daemon's approval window (330 s,
+    #: tools/registry.py HOST_APPROVAL_WINDOW_S), or an approved command is cut off mid-run
+    #: (audit FSA-041).
+    engineer_loop_deadline_s: float = 960.0
     #: How many `delegate_to_agent` hops a call tree may contain (`aura_core/tools/delegation.py`).
     #: `1` means a delegating persona's own sub-turn cannot itself delegate further -- the default
     #: ceiling, combined with only `orchestrator` holding the tool, caps recursion at exactly one
@@ -960,7 +1107,7 @@ class ReasoningSettings:
             tot_max_nodes=_int("REASONING_TOT_MAX_NODES", 12, minimum=2, maximum=64),
             verification_enabled=_bool("REASONING_VERIFICATION_ENABLED", True),
             engineer_loop_deadline_s=_float(
-                "REASONING_ENGINEER_LOOP_DEADLINE_S", 600.0, minimum=10.0, maximum=3600.0
+                "REASONING_ENGINEER_LOOP_DEADLINE_S", 960.0, minimum=10.0, maximum=3600.0
             ),
             max_delegation_depth=_int(
                 "REASONING_MAX_DELEGATION_DEPTH", 1, minimum=0, maximum=4
@@ -988,10 +1135,19 @@ class ObservabilitySettings:
     #: found /metrics world-readable there, publishing which safety bypasses are on and which
     #: dependencies are down.
     metrics_token: str = ""
+    #: How long audit events and turn telemetry are kept (audit FSA-016). Both hold personal
+    #: data (the audit actor is an email or subject, with a source IP; telemetry names a user's
+    #: conversations) and were kept forever. ``0`` keeps rows indefinitely. The daily
+    #: ``purge_audit_and_telemetry_task`` applies these; erasure pseudonymises the audit actor
+    #: and drops the user's conversations' telemetry regardless of age.
+    audit_retention_days: int = 365
+    telemetry_retention_days: int = 90
 
     @classmethod
     def from_env(cls) -> "ObservabilitySettings":
         return cls(
+            audit_retention_days=_int("AUDIT_RETENTION_DAYS", 365, minimum=0),
+            telemetry_retention_days=_int("TELEMETRY_RETENTION_DAYS", 90, minimum=0),
             log_level=(_env("LOG_LEVEL", "INFO") or "INFO").upper(),
             log_format=(_env("LOG_FORMAT", "json") or "json").lower(),
             metrics_enabled=_bool("METRICS_ENABLED", True),
@@ -1071,6 +1227,37 @@ class SecuritySettings:
         )
 
 
+def _vector_store_is_on_host(url: str) -> bool:
+    """Whether a vector-store URL points at this deployment's own network: empty (in-memory), a
+    loopback or private address, a bare Docker service name, or a ``.internal``/``.local`` name.
+    A dotted public hostname (Qdrant Cloud, any SaaS) is off-host."""
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    if not url:
+        return True
+    host = (urlsplit(url if "//" in url else f"//{url}").hostname or "").lower()
+    if not host or host in ("localhost",):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_private or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        pass
+    if "." not in host:
+        return True
+    return host.endswith((".internal", ".local", ".localdomain"))
+
+
+def vector_payload_content_enabled(knowledge: "KnowledgeSettings", infrastructure: "InfrastructureSettings") -> bool:
+    """The recorded decision per target (audit FSA-018): readable content travels into vector
+    payloads only when the vector store is on-host, unless the operator says otherwise."""
+    if knowledge.vector_payload_content is not None:
+        return bool(knowledge.vector_payload_content)
+    if infrastructure.vector_backend != "qdrant":
+        return True
+    return _vector_store_is_on_host(infrastructure.qdrant_url)
+
+
 @dataclass(frozen=True, slots=True)
 class InfrastructureSettings:
     """Connection strings. Empty means "use the in-memory adapter".
@@ -1088,9 +1275,36 @@ class InfrastructureSettings:
     document_backend: str = "memory"  # memory | postgres
     memory_backend: str = "memory"  # memory | postgres
     cache_backend: str = "memory"  # memory | redis
+    #: Relay desktop host-agent calls between gateway workers over Redis
+    #: (``adapters/host_agent_relay.py``). On whenever ``redis_url`` is set; ``False`` is the
+    #: kill switch back to single-process behaviour (only the worker holding a daemon's socket
+    #: can reach it).
+    host_agent_relay: bool = True
+    #: The one asyncpg pool every aura_core store in a process shares (``PostgresPool``), and
+    #: the legacy SQLAlchemy engine beside it (``infrastructure/db/base.py``). Per *process*:
+    #: every uvicorn worker and every Celery prefork child holds its own, so a deployment's
+    #: connection budget is ``processes x postgres_connections_per_process`` and must fit under
+    #: Postgres's ``max_connections`` with headroom (audit FSA-073;
+    #: tests/unit/test_postgres_connection_budget.py computes it for both compose files).
+    postgres_pool_min_size: int = 2
+    postgres_pool_max_size: int = 10
+    #: A statement that runs longer than this is cancelled and its connection returned; without
+    #: it a hung query held a pooled connection forever.
+    postgres_command_timeout_s: float = 60.0
+    #: Idle pooled connections are closed after this long, so a burst does not pin its peak.
+    postgres_max_inactive_connection_lifetime_s: float = 300.0
+    legacy_db_pool_size: int = 5
+    legacy_db_max_overflow: int = 10
 
     @classmethod
     def from_env(cls) -> "InfrastructureSettings":
+        pool_min = _int("POSTGRES_POOL_MIN_SIZE", 2, minimum=0)
+        pool_max = _int("POSTGRES_POOL_MAX_SIZE", 10, minimum=1)
+        if pool_min > pool_max:
+            raise ConfigurationError(
+                "AURA_POSTGRES_POOL_MIN_SIZE must not exceed AURA_POSTGRES_POOL_MAX_SIZE",
+                details={"min": pool_min, "max": pool_max},
+            )
         return cls(
             database_url=_env("DATABASE_URL", "") or "",
             redis_url=_env("REDIS_URL", "") or "",
@@ -1100,11 +1314,33 @@ class InfrastructureSettings:
             document_backend=(_env("DOCUMENT_BACKEND", "memory") or "memory").lower(),
             memory_backend=(_env("MEMORY_BACKEND", "memory") or "memory").lower(),
             cache_backend=(_env("CACHE_BACKEND", "memory") or "memory").lower(),
+            host_agent_relay=_bool("HOST_AGENT_RELAY", True),
+            postgres_pool_min_size=pool_min,
+            postgres_pool_max_size=pool_max,
+            postgres_command_timeout_s=_float("POSTGRES_COMMAND_TIMEOUT_S", 60.0, minimum=1.0),
+            postgres_max_inactive_connection_lifetime_s=_float(
+                "POSTGRES_MAX_INACTIVE_CONNECTION_LIFETIME_S", 300.0, minimum=0.0
+            ),
+            legacy_db_pool_size=_int("LEGACY_DB_POOL_SIZE", 5, minimum=0),
+            legacy_db_max_overflow=_int("LEGACY_DB_MAX_OVERFLOW", 10, minimum=0),
         )
+
+    @property
+    def postgres_connections_per_process(self) -> int:
+        """The most Postgres connections one process can hold with every pool full."""
+        return self.postgres_pool_max_size + self.legacy_db_pool_size + self.legacy_db_max_overflow
 
     @property
     def qdrant_api_key(self) -> str:
         return os.environ.get(self.qdrant_api_key_env, "")
+
+    @property
+    def host_agent_relay_secret(self) -> str:
+        """The key the host-agent relay signs with: the deployment's JWT secret, read at call
+        time (it is hydrated from a secret file after settings load, as ``services/jwt_auth``
+        notes). Every gateway worker must share it already, or a token one worker minted would
+        not verify on another."""
+        return os.environ.get("AURA_JWT_SECRET") or os.environ.get("JWT_SECRET") or ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1489,6 +1725,12 @@ class VoiceSettings:
 
     stt_enabled: bool = True
     stt_model: str = "tiny.en"
+    #: Hub commit of the Whisper weights (audit FSA-110); empty loads the repo's head.
+    stt_model_revision: str = ""
+    #: Load Whisper at container startup instead of on the first transcription of every fresh
+    #: container. ``None`` means "in production-like environments only", which keeps a local or
+    #: test container from ever pulling weights.
+    stt_warm_on_startup: bool | None = None
     tts_enabled: bool = True
     tts_voice: str = "en-us"
     tts_rate_wpm: int = 142
@@ -1521,6 +1763,10 @@ class VoiceSettings:
         return cls(
             stt_enabled=_bool("VOICE_STT_ENABLED", True),
             stt_model=_env("VOICE_STT_MODEL", "tiny.en") or "tiny.en",
+            stt_model_revision=_env("VOICE_STT_MODEL_REVISION", "") or "",
+            stt_warm_on_startup=(
+                None if not _env("VOICE_STT_WARM_ON_STARTUP", "") else _bool("VOICE_STT_WARM_ON_STARTUP", True)
+            ),
             tts_enabled=_bool("VOICE_TTS_ENABLED", True),
             tts_voice=_env("VOICE_TTS_VOICE", "en-us") or "en-us",
             tts_rate_wpm=_int("VOICE_TTS_RATE_WPM", 142, minimum=80, maximum=250),

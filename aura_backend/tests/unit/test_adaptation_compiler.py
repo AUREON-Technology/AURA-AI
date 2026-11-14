@@ -519,15 +519,6 @@ def test_a_record_must_carry_exactly_its_declared_suites(compiled) -> None:
                         "sa", "sha256:" + "0" * 64, "sha256:" + "0" * 64, result.blueprint, suites=result.suites[:1])
 
 
-def test_postgres_schema_matches_its_migration() -> None:
-    from aura_core.adapters.postgres_adaptation import BLUEPRINT_SCHEMA
-
-    spec = importlib.util.spec_from_file_location("m0011", BACKEND / "alembic" / "versions" / "0011_adaptation_blueprints.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    assert tuple(module.UPGRADE_STATEMENTS) == BLUEPRINT_SCHEMA
-
-
 def test_super_admin_compiles_and_reads_a_blueprint(monkeypatch) -> None:
     from fastapi.testclient import TestClient
 
@@ -666,10 +657,28 @@ class TestOptionalQueryParameters:
         with pytest.raises(ValidationError, match="too many"):
             render_http(template, {"q": "x", "source_id": ["S"] * 21})
 
-    def test_at_most_eight_optional_parameters_reach_one_tool(self) -> None:
-        extra = [{"name": f"f{i}", "in": "query", "schema": {"type": "string"}} for i in range(6)]
-        _, _, _, tool, _ = _compile_search(_search_spec(extra))
-        assert sum(not p.required for p in tool.parameters) == 8
+    def test_at_most_max_optional_query_parameters_reach_one_tool(self) -> None:
+        from aura_core.adaptation.normalize import MAX_OPTIONAL_QUERY
+
+        extra = [{"name": f"f{i}", "in": "query", "schema": {"type": "string"}} for i in range(MAX_OPTIONAL_QUERY)]
+        _, _, _, tool, template = _compile_search(_search_spec(extra))
+        assert sum(not p.required for p in tool.parameters) == MAX_OPTIONAL_QUERY
+        # Spec order decides who is left out: the last declared ones.
+        assert f"f{MAX_OPTIONAL_QUERY - 1}" not in template.http.query_params
+
+    def test_ten_optional_parameters_all_reach_the_tool(self) -> None:
+        # Flame in Freefall's GET /api/insights/suppression-advice declares ten optional query
+        # parameters; with a cap of eight, delivery_fraction and droplet_diameter_mm were unreachable.
+        names = ["fire_type", "cabin_volume_m3", "pressure_kpa", "o2_fraction", "co2_fraction", "temperature_k",
+                 "zone", "local_zone_fraction", "delivery_fraction", "droplet_diameter_mm"]
+        spec = _search_spec()
+        spec["paths"]["/api/search"]["get"]["parameters"] = [
+            {"name": "q", "in": "query", "required": True, "schema": {"type": "string"}},
+            *({"name": n, "in": "query", "schema": {"type": "number"}} for n in names),
+        ]
+        _, _, _, tool, template = _compile_search(spec)
+        assert set(names) <= set(template.http.query_params)
+        assert sum(not p.required for p in tool.parameters) == len(names)
 
     def test_a_query_key_the_twin_does_not_declare_is_refused(self) -> None:
         _, twin, result, tool, template = _compile_search(_search_spec())

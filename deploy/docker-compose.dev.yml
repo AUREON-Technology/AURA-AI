@@ -76,6 +76,13 @@ x-hosted-providers: &hosted_providers
   AURA_ALLOW_HOSTED_INFERENCE: ${AURA_ALLOW_HOSTED_INFERENCE:-false}
   AURA_LLM_ROUTING_POLICY: ${AURA_LLM_ROUTING_POLICY:-balanced}
   AURA_LLM_RATE_LIMIT_COOLDOWN_S: ${AURA_LLM_RATE_LIMIT_COOLDOWN_S:-30}
+  # ADR-033: a slot may also be KIND=claude (no BASE_URL; MODEL=claude-opus-5-5). Refused
+  # unless AURA_ALLOW_CLAUDE_INFERENCE=true, which AURA_ALLOW_HOSTED_INFERENCE does not cover.
+  # COMPLEXITY_ROUTING sends complex interactive turns to the `reasoning` pool, so set that
+  # slot's POOLS=reasoning.
+  AURA_ALLOW_CLAUDE_INFERENCE: ${AURA_ALLOW_CLAUDE_INFERENCE:-false}
+  AURA_LLM_COMPLEXITY_ROUTING: ${AURA_LLM_COMPLEXITY_ROUTING:-false}
+  AURA_LLM_COMPLEXITY_THRESHOLD: ${AURA_LLM_COMPLEXITY_THRESHOLD:-0.5}
   AURA_PROVIDER_HOSTED1_KIND: ${AURA_PROVIDER_HOSTED1_KIND:-openai_compatible}
   AURA_PROVIDER_HOSTED1_MODEL: ${AURA_PROVIDER_HOSTED1_MODEL:-}
   AURA_PROVIDER_HOSTED1_BASE_URL: ${AURA_PROVIDER_HOSTED1_BASE_URL:-}
@@ -97,6 +104,10 @@ x-hosted-providers: &hosted_providers
   AURA_PROVIDER_HOSTED1_TOKENS_PER_SECOND: ${AURA_PROVIDER_HOSTED1_TOKENS_PER_SECOND:-0}
   AURA_PROVIDER_HOSTED1_EXTRA_BODY: ${AURA_PROVIDER_HOSTED1_EXTRA_BODY:-}
   AURA_PROVIDER_HOSTED1_ALLOW_PROMPT_TRAINING: ${AURA_PROVIDER_HOSTED1_ALLOW_PROMPT_TRAINING:-false}
+  AURA_PROVIDER_HOSTED1_POOLS: ${AURA_PROVIDER_HOSTED1_POOLS:-}
+  AURA_PROVIDER_HOSTED1_SUPPORTS_REASONING: ${AURA_PROVIDER_HOSTED1_SUPPORTS_REASONING:-false}
+  AURA_PROVIDER_HOSTED1_COST_INPUT: ${AURA_PROVIDER_HOSTED1_COST_INPUT:-0}
+  AURA_PROVIDER_HOSTED1_COST_OUTPUT: ${AURA_PROVIDER_HOSTED1_COST_OUTPUT:-0}
   AURA_PROVIDER_HOSTED1_IS_LOCAL: "false"
   AURA_PROVIDER_HOSTED1_API_KEY_ENV: AURA_PROVIDER_HOSTED1_API_KEY
   AURA_PROVIDER_HOSTED1_API_KEY_FILE: /run/secrets/hosted1_api_key
@@ -121,6 +132,10 @@ x-hosted-providers: &hosted_providers
   AURA_PROVIDER_HOSTED2_TOKENS_PER_SECOND: ${AURA_PROVIDER_HOSTED2_TOKENS_PER_SECOND:-0}
   AURA_PROVIDER_HOSTED2_EXTRA_BODY: ${AURA_PROVIDER_HOSTED2_EXTRA_BODY:-}
   AURA_PROVIDER_HOSTED2_ALLOW_PROMPT_TRAINING: ${AURA_PROVIDER_HOSTED2_ALLOW_PROMPT_TRAINING:-false}
+  AURA_PROVIDER_HOSTED2_POOLS: ${AURA_PROVIDER_HOSTED2_POOLS:-}
+  AURA_PROVIDER_HOSTED2_SUPPORTS_REASONING: ${AURA_PROVIDER_HOSTED2_SUPPORTS_REASONING:-false}
+  AURA_PROVIDER_HOSTED2_COST_INPUT: ${AURA_PROVIDER_HOSTED2_COST_INPUT:-0}
+  AURA_PROVIDER_HOSTED2_COST_OUTPUT: ${AURA_PROVIDER_HOSTED2_COST_OUTPUT:-0}
   AURA_PROVIDER_HOSTED2_IS_LOCAL: "false"
   AURA_PROVIDER_HOSTED2_API_KEY_ENV: AURA_PROVIDER_HOSTED2_API_KEY
   AURA_PROVIDER_HOSTED2_API_KEY_FILE: /run/secrets/hosted2_api_key
@@ -145,6 +160,10 @@ x-hosted-providers: &hosted_providers
   AURA_PROVIDER_HOSTED3_TOKENS_PER_SECOND: ${AURA_PROVIDER_HOSTED3_TOKENS_PER_SECOND:-0}
   AURA_PROVIDER_HOSTED3_EXTRA_BODY: ${AURA_PROVIDER_HOSTED3_EXTRA_BODY:-}
   AURA_PROVIDER_HOSTED3_ALLOW_PROMPT_TRAINING: ${AURA_PROVIDER_HOSTED3_ALLOW_PROMPT_TRAINING:-false}
+  AURA_PROVIDER_HOSTED3_POOLS: ${AURA_PROVIDER_HOSTED3_POOLS:-}
+  AURA_PROVIDER_HOSTED3_SUPPORTS_REASONING: ${AURA_PROVIDER_HOSTED3_SUPPORTS_REASONING:-false}
+  AURA_PROVIDER_HOSTED3_COST_INPUT: ${AURA_PROVIDER_HOSTED3_COST_INPUT:-0}
+  AURA_PROVIDER_HOSTED3_COST_OUTPUT: ${AURA_PROVIDER_HOSTED3_COST_OUTPUT:-0}
   AURA_PROVIDER_HOSTED3_IS_LOCAL: "false"
   AURA_PROVIDER_HOSTED3_API_KEY_ENV: AURA_PROVIDER_HOSTED3_API_KEY
   AURA_PROVIDER_HOSTED3_API_KEY_FILE: /run/secrets/hosted3_api_key
@@ -274,7 +293,7 @@ services:
       uvicorn aura_service:app
       --host 0.0.0.0 --port 8000
       --workers ${AURA_WORKERS:-2}
-      --proxy-headers --forwarded-allow-ips='*'
+      --proxy-headers --forwarded-allow-ips=10.77.11.10
       --timeout-keep-alive 65
       --timeout-graceful-shutdown ${AURA_GRACEFUL_SHUTDOWN_S:-150}
     environment:
@@ -305,13 +324,43 @@ services:
       # work -- and is refused with 503 + Retry-After after the timeout, instead of piling up
       # invisibly inside Ollama until the 180s provider timeout cancels it mid-generation.
       # Per *process*: the effective cap on Ollama is this x AURA_WORKERS (+ Celery workers).
+      # Audit FSA-025: the declared cap is divided among the gateway's uvicorn workers, so the
+      # server sees the cap, not cap x AURA_WORKERS. Keep in step with --workers above.
+      AURA_LLM_ADMISSION_PROCESSES: ${AURA_WORKERS:-2}
       AURA_LLM_ADMISSION_MAX_QUEUE: ${AURA_LLM_ADMISSION_MAX_QUEUE:-4}
       AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S: ${AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S:-90}
       AURA_LLM_USER_MAX_CONCURRENT_GENERATIONS: ${AURA_LLM_USER_MAX_CONCURRENT_GENERATIONS:-2}
+      # Per-turn latency bounds (PP-06/PP-07, aura_core/llm/deadline.py); 0 = off, the code default.
+      AURA_LLM_TURN_GENERATION_BUDGET_S: ${AURA_LLM_TURN_GENERATION_BUDGET_S:-0}
+      AURA_LLM_STREAM_MAX_S: ${AURA_LLM_STREAM_MAX_S:-0}
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
       AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      # Hub commit of the embedding weights (audit FSA-110). Part of the index identity: changing
+      # it builds and promotes a new index. Empty = the repo's head, as before.
+      AURA_EMBEDDING_MODEL_REVISION: ${AURA_EMBEDDING_MODEL_REVISION:-}
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
       AURA_MODEL_ALLOWLIST: ${AURA_MODEL_ALLOWLIST:-}
+      # Connection budget (audit FSA-073). Per uvicorn worker: asyncpg pool + legacy SQLAlchemy
+      # pool (size + overflow) = 10 + 5 + 5 = 20. With AURA_WORKERS gateway processes and the
+      # Celery children below (4 each), the worst case must fit under postgresql.conf's
+      # max_connections with headroom for alembic, the backup job and psql.
+      # tests/unit/test_postgres_connection_budget.py does that arithmetic on this file.
+      # Hub commit of the Whisper weights (audit FSA-110); shown as the STT engine name in
+      # /health/ready. Whisper is also loaded at startup in production so the first live-voice
+      # turn of a fresh container does not pay the download (AURA_VOICE_STT_WARM_ON_STARTUP).
+      AURA_VOICE_STT_MODEL_REVISION: ${AURA_VOICE_STT_MODEL_REVISION:-}
+      AURA_KNOWLEDGE_RERANK_MODEL_REVISION: ${AURA_KNOWLEDGE_RERANK_MODEL_REVISION:-}
+      AURA_POSTGRES_POOL_MAX_SIZE: ${AURA_POSTGRES_POOL_MAX_SIZE:-10}
+      AURA_LEGACY_DB_POOL_SIZE: ${AURA_LEGACY_DB_POOL_SIZE:-5}
+      AURA_LEGACY_DB_MAX_OVERFLOW: ${AURA_LEGACY_DB_MAX_OVERFLOW:-5}
+      # Retention for personal data in the logs (audit FSA-016): audit events (actor, source IP)
+      # and turn telemetry (conversation ids). 0 keeps a table forever. Applied daily by
+      # purge_audit_and_telemetry_task on the realtime worker.
+      # Readable chunk text in vector payloads (audit FSA-018): empty decides by where Qdrant
+      # runs -- on this host (the compose service) keeps it, an off-host Qdrant never sees it.
+      AURA_KNOWLEDGE_VECTOR_PAYLOAD_CONTENT: ${AURA_KNOWLEDGE_VECTOR_PAYLOAD_CONTENT:-}
+      AURA_AUDIT_RETENTION_DAYS: ${AURA_AUDIT_RETENTION_DAYS:-365}
+      AURA_TELEMETRY_RETENTION_DAYS: ${AURA_TELEMETRY_RETENTION_DAYS:-90}
       AURA_DATABASE_URL_FILE: /run/secrets/postgres_password
       AURA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
       AURA_QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
@@ -330,7 +379,9 @@ services:
       FIREBASE_SERVICE_ACCOUNT_PATH: /run/secrets/firebase_credentials
       AURA_DOMAIN: ${AURA_DOMAIN}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1,http://localhost:8080,http://127.0.0.1:8080,https://${AURA_DOMAIN}}
-      ALLOW_MOCK_ATTESTATION: ${ALLOW_MOCK_ATTESTATION:-true}
+      # Same default as prod (audit FSA-100): a debug APK's fake attestation is accepted only
+      # when deploy/.env.dev says so, not because this is the dev stack.
+      ALLOW_MOCK_ATTESTATION: ${ALLOW_MOCK_ATTESTATION:-false}
       DEBUG_MODE: "false"
       APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
       AURA_IOS_BUNDLE_ID: ${AURA_IOS_BUNDLE_ID:-com.auraai.auraClient}
@@ -362,7 +413,15 @@ services:
       # Built by `sandbox-image` below (not pulled) so IMAGES stays off the socket proxy.
       AURA_SANDBOX_IMAGE: ${AURA_SANDBOX_IMAGE:-aura-sandbox:latest}
       AURA_SANDBOX_PROXY_URL: ${AURA_SANDBOX_PROXY_URL:-http://sandbox-proxy:8888}
-      AURA_SANDBOX_NETWORK: sandbox_egress
+      # Compose prefixes the network key with the project name (`aura-dev`), so this is the name
+      # Docker actually creates; the bare key never matched anything (audit FSA-100).
+      AURA_SANDBOX_NETWORK: ${AURA_SANDBOX_NETWORK:-aura-dev_sandbox_egress}
+      # Same limits as prod -- the two stacks share this host.
+      AURA_SANDBOX_MEMORY_LIMIT: ${AURA_SANDBOX_MEMORY_LIMIT:-512m}
+      AURA_SANDBOX_CPU_LIMIT: ${AURA_SANDBOX_CPU_LIMIT:-1.0}
+      AURA_SANDBOX_HOT_IDLE_S: ${AURA_SANDBOX_HOT_IDLE_S:-900}
+      AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB: ${AURA_SANDBOX_WORKSPACE_DISK_QUOTA_MB:-2048}
+      AURA_SANDBOX_MIN_FREE_MEMORY_MB: ${AURA_SANDBOX_MIN_FREE_MEMORY_MB:-1024}
       # Its own root, never prod's: the dev stack shares this host with prod, and one directory
       # for both would let a dev workspace collide with a production one. Bind-mounted at the
       # same path -- see docker-compose.prod.yml's AURA_SANDBOX_HOST_ROOT for why that matters.
@@ -430,7 +489,7 @@ services:
   # `sandbox-image` builds the workspace image locally. See prod's docker-socket-proxy comment.
   docker-socket-proxy:
     profiles: [sandbox]
-    image: tecnativa/docker-socket-proxy:0.3.0
+    image: tecnativa/docker-socket-proxy:0.3.0@sha256:9e4b9e7517a6b660f2cc903a19b257b1852d5b3344794e3ea334ff00ae677ac2
     <<: *restart
     logging: *logging
     environment:
@@ -476,7 +535,7 @@ services:
 
   sandbox-proxy:
     profiles: [sandbox]
-    image: ${AURA_SANDBOX_PROXY_IMAGE:-vimagick/tinyproxy:latest}
+    image: ${AURA_SANDBOX_PROXY_IMAGE:-vimagick/tinyproxy:latest@sha256:72b441b95ee1e641af948f68f09492f9f795ead72b73954414e339168c98ad8c}
     <<: *restart
     logging: *logging
     volumes:
@@ -522,9 +581,26 @@ services:
       AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S: ${AURA_LLM_WORKER_ADMISSION_QUEUE_TIMEOUT_S:-300}
       AURA_EMBEDDING_PROVIDER: ${AURA_EMBEDDING_PROVIDER:-sentence-transformers}
       AURA_EMBEDDING_MODEL: ${AURA_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}
+      # Hub commit of the embedding weights (audit FSA-110). Part of the index identity: changing
+      # it builds and promotes a new index. Empty = the repo's head, as before.
+      AURA_EMBEDDING_MODEL_REVISION: ${AURA_EMBEDDING_MODEL_REVISION:-}
       AURA_EMBEDDING_DIMENSION: ${AURA_EMBEDDING_DIMENSION:-384}
       AURA_LEARNING_REFRESH_ENABLED: ${AURA_LEARNING_REFRESH_ENABLED:-true}
       AURA_LEARNING_REFRESH_CRON: ${AURA_LEARNING_REFRESH_CRON:-0 2 * * *}
+      # Connection budget (audit FSA-073): each prefork child (`-c N`) holds its own pools, so a
+      # worker process gets 2 + 1 + 1 = 4 connections. See the gateway's block for the arithmetic.
+      AURA_POSTGRES_POOL_MIN_SIZE: ${AURA_WORKER_POSTGRES_POOL_MIN_SIZE:-1}
+      AURA_POSTGRES_POOL_MAX_SIZE: ${AURA_WORKER_POSTGRES_POOL_MAX_SIZE:-2}
+      AURA_LEGACY_DB_POOL_SIZE: ${AURA_WORKER_LEGACY_DB_POOL_SIZE:-1}
+      AURA_LEGACY_DB_MAX_OVERFLOW: ${AURA_WORKER_LEGACY_DB_MAX_OVERFLOW:-1}
+      # Retention for personal data in the logs (audit FSA-016): audit events (actor, source IP)
+      # and turn telemetry (conversation ids). 0 keeps a table forever. Applied daily by
+      # purge_audit_and_telemetry_task on the realtime worker.
+      # Readable chunk text in vector payloads (audit FSA-018): empty decides by where Qdrant
+      # runs -- on this host (the compose service) keeps it, an off-host Qdrant never sees it.
+      AURA_KNOWLEDGE_VECTOR_PAYLOAD_CONTENT: ${AURA_KNOWLEDGE_VECTOR_PAYLOAD_CONTENT:-}
+      AURA_AUDIT_RETENTION_DAYS: ${AURA_AUDIT_RETENTION_DAYS:-365}
+      AURA_TELEMETRY_RETENTION_DAYS: ${AURA_TELEMETRY_RETENTION_DAYS:-90}
       AURA_DATABASE_URL_FILE: /run/secrets/postgres_password
       AURA_REDIS_PASSWORD_FILE: /run/secrets/redis_password
       AURA_QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
@@ -622,7 +698,7 @@ services:
         limits: {cpus: "0.25", memory: 256M}
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     <<: *restart
     logging: *logging
     environment:
@@ -646,7 +722,7 @@ services:
         limits: {cpus: "0.75", memory: 1536M}
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:c5d34a98396a4775e223c74e929162c35c5a2182901ba26b50ade939941ce14b
     <<: *restart
     logging: *logging
     command: >

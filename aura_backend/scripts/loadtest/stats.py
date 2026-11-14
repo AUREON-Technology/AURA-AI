@@ -50,6 +50,7 @@ ERROR_KIND_STATUS: Mapping[str, int] = {
     "dependency_unavailable": 503,
     "provider_error": 502,
     "all_providers_failed": 503,
+    "capability_unavailable": 503,
     "overloaded": 503,
     "user_concurrency_limit": 429,
     "embedding_error": 502,

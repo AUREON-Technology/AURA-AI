@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:aura_client/core/network/idempotency.dart';
 
 import '../../auth/token_manager.dart';
 import '../../config/backend_url_provider.dart';
@@ -130,7 +131,8 @@ class EngineerWorkspacesClient {
     try {
       final response = await _client.delete(
         Uri.parse('$_baseUrl/$workspaceId'),
-        headers: await _headers(),
+        // Audit FSA-046: the route deduplicates by key; a retried destroy is one destroy.
+        headers: {...await _headers(), idempotencyKeyHeader: newIdempotencyKey()},
       );
       return response.statusCode == 200;
     } catch (_) {

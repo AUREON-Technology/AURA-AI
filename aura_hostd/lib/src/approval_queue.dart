@@ -271,6 +271,19 @@ class ApprovalQueue {
     return true;
   }
 
+  /// The server has given up on the call this approval belongs to (audit FSA-041): resolve it as
+  /// [ApprovalStatus.cancelled] so the waiting task throws instead of executing, and so a human
+  /// answering later finds it already decided ([respond] is idempotent). Returns `false` only
+  /// when [id] was never a known approval; an already-decided one is left as it is.
+  bool cancel(String id) {
+    final approval = _pending[id];
+    if (approval == null) return false;
+    if (approval.status != ApprovalStatus.pending) return true;
+    approval.status = ApprovalStatus.cancelled;
+    approval._decision.complete(ApprovalStatus.cancelled);
+    return true;
+  }
+
   /// Waits for [approval] to be answered, or for [approvalTimeout] to elapse -- whichever comes
   /// first. On timeout, marks the approval [ApprovalStatus.expired] itself (rather than leaving it
   /// `pending` forever) so a subsequent `GET /approvals` stops listing it and a late human response

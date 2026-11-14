@@ -4,8 +4,7 @@ Documents are the source of truth; the vector index is derived and can always be
 here (ADR-007). That asymmetry is what makes reindexing routine, and it is why this adapter --
 not the vector store -- owns the schema for content, versions, and provenance.
 
-Both stores share one connection pool and one ``ensure_schema`` call, because they are one
-database and giving them separate pools would double the connection count for no benefit on a
+Both stores share one connection pool, because they are one database and giving them separate pools would double the connection count for no benefit on a
 box where Postgres is configured for a few hundred.
 
 **Written with asyncpg directly, not the ORM.** The legacy tree already has SQLAlchemy models for
@@ -14,11 +13,12 @@ by the architecture tests). Sharing an ORM base across the boundary would create
 coupling the strangler migration exists to avoid, and these tables are owned solely by v3 -- the
 removal checklist in the migration guide requires that no two layers write the same tables.
 
-**Schema is created idempotently on first use, not by Alembic.** The legacy Alembic chain manages
-the v1/v2 tables; these are separate, versioned by ``schema_version`` in their own metadata row,
-and created with ``IF NOT EXISTS`` so a fresh deployment needs no migration step before it can
-serve. When these tables need their first real migration, that is the point to add an Alembic
-branch for them rather than extending this function.
+**Alembic owns the schema; no adapter issues DDL** (one schema authority, CB-20 / roadmap M6). These
+tables used to be created with ``IF NOT EXISTS`` on first use; migration ``0016`` baselined them and
+the runtime DDL is gone, so a database is exactly what ``alembic upgrade head`` made it and an image
+rollback cannot leave behind columns no migration knows about. An unmigrated database fails
+``/health/ready`` (``services/schema_readiness.py``), and a query against a missing table surfaces as
+``DependencyUnavailableError``. ``tests/architecture/test_no_runtime_ddl.py`` keeps it that way.
 """
 
 from __future__ import annotations
@@ -80,7 +80,15 @@ class PostgresPool:
     validation and in every test that constructs one, and neither should require a database.
     """
 
-    def __init__(self, url: str, *, min_size: int = 2, max_size: int = 10) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        min_size: int = 2,
+        max_size: int = 10,
+        command_timeout_s: float | None = 60.0,
+        max_inactive_connection_lifetime_s: float = 300.0,
+    ) -> None:
         if not url:
             raise ConfigurationError(
                 "postgres backends require AURA_DATABASE_URL",
@@ -89,14 +97,16 @@ class PostgresPool:
         self._dsn = _dsn(url)
         self._min = min_size
         self._max = max_size
+        # Audit FSA-073: a statement past ``command_timeout_s`` is cancelled instead of holding
+        # its connection forever, and an idle connection is closed after the lifetime so a
+        # burst does not pin its peak connection count. Both come from InfrastructureSettings.
+        self._command_timeout_s = command_timeout_s
+        self._max_inactive_connection_lifetime_s = max_inactive_connection_lifetime_s
         self._pool: Any = None
-        self._schema_ready = False
         # Guards pool *creation* only. N concurrent first callers must produce exactly one
         # asyncpg pool -- without this, each sees ``self._pool is None`` before any of them
         # finishes awaiting ``create_pool``, so each creates its own; only the last write wins,
-        # and every other pool leaks its connections uncollected. Schema readiness below is
-        # deliberately left outside the lock: `_ensure_schema`'s statements are all
-        # ``IF NOT EXISTS``, so concurrent callers racing it converge rather than one failing.
+        # and every other pool leaks its connections uncollected.
         self._pool_lock = asyncio.Lock()
 
     async def acquire(self) -> Any:
@@ -118,138 +128,15 @@ class PostgresPool:
                         ) from exc
                     try:
                         self._pool = await asyncpg.create_pool(
-                            self._dsn, min_size=self._min, max_size=self._max
+                            self._dsn,
+                            min_size=self._min,
+                            max_size=self._max,
+                            command_timeout=self._command_timeout_s,
+                            max_inactive_connection_lifetime=self._max_inactive_connection_lifetime_s,
                         )
                     except Exception as exc:
                         raise _unavailable(f"could not connect to Postgres: {exc}") from exc
-        if not self._schema_ready:
-            await self._ensure_schema()
-            self._schema_ready = True
         return self._pool
-
-    async def _ensure_schema(self) -> None:
-        """Create the v3 tables if absent.
-
-        Every statement is ``IF NOT EXISTS``, so concurrent workers racing at startup converge
-        rather than one of them failing. The indexes are not optional extras: without
-        ``aura_chunks(document_id, document_version)`` a rebuild degenerates into a sequential scan
-        per document, and without the ``owner_id`` indexes tenant filtering becomes the dominant
-        cost of every read.
-        """
-        statements = (
-            """
-            CREATE TABLE IF NOT EXISTS aura_documents (
-                id                TEXT        NOT NULL,
-                version           INTEGER     NOT NULL,
-                title             TEXT        NOT NULL DEFAULT '',
-                content           TEXT        NOT NULL,
-                content_hash      TEXT        NOT NULL,
-                source_type       TEXT        NOT NULL DEFAULT 'upload',
-                source_uri        TEXT,
-                owner_id          TEXT,
-                trust_tier        INTEGER     NOT NULL DEFAULT 1,
-                status            TEXT        NOT NULL DEFAULT 'active',
-                language          TEXT,
-                created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-                metadata          JSONB       NOT NULL DEFAULT '{}'::jsonb,
-                PRIMARY KEY (id, version)
-            )
-            """,
-            # Partial index: `get(version=None)` and `list_active` both ask only about active
-            # versions, and a document accumulates superseded ones indefinitely.
-            """
-            CREATE INDEX IF NOT EXISTS ix_aura_documents_active
-                ON aura_documents (owner_id, updated_at DESC)
-                WHERE status = 'active'
-            """,
-            # Ingestion idempotency lookup. Scoped by owner because two users may legitimately
-            # upload identical content and neither should see the other's document.
-            """
-            CREATE INDEX IF NOT EXISTS ix_aura_documents_hash
-                ON aura_documents (content_hash, owner_id)
-            """,
-            # CAG pin flag (ADR-010). Added via ALTER so existing deployments pick it up
-            # without a separate migration step.
-            """
-            ALTER TABLE aura_documents
-                ADD COLUMN IF NOT EXISTS cag_pinned BOOLEAN NOT NULL DEFAULT false
-            """,
-            """
-            CREATE INDEX IF NOT EXISTS ix_aura_documents_cag_pinned
-                ON aura_documents (owner_id)
-                WHERE cag_pinned AND status = 'active'
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS aura_chunks (
-                id                TEXT        PRIMARY KEY,
-                document_id       TEXT        NOT NULL,
-                document_version  INTEGER     NOT NULL,
-                idx               INTEGER     NOT NULL,
-                content           TEXT        NOT NULL,
-                heading_path      JSONB       NOT NULL DEFAULT '[]'::jsonb,
-                token_estimate    INTEGER     NOT NULL DEFAULT 0,
-                owner_id          TEXT,
-                trust_tier        INTEGER     NOT NULL DEFAULT 1,
-                metadata          JSONB       NOT NULL DEFAULT '{}'::jsonb
-            )
-            """,
-            """
-            CREATE INDEX IF NOT EXISTS ix_aura_chunks_document
-                ON aura_chunks (document_id, document_version, idx)
-            """,
-            # One row per owner key ('global' for owner-less content), advanced in the same
-            # transaction as every change to that owner's active chunks. Each gateway worker
-            # reads it before a lexical search to learn whether its in-process index for that
-            # owner is stale (F-14) -- a primary-key read, so it is cheap enough for every query.
-            """
-            CREATE TABLE IF NOT EXISTS aura_corpus_revisions (
-                owner_key   TEXT    PRIMARY KEY,
-                revision    BIGINT  NOT NULL DEFAULT 0
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS aura_memories (
-                id                  TEXT        PRIMARY KEY,
-                kind                TEXT        NOT NULL,
-                owner_id            TEXT        NOT NULL,
-                content             TEXT        NOT NULL,
-                subject             TEXT,
-                confidence          DOUBLE PRECISION NOT NULL DEFAULT 0.7,
-                embedding_ref       TEXT,
-                session_id          TEXT,
-                created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-                last_accessed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-                access_count        INTEGER     NOT NULL DEFAULT 0,
-                superseded_by       TEXT,
-                expires_at          TIMESTAMPTZ,
-                prov_source         TEXT        NOT NULL,
-                prov_turn_id        TEXT,
-                prov_session_id     TEXT,
-                prov_extractor      TEXT,
-                prov_extractor_ver  TEXT,
-                prov_document_ref   TEXT,
-                prov_recorded_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-                metadata            JSONB       NOT NULL DEFAULT '{}'::jsonb
-            )
-            """,
-            # The shape `list_for_owner` asks for: this owner, this kind, active first.
-            """
-            CREATE INDEX IF NOT EXISTS ix_aura_memories_owner_kind
-                ON aura_memories (owner_id, kind, created_at DESC)
-            """,
-            # `delete_by_provenance` -- "forget everything you learned from X".
-            """
-            CREATE INDEX IF NOT EXISTS ix_aura_memories_provenance
-                ON aura_memories (owner_id, prov_source)
-            """,
-        )
-        try:
-            async with self._pool.acquire() as conn:
-                for statement in statements:
-                    await conn.execute(statement)
-        except Exception as exc:
-            raise _unavailable(f"could not create the v3 schema: {exc}") from exc
 
     async def close(self, *, timeout_s: float | None = None) -> None:
         """Release the pool. Safe to call when it was never created, and a second time.
@@ -260,7 +147,6 @@ class PostgresPool:
         ends gets SIGKILLed and then nothing is closed cleanly.
         """
         pool, self._pool = self._pool, None
-        self._schema_ready = False
         if pool is None:
             return
         if timeout_s is None:

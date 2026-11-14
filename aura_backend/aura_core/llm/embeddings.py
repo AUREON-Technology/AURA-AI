@@ -76,6 +76,10 @@ class HashEmbeddingProvider:
     magnitude), then L2-normalise so cosine similarity is well behaved.
     """
 
+    #: Read by the container (``llm.cache.semantic_tier_useful``): similarity over character
+    #: n-grams is not similarity of meaning, so the semantic cache tier stays off with this.
+    is_semantic = False
+
     def __init__(self, *, dimension: int = 384, model_id: str = "hash-embed-v1") -> None:
         if dimension < 16:
             raise ValueError("dimension must be at least 16")
@@ -311,9 +315,13 @@ class SentenceTransformerProvider:
         normalize: bool = True,
         query_prefix: str = "",
         document_prefix: str = "",
+        revision: str = "",
     ) -> None:
         self._name = name
         self._model_name = model
+        # Hub commit of the weights (audit FSA-110). Folded into model_id, hence into the index
+        # identity: a new revision is a new physical index, never a silent rewrite of the live one.
+        self._revision = revision
         self._dimension = dimension
         self._max_batch = max_batch_size
         self._normalize = normalize
@@ -328,7 +336,7 @@ class SentenceTransformerProvider:
 
     @property
     def model_id(self) -> str:
-        return self._model_name
+        return f"{self._model_name}@{self._revision}" if self._revision else self._model_name
 
     @property
     def dimension(self) -> int:
@@ -355,7 +363,9 @@ class SentenceTransformerProvider:
                     details={"provider": self._name},
                 ) from exc
             try:
-                self._model = await asyncio.to_thread(SentenceTransformer, self._model_name)
+                self._model = await asyncio.to_thread(
+                    SentenceTransformer, self._model_name, revision=self._revision or None
+                )
             except Exception as exc:
                 raise EmbeddingError(
                     f"{self._name}: failed to load {self._model_name}",

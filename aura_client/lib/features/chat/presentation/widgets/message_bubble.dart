@@ -20,6 +20,7 @@ import 'empty_answer_retry_card.dart';
 import 'engineer_confirmation_card.dart';
 import 'feedback_sheet.dart';
 import 'persona_badge.dart';
+import 'incomplete_plan_notice.dart';
 import 'step_log_panel.dart';
 import 'streaming_message_skeleton.dart';
 import 'tool_call_chip.dart';
@@ -293,6 +294,9 @@ class MessageBubble extends ConsumerWidget {
                       const SizedBox(height: AuraSpacing.sm),
                       StepLogPanel(steps: turnMeta.steps),
                     ],
+                    // Only once the turn has finished: mid-stream, a step that
+                    // has not completed yet is simply a step in progress.
+                    if (!isStreaming) IncompletePlanNotice(plan: turnMeta.plan),
                     if (!isStreaming) ...[
                       const SizedBox(height: AuraSpacing.sm),
                       EngineerConfirmationCard(

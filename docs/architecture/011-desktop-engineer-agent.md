@@ -63,9 +63,21 @@ a *trusted* root, since the 2026-10-31 audit (FSA-006), the daemon applies the s
 containment to a documented set of destructive verbs (remove, move, copy, find, chmod,
 `git clean`/`reset`/`checkout`, … — `command_policy.dart::destructiveVerbPattern`), including
 through a `cd ..` earlier on the same command line. Trust lifts per-call confirmation for the
-checkout's own tooling; it does not let the daemon destroy anything outside the checkout. Still
-open from that finding: with several granted roots and no `cwd` in the request, `run` executes in
-the first root, because the backend does not yet send the IDE's active root.
+checkout's own tooling; it does not let the daemon destroy anything outside the checkout. The
+other half of that finding is **built and tested, not proven** (2026-11-08): the IDE sends the
+workspace it currently shows as `workspace_root` on `/api/v3/chat/stream`; the kernel carries it
+on `ToolContext.metadata`; the sandbox session binds the task to it once, at `create_task`, and the
+host-agent bridge sends it to the daemon as that call's `cwd`. The daemon binds the task only if
+the path lies inside a granted root (refusing otherwise), and every RPC on that task -- `run`,
+`write_file`, `read_file`, `write_files`, hence every git tool -- resolves against the bound root.
+When granted roots nest, the most specific root wins, so an inner root's narrower trust is kept.
+A held turn stores the root it was proposed in and the kernel pins it on approval, so an approved
+command cannot follow the user into another workspace. The backend never interprets the path. With
+no root sent (mobile, an older desktop build, no open workspace) the daemon keeps its
+first-granted-root fallback, and the server-side sandbox ignores the value, since a path on the
+user's machine means nothing there. What proves it: a paired desktop with two granted roots, the
+second one open in the IDE, and an Engineer turn whose `run_command`, `write_file` and
+`git_commit` all land in the open root -- recorded under `docs/reports/`. Until then it is BUILT.
 
 ### Trust channels and taint are unaffected
 
@@ -420,6 +432,33 @@ included) needs `AURA_WORKERS=1` for the desktop Engineer agent to work reliably
 work under multiple workers means routing a tool call to whichever worker holds the socket
 (Redis pub/sub, or a dedicated single host-agent process) -- not built, and not implied by
 anything above.
+
+**Amendment (2026-11-08): the cross-worker relay -- built and tested, not proven live.**
+`adapters/host_agent_relay.py` takes the Redis pub/sub option above. The worker that holds a
+daemon's socket records that it *owns* the session in a short-lived key (`aura:host-agent:owner:
+<user>`, 30 s TTL, refreshed by a heartbeat, dropped on disconnect). Any other worker's
+`HostAgentRegistry.resolve` returns a `RemoteHostAgentSession` with the same `call`/
+`call_streaming` surface. Each call is published to the owner's channel; the owner runs it
+against its local session and publishes every frame back (`stream` increments as they arrive,
+then `result` or `error`). Nothing above the registry changed.
+
+- **The newest connection wins across workers too.** The previous owner is told its session was
+  superseded and fails that session's in-flight calls, as the single-process registry always
+  did. Its heartbeat finds the same thing if the notice is lost.
+- **Signed.** Relay messages carry commands for a user's own machine, so bus access must not be
+  enough to send one. Every message is HMAC-SHA256 signed with a key derived from the JWT secret
+  (which every worker already shares), is refused outside a 30 s timestamp window, and a call id
+  seen before is refused. The daemon's own containment and consent tiers apply on top, unchanged.
+- **Degrades to the old behaviour, never below it.** A bus error falls back to this worker's own
+  sessions. A remote owner that never answers fails with the same timeout a silent daemon does.
+- **When it is on.** It is on whenever `AURA_REDIS_URL` is set (the VPS builds it from the Redis
+  password file; Railway needs its Redis plugin's URL) and a JWT secret exists to sign with.
+  `AURA_HOST_AGENT_RELAY=false` turns it off. With it off in a production-like environment, the
+  container logs that one gateway worker is required, so the constraint above still applies there.
+- **Evidence.** `tests/unit/test_host_agent_relay.py` runs two registries over the in-memory bus
+  as two workers. `tests/load/test_host_agent_relay_redis.py` (`-m load`) runs them over a real
+  Redis, and was run against Redis 7.0. Not yet observed live: that needs a paired daemon against
+  a deployment running more than one worker.
 
 **Version skew between the app and the daemon is now visible instead of silent.** `/status`'s
 `backend_connected` field postdates the daemon binary a person may still have installed --

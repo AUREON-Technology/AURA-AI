@@ -6,6 +6,8 @@ an echo-backed stream without an adapter import.
 
 from __future__ import annotations
 
+import re
+
 import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
@@ -58,6 +60,32 @@ class LiveVoiceConfig:
     playback_sample_rate_hint: int = 22_050
     hold_tts_until_done: bool = True
     english_only_stt: bool = True
+
+
+#: The language codes Whisper accepts (ISO-639-1 plus ``yue``, ``haw``, ``jw``): the only values a
+#: start frame's ``language`` may take (audit FSA-059). Anything else used to reach the model as
+#: typed.
+WHISPER_LANGUAGES = frozenset(
+    "af am ar as az ba be bg bn bo br bs ca cs cy da de el en es et eu fa fi fo fr gl gu ha haw "
+    "he hi hr ht hu hy id is it ja jw ka kk km kn ko la lb ln lo lt lv mg mi mk ml mn mr ms mt my "
+    "ne nl nn no oc pa pl ps pt ro ru sa sd si sk sl sn so sq sr su sv sw ta te tg th tk tl tr tt "
+    "uk ur uz vi yi yo yue zh".split()
+)
+_LANGUAGE_NAMES = {"english": "en", "arabic": "ar"}
+
+
+def normalise_language(value: str | None) -> str | None:
+    """The Whisper code for a client's language value, or ``None`` when it is not one.
+
+    ``EN-US`` and ``en_GB`` fold to ``en``; ``english`` is accepted for the clients that sent it
+    before codes were required. Anything not in :data:`WHISPER_LANGUAGES` is refused.
+    """
+    raw = (value or "en").strip().lower()
+    if not raw:
+        raw = "en"
+    raw = _LANGUAGE_NAMES.get(raw, raw)
+    code = re.split(r"[-_]", raw, maxsplit=1)[0]
+    return code if code in WHISPER_LANGUAGES else None
 
 
 class PcmFrameError(ValueError):
@@ -230,9 +258,19 @@ class LiveVoiceSession:
         self.state = SessionState.LISTENING
         await self._emit_state()
 
+    @property
+    def stt_language(self) -> str:
+        """The validated, normalised code handed to the STT engine (``en`` when unset)."""
+        return normalise_language(self.language) or "en"
+
     def check_language(self) -> str | None:
-        lang = (self.language or "en").lower()
-        if self.config.english_only_stt and lang not in ("en", "en-us", "en-gb", "english"):
+        code = normalise_language(self.language)
+        if code is None:
+            return (
+                f"{str(self.language)[:40]!r} is not a supported language code; send an "
+                "ISO-639-1 code such as en or ar"
+            )
+        if self.config.english_only_stt and code != "en":
             return (
                 "live voice STT is English-only with the configured model; "
                 "set a multilingual Whisper size to enable other languages"
@@ -248,7 +286,7 @@ class LiveVoiceSession:
             return
         wav = pcm16_mono_to_wav(pcm, self.config.sample_rate)
         try:
-            transcript = await self.stt.transcribe(wav, language=self.language)
+            transcript = await self.stt.transcribe(wav, language=self.stt_language)
         except Exception as exc:
             await self._emit(
                 {"type": "error", "error": "stt_failed", "message": type(exc).__name__}

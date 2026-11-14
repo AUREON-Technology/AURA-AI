@@ -73,11 +73,33 @@ DEBUG_MODE=false
 AURA_EMBEDDING_PROVIDER=sentence-transformers
 AURA_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 AURA_EMBEDDING_DIMENSION=384
+# Pin the weights to a Hub commit (audit FSA-110): the revision is part of the index identity,
+# so changing it builds and promotes a new index rather than silently re-reading the live one.
+# AURA_KNOWLEDGE_RERANK_MODEL_REVISION and AURA_VOICE_STT_MODEL_REVISION pin the cross-encoder
+# and Whisper the same way; /health/ready reports all three. Whisper loads at startup in
+# production-like environments (AURA_VOICE_STT_WARM_ON_STARTUP overrides).
+AURA_EMBEDDING_MODEL_REVISION=<commit SHA from the model repo's Files and versions>
 
 AURA_DATABASE_URL=<Railway Postgres plugin's connection string>
+# Connection budget (audit FSA-073). Every uvicorn worker holds one asyncpg pool plus the legacy
+# SQLAlchemy pool: AURA_POSTGRES_POOL_MAX_SIZE (10) + AURA_LEGACY_DB_POOL_SIZE (5) +
+# AURA_LEGACY_DB_MAX_OVERFLOW (10) = 25 connections per worker by default, so AURA_WORKERS=4 can
+# open 100 -- plus any Celery workers (per prefork child). Size these against the Railway
+# Postgres plan's connection limit, leaving room for the pre-deploy `alembic upgrade head`.
+# AURA_POSTGRES_COMMAND_TIMEOUT_S (60) cancels a hung statement; idle pooled connections close
+# after AURA_POSTGRES_MAX_INACTIVE_CONNECTION_LIFETIME_S (300).
+# Also what lets a paired desktop (aura_hostd) be reached from every gateway worker: the
+# host-agent relay (ADR-011 amendment, 2026-11-08) is on whenever this and AURA_JWT_SECRET are
+# set. Without it, the image's default 4 workers each see only their own desktop connections, so
+# set AURA_WORKERS=1 instead. AURA_HOST_AGENT_RELAY=false turns the relay off.
 AURA_REDIS_URL=<Railway Redis plugin's connection string, or an external Redis>
 AURA_QDRANT_URL=<Qdrant Cloud or self-hosted Qdrant URL — Railway has no Qdrant plugin>
 AURA_QDRANT_API_KEY=<Qdrant API key>
+# Recorded decision for this target (audit FSA-018 / CB-22): with an off-host Qdrant (any dotted
+# public hostname, e.g. Qdrant Cloud) no readable chunk text or memory subject is written into
+# vector payloads; retrieval resolves the text from Postgres. /health/ready reports it under
+# "vectors.payload_content". AURA_KNOWLEDGE_VECTOR_PAYLOAD_CONTENT=true|false overrides the rule.
+# Existing payloads keep their text until the index is rebuilt (knowledge refresh / re-index).
 AURA_JWT_SECRET=<random>
 AURA_SECRETS_ENCRYPTION_KEY=<random>
 
@@ -167,6 +189,88 @@ AURA_PROVIDER_HOSTED1_RPM=... / _RPD / _TPM / _TPD   # the provider's published 
 AURA_PROVIDER_HOSTED1_TOKENS_PER_SECOND=200          # lets the planner use 1200 tokens here
 AURA_PROVIDER_HOSTED1_EXTRA_BODY={"reasoning_effort": "low"}   # reasoning models only
 ```
+
+### Capacity and latency settings (provider performance audit, 2026-11-08)
+
+Without these, the code defaults apply on Railway:
+- the admission queue is unlimited and has no timeout;
+- one user may hold every generation slot;
+- `hosted1`'s concurrency is 8, whatever its rate limit;
+- the prompt cap is 400 tokens, sized for a CPU 3B model;
+- a failing chat turn can take about 210 s before it reports an error: up to 3 providers per
+  generation, two generations per turn, each attempt with a full timeout.
+
+None of these is in `railway.json`, and Railway ignores that file for this service anyway, so set
+them in the dashboard (Variables).
+
+**These are starting values, not measured ones.** No generation on this topology has been
+measured yet (GAP-041). Phase 3 of the provider performance plan runs the load test that confirms
+or replaces them. Record what it finds here.
+
+```
+# Admission (aura_core/llm/admission.py). Waiting is bounded, and a request that cannot start in
+# time gets a retryable 503 "busy" instead of an indefinite spinner.
+AURA_LLM_ADMISSION_MAX_QUEUE=8
+AURA_LLM_ADMISSION_QUEUE_TIMEOUT_S=10
+AURA_LLM_USER_MAX_CONCURRENT_GENERATIONS=2
+
+# hosted1: size concurrency to its rate limit (rule below), and declare the limit so the router
+# skips the provider *before* a 429 rather than after.
+AURA_PROVIDER_HOSTED1_MAX_CONCURRENCY=<rule below>
+AURA_PROVIDER_HOSTED1_RPM=<published limit>   # and _TPM / _RPD / _TPD where published
+AURA_PROVIDER_HOSTED1_TIMEOUT_S=30
+
+# Per-turn bounds (PP-06/PP-07, aura_core/llm/deadline.py). Engineer turns never get the budget.
+AURA_LLM_TURN_GENERATION_BUDGET_S=45
+AURA_LLM_STREAM_MAX_S=120
+
+# Prompt cap (PP-09). 400 is sized for qwen2.5:3b on CPU; nothing on this target is that slow.
+AURA_LLM_MAX_PROMPT_TOKENS=<rule below>
+```
+
+Why each value:
+
+- **`AURA_WORKERS`.** Every provider's `MAX_CONCURRENCY` is declared per capacity group, and the
+  image runs `AURA_WORKERS` processes (4 by default). Since audit FSA-025 the gateway divides each
+  group's cap among its processes: `AURA_LLM_ADMISSION_PROCESSES` defaults to `AURA_WORKERS` when
+  unset, so a declared cap of 4 is 1 slot in each of 4 workers and the upstream sees 4, not 16.
+  Declare the cap the upstream should see in total; a cap below the worker count keeps one slot per
+  worker and the boot log says so. The per-minute arithmetic below still has to account for every
+  worker, because each worker's slot is independently busy. Daily and per-minute quotas
+  (`RPM`/`RPD`/`TPM`/`TPD`) are shared counters in Redis across every process.
+- **`AURA_PROVIDER_HOSTED1_MAX_CONCURRENCY`.** A generation that takes `d` seconds, held at
+  concurrency `c`, sends `c × 60 / d` requests a minute. To stay under the provider's `RPM`, use
+  `c ≤ RPM × d / (60 × AURA_WORKERS)`, rounded down, and never below 1.
+
+  For example, at 30 RPM with about 5 s per generation and 4 workers: `30 × 5 / 240 = 0.6`, so 1.
+  That is a hard ceiling. A free tier like that cannot carry the 50-concurrent-user target
+  (`docs/production/PRODUCTION_SLO.md` S6). The load test will show it as a stream of `busy` and
+  `rate_limited` responses rather than slow ones.
+- **Queue timeout, 10 s.** The answer target is p95 < 15 s (S4). A turn that waited 20 s for a
+  slot has already missed it, and a prompt "busy, retry" is more honest than a long wait.
+- **`AURA_PROVIDER_HOSTED1_TIMEOUT_S`, 30 s.** The only measured `hosted1` completion took 4.8 s
+  (n=1, in-process, 2026-10-28). 30 s leaves headroom for a slow reply and still leaves part of the
+  turn budget for a fallback.
+- **`AURA_LLM_TURN_GENERATION_BUDGET_S`, 45 s.** This caps all of a chat or voice turn's
+  generations, fallbacks included. It counts from the first generation, so retrieval does not use
+  it up. When it runs out, the turn ends with an error, and the attempt it cut short is not held
+  against the provider's circuit breaker.
+- **`AURA_LLM_STREAM_MAX_S`, 120 s.** This caps a stream after its first chunk. Every chunk is
+  also bounded by the request timeout. 1024 output tokens at a slow 20 tok/s is about 51 s, so
+  120 s only cuts off a stream that is really stuck.
+- **`AURA_LLM_MAX_PROMPT_TOKENS`.** The prompt has to fit every provider a turn may be routed to.
+  Use `min(context_window) − max_output_tokens − 500` across `hosted1` and `hfspace`. Also mind
+  `TPM`: a chat turn sends roughly the prompt twice (planner, then answer), so
+  `2 × prompt × turns per minute` must stay under it. `3000` is a reasonable first value for
+  8k-context models with a generous TPM. The cap is one global value, not per provider. That is
+  fine here because no provider on this target is slow enough to need a small prompt. A mixed
+  deployment with a CPU model would need a per-provider cap, which does not exist yet.
+
+What these do not fix: sensitive turns (memory, documents, tools, images, Engineer) still have
+no eligible model while only `hosted1` is healthy, because its ceiling is `internal`. The owner
+accepted this as the chat-only launch limitation on 2026-11-08. Those turns now end with
+`capability_unavailable` ("This needs a feature that isn't available yet") instead of a
+retryable "model not answering".
 
 Two differences from the VPS:
 

@@ -27,36 +27,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["PostgresTelemetrySink"]
 
-_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_turn_telemetry (
-        turn_id           TEXT              PRIMARY KEY,
-        correlation_id    TEXT              NOT NULL,
-        started_at        TIMESTAMPTZ       NOT NULL,
-        route             TEXT              NOT NULL,
-        agent             TEXT              NOT NULL,
-        outcome           TEXT              NOT NULL,
-        error_kind        TEXT,
-        provider          TEXT,
-        model             TEXT,
-        total_ms          DOUBLE PRECISION  NOT NULL,
-        prompt_tokens     INTEGER           NOT NULL,
-        completion_tokens INTEGER           NOT NULL,
-        cost_usd          DOUBLE PRECISION  NOT NULL,
-        degraded          BOOLEAN           NOT NULL,
-        cache_hit         BOOLEAN           NOT NULL,
-        tool_calls        INTEGER           NOT NULL,
-        tool_failures     INTEGER           NOT NULL,
-        groundedness      DOUBLE PRECISION,
-        payload           JSONB             NOT NULL
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_turn_telemetry_started_at
-        ON aura_turn_telemetry (started_at)
-    """,
-)
-
 
 def _unavailable(message: str, **details: Any) -> DependencyUnavailableError:
     return DependencyUnavailableError(message, dependency="postgres", details=details or None)
@@ -65,22 +35,8 @@ def _unavailable(message: str, **details: Any) -> DependencyUnavailableError:
 class PostgresTelemetrySink:
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)
-        self._schema_ready = False
-
-    async def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-        pool = await self._pool._get_pool()
-        try:
-            async with pool.acquire() as conn:
-                for statement in _SCHEMA:
-                    await conn.execute(statement)
-        except Exception as exc:
-            raise _unavailable(f"could not create the turn telemetry schema: {exc}") from exc
-        self._schema_ready = True
 
     async def record_turn(self, telemetry: TurnTelemetry) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         payload = telemetry.as_dict()
         try:
@@ -107,10 +63,34 @@ class PostgresTelemetrySink:
             # reasoning InMemoryEventBus uses for a handler exception.
             logger.warning("could not record turn telemetry: %s", exc)
 
+    async def purge_before(self, cutoff: datetime) -> int:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                status = await conn.execute("DELETE FROM aura_turn_telemetry WHERE started_at < $1", cutoff)
+        except Exception as exc:
+            raise _unavailable(f"could not purge turn telemetry: {exc}") from exc
+        # asyncpg reports the command tag ("DELETE 3"); the count is its last word.
+        return int(str(status).rsplit(" ", 1)[-1] or 0)
+
+    async def purge_sessions(self, session_ids: Any) -> int:
+        doomed = [str(s) for s in session_ids]
+        if not doomed:
+            return 0
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                status = await conn.execute(
+                    "DELETE FROM aura_turn_telemetry WHERE payload->>'session_id' = ANY($1::text[])", doomed
+                )
+        except Exception as exc:
+            raise _unavailable(f"could not purge turn telemetry: {exc}") from exc
+        # asyncpg reports the command tag ("DELETE 3"); the count is its last word.
+        return int(str(status).rsplit(" ", 1)[-1] or 0)
+
     async def recent_summary(self, *, since: datetime) -> dict[str, Any]:
         """Real aggregate numbers over every turn recorded since ``since`` -- the query the
         scorecard endpoint reads from, not a hand-maintained figure."""
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:

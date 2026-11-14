@@ -19,15 +19,12 @@ Confidence, live sources and validity are re-derived after every change with
 :func:`~aura_core.domain.graph.summarise_provenance` -- the function the in-memory adapter uses --
 so both stores compute identical beliefs from identical evidence.
 
-The DDL below is kept textually in step with ``alembic/versions/0007_knowledge_graph.py``
-(``tests/unit/test_graph_schema_migration.py`` checks it): like every ``aura_*`` table, the adapter
-creates what it needs on first use, so a gateway that ran before the migration must not make
-``alembic upgrade head`` fail, and vice versa.
+Migration ``0007_knowledge_graph`` owns these tables and seeds the vocabulary; the adapter issues no
+DDL (one schema authority, CB-20).
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -35,9 +32,7 @@ from typing import Any, Mapping, Sequence
 
 from ..domain.errors import DependencyUnavailableError
 from ..domain.graph import (
-    DEFAULT_GRAPH_SCHEMA,
     FactProvenance,
-    GraphSchema,
     normalize_alias,
     parse_source,
     summarise_provenance,
@@ -48,259 +43,9 @@ from .postgres_store import PostgresPool
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["PostgresGraphStore", "GRAPH_SCHEMA", "graph_type_seed_statements"]
+__all__ = ["PostgresGraphStore"]
 
 _MAX_DEPTH = 3
-
-#: Static DDL, in order. Mirrored by migration 0007.
-GRAPH_SCHEMA: tuple[str, ...] = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_graph_entities (
-        owner_id      TEXT        NOT NULL DEFAULT '',
-        key           TEXT        NOT NULL,
-        name          TEXT        NOT NULL,
-        type          TEXT        NOT NULL,
-        aliases       JSONB       NOT NULL DEFAULT '[]'::jsonb,
-        attributes    JSONB       NOT NULL DEFAULT '{}'::jsonb,
-        mention_count INTEGER     NOT NULL DEFAULT 1,
-        first_seen    TIMESTAMPTZ NOT NULL DEFAULT now(),
-        last_seen     TIMESTAMPTZ NOT NULL DEFAULT now(),
-        sources       JSONB       NOT NULL DEFAULT '[]'::jsonb,
-        PRIMARY KEY (owner_id, key)
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_graph_entities_owner
-        ON aura_graph_entities (owner_id)
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS aura_graph_relations (
-        owner_id     TEXT             NOT NULL DEFAULT '',
-        subject_key  TEXT             NOT NULL,
-        predicate    TEXT             NOT NULL,
-        object_key   TEXT             NOT NULL,
-        confidence   DOUBLE PRECISION NOT NULL DEFAULT 0.5,
-        sources      JSONB            NOT NULL DEFAULT '[]'::jsonb,
-        attributes   JSONB            NOT NULL DEFAULT '{}'::jsonb,
-        created_at   TIMESTAMPTZ      NOT NULL DEFAULT now(),
-        PRIMARY KEY (owner_id, subject_key, predicate, object_key)
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_graph_relations_owner
-        ON aura_graph_relations (owner_id)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_graph_relations_subject
-        ON aura_graph_relations (owner_id, subject_key)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_graph_relations_object
-        ON aura_graph_relations (owner_id, object_key)
-    """,
-    # -- Phase 11: confidence and validity on the facts ----------------------------------
-    """
-    ALTER TABLE aura_graph_entities
-        ADD COLUMN IF NOT EXISTS confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5
-    """,
-    """
-    ALTER TABLE aura_graph_entities ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ
-    """,
-    """
-    ALTER TABLE aura_graph_entities ADD COLUMN IF NOT EXISTS valid_to TIMESTAMPTZ
-    """,
-    """
-    UPDATE aura_graph_entities SET valid_from = first_seen WHERE valid_from IS NULL
-    """,
-    """
-    ALTER TABLE aura_graph_relations ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ
-    """,
-    """
-    ALTER TABLE aura_graph_relations ADD COLUMN IF NOT EXISTS valid_to TIMESTAMPTZ
-    """,
-    """
-    UPDATE aura_graph_relations SET valid_from = created_at WHERE valid_from IS NULL
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_graph_entities_current
-        ON aura_graph_entities (owner_id, type) WHERE valid_to IS NULL
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_graph_relations_current
-        ON aura_graph_relations (owner_id) WHERE valid_to IS NULL
-    """,
-    # -- vocabulary ----------------------------------------------------------------------
-    """
-    CREATE TABLE IF NOT EXISTS aura_graph_entity_types (
-        name        TEXT    PRIMARY KEY,
-        literal     BOOLEAN NOT NULL DEFAULT false,
-        description TEXT    NOT NULL DEFAULT ''
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS aura_graph_relation_types (
-        predicate     TEXT   PRIMARY KEY,
-        subject_types TEXT[] NOT NULL,
-        object_types  TEXT[] NOT NULL,
-        description   TEXT   NOT NULL DEFAULT ''
-    )
-    """,
-    # -- aliases -------------------------------------------------------------------------
-    """
-    CREATE TABLE IF NOT EXISTS aura_graph_entity_aliases (
-        owner_id    TEXT NOT NULL,
-        entity_key  TEXT NOT NULL,
-        alias       TEXT NOT NULL,
-        alias_norm  TEXT NOT NULL,
-        PRIMARY KEY (owner_id, entity_key, alias_norm),
-        FOREIGN KEY (owner_id, entity_key)
-            REFERENCES aura_graph_entities (owner_id, key) ON DELETE CASCADE
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_graph_entity_aliases_norm
-        ON aura_graph_entity_aliases (owner_id, alias_norm)
-    """,
-    # -- provenance ----------------------------------------------------------------------
-    """
-    CREATE TABLE IF NOT EXISTS aura_graph_entity_provenance (
-        owner_id          TEXT             NOT NULL,
-        entity_key        TEXT             NOT NULL,
-        source_id         TEXT             NOT NULL,
-        document_id       TEXT,
-        document_version  INTEGER,
-        extractor         TEXT             NOT NULL DEFAULT '',
-        confidence        DOUBLE PRECISION NOT NULL
-            CHECK (confidence >= 0 AND confidence <= 1),
-        recorded_at       TIMESTAMPTZ      NOT NULL DEFAULT now(),
-        retired_at        TIMESTAMPTZ,
-        PRIMARY KEY (owner_id, entity_key, source_id),
-        FOREIGN KEY (owner_id, entity_key)
-            REFERENCES aura_graph_entities (owner_id, key) ON DELETE CASCADE
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_graph_entity_provenance_document
-        ON aura_graph_entity_provenance (owner_id, document_id)
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS aura_graph_relation_provenance (
-        owner_id          TEXT             NOT NULL,
-        subject_key       TEXT             NOT NULL,
-        predicate         TEXT             NOT NULL,
-        object_key        TEXT             NOT NULL,
-        source_id         TEXT             NOT NULL,
-        document_id       TEXT,
-        document_version  INTEGER,
-        extractor         TEXT             NOT NULL DEFAULT '',
-        confidence        DOUBLE PRECISION NOT NULL
-            CHECK (confidence >= 0 AND confidence <= 1),
-        recorded_at       TIMESTAMPTZ      NOT NULL DEFAULT now(),
-        retired_at        TIMESTAMPTZ,
-        PRIMARY KEY (owner_id, subject_key, predicate, object_key, source_id),
-        FOREIGN KEY (owner_id, subject_key, predicate, object_key)
-            REFERENCES aura_graph_relations (owner_id, subject_key, predicate, object_key)
-            ON DELETE CASCADE
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_graph_relation_provenance_document
-        ON aura_graph_relation_provenance (owner_id, document_id)
-    """,
-    # -- backfill from the pre-Phase-11 JSONB columns (idempotent) ------------------------
-    """
-    INSERT INTO aura_graph_entity_provenance (
-        owner_id, entity_key, source_id, document_id, document_version, extractor,
-        confidence, recorded_at
-    )
-    SELECT e.owner_id, e.key, s.source,
-           CASE WHEN s.source ~ '^.+@v[0-9]+$'
-                THEN regexp_replace(s.source, '@v[0-9]+$', '') END,
-           CASE WHEN s.source ~ '^.+@v[0-9]+$'
-                THEN substring(s.source from '@v([0-9]+)$')::integer END,
-           COALESCE(e.attributes->>'extractor', ''),
-           LEAST(GREATEST(e.confidence, 0), 1),
-           e.first_seen
-    FROM aura_graph_entities e
-    CROSS JOIN LATERAL jsonb_array_elements_text(
-        CASE WHEN jsonb_array_length(e.sources) = 0 THEN '[""]'::jsonb ELSE e.sources END
-    ) AS s(source)
-    WHERE NOT EXISTS (
-        SELECT 1 FROM aura_graph_entity_provenance p
-        WHERE p.owner_id = e.owner_id AND p.entity_key = e.key
-    )
-    ON CONFLICT DO NOTHING
-    """,
-    """
-    INSERT INTO aura_graph_relation_provenance (
-        owner_id, subject_key, predicate, object_key, source_id, document_id,
-        document_version, extractor, confidence, recorded_at
-    )
-    SELECT r.owner_id, r.subject_key, r.predicate, r.object_key, s.source,
-           CASE WHEN s.source ~ '^.+@v[0-9]+$'
-                THEN regexp_replace(s.source, '@v[0-9]+$', '') END,
-           CASE WHEN s.source ~ '^.+@v[0-9]+$'
-                THEN substring(s.source from '@v([0-9]+)$')::integer END,
-           COALESCE(r.attributes->>'extractor', ''),
-           LEAST(GREATEST(r.confidence, 0), 1),
-           r.created_at
-    FROM aura_graph_relations r
-    CROSS JOIN LATERAL jsonb_array_elements_text(
-        CASE WHEN jsonb_array_length(r.sources) = 0 THEN '[""]'::jsonb ELSE r.sources END
-    ) AS s(source)
-    WHERE NOT EXISTS (
-        SELECT 1 FROM aura_graph_relation_provenance p
-        WHERE p.owner_id = r.owner_id AND p.subject_key = r.subject_key
-          AND p.predicate = r.predicate AND p.object_key = r.object_key
-    )
-    ON CONFLICT DO NOTHING
-    """,
-    """
-    INSERT INTO aura_graph_entity_aliases (owner_id, entity_key, alias, alias_norm)
-    SELECT e.owner_id, e.key, a.alias, lower(regexp_replace(btrim(a.alias), '\\s+', ' ', 'g'))
-    FROM aura_graph_entities e
-    CROSS JOIN LATERAL (
-        SELECT e.name AS alias
-        UNION
-        SELECT jsonb_array_elements_text(e.aliases)
-    ) AS a
-    WHERE NOT EXISTS (
-        SELECT 1 FROM aura_graph_entity_aliases x
-        WHERE x.owner_id = e.owner_id AND x.entity_key = e.key
-    )
-    ON CONFLICT DO NOTHING
-    """,
-)
-
-
-def _sql_text(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
-
-def _sql_array(values: Sequence[str]) -> str:
-    return "ARRAY[" + ", ".join(_sql_text(v) for v in sorted(values)) + "]::text[]"
-
-
-def graph_type_seed_statements(schema: GraphSchema = DEFAULT_GRAPH_SCHEMA) -> tuple[str, ...]:
-    """Upserts that make the vocabulary tables match ``schema``. Values are code constants."""
-    entity_rows = ", ".join(
-        f"({_sql_text(t.name)}, {'true' if t.literal else 'false'}, {_sql_text(t.description)})"
-        for t in schema.entity_types
-    )
-    relation_rows = ", ".join(
-        f"({_sql_text(r.predicate)}, {_sql_array(r.subject_types)}, "
-        f"{_sql_array(r.object_types)}, {_sql_text(r.description)})"
-        for r in schema.relation_types
-    )
-    return (
-        "INSERT INTO aura_graph_entity_types (name, literal, description) VALUES "
-        f"{entity_rows} ON CONFLICT (name) DO UPDATE SET literal = EXCLUDED.literal, "
-        "description = EXCLUDED.description",
-        "INSERT INTO aura_graph_relation_types (predicate, subject_types, object_types, "
-        f"description) VALUES {relation_rows} ON CONFLICT (predicate) DO UPDATE SET "
-        "subject_types = EXCLUDED.subject_types, object_types = EXCLUDED.object_types, "
-        "description = EXCLUDED.description",
-    )
 
 
 def _unavailable(message: str, **details: Any) -> DependencyUnavailableError:
@@ -346,31 +91,10 @@ def _like(needle: str) -> str:
 class PostgresGraphStore:
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)
-        self._schema_ready = False
-        # The schema includes ALTERs and backfills, which -- unlike bare CREATE ... IF NOT
-        # EXISTS -- can conflict when two first callers run them concurrently.
-        self._schema_lock = asyncio.Lock()
-
-    async def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-        async with self._schema_lock:
-            if self._schema_ready:
-                return
-            pool = await self._pool._get_pool()
-            try:
-                async with pool.acquire() as conn:
-                    async with conn.transaction():
-                        for statement in (*GRAPH_SCHEMA, *graph_type_seed_statements()):
-                            await conn.execute(statement)
-            except Exception as exc:
-                raise _unavailable(f"could not create the graph schema: {exc}") from exc
-            self._schema_ready = True
 
     # -- writes --------------------------------------------------------------------------
 
     async def apply(self, delta: GraphDelta, *, owner_id: UserId | None) -> None:
-        await self._ensure_schema()
         owner = _owner(owner_id)
         now = datetime.now(timezone.utc)
         pool = await self._pool._get_pool()
@@ -611,7 +335,6 @@ class PostgresGraphStore:
         self, document_id: str, *, owner_id: UserId | None, keep_version: int | None = None,
         at: datetime | None = None,
     ) -> int:
-        await self._ensure_schema()
         owner = _owner(owner_id)
         when = _utc(at)
         pool = await self._pool._get_pool()
@@ -657,7 +380,6 @@ class PostgresGraphStore:
 
     async def _remove_provenance(self, owner_id: UserId | None, column: str, value: str) -> int:
         assert column in ("document_id", "source_id")  # interpolated below; never user input
-        await self._ensure_schema()
         owner = _owner(owner_id)
         now = datetime.now(timezone.utc)
         pool = await self._pool._get_pool()
@@ -728,7 +450,6 @@ class PostgresGraphStore:
     # -- reads ---------------------------------------------------------------------------
 
     async def get_entity(self, key: str, *, owner_id: UserId | None) -> Entity | None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -750,7 +471,6 @@ class PostgresGraphStore:
         limit: int = 50,
         include_expired: bool = False,
     ) -> Sequence[Entity]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         needle = _like(normalize_alias(name)) if name else None
         try:
@@ -791,7 +511,6 @@ class PostgresGraphStore:
         limit: int = 100,
         include_expired: bool = False,
     ) -> Sequence[Relation]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -821,7 +540,6 @@ class PostgresGraphStore:
         entity_key: str | None = None,
         relation_key: tuple[str, str, str] | None = None,
     ) -> Sequence[FactProvenance]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -854,7 +572,6 @@ class PostgresGraphStore:
         self, key: str, *, owner_id: UserId | None, depth: int = 1, limit: int = 50
     ) -> tuple[Sequence[Entity], Sequence[Relation]]:
         """Bounded BFS over current facts. Depth is clamped to 3 regardless of the caller."""
-        await self._ensure_schema()
         owner = _owner(owner_id)
         depth = max(1, min(depth, _MAX_DEPTH))
         pool = await self._pool._get_pool()

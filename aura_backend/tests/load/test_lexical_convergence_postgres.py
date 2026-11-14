@@ -17,8 +17,6 @@ transactions, the active-chunk listing and fetch -- does what that adapter does.
 from __future__ import annotations
 
 import os
-import uuid
-from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 
@@ -28,6 +26,7 @@ from aura_core.domain.identifiers import DocumentId, UserId
 from aura_core.knowledge.engine import KnowledgeEngine
 from aura_core.knowledge.index_manager import IndexManager
 from aura_core.llm.embeddings import HashEmbeddingProvider
+from tests.postgres_migrations import migrated_database
 
 pytestmark = pytest.mark.load
 
@@ -40,16 +39,8 @@ RUNBOOK = "The AURA-4419 escalation runbook says to page the on-call SRE."
 async def database_url():
     if not _URL:
         pytest.skip("AURA_TEST_DATABASE_URL is not set")
-    import asyncpg
-
-    name = f"lexical_{uuid.uuid4().hex[:10]}"
-    admin = await asyncpg.connect(_URL)
-    await admin.execute(f'CREATE DATABASE "{name}"')
-    try:
-        yield urlunsplit(urlsplit(_URL)._replace(path=f"/{name}"))
-    finally:
-        await admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-        await admin.close()
+    async with migrated_database(_URL, "lexical") as url:
+        yield url
 
 
 def _worker(database_url: str) -> tuple[KnowledgeEngine, PostgresDocumentStore]:

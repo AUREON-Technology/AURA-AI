@@ -55,17 +55,24 @@ jobs:
           cache-dependency-path: |
             aura_backend/requirements.lock
             aura_backend/requirements.txt
-            aura_backend/requirements-dev.txt
+            aura_backend/requirements-dev.lock
 
       - name: Install dependencies
         # Hash-checked (F-38): every artefact must match a hash recorded in requirements.lock.
         # The lock names no index; torch's +cpu wheel exists only on PyTorch's CPU index, so it
         # is passed here, and --require-hashes means neither index can substitute a file.
-        # requirements-dev.txt is unhashed test tooling (GAP-033), so it is a second install --
-        # one hash-checked requirement puts pip in hash mode for every file on its command line.
+        # The test tooling is hash-pinned too (G-06 / GAP-033): requirements-dev.lock is compiled
+        # against requirements.lock as a constraint, so a package in both carries one version.
+        # Two installs because pip resolves each command's requirement set on its own.
         run: |
           pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
-          pip install -r requirements-dev.txt
+          pip install --require-hashes -r requirements-dev.lock
+
+      # Audit FSA-081: every engine-backed speech and OCR test is skipif-gated on these binaries,
+      # and none had run anywhere but a contributor's machine. The Dockerfile installs the same
+      # packages, so this is the image's behaviour being tested, not a CI-only one.
+      - name: Install speech and OCR engines
+        run: sudo apt-get update -q && sudo apt-get install -y -q espeak-ng tesseract-ocr
 
       - name: Dockerfile boots aura_service (AURA-012)
         run: |
@@ -107,7 +114,13 @@ jobs:
         # without pytest on the runner, every one of those imports raises and
         # the failure reads as "legacy suite broken" rather than "wrong
         # runner".
-        run: python -m unittest discover -p "test_*.py"
+        #
+        # Under coverage for the platform packages the aura_core ratchet above does not see
+        # (audit G-05): api/, services/, infrastructure/ -- ADR-002's permanent adapters, JWT and
+        # sync included. Reported, not yet floored: the first measured number sets the floor.
+        run: |
+          python -m coverage run --source=api,services,infrastructure -m unittest discover -p "test_*.py"
+          python -m coverage report --skip-empty
 
   pip-audit:
     runs-on: ubuntu-latest
@@ -144,7 +157,7 @@ jobs:
           pip install pip-audit
           grep -E '^[A-Za-z0-9._-]+==' requirements.lock \
             | sed -E 's/[[:space:]]*\\$//; s/\+[A-Za-z0-9.]+$//' > /tmp/audit.lock
-          if grep -q -e '--hash' -e '\\' /tmp/audit.lock || ! grep -qx 'torch==[0-9.]*' /tmp/audit.lock; then
+          if grep -q -e '--hash' -e '[\]' /tmp/audit.lock || ! grep -qx 'torch==[0-9.]*' /tmp/audit.lock; then
             echo "::error::could not reduce requirements.lock to name==version pins for pip-audit"
             exit 1
           fi
@@ -191,9 +204,11 @@ jobs:
   # The `*_postgres` tests under tests/load (audit F-37). They are opt-in (`-m load`) and skip
   # unless AURA_TEST_DATABASE_URL is set, so before this job no CI run had ever executed them --
   # against CLAUDE.md's own rule that a Postgres-backed change is verified against a real Postgres.
-  # Each test creates its own database and migrates it with `alembic upgrade head`, so this also
-  # proves the migration chain applies to an empty database. Only the Postgres files are selected:
-  # the rest of tests/load needs Qdrant, Redis, Ollama or Docker.
+  # Each test creates its own database and migrates it with `alembic upgrade head`
+  # (tests/postgres_migrations.py) -- the adapters create no tables (CB-20) -- so this also proves
+  # the migration chain applies to an empty database, and test_migration_roundtrip_postgres.py
+  # undoes and re-applies every revision. Only the Postgres files are selected: the rest of
+  # tests/load needs Qdrant, Redis, Ollama or Docker.
   postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -223,23 +238,40 @@ jobs:
           cache: "pip"
           cache-dependency-path: |
             aura_backend/requirements.lock
-            aura_backend/requirements-dev.txt
+            aura_backend/requirements-dev.lock
 
       - name: Install dependencies
         # Hash-checked (F-38): every artefact must match a hash recorded in requirements.lock.
         # The lock names no index; torch's +cpu wheel exists only on PyTorch's CPU index, so it
         # is passed here, and --require-hashes means neither index can substitute a file.
-        # requirements-dev.txt is unhashed test tooling (GAP-033), so it is a second install --
-        # one hash-checked requirement puts pip in hash mode for every file on its command line.
+        # The test tooling is hash-pinned too (G-06 / GAP-033): requirements-dev.lock is compiled
+        # against requirements.lock as a constraint, so a package in both carries one version.
+        # Two installs because pip resolves each command's requirement set on its own.
         run: |
           pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
-          pip install -r requirements-dev.txt
+          pip install --require-hashes -r requirements-dev.lock
 
       - name: Postgres adapter tests (real database)
         env:
           AURA_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
         # `-rs` lists skips, so a test that silently stopped reaching the database is visible.
         run: pytest tests/load/*_postgres.py -m load -q -rs
+
+      # The legacy tree's seven Postgres integration suites (audit G-05). They used to need a
+      # Docker daemon for a testcontainers Postgres and so ran only where one happened to be;
+      # legacy_postgres.py gives each suite a fresh database on this job's server instead.
+      # `-v` so a suite that silently skipped reads as skipped, not as passed. pipefail, because the
+      # default shell would otherwise report tee's status (always 0) for the pipeline; then unittest's
+      # own `OK` line is required and any `skipped=` refused.
+      - name: Legacy integration suites (real database)
+        env:
+          TESTING: "True"
+          AURA_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: |
+          set -euo pipefail
+          python -m unittest discover -p "test_*_integration.py" -v 2>&1 | tee legacy-integration.log
+          grep -q "^OK" legacy-integration.log
+          ! grep -q "skipped=" legacy-integration.log
 
   docker-build:
     runs-on: ubuntu-latest

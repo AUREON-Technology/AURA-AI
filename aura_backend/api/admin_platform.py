@@ -233,8 +233,7 @@ async def revoke_sessions(email: str, user_info: dict = Depends(require_role("Su
 #: What erasure does not reach yet, reported with every result rather than claimed as done.
 NOT_ERASED = (
     "feedback records",
-    "turn telemetry",
-    "audit log",
+    "audit log events (kept; the actor is pseudonymised and the source IP dropped)",
     "LLM response cache (expires within an hour)",
     "agent run history",
     "idempotency keys (expire within a day)",
@@ -242,11 +241,17 @@ NOT_ERASED = (
 )
 
 
-async def _erase_core(container, owner: str, conversation_ids: set[str]) -> tuple[dict, list]:
+async def _erase_core(
+    container, owner: str, conversation_ids: set[str], *, aliases: set[str] | frozenset[str] = frozenset(),
+) -> tuple[dict, list]:
     """Erase ``owner`` from the aura_core stores: memories and their vectors, knowledge documents
     with every chunk, vector, lexical entry and graph fact, agent-written personal-OS records,
-    and the server-side transcript of each known conversation. Returns counts and the stores
-    that failed, so a failure is reported instead of swallowed."""
+    the server-side transcript of each known conversation, the telemetry of those conversations,
+    and the owner's identity in the audit log (``aliases``: the other names the actor column may
+    carry, such as the email). Returns counts and the stores that failed, so a failure is
+    reported instead of swallowed."""
+    import hashlib
+
     from aura_core.domain.identifiers import SessionId, UserId
 
     owner_id = UserId(owner)
@@ -285,10 +290,22 @@ async def _erase_core(container, owner: str, conversation_ids: set[str]) -> tupl
             await container.episodic.clear(SessionId(session_id), owner_id)
         return len(sessions)
 
+    async def audit_actor():
+        # The events stay (who did what to the system is a security record); the identity in
+        # them goes (audit FSA-016). One stable pseudonym per subject keeps an actor's events
+        # correlatable without naming them.
+        pseudonym = "erased:" + hashlib.sha256(owner.encode("utf-8")).hexdigest()[:12]
+        return sum([
+            await container.audit.pseudonymise_actor(name, pseudonym)
+            for name in dict.fromkeys([owner, *sorted(a for a in aliases if a)])
+        ])
+
     await step("memories", lambda: container.memory.forget_owner(owner_id))
     await step("documents", lambda: container.knowledge.erase_owner(owner_id))
     await step("personal_os_records", personal_os)
     await step("conversations", conversations)
+    await step("telemetry_turns", lambda: container.telemetry_sink.purge_sessions(conversation_ids))
+    await step("audit_events_pseudonymised", audit_actor)
     return counts, failed
 
 
@@ -318,9 +335,11 @@ async def forget_user(
     counts: dict = {"sessions": 0, "devices": 0, "user": 0}
     failed: list = []
 
-    async def erase_everything_but_the_row(auth_subject: str, conversation_ids: set) -> None:
+    async def erase_everything_but_the_row(auth_subject: str, conversation_ids: set, email: str | None = None) -> None:
         if container is not None:
-            core, core_failed = await _erase_core(container, auth_subject, conversation_ids)
+            core, core_failed = await _erase_core(
+                container, auth_subject, conversation_ids, aliases={email} if email else frozenset(),
+            )
             counts.update(core)
             failed.extend(core_failed)
         else:
@@ -348,7 +367,7 @@ async def forget_user(
                     select(Message.conversation_id).where(Message.user_id == user.id).distinct()
                 )).scalars()
             )
-            await erase_everything_but_the_row(user.auth_subject, conversation_ids)
+            await erase_everything_but_the_row(user.auth_subject, conversation_ids, user.email)
             if not failed:
                 await db.delete(user)
                 await db.commit()

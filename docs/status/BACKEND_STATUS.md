@@ -3,7 +3,18 @@
 **As of 2026-10-28 (evening), `main` at `2337577`.** Covers `aura_backend/` and the deploy stack under
 `deploy/`. Evidence scale and refresh steps: [README.md](README.md).
 
+**Re-read against commit:** `b2e14c4` (2026-11-08) for every row dated 2026-11-07 or later (their live checks came first; the re-read confirmed that tree holds what they describe); older rows carry the commit they were checked at. Refresh this line whenever a row is re-verified (audit FSA-120).
+
 ## Summary
+
+**Update 2026-11-07 (`main` at `772f9ef`, live probe):** production serves `ffbbb9f` and
+`/health/ready` reports **`schema.revision 0019`**, so open issue 0 below is resolved live and the
+pre-deploy migration path has now (by one route or another) applied real revisions; confirm which in
+the Railway deploy log. Still true: `hfspace` 503 and `hosted1` capped at `internal`, the
+`hash-embed-v1` index live, `/metrics` and `/docs` readable without a token, `main` unprotected,
+Railway auto-deploying, VPS dead. Runners are assigned again (Repo Hygiene, Admin CI executed) but
+Backend CI has had no trigger since 2026-10-31. Full check:
+`docs/reports/AURA_PRODUCTION_READINESS_2026-11-07.md`.
 
 **Production is up and ready (update 2026-10-30).** Railway serves `main` at `6417c43`. On
 2026-10-28 its database sat two migrations behind (`0013`, code expected `0015`; CB-43). On
@@ -54,19 +65,20 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 | Hosted open-weight inference, ADR-030 Phases 1–5 | TESTED | GAP-064; inert unless `AURA_ALLOW_HOSTED_INFERENCE=true` |
 | ADR-030 Phase 6, live | BUILT (`built_not_proven`) | In-process run against live OpenRouter (`nvidia/nemotron-3-ultra-550b-a55b:free`, `ALLOW_PROMPT_TRAINING=true`): 9/10 checks pass, the 429 burst was skipped (`docs/reports/phase-6-hosted-inference-openrouter-inprocess-20261028.txt`). The Verify Hosted Inference workflow has never run. |
 | Hybrid retrieval / knowledge | TESTED (hash embedder) | A3 recall@5 0.65; F-14 fixed: read-time drop (`c415a52`) and cross-worker convergence via per-owner corpus revisions (migration 0017), neither CI-run; F-30 built and benchmarked locally, not CI-run: the threshold no longer passes a rank pseudo-score, and the owner-sharded inverted BM25 brings the lexical stage at 50k chunks from 54.7 to 4.8 ms p50, with identical scores (`docs/reports/LEXICAL_RETRIEVAL_BENCHMARK.md`; the 200k point and Postgres FTS are open) |
-| Memory engine | TESTED | F-15 fixed (`19244e6`); F-16 write races open |
+| Memory engine | TESTED | F-15 fixed (`19244e6`); F-16 write races fixed (`8b34504`, audit FSA-120 correction 2026-11-08) |
 | v2 sync protocol | BUILT (fixes merged, not CI-run); **broken live until 0014 applies** | F-11 (`31608f9`), F-12 (`19c64f9`, migration `0014`), F-13 (`c5b1924`), F-07 (`98143ff`) |
-| Auth / RBAC / JWT | BUILT (fixes merged, not CI-run); **at risk live until 0015 applies** | F-02: refresh re-resolves role (`2d42388`) and Access-page assignments now take effect (`3e4e0f5`, migration `0015`); F-03 (`a3fa5c2`: dev keys, `iss`/`aud`); F-10 (`039865e`: no JWT secret → no start in production). Demotion still revokes no sessions. |
+| Auth / RBAC / JWT | BUILT (fixes merged, not CI-run); **at risk live until 0015 applies** | F-02: refresh re-resolves role (`2d42388`) and Access-page assignments now take effect (`3e4e0f5`, migration `0015`); F-03 (`a3fa5c2`: dev keys, `iss`/`aud`); F-10 (`039865e`: no JWT secret → no start in production). Demotion revokes refresh tokens and paired devices (`admin_platform.py`; FSA-120 correction 2026-11-08). |
 | Security regression suite (P1.5) | TESTED | GAP-048 `built_not_proven` |
 | Engineer workspaces (ADR-013/014) | BUILT | GAP-025; off by default; no `verify-engineer-workspaces` report |
 | Desktop hostd bridge | BUILT | GAP-026; F-21 (confirmed): non-streaming `run` returns `''` / `-1` |
 | Observability | OPEN | GAP-036, GAP-037 |
 | Backup / DR | TESTED in a sandbox; OPEN on any live target | A2 sandbox (`phase-a2-restore-drill.md`); GAP-028, GAP-046 |
-| 50-user capacity | OPEN | GAP-011 (P0), GAP-041 |
-| Real-model evaluation gates | OPEN | GAP-021; GAP-006 (`eval-ci.yml` is dispatch-only) |
-| Schema / migrations | TESTED (local PG16, `0001`→`0017`); production at `0016` until the ADR-032 change deploys | Alembic `0001`→`0017`, single head; F-27 built: `0016` baselines the 16 runtime-only tables, `env.py` keeps autogenerate off `aura_*`, and a fitness test requires a migration for every runtime table. `0017` (ADR-032) adds `aura_user_data_keys`; `upgrade → downgrade -1 → upgrade` checked on PG16 |
+| 50-user capacity | OPEN | GAP-011 (P0), GAP-041. Phase 2 (2026-11-09): admission caps are divided among the gateway's workers and daily quotas are shared across processes (FSA-025) -- built and tested, still unmeasured on the live topology |
+| Phase 2 core reliability (audit FSA-010/011/012/015/016/018/025/041/046/059/066/073/091/092/093/094/100/110/111/112) | BUILT and TESTED locally (pytest, legacy unittest, real PG16 for the Postgres-backed items, `dart test` 274, `flutter test` 630); **not CI-run, not deployed** | Branch `anas/magical-bell-e9spvh` after #229: nginx-only forwarded headers, production CORS, dev/prod parity, streamed `fetch_url`, Ollama `done_reason`, `forget_source` vectors, per-turn tool cap, JSON-mode boot warning, finetune drain reuse, asyncpg pool bounds + computed connection budget, Whisper language allow-list, legacy-plaintext read counter, digest-pinned images + required Space revision, model revisions + Whisper warm-up, per-user session index + refresh-family revocation, audit/telemetry retention + pseudonymised erasure, off-host vector payloads without text, host-tool cancel frames + approval-window budget, client Idempotency-Key, cross-process admission/quota. Live-only items (FSA-084/085, load matrix, re-encryption run) remain the owner's |
+| Real-model evaluation gates | OPEN | GAP-021; GAP-006 (`eval-ci.yml`'s deterministic gate runs on PR and push; only its `dispatch-run` job is manual -- FSA-120 correction 2026-11-08) |
+| Schema / migrations | TESTED (local PG16, `0001`→`0019`); production at `0019` (2026-11-07 probe). One schema authority (CB-20) TESTED locally and in CI (#225, `postgres` job green 2026-11-09), **not deployed** | Alembic `0001`→`0019`, single head. F-27: `0016` baselines the 16 runtime-only tables. **CB-20: the adapters no longer issue DDL**: no `CREATE TABLE IF NOT EXISTS` on first use, no runtime vocabulary seeding. Before removing it, a fresh PG16 at `head` and the same database after every adapter's old bootstrap gave identical `pg_dump --schema-only` and identical seed rows. `tests/architecture/test_no_runtime_ddl.py` forbids DDL under `aura_core` and requires a migration for every `aura_*` table the code queries. `tests/load/test_migration_roundtrip_postgres.py` undoes and re-applies all 19 revisions; `0017`–`0019` restore their parent exactly, and `0007`/`0016` keep only their named pre-existing tables. Consequence: an unmigrated database now fails requests, not just `/health/ready` |
 | Personal-OS single store (ADR-032, CB-28 / F-18) | BUILT and TESTED locally (pytest, legacy unittest, real PG16); **not deployed, not CI-run** | Owner chose Option A (server-held per-user data key) on 2026-10-31. The agent's `create_/list_/update_/delete_*` tools now read and write the synced `tasks`/`calendar_events`/`finance_records`/`health_records` rows, encrypted `gcm2` with the user's data key; `GET /api/v3/keys/data` hands that key to the user's devices. **The synced fields are no longer zero-knowledge** (threat-model table in ADR-032). Old rows: `scripts/move_personal_os_records.py` (not yet run anywhere) |
-| Learning / fine-tuning | BUILT | GAP-017; GAP-018 (a failed train is recorded as success) |
+| Learning / fine-tuning | BUILT | GAP-017; GAP-018 fixed in code (`finetune.py` records a failed train as failed; FSA-120 correction 2026-11-08), `built_not_proven` |
 | Voice | BUILT | GAP-020: speech-to-text is English-only while an Arabic voice ships |
 | Track AP: AP1–AP8 | TESTED (`built_not_proven`) | GAP-049…057; held at BUILT until M0 |
 | Track AP: AP10 | In progress | GAP-059 |
@@ -76,7 +88,7 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 ## Open issues (most severe first)
 
 **Operational**
-0. **ADR-032 needs migration `0019` live.** After the merge that carries it, `/health/ready` must
+0. **ADR-032 needs migration `0019` live** — *resolved 2026-11-07: `/health/ready` shows `0019`; the data move script is still unrun.* After the merge that carries it, `/health/ready` must
    show `schema.revision 0019`. Until then the key endpoint and the agent's personal-OS tools
    fail on production, because `aura_user_data_keys` does not exist. `AURA_DATA_ENCRYPTION_KEYS`
    (already required in production) now also wraps every user's data key: losing it loses every
@@ -164,7 +176,8 @@ findings, 18 High; 13 now have fixes on `main` (listed below). Only the four fro
 - F-22 and F-27 are built and tested locally, not CI-run:
   - F-22: one configured LLM deadline, an SSE keep-alive every 15 s, and `/api/v3/chat` given
     600 s at nginx.
-  - F-27: migration `0016` baselines the 16 runtime-only tables.
+  - F-27: migration `0016` baselines the 16 runtime-only tables. CB-20 (2026-11-09) then removed
+    the runtime DDL itself (see the schema row).
 - **GAP-011, GAP-041 (P0):** inference is single-slot and no load matrix exists.
 
 **Medium:** F-16, F-17, F-23, F-24, F-26, F-28, F-33–F-38. F-25 and F-30 are built (above), not proven. F-18 is built (ADR-032), tested locally, not CI-run or deployed.
@@ -184,7 +197,7 @@ That needs a check in the Firebase console.
 
 ## Next steps
 
-0. After the ADR-032 merge deploys: check that `/health/ready` reports `schema.revision 0017`, then
+0. ~~After the ADR-032 merge deploys: check that `/health/ready` reports `schema.revision 0019`~~ (done: live `0019` on 2026-11-07), then
    run the personal-OS data move (`--dry-run` first), and confirm in the app that an
    agent-created task appears after a sync.
 1. **Owner:** confirm a real sign-in works on `aureon-ai.tech` now that the schema is `0016` (CB-43 migrated 2026-10-30).

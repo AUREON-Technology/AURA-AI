@@ -474,3 +474,77 @@ class TestSessionsRememberSensitivity:
         await container.kernel.run(_turn(session_id=session))
         key = f"llm:session-clean:v1:test-user:{session.value}"
         assert await container.cache_backend.get(key) is None
+
+
+# -- PP-10: a content refusal is "not available", not "inference is down" ---------------------
+
+
+def _failing_local() -> EchoProvider:
+    """A local provider that is configured but not answering (the live `hfspace` 503 case)."""
+    from aura_core.domain.errors import ProviderError
+    from aura_core.llm.providers.echo import ScriptedTurn
+
+    local = _local()
+    local.queue(*[
+        ScriptedTurn(raise_error=ProviderError("local: HTTP 503", provider="local", retryable=True))
+        for _ in range(4)
+    ])
+    return local
+
+
+class TestCapabilityUnavailable:
+    """The chat-only launch (owner decision, 2026-11-08): a sensitive turn with only an
+    `internal`-ceiling provider healthy must say so, and must not invite a retry that cannot work.
+    """
+
+    async def test_only_a_refusing_provider_means_capability_unavailable(self) -> None:
+        from aura_core.domain.errors import CapabilityUnavailableError
+
+        router = _router(_hosted())
+        with data_scope(SENSITIVE, "memory"), pytest.raises(CapabilityUnavailableError) as excinfo:
+            await router.complete(_request())
+        error = excinfo.value
+        assert error.kind == "capability_unavailable"
+        assert error.retryable is False
+        assert error.details["refused_for_content"] == ["hosted"]
+        assert error.details["data_classification"] == "sensitive"
+        # Still the parent type, so every existing handler keeps catching it.
+        assert isinstance(error, AllProvidersFailedError)
+
+    async def test_a_down_sensitive_capable_provider_is_still_capability_unavailable(self) -> None:
+        """The live topology: `hosted1` refuses the content, `hfspace` is configured but 503s."""
+        from aura_core.domain.errors import CapabilityUnavailableError
+
+        hosted, local = _hosted(), _failing_local()
+        router = _router(hosted, local)
+        with data_scope(SENSITIVE, "documents"), pytest.raises(CapabilityUnavailableError) as excinfo:
+            await router.complete(_request())
+        assert excinfo.value.retryable is False
+        assert {"provider": "local", "error": "provider_error", "detail": "local: HTTP 503"} in (
+            excinfo.value.attempts
+        )
+        assert hosted.call_count == 0
+
+    async def test_streaming_reports_it_the_same_way(self) -> None:
+        from aura_core.domain.errors import CapabilityUnavailableError
+
+        router = _router(_hosted(), _failing_local())
+        with data_scope(SENSITIVE, "goals"), pytest.raises(CapabilityUnavailableError):
+            async for _ in router.stream(_request()):
+                pass
+
+    async def test_an_outage_with_no_content_refusal_stays_a_retryable_failure(self) -> None:
+        """Nothing was refused for content, so this really is "inference is not answering"."""
+        router = _router(_failing_local())
+        with data_scope(INTERNAL), pytest.raises(AllProvidersFailedError) as excinfo:
+            await router.complete(_request())
+        assert excinfo.value.kind == "all_providers_failed"
+        assert excinfo.value.retryable is True
+        assert "refused_for_content" not in excinfo.value.details
+
+    async def test_internal_content_still_reaches_the_hosted_provider(self) -> None:
+        """The chat-only half of the launch keeps working."""
+        router = _router(_hosted(), _failing_local())
+        with data_scope(INTERNAL):
+            response = await router.complete(_request())
+        assert response.provider == "hosted"

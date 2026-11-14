@@ -1,6 +1,6 @@
 """Postgres implementation of the ``WorkspaceStore`` port.
 
-Its own table, its own schema management, sharing only the connection pool -- the same pattern
+Its own table (Alembic's ``0016`` baseline), sharing only the connection pool -- the same pattern
 ``postgres_engineer_runs.py`` and ``postgres_personal_os.py`` use, and keyed by the ``UserId``
 value object's string form (the auth-subject claim) rather than the v2 relational ``users.id``
 UUID, for the reason spelled out in ``postgres_engineer_runs.py``'s module docstring.
@@ -26,35 +26,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["PostgresWorkspaceStore"]
 
-_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_agent_workspaces (
-        id              TEXT        PRIMARY KEY,
-        user_id         TEXT        NOT NULL,
-        repo            TEXT        NOT NULL,
-        workspace_path  TEXT        NOT NULL,
-        status          TEXT        NOT NULL,
-        container_id    TEXT        NULL,
-        branch          TEXT        NULL,
-        created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-        last_active_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-    """,
-    # The scope rule, enforced by the database rather than by callers remembering it: one
-    # workspace per (user, repository). Two rows would mean two containers bind-mounting the
-    # same checkout, racing on the same files.
-    """
-    CREATE UNIQUE INDEX IF NOT EXISTS ix_aura_agent_workspaces_user_repo
-        ON aura_agent_workspaces (user_id, repo)
-    """,
-    # The reaper's query shape: everything idle since a cutoff, oldest first. Unqualified by
-    # user, because expiry is a host-capacity concern rather than a per-user one.
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_agent_workspaces_last_active
-        ON aura_agent_workspaces (last_active_at)
-    """,
-)
-
 
 def _unavailable(message: str, **details: Any) -> DependencyUnavailableError:
     return DependencyUnavailableError(message, dependency="postgres", details=details or None)
@@ -70,19 +41,6 @@ def _utc(value: datetime) -> datetime:
 class PostgresWorkspaceStore:
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)
-        self._schema_ready = False
-
-    async def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-        pool = await self._pool._get_pool()
-        try:
-            async with pool.acquire() as conn:
-                for statement in _SCHEMA:
-                    await conn.execute(statement)
-        except Exception as exc:
-            raise _unavailable(f"could not create the agent-workspaces schema: {exc}") from exc
-        self._schema_ready = True
 
     @staticmethod
     def _workspace(row: Mapping[str, Any]) -> AgentWorkspace:
@@ -99,7 +57,6 @@ class PostgresWorkspaceStore:
         )
 
     async def upsert(self, workspace: AgentWorkspace) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -124,7 +81,6 @@ class PostgresWorkspaceStore:
             raise _unavailable(f"could not write agent workspace: {exc}") from exc
 
     async def get(self, user_id: UserId, repo: str) -> AgentWorkspace | None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -137,7 +93,6 @@ class PostgresWorkspaceStore:
         return self._workspace(row) if row else None
 
     async def get_by_id(self, workspace_id: WorkspaceId) -> AgentWorkspace | None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -149,7 +104,6 @@ class PostgresWorkspaceStore:
         return self._workspace(row) if row else None
 
     async def list_for_user(self, user_id: UserId) -> list[AgentWorkspace]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -166,7 +120,6 @@ class PostgresWorkspaceStore:
         return [self._workspace(row) for row in rows]
 
     async def list_all(self) -> list[AgentWorkspace]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -178,7 +131,6 @@ class PostgresWorkspaceStore:
         return [self._workspace(row) for row in rows]
 
     async def list_idle_since(self, cutoff: datetime) -> list[AgentWorkspace]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -197,7 +149,6 @@ class PostgresWorkspaceStore:
     async def touch(
         self, workspace_id: WorkspaceId, *, at: datetime, status: str | None = None
     ) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -217,7 +168,6 @@ class PostgresWorkspaceStore:
             raise _unavailable(f"could not touch agent workspace: {exc}") from exc
 
     async def delete(self, workspace_id: WorkspaceId) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:

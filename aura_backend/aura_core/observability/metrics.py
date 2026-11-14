@@ -163,6 +163,13 @@ class Metrics:
         )
 
     def _build(self) -> None:
+        # Audit FSA-094: plaintext rows read under a configured data key -- what
+        # scripts/reencrypt_fields.py has left to seal. Zero after a complete run.
+        self.field_crypto_legacy_reads = self._counter(
+            "field_crypto_legacy_plaintext_reads_total",
+            "Values read in legacy plaintext while a data-encryption key is configured",
+            ["kind"],
+        )
         # -- turns ---------------------------------------------------------------------
         self.turns_total = self._counter(
             "turns_total", "Completed turns by route and outcome.", ("route", "outcome")
@@ -632,6 +639,9 @@ class Metrics:
         )
 
     # -- convenience -------------------------------------------------------------------
+
+    def observe_legacy_plaintext_read(self, kind: str) -> None:
+        self.field_crypto_legacy_reads.labels(kind=kind).inc()
 
     def observe_turn(self, telemetry: Any) -> None:
         """Fan one :class:`~aura_core.domain.telemetry.TurnTelemetry` out to the catalogue.

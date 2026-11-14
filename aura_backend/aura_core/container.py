@@ -40,6 +40,7 @@ from .adapters.runtime import (
 )
 from .cag import CagEngine
 from .config.settings import (
+    vector_payload_content_enabled,
     DATA_ENCRYPTION_KEYS_ENV,
     AuraSettings,
     data_encryption_keys,
@@ -57,7 +58,7 @@ from .knowledge.extraction import RuleEntityExtractor
 from .knowledge.index_manager import IndexManager, PromotionGate
 from .knowledge.reranking import build_reranker
 from .kernel.kernel import AIKernel, KernelDependencies
-from .llm.cache import InMemoryCache, LLMCache
+from .llm.cache import InMemoryCache, LLMCache, semantic_tier_useful
 from .llm.embeddings import HashEmbeddingProvider
 from .llm.quota import QuotaTracker
 from .llm.registry import (
@@ -187,6 +188,7 @@ class Container:
             self.providers,
             default_policy=settings.llm.default_policy,
             default_timeout_s=settings.llm.request_timeout_s,
+            stream_max_s=settings.llm.stream_max_s,
             max_fallbacks=settings.llm.max_fallbacks,
             circuit_failure_threshold=settings.llm.circuit_failure_threshold,
             circuit_open_seconds=settings.llm.circuit_open_seconds,
@@ -213,7 +215,11 @@ class Container:
             self.cache_backend,
             embedder=self.embedder,
             enabled=settings.llm.cache_enabled,
-            semantic_enabled=settings.llm.semantic_cache_enabled,
+            # PP-08: off when the embedder is not semantic (the hash embedder), where it can never
+            # hit but costs an embedding and a cache read on every single-turn miss.
+            semantic_enabled=(
+                settings.llm.semantic_cache_enabled and semantic_tier_useful(self.embedder)
+            ),
             similarity_threshold=settings.llm.semantic_cache_threshold,
             ttl_s=settings.llm.cache_ttl_s,
             metrics=self.metrics,
@@ -231,6 +237,7 @@ class Container:
         self.blueprint_deployment = None
         self.project_knowledge = None
         self._blueprint_sync_task = None
+        self._stt_warm_task = None
 
         self.safety = SafetyPipeline.from_settings(
             settings.safety, metrics=self.metrics, event_bus=self.events, audit=self.audit
@@ -244,12 +251,15 @@ class Container:
             max_knowledge_items=settings.knowledge.retrieval_top_k,
         )
 
+        # Audit FSA-018: readable content in vector payloads only when the vector store is on-host.
+        self.vector_payload_content = vector_payload_content_enabled(settings.knowledge, settings.infrastructure)
         self.index_manager = IndexManager(
             vectors=self.vectors,
             documents=self.documents,
             embedder=self.embedder,
             alias=settings.knowledge.index_alias,
             schema_version=settings.knowledge.schema_version,
+            payload_content=self.vector_payload_content,
             gate=PromotionGate(
                 max_recall_drop=settings.learning.gate_max_recall_drop,
                 max_error_rate=settings.learning.gate_max_error_rate,
@@ -282,6 +292,7 @@ class Container:
                 settings.knowledge.rerank_provider,
                 model=settings.knowledge.rerank_model,
                 metrics=self.metrics,
+                revision=settings.knowledge.rerank_model_revision,
             ),
             rrf_k=settings.knowledge.rrf_k,
             mmr_lambda=settings.knowledge.mmr_lambda,
@@ -364,6 +375,7 @@ class Container:
                 max_records_per_owner=settings.memory.max_records_per_user,
                 duplicate_threshold=settings.memory.duplicate_threshold,
                 clock=self.clock,
+                payload_content=self.vector_payload_content,
             )
             if settings.memory.enabled
             else None
@@ -402,7 +414,7 @@ class Container:
 
         from .adapters.host_agent import HostAgentRegistry
 
-        self.host_agent_registry = HostAgentRegistry()
+        self.host_agent_registry = HostAgentRegistry(relay=self._build_host_agent_relay())
         self.sandbox_runner = self._build_sandbox_runner()
         # After the runner, never before: the manager needs it, and a None runner is the signal
         # that this deployment has no workspaces at all.
@@ -701,6 +713,7 @@ class Container:
             return SentenceTransformerProvider(
                 model=model, dimension=dimension,
                 max_batch_size=self.settings.llm.embedding_batch_size,
+                revision=self.settings.llm.embedding_model_revision,
             )
         # Anything else is treated as the name of a configured provider whose base_url serves an
         # OpenAI-compatible /v1/embeddings endpoint.
@@ -908,13 +921,20 @@ class Container:
         if self._pg_pool is None:
             from .adapters.postgres_store import PostgresPool
 
-            self._pg_pool = PostgresPool(self.settings.infrastructure.database_url)
+            infra = self.settings.infrastructure
+            self._pg_pool = PostgresPool(
+                infra.database_url,
+                min_size=infra.postgres_pool_min_size,
+                max_size=infra.postgres_pool_max_size,
+                command_timeout_s=infra.postgres_command_timeout_s,
+                max_inactive_connection_lifetime_s=infra.postgres_max_inactive_connection_lifetime_s,
+            )
         return self._pg_pool
 
     def _field_cipher(self) -> Any:
         """The data-at-rest cipher shared by every store that encrypts a column. Memoised."""
         if self._cipher is None:
-            self._cipher = build_field_cipher(self.settings)
+            self._cipher = build_field_cipher(self.settings, metrics=self.metrics)
         return self._cipher
 
     def _build_document_store(self) -> Any:
@@ -1133,7 +1153,10 @@ class Container:
 
         if not faster_whisper_available():
             return None
-        return FasterWhisperEngine(model_size=self.settings.voice.stt_model)
+        return FasterWhisperEngine(
+            model_size=self.settings.voice.stt_model,
+            revision=self.settings.voice.stt_model_revision,
+        )
 
     def _build_tts_engine(self) -> Any:
         """`None` unless opted in (`voice.tts_enabled`) and espeak-ng is on PATH.
@@ -1374,6 +1397,36 @@ class Container:
         from .learning.sources import InMemorySourceRegistry
 
         return InMemorySourceRegistry()
+
+    def _build_host_agent_relay(self) -> Any:
+        """The cross-worker relay for desktop host-agent sessions, or ``None``.
+
+        A daemon's socket lives in one gateway worker; without the relay, only that worker can
+        reach it, so with ``--workers 4`` most Engineer turns found no desktop (ADR-011,
+        "Deployment constraint"). Built whenever Redis is configured and a signing secret exists.
+        Nothing connects here -- the relay subscribes on first use.
+        """
+        infra = self.settings.infrastructure
+        reason = ""
+        if not infra.host_agent_relay:
+            reason = "disabled by AURA_HOST_AGENT_RELAY"
+        elif not infra.redis_url:
+            reason = "no AURA_REDIS_URL"
+        elif not infra.host_agent_relay_secret:
+            reason = "no JWT secret to sign relay messages with"
+        if reason:
+            if self.settings.environment.is_production_like:
+                logger.warning(
+                    "host-agent relay off: a paired desktop is reachable only from the gateway "
+                    "worker holding its socket, so run one worker (AURA_WORKERS=1)",
+                    extra={"reason": reason},
+                )
+            return None
+
+        from .adapters.host_agent_relay import HostAgentRelay
+        from .adapters.redis_relay_bus import RedisRelayBus
+
+        return HostAgentRelay(RedisRelayBus(infra.redis_url), infra.host_agent_relay_secret)
 
     async def _host_routed(self, context) -> bool:
         """Whether this caller's sandbox calls go to their paired desktop: the same predicate
@@ -1627,7 +1680,27 @@ class Container:
             # Never raises: a blueprint that cannot load leaves the core personas serving.
             await self.blueprint_deployment.startup()
             self._blueprint_sync_task = asyncio.get_running_loop().create_task(self._sync_blueprints())
+        if self._should_warm_stt():
+            # In the background: readiness must not wait on a Hub download, but the first
+            # live-voice turn of a fresh container should not pay for it either (audit FSA-110).
+            self._stt_warm_task = asyncio.get_running_loop().create_task(self._warm_stt())
         logger.info("container startup complete")
+
+    def _should_warm_stt(self) -> bool:
+        engine = self.stt_engine
+        if engine is None or not hasattr(engine, "warm"):
+            return False
+        explicit = self.settings.voice.stt_warm_on_startup
+        return self.settings.environment.is_production_like if explicit is None else bool(explicit)
+
+    async def _warm_stt(self) -> None:
+        try:
+            await self.stt_engine.warm()
+            logger.info("speech-to-text model warmed", extra={"stt": getattr(self.stt_engine, "name", None)})
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("speech-to-text warm-up failed; the first transcription will load the model")
 
     async def _sync_blueprints(self) -> None:
         """Keep this worker on the store's active blueprint (a deploy swaps only its own process)."""
@@ -1670,6 +1743,9 @@ class Container:
         """``(name, zero-argument coroutine function)`` for each resource to release."""
         closers: list[tuple[str, Any]] = []
 
+        warm, self._stt_warm_task = self._stt_warm_task, None
+        if warm is not None and not warm.done():
+            warm.cancel()
         task, self._blueprint_sync_task = self._blueprint_sync_task, None
         if task is not None:
             task.cancel()
@@ -1692,6 +1768,7 @@ class Container:
             ("cache", self.cache_backend),  # Redis
             ("vector store", self.vectors),  # Qdrant
             ("docker sandbox", getattr(self, "docker_sandbox_runner", None)),
+            ("host agent relay", getattr(getattr(self, "host_agent_registry", None), "relay", None)),
             ("github client", self.github_client),
             ("mcp client", self.mcp_client),
         ):
@@ -1784,9 +1861,16 @@ class Container:
             # hash embedder is refused in production by AuraSettings.validate(), but a reader
             # of this payload should not have to infer that: `semantic: false` names it
             # outright (audit FSA-031). Informational, never gates readiness.
+            # Audit FSA-018: whether chunk text travels into vector payloads, decided by where the
+            # vector store runs (settings.vector_payload_content_enabled). Informational.
+            "vectors": {
+                "backend": self.settings.infrastructure.vector_backend,
+                "payload_content": self.vector_payload_content,
+            },
             "embedding": {
                 "provider": self.settings.llm.embedding_provider,
                 "model": getattr(self.embedder, "model_id", None),
+                "revision": self.settings.llm.embedding_model_revision or None,
                 "dimension": getattr(self.embedder, "dimension", None),
                 "semantic": not isinstance(self.embedder, HashEmbeddingProvider),
             },
@@ -1801,7 +1885,7 @@ class Container:
         return payload
 
 
-def build_field_cipher(settings: AuraSettings) -> Any:
+def build_field_cipher(settings: AuraSettings, *, metrics: Any = None) -> Any:
     """Load the data-at-rest keys and build the cipher (P1.2/P5.1).
 
     The only place ``AURA_DATA_ENCRYPTION_KEYS`` is turned into a key object -- the stores and
@@ -1819,7 +1903,7 @@ def build_field_cipher(settings: AuraSettings) -> Any:
 
     keys = data_encryption_keys()
     if keys:
-        cipher = FieldCipher(keys)
+        cipher = FieldCipher(keys, metrics=metrics)
         logger.info(
             "data encryption at rest enabled",
             extra={"primary_key_id": cipher.primary_key_id, "key_count": len(keys)},

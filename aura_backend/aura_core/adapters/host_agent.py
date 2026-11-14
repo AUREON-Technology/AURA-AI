@@ -67,6 +67,15 @@ class HostAgentSession:
         self._pending: dict[str, "asyncio.Future[Any]"] = {}
         self._streams: dict[str, "asyncio.Queue[Any]"] = {}
 
+    async def _cancel(self, call_id: str) -> None:
+        """Tell the daemon this side has given up on ``call_id`` (audit FSA-041). The daemon
+        marks the call's pending approval cancelled, so a human answering later executes
+        nothing. Best effort: the socket may already be gone."""
+        try:
+            await self._send({"type": "cancel", "id": call_id})
+        except Exception:  # noqa: BLE001 -- nothing above can act on a failed courtesy frame
+            logger.debug("could not send cancel frame", extra={"call_id": call_id})
+
     async def call(self, method: str, params: Mapping[str, Any], *, timeout_s: float) -> Any:
         call_id = uuid.uuid4().hex
         future: "asyncio.Future[Any]" = asyncio.get_event_loop().create_future()
@@ -80,6 +89,10 @@ class HostAgentSession:
             ) from exc
         finally:
             self._pending.pop(call_id, None)
+            # No answer arrived -- this side timed out, or the tool registry's own timeout
+            # cancelled us -- so the daemon must stop waiting for its human too (FSA-041).
+            if future.cancelled() or not future.done():
+                await self._cancel(call_id)
 
     async def call_streaming(
         self, method: str, params: Mapping[str, Any], *, timeout_s: float
@@ -97,6 +110,7 @@ class HostAgentSession:
         call_id = uuid.uuid4().hex
         queue: "asyncio.Queue[Any]" = asyncio.Queue()
         self._streams[call_id] = queue
+        finished = False
         try:
             await self._send({"type": "call", "id": call_id, "method": method, "params": dict(params)})
             while True:
@@ -107,15 +121,24 @@ class HostAgentSession:
                         f"desktop app did not respond to {method!r} within {timeout_s:.0f}s"
                     ) from exc
                 if frame is _STREAM_DISCONNECTED:
+                    finished = True
                     raise SandboxError("desktop app disconnected mid-stream")
                 ftype = frame.get("type")
                 if ftype == "error":
+                    finished = True
                     raise SandboxError(str(frame.get("message") or "host agent error"))
+                if ftype != "stream":
+                    finished = True
                 yield frame
                 if ftype != "stream":
                     return
         finally:
             self._streams.pop(call_id, None)
+            if not finished:
+                # Idle timeout, cancellation by the tool registry, or the consumer stopped
+                # reading: the daemon must not keep waiting on (or run) an approval nobody is
+                # listening for (FSA-041).
+                await self._cancel(call_id)
 
     def resolve(self, frame: Mapping[str, Any]) -> None:
         """Feed one inbound `stream`/`result`/`error` frame. Unknown or already-resolved ids are
@@ -156,11 +179,36 @@ class HostAgentSession:
 class HostAgentRegistry:
     """Live host-agent sessions, keyed by user. One connection per user at a time -- a second
     desktop pairing the same account replaces the first (matching the intent of "your own
-    machine", not a pool of workers)."""
+    machine", not a pool of workers).
 
-    def __init__(self) -> None:
+    Sessions are held per process: the daemon's socket lives in exactly one gateway worker. With
+    a ``relay`` (``adapters/host_agent_relay.py``), :meth:`resolve` also finds a session another
+    worker holds and returns a proxy for it, so a deployment can run several workers (ADR-011,
+    "Deployment constraint"). Without one, behaviour is exactly the single-process registry: only
+    the worker holding the socket can see it.
+
+    The relay never makes a local session unreachable. If the bus errors, resolution falls back
+    to this process's own sessions.
+    """
+
+    def __init__(self, *, relay: Any = None) -> None:
         self._sessions: dict[str, HostAgentSession] = {}
         self._lock = asyncio.Lock()
+        self._relay = relay
+        if relay is not None:
+            relay.bind(local_session=self._local, superseded=self._drop_superseded)
+
+    async def _local(self, user_id: UserId) -> HostAgentSession | None:
+        async with self._lock:
+            return self._sessions.get(user_id.value)
+
+    async def _drop_superseded(self, user_id: UserId) -> None:
+        """Another worker now holds this user's session: drop ours, failing its in-flight calls
+        the same way an in-process replacement does."""
+        async with self._lock:
+            previous = self._sessions.pop(user_id.value, None)
+        if previous is not None:
+            previous.fail_all_pending("replaced by a new desktop connection")
 
     async def register(self, session: HostAgentSession) -> None:
         async with self._lock:
@@ -168,17 +216,46 @@ class HostAgentRegistry:
             self._sessions[session.user_id.value] = session
         if previous is not None and previous is not session:
             previous.fail_all_pending("replaced by a new desktop connection")
+        if self._relay is not None:
+            try:
+                await self._relay.claim(session.user_id)
+            except Exception:
+                # Still reachable from this worker; other workers just cannot see it until the
+                # heartbeat's refresh succeeds.
+                logger.warning("host-agent relay claim failed; session is local-only", exc_info=True)
 
     async def unregister(self, session: HostAgentSession) -> None:
         async with self._lock:
             current = self._sessions.get(session.user_id.value)
-            if current is session:
+            was_current = current is session
+            if was_current:
                 del self._sessions[session.user_id.value]
         session.fail_all_pending("desktop app disconnected")
+        if was_current and self._relay is not None:
+            await self._relay.release(session.user_id)
 
-    async def resolve(self, user_id: UserId) -> HostAgentSession | None:
-        async with self._lock:
-            return self._sessions.get(user_id.value)
+    async def resolve(self, user_id: UserId) -> Any:
+        """This worker's session for ``user_id``, a relay proxy to another worker's, or ``None``.
+
+        Returns an object with ``user_id``, ``call`` and ``call_streaming`` either way."""
+        local = await self._local(user_id)
+        if self._relay is None:
+            return local
+        try:
+            owner = await self._relay.owner(user_id)
+        except Exception:
+            logger.warning("host-agent relay lookup failed; resolving locally", exc_info=True)
+            return local
+        if owner is None or owner == self._relay.worker_id:
+            return local
+        # Another worker holds the newest connection. A local session here is a stale one the
+        # superseded notice has not reached yet; the owner is authoritative.
+        return self._relay.remote_session(user_id, owner)
+
+    @property
+    def relay(self) -> Any:
+        """The cross-worker relay, or ``None`` when this registry is single-process."""
+        return self._relay
 
 
 class HostAgentSandboxRunner:
@@ -203,6 +280,7 @@ class HostAgentSandboxRunner:
         user_id: UserId | None = None,
         session_id: str | None = None,
         isolate: bool = False,
+        workspace_root: str | None = None,
     ) -> SandboxHandle:
         if user_id is None:
             raise SandboxError("the host-agent sandbox requires a caller identity")
@@ -221,6 +299,13 @@ class HostAgentSandboxRunner:
         if isolate and session_id:
             params["isolate"] = True
             params["task_key"] = session_id
+        # FSA-006: the IDE's active root binds the task on the daemon (`task_handler.dart::
+        # createTask`), so every RPC on this handle resolves against it. A key only when the
+        # caller named one: the daemon's fallback for an absent key is "the first granted root",
+        # and an explicit `null` is a wire shape no daemon version has been exercised against.
+        # The daemon resolves and contains the path; this side never interprets it.
+        if workspace_root:
+            params["cwd"] = workspace_root
         result = await session.call("create_task", params, timeout_s=self._call_timeout_s)
         task_id = str((result or {}).get("task_id") or uuid.uuid4().hex)
         self._handle_owners[task_id] = user_id
@@ -379,9 +464,15 @@ class CompositeSandboxRunner:
         user_id: UserId | None = None,
         session_id: str | None = None,
         isolate: bool = False,
+        workspace_root: str | None = None,
     ) -> SandboxHandle:
         if user_id is not None and await self._host.has_session(user_id):
-            handle = await self._host.create_task(user_id=user_id, session_id=session_id, isolate=isolate)
+            # `workspace_root` (FSA-006) is a path on the user's machine: meaningful to the paired
+            # daemon, never to the server-side fallback below, which does not get it.
+            extra = {"workspace_root": workspace_root} if workspace_root else {}
+            handle = await self._host.create_task(
+                user_id=user_id, session_id=session_id, isolate=isolate, **extra
+            )
             self._handle_runner[handle.task_id] = self._host
             return handle
         if self._fallback is None:

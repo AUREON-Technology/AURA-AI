@@ -79,8 +79,10 @@ STATUS_NAMES = frozenset({"status", "state", "stage", "phase", "lifecycle"})
 
 _MAX_PROPERTY = 256
 #: Optional query parameters carried per API action (AR-2): each becomes an optional tool
-#: parameter, so this also caps how wide one generated tool's declaration can get.
-MAX_OPTIONAL_QUERY = 8
+#: parameter, so this also caps how wide one generated tool's declaration can get. 12 covers the
+#: widest attached contract (Flame in Freefall's suppression-advice route declares 10) with room
+#: to spare; parameters past the cap, in spec order, stay unreachable.
+MAX_OPTIONAL_QUERY = 12
 _MAX_LOCATOR = 512
 _TIMESTAMP_TYPES = re.compile(r"^timestamp\b")
 _NUMERIC_TYPES = re.compile(

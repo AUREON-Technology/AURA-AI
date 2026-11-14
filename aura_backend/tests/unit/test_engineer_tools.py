@@ -851,3 +851,97 @@ class TestMcpBridge:
         name = tools[0].spec.name
         assert name == name.lower()
         assert set(name) <= set("abcdefghijklmnopqrstuvwxyz0123456789_")
+
+
+
+class _RecordingRunner:
+    """A non-streaming `SandboxRunner` that records what `create_task` and `run` receive.
+
+    With `accepts_workspace_root=False` its `create_task` has the pre-FSA-006 signature, the shape
+    of every runner and test fake written before the binding existed: `run_command` must keep
+    working against it when no workspace root was named.
+    """
+
+    def __init__(self, *, accepts_workspace_root: bool = True) -> None:
+        self.created: list[dict] = []
+        self.calls: list[dict] = []
+        if not accepts_workspace_root:
+            self.create_task = self._create_task_legacy  # type: ignore[method-assign]
+
+    async def create_task(self, *, user_id=None, session_id=None, isolate=False, workspace_root=None):
+        from aura_core.ports.coding import SandboxHandle
+
+        self.created.append({"session_id": session_id, "isolate": isolate, "workspace_root": workspace_root})
+        return SandboxHandle(task_id="recording-task")
+
+    async def _create_task_legacy(self, *, user_id=None, session_id=None, isolate=False):
+        from aura_core.ports.coding import SandboxHandle
+
+        self.created.append({"session_id": session_id, "isolate": isolate})
+        return SandboxHandle(task_id="recording-task")
+
+    async def run(self, handle, command, *, timeout_s):
+        from aura_core.ports.coding import SandboxResult
+
+        self.calls.append({"command": list(command), "timeout_s": timeout_s})
+        return SandboxResult(stdout="", stderr="", exit_code=0)
+
+    async def write_file(self, handle, path, content):
+        self.calls.append({"write_file": path})
+
+    async def read_file(self, handle, path):
+        raise NotImplementedError
+
+    async def destroy(self, handle):
+        pass
+
+
+class TestWorkspaceRootBindsTheSandboxTask:
+    """FSA-006, second half: the IDE's active root binds the task at `create_task`, once, so every
+    tool on the handle (run, write, read, git) lands in that root -- not only `run_command`."""
+
+    _ROOT = "/home/me/projects/aura"
+
+    def _ctx(self, user, root):
+        return ToolContext(
+            user_id=user, correlation_id="corr-engineer-root", deadline_s=30.0,
+            metadata={"workspace_root": root},
+        )
+
+    async def test_the_root_in_the_tool_context_binds_the_task(self, user) -> None:
+        runner = _RecordingRunner()
+        tools = _by_name(build_sandbox_tools(runner))
+
+        await tools["run_command"].execute({"command": "pwd"}, self._ctx(user, self._ROOT))
+
+        assert runner.created == [{"session_id": None, "isolate": False, "workspace_root": self._ROOT}]
+
+    async def test_every_tool_on_the_turn_shares_the_bound_task(self, user) -> None:
+        runner = _RecordingRunner()
+        tools = _by_name(build_sandbox_tools(runner))
+        ctx = self._ctx(user, self._ROOT)
+
+        await tools["run_command"].execute({"command": "pwd"}, ctx)
+        await tools["write_file"].execute({"path": "a.txt", "content": "x"}, ctx)
+
+        assert len(runner.created) == 1, "the task is created once per turn and bound once"
+        assert runner.calls[1] == {"write_file": "a.txt"}
+
+    async def test_run_itself_carries_no_cwd(self, user) -> None:
+        """The binding lives on the task; `run` is called exactly as before."""
+        runner = _RecordingRunner()
+        tools = _by_name(build_sandbox_tools(runner))
+
+        await tools["run_command"].execute({"command": "pwd"}, self._ctx(user, self._ROOT))
+
+        assert runner.calls[0] == {"command": ["sh", "-c", "pwd"], "timeout_s": 60.0}
+
+    async def test_without_a_root_a_legacy_runner_is_called_exactly_as_before(self, ctx) -> None:
+        """`ctx` carries no metadata and this runner's `create_task` predates `workspace_root`."""
+        runner = _RecordingRunner(accepts_workspace_root=False)
+        tools = _by_name(build_sandbox_tools(runner))
+
+        result = await tools["run_command"].execute({"command": "pwd"}, ctx)
+
+        assert "exit_code=0" in result
+        assert runner.created == [{"session_id": None, "isolate": False}]

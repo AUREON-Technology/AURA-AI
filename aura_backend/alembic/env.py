@@ -22,7 +22,7 @@ target_metadata = Base.metadata
 def include_object(object_, name, type_, reflected, compare_to):
     """Keep autogenerate away from the ``aura_*`` tables.
 
-    They are created by raw-SQL migrations (and by the Postgres adapters' own DDL), not modelled
+    They are created by raw-SQL migrations (no adapter issues DDL), not modelled
     in ``Base.metadata``, so autogenerate saw every one as a table to drop -- documents, chunks,
     memories, the audit log (audit F-27). Their migrations are written by hand.
     """

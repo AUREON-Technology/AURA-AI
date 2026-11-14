@@ -38,8 +38,11 @@ class InMemorySandboxRunner:
         self._paused: set[str] = set()
 
     async def create_task(
-        self, *, user_id: Any | None = None, session_id: str | None = None, isolate: bool = False
+        self, *, user_id: Any | None = None, session_id: str | None = None, isolate: bool = False,
+        workspace_root: str | None = None,
     ) -> SandboxHandle:
+        # `workspace_root` (FSA-006) is a path on the user's machine; this fake's workspace is its
+        # own scratch directory, so it is accepted and ignored.
         # `user_id`/`session_id`/`isolate` accepted for `SandboxRunner` protocol conformance,
         # ignored -- this fake has no concept of per-caller routing or per-task git worktrees.
         task_id = uuid.uuid4().hex

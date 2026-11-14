@@ -150,7 +150,7 @@ class RedisCache:
 
     # -- the operation that must not fail silently ------------------------------------
 
-    async def incr(self, key: str, *, ttl_s: int | None = None) -> int:
+    async def incr(self, key: str, *, ttl_s: int | None = None, amount: int = 1) -> int:
         """Atomic increment, returning the new value. **Raises** on backend failure.
 
         Atomicity across replicas is the entire reason the rate limiter uses the cache rather than
@@ -165,7 +165,7 @@ class RedisCache:
         """
         client = self._get_client()
         pipe = client.pipeline(transaction=True)
-        pipe.incr(key)
+        pipe.incrby(key, int(amount))
         if ttl_s and ttl_s > 0:
             # NX: set the expiry only if the key has none, i.e. on the increment that created it.
             pipe.expire(key, ttl_s, nx=True)

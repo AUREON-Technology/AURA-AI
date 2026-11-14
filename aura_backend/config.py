@@ -26,6 +26,19 @@ def native_ollama_base_url(configured_host: str = "") -> str:
     return host.rstrip("/")
 
 
+LOCAL_ALLOWED_ORIGINS = (
+    "http://localhost,http://127.0.0.1,"
+    "http://localhost:8080,http://127.0.0.1:8080,"
+    "http://localhost:3000,http://127.0.0.1:3000"
+)
+
+
+def default_allowed_origins() -> str:
+    """Local Flutter-web origins for a local environment; nothing for a production-like one, where
+    the operator names the real origin(s) in ALLOWED_ORIGINS (audit FSA-010)."""
+    return "" if environment_is_production_like() else LOCAL_ALLOWED_ORIGINS
+
+
 def environment_is_production_like() -> bool:
     """Same staging/production gate v3 ``Environment.is_production_like`` uses."""
     raw = (
@@ -66,12 +79,11 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3"
     local_embedding_model: str = "all-MiniLM-L6-v2"
     # Native Android/iOS ignore CORS. Flutter web (local :8080 and production
-    # https://$AURA_DOMAIN) does not. Compose overrides this with ALLOWED_ORIGINS.
-    allowed_origins: str = (
-        "http://localhost,http://127.0.0.1,"
-        "http://localhost:8080,http://127.0.0.1:8080,"
-        "http://localhost:3000,http://127.0.0.1:3000"
-    )
+    # https://$AURA_DOMAIN) does not. Compose overrides this with ALLOWED_ORIGINS. The default
+    # is the local Flutter-web list only outside production-like environments (audit FSA-010):
+    # in staging/production an unset ALLOWED_ORIGINS allows no browser origin at all, which
+    # native clients never notice, rather than every developer's localhost with credentials.
+    allowed_origins: str = Field(default_factory=lambda: default_allowed_origins())
     
     # Production Authentication Settings
     google_client_id: str = "87789110323-5picq501c0834g6g0amjqqpk628jaoh2.apps.googleusercontent.com"

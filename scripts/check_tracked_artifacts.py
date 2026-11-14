@@ -47,13 +47,10 @@ EXECUTABLE_MAGIC = (b"MZ", b"\x7fELF", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf",
 
 MAX_BYTES = 5 * 1024 * 1024
 
-# path -> why it is allowed. Keep this short; every entry is a decision someone has to defend.
-ALLOWLIST: dict[str, str] = {
-    # Text, not a binary: a single host-key line left over from the deploy host-key work. Owned by
-    # the deploy area; listed here rather than untracked so this check does not silently decide a
-    # deploy question. Remove the entry once deploy/ either deletes or renames it.
-    "deploy/vps_known_hosts.tmp": "deploy-owned host-key text file (see comment)",
-}
+# path -> why it is allowed. Keep this short; every entry is a decision someone has to defend, and
+# tests/unit/test_repo_hygiene.py refuses an entry for a file git no longer tracks or for any
+# `.tmp` (audit FSA-113: `deploy/vps_known_hosts.tmp` sat here for weeks instead of being deleted).
+ALLOWLIST: dict[str, str] = {}
 
 
 def tracked_files(repo: Path) -> list[str]:

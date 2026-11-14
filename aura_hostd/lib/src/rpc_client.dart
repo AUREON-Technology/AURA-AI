@@ -142,9 +142,14 @@ class HostAgentClient {
           // heartbeat plumbing for other in-flight calls, and each call's own result carries its
           // own correlation id so out-of-order completion is fine on the wire.
           unawaited(_handleCall(socket, frame));
+        } else if (frame['type'] == 'cancel') {
+          // The server gave up on a call (its tool timed out, or the turn ended). If that call
+          // is waiting for the human's approval, stop waiting and never run it (audit FSA-041).
+          final id = frame['id'];
+          if (id != null) taskHandler.cancel(id.toString());
         }
-        // Any other frame type (there are none yet besides `call`) is ignored -- forward
-        // compatible with a newer server sending a frame this daemon version does not understand.
+        // Any other frame type is ignored -- forward compatible with a newer server sending a
+        // frame this daemon version does not understand.
       }
     } finally {
       _isConnected = false;
@@ -182,11 +187,12 @@ class HostAgentClient {
           onChunk: (streamName, data) {
             socket.add(jsonEncode({'type': 'stream', 'id': id, 'stream': streamName, 'data': data}));
           },
+          callId: id?.toString(),
         );
       case 'write_file':
-        return taskHandler.writeFile(params);
+        return taskHandler.writeFile(params, callId: id?.toString());
       case 'write_files':
-        return taskHandler.writeFiles(params);
+        return taskHandler.writeFiles(params, callId: id?.toString());
       case 'read_file':
         return taskHandler.readFile(params);
       default:

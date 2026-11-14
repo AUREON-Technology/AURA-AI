@@ -9,10 +9,9 @@ sent on a side-effecting request (roadmap P1.4, `aura_core/api/idempotency.py`).
 holds the response to replay on a retry; an `in_progress` row is the atomic claim that stops a
 concurrent duplicate from running the operation twice.
 
-Written as raw `CREATE ... IF NOT EXISTS` rather than `op.create_table`, and kept textually in
-step with `aura_core/adapters/postgres_idempotency.py`'s `IDEMPOTENCY_SCHEMA`: like the other
-`aura_*` tables, the adapter creates it on first use, so a gateway that served a keyed request
-before this migration ran must not make `alembic upgrade head` fail on an existing table.
+Written as raw `CREATE ... IF NOT EXISTS` rather than `op.create_table`: at the time the adapter
+also created the table on first use, so a gateway that served a keyed request before this migration
+ran must not make `alembic upgrade head` fail on an existing table. (The adapter's copy was removed when Alembic became the only schema authority, CB-20.)
 
 `user_id` is the v3 `UserId` value (the authenticated subject string), not a foreign key to the v2
 `users.id` UUID -- the same convention as `aura_documents.owner_id` and `aura_memories.owner_id`.

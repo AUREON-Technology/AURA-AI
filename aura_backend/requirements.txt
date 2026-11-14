@@ -58,3 +58,7 @@ faster-whisper>=1.0.0
 # degrade to "no sandbox" / "no MCP tools" when unreachable or unconfigured.
 docker>=7.0
 mcp>=1.0.0
+# ADR-033: Anthropic's official SDK, for the one sanctioned closed-model provider (kind=claude,
+# aura_core/llm/providers/claude.py -- the only module the fitness tests let import it). Inert
+# unless AURA_ALLOW_CLAUDE_INFERENCE=true and a provider of that kind is configured.
+anthropic>=2.6.0,<3

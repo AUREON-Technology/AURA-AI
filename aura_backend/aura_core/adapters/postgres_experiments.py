@@ -15,39 +15,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["PostgresExperimentStore"]
 
-_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_experiments (
-        id           TEXT        PRIMARY KEY,
-        name         TEXT        NOT NULL UNIQUE,
-        description  TEXT        NOT NULL DEFAULT '',
-        created_at   TIMESTAMPTZ NOT NULL,
-        tags         JSONB       NOT NULL DEFAULT '[]'::jsonb
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS aura_experiment_runs (
-        id              TEXT        PRIMARY KEY,
-        experiment_id   TEXT        NOT NULL REFERENCES aura_experiments(id),
-        status          TEXT        NOT NULL,
-        parameters      JSONB       NOT NULL DEFAULT '{}'::jsonb,
-        metrics         JSONB       NOT NULL DEFAULT '[]'::jsonb,
-        artefacts       JSONB       NOT NULL DEFAULT '{}'::jsonb,
-        dataset_digest  TEXT        NOT NULL DEFAULT '',
-        base_model      TEXT        NOT NULL DEFAULT '',
-        code_version    TEXT        NOT NULL DEFAULT '',
-        started_at      TIMESTAMPTZ NOT NULL,
-        finished_at     TIMESTAMPTZ,
-        error           TEXT,
-        notes           TEXT        NOT NULL DEFAULT ''
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_experiment_runs_exp
-        ON aura_experiment_runs (experiment_id, started_at DESC)
-    """,
-)
-
 
 def _unavailable(message: str, **details: Any) -> DependencyUnavailableError:
     return DependencyUnavailableError(message, dependency="postgres", details=details or None)
@@ -64,22 +31,8 @@ def _utc(value: datetime | None) -> datetime | None:
 class PostgresExperimentStore:
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)
-        self._schema_ready = False
-
-    async def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-        pool = await self._pool._get_pool()
-        try:
-            async with pool.acquire() as conn:
-                for statement in _SCHEMA:
-                    await conn.execute(statement)
-        except Exception as exc:
-            raise _unavailable(f"could not create the experiments schema: {exc}") from exc
-        self._schema_ready = True
 
     async def put_experiment(self, experiment: Experiment) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -104,7 +57,6 @@ class PostgresExperimentStore:
             ) from exc
 
     async def get_experiment(self, experiment_id: str) -> Experiment | None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -117,7 +69,6 @@ class PostgresExperimentStore:
         return self._experiment(row) if row else None
 
     async def find_experiment(self, name: str) -> Experiment | None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -130,7 +81,6 @@ class PostgresExperimentStore:
         return self._experiment(row) if row else None
 
     async def put_run(self, run: RunRecord) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         metrics = [
             {
@@ -181,7 +131,6 @@ class PostgresExperimentStore:
             raise _unavailable(f"could not write run {run.id!r}: {exc}", run=run.id) from exc
 
     async def get_run(self, run_id: str) -> RunRecord | None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -199,7 +148,6 @@ class PostgresExperimentStore:
         return self._run(row) if row else None
 
     async def list_runs(self, experiment_id: str, *, limit: int = 100) -> Sequence[RunRecord]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:

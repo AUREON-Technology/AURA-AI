@@ -10,9 +10,9 @@ name: Admin CI
 # dev.aureon-ai.tech no longer resolves. A manual run can still target a live console with the
 # optional `base_url` input.
 #
-# `npm run lint` is deliberately not a step: the package has no ESLint config, so `next lint`
-# opens an interactive setup prompt and either hangs or fails for a reason unrelated to the diff.
-# Wire it in once an ESLint config is committed.
+# `npm run lint` is a gate since 2026-11-09 (audit G-10): eslint.config.mjs loads Next's own rule
+# sets and the script fails on warnings too, so a hook-dependency slip reads as red here rather
+# than as a stale page in production.
 
 on:
   pull_request:
@@ -63,6 +63,9 @@ jobs:
 
       - name: Typecheck
         run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
 
       - name: Build
         run: npm run build

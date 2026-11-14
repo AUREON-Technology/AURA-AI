@@ -544,9 +544,10 @@ class Cache(Protocol):
     async def delete(self, key: str) -> None:
         ...
 
-    async def incr(self, key: str, *, ttl_s: int | None = None) -> int:
-        """Atomic increment, returning the new value. Used by the rate limiter, where atomicity
-        across replicas is the whole point."""
+    async def incr(self, key: str, *, ttl_s: int | None = None, amount: int = 1) -> int:
+        """Atomic increment by ``amount`` (negative allowed), returning the new value. Used by the
+        rate limiter and the shared quota counters, where atomicity across processes is the
+        whole point."""
         ...
 
     async def get_many(self, keys: Sequence[str]) -> Mapping[str, bytes]:

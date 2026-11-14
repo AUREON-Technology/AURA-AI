@@ -7,7 +7,9 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:collection/collection.dart';
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:xterm/xterm.dart' as xterm;
 import 'package:aura_client/core/database/database.dart';
@@ -15,6 +17,7 @@ import 'package:aura_client/core/database/database_provider.dart';
 import 'package:aura_client/core/hostd/hostd_control_client.dart';
 import 'package:aura_client/core/hostd/hostd_providers.dart' hide HostdRoot;
 import 'package:aura_client/core/hostd/hostd_terminal_client.dart';
+import 'package:aura_client/core/security/encryption_service.dart';
 import 'package:aura_client/desktop/editor/editor_abstraction.dart';
 import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/git_notifier.dart';
@@ -82,12 +85,31 @@ class WorkspaceNotifier extends StateNotifier<WorkspaceState> {
 
 /// Editor state notifier.
 class EditorNotifier extends StateNotifier<EditorState> {
-  EditorNotifier(this._db, this._eventBus) : super(const EditorState()) {
+  EditorNotifier(this._db, this._eventBus, {this.backupDelay = const Duration(seconds: 1)})
+      : super(const EditorState()) {
     _subscribeToEvents();
   }
 
   final AppDatabase _db;
   final IdeEventBus _eventBus;
+
+  /// Hot exit (M8.8): how long after the last edit a dirty buffer is backed up to
+  /// [DesktopUnsavedBuffers]. At most this much typing is lost if the app is killed.
+  final Duration backupDelay;
+
+  final Map<String, Timer> _backupTimers = {};
+
+  /// SHA-256 of each tab's file as it was on disk when loaded or last saved -- the base its
+  /// unsaved edits were made against (see [restoredOverChangedFile]).
+  final Map<String, String> _baseHashes = {};
+
+  /// Tabs whose buffer came back from a backup at workspace open, mapped to the base hash the
+  /// backup recorded (`null` when it recorded none).
+  final Map<String, String?> _restored = {};
+
+  /// Backup writes and deletes run one after another, so a write that started before a save
+  /// can never land after the save's delete and resurrect an already-saved buffer as unsaved.
+  Future<void> _backupQueue = Future<void>.value();
 
   StreamSubscription? _eventSub;
 
@@ -110,6 +132,144 @@ class EditorNotifier extends StateNotifier<EditorState> {
   /// touch [EditorState] or trigger a rebuild by itself.
   void setContent(String tabId, String content) {
     _tabContents[tabId] = content;
+    _scheduleBackup(tabId);
+  }
+
+  // -- hot exit (M8.8) ------------------------------------------------------------------------
+
+  static String _hash(String content) => sha256.convert(utf8.encode(content)).toString();
+
+  /// Records [diskContent] as the base [tabId]'s edits are made against: the file as read when
+  /// the tab opened.
+  void recordDiskBase(String tabId, String diskContent) {
+    _baseHashes[tabId] = _hash(diskContent);
+  }
+
+  /// Whether [tabId]'s buffer was restored from a backup when its workspace opened.
+  bool wasRestored(String tabId) => _restored.containsKey(tabId);
+
+  /// For a restored tab: whether the file on disk is no longer the one the unsaved edits were
+  /// made against, so saving would overwrite someone else's change. `false` when unknown.
+  bool restoredOverChangedFile(String tabId, String diskContent) {
+    if (!_restored.containsKey(tabId)) return false;
+    final base = _restored[tabId];
+    return base != null && base != _hash(diskContent);
+  }
+
+  void _scheduleBackup(String tabId) {
+    _backupTimers.remove(tabId)?.cancel();
+    _backupTimers[tabId] = Timer(backupDelay, () {
+      _backupTimers.remove(tabId);
+      _enqueue(() async {
+        final snapshot = _snapshot(tabId);
+        if (snapshot != null) await _persist(snapshot);
+      });
+    });
+  }
+
+  void _enqueue(Future<void> Function() operation) {
+    _backupQueue = _backupQueue.then((_) => operation()).catchError((Object error) {
+      // A failed backup must never break editing; the next edit tries again.
+      debugPrint('[EditorNotifier] unsaved-buffer backup failed: $error');
+    });
+  }
+
+  /// What a backup of [tabId] would write, taken now; `null` when there is nothing to back up
+  /// (the tab is clean, gone, or has no workspace). Taken synchronously so [dispose] can capture
+  /// pending backups while [state] is still readable.
+  DesktopUnsavedBuffersCompanion? _snapshot(String tabId) {
+    final workspaceId = state.workspaceId;
+    final tab = state.tabs.where((t) => t.id == tabId).firstOrNull;
+    final content = _tabContents[tabId];
+    if (workspaceId == null || tab == null || !tab.isDirty || content == null) return null;
+    final String sealed;
+    try {
+      sealed = EncryptionService.encryptText(content);
+    } on EncryptionException catch (error) {
+      // Fail closed: no key means no backup, never a plaintext copy of the user's file.
+      debugPrint('[EditorNotifier] not backing up ${tab.path}: $error');
+      return null;
+    }
+    return DesktopUnsavedBuffersCompanion.insert(
+      workspaceId: workspaceId,
+      tabId: tabId,
+      path: tab.path,
+      contentEnc: sealed,
+      baseHash: Value(_baseHashes[tabId]),
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  Future<void> _persist(DesktopUnsavedBuffersCompanion row) async {
+    await _db.into(_db.desktopUnsavedBuffers).insertOnConflictUpdate(row);
+  }
+
+  void _dropBackup(String tabId) {
+    _backupTimers.remove(tabId)?.cancel();
+    _restored.remove(tabId);
+    final workspaceId = state.workspaceId;
+    if (workspaceId == null) return;
+    _enqueue(() async {
+      await (_db.delete(_db.desktopUnsavedBuffers)
+            ..where((t) => t.workspaceId.equals(workspaceId) & t.tabId.equals(tabId)))
+          .go();
+    });
+  }
+
+  /// Writes every pending backup now and waits for all backup work to finish. Called before a
+  /// workspace switch, and by tests in place of waiting out [backupDelay].
+  Future<void> flushBackups() async {
+    for (final snapshot in _takePendingSnapshots()) {
+      _enqueue(() => _persist(snapshot));
+    }
+    await _backupQueue;
+  }
+
+  List<DesktopUnsavedBuffersCompanion> _takePendingSnapshots() {
+    final snapshots = <DesktopUnsavedBuffersCompanion>[];
+    for (final tabId in _backupTimers.keys.toList()) {
+      _backupTimers.remove(tabId)?.cancel();
+      final snapshot = _snapshot(tabId);
+      if (snapshot != null) snapshots.add(snapshot);
+    }
+    return snapshots;
+  }
+
+  /// Puts back the unsaved buffers backed up for [workspaceId] into [tabs], marking each tab
+  /// dirty. A backup that can no longer be decrypted (the key is gone) is dropped rather than
+  /// shown as ciphertext.
+  Future<List<EditorTab>> _restoreBackups(String workspaceId, List<EditorTab> tabs) async {
+    final rows = await (_db.select(_db.desktopUnsavedBuffers)
+          ..where((t) => t.workspaceId.equals(workspaceId)))
+        .get();
+    if (rows.isEmpty) return tabs;
+    final restored = [...tabs];
+    for (final row in rows) {
+      final content = EncryptionService.decryptText(row.contentEnc);
+      if (content == row.contentEnc && EncryptionService.isEnvelope(row.contentEnc)) {
+        await (_db.delete(_db.desktopUnsavedBuffers)
+              ..where((t) => t.workspaceId.equals(workspaceId) & t.tabId.equals(row.tabId)))
+            .go();
+        continue;
+      }
+      _tabContents[row.tabId] = content;
+      _restored[row.tabId] = row.baseHash;
+      if (row.baseHash != null) _baseHashes[row.tabId] = row.baseHash!;
+      final index = restored.indexWhere((t) => t.id == row.tabId);
+      if (index >= 0) {
+        restored[index] = restored[index].copyWith(isDirty: true);
+      } else {
+        // The tab list was not saved with this tab in it; reopen it so the edits are not lost.
+        restored.add(EditorTab(
+          id: row.tabId,
+          path: row.path,
+          title: row.path.split('/').last,
+          lastAccessed: DateTime.now(),
+          isDirty: true,
+        ));
+      }
+    }
+    return restored;
   }
 
   void _subscribeToEvents() {
@@ -123,11 +283,15 @@ class EditorNotifier extends StateNotifier<EditorState> {
   /// Restores the tab list persisted for [workspaceId] (see [saveSession]),
   /// or clears the editor if this workspace has never had a session saved.
   Future<void> _loadSession(String workspaceId) async {
+    // Pending backups belong to the workspace being left; write them under its id first.
+    await flushBackups();
+    _restored.clear();
     final row = await (_db.select(_db.desktopEditorState)
           ..where((t) => t.workspaceId.equals(workspaceId)))
         .getSingleOrNull();
     if (row == null) {
-      state = EditorState(workspaceId: workspaceId);
+      final tabs = await _restoreBackups(workspaceId, const []);
+      state = EditorState(tabs: tabs, activeTabId: tabs.firstOrNull?.id, workspaceId: workspaceId);
       return;
     }
     try {
@@ -151,9 +315,10 @@ class EditorNotifier extends StateNotifier<EditorState> {
                     : null,
               ))
           .toList();
-      final activeTab = tabs.where((t) => t.path == row.activeTabPath).firstOrNull;
+      final withBackups = await _restoreBackups(workspaceId, tabs);
+      final activeTab = withBackups.where((t) => t.path == row.activeTabPath).firstOrNull;
       state = EditorState(
-        tabs: tabs,
+        tabs: withBackups,
         activeTabId: activeTab?.id,
         workspaceId: workspaceId,
       );
@@ -221,7 +386,9 @@ class EditorNotifier extends StateNotifier<EditorState> {
       newActiveId = newTabs.isNotEmpty ? newTabs.last.id : null;
     }
     state = state.copyWith(tabs: newTabs, activeTabId: newActiveId);
+    _dropBackup(tabId);
     _tabContents.remove(tabId);
+    _baseHashes.remove(tabId);
     _eventBus.publish(TabClosed(tabId, state.workspaceId ?? ''));
     await saveSession();
   }
@@ -239,6 +406,12 @@ class EditorNotifier extends StateNotifier<EditorState> {
     state = state.copyWith(
       tabs: state.tabs.map((t) => t.id == tabId ? t.copyWith(isDirty: isDirty) : t).toList(),
     );
+    if (!isDirty) {
+      // Saved (the only caller that clears dirty): what is on disk is now this buffer.
+      final content = _tabContents[tabId];
+      if (content != null) _baseHashes[tabId] = _hash(content);
+      _dropBackup(tabId);
+    }
     _eventBus.publish(TabDirtyChanged(tabId, isDirty, state.workspaceId ?? ''));
   }
 
@@ -305,6 +478,11 @@ class EditorNotifier extends StateNotifier<EditorState> {
   void dispose() {
     _eventSub?.cancel();
     _cursorSaveDebounce?.cancel();
+    // A graceful close: capture what is pending while state is still readable, then write it
+    // (best effort -- the database may close first).
+    for (final snapshot in _takePendingSnapshots()) {
+      _enqueue(() => _persist(snapshot));
+    }
     super.dispose();
   }
 }

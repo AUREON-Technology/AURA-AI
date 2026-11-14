@@ -1,9 +1,9 @@
 """Postgres implementation of the ``EventOutbox`` port (Phase E1).
 
 A separate module and a separate table from ``postgres_audit.py``: audit is an append-only,
-permanent record; an outbox entry is a work item that gets deleted once delivered. Owns its own
-table (``CREATE TABLE IF NOT EXISTS``, like every other ``postgres_*.py`` adapter here) --
-unlike ``postgres_goals.py``, there is no legacy table to defer to, this one is new.
+permanent record; an outbox entry is a work item that gets deleted once delivered. Its own table,
+created by Alembic (the ``0016`` baseline) -- unlike ``postgres_goals.py``, there is no legacy table
+to defer to.
 
 ``claim_batch`` uses ``FOR UPDATE SKIP LOCKED`` so multiple Celery workers draining
 concurrently never claim the same row twice, and a ``claimed_at`` lease (not a plain boolean)
@@ -26,25 +26,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["PostgresEventOutbox"]
 
-_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_event_outbox (
-        id              TEXT        PRIMARY KEY,
-        event_name      TEXT        NOT NULL,
-        payload         JSONB       NOT NULL,
-        created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-        claimed_at      TIMESTAMPTZ,
-        attempts        INTEGER     NOT NULL DEFAULT 0,
-        last_error      TEXT,
-        dead_lettered   BOOLEAN     NOT NULL DEFAULT FALSE
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_event_outbox_claimable
-        ON aura_event_outbox (created_at)
-        WHERE NOT dead_lettered
-    """,
-)
 
 _LEASE_SECONDS = 300
 
@@ -56,22 +37,8 @@ def _unavailable(message: str, **details) -> DependencyUnavailableError:
 class PostgresEventOutbox:
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)
-        self._schema_ready = False
-
-    async def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-        pool = await self._pool._get_pool()
-        try:
-            async with pool.acquire() as conn:
-                for statement in _SCHEMA:
-                    await conn.execute(statement)
-        except Exception as exc:
-            raise _unavailable(f"could not create the event outbox schema: {exc}") from exc
-        self._schema_ready = True
 
     async def enqueue(self, event: DomainEvent) -> str:
-        await self._ensure_schema()
         entry_id = uuid.uuid4().hex
         pool = await self._pool._get_pool()
         try:
@@ -88,7 +55,6 @@ class PostgresEventOutbox:
         return entry_id
 
     async def claim_batch(self, *, limit: int = 50) -> list[OutboxEntry]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -123,7 +89,6 @@ class PostgresEventOutbox:
         ]
 
     async def mark_processed(self, entry_id: str) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -133,7 +98,6 @@ class PostgresEventOutbox:
 
     async def stats(self) -> dict[str, float]:
         """Backlog shape for the outbox gauges (F-24), in one indexed scan."""
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -157,7 +121,6 @@ class PostgresEventOutbox:
         }
 
     async def mark_failed(self, entry_id: str, *, error: str, max_attempts: int = 5) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:

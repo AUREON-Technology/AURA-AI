@@ -1,8 +1,10 @@
 # Flame in Freefall integration runbook
 
 How to connect AURA to Flame in Freefall (`FCDS-College/Nasa`) and produce the evidence that each
-link works. Flame's side of the contract is `docs/integration/AURA_INTEGRATION_REQUIREMENTS.md` in
-that repository, and its current endpoint reference is `docs/integration/API_INTEGRATION_REFERENCE.md`; the AURA requirements it names (AR-1…AR-8) are built in this repository:
+link works. In that repository, Flame's entry point for this integration is `docs/integration/README.md`
+(current for Flame contract 0.6.0), its side of the contract is
+`docs/integration/AURA_INTEGRATION_REQUIREMENTS.md`, and its per-endpoint reference is
+`docs/integration/API_INTEGRATION_REFERENCE.md`; the AURA requirements it names (AR-1…AR-8) are built in this repository:
 
 | AR | What | Where |
 | --- | --- | --- |
@@ -16,7 +18,8 @@ that repository, and its current endpoint reference is `docs/integration/API_INT
 | AR-8 | Re-discovery on contract change | this runbook, §4 |
 
 **Built is not proven.** Link 2 (§2) has run once against a live Flame API, on Railway on
-2026-10-07, and that report lacks items §2.6 asks for. Link 1 (§3) has not run. The integration
+2026-10-07, at an earlier Flame contract (8 tools), and that report lacks items §2.6 asks for. It
+has not run against contract 0.6.0 (16 tools). Link 1 (§3) has not run. The integration
 counts as proven only when complete reports for §2.6 and §3.4 exist.
 
 All admin calls need a Super Admin token: `ADMIN="Authorization: Bearer $SUPERADMIN_JWT"`.
@@ -35,10 +38,23 @@ All admin calls need a Super Admin token: `ADMIN="Authorization: Bearer $SUPERAD
 
 - The read endpoints (FR-1) and `GET /api/openapi.json` must be reachable from the AURA gateway's
   network, **over https**: the connector sends its credential only on https.
-- Flame requires a bearer token on every `/api/*` call except `GET /api/openapi.json`
-  (`FLAME_API_AUTH_ENABLED` defaults to true). Use Flame's **read** token (`FLAME_READ_API_TOKEN`)
-  as the connector `secret` (§2.1). Never give AURA the write token. Do not turn Flame's auth off
-  to make the connector work.
+- Flame requires a bearer credential on every `/api/*` call except `GET /api/openapi.json`
+  (`FLAME_API_AUTH_ENABLED` defaults to true). Since Flame contract 0.4.0, each caller gets its own
+  key. Have a Flame operator issue AURA a **read-scoped** key and use it as the connector `secret`
+  (§2.1):
+
+  ```bash
+  # in a Flame checkout, against Flame's database
+  cd apps/api && python -m flame_api.clients create aura --scopes read   # prints flk_… once
+  ```
+
+  The key is stored hashed, is revocable, and is rate-limited on its own: by default 600 reads per
+  minute (`FLAME_READ_RATE_LIMIT_PER_MINUTE`); over the limit AURA gets 429 with `Retry-After`. To
+  rotate it, create `aura-YYYY-MM`, update the connector secret, then
+  `python -m flame_api.clients revoke aura`.
+  - The shared `FLAME_READ_API_TOKEN` still works but is deprecated.
+  - Never give AURA a `write` key.
+  - Do not turn Flame's auth off to make the connector work.
 
 **Offline check first.** From a Flame checkout, run the dry run against the AURA revision you
 will deploy:
@@ -47,8 +63,25 @@ will deploy:
 AURA_BACKEND=/path/to/AURA-AI/aura_backend python tests/integration/aura_blueprint_dryrun.py
 ```
 
-It must exit 0 with all 10 tools `ACCEPTED`, report 3 operations excluded by `x-aura-exclude`, and
-print no `not reachable by AURA` lines. Checked against Flame contract 0.3.0 and AURA `6417c43`.
+It must exit 0 with all 16 tools `ACCEPTED`, report 10 operations excluded by `x-aura-exclude`, and
+print no `not reachable by AURA` lines. Last checked on 2026-11-12 against Flame contract 0.6.0
+(`FCDS-College/Nasa` `main` at `dcc89dc`) and both AURA `667c7c4` (`main`) and `d696fad` (the
+revision Flame's `AURA Link 2 Contract` CI job pins). Earlier the same day: Flame `80b9c21`
+against AURA `ad215d3` and `d696fad`, with the same result.
+
+**Prepare Flame's reranker model.** Since Flame PR #30, `/api/search` reranks its top 10 results
+with a local cross-encoder, which adds about 0.7 s per search on CPU. The first search after Flame
+starts downloads that model (about 90 MB, 5–7 s) unless a Flame operator has prepared it:
+
+```bash
+# in a Flame checkout, on the Flame host
+python -m ai.providers.local.cross_encoder prepare --cache-dir "$FLAME_EMBEDDING_CACHE_DIR"
+```
+
+Both fit inside the connector's default `timeout_s` of 15 s, but prepare the model before the
+gate's probes (§2.3) or a live question (§2.5) hit `api_search`. An offline Flame that has not
+prepared it answers in fused order with `retrieval.reranking.status = "unavailable"`: correct
+results, just not reranked.
 
 ## 2. Link 2: AURA reads Flame (AR-7)
 
@@ -65,8 +98,8 @@ curl -X POST "$AURA/api/v3/admin/connectors" -H "$ADMIN" -H "Content-Type: appli
 
 - `allow_private_network` is needed when Flame resolves to a private address. Loopback,
   link-local and metadata ranges stay refused even with it.
-- **Add Flame's read token** (required, see §1):
-  - add `"secret": "<token>"` to the body, and `"read_only_attested": true` to `options`;
+- **Add AURA's Flame read key** (required, see §1):
+  - add `"secret": "<flk_… read key>"` to the body, and `"read_only_attested": true` to `options`;
   - the token is vaulted and never echoed;
   - the attestation is shown to the approver and bound into the approval digest.
 
@@ -93,7 +126,7 @@ curl -X POST "$AURA/api/v3/admin/twin/versions/$TWIN/compile" -H "$ADMIN"
 curl -X POST "$AURA/api/v3/admin/blueprints/$BP/evaluate" -H "$ADMIN"
 ```
 
-- The compiled blueprint should hold the same 10 tools as the dry run. `api_search` should take
+- The compiled blueprint should hold the same 16 tools as the dry run. `api_search` should take
   `q` plus the optional `type`, `source_id`, `experiment_id`, `domain`, `page` and `page_size`.
 - A `tool_contract` case that cannot reach a replica is `not_run`, never a pass. Record the gate
   report as it is.
@@ -101,7 +134,21 @@ curl -X POST "$AURA/api/v3/admin/blueprints/$BP/evaluate" -H "$ADMIN"
 ### 2.3a Operations Flame keeps out of discovery (`x-aura-exclude`)
 
 From Flame contract 0.2.0, `docs/api/openapi.json` also describes `POST /api/chat` and Flame's
-admin writes. Flame marks those operations with the vendor extension `x-aura-exclude: true`.
+admin operations. Flame marks those operations with the vendor extension `x-aura-exclude: true`.
+As of contract 0.6.0, 10 operations carry it:
+- `POST /api/chat`;
+- `GET /api/ai/providers`;
+- `PUT /api/admin/ai/mode`;
+- `GET /api/admin/files` and `POST /api/admin/files/{file_id}/reprocess`;
+- `GET /api/admin/ingestion-runs`;
+- `PUT /api/admin/evidence/{evidence_id}/review`;
+- `GET /api/admin/audit`;
+- `GET /api/admin/graph/consistency` (0.6.0);
+- `POST /api/analyses/{analysis_id}/cancel` (0.6.0): AURA never changes a user's jobs.
+
+From contract 0.6.0, every `/api/admin/` operation needs a Flame key with the `admin` scope, but AURA
+never needs one: it holds a read-scoped key and calls none of them.
+
 The OpenAPI connector's discovery (`aura_core/adapters/connectors/openapi.py`) skips any
 operation, or any whole path item, that carries the literal `true`. Each skipped operation is
 reported as a discovery issue `operation_excluded` with its `op:<METHOD> <path>` locator, so the
@@ -109,10 +156,39 @@ exclusion appears in the discovery report and the twin diff rather than vanishin
 
 The reason is that Flame's `/api/chat` itself calls AURA's `/api/v3/chat` (Link 1). A tool compiled
 from it would let AURA call back into its own caller. Expect one `operation_excluded` issue per
-marked operation. The 10 compiled read tools are `api_get_health`, `api_get_dashboard_counts`,
+marked operation. The 16 compiled read tools are `api_get_health`, `api_get_dashboard_counts`,
 `api_search`, `api_list_documents`, `api_get_document`, `api_list_experiments`,
-`api_get_experiment`, `api_get_evidence`, `api_list_analyses` and `api_get_analysis`. From
-contract 0.3.0, `api_get_analysis` also returns video analyses (`analysis_type: flame_video`).
+`api_get_experiment`, `api_get_evidence`, `api_list_analyses`, `api_get_analysis`,
+`api_list_investigations`, `api_get_investigation`, `api_list_insights`,
+`api_estimate_flex_outcome`, `api_list_graph_entities` and `api_get_graph_entity`.
+- From contract 0.3.0, `api_get_analysis` also returns video analyses
+  (`analysis_type: flame_video`).
+- `api_list_investigations`, `api_get_investigation`, `api_list_insights` and `api_estimate_flex_outcome`
+  come from contract 0.5.0 (Flame's fire-safety dashboard):
+  - investigations ranked by evidence relevance to a cabin atmosphere;
+  - NASA's cited investigation summaries;
+  - computed fire-safety insights with evidence IDs;
+  - a FLEX droplet-flame outcome estimate. Its `probabilities` is `null` outside the
+    flight-tested domain, so pass that refusal on rather than guessing.
+- `api_list_graph_entities` and `api_get_graph_entity` come from contract 0.6.0 (Flame's knowledge graph, Flame ADR-007):
+  - `api_list_graph_entities`: investigations, experiments, fuels, condition variables,
+    phenomena and documents, by type or name;
+  - `api_get_graph_entity`: one entity and its neighbourhood up to 3 hops. Every edge carries the
+    `evidence_id` of the table cell it was read from, so an answer built on it can cite that cell.
+    The graph holds only what Flame's tables record: no platforms, instruments or report links.
+  - A person can check a graph answer by opening the same entity in Flame's web app: the
+    Knowledge Graph page, `<flame web>/knowledge?id=<entity ULID>` (Flame PR #32). Each link there
+    opens its evidence cell. The page walks at most 2 hops and shows at most 200 links, while the
+    tool allows `depth` up to 3 and `max_edges` up to 500 (default 200), so a deeper tool answer
+    has more links than the page shows.
+- Also from contract 0.6.0, `api_search`'s `retrieval` block reports the query rewrite and whether
+  Flame's reranker reordered the results (`reranking.status`). The tool's parameters are unchanged.
+
+A blueprint deployed before contract 0.5.0 has only the first 10 tools until re-discovery (§4), and
+one deployed before 0.6.0 has 14.
+Writes (`POST /api/analyses`) and the binary artifact download are never compiled.
+
+Flame's own entry point for this integration is `docs/integration/README.md` in `FCDS-College/Nasa`.
 
 ### 2.4 Approve and deploy
 
@@ -149,6 +225,9 @@ Write `docs/reports/flame-link2-live.md` with the following:
 - the question;
 - the tool call (from `GET /api/v3/admin/audit?action=tool.bp<N>_api_search`);
 - the answer, with the Flame `evidence_id` it cites.
+  - Check that the ID resolves: `GET /api/evidence/<id>` on Flame, with the same read key.
+  - If the answer came from `bp<N>_api_get_graph_entity`, also open the entity on Flame's
+    Knowledge Graph page (§2.3a) and record that the cited link and its evidence cell appear there.
 
 **That report is AR-7.** `docs/reports/flame-link2-live.md` (2026-10-07) is the first one. It is
 missing items from the list above: the deploy audit entries, the tool-call audit record, full
@@ -197,6 +276,7 @@ curl -X POST "$AURA/api/v3/admin/service-keys" -H "$ADMIN" -d '{"name": "svc-fla
 | 422 `output_invalid` | From Flame PR #21 (FCDS-College/Nasa), Flame's router falls back to its local model; if none answers, `interpretation.status="unavailable"` with `INTERPRETATION_UNAVAILABLE`. Not retried at AURA |
 | 429 | `retryable=true`; honour `Retry-After` |
 | 401 | key revoked or wrong; page an operator |
+| 503 `capability_unavailable` | No model AURA may give this turn to answered (below). Flame falls back like any 503 and logs `upstream=capability_unavailable`. Not retryable: the same request reaches the same models |
 | 503 | `INTERPRETATION_UNAVAILABLE` |
 
 Idempotency. Flame sends `Idempotency-Key: <analysis or request id>:<16 hex of the body's SHA-256>`
@@ -205,9 +285,29 @@ request rather than `422 idempotency_key_reused`. AURA does not store a 429 or a
 answer, so a retry after a refusal runs the turn again.
 
 `require_local`. Flame sends `require_local: true` by default. `/health/ready` reports
-`local_healthy`; when it is false every Flame call fails with 503 while `healthy` is still true.
-Either run a provider marked local, or set Flame's `FLAME_AURA_REQUIRE_LOCAL=false` where AURA's
-model is remote by design.
+`local_healthy`. When it is false, every Flame call would fail with 503 while `healthy` is still
+true. Flame reads it (from FCDS-College/Nasa#34), marks AURA down (`no_local_provider`) and does
+not call. Either run a
+provider marked local, or set Flame's `FLAME_AURA_REQUIRE_LOCAL=false` where AURA's model is
+remote by design. That alone is not enough; see the next paragraph.
+
+**Data classification.** Every Flame request carries `context`, so the kernel classifies the turn
+SENSITIVE (`caller_evidence`, ADR-030 §4). It may go only to a provider whose ceiling is
+`sensitive`:
+- a local provider has that ceiling by default;
+- a hosted open-weight slot and the Claude provider default to `internal`.
+
+On a deployment with no local model, Flame's calls therefore end in 503 `capability_unavailable`
+unless the operator sets `AURA_PROVIDER_<NAME>_MAX_DATA_CLASSIFICATION=sensitive` on a slot and
+Flame sets `FLAME_AURA_REQUIRE_LOCAL=false`.
+- That sends Flame's evidence to the third party. NASA's data is public, but the rule covers all
+  caller evidence, so it is the operator's decision.
+- AURA refuses `sensitive` for a slot that may train on prompts (`:free`).
+- The Claude provider allows it with a warning.
+
+**Guards.** AURA's default context guards were run over every evidence excerpt in Flame's database
+(10,562), at `d696fad` and at `667c7c4`. All passed, and none was quarantined. 67 PDF passages are
+NFKC-normalised.
 
 On the CPU deployment, 400 tokens at 5–10 tok/s plus one possible repair is roughly 40–160 s. That
 is why Flame's 120 s timeout must stay off the dashboard path (NR-1).

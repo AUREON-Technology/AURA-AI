@@ -177,16 +177,16 @@ Severity: **Critical** (blocks everything / live exposure) · **High** (blocks a
 | CB-17 | High | Inference capacity | `NUM_PARALLEL=1`, CPU, p95 70.5 s (A4) | Pinned GPU pool + failover | Cutover + failure reports | M4 |
 | CB-18 | High | Supply chain | LLM by tag; embedder/STT no revision; HF Space `vllm:latest`; licenses unrecorded (GAP-030/031/042) | Pin + startup check + license table | Test + MODEL_REGISTRY | M4 |
 | CB-19 | High | Capacity | No load matrix (GAP-041); Phase-3 numbers are echo artifacts | 1→100 matrix + soak on prod topology | Report | M5 |
-| CB-20 | High | Schema | 26 runtime-DDL tables outside Alembic; readiness checks Alembic only | Alembic baseline; forbid runtime DDL; downgrade tests | Fitness test | M6 |
+| CB-20 | High | Schema | 26 runtime-DDL tables outside Alembic; readiness checks Alembic only | Alembic baseline; forbid runtime DDL; downgrade tests | Fitness test | M6 · **2026-11-09: BUILT and TESTED locally, not CI-run, not deployed.** Baseline `0016` (F-27). Runtime DDL removed from all 16 adapters: a PG16 schema diff (head vs head + the old bootstrap) was identical. `test_no_runtime_ddl.py` forbids it. `test_migration_roundtrip_postgres.py` downgrades and re-applies every revision; each after `0016` restores its parent exactly. Closes once the Backend CI `postgres` job runs it green. |
 | CB-21 | High | DR | No offsite restore drill; no RPO/RTO (GAP-028) | Drill onto fresh host | Report | M6 |
-| CB-22 | Medium | Data residency | Railway/Qdrant Cloud plaintext chunks (SEC-12); chunks outside encryption ADR | Encryption ADR covers chunks & third parties | ADR | M6 |
+| CB-22 | Medium | Data residency | Railway/Qdrant Cloud plaintext chunks (SEC-12); chunks outside encryption ADR. **2026-11-09 (FSA-018):** vector payloads carry no chunk text or memory subject when Qdrant is off-host (`vector_payload_content_enabled`, `/health/ready` reports it); chunk text in Postgres stays on-host | Encryption ADR covers chunks & third parties | ADR | M6 |
 
 ## Tier 3 — quality & product (M7–M12, M14)
 
 | ID | Sev | Area | Actual state | Required action | Phase |
 | --- | --- | --- | --- | --- | --- |
 | CB-23 | High | Evaluation | All gated quality from scripted providers/hash embedder (GAP-021) | EV-1..EV-9 real-model baselines, gated | M7 |
-| CB-24 | Medium | Guards | Leak/groundedness guard precision unknown (GAP-022) | Labelled FP suite; tune | M7 |
+| CB-24 | Medium | Guards | Leak/groundedness guard precision unknown (GAP-022) | Labelled FP suite; tune | M7 · **2026-11-09: harness + hand-labelled baseline TESTED, gated (`guard_precision`); real-output run OPEN.** `docs/reports/ev7-guard-precision-2026-11-09.md`. The A4 blocks reproduce as the pre-`86e122c` comparison bug (fixed). Same day: Arabic injection/jailbreak patterns added (every held-out Arabic attack caught, no Arabic false positives) and the `concealment` FP fixed. Open: the leak guard blocks the engineer persona's own policy explanations (3 FP; a proportional threshold removes them, owner decision). |
 | CB-25 | High | Desktop | Desktop + hostd not compiled/tested in CI since 09-13; `build-windows` non-gating | M8.0 re-baseline; make Windows gating | M8 |
 | CB-26 | Medium | Desktop | PTY Windows-only; no bundled/signed hostd; no restart-on-crash; no installer/updates | M8.3, M8.8, M8.10 | M8 |
 | CB-27 | Medium | Engineer | Workspace VPS verification never run (GAP-025) | Run script; commit report | M9 |

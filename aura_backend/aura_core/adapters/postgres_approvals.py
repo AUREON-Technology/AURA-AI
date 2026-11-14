@@ -19,28 +19,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["PostgresApprovalStore"]
 
-_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_approvals (
-        id               TEXT        PRIMARY KEY,
-        kind             TEXT        NOT NULL,
-        summary          TEXT        NOT NULL,
-        artefact_digest  TEXT        NOT NULL,
-        payload          JSONB       NOT NULL DEFAULT '{}'::jsonb,
-        status           TEXT        NOT NULL,
-        requested_at     TIMESTAMPTZ NOT NULL,
-        expires_at       TIMESTAMPTZ,
-        decided_by       TEXT,
-        decided_at       TIMESTAMPTZ,
-        note             TEXT        NOT NULL DEFAULT ''
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_approvals_status_kind
-        ON aura_approvals (status, kind, requested_at DESC)
-    """,
-)
-
 
 def _unavailable(message: str, **details: Any) -> DependencyUnavailableError:
     return DependencyUnavailableError(message, dependency="postgres", details=details or None)
@@ -57,22 +35,8 @@ def _utc(value: datetime | None) -> datetime | None:
 class PostgresApprovalStore:
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)
-        self._schema_ready = False
-
-    async def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-        pool = await self._pool._get_pool()
-        try:
-            async with pool.acquire() as conn:
-                for statement in _SCHEMA:
-                    await conn.execute(statement)
-        except Exception as exc:
-            raise _unavailable(f"could not create the approvals schema: {exc}") from exc
-        self._schema_ready = True
 
     async def put(self, request: ApprovalRequest) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -112,7 +76,6 @@ class PostgresApprovalStore:
             ) from exc
 
     async def get(self, approval_id: str) -> ApprovalRequest | None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -135,7 +98,6 @@ class PostgresApprovalStore:
         kind: ApprovalKind | None = None,
         limit: int = 50,
     ) -> Sequence[ApprovalRequest]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         clauses: list[str] = []
         params: list[Any] = []

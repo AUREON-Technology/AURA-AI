@@ -20,30 +20,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["PostgresFeedbackStore"]
 
-_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_feedback (
-        id          TEXT        PRIMARY KEY,
-        owner_id    TEXT        NOT NULL,
-        turn_id     TEXT        NOT NULL DEFAULT '',
-        rating      INTEGER     NOT NULL,
-        correction  TEXT,
-        comment     TEXT,
-        prompt      TEXT        NOT NULL DEFAULT '',
-        response    TEXT        NOT NULL DEFAULT '',
-        created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_feedback_owner
-        ON aura_feedback (owner_id, created_at DESC)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_feedback_created
-        ON aura_feedback (created_at DESC)
-    """,
-)
-
 
 def _unavailable(message: str, **details: Any) -> DependencyUnavailableError:
     return DependencyUnavailableError(message, dependency="postgres", details=details or None)
@@ -60,22 +36,8 @@ def _utc(value: datetime | None) -> datetime | None:
 class PostgresFeedbackStore:
     def __init__(self, url: str, *, pool: PostgresPool | None = None) -> None:
         self._pool = pool or PostgresPool(url)
-        self._schema_ready = False
-
-    async def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-        pool = await self._pool._get_pool()
-        try:
-            async with pool.acquire() as conn:
-                for statement in _SCHEMA:
-                    await conn.execute(statement)
-        except Exception as exc:
-            raise _unavailable(f"could not create the feedback schema: {exc}") from exc
-        self._schema_ready = True
 
     async def put(self, record: FeedbackRecord, *, owner_id: UserId) -> None:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         turn_id = str(record.metadata.get("turn_id") or "")
         comment = str(record.metadata.get("comment") or "") or None
@@ -112,7 +74,6 @@ class PostgresFeedbackStore:
     async def list_for_owner(
         self, owner_id: UserId, *, limit: int = 200
     ) -> Sequence[FeedbackRecord]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -136,7 +97,6 @@ class PostgresFeedbackStore:
         self, *, since: datetime | None = None, limit: int = 10_000
     ) -> Sequence[FeedbackRecord]:
         """Cross-tenant feed for Loop B. Admin/curator paths only."""
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:

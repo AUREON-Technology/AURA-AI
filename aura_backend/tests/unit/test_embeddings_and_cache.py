@@ -591,3 +591,31 @@ class TestSemanticTier:
         await cache.lookup(_request())
         await cache.store(_request(), _response())
         assert (await cache.lookup(_request())).tier == "exact"
+
+
+class TestSemanticTierNeedsASemanticEmbedder:
+    """PP-08 (provider performance audit, 2026-11-08)."""
+
+    def test_the_hash_embedder_declares_itself_not_semantic(self) -> None:
+        from aura_core.llm.cache import semantic_tier_useful
+
+        assert semantic_tier_useful(HashEmbeddingProvider(dimension=128)) is False
+
+    def test_an_embedder_that_declares_nothing_counts_as_semantic(self) -> None:
+        from aura_core.llm.cache import semantic_tier_useful
+
+        class _ModelEmbedder:
+            pass
+
+        assert semantic_tier_useful(_ModelEmbedder()) is True
+        assert semantic_tier_useful(None) is False
+
+    def test_the_container_leaves_the_tier_off_with_the_hash_embedder(self, container) -> None:
+        assert container.settings.llm.semantic_cache_enabled is True  # the setting is on...
+        assert container.llm_cache._semantic_enabled is False  # ...and the wiring overrides it
+
+    async def test_the_exact_tier_still_works_without_it(self, container) -> None:
+        cache = container.llm_cache
+        await cache.store(_request("what is my schedule?"), _response("Three meetings."))
+        hit = await cache.lookup(_request("what is my schedule?"))
+        assert hit is not None and hit.tier == "exact"

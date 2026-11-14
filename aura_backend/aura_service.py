@@ -245,6 +245,10 @@ def _apply_cors(app) -> None:
 
     origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
     allow_all = "*" in origins
+    if not origins:
+        # The production-like default (config.default_allowed_origins). Native clients are
+        # unaffected; a Flutter web bundle needs its origin named in ALLOWED_ORIGINS.
+        logger.warning("ALLOWED_ORIGINS is empty: no browser origin may call this API until one is named.")
     if allow_all:
         logger.warning(
             "ALLOWED_ORIGINS contains '*' — disabling allow_credentials to avoid "
@@ -323,6 +327,12 @@ def create_app():
 
     # Exposed so Celery tasks and the CLI can reach the same wired graph without rebuilding it.
     app.state.aura = container
+    # The legacy SQLAlchemy engine (api/v2 sync, insights) lives outside the container and was
+    # never disposed at shutdown (audit FSA-073). Registered after build_app's own handler, so
+    # it runs after the container's pools close, once uvicorn's graceful drain has finished.
+    from infrastructure.db.base import dispose_engine
+
+    app.on_event("shutdown")(dispose_engine)
     return app
 
 

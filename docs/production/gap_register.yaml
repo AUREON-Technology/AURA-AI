@@ -311,6 +311,14 @@ gaps:
       with a deadline instead of inside Ollama until the provider timeout. This bounds the
       queue; it does not add throughput. The gap stays open until GAP-012 lands and GAP-041
       measures it.
+    reverified_2026_11_09: >-
+      Audit FSA-025 (Phase 2): the admission cap was per *process* while the gateway runs
+      AURA_WORKERS of them, and a hosted provider's daily budget was counted once per process.
+      Now each capacity group's cap is divided by AURA_LLM_ADMISSION_PROCESSES (= AURA_WORKERS in
+      both compose files; floored at one slot per process with a boot warning), and the daily
+      request/token counters are atomic shared counters in the cache, so the budget is spent
+      once across processes (tests/unit/test_cross_process_limits.py). Built and tested; the
+      measured matrix on the live topology is still GAP-041's exit and has not been run.
 
   - gap_id: GAP-012
     component: inference/gpu-host
@@ -366,6 +374,13 @@ gaps:
       handles 429/503 + Retry-After (including the streamed SSE overload event) with a design-
       system busy notice -- written against the existing conventions but NOT compiled or tested:
       there is no Flutter/Dart toolchain here, and Client CI cannot run (GAP-043).
+    reverified_2026_11_09: >-
+      The Idempotency-Key claim above was STALE: the 2026-10-31 audit (FSA-046) found zero
+      occurrences of the header in aura_client. Phase 2 adds it for real -- KnowledgeCenter,
+      MemoryRepository, FeedbackRepository (via AuraApiClient), RemoteDeletes (a stable key per
+      queued delete) and EngineerWorkspacesClient -- compiled and tested with Flutter 3.44.6
+      (flutter analyze clean, flutter test 630 passed; test/idempotency_key_test.dart). The
+      reachability matrix was regenerated the same day (78 called / 43 none / 8 infra).
 
   - gap_id: GAP-014
     component: safety/taint
@@ -606,6 +621,10 @@ gaps:
       The first time guards ran on real model output (A4), SystemPromptLeakGuard blocked 3 of 15
       concurrency-test turns and GroundednessGuard flagged 9 (phase-a4-load-test.md:103-116).
       Whether the blocks were true leaks or false positives was never established.
+      2026-11-09 (docs/reports/ev7-guard-precision-2026-11-09.md): an EV-7 harness scores the leak,
+      groundedness, injection and jailbreak guards on 82 hand-labelled cases, gated in the PR-time
+      evaluation gate. The A4 leak blocks reproduce as the pre-86e122c bug (answers compared with
+      retrieved text as well as instructions), since fixed. Not yet run on real model output.
     target_state: Guard precision/recall measured on real model output; false-positive rate bounded.
     owner: security
     dependencies: [GAP-021]

@@ -31,11 +31,45 @@ class _LatentRedis:
 
     def __init__(self, latency_s: float = 0.02) -> None:
         self._data: dict[str, str] = {}
+        self._sets: dict[str, set] = {}
         self._lock = threading.Lock()
         self._latency = latency_s
 
+    # The revocation index (FSA-015): per-user, per-device and per-family sets.
+    def sadd(self, key: str, *members: str) -> int:
+        self._rtt()
+        with self._lock:
+            bucket = self._sets.setdefault(key, set())
+            before = len(bucket)
+            bucket.update(members)
+            return len(bucket) - before
+
+    def srem(self, key: str, *members: str) -> int:
+        self._rtt()
+        with self._lock:
+            bucket = self._sets.get(key, set())
+            before = len(bucket)
+            bucket.difference_update(members)
+            return before - len(bucket)
+
+    def smembers(self, key: str) -> set:
+        self._rtt()
+        with self._lock:
+            return set(self._sets.get(key, set()))
+
+    def expire(self, key: str, ttl: int) -> int:
+        return 1
+
     def _rtt(self) -> None:
         time.sleep(self._latency)
+
+    def set(self, key: str, value: str, nx: bool = False):
+        self._rtt()
+        with self._lock:
+            if nx and key in self._data:
+                return None
+            self._data[key] = value
+            return True
 
     def setex(self, key: str, ttl: int, value: str) -> None:
         self._rtt()
@@ -80,8 +114,22 @@ class TestRotation:
         assert rotated is not None
         assert rotated["refresh_token"] != pair["refresh_token"]
         assert jwt_auth.refresh_token_pair(pair["refresh_token"]) is None
-        # The replacement is itself single-use and live.
-        assert jwt_auth.refresh_token_pair(rotated["refresh_token"]) is not None
+
+    def test_the_replacement_is_itself_single_use_and_live(self, store) -> None:
+        pair = jwt_auth.issue_token_pair(dict(USER))
+        rotated = jwt_auth.refresh_token_pair(pair["refresh_token"])
+        again = jwt_auth.refresh_token_pair(rotated["refresh_token"])
+        assert again is not None
+        assert jwt_auth.refresh_token_pair(rotated["refresh_token"]) is None
+
+    def test_reusing_a_rotated_token_revokes_its_replacement_too(self, store) -> None:
+        """Audit FSA-015: a token presented again after rotation means two parties hold one
+        chain, and one of them is a thief -- so the live successor is revoked with it, and the
+        user signs in again (tests/unit/test_session_revocation_index.py covers the mechanism)."""
+        pair = jwt_auth.issue_token_pair(dict(USER))
+        rotated = jwt_auth.refresh_token_pair(pair["refresh_token"])
+        assert jwt_auth.refresh_token_pair(pair["refresh_token"]) is None
+        assert jwt_auth.refresh_token_pair(rotated["refresh_token"]) is None
 
     def test_a_revoked_refresh_token_cannot_be_used(self, store) -> None:
         pair = jwt_auth.issue_token_pair(dict(USER))

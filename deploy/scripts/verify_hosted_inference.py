@@ -271,9 +271,14 @@ async def check_quota_persisted(ctx) -> str:
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     lines = []
     for p in declared:
-        raw = await cache.get(f"llm:quota:v1:{p.name}:day:{day}")
-        _require(raw is not None, f"no stored counter for {p.name} -- a restart would forget today")
-        lines.append(f"{p.name}: {raw.decode()}")
+        # Audit FSA-025: the day's spend is one atomic counter per kind, shared by every process
+        # (not a per-process record), so a restart -- or a sibling worker -- sees the same total.
+        requests = await cache.get(f"llm:quota:v1:{p.name}:day:{day}:requests")
+        tokens = await cache.get(f"llm:quota:v1:{p.name}:day:{day}:tokens")
+        _require(requests is not None, f"no shared request counter for {p.name} -- a restart would forget today")
+        lines.append(
+            f"{p.name}: requests={requests.decode()} tokens={tokens.decode() if tokens else 0}"
+        )
     return "\n".join(lines)
 
 

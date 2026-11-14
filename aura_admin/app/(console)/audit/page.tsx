@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { api } from "@/lib/api";
 import type { AuditEvent } from "@/lib/types";
@@ -10,16 +10,18 @@ export default function AuditPage() {
   const [action, setAction] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  function load(next = action) {
+  // Stable across renders (state setters are), so the mount-time effect below can list it as its
+  // one dependency instead of silencing react-hooks/exhaustive-deps (audit G-10 lint gate).
+  const load = useCallback((next: string) => {
     const query = next ? `?action=${encodeURIComponent(next)}` : "";
     api<{ events: AuditEvent[] }>(`/admin/audit${query}`)
       .then((body) => setRows(body.events))
       .catch((err: Error) => setError(err.message));
-  }
+  }, []);
 
   useEffect(() => {
     load("");
-  }, []);
+  }, [load]);
 
   return (
     <>

@@ -47,6 +47,22 @@ async def test_a_baseline_above_what_the_tree_achieves_fails(tmp_path: Path) -> 
     assert "| FAIL |" in eval_gate.render_markdown([outcome])
 
 
+async def test_the_guard_gate_fails_when_a_guard_gets_worse(tmp_path: Path) -> None:
+    """EV-7: a baseline the guards cannot meet (as if a regex change had added false positives)
+    turns the guard_precision gate red, and the committed one passes."""
+    assert (await eval_gate.run_gate(_spec("guard_precision"), eval_gate.SUITE_DIR)).ok
+
+    baseline_dir = _copy_baselines(tmp_path)
+    path = baseline_dir / "guard_cases_baseline.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["metrics"]["prompt_injection.specificity"] = 1.0
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    outcome = await eval_gate.run_gate(_spec("guard_precision"), baseline_dir)
+    assert not outcome.ok
+    assert any(f.startswith("prompt_injection.specificity fell") for f in outcome.failures)
+
+
 async def test_a_missing_baseline_fails_rather_than_passing(tmp_path: Path) -> None:
     outcome = await eval_gate.run_gate(_spec("agent_tasks"), tmp_path)
     assert not outcome.ok

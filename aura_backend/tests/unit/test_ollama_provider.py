@@ -506,3 +506,47 @@ class TestModelLifecycle:
         _install_transport(provider, handler)
         with pytest.raises(ProviderError):
             await provider.warm_model()
+
+
+class TestFinishReasonFollowsDoneReason:
+    """Audit FSA-093: every completion was reported as ``stop``, so a generation cut off at
+    ``num_predict`` looked complete -- the kernel never saw truncation and never retried or
+    warned. Ollama reports ``done_reason`` (``stop`` or ``length``); it must be mapped."""
+
+    async def test_a_truncated_completion_reports_length(self, provider) -> None:
+        def handler(request):
+            return httpx.Response(200, json={
+                "model": "qwen2.5:7b-instruct-q4_K_M",
+                "message": {"role": "assistant", "content": "The answer is cut off at"},
+                "done": True, "done_reason": "length",
+                "prompt_eval_count": 12, "eval_count": 64,
+            })
+
+        _install_transport(provider, handler)
+        response = await provider.complete(_request())
+        assert response.finish_reason is FinishReason.LENGTH
+
+    async def test_a_complete_completion_still_reports_stop(self, provider) -> None:
+        def handler(request):
+            return httpx.Response(200, json={
+                "model": "m", "message": {"role": "assistant", "content": "Done."},
+                "done": True, "done_reason": "stop", "prompt_eval_count": 1, "eval_count": 2,
+            })
+
+        _install_transport(provider, handler)
+        assert (await provider.complete(_request())).finish_reason is FinishReason.STOP
+
+    async def test_a_truncated_stream_s_terminal_chunk_reports_length(self, provider) -> None:
+        lines = [
+            {"model": "m", "message": {"role": "assistant", "content": "partial"}, "done": False},
+            {"model": "m", "message": {"role": "assistant", "content": ""}, "done": True,
+             "done_reason": "length", "prompt_eval_count": 3, "eval_count": 64},
+        ]
+
+        def handler(request):
+            body = "\n".join(json.dumps(line) for line in lines) + "\n"
+            return httpx.Response(200, content=body.encode())
+
+        _install_transport(provider, handler)
+        chunks = [chunk async for chunk in provider.stream(_request())]
+        assert chunks[-1].finish_reason is FinishReason.LENGTH

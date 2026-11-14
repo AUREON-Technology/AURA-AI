@@ -267,10 +267,20 @@ class _SandboxSessionCache:
                 # policy-inputs-only for a Desktop-IDE-specific, opt-in capability). Every
                 # non-Desktop caller's `context.metadata` simply lacks these keys, so `.get(...)`
                 # below defaults to `isolate=False` -- identical behavior to before this existed.
+                # FSA-006 (second half): the Desktop IDE's active workspace root, carried on
+                # `ToolContext.metadata` from `TurnRequest.workspace_root`, binds the task once
+                # here -- so run, write, read and the git tools on this handle all land in the
+                # root the IDE shows, not in whichever root the daemon was granted first. Passed
+                # only when present, so a runner that predates the parameter is called exactly as
+                # before. The daemon decides whether the path lies inside a granted root; nothing
+                # on this side interprets it.
+                root = (context.metadata or {}).get("workspace_root") or None
+                extra = {"workspace_root": root} if root else {}
                 handle = await self._runner.create_task(
                     user_id=context.user_id,
                     session_id=context.metadata.get("session_id"),
                     isolate=bool(context.metadata.get("desktop_task_isolation", False)),
+                    **extra,
                 )
             self._handles[correlation_id] = (handle, now)
             return handle

@@ -236,8 +236,11 @@ class DockerSandboxRunner:
                 )
 
     async def create_task(
-        self, *, user_id: Any | None = None, session_id: str | None = None, isolate: bool = False
+        self, *, user_id: Any | None = None, session_id: str | None = None, isolate: bool = False,
+        workspace_root: str | None = None,
     ) -> SandboxHandle:
+        # `workspace_root` (FSA-006) is a path on the user's machine; this sandbox's workspace is
+        # the checkout on the host, so there is nothing it could sensibly name here: ignored.
         # `user_id`/`session_id`/`isolate` are accepted for `SandboxRunner` protocol conformance
         # and ignored: this server-side sandbox has its own durable-workspace story
         # (`open_workspace`/`pause_workspace`), not D8's per-task git worktrees, which only the

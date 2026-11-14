@@ -731,4 +731,24 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get loginDeveloperTip =>
       'Tip: Google Sign-In failed. To test locally without registering SHA-1 fingerprints in the Google Console, use the \"Access Developer Environment\" bypass option above.';
+
+  @override
+  String planIncompleteHeadline(int total, int gaps) {
+    String _temp0 = intl.Intl.pluralLogic(
+      gaps,
+      locale: localeName,
+      other: 'AURA planned $total steps and $gaps did not complete.',
+      one: 'AURA planned $total steps and one did not complete.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get planIncompleteAnnouncement =>
+      'This answer was given without them.';
+
+  @override
+  String planStepWithStatus(String step, String status) {
+    return '$step — $status';
+  }
 }

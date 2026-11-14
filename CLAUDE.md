@@ -14,8 +14,10 @@ Four independent apps in one repo:
 - **`aura_client/`** — Flutter app (Android/iOS/macOS/web/desktop) that talks to the backend's
   `/api/v3/*` routes.
 - **`aura_admin/`** — Next.js operator console served at `/console` (10 pages; `npm run
-  dev|build|lint`, `npm run test:e2e` for Playwright against a mock gateway). Built, but not
-  reachable on any live target as of 2026-10-28, and Admin CI has never run.
+  dev|build|lint`, `npm run test:e2e` for Playwright against a mock gateway; `lint` is ESLint
+  with Next's rule sets, warnings fail it, and Admin CI runs it from PR #226 on -- no run with that step had executed when this was written). Built, but not
+  reachable on any live target as of 2026-11-07. Admin CI ran for the first time on 2026-11-07
+  (run #3, dispatched: typecheck, build and Playwright e2e all green).
 - **`aura_hostd/`** — pure-Dart local daemon (no Flutter dependency) that lets the desktop Engineer
   agent act on the user's real files and terminal. Pairs with the backend's
   `/api/v3/host/agent` WebSocket. `dart pub get && dart test` (`.github/workflows/hostd-ci.yml`
@@ -31,8 +33,9 @@ Four independent apps in one repo:
   because the default suite's sandbox runner never touches the Docker API.
 
 Supporting directories: `deploy/` (production stack), `docs/` (architecture, guides, reports),
-`infra/` (Terraform), `scripts/` (client build and Firebase helpers). Historical docs live under
-`docs/archive/`.
+`scripts/` (client build and Firebase helpers). There is no `infra/` directory (audit FSA-120: an
+earlier version of this file named a Terraform tree that does not exist). Historical docs live
+under `docs/archive/`.
 
 The production stack above (Contabo VPS, `docker-compose.prod.yml`, `deploy-backend.yml`) is
 one of two supported deploy targets. `docs/deployment/` documents the other: a Railway Control
@@ -49,7 +52,8 @@ from it change how the paragraph above reads (checked live on 2026-10-28, `main`
 - `aureon-ai.tech` is now served by **Railway** (`server: railway-hikari`), running current
   `main`, with providers `hosted1` (healthy) and `hfspace` (503), and no Ollama.
   `dev.aureon-ai.tech` no longer resolves.
-- **Its database was behind the code until 2026-10-30** (CB-43, resolved): it sat at `0013` while
+- **Its database was behind the code until 2026-10-30** (CB-43, resolved; on 2026-11-07 live
+  `/health/ready` showed `schema.revision 0019`, the current head): it sat at `0013` while
   the code expected `0015`. The owner ran `alembic upgrade head` over `railway ssh` (`0013 → 0016`).
   Live `/health/ready` then showed `healthy: true`, `schema.revision 0016` at `6417c43`. The cause:
   Railway does not run `preDeployCommand` in a shell, so the old inline `echo … && alembic upgrade
@@ -69,10 +73,13 @@ from it change how the paragraph above reads (checked live on 2026-10-28, `main`
   - An unprefixed `=== MIGRATION START ===` in a deploy log means the old command is back.
   - That deploy had nothing to apply. Check `/health/ready`'s `schema` block after the first merge
     that adds a migration.
-- **Railway auto-deploys every `main` push itself, CI or not**, and **CI stopped getting runners
-  again around 19:50 UTC on 2026-10-28** (CB-44: jobs end in 2–4 s with no log). Until that is
-  fixed, a merge ships to production with no CI, and a PR's "CI green" cannot be had — run the
-  suites locally and say so.
+- **Railway auto-deploys every `main` push itself, CI or not.** CI stopped getting runners
+  around 19:50 UTC on 2026-10-28 (CB-44: jobs end in 2–4 s with no log). **Runners were seen
+  assigned again on 2026-11-06/07** (Repo Hygiene executed; Admin CI run #3 executed and passed),
+  but Backend, Client and Host Daemon CI have had no trigger since 2026-10-31, so no application
+  suite has run in CI since `dc87beb`. Until a PR touching `aura_backend/` shows a real run, treat
+  "CI green" as unavailable — run the suites locally and say so. `main` is still unprotected, so a
+  merge ships to production with no gate either way.
 - **Deploy VPS has failed on every run since at least 2026-09-27.** Since 2026-10-18 it fails
   with `Host key verification failed`: 169.58.188.43 presents a new ED25519 key. Do not update
   `deploy/known_hosts` to make it pass. A changed host key is either a reinstall or an
@@ -103,8 +110,12 @@ evidence its exit criteria name** — "built" and "tested" are not "proven."
 ### Backend (`cd aura_backend` first)
 
 ```bash
+# The one sanctioned local environment: Python 3.11, both lockfiles, hashes checked (audit G-07).
+# Anything else may run the suite but its result does not stand for the locked one; conftest
+# warns at session start when a watched package differs (scripts/lock_drift.py).
+uv venv --python 3.11 .venv && source .venv/bin/activate
 pip install --require-hashes --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.lock
-pip install -r requirements-dev.txt     # separate: the lock is hash-pinned, dev deps are not (GAP-033)
+pip install --require-hashes -r requirements-dev.lock   # separate: pip resolves each command on its own
 
 pytest                                   # aura_core suite — no Docker, no network, no model
 pytest tests/some_test.py::TestClass::test_name   # single test
@@ -143,9 +154,14 @@ weeks with no runner, runs 142–143 executed every step:
 - `build-windows` (`continue-on-error`) fails 10 `path_containment_test.dart` cases on 8.3
   short paths.
 
-So read the `analyze-and-test` job for a client diff, not the run's overall tick. Host Daemon CI
-is red too: on Linux all tests pass, then a `PosixPtySession` isolate hangs until the 15-minute
-timeout; on Windows 5 tests fail.
+**Update 2026-11-08:** all four jobs went green on #213–#215, Android and Windows included, and
+`build-windows` is no longer `continue-on-error`: a red Windows job now fails the run, so the
+run's overall tick means something again. Windows' coarse clock has already exposed one real bug
+(#215), so treat a Windows-only failure as a possible defect, not noise. Host Daemon CI's
+last executed run (`dc87beb`) was red: on Linux a `PosixPtySession` isolate hung until the
+15-minute timeout, and on Windows 5 tests failed. Both are fixed on `main` (#185; the Linux suite
+now exits in about 16 s locally), but no Host Daemon CI run has executed since, because nothing
+under `aura_hostd/` has changed.
 
 No Flutter SDK is preinstalled in the environment a change is usually written in, but one can be
 fetched in about two minutes, and `analyze` + `test` then run exactly as CI would:
@@ -195,15 +211,21 @@ behind an `asyncio.Lock` when concurrent callers could race). `PostgresPool._get
 canonical example; match that pattern for any new adapter.
 
 **Self-hosting is a fitness-tested invariant, not a preference.** `aura_core/llm/registry.py`
-only builds `echo`, `openai_compatible` (vLLM/llama.cpp/TGI/Ollama's `/v1`), and `ollama`
-providers. There is no hosted-vendor branch anywhere — adding one fails
-`tests/architecture/test_no_external_inference.py`. The Flutter client is checked too. The one
+builds `echo`, `openai_compatible` (vLLM/llama.cpp/TGI/Ollama's `/v1`), `ollama`, and one gated
+vendor kind, `claude` (ADR-033, below). Any other hosted-vendor branch fails
+`tests/architecture/test_no_external_inference.py`. The Flutter client is checked too. The first
 sanctioned exception is ADR-030 (Proposed). Hosted *open-weight* APIs (Groq, Workers AI,
 OpenRouter, …) are a third host category in `aura_core/config/external_inference.py`. They are
 refused unless `AURA_ALLOW_HOSTED_INFERENCE=true`, only accept open-weight model IDs, can never be
 `is_local`, and may never be named in Python source. One that may train on prompts (any `:free`
 model ID) also needs its slot's `ALLOW_PROMPT_TRAINING=true` and can never be raised to `sensitive`. Closed-model vendors stay banned under
-either opt-in flag. Every generation also has a data classification (`llm/sensitivity.py`). A
+either opt-in flag. The one closed-model exception is ADR-033 (Proposed; built, not proven): provider kind
+`claude` (Anthropic), refused unless `AURA_ALLOW_CLAUDE_INFERENCE=true`, no `base_url` (SDK endpoint
+only), key only via `AURA_PROVIDER_<NAME>_API_KEY_ENV`, third-party semantics (internal ceiling, no
+images, audited), and the `anthropic` SDK importable only from `aura_core/llm/providers/claude.py`
+(`SANCTIONED_SDK_IMPORTERS`). With `AURA_LLM_COMPLEXITY_ROUTING=true`, interactive turns whose message
+scores as complex (`aura_core/llm/complexity.py`) prefer the `reasoning` pool that provider declares;
+everything else routes as before. Every generation also has a data classification (`llm/sensitivity.py`). A
 hosted provider receives only `internal` content by default. An unclassified generation counts
 as `sensitive`, so any new background caller of the router stays local unless it opts in.
 
@@ -230,16 +252,25 @@ pinned to the in-memory substrate on purpose (see its own docstring). Real Postg
 adapters exist for production and are only exercised by the opt-in `tests/load` suite and
 targeted integration tests using `testcontainers`.
 
+**Alembic is the only schema authority (CB-20).** No adapter creates or alters a table; the old
+`CREATE TABLE IF NOT EXISTS`-on-first-use bootstrap is gone, and
+`tests/architecture/test_no_runtime_ddl.py` fails on any DDL string under `aura_core`. A schema
+change is a new migration in `alembic/versions/` with a working `downgrade()`;
+`tests/load/test_migration_roundtrip_postgres.py` undoes and re-applies every revision on a real
+Postgres and requires each one after `0016` to restore its parent's schema exactly. An unmigrated
+database now fails requests as well as `/health/ready`, so both deploy targets must keep running
+`alembic upgrade head` before the app starts (Railway's pre-deploy command, `vps-update.sh`).
+
 **v3 is the only live HTTP surface.** `aura_service.py` is a v3-only gateway that never imports
 the legacy `main.py`-era app. `api/v2/{auth,sync,insights}` are a deliberate exception —
 permanent platform adapters mounted outside `aura_core` (ADR-002), not legacy code awaiting
 removal.
 
 Full ADR list and the ten essential decisions are in `docs/architecture/00-overview.md` and
-`docs/architecture/001-*.md`–`031-*.md` (there is no 012 or 017; 018–028 are Track AP drafts, Proposed); read the relevant one before touching
+`docs/architecture/001-*.md`–`033-*.md` (there is no 012 or 017; 018–028 are Track AP drafts, Proposed); read the relevant one before touching
 retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer workspaces
-(013/014), service keys / caller context / structured output on `/chat` (029), or images on
-`/chat` (031) — each encodes a reason something is shaped the way it is, not just what it does.
+(013/014), service keys / caller context / structured output on `/chat` (029), images on
+`/chat` (031), or the Claude provider and complexity routing (033) — each encodes a reason something is shaped the way it is, not just what it does.
 
 ## Client architecture — the parts that span files
 
@@ -269,8 +300,10 @@ retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer work
   images are built rather than pulled) — they share a host, so hardening applied to only one of
   them leaves the weaker stack as the real attack surface. Change a security-relevant key in one
   and change it in the other in the same commit.
-- **`nginx` is the only container with a published port** (SEC-12) — `gateway` binds no host
-  port, so reaching it directly means `docker exec`-ing into another container on the same
+- **On the VPS stack, `nginx` is the only container with a published port** (SEC-12) — `gateway`
+  binds no host port there. On Railway there is no nginx: uvicorn is the edge, which is why the
+  header floor and the metrics gate live in `build_app` (`tests/unit/test_security_headers.py`).
+  Reaching the VPS gateway directly means `docker exec`-ing into another container on the same
   Docker network (or using `deploy/nginx/host-proxy.conf.example`'s override pattern for a
   shared-host setup).
 - **Never re-add `http2 on;` to the HTTPS server blocks in
@@ -308,13 +341,33 @@ retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer work
   `IMAGES: "0"` stay off the socket proxy's allowlist — adding a runtime `docker pull` would
   silently require putting it back.
 - **The self-hosted LLM (`qwen2.5:3b-instruct-q4_K_M` on Ollama, CPU-only) sustains roughly
-  5–10 tokens/sec in production**, degrading further as context grows. Any new completion call
+  5–10 tokens/sec on the VPS stack**, degrading further as context grows. The Railway target that
+  serves `aureon-ai.tech` today runs no Ollama at all: its only healthy provider is the hosted
+  open-weight slot `hosted1` (ADR-030), so "production" throughput is that provider's, not this.
+  The sizing rule below still binds every completion call, because the VPS stack is a supported
+  target. Any new completion call
   needs its `max_output_tokens` sized so a worst-case generation actually finishes inside its
   `timeout_s` at that throughput, or the provider call gets hard-cancelled mid-generation
   (`AllProvidersFailedError`) before ever returning something parseable.
   `PlanningEngine.plan()`'s call (`aura_core/planning/engine.py`) is the worked example — 700
   tokens against the deployed 180s `request_timeout_s`, with the full reasoning in its own
   comment — after the previous 1200-token ceiling was measured taking up to 240s in production.
+- **nginx holds static addresses** (`10.77.10.10` on `edge`, `10.77.11.10` on `aura_edge`) and the
+  prod and dev gateways trust `X-Forwarded-For` from exactly those (`--forwarded-allow-ips`), never
+  `'*'` (audit FSA-012). Change an address in one place and change it in the other in the same
+  commit; `tests/unit/test_compose_security_parity.py` pins both and that each address lies in its
+  network's declared subnet. Compose does not recreate an existing network whose `ipam` changed:
+  it stops with "network needs to be recreated", and `aura_edge` is shared with the dev stack's
+  containers. The first deploy after a subnet change is therefore manual: stop the dev stack,
+  `docker network rm aura_edge` (and `edge` if it changed), deploy prod, start dev. Until that is
+  done nginx cannot start, because a static address needs a user-configured subnet, and nginx is
+  the only published port. Reasoned from Compose's behaviour, not yet run on the VPS.
+- **The Postgres connection budget is arithmetic, not a comment.** Every uvicorn worker and every
+  Celery prefork child holds one asyncpg pool plus the legacy SQLAlchemy pool
+  (`InfrastructureSettings.postgres_connections_per_process`); both compose files size them per
+  service (gateway 20 per worker, Celery children 4) so prod's worst case is 108 against
+  `max_connections = 120`. `tests/unit/test_postgres_connection_budget.py` recomputes it from the
+  compose files and `postgresql.conf` and fails when a change breaks it (audit FSA-073).
 - Push-triggered pipeline: `Deploy VPS` (`.github/workflows/deploy-backend.yml`) fires via
   `workflow_run` only after `Backend CI` succeeds on `main` — merging to `main` is the entire
   deploy action, there is no separate manual step. `Deploy Control Plane (Railway)` fires the
@@ -335,3 +388,6 @@ retrieval, memory, routing, safety, indexing, desktop hostd (011), engineer work
 - When a change touches a Postgres-backed adapter, verify it against a real (even throwaway)
   Postgres instance before considering it done — asyncpg's type mapping (e.g. `Decimal` from
   `avg()`/`percentile_cont`) has caused real bugs the in-memory adapter can't surface.
+- A real-Postgres test must build its database with `alembic upgrade head`
+  (`tests/postgres_migrations.py`: `migrated_database()`, `migrate()`), never by letting an
+  adapter create its tables — adapters no longer do.

@@ -275,6 +275,22 @@ class InMemoryAuditSink:
         ]
         return matches[:limit]
 
+    async def purge_before(self, cutoff: datetime) -> int:
+        kept = [e for e in self._events if e.at is None or e.at >= cutoff]
+        purged = len(self._events) - len(kept)
+        self._events.clear()
+        self._events.extend(kept)
+        return purged
+
+    async def pseudonymise_actor(self, actor: str, replacement: str) -> int:
+        changed = 0
+        for event in self._events:
+            if event.actor == actor:
+                event.actor = replacement
+                event.source_ip = None
+                changed += 1
+        return changed
+
     def __len__(self) -> int:
         return len(self._events)
 
@@ -292,6 +308,21 @@ class InMemoryTelemetrySink:
 
     async def record_turn(self, telemetry: TurnTelemetry) -> None:
         self._turns.append(telemetry)
+
+    async def purge_before(self, cutoff: datetime) -> int:
+        kept = [t for t in self._turns if t.started_at >= cutoff]
+        purged = len(self._turns) - len(kept)
+        self._turns.clear()
+        self._turns.extend(kept)
+        return purged
+
+    async def purge_sessions(self, session_ids) -> int:
+        doomed = {str(s) for s in session_ids}
+        kept = [t for t in self._turns if t.session_id is None or t.session_id.value not in doomed]
+        purged = len(self._turns) - len(kept)
+        self._turns.clear()
+        self._turns.extend(kept)
+        return purged
 
     async def recent_summary(self, *, since: datetime) -> dict:
         turns = [t for t in self._turns if t.started_at >= since]

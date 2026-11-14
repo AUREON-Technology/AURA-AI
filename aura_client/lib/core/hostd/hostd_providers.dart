@@ -10,6 +10,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../security/aura_secure_storage.dart';
+import 'hostd_bundled_path.dart';
 import 'hostd_control_client.dart';
 import 'hostd_supervisor.dart';
 
@@ -68,6 +69,16 @@ final hostdSupervisorProvider = Provider<HostdSupervisor>((ref) {
   final supervisor = HostdSupervisor();
   ref.onDispose(supervisor.dispose);
   return supervisor;
+});
+
+/// What the supervisor is doing with the daemon it started: running, restarting after a crash,
+/// or given up (M8.8). `/status` polling cannot tell those apart -- a daemon between restarts and
+/// one that will never come back both just fail to answer -- so the screens read this alongside
+/// [hostdStatusProvider].
+final hostdSupervisorStateProvider = StreamProvider<HostdSupervisorState>((ref) async* {
+  final supervisor = ref.watch(hostdSupervisorProvider);
+  yield supervisor.state;
+  yield* supervisor.states;
 });
 
 /// Polls `GET /status` every few seconds while something is watching it (the daemon screen) --
@@ -202,25 +213,28 @@ class HostdLogNotifier extends Notifier<List<String>> {
 
 final hostdLogProvider = NotifierProvider<HostdLogNotifier, List<String>>(HostdLogNotifier.new);
 
-/// The path to the `aura_hostd` executable this app should spawn -- empty until a person
-/// configures it (no bundled binary shipped, per ADR-011's disclosed scope). Persisted the same
-/// way every other small app setting is (`auraSecureStorage`).
+/// The path to the `aura_hostd` executable this app should spawn. A path the person saved wins;
+/// otherwise the daemon a packaged build ships next to the app (`hostd_bundled_path.dart`, M8.10);
+/// otherwise `null`, and the screens ask for one. Persisted the same way every other small app
+/// setting is (`auraSecureStorage`); saving an empty path goes back to the bundled default.
 class HostdExecutablePathNotifier extends AsyncNotifier<String?> {
   static const _key = 'hostd_executable_path';
 
   @override
   Future<String?> build() async {
+    String? saved;
     try {
-      final value = await auraSecureStorage.read(key: _key);
-      return (value == null || value.isEmpty) ? null : value;
+      saved = await auraSecureStorage.read(key: _key);
     } on Object {
-      return null;
+      saved = null;
     }
+    if (saved != null && saved.isNotEmpty) return saved;
+    return bundledHostdPath();
   }
 
   Future<void> set(String path) async {
     await auraSecureStorage.write(key: _key, value: path);
-    state = AsyncValue.data(path);
+    state = AsyncValue.data(path.isEmpty ? bundledHostdPath() : path);
   }
 }
 

@@ -14,7 +14,56 @@ import 'package:aura_client/desktop/state/desktop_application_state.dart';
 import 'package:aura_client/desktop/state/state_notifiers.dart';
 
 class ActivityBar extends ConsumerWidget {
-  const ActivityBar({super.key});
+  const ActivityBar({
+    super.key,
+    this.agentPanelFloating = false,
+    this.sidebarFloating = false,
+  });
+
+  /// The AI panel is floating over the content area (narrow windows), so a
+  /// primary sidebar opened underneath it would not be visible.
+  final bool agentPanelFloating;
+
+  /// The primary sidebar is floating over the content area.
+  final bool sidebarFloating;
+
+  /// Opens [panel] in the primary sidebar, or closes it if it is already the
+  /// one showing.
+  ///
+  /// A floating AI panel is drawn over the primary sidebar, so opening a
+  /// primary panel underneath it would change nothing the user can see.
+  /// Instead the click closes the AI panel and makes sure [panel] is the one
+  /// revealed: one click reaches the destination that was asked for.
+  void _openPrimary(
+    LayoutNotifier notifier,
+    LayoutState layoutState,
+    PrimarySidebarPanel panel,
+    void Function() show,
+  ) {
+    if (agentPanelFloating) {
+      notifier.toggleSecondarySidebar();
+      show();
+      return;
+    }
+    if (layoutState.showPrimarySidebar && layoutState.primarySidebarPanel == panel) {
+      notifier.togglePrimarySidebar();
+    } else {
+      show();
+    }
+  }
+
+  /// Toggles the bottom panel -- or, while something floats over the content
+  /// area, closes what floats and shows the bottom panel, which would
+  /// otherwise open behind the scrim.
+  void _openBottomPanel(LayoutNotifier notifier, LayoutState layoutState) {
+    if (!agentPanelFloating && !sidebarFloating) {
+      notifier.toggleBottomPanel();
+      return;
+    }
+    if (agentPanelFloating) notifier.toggleSecondarySidebar();
+    if (sidebarFloating) notifier.togglePrimarySidebar();
+    if (!layoutState.showBottomPanel) notifier.toggleBottomPanel();
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -60,11 +109,7 @@ class ActivityBar extends ConsumerWidget {
                 layoutState.primarySidebarPanel == PrimarySidebarPanel.explorer,
             onTap: () {
               final notifier = ref.read(layoutNotifierProvider.notifier);
-              if (layoutState.showPrimarySidebar && layoutState.primarySidebarPanel == PrimarySidebarPanel.explorer) {
-                notifier.togglePrimarySidebar();
-              } else {
-                notifier.showExplorerPanel();
-              }
+              _openPrimary(notifier, layoutState, PrimarySidebarPanel.explorer, notifier.showExplorerPanel);
             },
             density: ideDensity,
           ),
@@ -94,12 +139,12 @@ class ActivityBar extends ConsumerWidget {
                 layoutState.primarySidebarPanel == PrimarySidebarPanel.sourceControl,
             onTap: () {
               final notifier = ref.read(layoutNotifierProvider.notifier);
-              if (layoutState.showPrimarySidebar &&
-                  layoutState.primarySidebarPanel == PrimarySidebarPanel.sourceControl) {
-                notifier.togglePrimarySidebar();
-              } else {
-                notifier.showSourceControlPanel();
-              }
+              _openPrimary(
+                notifier,
+                layoutState,
+                PrimarySidebarPanel.sourceControl,
+                notifier.showSourceControlPanel,
+              );
             },
             density: ideDensity,
           ),
@@ -121,12 +166,12 @@ class ActivityBar extends ConsumerWidget {
                 layoutState.primarySidebarPanel == PrimarySidebarPanel.controlCenter,
             onTap: () {
               final notifier = ref.read(layoutNotifierProvider.notifier);
-              if (layoutState.showPrimarySidebar &&
-                  layoutState.primarySidebarPanel == PrimarySidebarPanel.controlCenter) {
-                notifier.togglePrimarySidebar();
-              } else {
-                notifier.showControlCenterPanel();
-              }
+              _openPrimary(
+                notifier,
+                layoutState,
+                PrimarySidebarPanel.controlCenter,
+                notifier.showControlCenterPanel,
+              );
             },
             density: ideDensity,
           ),
@@ -144,7 +189,7 @@ class ActivityBar extends ConsumerWidget {
             badgeCount: problemCount,
             badgeNoun: 'problem',
             isSelected: layoutState.showBottomPanel,
-            onTap: () => ref.read(layoutNotifierProvider.notifier).toggleBottomPanel(),
+            onTap: () => _openBottomPanel(ref.read(layoutNotifierProvider.notifier), layoutState),
             density: ideDensity,
           ),
           SizedBox(height: ideDensity.spacingScale * AuraSpacing.md),

@@ -26,6 +26,8 @@ void main() {
     tempDir.deleteSync(recursive: true);
   });
 
+  _nameMissingExecutableTests();
+
   test('createTask returns a fresh, non-empty task_id each time', () async {
     final a = await handler.createTask(const {});
     final b = await handler.createTask(const {});
@@ -106,6 +108,71 @@ void main() {
     });
   });
 
+  group('create_task bound to the IDE root (FSA-006)', () {
+    // The backend binds every task to the Desktop IDE's active workspace root at `create_task`
+    // (aura_backend/aura_core/tools/coding.py::_SandboxSessionCache), so run, write and read all
+    // land in the root the user is looking at -- not in whichever root was granted first.
+    late Directory otherDir;
+
+    setUp(() {
+      otherDir = Directory(p.join(tempDir.path, 'other'))..createSync();
+      roots.addRoot(otherDir.path); // granted second: the first granted root is workspaceDir
+      roots.setTrusted(workspaceDir.path, true);
+      roots.setTrusted(otherDir.path, true);
+    });
+
+    test('run, write_file and read_file all land in the bound root, not the first granted one',
+        () async {
+      final created = await handler.createTask({'cwd': otherDir.path});
+      final taskId = created['task_id'] as String;
+
+      final run = await handler.run({
+        'task_id': taskId,
+        'command': ['sh', '-c', 'pwd'],
+        'timeout_s': 5.0,
+      });
+      expect((run['stdout'] as String).trim(), otherDir.path);
+
+      await handler.writeFile({'task_id': taskId, 'path': 'note.txt', 'content': 'here'});
+      expect(File(p.join(otherDir.path, 'note.txt')).readAsStringSync(), 'here');
+      expect(File(p.join(workspaceDir.path, 'note.txt')).existsSync(), isFalse);
+
+      final read = await handler.readFile({'task_id': taskId, 'path': 'note.txt'});
+      expect(read['content'], 'here');
+    }, testOn: '!windows');
+
+    test('a cwd outside every granted root is refused at create_task', () async {
+      final elsewhere = Directory(p.join(tempDir.path, 'elsewhere'))..createSync();
+      expect(
+        () => handler.createTask({'cwd': elsewhere.path}),
+        throwsA(isA<RpcError>().having(
+          (e) => e.message, 'message', contains('no granted workspace root contains'),
+        )),
+      );
+    });
+
+    test('a bound task ignores a per-call cwd: the binding is authoritative', () async {
+      final created = await handler.createTask({'cwd': otherDir.path});
+      final run = await handler.run({
+        'task_id': created['task_id'],
+        'command': ['sh', '-c', 'pwd'],
+        'cwd': workspaceDir.path,
+        'timeout_s': 5.0,
+      });
+      expect((run['stdout'] as String).trim(), otherDir.path);
+    }, testOn: '!windows');
+
+    test('without a cwd at create_task the first granted root is used, as before', () async {
+      final created = await handler.createTask(const {});
+      final run = await handler.run({
+        'task_id': created['task_id'],
+        'command': ['sh', '-c', 'pwd'],
+        'timeout_s': 5.0,
+      });
+      expect((run['stdout'] as String).trim(), workspaceDir.path);
+    }, testOn: '!windows');
+  });
+
   group('run', () {
     test('runs pwd (allowlisted) successfully in an untrusted workspace', () async {
       final result = await handler.run({
@@ -140,6 +207,34 @@ void main() {
       });
       expect(result['exit_code'], 0);
       expect(File(p.join(workspaceDir.path, 'written.txt')).existsSync(), isTrue);
+    });
+
+    test('runs in the cwd the backend names when it lies inside a granted root', () async {
+      // FSA-006, second half: the backend now sends the IDE's active root as `cwd`
+      // (aura_backend/aura_core/tools/coding.py::run_command), so a user with several granted
+      // roots gets the command in the one the IDE shows, not in whichever root was granted first.
+      final sub = Directory(p.join(workspaceDir.path, 'pkg'))..createSync();
+      final result = await handler.run({
+        'command': ['sh', '-c', 'pwd'],
+        'cwd': sub.path,
+        'timeout_s': 5.0,
+      });
+      expect(result['exit_code'], 0);
+      expect((result['stdout'] as String).trim(), sub.path);
+    }, testOn: '!windows');
+
+    test('a cwd outside every granted root is refused, not silently replaced', () async {
+      final elsewhere = Directory(p.join(tempDir.path, 'elsewhere'))..createSync();
+      expect(
+        () => handler.run({
+          'command': ['sh', '-c', 'pwd'],
+          'cwd': elsewhere.path,
+          'timeout_s': 5.0,
+        }),
+        throwsA(isA<RpcError>().having(
+          (e) => e.message, 'message', contains('no granted workspace root contains'),
+        )),
+      );
     });
 
     test('refuses rm -rf even in a trusted workspace', () async {
@@ -317,6 +412,21 @@ void main() {
       roots.removeRoot(workspaceDir.path);
       approvals.respond(pending.id, true);
       await expectLater(future, throwsA(isA<RpcError>()));
+      expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isFalse);
+    });
+
+    test(
+        'cancelling the call while it waits for approval throws, delists the approval and never '
+        'runs the command (FSA-041)', () async {
+      final future = handler.run({
+        'command': ['sh', '-c', 'mkdir newdir'],
+        'timeout_s': 5.0,
+      }, callId: 'call-1');
+      expect(approvals.list(), hasLength(1));
+      handler.cancel('call-1');
+      await expectLater(future, throwsA(isA<RpcError>()));
+      expect(approvals.list(), isEmpty);
+      // A human answering after the server gave up changes nothing.
       expect(Directory(p.join(workspaceDir.path, 'newdir')).existsSync(), isFalse);
     });
 
@@ -513,6 +623,23 @@ void main() {
       expect(worktreeList.stdout.toString().replaceAll('\\', '/'), contains('session-1'));
     });
 
+    test('an isolated task created with the IDE root as cwd runs in its worktree, and a per-call '
+        'cwd naming the parent does not break it (FSA-006)', () async {
+      final created = await handler.createTask({
+        'isolate': true,
+        'task_key': 'session-cwd',
+        'cwd': workspaceDir.path,
+      });
+      final run = await handler.run({
+        'task_id': created['task_id'],
+        'command': ['sh', '-c', 'pwd'],
+        'cwd': workspaceDir.path,
+        'timeout_s': 5.0,
+      });
+      expect(run['exit_code'], 0);
+      expect((run['stdout'] as String).trim(), endsWith(p.join('.aura-workspaces', 'session-cwd')));
+    }, testOn: '!windows');
+
     test('a second task_id for the same task_key reuses the same worktree, not a new one', () async {
       final first = await handler.createTask({'isolate': true, 'task_key': 'session-2'});
       await handler.writeFile({'task_id': first['task_id'], 'path': 'a.txt', 'content': 'turn 1'});
@@ -654,6 +781,33 @@ void main() {
         isolatedTasks.discard('never-created'),
         throwsA(isA<TaskNotFoundError>()),
       );
+    });
+  });
+}
+
+void _nameMissingExecutableTests() {
+  group('nameMissingExecutable', () {
+    const argv = ['this_binary_does_not_exist_xyz_12345', 'arg'];
+
+    test("adds the program's name when the stdbuf wrapper failed to exec without naming it", () {
+      // uutils coreutils (ubuntu-latest since 26.04) says this; GNU coreutils names the command.
+      const uutils = 'stdbuf: failed to execute process: No such file or directory\n';
+      final named = nameMissingExecutable(uutils, 127, argv);
+      expect(named, startsWith(uutils));
+      expect(named, contains('this_binary_does_not_exist_xyz_12345'));
+    });
+
+    test('leaves GNU stdbuf output alone because it already names the command', () {
+      const gnu =
+          "stdbuf: failed to run command 'this_binary_does_not_exist_xyz_12345': No such file or directory\n";
+      expect(nameMissingExecutable(gnu, 127, argv), gnu);
+    });
+
+    test('leaves a successful or ordinary failing command alone', () {
+      expect(nameMissingExecutable('all good\n', 0, argv), 'all good\n');
+      expect(nameMissingExecutable('Traceback ...\n', 1, argv), 'Traceback ...\n');
+      expect(nameMissingExecutable('sh: 1: foo: not found\n', 127, ['sh', '-c', 'foo']),
+          'sh: 1: foo: not found\n');
     });
   });
 }

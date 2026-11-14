@@ -538,19 +538,6 @@ class TestPostgresConnectorWithoutADatabase:
         assert (await self._health(_descriptor(options=options))).reason == "invalid_options"
 
 
-def test_adapter_schema_matches_the_migration() -> None:
-    import importlib.util
-    from pathlib import Path
-
-    from aura_core.adapters.postgres_adaptation import ADAPTATION_SCHEMA
-
-    path = Path(__file__).resolve().parents[2] / "alembic" / "versions" / "0009_adaptation_connectors.py"
-    spec = importlib.util.spec_from_file_location("migration_0009", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    assert tuple(s.strip() for s in module.UPGRADE_STATEMENTS) == tuple(s.strip() for s in ADAPTATION_SCHEMA)
-
-
 # -------------------------------------------------------------------------------------- HTTP API
 
 

@@ -120,7 +120,7 @@ unmeasured until the plan's P7-4 regression eval runs.
 | Variable | Value | Why |
 |---|---|---|
 | `VLLM_MODEL` | `Qwen/Qwen3-VL-8B-Instruct` on the L40S (48 GB, BF16 fits with room for KV cache); `Qwen/Qwen3-VL-8B-Instruct-FP8` on a 24 GB Ada/Hopper card (L4) | Apache-2.0, first-class vLLM architecture, the GAP-019 candidate. Qwen2.5-VL-3B is excluded (`qwen-research` license). |
-| `VLLM_MODEL_REVISION` | the commit SHA from the model repo's *Files and versions* history | Without it, an upstream push silently changes what answers |
+| `VLLM_MODEL_REVISION` | the commit SHA from the model repo's *Files and versions* history (required; the entrypoint refuses to start without it) | Without it, an upstream push silently changes what answers |
 | `VLLM_MAX_MODEL_LEN` | `16384` | The gateway shrinks images to a 1536 px long edge, about 2,300 vision tokens each for a square image. Four images exceed 8192 on their own, and the router then excludes this provider (`context_window_too_small`) |
 | `VLLM_MAX_IMAGES_PER_PROMPT` | `4` | Must be ≥ `AURA_VISION_MAX_IMAGES`. Any value > 0 also makes the entrypoint refuse remote media URLs (`--allowed-media-domains media.invalid`, redirects off). The gateway only ever sends base64 |
 

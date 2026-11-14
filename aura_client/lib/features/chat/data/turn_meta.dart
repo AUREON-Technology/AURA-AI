@@ -102,7 +102,13 @@ class TurnMeta {
 
   factory TurnMeta.fromJson(Map<String, dynamic> json) {
     final rawSteps = json['steps'];
-    final rawPlan = json['plan'];
+    // The two transports disagree on this key: the streamed `done` frame sends
+    // `plan_summary` (kernel.py), while the non-streaming `/chat` body sends
+    // `plan` (v3.py). Reading only `plan` meant the plan never arrived on the
+    // streaming path -- which is the path chat actually uses -- so `plan` was
+    // empty in practice for every real turn. Accepting both keeps this working
+    // against either transport and against a backend older than this fix.
+    final rawPlan = json['plan'] ?? json['plan_summary'];
     return TurnMeta(
       turnId: json['turn_id']?.toString(),
       correlationId: json['correlation_id']?.toString(),

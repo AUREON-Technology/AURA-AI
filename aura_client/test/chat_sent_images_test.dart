@@ -41,6 +41,7 @@ class _RecordingSseClient extends SseAgentClient {
     int maxOutputTokens = 1024,
     double temperature = 0.3,
     List<ChatImageAttachment> images = const [],
+    String? workspaceRoot,
   }) async* {
     calls.add((message: message, images: images));
     if (failFirst && calls.length == 1) {

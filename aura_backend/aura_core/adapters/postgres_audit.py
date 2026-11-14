@@ -2,7 +2,8 @@
 
 A separate module from ``postgres_store.py`` so that file does not keep growing.
 Selected when the document backend is postgres; shares ``PostgresPool``.
-Append-only: this adapter never updates or deletes rows.
+Append-only in normal operation; the only writes after insert are the retention purge and the
+erasure pseudonymisation (audit FSA-016).
 """
 
 from __future__ import annotations
@@ -22,31 +23,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["PostgresAuditSink"]
 
-_SCHEMA = (
-    """
-    CREATE TABLE IF NOT EXISTS aura_audit_events (
-        id              TEXT        PRIMARY KEY,
-        at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-        actor           TEXT        NOT NULL,
-        actor_role      TEXT        NOT NULL DEFAULT '',
-        action          TEXT        NOT NULL,
-        resource        TEXT        NOT NULL DEFAULT '',
-        outcome         TEXT        NOT NULL,
-        correlation_id  TEXT        NOT NULL DEFAULT '',
-        source_ip       TEXT,
-        detail          JSONB       NOT NULL DEFAULT '{}'::jsonb
-    )
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_audit_events_at
-        ON aura_audit_events (at)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS ix_aura_audit_events_actor_at
-        ON aura_audit_events (actor, at)
-    """,
-)
-
 
 def _unavailable(message: str, **details: Any) -> DependencyUnavailableError:
     return DependencyUnavailableError(message, dependency="postgres", details=details or None)
@@ -64,22 +40,8 @@ class PostgresAuditSink:
     def __init__(self, url: str, *, pool: PostgresPool | None = None, clock=None) -> None:
         self._pool = pool or PostgresPool(url)
         self._clock = clock or SystemClock()
-        self._schema_ready = False
-
-    async def _ensure_schema(self) -> None:
-        if self._schema_ready:
-            return
-        pool = await self._pool._get_pool()
-        try:
-            async with pool.acquire() as conn:
-                for statement in _SCHEMA:
-                    await conn.execute(statement)
-        except Exception as exc:
-            raise _unavailable(f"could not create the audit schema: {exc}") from exc
-        self._schema_ready = True
 
     async def record(self, event: AuditEvent) -> None:
-        await self._ensure_schema()
         if event.at is None:
             event.at = self._clock.now()
         pool = await self._pool._get_pool()
@@ -114,7 +76,6 @@ class PostgresAuditSink:
         since: datetime | None = None,
         limit: int = 100,
     ) -> Sequence[AuditEvent]:
-        await self._ensure_schema()
         pool = await self._pool._get_pool()
         try:
             async with pool.acquire() as conn:
@@ -137,6 +98,29 @@ class PostgresAuditSink:
         except Exception as exc:
             raise _unavailable(f"could not query audit events: {exc}") from exc
         return [self._event(row) for row in rows]
+
+    async def purge_before(self, cutoff: datetime) -> int:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                status = await conn.execute("DELETE FROM aura_audit_events WHERE at < $1", _utc(cutoff))
+        except Exception as exc:
+            raise _unavailable(f"could not purge audit events: {exc}") from exc
+        # asyncpg reports the command tag ("DELETE 3"); the count is its last word.
+        return int(str(status).rsplit(" ", 1)[-1] or 0)
+
+    async def pseudonymise_actor(self, actor: str, replacement: str) -> int:
+        pool = await self._pool._get_pool()
+        try:
+            async with pool.acquire() as conn:
+                status = await conn.execute(
+                    "UPDATE aura_audit_events SET actor = $2, source_ip = NULL WHERE actor = $1",
+                    actor, replacement,
+                )
+        except Exception as exc:
+            raise _unavailable(f"could not pseudonymise audit events: {exc}") from exc
+        # asyncpg reports the command tag ("UPDATE 3"); the count is its last word.
+        return int(str(status).rsplit(" ", 1)[-1] or 0)
 
     @staticmethod
     def _event(row: Mapping[str, Any]) -> AuditEvent:

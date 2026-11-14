@@ -197,8 +197,18 @@ class SandboxRunner(Protocol):
         user_id: UserId | None = None,
         session_id: str | None = None,
         isolate: bool = False,
+        workspace_root: str | None = None,
     ) -> SandboxHandle:
-        """``session_id``/``isolate`` are D8's per-task isolated-workspace request (Desktop IDE
+        """``workspace_root`` is the Desktop IDE's active workspace root (audit FSA-006), in the
+        *user's machine's* path syntax, and binds the task to that root for every call made on the
+        handle -- run, write, read, git -- so a user with several granted roots gets the Engineer
+        in the one the IDE shows, not in whichever root was granted first. The host-agent bridge
+        sends it to the daemon, which binds the task only if the path lies inside a granted root
+        and refuses otherwise; every other runner accepts and ignores it, because a path on the
+        user's machine means nothing to a server-side checkout. Callers pass it only when they
+        have one, so a runner written before this parameter existed keeps working unchanged.
+
+        ``session_id``/``isolate`` are D8's per-task isolated-workspace request (Desktop IDE
         only): ``isolate=True`` asks the host-agent bridge's daemon to carve out a dedicated git
         worktree for this task rather than writing into the user's live checkout, keyed by
         ``session_id`` (stable across a chat session's many turns, unlike the fresh ``task_id``
@@ -351,8 +361,7 @@ class AgentRunStore(EngineerRunStore, Protocol):
 
     An extension of the engineer-runs port rather than a parallel one: the same adapter holds
     both ledgers (``aura_engineer_runs`` for per-engineer-tool-call rows, ``aura_agent_runs`` /
-    ``aura_agent_steps`` for per-run state of any persona), shares one connection pool and one
-    schema bootstrap, and a deployment that wires one has wired both.
+    ``aura_agent_steps`` for per-run state of any persona), shares one connection pool, and a deployment that wires one has wired both.
 
     Every read is owner-scoped by construction -- ``user_id`` is a required argument, not a
     filter a caller may forget -- so a run id guessed or leaked across users reads as absent.
