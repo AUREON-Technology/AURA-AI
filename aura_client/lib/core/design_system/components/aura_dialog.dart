@@ -73,6 +73,9 @@ class AuraDialog extends StatelessWidget {
                         child: AuraButton(
                           label: cancelLabel!,
                           variant: AuraButtonVariant.secondary,
+                          // Each button already sits in an Expanded slot; `expand` lets a
+                          // label that does not fit ellipsize instead of overflowing the row.
+                          expand: true,
                           onPressed: () => Navigator.of(context).pop(),
                         ),
                       ),
@@ -85,6 +88,7 @@ class AuraDialog extends StatelessWidget {
                           variant: confirmDestructive
                               ? AuraButtonVariant.destructive
                               : AuraButtonVariant.primary,
+                          expand: true,
                           onPressed: onConfirm,
                         ),
                       ),

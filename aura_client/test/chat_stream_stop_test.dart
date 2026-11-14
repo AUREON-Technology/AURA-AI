@@ -188,4 +188,55 @@ void main() {
     expect(find.byIcon(Icons.send), findsOneWidget);
     semantics.dispose();
   });
+
+  group('safety guard (post-stream)', () {
+    /// The message text each queued upsert would send, decrypted.
+    Future<List<String>> outboxContents() async => [
+          for (final row in await db.select(db.outboxEntries).get())
+            if (row.targetTable == 'messages' && row.payloadJson != null)
+              EncryptionService.decryptText(
+                (jsonDecode(row.payloadJson!) as Map<String, dynamic>)['content_enc'] as String,
+              ),
+        ];
+
+    test('an answer withheld after it streamed is replaced, not kept as a partial', () async {
+      final container = containerWith(idleTimeout: const Duration(seconds: 5));
+      body
+        ..add(_frame('token', {'text': 'Here is the secret: hunter2'}))
+        ..add(_frame('error', {
+          'error': 'safety_violation',
+          'message': 'The response was withheld by a safety guard.',
+          'post_hoc': true,
+        }));
+      unawaited(body.close());
+
+      await container
+          .read(chatRepositoryProvider)
+          .sendChatMessage(conversationId: 'conv-1', userContent: 'hello')
+          .timeout(const Duration(seconds: 5));
+
+      final assistant = await assistantRow();
+      expect(assistant.content, kChatWithheldText);
+      expect(isChatConnectionErrorText(assistant.content), isFalse, reason: 'no Retry card');
+      final synced = await outboxContents();
+      expect(synced, contains(kChatWithheldText));
+      expect(synced.where((c) => c.contains('hunter2')), isEmpty,
+          reason: 'withheld text must not reach the outbox');
+    });
+
+    test('a request a guard refused before any token says so, without a Retry card', () async {
+      final container = containerWith(idleTimeout: const Duration(seconds: 5));
+      body.add(_frame('error', {'error': 'safety_violation', 'message': 'blocked'}));
+      unawaited(body.close());
+
+      await container
+          .read(chatRepositoryProvider)
+          .sendChatMessage(conversationId: 'conv-1', userContent: 'hello')
+          .timeout(const Duration(seconds: 5));
+
+      final assistant = await assistantRow();
+      expect(assistant.content, kChatBlockedText);
+      expect(isChatConnectionErrorText(assistant.content), isFalse);
+    });
+  });
 }

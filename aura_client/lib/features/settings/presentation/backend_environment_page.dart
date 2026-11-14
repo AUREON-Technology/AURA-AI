@@ -5,6 +5,7 @@ import 'package:aura_client/core/config/backend_url_provider.dart';
 import 'package:aura_client/core/config/backend_url_settings.dart';
 import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_api_client.dart';
+import 'package:aura_client/features/auth/presentation/auth_provider.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
 final backendReachabilityProvider = FutureProvider.autoDispose<bool>((ref) async {
@@ -29,10 +30,34 @@ class _BackendEnvironmentPageState extends ConsumerState<BackendEnvironmentPage>
     final current = ref.read(backendUrlProvider.notifier).currentEnvironment;
     if (current == environment) return;
 
+    // Read before anything can unmount this page: signing out below sends the router to
+    // /login, and `ref` is unusable once the page is gone.
+    final urlNotifier = ref.read(backendUrlProvider.notifier);
+    final signedIn = ref.read(authProvider).value != null;
+    if (signedIn) {
+      // The session and this device's data belong to the current server. End the session
+      // there (revoking its refresh token) and wipe the local data before switching; clearing
+      // the tokens alone left a live refresh token behind and pushed one server's rows and
+      // outbox to the other.
+      final confirmed = await AuraDialog.show<bool>(
+        context: context,
+        title: context.l10n.serverSwitchConfirmTitle,
+        confirmLabel: context.l10n.serverSwitchConfirm,
+        cancelLabel: context.l10n.cancel,
+        confirmDestructive: true,
+        onConfirm: () => Navigator.of(context, rootNavigator: true).pop(true),
+        child: Text(
+          context.l10n.serverSwitchConfirmBody,
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+
     setState(() => _switching = true);
     try {
-      final changed =
-          await ref.read(backendUrlProvider.notifier).setEnvironment(environment);
+      if (signedIn) await ref.read(authProvider.notifier).signOut();
+      final changed = await urlNotifier.setEnvironment(environment);
       if (!mounted) return;
       ref.invalidate(backendReachabilityProvider);
       if (changed) {
@@ -117,8 +142,8 @@ class _BackendEnvironmentPageState extends ConsumerState<BackendEnvironmentPage>
             padding: EdgeInsets.zero,
             child: Column(
               children: [
-                for (final environment in BackendEnvironment.values) ...[
-                  if (environment != BackendEnvironment.values.first)
+                for (final environment in BackendUrlSettings.selectableEnvironments) ...[
+                  if (environment != BackendUrlSettings.selectableEnvironments.first)
                     Divider(height: 1, indent: 56, color: palette.border),
                   ListTile(
                     leading: Icon(

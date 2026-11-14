@@ -20,7 +20,7 @@ import 'turn_meta.dart';
 // arrived was kept, marked [TurnMeta.interrupted] -- never replaced by the error bubble.
 /// `unavailable`: the backend refused the turn's content class (`capability_unavailable`, the
 /// chat-only launch). Not a connection error, so it gets plain copy and no Retry card.
-enum _SseSendOutcome { succeeded, failed, interrupted, unavailable }
+enum _SseSendOutcome { succeeded, failed, interrupted, unavailable, withheld, blocked }
 
 class _SseResult {
   final _SseSendOutcome outcome;
@@ -258,6 +258,10 @@ class ChatRepository {
 
       if (sseOutcome.outcome == _SseSendOutcome.interrupted) {
         // Partial text, already saved and marked by `_sendViaSse`.
+      } else if (sseOutcome.outcome == _SseSendOutcome.withheld) {
+        await _updateMessageText(assistantMsgId, kChatWithheldText);
+      } else if (sseOutcome.outcome == _SseSendOutcome.blocked) {
+        await _updateMessageText(assistantMsgId, kChatBlockedText);
       } else if (sseOutcome.outcome == _SseSendOutcome.unavailable) {
         // Deliberately without `kChatConnectionErrorPrefix`: that prefix is what puts a Retry
         // card on the row, and retrying this turn reaches the same refusal.
@@ -480,6 +484,20 @@ class ChatRepository {
             debugPrint("[ChatRepository] SSE stream error event: ${event.message}");
             if (event.details != null) {
               debugPrint("[ChatRepository] SSE stream error details: ${event.details}");
+            }
+            if (event.errorKind == 'safety_violation' || event.postHoc) {
+              // Never keep a guarded answer as a partial (F-31's rule is for dropped
+              // connections): it would stay on screen and sync to every device.
+              final withheld = event.postHoc || displayText.isNotEmpty;
+              displayText = '';
+              await _logTelemetry(
+                eventType: "error",
+                isOffline: false,
+                latencyMs: stopwatch.elapsedMilliseconds.toDouble(),
+                modelUsed: "server-sse",
+                errorMessage: withheld ? 'safety_violation: post_hoc' : 'safety_violation',
+              );
+              return _SseResult(withheld ? _SseSendOutcome.withheld : _SseSendOutcome.blocked);
             }
             if (displayText.isNotEmpty) {
               return keepPartial("stream_error", error: event.message);

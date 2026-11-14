@@ -640,6 +640,72 @@ abstract class AppLocalizations {
   /// **'Could not check reachability'**
   String get serverReachabilityError;
 
+  /// Settings row that permanently deletes the user's account.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete account'**
+  String get deleteAccountTitle;
+
+  /// Subtitle of the Delete account settings row.
+  ///
+  /// In en, this message translates to:
+  /// **'Permanently erase your account and its data'**
+  String get deleteAccountSubtitle;
+
+  /// Title of the account deletion confirmation.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete your account?'**
+  String get deleteAccountConfirmTitle;
+
+  /// Body of the account deletion confirmation.
+  ///
+  /// In en, this message translates to:
+  /// **'This permanently erases your AURA account from the server: memories, documents, tasks and other synced records, conversations, and every signed-in device. It cannot be undone. AURA then signs you out and clears its data from this device. To leave without deleting anything, sign out instead.'**
+  String get deleteAccountConfirmBody;
+
+  /// Destructive confirm button of the account deletion confirmation.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get deleteAccountConfirm;
+
+  /// Shown after the server confirms the account was erased.
+  ///
+  /// In en, this message translates to:
+  /// **'Your account has been deleted.'**
+  String get deleteAccountDone;
+
+  /// Shown when the server revoked sessions but reported a store it could not erase.
+  ///
+  /// In en, this message translates to:
+  /// **'Your sessions were ended, but part of your account could not be erased yet. Sign in and choose Delete account again to finish.'**
+  String get deleteAccountPartial;
+
+  /// Prefix of the error shown when the delete request failed; followed by the reason.
+  ///
+  /// In en, this message translates to:
+  /// **'Your account was not deleted.'**
+  String get deleteAccountFailed;
+
+  /// Title of the confirmation shown before switching backend server while signed in.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch server?'**
+  String get serverSwitchConfirmTitle;
+
+  /// Body of the server-switch confirmation.
+  ///
+  /// In en, this message translates to:
+  /// **'Your account and data live on the server you are leaving. AURA uploads unsynced changes there first when it can, signs you out, and clears its data from this device. Sign in again on the new server.'**
+  String get serverSwitchConfirmBody;
+
+  /// Confirm button of the server-switch confirmation.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch'**
+  String get serverSwitchConfirm;
+
   /// Footnote on the server environment screen
   ///
   /// In en, this message translates to:

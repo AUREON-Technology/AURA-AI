@@ -178,6 +178,18 @@ class LiveVoiceViewModel extends Notifier<LiveVoiceState> {
         unawaited(_socket?.reauth());
       case LiveCancelledFrame():
         state = state.copyWith(phase: 'listening', assistantDraft: '');
+      case LiveErrorFrame(:final error, :final message)
+          when error == 'session_expired' || error == 'socket_closed':
+        // The socket is gone: stop the mic and playback rather than leave the screen
+        // "listening" to nothing.
+        unawaited(_teardown());
+        state = state.copyWith(
+          phase: 'idle',
+          error: message,
+          micAmplitude: 0,
+          playbackAmplitude: 0,
+          assistantDraft: '',
+        );
       case LiveErrorFrame(:final message):
         state = state.copyWith(error: message);
       case LivePlaybackHintFrame(:final sampleRate):

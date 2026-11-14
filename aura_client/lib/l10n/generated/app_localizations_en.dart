@@ -295,6 +295,43 @@ class AppLocalizationsEn extends AppLocalizations {
   String get serverReachabilityError => 'Could not check reachability';
 
   @override
+  String get deleteAccountTitle => 'Delete account';
+
+  @override
+  String get deleteAccountSubtitle =>
+      'Permanently erase your account and its data';
+
+  @override
+  String get deleteAccountConfirmTitle => 'Delete your account?';
+
+  @override
+  String get deleteAccountConfirmBody =>
+      'This permanently erases your AURA account from the server: memories, documents, tasks and other synced records, conversations, and every signed-in device. It cannot be undone. AURA then signs you out and clears its data from this device. To leave without deleting anything, sign out instead.';
+
+  @override
+  String get deleteAccountConfirm => 'Delete';
+
+  @override
+  String get deleteAccountDone => 'Your account has been deleted.';
+
+  @override
+  String get deleteAccountPartial =>
+      'Your sessions were ended, but part of your account could not be erased yet. Sign in and choose Delete account again to finish.';
+
+  @override
+  String get deleteAccountFailed => 'Your account was not deleted.';
+
+  @override
+  String get serverSwitchConfirmTitle => 'Switch server?';
+
+  @override
+  String get serverSwitchConfirmBody =>
+      'Your account and data live on the server you are leaving. AURA uploads unsynced changes there first when it can, signs you out, and clears its data from this device. Sign in again on the new server.';
+
+  @override
+  String get serverSwitchConfirm => 'Switch';
+
+  @override
   String get serverSwitchExplainer =>
       'Switching servers clears your session on this device. Sign in again after changing environments.';
 

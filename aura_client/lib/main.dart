@@ -15,6 +15,7 @@ import 'l10n/generated/app_localizations.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (kReleaseMode) {
+    silenceDebugLogging();
     BackendUrlPolicy.assertSafeForRelease(AppConfig.backendUrl);
   }
   _warnIfAndroidDebugUsesLoopback();
@@ -36,6 +37,15 @@ void main() async {
       child: const AuraApp(),
     ),
   );
+}
+
+/// `debugPrint` is not stripped from a release build: it writes to logcat and the iOS device
+/// log, which other tools on the device and anyone with a cable can read. The app's ~120 calls
+/// include server response bodies (sync, memory, token exchange errors). A store build prints
+/// none of them.
+@visibleForTesting
+void silenceDebugLogging() {
+  debugPrint = (String? message, {int? wrapWidth}) {};
 }
 
 /// Physical Android treats loopback as the phone, not the PC/VPS.

@@ -80,10 +80,36 @@ class TokenManager {
     return _refreshToken != null && _refreshToken!.isNotEmpty;
   }
 
-  bool _hasFreshAccessToken() {
+  static const _freshnessMargin = Duration(seconds: 30);
+
+  bool _hasFreshAccessToken([Duration margin = _freshnessMargin]) {
     return _accessToken != null &&
         _accessTokenExpiry != null &&
-        DateTime.now().isBefore(_accessTokenExpiry!.subtract(const Duration(seconds: 30)));
+        DateTime.now().isBefore(_accessTokenExpiry!.subtract(margin));
+  }
+
+  /// Like [getValidAccessToken], but renews a cached token that would expire within
+  /// [minValidity] instead of handing it out.
+  ///
+  /// For a credential that has to stay good for a while after it is sent: the live-voice
+  /// socket re-checks the token it holds every 60 s and closes with 4401 once it has expired
+  /// (`aura_core/api/ws_auth.py`), so a `reauth` must carry a token with more than one
+  /// re-check interval left, not one with 31 s. A separate method, not a parameter on
+  /// [getValidAccessToken], so the subclasses tests stub that method with stay valid
+  /// overrides; with no cached token it simply defers to [getValidAccessToken].
+  Future<String?> getAccessTokenValidFor(Duration minValidity) {
+    if (_accessToken == null || _accessTokenExpiry == null || _hasFreshAccessToken(minValidity)) {
+      return getValidAccessToken();
+    }
+    final inFlight = _inFlightAccessToken;
+    if (inFlight != null) return inFlight;
+    final request = _refreshOrExchange(minValidity);
+    _inFlightAccessToken = request;
+    return request.whenComplete(() {
+      if (identical(_inFlightAccessToken, request)) {
+        _inFlightAccessToken = null;
+      }
+    });
   }
 
   /// Returns a valid access token, transparently refreshing or
@@ -114,8 +140,8 @@ class TokenManager {
     });
   }
 
-  Future<String?> _refreshOrExchange() async {
-    if (_hasFreshAccessToken()) return _accessToken;
+  Future<String?> _refreshOrExchange([Duration margin = _freshnessMargin]) async {
+    if (_hasFreshAccessToken(margin)) return _accessToken;
 
     final afterRejection = _renewingAfterRejection;
     _renewingAfterRejection = false;

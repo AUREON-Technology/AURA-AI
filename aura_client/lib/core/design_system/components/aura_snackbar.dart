@@ -16,14 +16,35 @@ class AuraSnackbar {
     String? actionLabel,
     VoidCallback? onAction,
     Duration? duration,
+  }) =>
+      showOn(
+        ScaffoldMessenger.of(context),
+        palette: AuraPalette.of(context),
+        message: message,
+        kind: kind,
+        actionLabel: actionLabel,
+        onAction: onAction,
+        duration: duration,
+      );
+
+  /// [show] on a messenger and palette read earlier, for a message that must survive the
+  /// widget that triggered it -- one shown as the router leaves the page (account deletion
+  /// ends on the login screen). The app-level messenger outlives every route.
+  static ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showOn(
+    ScaffoldMessengerState messenger, {
+    required AuraPalette palette,
+    required String message,
+    AuraSnackbarKind kind = AuraSnackbarKind.info,
+    String? actionLabel,
+    VoidCallback? onAction,
+    Duration? duration,
   }) {
-    final palette = AuraPalette.of(context);
     final color = switch (kind) {
       AuraSnackbarKind.success => palette.success,
       AuraSnackbarKind.error => palette.danger,
       AuraSnackbarKind.info => palette.brand,
     };
-    return ScaffoldMessenger.of(context).showSnackBar(
+    return messenger.showSnackBar(
       SnackBar(
         content: Text(message),
         backgroundColor: color,

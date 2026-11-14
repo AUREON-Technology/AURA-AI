@@ -53,7 +53,14 @@ jobs:
         run: dart run build_runner build --delete-conflicting-outputs
 
       - name: Build release APK
-        run: flutter build apk --release --dart-define=BACKEND_URL=${{ github.event.inputs.backend_url }}
+        # The input goes through env, never straight into the script: an expression interpolated
+        # into `run:` is pasted into the shell as code. --build-number gives every run a new
+        # Android versionCode / iOS CFBundleVersion; pubspec's `3.0.1` has no `+N`, so every
+        # build was versionCode 1 and Play refuses a second upload with the same one.
+        env:
+          BACKEND_URL: ${{ github.event.inputs.backend_url || 'https://aureon-ai.tech' }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: flutter build apk --release --build-number="$BUILD_NUMBER" --dart-define=BACKEND_URL="$BACKEND_URL"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -119,7 +126,9 @@ jobs:
           AURA_RELEASE_STORE_PASSWORD: ${{ secrets.AURA_RELEASE_STORE_PASSWORD }}
           AURA_RELEASE_KEY_PASSWORD: ${{ secrets.AURA_RELEASE_KEY_PASSWORD }}
           AURA_RELEASE_KEY_ALIAS: ${{ secrets.AURA_RELEASE_KEY_ALIAS }}
-        run: flutter build appbundle --release --dart-define=BACKEND_URL=${{ github.event.inputs.backend_url }}
+          BACKEND_URL: ${{ github.event.inputs.backend_url || 'https://aureon-ai.tech' }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: flutter build appbundle --release --build-number="$BUILD_NUMBER" --dart-define=BACKEND_URL="$BACKEND_URL"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: steps.signing.outputs.available == 'true'

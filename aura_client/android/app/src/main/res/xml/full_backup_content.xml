@@ -4,5 +4,6 @@
   (the API 31+ equivalent) for why this file exists.
 -->
 <full-backup-content>
+    <exclude domain="file" path=".aura_db_key"/>
     <exclude domain="file" path="app_flutter/.aura_db_key"/>
 </full-backup-content>

@@ -10,6 +10,74 @@ iOS:
 
 Evidence scale and refresh steps: [README.md](README.md).
 
+## Update 2026-11-14 (release readiness pass, on `b655421`)
+
+A contract and release audit of the app against everything merged since 2026-10-28. Everything
+below is **TESTED locally** (Flutter 3.44.6: `flutter analyze` clean, `flutter test` 673 passed,
+3 skipped; backend pytest and legacy unittest, see the PR). None of it is CI-run, deployed or
+checked on a device yet.
+
+Fixed:
+- **Account deletion (store requirement, Apple 5.1.1(v) / Google Play).** New
+  `POST /api/v3/account/delete` (`aura_backend/api/account.py`) runs the operator erasure
+  (`erase_account`, shared with `/admin/users/{subject}/forget`) on the caller; it needs
+  `{"confirm": "DELETE"}` and refuses scoped daemon tokens and service keys. You → Account →
+  Delete account confirms, calls it, then clears the device like sign-out (no final push).
+  Erasure also records an erased-at time that `verify_access_token` checks against a token's
+  `iat`, so another device's still-unexpired access token cannot sync the account back into
+  existence. Known gap: that other device keeps its local copy until it signs in again, and
+  signing back in with the same Google account starts a fresh account that its outbox can
+  repopulate.
+- **Plaintext DB key in Android backups.** The backup rules excluded `app_flutter/.aura_db_key`,
+  but `getApplicationSupportDirectory()` is `filesDir`, so the real file `files/.aura_db_key`
+  went into cloud backup and device transfer. Both rule files now name it
+  (`test/android_backup_rules_test.dart`).
+- **Answers withheld by the output guard stayed on screen and synced.** F-31's keep-partial path
+  caught the post-stream `safety_violation` frame. The text is now replaced
+  (`kChatWithheldText`) before it is queued; a request blocked before any token says so, neither
+  with a Retry card (`chat_stream_stop_test.dart`).
+- **Live voice died silently at token expiry.** The server re-checks the socket's token every
+  60 s and closes with 4401. The socket now renews every 45 s with a token valid for at least
+  2 minutes (`TokenManager.getAccessTokenValidFor`), and a server close ends the session with a
+  message instead of leaving the screen "listening" (`live_voice_socket_test.dart`).
+- **Images over ~3.7 MB got a 413** once vision is on: the flat 5 MB body cap sat under the
+  10 MB per image `/capabilities` advertises. With vision enabled the chat routes now allow the
+  base64 of `max_request_image_bytes` plus 1 MB (~17 MB with defaults, under nginx's 20 MB).
+- **The dead `dev.aureon-ai.tech` preset is gone from release builds** (picker hidden; a saved
+  `development` choice reads as production). In debug builds, switching server while signed in
+  now asks, then signs out on the old server (revoke + wipe) before switching.
+- **iOS:** deployment target 13.0 → 15.0 (the locked `firebase_core` 4.12.1 requires 15.0, so
+  `pod install` would fail); `NSFaceIDUsageDescription` (biometric unlock),
+  `NSPhotoLibraryUsageDescription` and `NSAppleMusicUsageDescription` (file_picker links both
+  pickers; ITMS-90683) added (`test/ios_release_config_test.dart`).
+- **Release workflow:** `--build-number=${{ github.run_number }}` (every build was versionCode 1,
+  so Play would refuse the second upload); the `backend_url` input goes through `env`, not
+  straight into the shell.
+- **Release logs:** `debugPrint`, which Flutter does not strip, is silenced in release builds
+  (it printed server response bodies).
+- **`AuraDialog` buttons** ellipsize instead of overflowing on a 360 px phone.
+
+Still open, needs the owner (cannot be done from the repo):
+- **iOS sign-in:** the iOS OAuth client id (`GIDClientID` + reversed-client-id URL scheme), an
+  Apple team id (`DEVELOPMENT_TEAM`), an App ID with App Attest, and a macOS build pipeline.
+- **Sign in with Apple** (Apple 4.8: Google is the only sign-in). Needs an Apple Services ID and a
+  backend token-exchange route; not started.
+- **A privacy policy URL** (both stores; none exists in the repo), the Play Data Safety form, a
+  web account-deletion URL for Play, App Privacy answers.
+- **Android signing:** the `AURA_RELEASE_*` secrets (without them the AAB job skips) and the Play
+  app-signing SHA-1 registered for Google sign-in.
+- **Crash reporting:** none is wired; choosing a service is a privacy decision.
+
+Accepted trade-offs from the review of this pass: with vision on, the chat routes buffer up
+to ~17 MB before authentication rejects a request (nginx already allows 20 MB on every route on
+the VPS; Railway has no nginx); a guarded turn's tool-call and citation metadata stay on the row
+(only the answer text was guarded).
+
+Still open in code (lower priority): `confirmation_invalid`, `budget_exceeded` and
+`user_concurrency_limit` chat errors still render as "Connection Error" with a Retry card, and
+a 429's Retry ignores `Retry-After` (P3); no app-level `PrivacyInfo.xcprivacy`; Play Integrity
+uses the classic API's daily quota.
+
 ## Summary
 
 Every mobile feature is built and most of the core plumbing is tested, but nothing is proven. No
@@ -47,6 +115,7 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
 | Offline sync (data only; no model on device) | TESTED (outbox); broken end to end | Outbox tests are green. F-11: pull is skipped when push fails. F-12: the cursor comes from the app clock. F-13: memory rows are rejected forever. |
 | Auth and sign-out | TESTED | `5153394`: revoke and wipe on sign-out. F-33 and F-34 fixed on 2026-10-30 (TESTED locally, not proven): a 401 followed by a refused refresh ends the session and the router shows login, keeping local data (`test/ux/session_expiry_test.dart`); sign-out asks first. Switching backend (`setEnvironment()`) clears tokens without revoking them or wiping data. |
 | Device attestation | TESTED (unit); can be bypassed | Play Integrity (`IntegrityAttestationPlugin.kt`) and App Attest (`AppAttestPlugin.swift`), with backend tests green. F-09 / SEC-05: any account can skip attestation through `/desktop/login`. |
+| Account deletion | TESTED locally (2026-11-14) | `POST /api/v3/account/delete` + You → Account → Delete account; `test/account_deletion_test.dart`, `tests/unit/test_account_self_deletion.py`. Not deployed. |
 | Push notifications | OPEN | No `firebase_messaging`; a failed `Firebase.initializeApp()` is ignored (`main.dart:26`); iOS has no `GoogleService-Info.plist`; in-app notification centre only |
 | Accessibility / i18n | BUILT; TESTED locally (F-36 foundation, 2026-10-30) | `design_system_contrast_test.dart`, `test/ux/`. F-36: every `IconButton` under `lib/` now has a tooltip, pinned by `test/ux/icon_button_tooltip_test.dart` (Send already had one; the 18 real gaps were in tasks, calendar, finance, memory bank, hostd page, live voice, analytics, GitHub tab, plus the chat header menu button). Strings for chat, sign-in, You/settings and the design-system components moved to `app_en.arb` (34 → 203 keys) and are read via `context.l10n` (`lib/l10n/l10n.dart`, English fallback when no delegate is present). Other features still hold 209 hard-coded `Text('...')` literals, held by `test/ux/hardcoded_text_ratchet_test.dart`. RTL: layout code uses directional APIs (`test/ux/rtl_layout_test.dart` guard), and the chat composer, empty chat, You and sign-in screens render under `TextDirection.rtl` at 360 px with no exception. No Arabic locale yet. Screen-reader output and Arabic glyph shaping have not been checked on a device. |
 | Android release (APK/AAB) | BUILT; not currently built in CI | See below |
@@ -71,7 +140,7 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
 - **Backend URL:** fixed at build time, plus a runtime switch between allowlisted presets
   (`aureon-ai.tech`, `dev.aureon-ai.tech`). `dev.aureon-ai.tech` no longer resolves in DNS.
 - **iOS:** no CI job and no IPA workflow. `scripts/deploy_client.sh` builds an IPA on macOS only.
-  There is no `DEVELOPMENT_TEAM`. Bundle id `com.auraai.auraClient`, iOS 13.
+  There is no `DEVELOPMENT_TEAM`. Bundle id `com.auraai.auraClient`, iOS 15 (raised from 13 on 2026-11-14 for `firebase_core`).
 
 ## Open issues (most severe first)
 

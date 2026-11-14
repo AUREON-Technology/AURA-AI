@@ -16,6 +16,15 @@ const kChatConnectionErrorMessage =
 /// [kChatConnectionErrorPrefix], so the transcript shows no Retry card.
 const kChatFeatureUnavailableText = '$kFeatureUnavailableTitle. $kFeatureUnavailableMessage';
 
+/// Assistant-row text for an answer the output guard withheld after it had streamed
+/// (`safety_violation`, `post_hoc`). Replaces the streamed text rather than keeping it: the
+/// guard exists to keep that content off the screen and out of the synced transcript.
+/// Deliberately without [kChatConnectionErrorPrefix]: retrying is not the remedy.
+const kChatWithheldText = 'This response was withheld by a safety check.';
+
+/// Assistant-row text for a request a guard refused before anything was generated.
+const kChatBlockedText = 'AURA did not answer this request: it was stopped by a safety check.';
+
 bool isChatConnectionErrorText(String text) =>
     text.startsWith(kChatConnectionErrorPrefix);
 

@@ -62,6 +62,67 @@ void main() {
     expect(store.token, 'refresh-xyz');
   });
 
+  group('getAccessTokenValidFor', () {
+    // First refresh issues a token with [firstTtl] left; the second a full 15 minutes.
+    (ProviderContainer, List<String>) setUpWith(int firstTtl) {
+      final store = _MemoryRefreshTokenStore('refresh-0');
+      final issued = <String>[];
+      final httpClient = MockClient((request) async {
+        if (!request.url.path.endsWith('/refresh')) fail('unexpected ${request.url}');
+        final n = issued.length + 1;
+        issued.add('access-$n');
+        return http.Response(
+          jsonEncode({
+            'access_token': 'access-$n',
+            'refresh_token': 'refresh-$n',
+            'expires_in': n == 1 ? firstTtl : 900,
+          }),
+          200,
+        );
+      });
+      final container = ProviderContainer(overrides: [
+        tokenManagerProvider.overrideWith(
+          (ref) => TokenManager(ref, httpClient: httpClient, store: store),
+        ),
+      ]);
+      addTearDown(container.dispose);
+      return (container, issued);
+    }
+
+    test('renews a token that would expire within the window', () async {
+      final (container, issued) = setUpWith(90);
+      final tm = container.read(tokenManagerProvider);
+      expect(await tm.getValidAccessToken(), 'access-1');
+
+      // 90 s left: fresh for an ordinary request, not for a socket re-checked every 60 s.
+      expect(await tm.getValidAccessToken(), 'access-1');
+      expect(await tm.getAccessTokenValidFor(const Duration(minutes: 2)), 'access-2');
+      expect(issued, ['access-1', 'access-2']);
+    });
+
+    test('reuses a token that outlasts the window', () async {
+      final (container, issued) = setUpWith(900);
+      final tm = container.read(tokenManagerProvider);
+      await tm.getValidAccessToken();
+
+      expect(await tm.getAccessTokenValidFor(const Duration(minutes: 2)), 'access-1');
+      expect(issued, ['access-1']);
+    });
+
+    test('concurrent renewals share one /refresh', () async {
+      final (container, issued) = setUpWith(90);
+      final tm = container.read(tokenManagerProvider);
+      await tm.getValidAccessToken();
+
+      final results = await Future.wait([
+        tm.getAccessTokenValidFor(const Duration(minutes: 2)),
+        tm.getAccessTokenValidFor(const Duration(minutes: 2)),
+      ]);
+      expect(results, ['access-2', 'access-2']);
+      expect(issued, ['access-1', 'access-2'], reason: 'a replayed refresh token revokes its family');
+    });
+  });
+
   test('invalidateAccessToken does not clear the refresh token', () async {
     final store = _MemoryRefreshTokenStore('refresh-abc');
     var refreshCalls = 0;

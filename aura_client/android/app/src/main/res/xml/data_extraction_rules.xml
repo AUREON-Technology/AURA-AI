@@ -10,15 +10,22 @@
   backup -readable by anyone who can restore or extract the backup archive.
 
   path_provider's getApplicationSupportDirectory() resolves on Android to
-  <filesDir>/app_flutter (long-documented path_provider_android behaviour,
-  unchanged across the 2.1.x line pinned in pubspec.yaml) -domain="file"
-  below is Context.getFilesDir().
+  Context.getFilesDir() itself (path_provider_android 2.3.x:
+  getApplicationSupportPath() returns filesDir), so the key file is
+  files/.aura_db_key, i.e. domain="file" path=".aura_db_key". These rules used
+  to name app_flutter/.aura_db_key -a path under filesDir that does not exist
+  (app_flutter is getDir("flutter"), the *documents* directory, outside
+  filesDir) -so the plaintext key went into every backup. The old path stays
+  excluded as well, in case a future path_provider moves the support
+  directory there. test/android_backup_rules_test.dart pins both.
 -->
 <data-extraction-rules>
     <cloud-backup>
+        <exclude domain="file" path=".aura_db_key"/>
         <exclude domain="file" path="app_flutter/.aura_db_key"/>
     </cloud-backup>
     <device-transfer>
+        <exclude domain="file" path=".aura_db_key"/>
         <exclude domain="file" path="app_flutter/.aura_db_key"/>
     </device-transfer>
 </data-extraction-rules>

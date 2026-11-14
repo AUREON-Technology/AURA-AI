@@ -53,6 +53,13 @@ class UndoableDeletes extends Notifier<Set<String>> {
     }
   }
 
+  /// Drops everything still pending without running it -- account deletion calls this: the
+  /// server is erasing the whole account, so a single pending delete has nothing left to do.
+  void discardAll() {
+    _commits.clear();
+    state = const {};
+  }
+
   /// Commits everything still pending -- sign-out calls this before its final
   /// push, so a delete made just before signing out still reaches the server.
   Future<void> commitAll() async {
