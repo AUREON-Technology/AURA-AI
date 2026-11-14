@@ -26,9 +26,17 @@ class BackendUrlNotifier extends Notifier<String> {
       BackendUrlSettings.environmentForUrl(state);
 
   /// Switches to a preset environment, clears JWTs, and drops cached attestation.
+  ///
+  /// Does not sign out: a signed-in caller must end the session on the *current* server
+  /// first (`AuthNotifier.signOut` revokes the refresh token there and wipes this device's
+  /// data), or the old server keeps a live refresh token and the local rows and outbox of one
+  /// server are pushed to the other. `BackendEnvironmentPage` does that before calling this.
   Future<bool> setEnvironment(BackendEnvironment environment) async {
     final url = BackendUrlSettings.urlFor(environment);
     if (url == state) return false;
+    if (!BackendUrlSettings.selectableEnvironments.contains(environment)) {
+      throw StateError('${BackendUrlSettings.labelFor(environment)} is not available in this build.');
+    }
 
     final error = BackendUrlSettings.validationError(url);
     if (error != null) {

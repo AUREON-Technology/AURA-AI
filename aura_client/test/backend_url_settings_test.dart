@@ -40,5 +40,34 @@ void main() {
         BackendEnvironment.development,
       );
     });
+
+    group('release build', () {
+      setUp(() => BackendUrlSettings.releaseBuild = true);
+      tearDown(() => BackendUrlSettings.releaseBuild = false);
+
+      test('offers production only: the dev host no longer resolves', () {
+        expect(BackendUrlSettings.selectableEnvironments, [BackendEnvironment.production]);
+        expect(BackendUrlSettings.offersEnvironmentChoice, isFalse);
+      });
+
+      test('a saved development choice from an older build reads as none', () {
+        expect(BackendUrlSettings.savedEnvironmentFrom('development'), isNull);
+        expect(
+          BackendUrlSettings.savedEnvironmentFrom('production'),
+          BackendEnvironment.production,
+        );
+      });
+    });
+
+    test('debug and profile builds keep both presets', () {
+      BackendUrlSettings.releaseBuild = false;
+      expect(BackendUrlSettings.selectableEnvironments, BackendEnvironment.values);
+      expect(BackendUrlSettings.offersEnvironmentChoice, isTrue);
+      expect(
+        BackendUrlSettings.savedEnvironmentFrom('development'),
+        BackendEnvironment.development,
+      );
+      expect(BackendUrlSettings.savedEnvironmentFrom('garbage'), isNull);
+    });
   });
 }

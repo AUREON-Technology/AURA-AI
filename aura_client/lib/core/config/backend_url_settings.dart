@@ -32,6 +32,21 @@ class BackendUrlSettings {
 
   static String urlFor(BackendEnvironment environment) => presetUrls[environment]!;
 
+  /// Whether this is a store build. A field, not a getter on [kReleaseMode], so a test can
+  /// exercise the release rules.
+  @visibleForTesting
+  static bool releaseBuild = kReleaseMode;
+
+  /// The environments a user may pick. A release build offers production only:
+  /// [developmentUrl] (`dev.aureon-ai.tech`) stopped resolving in DNS, and a user who picked
+  /// it was signed out onto a server that does not exist, with the choice saved across
+  /// launches. Debug and profile builds keep both for development.
+  static List<BackendEnvironment> get selectableEnvironments =>
+      releaseBuild ? const [BackendEnvironment.production] : BackendEnvironment.values;
+
+  /// Whether a server picker is worth showing at all (more than one choice).
+  static bool get offersEnvironmentChoice => selectableEnvironments.length > 1;
+
   static BackendEnvironment environmentForUrl(String url) {
     final normalized = _normalizeUrl(url);
     return _urlToEnvironment[normalized] ?? BackendEnvironment.production;
@@ -54,14 +69,24 @@ class BackendUrlSettings {
     if (!_secureStorageAvailable) return null;
     try {
       final raw = await auraSecureStorage.read(key: storageKey);
-      return switch (raw) {
-        'production' => BackendEnvironment.production,
-        'development' => BackendEnvironment.development,
-        _ => null,
-      };
+      return savedEnvironmentFrom(raw);
     } on Object {
       return null;
     }
+  }
+
+  /// Parses a stored choice. A choice this build no longer offers (a release build that
+  /// inherited `development` from an earlier version) reads as none, so the app starts on
+  /// production instead of on a server that does not resolve.
+  @visibleForTesting
+  static BackendEnvironment? savedEnvironmentFrom(String? raw) {
+    final environment = switch (raw) {
+      'production' => BackendEnvironment.production,
+      'development' => BackendEnvironment.development,
+      _ => null,
+    };
+    if (environment == null || !selectableEnvironments.contains(environment)) return null;
+    return environment;
   }
 
   static Future<void> saveEnvironment(BackendEnvironment environment) async {

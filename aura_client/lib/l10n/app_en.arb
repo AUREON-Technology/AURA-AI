@@ -375,6 +375,50 @@
   "@serverReachabilityError": {
     "description": "Backend reachability probe failed"
   },
+  "deleteAccountTitle": "Delete account",
+  "@deleteAccountTitle": {
+    "description": "Settings row that permanently deletes the user's account."
+  },
+  "deleteAccountSubtitle": "Permanently erase your account and its data",
+  "@deleteAccountSubtitle": {
+    "description": "Subtitle of the Delete account settings row."
+  },
+  "deleteAccountConfirmTitle": "Delete your account?",
+  "@deleteAccountConfirmTitle": {
+    "description": "Title of the account deletion confirmation."
+  },
+  "deleteAccountConfirmBody": "This permanently erases your AURA account from the server: memories, documents, tasks and other synced records, conversations, and every signed-in device. It cannot be undone. AURA then signs you out and clears its data from this device. To leave without deleting anything, sign out instead.",
+  "@deleteAccountConfirmBody": {
+    "description": "Body of the account deletion confirmation."
+  },
+  "deleteAccountConfirm": "Delete",
+  "@deleteAccountConfirm": {
+    "description": "Destructive confirm button of the account deletion confirmation."
+  },
+  "deleteAccountDone": "Your account has been deleted.",
+  "@deleteAccountDone": {
+    "description": "Shown after the server confirms the account was erased."
+  },
+  "deleteAccountPartial": "Your sessions were ended, but part of your account could not be erased yet. Sign in and choose Delete account again to finish.",
+  "@deleteAccountPartial": {
+    "description": "Shown when the server revoked sessions but reported a store it could not erase."
+  },
+  "deleteAccountFailed": "Your account was not deleted.",
+  "@deleteAccountFailed": {
+    "description": "Prefix of the error shown when the delete request failed; followed by the reason."
+  },
+  "serverSwitchConfirmTitle": "Switch server?",
+  "@serverSwitchConfirmTitle": {
+    "description": "Title of the confirmation shown before switching backend server while signed in."
+  },
+  "serverSwitchConfirmBody": "Your account and data live on the server you are leaving. AURA uploads unsynced changes there first when it can, signs you out, and clears its data from this device. Sign in again on the new server.",
+  "@serverSwitchConfirmBody": {
+    "description": "Body of the server-switch confirmation."
+  },
+  "serverSwitchConfirm": "Switch",
+  "@serverSwitchConfirm": {
+    "description": "Confirm button of the server-switch confirmation."
+  },
   "serverSwitchExplainer": "Switching servers clears your session on this device. Sign in again after changing environments.",
   "@serverSwitchExplainer": {
     "description": "Footnote on the server environment screen"

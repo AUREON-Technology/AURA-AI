@@ -11,7 +11,7 @@ corrected in the same change.
 | --- | --- | --- |
 | Backend (`aura_backend/`, `deploy/`) | [BACKEND_STATUS.md](BACKEND_STATUS.md) | Live on Railway at `ffbbb9f`, ready, **schema `0019` (head) since at latest 2026-11-07**; `hfspace` 503 so only `internal`-ceiling inference is up; `/metrics` and `/docs` open; runners assigned again but no application suite CI-run since `dc87beb`; VPS deploy blocked |
 | Desktop app (`aura_client` desktop + `aura_hostd`) | [DESKTOP_APP_STATUS.md](DESKTOP_APP_STATUS.md) | Linux built in CI at `dc87beb`; Windows/hostd fixes merged but never CI-run; nothing packaged. 2026-11-08 assessment: not production-ready |
-| Mobile app (`aura_client` Android/iOS) | [MOBILE_APP_STATUS.md](MOBILE_APP_STATUS.md) | 381 tests green at `dc87beb`; sync/approval fixes merged since, not CI-run; no iOS pipeline |
+| Mobile app (`aura_client` Android/iOS) | [MOBILE_APP_STATUS.md](MOBILE_APP_STATUS.md) | 2026-11-14 release pass: account deletion, backup-key, guard and live-voice fixes, 673 tests green locally, not CI-run; iOS still blocked on owner items (Google client id, team id, Sign in with Apple, privacy policy) |
 | Web console (`aura_admin/`) | [WEB_CONSOLE_STATUS.md](WEB_CONSOLE_STATUS.md) | Built and wired into both stacks; not served anywhere reachable; **Admin CI green once** (run #3, dispatched 2026-11-07: typecheck, build, Playwright e2e) |
 
 ## The evidence scale
