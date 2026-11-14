@@ -29,6 +29,17 @@
 	<!-- Phase F2: recording a voice note for POST /api/v3/voice/transcribe. -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>AURA needs microphone access for voice notes and live voice chat.</string>
+	<!-- Biometric unlock on the login screen (local_auth, biometricOnly). Without this key
+	     iOS refuses Face ID and the unlock fails. -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>AURA uses Face ID to unlock your account on this device.</string>
+	<!-- file_picker links its photo-gallery and media-library pickers by default; App Store
+	     Connect rejects an upload whose binary references those APIs without a purpose string
+	     (ITMS-90683), even though the app only opens the Files picker (FileType.custom). -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>AURA opens your photo library only when you choose an image to attach to a message.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>AURA opens your media library only when you choose a file to attach.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
