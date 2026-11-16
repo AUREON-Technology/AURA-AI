@@ -38,6 +38,7 @@ from ..domain.memory import MemoryKind, MemoryQuery
 from ..domain.output_schema import check_output_schema
 from ..domain.reasoning import ReasoningStrategy
 from ..domain.tenancy import WorkspaceContext, WorkspaceKind, workspace_scope
+from ..domain.tenancy import can as can_in_workspace
 from ..domain.untrusted import MAX_UNTRUSTED_CHARS
 from ..kernel.kernel import TurnRequest
 from ..observability.logging import get_logger
@@ -341,6 +342,18 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         except Exception:
             logger.warning("service audit write failed", extra={"action": action}, exc_info=True)
 
+    def require_knowledge_write(caller: Principal) -> None:
+        """Inside a team only Owners and Admins change the shared corpus (ADR-034); a Member
+        reads it. Outside a team this is the caller's own corpus and nothing is checked."""
+        workspace = caller.workspace
+        if workspace is not None and workspace.kind is WorkspaceKind.TEAM and not can_in_workspace(
+            workspace.role, "manage_knowledge"
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=AuthorizationError("only a workspace owner or admin can change its knowledge").to_dict(),
+            )
+
     # Optional `Idempotency-Key` support (roadmap P1.4; see api/idempotency.py). Set before any
     # route is declared: APIRouter reads `route_class` at decoration time. A route opts in with
     # `dependencies=idempotent`; without the header the route behaves exactly as before.
@@ -472,6 +485,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         return TurnRequest(
             message=message,
             user_id=caller.user_id,
+            knowledge_owner=caller.knowledge_owner,
             session_id=SessionId(payload.session_id) if payload.session_id else None,
             agent=payload.agent,
             correlation_id=CorrelationId(
@@ -765,16 +779,17 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         request: Request, payload: IngestRequest, caller: Principal = Depends(principal)
     ) -> JSONResponse:
         await enforce_rate_limit(request, caller, "ingest")
+        require_knowledge_write(caller)
         result = await container.knowledge.ingest(
             content=payload.content,
             title=payload.title,
             document_id=DocumentId(payload.document_id) if payload.document_id else None,
-            owner_id=caller.user_id,
+            owner_id=caller.knowledge_owner,
             metadata=payload.metadata,
         )
         if container.cag is not None and result.document is not None:
             await container.cag.on_document_changed(
-                result.document.id, owner_id=caller.user_id
+                result.document.id, owner_id=caller.knowledge_owner
             )
         return JSONResponse(
             content={
@@ -805,6 +820,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         ones with the same honest "OCR is not configured" note `extract_pdf` always produces.
         """
         await enforce_rate_limit(request, caller, "ingest")
+        require_knowledge_write(caller)
         data = await file.read()
         if len(data) > settings.knowledge.max_document_bytes:
             raise ValidationError(
@@ -819,11 +835,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
             extraction = await apply_ocr(extraction, container.ocr_engine)
 
         result = await container.knowledge.ingest(
-            title=title, owner_id=caller.user_id, segments=extraction.blocks,
+            title=title, owner_id=caller.knowledge_owner, segments=extraction.blocks,
         )
         if container.cag is not None and result.document is not None:
             await container.cag.on_document_changed(
-                result.document.id, owner_id=caller.user_id
+                result.document.id, owner_id=caller.knowledge_owner
             )
         return JSONResponse(
             content={
@@ -846,7 +862,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     ) -> JSONResponse:
         await enforce_rate_limit(request, caller, "search")
         result = await container.knowledge.retrieve(
-            payload.query, owner_id=caller.user_id, limit=payload.limit
+            payload.query, owner_id=caller.knowledge_owner, limit=payload.limit
         )
         return JSONResponse(
             content={
@@ -874,12 +890,13 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         request: Request, document_id: str, caller: Principal = Depends(principal)
     ) -> JSONResponse:
         await enforce_rate_limit(request, caller, "ingest")
+        require_knowledge_write(caller)
         doc_id = DocumentId(document_id)
         removed = await container.knowledge.delete_document(
-            doc_id, owner_id=caller.user_id
+            doc_id, owner_id=caller.knowledge_owner
         )
         if container.cag is not None:
-            await container.cag.on_document_changed(doc_id, owner_id=caller.user_id)
+            await container.cag.on_document_changed(doc_id, owner_id=caller.knowledge_owner)
         return JSONResponse(content={"deleted": True, "chunks_removed": removed})
 
     @router.post("/knowledge/documents/{document_id}/cag-pin", dependencies=idempotent)
@@ -888,13 +905,14 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     ) -> JSONResponse:
         """Pin a user-owned document into the CAG prefix (ADR-010)."""
         await enforce_rate_limit(request, caller, "ingest")
+        require_knowledge_write(caller)
         if container.cag is None:
             raise DependencyUnavailableError(
                 "CAG is disabled on this deployment",
                 dependency="cag",
             )
         document = await container.cag.set_pin(
-            DocumentId(document_id), owner_id=caller.user_id, pinned=True
+            DocumentId(document_id), owner_id=caller.knowledge_owner, pinned=True
         )
         return JSONResponse(
             content={
@@ -910,13 +928,14 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     ) -> JSONResponse:
         """Remove a document from the CAG prefix."""
         await enforce_rate_limit(request, caller, "ingest")
+        require_knowledge_write(caller)
         if container.cag is None:
             raise DependencyUnavailableError(
                 "CAG is disabled on this deployment",
                 dependency="cag",
             )
         document = await container.cag.set_pin(
-            DocumentId(document_id), owner_id=caller.user_id, pinned=False
+            DocumentId(document_id), owner_id=caller.knowledge_owner, pinned=False
         )
         return JSONResponse(
             content={
@@ -941,7 +960,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                     "documents": [],
                 }
             )
-        prefix = await container.cag.prefix_for(caller.user_id)
+        prefix = await container.cag.prefix_for(caller.knowledge_owner)
         if prefix is None:
             return JSONResponse(
                 content={
@@ -966,7 +985,7 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
     ) -> JSONResponse:
         await enforce_rate_limit(request, caller, "read")
         documents = await container.documents.list_active(
-            owner_id=caller.user_id, limit=limit, offset=offset
+            owner_id=caller.knowledge_owner, limit=limit, offset=offset
         )
         return JSONResponse(
             content={
@@ -1028,11 +1047,11 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         await enforce_rate_limit(request, caller, "read")
         enabled = container.settings.knowledge.graph_enabled
         entities = await container.graph.find_entities(
-            owner_id=caller.user_id, name=query or None, type=type, limit=limit,
+            owner_id=caller.knowledge_owner, name=query or None, type=type, limit=limit,
             include_expired=include_expired,
         )
         relations = await container.graph.list_relations(
-            owner_id=caller.user_id,
+            owner_id=caller.knowledge_owner,
             entity_keys=[e.key for e in entities] if query or type else None,
             limit=limit * 2,
             include_expired=include_expired,
@@ -1057,14 +1076,14 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         Another user's key is reported exactly like an absent one (404).
         """
         await enforce_rate_limit(request, caller, "read")
-        entity = await container.graph.get_entity(entity_key, owner_id=caller.user_id)
+        entity = await container.graph.get_entity(entity_key, owner_id=caller.knowledge_owner)
         if entity is None:
             raise HTTPException(status_code=404, detail={"error": "not_found"})
         neighbours, relations = await container.graph.neighbours(
-            entity_key, owner_id=caller.user_id, depth=depth, limit=100
+            entity_key, owner_id=caller.knowledge_owner, depth=depth, limit=100
         )
         provenance = await container.graph.provenance(
-            owner_id=caller.user_id, entity_key=entity_key
+            owner_id=caller.knowledge_owner, entity_key=entity_key
         )
         return JSONResponse(
             content={

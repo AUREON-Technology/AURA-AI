@@ -116,6 +116,10 @@ class TurnRequest:
     message: str
     user_id: UserId
     session_id: SessionId | None = None
+    #: Owner for shareable data -- knowledge retrieval, CAG and the knowledge tools (ADR-034):
+    #: the team's ``workspace:<id>`` scope inside a team workspace. ``None`` means ``user_id``.
+    #: Memory, history, goals and Personal-OS always use ``user_id``.
+    knowledge_owner: UserId | None = None
     agent: str = "orchestrator"
     correlation_id: CorrelationId | None = None
     use_knowledge: bool = True
@@ -1118,7 +1122,7 @@ class AIKernel:
             if not (request.use_knowledge and deps.knowledge is not None):
                 return None
             try:
-                return await deps.knowledge.retrieve(message, owner_id=request.user_id)
+                return await deps.knowledge.retrieve(message, owner_id=request.knowledge_owner or request.user_id)
             except Exception:
                 logger.warning("knowledge retrieval failed; continuing without it")
                 return None
@@ -1145,7 +1149,7 @@ class AIKernel:
             if deps.cag is None:
                 return None
             try:
-                return await deps.cag.prefix_for(request.user_id)
+                return await deps.cag.prefix_for(request.knowledge_owner or request.user_id)
             except Exception:
                 logger.warning("cag prefix load failed; continuing without it")
                 return None
@@ -1551,6 +1555,7 @@ class AIKernel:
             )
         return ToolContext(
             user_id=request.user_id,
+            knowledge_owner=request.knowledge_owner,
             correlation_id=(request.correlation_id or CorrelationId.new()).value,
             deadline_s=deadline_s,
             tainted=tainted,

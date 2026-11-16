@@ -134,6 +134,7 @@ def build_delegation_tools(
         child_request = TurnRequest(
             message=subtask,
             user_id=context.user_id,
+            knowledge_owner=context.knowledge_owner,
             session_id=None,  # stateless sub-turn: the target sees only `subtask`, nothing else
             agent=target_spec.id,
             correlation_id=CorrelationId(f"{context.correlation_id}:{uuid4().hex[:8]}"),
