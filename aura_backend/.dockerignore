@@ -1,4 +1,8 @@
 venv/
+# The sanctioned local setup (CLAUDE.md) creates .venv, not venv: without this line a local
+# build copies the whole virtualenv into the image.
+.venv/
+.pytest_cache/
 .env
 __pycache__/
 *.pyc

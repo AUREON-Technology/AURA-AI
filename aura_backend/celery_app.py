@@ -1,20 +1,41 @@
 import os
+from collections.abc import Mapping
+
 from celery import Celery
 from celery.schedules import crontab
 
 from infrastructure.secret_hydration import hydrate_secrets_from_files
 
 
-def _redis_password() -> str | None:
+def _redis_password(environ: Mapping[str, str]) -> str | None:
     """Docker mounts the Redis password as a secret file (AURA_REDIS_PASSWORD_FILE); the
     running app hydrates it into AURA_REDIS_URL at startup (aura_service.py), but the celery
     CLI (`celery -A celery_app worker`) imports this module directly and never goes through
     that hydration, so it has to read the file itself."""
-    path = os.environ.get("AURA_REDIS_PASSWORD_FILE")
+    path = environ.get("AURA_REDIS_PASSWORD_FILE")
     if path and os.path.exists(path):
         with open(path, encoding="utf-8") as handle:
             return handle.read().strip()
-    return os.environ.get("AURA_REDIS_PASSWORD")
+    return environ.get("AURA_REDIS_PASSWORD")
+
+
+def broker_url(environ: Mapping[str, str]) -> str:
+    """The Redis URL for the Celery broker and result backend.
+
+    Resolved in the same order as ``infrastructure.redis_client`` and the v3 container: a full
+    URL first (``AURA_REDIS_URL``, then the legacy ``REDIS_URL``), which is all Railway's managed
+    Redis provides, and only then the discrete ``REDIS_HOST``/password pair the compose files set.
+    Building it from ``REDIS_HOST`` alone sent every Railway ``.delay()`` to ``localhost:6379``.
+    On the VPS nothing changes: ``hydrate_secrets_from_files`` turns the password file and
+    ``REDIS_HOST`` into the same ``redis://:<password>@redis:6379/0`` this used to build.
+    """
+    url = environ.get("AURA_REDIS_URL") or environ.get("REDIS_URL")
+    if url:
+        return url
+    host = environ.get("REDIS_HOST", "localhost")
+    password = _redis_password(environ)
+    auth = f":{password}@" if password else ""
+    return f"redis://{auth}{host}:6379/0"
 
 
 def _truthy(raw: str | None, default: bool = True) -> bool:
@@ -40,10 +61,7 @@ def _crontab_from_cron(expr: str) -> crontab:
 # worker that imported this module can build the v3 container.
 hydrate_secrets_from_files()
 
-redis_host = os.getenv("REDIS_HOST", "localhost")
-_redis_password_value = _redis_password()
-_redis_auth = f":{_redis_password_value}@" if _redis_password_value else ""
-_redis_url = f"redis://{_redis_auth}{redis_host}:6379/0"
+_redis_url = broker_url(os.environ)
 
 celery_app = Celery(
     "aura_tasks",
