@@ -1667,6 +1667,18 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
         JSONResponse=JSONResponse,
     )
 
+    from .workspaces import register_workspace_ops
+
+    register_workspace_ops(
+        router,
+        container,
+        principal=principal,
+        idempotent=idempotent,
+        Depends=Depends,
+        JSONResponse=JSONResponse,
+        Response=Response,
+    )
+
     # The WebSocket routes authenticate per frame without the `principal` dependency, so the
     # service-key route gate never sees them. A service key opens neither (AR-4).
     async def person_authenticator(request: Any) -> Principal:

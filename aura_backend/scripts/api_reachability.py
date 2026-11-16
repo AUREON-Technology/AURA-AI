@@ -57,6 +57,7 @@ TRIAGE = (
     ("/api/v3/admin/", "to wire: admin console page missing for this route"),
     ("/api/v3/learning/", "to wire or remove: learning surface with no caller (GAP-013)"),
     ("/api/v3/tools", "to wire: tool catalogue is not shown anywhere"),
+    ("/api/v3/workspaces", "to wire: team workspaces (ADR-034) have no client or console screen yet -- SaaS P1 plan F"),
 )
 
 # Served to infrastructure or browsers rather than an app client; never "to wire".
