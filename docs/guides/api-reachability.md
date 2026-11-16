@@ -77,15 +77,15 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | GET | `/api/v3/agents/runs/{run_id}` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
 | GET | `/api/v3/auth/desktop/devices` | `aura_client/lib/core/auth/desktop_devices_client.dart:41` | — | — | called |  |
 | POST | `/api/v3/auth/desktop/devices/revoke` | `aura_client/lib/core/auth/desktop_devices_client.dart:41` | — | — | called |  |
-| POST | `/api/v3/auth/desktop/login` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:57`, `aura_client/lib/core/auth/token_manager.dart:28` (+2) | — | — | called |  |
+| POST | `/api/v3/auth/desktop/login` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:57`, `aura_client/lib/core/auth/token_manager.dart:47` (+2) | — | — | called |  |
 | POST | `/api/v3/auth/desktop/pair/approve` | `aura_client/lib/desktop/host/host_panel.dart:304`, `aura_client/lib/features/engineering/presentation/host_daemon_page.dart:148` | — | — | called |  |
 | POST | `/api/v3/auth/desktop/pair/poll` | — | — | `aura_hostd/lib/src/pairing_client.dart:129` | called |  |
 | POST | `/api/v3/auth/desktop/pair/start` | — | — | `aura_hostd/lib/src/pairing_client.dart:98` | called |  |
 | POST | `/api/v3/auth/nonce` | `aura_client/lib/core/security/device_validation_service.dart:139` | — | — | called |  |
-| POST | `/api/v3/auth/refresh` | `aura_client/lib/core/auth/token_manager.dart:67`, `aura_client/lib/core/auth/token_manager.dart:124` (+2) | `aura_admin/src/lib/refresh.ts:76` | — | called |  |
+| POST | `/api/v3/auth/refresh` | `aura_client/lib/core/auth/token_manager.dart:86`, `aura_client/lib/core/auth/token_manager.dart:143` (+2) | `aura_admin/src/lib/refresh.ts:76` | — | called |  |
 | POST | `/api/v3/auth/revoke` | `aura_client/lib/core/auth/desktop_devices_client.dart:41`, `aura_client/lib/core/auth/desktop_devices_client.dart:82` (+1) | `aura_admin/app/api/auth/logout/route.ts:8` | — | called |  |
-| POST | `/api/v3/auth/token` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:63`, `aura_client/lib/core/auth/token_manager.dart:67` (+4) | — | — | called |  |
-| POST | `/api/v3/auth/web/token` | `aura_client/lib/core/auth/token_manager.dart:280`, `aura_client/lib/core/auth/token_manager.dart:286` | `aura_admin/app/api/auth/login/route.ts:10` | — | called |  |
+| POST | `/api/v3/auth/token` | `aura_client/lib/core/auth/desktop_oauth_client_io.dart:63`, `aura_client/lib/core/auth/token_manager.dart:86` (+4) | — | — | called |  |
+| POST | `/api/v3/auth/web/token` | `aura_client/lib/core/auth/token_manager.dart:337`, `aura_client/lib/core/auth/token_manager.dart:343` | `aura_admin/app/api/auth/login/route.ts:10` | — | called |  |
 | POST | `/api/v3/automation/analyze-email` | `aura_client/lib/features/automations/data/automation_repository.dart:218` | — | — | called |  |
 | POST | `/api/v3/automation/analyze-issue` | `aura_client/lib/features/automations/data/automation_repository.dart:256` | — | — | called |  |
 | GET | `/api/v3/capabilities` | `aura_client/lib/core/ai/vision/chat_images.dart:40`, `aura_client/lib/core/ai/vision/chat_images.dart:74` (+2) | — | — | called |  |

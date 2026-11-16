@@ -40,7 +40,7 @@ Fixed:
   `ios_release_config_test.dart` checks they match once set. Not built: no macOS here.
 
 Still the owner's: the iOS OAuth client values, the same setup for macOS (plus its keychain
-entitlement), F-09 (below), the Firebase console check (SEC-08), and Sign in with Apple.
+entitlement), the Firebase console check (SEC-08), and Sign in with Apple.
 
 ## Update 2026-11-14 (release readiness pass, on `b655421`)
 
@@ -146,7 +146,7 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
 | Account data key and multi-device encryption (ADR-032) | TESTED locally (`test/data_key_crypto_test.dart`, 16 tests; full suite 529 passed, 3 skipped; `flutter analyze` clean); not deployed, not CI-run | The app fetches the account data key (`GET /api/v3/keys/data`) during a sync and moves local data off the per-device key: re-encrypts every row, queues the rows for upload through the outbox, and then retires the device key. The move resumes if the app is killed partway, and the app keeps working on the device key while offline. Every device of an account now shares one key, so another device's rows no longer trigger the `beforeOpen` key-loss wipe. **The server holds this key: the synced fields are not zero-knowledge any more.** |
 | Offline sync (data only; no model on device) | TESTED (outbox); broken end to end | Outbox tests are green. F-11: pull is skipped when push fails. F-12: the cursor comes from the app clock. F-13: memory rows are rejected forever. |
 | Auth and sign-out | TESTED | 2026-11-16 (TESTED locally): a saved session is resumed without a prompt when no biometric is enrolled; the backend exchange runs at Google sign-in and a refusal stops it; a sign-in as another account revokes the old refresh token (`test/sign_in_session_test.dart`). `5153394`: revoke and wipe on sign-out. F-33 and F-34 fixed on 2026-10-30 (TESTED locally, not proven): a 401 followed by a refused refresh ends the session and the router shows login, keeping local data (`test/ux/session_expiry_test.dart`); sign-out asks first. Switching backend (`setEnvironment()`) clears tokens without revoking them or wiping data. |
-| Device attestation | TESTED (unit); can be bypassed | Play Integrity (`IntegrityAttestationPlugin.kt`) and App Attest (`AppAttestPlugin.swift`), with backend tests green. F-09 / SEC-05: any account can skip attestation through `/desktop/login`. |
+| Device attestation | TESTED (unit) | Play Integrity (`IntegrityAttestationPlugin.kt`) and App Attest (`AppAttestPlugin.swift`), with backend tests green. F-09: until 2026-11-16 any account could skip attestation through `/desktop/login`; that route is now for operators only, like `/web/token` (owner decision; TESTED locally, not deployed). |
 | Account deletion | TESTED locally (2026-11-14) | `POST /api/v3/account/delete` + You → Account → Delete account; `test/account_deletion_test.dart`, `tests/unit/test_account_self_deletion.py`. Not deployed. |
 | Push notifications | OPEN | No `firebase_messaging`; a failed `Firebase.initializeApp()` is ignored (`main.dart:26`); iOS has no `GoogleService-Info.plist`; in-app notification centre only |
 | Accessibility / i18n | BUILT; TESTED locally (F-36 foundation, 2026-10-30) | `design_system_contrast_test.dart`, `test/ux/`. F-36: every `IconButton` under `lib/` now has a tooltip, pinned by `test/ux/icon_button_tooltip_test.dart` (Send already had one; the 18 real gaps were in tasks, calendar, finance, memory bank, hostd page, live voice, analytics, GitHub tab, plus the chat header menu button). Strings for chat, sign-in, You/settings and the design-system components moved to `app_en.arb` (34 → 203 keys) and are read via `context.l10n` (`lib/l10n/l10n.dart`, English fallback when no delegate is present). Other features still hold 209 hard-coded `Text('...')` literals, held by `test/ux/hardcoded_text_ratchet_test.dart`. RTL: layout code uses directional APIs (`test/ux/rtl_layout_test.dart` guard), and the chat composer, empty chat, You and sign-in screens render under `TextDirection.rtl` at 360 px with no exception. No Arabic locale yet. Screen-reader output and Arabic glyph shaping have not been checked on a device. |
@@ -182,7 +182,7 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
 3. **F-07 (High).** Memory forget and chat delete never reach the server.
 4. **F-31 (High).** Fixed on 2026-10-30 (TESTED locally). It is not proven until someone runs it against the live keepalive stream.
 5. **F-32 (High).** Light-theme contrast: the task and health cards are fixed. The rest is held by a ratchet test.
-6. **F-09 (Medium).** Attestation bypass.
+6. ~~**F-09 (Medium).** Attestation bypass.~~ Closed in code on 2026-11-16: desktop sign-in is for operators only (ADR-011 amendment). Not deployed or CI-run.
 7. **F-36 (Medium).** Foundation built on 2026-10-30 and TESTED locally (analyze clean, 513 passed /
    3 skipped). It is not proven. Still open: a screen-reader pass on a real device (R4.6 acceptance),
    extracting the remaining features' strings (ratchet at 209), and an Arabic locale.

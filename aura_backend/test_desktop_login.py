@@ -3,11 +3,12 @@
 services.security.verify_identity_token's dual-audience acceptance (google_client_id for
 mobile/web, google_desktop_client_id for the desktop loopback-OAuth exchange, since Google
 requires a separate "Desktop app"-type OAuth client for a loopback redirect URI) and the
-POST /api/v3/auth/desktop/login endpoint that mints a device-scoped token (not a full session
-pair) for a real-but-unattested identity. Mirrors test_web_token.py's approach for the HTTP
+POST /api/v3/auth/desktop/login endpoint that mints a device-bound session for a real-but-
+unattested identity -- an operator's only (F-09, owner decision 2026-11-16). Mirrors test_web_token.py's approach for the HTTP
 layer and test_device_pairing.py's for exercising real service functions directly.
 """
 import asyncio
+import os
 import unittest
 from unittest.mock import patch
 
@@ -25,6 +26,19 @@ class FakeCredentials:
 
 class FakeRequest:
     pass
+
+
+#: A verified Google sign-in by an operator: desktop sign-in is for Developer and above (F-09).
+#: Email-list roles need both verification keys (SEC-08).
+_OPERATOR_EMAIL = "ops@aura.ai"
+_GOOGLE = {"email_verified": True, "sign_in_provider": "google.com"}
+_OPERATOR_ENV = {"DEVELOPER_EMAILS": _OPERATOR_EMAIL}
+_NO_OPERATOR_ENV = ("SUPERADMIN_EMAILS", "ADMIN_EMAILS", "DEVELOPER_EMAILS",
+                    "AURA_SUPERADMIN_EMAILS", "AURA_ADMIN_EMAILS", "AURA_DEVELOPER_EMAILS")
+
+
+def _operator(uid):
+    return {"uid": uid, "email": _OPERATOR_EMAIL, "name": "Ops", **_GOOGLE}
 
 
 def _verify_identity(token):
@@ -99,17 +113,46 @@ class TestDualAudienceIdentityVerification(unittest.TestCase):
 class TestDesktopLoginEndpoint(unittest.TestCase):
     """POST /api/v3/auth/desktop/login."""
 
+    def setUp(self):
+        self._env = patch.dict(os.environ, _OPERATOR_ENV)
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
     def _client(self) -> TestClient:
         app = FastAPI()
         app.include_router(router)
         return TestClient(app)
 
-    def test_issues_a_device_token_for_any_role_not_just_operators(self):
-        """Unlike /web/token, an ordinary consumer must not be refused -- the desktop app is
-        for every AURA user, not console operators."""
-
+    def _post_as(self, user_info):
         async def identity(request, authorization):
-            return {"uid": "u1", "email": "user@example.com", "name": "User"}
+            return dict(user_info)
+
+        with patch("api.v2.auth.verify_identity_token", new=identity):
+            return self._client().post(
+                "/api/v3/auth/desktop/login", headers={"Authorization": "Bearer google-id"}
+            )
+
+    def test_refuses_a_consumer(self):
+        """F-09: this route skips device attestation, so -- like /web/token -- it is closed
+        below Developer. Before, any Google account got here the session a phone only gets after
+        Play Integrity or App Attest."""
+        response = self._post_as(
+            {"uid": "u1", "email": "user@example.com", "name": "User", **_GOOGLE}
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("desktop sign-in requires at least Developer", response.json()["detail"])
+
+    def test_says_so_when_no_operator_is_configured(self):
+        with patch.dict(os.environ, {}, clear=False):
+            for name in _NO_OPERATOR_ENV:
+                os.environ.pop(name, None)
+            response = self._post_as(_operator("u1"))
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("nobody can sign in to the desktop app", response.json()["detail"])
+
+    def test_issues_a_device_session_to_an_operator(self):
+        async def identity(request, authorization):
+            return _operator("u1")
 
         with patch("api.v2.auth.verify_identity_token", new=identity):
             response = self._client().post(
@@ -126,7 +169,7 @@ class TestDesktopLoginEndpoint(unittest.TestCase):
 
     def test_issued_token_verifies_as_a_device_token(self):
         async def identity(request, authorization):
-            return {"uid": "u5", "email": "e@f.com", "name": "E"}
+            return _operator("u5")
 
         with patch("api.v2.auth.verify_identity_token", new=identity):
             response = self._client().post(
@@ -144,7 +187,7 @@ class TestDesktopLoginEndpoint(unittest.TestCase):
 
     def test_persists_the_user(self):
         async def identity(request, authorization):
-            return {"uid": "u6", "email": "g@h.com", "name": "G"}
+            return _operator("u6")
 
         seen: dict = {}
 
@@ -194,6 +237,9 @@ class TestDesktopSessionIsShortAndDeviceBound(unittest.TestCase):
     def setUp(self):
         import services.jwt_auth as jwt_auth
 
+        self._env = patch.dict(os.environ, _OPERATOR_ENV)
+        self._env.start()
+        self.addCleanup(self._env.stop)
         self._jwt = jwt_auth
         self._redis = patch("services.jwt_auth.get_redis_client", return_value=None)
         self._redis.start()
@@ -214,11 +260,11 @@ class TestDesktopSessionIsShortAndDeviceBound(unittest.TestCase):
         app.include_router(router)
         return TestClient(app)
 
-    def _refresh(self, client, refresh_token):
+    def _refresh(self, client, refresh_token, role="Developer"):
         """/auth/refresh re-resolves the role through the users table; this suite has no
-        database, so the role stamp is replaced with the identity unchanged."""
+        database, so the role stamp is replaced with ``role``."""
         async def stamp(user_info):
-            user_info.setdefault("role", "User")
+            user_info["role"] = role
             return user_info
 
         with patch("api.v2.auth.stamp_role", new=stamp):
@@ -226,7 +272,7 @@ class TestDesktopSessionIsShortAndDeviceBound(unittest.TestCase):
 
     def _login(self, client, device_name="anas-laptop"):
         async def identity(request, authorization):
-            return {"uid": "u9", "email": "u9@example.com", "name": "U9"}
+            return _operator("u9")
 
         with patch("api.v2.auth.verify_identity_token", new=identity):
             return client.post(
@@ -286,11 +332,23 @@ class TestDesktopSessionIsShortAndDeviceBound(unittest.TestCase):
         renew = self._refresh(client, issued["refresh_token"])
         self.assertEqual(renew.status_code, 401)
 
+    def test_a_desktop_session_ends_once_its_owner_is_no_longer_an_operator(self):
+        """F-09: a desktop session issued before the operator rule, or to someone since
+        demoted, ends at its next refresh -- and the spent refresh token cannot be retried."""
+        client = self._client()
+        issued = self._login(client).json()
+        demoted = self._refresh(client, issued["refresh_token"], role="User")
+        self.assertEqual(demoted.status_code, 401)
+        self.assertIn("Desktop sign-in now requires", demoted.json()["detail"])
+        again = self._refresh(client, issued["refresh_token"])
+        self.assertEqual(again.status_code, 401)
+
     def test_an_ordinary_session_refresh_is_unchanged(self):
+        """A phone or web session carries no device_id, so the desktop rule never applies."""
         from services.jwt_auth import issue_token_pair
 
         pair = issue_token_pair({"uid": "m1", "email": "m@example.com", "role": "User"})
-        refreshed = self._refresh(self._client(), pair["refresh_token"])
+        refreshed = self._refresh(self._client(), pair["refresh_token"], role="User")
         self.assertEqual(refreshed.status_code, 200)
         self.assertIsNone(self._claims(refreshed.json()["access_token"]).get("device_id"))
 

@@ -368,6 +368,7 @@ class TokenManager {
     String googleIdToken, {
     String? deviceName,
   }) async {
+    lastDesktopLoginRefusal = null;
     try {
       final response = await _post(
         "$_authUrl/desktop/login",
@@ -381,6 +382,9 @@ class TokenManager {
         debugPrint(
           "[TokenManager] desktop login failed: ${response.statusCode} ${response.body}",
         );
+        if (_isRefusal(response.statusCode)) {
+          lastDesktopLoginRefusal = _serverDetail(response.body) ?? 'HTTP ${response.statusCode}';
+        }
         _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.other);
         return null;
       }
@@ -398,6 +402,20 @@ class TokenManager {
     } catch (e) {
       debugPrint("[TokenManager] desktop login failed: $e");
       _ref.read(authExchangeFailureProvider.notifier).set(AuthExchangeFailure.other);
+      return null;
+    }
+  }
+
+  /// Why the server refused the last [exchangeDesktopLogin] (its `detail`), when it answered
+  /// 400/401/403 -- for instance desktop sign-in being limited to operators (F-09). Null when
+  /// that call succeeded or failed without an answer.
+  String? lastDesktopLoginRefusal;
+
+  static String? _serverDetail(String body) {
+    try {
+      final detail = (jsonDecode(body) as Map<String, dynamic>)['detail'];
+      return detail is String && detail.isNotEmpty ? detail : null;
+    } catch (_) {
       return null;
     }
   }

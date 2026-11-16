@@ -219,6 +219,30 @@ void main() {
         container.read(authExchangeFailureProvider),
         AuthExchangeFailure.other,
       );
+      expect(tm.lastDesktopLoginRefusal, 'Invalid or expired credentials.');
+    });
+
+    test('records the server\'s reason when desktop sign-in is refused (F-09)', () async {
+      const detail = 'Access forbidden: desktop sign-in requires at least Developer (resolved User).';
+      var answer = http.Response(jsonEncode({'detail': detail}), 403);
+      final httpClient = MockClient((request) async => answer);
+      final container = ProviderContainer(
+        overrides: [
+          tokenManagerProvider.overrideWith(
+            (ref) => TokenManager(ref, httpClient: httpClient, store: _MemoryRefreshTokenStore()),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final tm = container.read(tokenManagerProvider);
+
+      expect(await tm.exchangeDesktopLogin('google-id'), isNull);
+      expect(tm.lastDesktopLoginRefusal, detail);
+
+      // A server that did not answer is not a refusal, and clears the previous one.
+      answer = http.Response('bad gateway', 502);
+      expect(await tm.exchangeDesktopLogin('google-id'), isNull);
+      expect(tm.lastDesktopLoginRefusal, isNull);
     });
   });
 

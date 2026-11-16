@@ -179,29 +179,36 @@ async def exchange_web_token(
     """
     user_info = await verify_identity_token(request, authorization)
     await stamp_role(user_info)
-    if not is_console_operator(user_info["role"]):
-        # Two different failures wear the same 403, and telling them apart is the difference
-        # between a five-minute fix and an afternoon. "Your role is too low" is true in both
-        # cases but only actionable in the second.
-        if not console_operators_configured():
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    "No console operator is configured on this deployment, so nobody can sign "
-                    "in to the console yet. Set SUPERADMIN_EMAILS (or ADMIN_EMAILS / "
-                    "DEVELOPER_EMAILS) to a comma-separated list of operator email addresses "
-                    "and restart. AURA_-prefixed spellings are accepted too."
-                ),
-            )
+    _require_operator(user_info, what="console login", where="the console")
+    await _persist_user(user_info)
+    return issue_token_pair(user_info)
+
+
+def _require_operator(user_info: dict, *, what: str, where: str) -> None:
+    """403 unless ``user_info`` holds at least ``CONSOLE_MIN_ROLE``: the gate on the two sign-in
+    routes that skip device attestation (``/web/token`` and ``/desktop/login``)."""
+    if is_console_operator(user_info["role"]):
+        return
+    # Two different failures wear the same 403, and telling them apart is the difference
+    # between a five-minute fix and an afternoon. "Your role is too low" is true in both
+    # cases but only actionable in the second.
+    if not console_operators_configured():
         raise HTTPException(
             status_code=403,
             detail=(
-                f"Access forbidden: console login requires at least {CONSOLE_MIN_ROLE} "
-                f"(resolved {user_info['role']})."
+                f"No console operator is configured on this deployment, so nobody can sign "
+                f"in to {where} yet. Set SUPERADMIN_EMAILS (or ADMIN_EMAILS / "
+                "DEVELOPER_EMAILS) to a comma-separated list of operator email addresses "
+                "and restart. AURA_-prefixed spellings are accepted too."
             ),
         )
-    await _persist_user(user_info)
-    return issue_token_pair(user_info)
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            f"Access forbidden: {what} requires at least {CONSOLE_MIN_ROLE} "
+            f"(resolved {user_info['role']})."
+        ),
+    )
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -211,7 +218,16 @@ async def refresh(request: RefreshRequest):
         raise HTTPException(status_code=401, detail="Refresh token is invalid, expired, or already used.")
     # A desktop app's refresh token is bound to its device (FSA-004): the re-issued pair keeps
     # the device claims, and a revoked device gets nothing even with a valid refresh token.
-    issued = reissue_for_refreshed_identity(await stamp_role(user_info))
+    await stamp_role(user_info)
+    if user_info.get("device_id") and not is_console_operator(user_info["role"]):
+        # F-09: desktop sign-in is for operators only, and a session issued before that rule,
+        # or to someone since demoted, must not outlive it. The refresh token was spent above,
+        # so the session ends here; phone and web sessions carry no device_id.
+        raise HTTPException(
+            status_code=401,
+            detail=f"Desktop sign-in now requires at least {CONSOLE_MIN_ROLE}; please sign in again.",
+        )
+    issued = reissue_for_refreshed_identity(user_info)
     if issued is None:
         raise HTTPException(status_code=401, detail="Device access has been revoked.")
     return issued
@@ -303,8 +319,12 @@ async def desktop_login(
     services/security.py's dual-audience check, since a Desktop-type OAuth client is required for
     that redirect and can't be the same client id the mobile/web login path verifies against).
 
-    What it does not have is device attestation -- no desktop equivalent exists (ADR-011). So
-    the session it gets is *device-bound*: a short access token carrying a device_id, and a
+    What it does not have is device attestation -- no desktop equivalent exists (ADR-011). So,
+    like ``/web/token``, it is for operators only (audit F-09, owner decision 2026-11-16): any
+    Google account could otherwise mint here the session a phone only gets after Play Integrity
+    or App Attest, and no route tells a desktop session apart. Opening desktop to every user
+    should come with a design that ties the device to an attested one, not by lowering this
+    gate. The session it gets is also *device-bound*: a short access token carrying a device_id, and a
     refresh token that re-issues only for that device and dies with its revocation
     (issue_desktop_session). Until audit FSA-004 this minted the daemon's 30-day unscoped
     token instead -- a month-long full session that could fetch /keys/data; revocation, which
@@ -315,6 +335,7 @@ async def desktop_login(
     and this keeps both non-attested identity endpoints in the same shape."""
     user_info = await verify_identity_token(request, authorization)
     await stamp_role(user_info)
+    _require_operator(user_info, what="desktop sign-in", where="the desktop app")
     await _persist_user(user_info)
     device_id = secrets.token_urlsafe(16)
     return issue_desktop_session(
