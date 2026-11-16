@@ -78,7 +78,15 @@ Original finding:
 - **Why the tests pass:** they always build `ToolContext(deadline_s=5.0)`. They never use the kernel's real context, and they only pin the *outer* loop deadline.
 - **Fix direction:** derive the per-call deadline from the persona / loop budget (e.g. `engineer_loop_deadline_s`) rather than a flat 60. Add a test that goes through `AIKernel._tool_context`.
 
-**T-02 · BROKEN · A server-confirmed call routed to the desktop loses the approval window.** (RUN + CODE)
+**T-02 · FIXED in this PR · A server-confirmed call routed to the desktop loses the approval window.** (RUN + CODE)
+
+> **Fix:** `ToolRegistry.execute` now computes `on_desktop` (routing) separately from the policy input `host_routed = on_desktop and not confirmed`. The timeout and the semaphore bypass follow routing, so a confirmed desktop call gets the approval window too. Policy decisions and audit records are unchanged.
+>
+> **Not changed, deliberately:** no "pre-approved" signal goes to the daemon. Its local approval stays authoritative.
+>
+> **Tests:** `test_engineer_tool_deadline.py` has 3 new cases. The confirmed desktop case failed before the fix.
+
+Original finding:
 - `host_routed` includes `and not confirmed` (`registry.py:322-328`).
 - That is right for *policy*: no second server-side prompt. But the same flag also drives the *timeout*, so the call falls back to 60 s.
 - **When it happens:** a tainted context needs confirmation for desktop writes (`policy.py`). After the user approves in the app, the resumed call runs with `confirmed=True`.
@@ -86,19 +94,45 @@ Original finding:
 - **Reproduction:** confirmed + host-routed, 200 s of work → timeout at 60 s.
 - **Fix direction:** compute the routing used for the timeout without `not confirmed`. Separately, consider passing a pre-approved flag to the daemon.
 
-**T-03 · BROKEN · The `engineer` persona cannot use any MCP tool.** (CODE)
+**T-03 · FIXED in this PR · The `engineer` persona cannot use any MCP tool.** (CODE)
+
+> **Fix:** `AgentSpec.allowed_tool_prefixes`; only `engineer` gets `{"mcp_"}`, and an empty prefix is rejected. Every checkpoint asks one helper, `domain/tools.py::tool_grant_permits`: the kernel's declarations, `ToolContext.permits_tool` → `ToolPolicy.evaluate`, `AgentSpec.permits_tool`, and the blueprint gate.
+>
+> **Delegation:** the kernel's delegated grant and `delegate_to_agent` both use `intersect_tool_grants`. A prefix survives only when both sides hold it, so delegating to the engineer cannot hand MCP tools to a caller without them.
+>
+> **Unchanged:** MCP sensitivity and confirmation, and generated blueprint agents may not hold prefixes.
+>
+> **Tests:** `test_agents.py` (the grant pin now covers MCP builders) and `test_delegation.py`. The pin failed before the fix.
+
+Original finding:
 - Its grant (`agents/registry.py:220-235`) is an exact-name list with no `mcp_*` entries.
 - The comment above it claims it covers "any MCP-bridged tool", but grants are exact-name matches (`kernel.py:1518`).
 - **Effect:** only `orchestrator` (open grant) can reach MCP tools, and only for an `engineer_agent` caller, without the engineer loop or prompt.
 - `tests/unit/test_agents.py:307` pins the grant against the sandbox and GitHub builders only, so it cannot catch this.
 
-**T-04 · BROKEN · An MCP server that dies after startup hangs every call to it.** (CODE)
+**T-04 · FIXED in this PR · An MCP server that dies after startup hangs every call to it.** (CODE)
+
+> **Fix:** when `_ServerSession._run` exits, every queued and in-flight request fails with `McpConnectionError`, which carries the cause, and later calls raise at once. `McpClient` evicts a dead session and reconnects lazily on the next call: one attempt per call, no background loop. `isError=True` now raises `McpToolError`, so the registry reports `ok=False` with the server's text.
+>
+> **Tests:** `test_mcp_client_failure.py` (4) runs against an in-process fake server through a new injectable `session_factory`; the default factory is the unchanged SDK path. All 4 failed before the fix, the hangs showing as 1 s `wait_for` timeouts.
+>
+> **Not tested:** against a real MCP server.
+
+Original finding:
 - When `_ServerSession._run` exits it sets `_failed`, but `call_tool` (`mcp_client.py:~110`) never checks `_failed`. It just queues a request nobody reads, so every call waits until the registry timeout.
 - There is no reconnect, no health check and no unregistration, so dead tools stay advertised.
 - Separately, an MCP result with `isError=True` and text content is returned as an ordinary string (`mcp_client.py:185-191`), so the registry reports `ok=True`.
 - None of this is tested in the default suite.
 
-**T-05 · BROKEN · A blueprint rollback inside the grace window fails.** (CODE)
+**T-05 · FIXED in this PR · A blueprint rollback inside the grace window fails.** (CODE)
+
+> **Fix:** `BlueprintToolMaterializer` tracks pending retirements per version and the live version. `activate()` cancels a version's pending retirement, reuses a complete registered set, and re-registers a partial one cleanly. `retire()` never removes the live version's tools, and re-checks that when the timer fires. A failed go-live that reused tools reschedules their retirement. Deploy, rollback and `_load`/`sync` all go through `activate()`.
+>
+> **Tests:** `TestGracePeriod` (6, `grace_s=0.2`, real waits). 4 failed before the fix with the duplicate-registration `ValidationError`.
+>
+> **Scope:** coordination is per process. Each worker has its own registry and shares the store, which matches the existing model.
+
+Original finding:
 - `_go_live_locked` calls `materializer.register()` without checking `names_of` (`adaptation/deployment.py:254`).
 - If the target version's tools are still registered, because its retirement is pending (default 300 s), `ToolRegistry.register` raises on the duplicate and the rollback errors out.
 - **Related (reported by the sub-investigation, not independently confirmed):** a `sync()` on another worker skips registration because the names exist (`deployment.py:221`), but never cancels the pending retire task (`runtime.py:423-428`). That task later unregisters tools the live agents depend on.
