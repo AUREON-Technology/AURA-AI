@@ -174,7 +174,11 @@ ENTRYPOINT ["/app/docker-entrypoint.sh"]
 # *leftmost* X-Forwarded-For entry, which the caller writes; nothing may treat it as the client's
 # address. The v3 router resolves it from the right instead (`client_ip` in aura_core/api/v3.py,
 # for both the rate limiter and audit records; pinned by tests/unit/test_audit_source_ip.py).
+# The default is quoted on purpose: unquoted, `sh -c` globbed `*` to every file in WORKDIR /app,
+# uvicorn got dozens of stray arguments and exited before serving -- every Railway build from
+# c575904 (2026-11-06) on, unless AURA_FORWARDED_ALLOW_IPS was set
+# (tests/unit/test_backend_image_user.py).
 # This is the command Railway runs. `exec` makes uvicorn PID 1, so the platform's SIGTERM reaches
 # it rather than a shell, and --timeout-graceful-shutdown bounds the drain below railway.json's
 # drainingSeconds (audit F-25; the compose files carry the same pair on the gateway).
-CMD ["sh", "-c", "exec uvicorn aura_service:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${AURA_WORKERS:-4} --proxy-headers --forwarded-allow-ips ${AURA_FORWARDED_ALLOW_IPS:-*} --log-level info --timeout-graceful-shutdown ${AURA_GRACEFUL_SHUTDOWN_S:-150}"]
+CMD ["sh", "-c", "exec uvicorn aura_service:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${AURA_WORKERS:-4} --proxy-headers --forwarded-allow-ips \"${AURA_FORWARDED_ALLOW_IPS:-*}\" --log-level info --timeout-graceful-shutdown ${AURA_GRACEFUL_SHUTDOWN_S:-150}"]

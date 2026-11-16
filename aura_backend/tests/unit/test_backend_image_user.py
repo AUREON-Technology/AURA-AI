@@ -66,3 +66,36 @@ def test_every_vps_service_built_from_the_image_stays_root(compose: str) -> None
     assert len(services) == 5, sorted(services)  # gateway, two workers, training worker, beat
     not_root = {key: spec.get("user") for key, spec in services.items() if spec.get("user") != "0:0"}
     assert not not_root, f"{compose}: these would run as uid 10002 and could not read their secrets: {not_root}"
+
+
+def _cmd_script() -> str:
+    import json
+
+    line = next(l for l in _runner_stage().splitlines() if l.startswith("CMD "))
+    argv = json.loads(line[len("CMD "):])
+    assert argv[:2] == ["sh", "-c"]
+    return argv[2]
+
+
+@pytest.mark.parametrize("configured", [None, "10.0.0.1,10.0.0.2"])
+def test_the_cmd_passes_forwarded_allow_ips_through_unexpanded(tmp_path, configured) -> None:
+    """The CMD runs through `sh -c` with WORKDIR /app. An unquoted `${AURA_FORWARDED_ALLOW_IPS:-*}`
+    globbed to every file in /app when the variable was unset (introduced in c575904), so uvicorn
+    got dozens of stray arguments and exited before serving -- on every Railway deploy that did not
+    set the variable. Run the real CMD text with uvicorn swapped for printf, in a directory with
+    files in it, and check what uvicorn would actually receive."""
+    import os
+    import subprocess
+
+    (tmp_path / "aura_service.py").write_text("", encoding="utf-8")
+    (tmp_path / "tasks.py").write_text("", encoding="utf-8")
+    script = _cmd_script().replace("exec uvicorn", "exec printf '%s\\n'", 1)
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    if configured is not None:
+        env["AURA_FORWARDED_ALLOW_IPS"] = configured
+    argv = subprocess.run(["sh", "-c", script], cwd=tmp_path, env=env, capture_output=True,
+                          text=True, check=True).stdout.splitlines()
+
+    value = argv[argv.index("--forwarded-allow-ips") + 1]
+    assert value == (configured or "*")
+    assert "tasks.py" not in argv
