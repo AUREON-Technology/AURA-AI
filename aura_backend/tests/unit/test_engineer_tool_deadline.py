@@ -94,11 +94,17 @@ class TestTheRegistryAtSmallScale:
         return registry
 
     @staticmethod
-    async def _call(registry: ToolRegistry, user):
-        context = ToolContext(user_id=user, correlation_id="c", deadline_s=10.0)
-        result, _ = await registry.execute(
-            ToolCall(id=ToolCallId("1"), name="slow_command", arguments={}), context
+    async def _execute(registry: ToolRegistry, user, *, confirmed: bool = False,
+                       tainted: bool = False):
+        context = ToolContext(user_id=user, correlation_id="c", deadline_s=10.0, tainted=tainted)
+        return await registry.execute(
+            ToolCall(id=ToolCallId("1"), name="slow_command", arguments={}), context,
+            confirmed=confirmed,
         )
+
+    @classmethod
+    async def _call(cls, registry: ToolRegistry, user, *, confirmed: bool = False):
+        result, _ = await cls._execute(registry, user, confirmed=confirmed)
         return result
 
     async def test_a_desktop_call_may_wait_for_approval_and_then_run_its_full_time(self, user) -> None:
@@ -113,3 +119,28 @@ class TestTheRegistryAtSmallScale:
     async def test_a_sandbox_call_has_no_approval_wait_added(self, user) -> None:
         result = await self._call(self._registry(on_desktop=False, work_s=0.4), user)
         assert not result.ok and result.error_kind == "tool_timeout"
+
+    async def test_a_confirmed_desktop_call_still_gets_the_approval_window(self, user) -> None:
+        """Tool audit T-02. Server-side confirmation does not skip the daemon's own approval: it
+        still applies its command policy and may hold the call for a local human. Without the
+        window the server gave up at the spec's budget while the daemon kept waiting, and a late
+        Approve then ran with nothing upstream expecting it -- FSA-041 for confirmed calls."""
+        result = await self._call(self._registry(on_desktop=True, work_s=0.4), user, confirmed=True)
+        assert result.ok, result.content
+
+    async def test_a_confirmed_sandbox_call_has_no_approval_wait_added(self, user) -> None:
+        result = await self._call(self._registry(on_desktop=False, work_s=0.4), user, confirmed=True)
+        assert not result.ok and result.error_kind == "tool_timeout"
+
+    async def test_confirmation_still_decides_policy_for_a_tainted_desktop_call(self, user) -> None:
+        """Routing feeds the timeout; the policy decision for confirmed calls is unchanged."""
+        registry = self._registry(on_desktop=True, work_s=0.0)
+
+        _, unconfirmed = await self._execute(registry, user, tainted=True)
+        assert unconfirmed.needs_confirmation
+        assert unconfirmed.policy_reason == "side_effect_on_user_machine_in_tainted_context"
+
+        result, confirmed = await self._execute(registry, user, tainted=True, confirmed=True)
+        assert result.ok, result.content
+        assert confirmed.allowed and not confirmed.needs_confirmation
+        assert confirmed.policy_reason == "user_confirmed"

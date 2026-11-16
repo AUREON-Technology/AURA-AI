@@ -127,7 +127,8 @@ class ToolRegistry:
         self._audit = audit
         # Whether a call for this context runs on the user's paired desktop rather than in the
         # sandbox; None when no desktop routing exists. Only asked for workspace_local side
-        # effects, the one place the answer changes the policy (ToolPolicy.evaluate).
+        # effects, the one place the answer changes the policy (ToolPolicy.evaluate) and the
+        # timeout (call_timeout) -- the latter for confirmed calls too (tool audit T-02).
         self._host_routed = host_routed
         #: The least a host-routed call may wait: the daemon's approval window plus slack.
         self.host_approval_window_s = HOST_APPROVAL_WINDOW_S
@@ -338,13 +339,20 @@ class ToolRegistry:
             )
 
         # 3. Policy
-        host_routed = bool(
+        # Where the call runs and what policy is told are two questions (tool audit T-02).
+        # ``on_desktop`` is routing: it sizes the timeout and keeps the call off the sandbox
+        # semaphore. A server-side confirmation does not change it -- the daemon still applies
+        # its own command policy and may hold the call for a local human's approval, so a
+        # confirmed call needs the approval window as much as any other (otherwise FSA-041
+        # reopens: the server gives up at 15 s while the daemon keeps waiting). The policy input
+        # keeps its old meaning, False once confirmed, so no decision or audit record changes.
+        on_desktop = bool(
             self._host_routed is not None
             and spec.workspace_local
             and spec.side_effecting
-            and not confirmed
             and await self._host_routed(context)
         )
+        host_routed = on_desktop and not confirmed
         decision: ToolPolicyDecision = self._policy.evaluate(
             spec, context=context, capabilities=capabilities, confirmed=confirmed,
             host_routed=host_routed,
@@ -385,9 +393,9 @@ class ToolRegistry:
             )
 
         # 4. Sandboxed execution
-        timeout = self.call_timeout(spec, context, host_routed=host_routed)
+        timeout = self.call_timeout(spec, context, host_routed=on_desktop)
         try:
-            if host_routed:
+            if on_desktop:
                 # The work happens on the user's own machine, and most of the wait is a human
                 # deciding. Holding one of this process's few sandbox slots for that would let a
                 # handful of pending approvals stall every other user's tool calls here.
