@@ -1542,13 +1542,20 @@ class AIKernel:
         agent = self._resolve_agent(request)
         allowed_tools, max_sensitivity = self._delegation_grant(request, agent)
         deadline_s = 60.0
-        if agent is not None and (agent.allowed_tools is None or "delegate_to_agent" in agent.allowed_tools):
+        reasoning = getattr(self._deps.settings, "reasoning", None)
+        if agent is not None and agent.max_plan_iterations > 1:
+            # An agentic persona (today: `engineer`) runs builds and test suites: `run_command`
+            # declares 605 s, and on a paired desktop the daemon may also wait for a human's
+            # approval first. The flat 60 s cut those off long before their own budgets
+            # (`ToolRegistry.call_timeout`, tool audit T-01). The loop's own deadline is the
+            # right ceiling: it is sized for the longest such call plus the approval window, and
+            # no single call can usefully outlive the loop that made it.
+            deadline_s = getattr(reasoning, "engineer_loop_deadline_s", 960.0)
+        elif agent is not None and (agent.allowed_tools is None or "delegate_to_agent" in agent.allowed_tools):
             # A turn whose persona can delegate may itself be dispatching a recursive kernel.run()
             # (aura_core/tools/delegation.py) rather than a simple API call -- the flat 60s every
             # other tool gets would truncate that sub-turn well before its own budgets do.
-            deadline_s = getattr(
-                getattr(self._deps.settings, "reasoning", None), "delegation_deadline_s", 180.0
-            )
+            deadline_s = getattr(reasoning, "delegation_deadline_s", 180.0)
         return ToolContext(
             user_id=request.user_id,
             correlation_id=(request.correlation_id or CorrelationId.new()).value,

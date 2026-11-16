@@ -165,6 +165,25 @@ class ToolRegistry:
         """Every registered tool name, sorted (no capability filtering -- see ``available``)."""
         return tuple(sorted(self._tools))
 
+    # -- budgets -----------------------------------------------------------------------
+
+    def call_timeout(self, spec: ToolSpec, context: ToolContext, *, host_routed: bool) -> float:
+        """Server-side seconds one call of ``spec`` may take for this caller.
+
+        The tool's own budget, capped by the caller's per-call ``deadline_s`` (set per persona by
+        ``AIKernel._tool_context``). On the user's own machine the daemon may first hold the call
+        for up to its approval window (aura_hostd approval_queue.dart) and only then run it, so
+        that wait is added on top. It used to be ``max(budget, window)``, which left a command
+        approved after a minute four minutes to run, not its declared ten (tool audit T-01). The
+        older bug was worse: cutting the call off at 15 s told the model a write had failed
+        while the daemon kept waiting, and a late Approve then executed with nothing upstream
+        expecting it (FSA-041).
+        """
+        timeout = min(spec.timeout_s or self._default_timeout, context.deadline_s or spec.timeout_s)
+        if host_routed:
+            timeout += self.host_approval_window_s
+        return timeout
+
     # -- discovery ---------------------------------------------------------------------
 
     def _is_visible(self, spec: ToolSpec) -> bool:
@@ -366,14 +385,7 @@ class ToolRegistry:
             )
 
         # 4. Sandboxed execution
-        timeout = min(spec.timeout_s or self._default_timeout, context.deadline_s or spec.timeout_s)
-        if host_routed:
-            # On the user's own machine the daemon queues this call for a human's approval and
-            # waits up to its five-minute window (aura_hostd approval_queue.dart). The spec's
-            # timeout is sized for a sandbox write or command, not for a person: cutting the
-            # call off at 15 s told the model the write had failed while the daemon kept waiting
-            # -- and a late Approve then executed with nothing upstream expecting it (FSA-041).
-            timeout = max(timeout, self.host_approval_window_s)
+        timeout = self.call_timeout(spec, context, host_routed=host_routed)
         try:
             if host_routed:
                 # The work happens on the user's own machine, and most of the wait is a human

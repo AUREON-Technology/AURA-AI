@@ -60,7 +60,15 @@ Severity follows the repo's P1–P4 scale. Each finding is marked **BROKEN** (do
 
 ### P2
 
-**T-01 · BROKEN · Engineer tools are cut off far below their declared budget.** (RUN + CODE)
+**T-01 · FIXED in this PR · Engineer tools are cut off far below their declared budget.** (RUN + CODE)
+
+> **Fix:** `AIKernel._tool_context` now gives an agentic persona (`max_plan_iterations > 1`, today `engineer`) `engineer_loop_deadline_s` (960 s) as its per-call ceiling. The new `ToolRegistry.call_timeout` adds the approval window *on top of* a host-routed call's budget instead of taking the `max`. Result: `run_command` gets 605 s in the sandbox and 605 + 330 = 935 s on a desktop, which is still within the 960 s loop deadline. Conversational personas keep 60 s.
+>
+> **Tests:** `tests/unit/test_engineer_tool_deadline.py` drives the kernel's real context with the registered `run_command` spec, plus scaled real-sleep registry cases. The registry test failed before the change.
+>
+> **Not covered:** T-02 (a server-confirmed call routed to a desktop) and the orchestrator path (T-07) are untouched.
+
+Original finding:
 - `registry.py:369` computes `timeout = min(spec.timeout_s, context.deadline_s)`, and `kernel.py:1544` gives every non-delegating persona `deadline_s = 60`.
 - **Server-sandbox path:** `run_command` declares 605 s and tells the model it may run up to 600 s (`coding.py:585-591`), but it is killed at **60 s**.
 - **Desktop path:** the call gets `max(60, 330)` = **330 s in total**, approval wait included. `settings.py:1081-1085` and `test_host_tool_cancellation.py:129` both say the requirement is 605 s run + 330 s approval.
