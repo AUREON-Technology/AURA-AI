@@ -6,6 +6,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:aura_client/core/auth/account_client.dart';
 import 'package:aura_client/core/auth/desktop_oauth_client.dart';
 import 'package:aura_client/core/auth/platform_login_support.dart';
+import 'package:aura_client/core/auth/sign_in_refused.dart';
 import 'package:aura_client/core/auth/token_manager.dart';
 import 'package:aura_client/core/config/config.dart';
 import 'package:aura_client/core/database/database_provider.dart';
@@ -240,8 +241,22 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
     state = const AsyncValue.loading();
     try {
       final googleUser = await _googleSignIn.authenticate();
-      _currentAccount = googleUser;
       final idToken = googleUser.authentication.idToken;
+      if (idToken == null) {
+        await _abandonGoogleSignIn();
+        throw const SignInRefused('Google returned no identity token for this account.');
+      }
+
+      // Start the backend session now, not on the first API call, so a refusal is shown here
+      // rather than leaving the user on a session nothing can renew. Only a refusal stops the
+      // sign-in: offline, or a device that failed attestation (main.dart's banner, C1), still
+      // gets in and keeps everything that works without the backend.
+      final outcome = await ref.read(tokenManagerProvider).startSession(idToken);
+      if (outcome == SessionStart.refused) {
+        await _abandonGoogleSignIn();
+        throw const SignInRefused();
+      }
+      _currentAccount = googleUser;
 
       final profile = UserProfile(
         id: googleUser.id,
@@ -258,14 +273,21 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
       if (profile.photoUrl != null) {
         await _storage.write(key: 'user_photo', value: profile.photoUrl);
       }
-      if (idToken != null) {
-        await _storage.write(key: 'auth_token', value: idToken);
-      }
+      await _storage.write(key: 'auth_token', value: idToken);
 
       state = AsyncValue.data(profile);
     } catch (err, stack) {
       state = AsyncValue.error(err, stack);
     }
+  }
+
+  /// Signs out of Google after a sign-in that will not go ahead, so the next attempt offers the
+  /// account picker again instead of silently reusing the account that was just refused.
+  Future<void> _abandonGoogleSignIn() async {
+    try {
+      await _googleSignIn.signOut();
+    } catch (_) {}
+    _currentAccount = null;
   }
 
   // Developer bypass bypass for desktop testing without full OAuth redirect config

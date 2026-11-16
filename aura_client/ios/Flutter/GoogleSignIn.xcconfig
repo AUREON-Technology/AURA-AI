@@ -1,0 +1,16 @@
+// Google Sign-In on iOS (google_sign_in). Info.plist reads both values from here as
+// GIDClientID and as the app's callback URL scheme; with them empty, iOS sign-in fails with
+// "No active configuration".
+//
+// Where they come from: Google Cloud Console -> APIs & Services -> Credentials, in the same
+// project as the web client 87789110323-...apps.googleusercontent.com that auth_provider.dart
+// passes as serverClientId -> Create credentials -> OAuth client ID -> iOS, bundle ID
+// com.auraai.auraClient. The client ID and its "iOS URL scheme" are on that client's page.
+// Neither is a secret: both ship inside the app binary.
+//
+//   GOOGLE_IOS_CLIENT_ID          = 123456789012-abc123.apps.googleusercontent.com
+//   GOOGLE_IOS_REVERSED_CLIENT_ID = com.googleusercontent.apps.123456789012-abc123
+//
+// test/ios_release_config_test.dart checks the two agree once they are set.
+GOOGLE_IOS_CLIENT_ID =
+GOOGLE_IOS_REVERSED_CLIENT_ID =

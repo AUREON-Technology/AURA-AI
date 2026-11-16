@@ -10,6 +10,38 @@ iOS:
 
 Evidence scale and refresh steps: [README.md](README.md).
 
+## Update 2026-11-16 (sign-in review, on `ebe7940`)
+
+A review of how the app signs people in, then fixes for what could be fixed from the repo.
+**TESTED locally** (Flutter 3.44.6: `flutter analyze` clean, `flutter test` 687 passed,
+4 skipped). Not CI-run, not on a device.
+
+Fixed:
+- **No biometric enrolled meant a Google sign-in on every launch.** The saved session (refresh
+  token in Keystore/Keychain) was resumed only after a fingerprint or face check, and
+  `canCheckBiometrics` is true on hardware with nothing enrolled. The login page now resumes it
+  directly when nothing is enrolled, and that includes Linux and Windows, whose device-bound
+  desktop session was also never resumed. It does not resume right after the server ended
+  the session (F-33's banner stays readable). `test/sign_in_session_test.dart`.
+- **Google sign-in did not ask the backend.** `signInWithGoogle` let the user in and the
+  `/auth/token` exchange ran on the first API call, so an account the server refuses got in on
+  a dead session. `TokenManager.startSession` now runs the exchange at sign-in. A refusal
+  (400/401/403) stops the sign-in with its own message (`SignInRefused`). An attestation
+  rejection still lets the user in (C1: the app stays usable offline) and shows the "could not
+  be verified" banner straight away. Network failures and 5xx let the user in, as before.
+- **A sign-in as a different account kept renewing the old account's session.** A refresh
+  token left on the device (signed out in the UI, kept for biometric unlock) survived a Google
+  sign-in as another account. The local data was wiped for the new account, but `/refresh` kept
+  issuing tokens for the old one. `startSession` now revokes the old token when the server
+  answers, or forgets it when the server does not.
+- **iOS Google sign-in config is wired, values pending.** `Info.plist` now reads `GIDClientID`
+  and the callback URL scheme from `ios/Flutter/GoogleSignIn.xcconfig` (included by Debug and
+  Release). The two values are empty until the owner creates the iOS OAuth client.
+  `ios_release_config_test.dart` checks they match once set. Not built: no macOS here.
+
+Still the owner's: the iOS OAuth client values, the same setup for macOS (plus its keychain
+entitlement), F-09 (below), the Firebase console check (SEC-08), and Sign in with Apple.
+
 ## Update 2026-11-14 (release readiness pass, on `b655421`)
 
 A contract and release audit of the app against everything merged since 2026-10-28. Everything
@@ -113,7 +145,7 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
 | Tasks / calendar / finance / health | BUILT (finance tested) | F-11: health "today" rows collide across devices. F-18 / CB-28 built 2026-10-31 (ADR-032, Option A; TESTED locally, not deployed or CI-run): the agent now writes the same synced rows, so its tasks appear after a sync and it sees the user's own. F-32 fixed on 2026-10-30 for the task card and the health card (`life_hub_contrast_test.dart`, at least 4.5:1 under `AuraThemeV2.light`; `legacy_theme_color_ratchet_test.dart` stops legacy `AuraTheme` colours under `lib/features/` from growing). About 177 legacy uses remain, so other Life Hub screens are not yet checked on the light theme. F-17: fixed in code, untested on a device: insights and the daily briefing compute "today" in the IANA zone the app sends as `X-Client-Timezone` (stored as `users.timezone`, migration 0018; UTC when absent). | |
 | Account data key and multi-device encryption (ADR-032) | TESTED locally (`test/data_key_crypto_test.dart`, 16 tests; full suite 529 passed, 3 skipped; `flutter analyze` clean); not deployed, not CI-run | The app fetches the account data key (`GET /api/v3/keys/data`) during a sync and moves local data off the per-device key: re-encrypts every row, queues the rows for upload through the outbox, and then retires the device key. The move resumes if the app is killed partway, and the app keeps working on the device key while offline. Every device of an account now shares one key, so another device's rows no longer trigger the `beforeOpen` key-loss wipe. **The server holds this key: the synced fields are not zero-knowledge any more.** |
 | Offline sync (data only; no model on device) | TESTED (outbox); broken end to end | Outbox tests are green. F-11: pull is skipped when push fails. F-12: the cursor comes from the app clock. F-13: memory rows are rejected forever. |
-| Auth and sign-out | TESTED | `5153394`: revoke and wipe on sign-out. F-33 and F-34 fixed on 2026-10-30 (TESTED locally, not proven): a 401 followed by a refused refresh ends the session and the router shows login, keeping local data (`test/ux/session_expiry_test.dart`); sign-out asks first. Switching backend (`setEnvironment()`) clears tokens without revoking them or wiping data. |
+| Auth and sign-out | TESTED | 2026-11-16 (TESTED locally): a saved session is resumed without a prompt when no biometric is enrolled; the backend exchange runs at Google sign-in and a refusal stops it; a sign-in as another account revokes the old refresh token (`test/sign_in_session_test.dart`). `5153394`: revoke and wipe on sign-out. F-33 and F-34 fixed on 2026-10-30 (TESTED locally, not proven): a 401 followed by a refused refresh ends the session and the router shows login, keeping local data (`test/ux/session_expiry_test.dart`); sign-out asks first. Switching backend (`setEnvironment()`) clears tokens without revoking them or wiping data. |
 | Device attestation | TESTED (unit); can be bypassed | Play Integrity (`IntegrityAttestationPlugin.kt`) and App Attest (`AppAttestPlugin.swift`), with backend tests green. F-09 / SEC-05: any account can skip attestation through `/desktop/login`. |
 | Account deletion | TESTED locally (2026-11-14) | `POST /api/v3/account/delete` + You → Account → Delete account; `test/account_deletion_test.dart`, `tests/unit/test_account_self_deletion.py`. Not deployed. |
 | Push notifications | OPEN | No `firebase_messaging`; a failed `Firebase.initializeApp()` is ignored (`main.dart:26`); iOS has no `GoogleService-Info.plist`; in-app notification centre only |
@@ -164,9 +196,10 @@ capability rows below that cite those findings as open describe `dc87beb`; treat
      outbox or the server for an undone delete); sign-out asks for confirmation.
 8. **Release hygiene.** GAP-044, the `build-android` disk space, the stale tracked APK.
 9. **iOS, new (code-read only).**
-   - No `GIDClientID` or Google URL scheme, while `clientId: null` is passed. Google sign-in on
-     iOS likely fails.
-   - `NSFaceIDUsageDescription` is missing, though biometric login is used.
+   - `GIDClientID` and the Google URL scheme are wired from `ios/Flutter/GoogleSignIn.xcconfig`
+     (2026-11-16), but the values are empty until the owner creates the iOS OAuth client. Until
+     then Google sign-in on iOS fails.
+   - ~~`NSFaceIDUsageDescription` is missing~~: added on 2026-11-14.
 
 **Fixed on PR #185 (TESTED locally: analyze clean, 430 passed / 3 skipped; not merged):**
 F-11 (pull runs even when push fails; outbox records attempts and last error, Drift schema 13),
@@ -199,8 +232,8 @@ cleanly, but its CI runs died during the old runner outage, and it has not been 
 4. The client half of F-04. F-31's Stop button and idle timeout are done.
 5. Pin Flutter in `release-apk.yml` (GAP-044) and run it. Delete the stale APK and `.tmp` files.
    Make `setEnvironment()` revoke and wipe.
-6. **iOS:** `GIDClientID` / URL scheme, `NSFaceIDUsageDescription`, a team ID, and a macOS CI job
-   that produces the first IPA.
+6. **iOS:** fill in `ios/Flutter/GoogleSignIn.xcconfig` (the iOS OAuth client), a team ID, and
+   a macOS CI job that produces the first IPA.
 7. Commit a real-device report for Android and iOS: sign-in with attestation, chat, live voice,
    and two-device sync. Do the Firebase console check (SEC-08) at the same time.
 
@@ -208,6 +241,6 @@ cleanly, but its CI runs died during the old runner outage, and it has not been 
 
 - No device or emulator was run. Rendering, screen readers, contrast and biometrics are inferred
   from code.
-- The iOS sign-in and Face ID failures are inferred from code.
+- The iOS sign-in failure is inferred from code.
 - Play Integrity and App Attest end to end against production.
 - The Firebase auth providers (SEC-08).

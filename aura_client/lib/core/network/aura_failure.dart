@@ -17,6 +17,7 @@
 /// vocabulary and which parts of it are not distinguishable today.
 library;
 
+import '../auth/sign_in_refused.dart';
 import 'aura_api_error.dart';
 
 /// Copy for [AuraFailureKind.featureUnavailable] (backend slug
@@ -112,6 +113,16 @@ class AuraFailure {
 
   static AuraFailure from(Object? error) {
     if (error is AuraApiError) return _fromApiError(error);
+    if (error is SignInRefused) {
+      return AuraFailure(
+        kind: AuraFailureKind.forbidden,
+        title: 'AURA did not accept this sign-in',
+        message: 'The server refused this Google account, so you have not been signed in. '
+            'Try another account, or ask whoever runs this AURA server to check this one.',
+        canRetry: false,
+        detail: error.detail,
+      );
+    }
     return AuraFailure(
       kind: AuraFailureKind.unknown,
       title: 'Something went wrong',
