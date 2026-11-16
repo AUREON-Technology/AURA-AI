@@ -67,7 +67,7 @@ from ..domain.output_schema import parse_structured
 from ..domain.messages import Conversation, Message
 from ..domain.planning import StepKind, StepStatus
 from ..domain.reasoning import ReasoningStrategy
-from ..domain.tools import ToolSensitivity
+from ..domain.tools import ToolSensitivity, intersect_tool_grants, tool_grant_permits
 from ..domain.telemetry import (
     CacheOutcome,
     RetrievalTelemetry,
@@ -145,6 +145,10 @@ class TurnRequest:
     #: (defense in depth -- a bug in the tool handler cannot hand a sub-turn a broader grant than
     #: its own persona ever declares). `None` for every ordinary turn (no override).
     delegated_tool_grant: frozenset[str] | None = None
+    #: The prefix half of that same intersected grant (audit T-03: the engineer's ``mcp_``).
+    #: Meaningless when ``delegated_tool_grant`` is ``None``; otherwise empty means "names only",
+    #: so a names-only override strips any prefix the resolved persona itself holds.
+    delegated_tool_prefixes: frozenset[str] = frozenset()
     delegated_risk_ceiling: ToolSensitivity | None = None
     #: Set by `delegate_to_agent` to the delegating turn's own taint (``ToolContext.tainted``).
     #: OR'd into the child turn's taint before planning, so ADR-006 holds across kernel hops: a
@@ -1467,20 +1471,21 @@ class AIKernel:
         exceed its resolved persona's declared grant.
         """
         base_tools = agent.allowed_tools if agent is not None else None
+        base_prefixes = agent.allowed_tool_prefixes if agent is not None else frozenset()
         base_ceiling = agent.risk_ceiling if agent is not None else None
-        if request.delegated_tool_grant is None:
-            effective_tools = base_tools
-        elif base_tools is None:
-            effective_tools = request.delegated_tool_grant
-        else:
-            effective_tools = base_tools & request.delegated_tool_grant
+        # One intersection for names *and* prefixes (domain/tools.py), the same function
+        # `delegate_to_agent` uses: a prefix survives only if both sides hold it (audit T-03).
+        effective_tools, effective_prefixes = intersect_tool_grants(
+            base_tools, base_prefixes,
+            request.delegated_tool_grant, request.delegated_tool_prefixes,
+        )
         if request.delegated_risk_ceiling is None:
             effective_ceiling = base_ceiling
         elif base_ceiling is None:
             effective_ceiling = request.delegated_risk_ceiling
         else:
             effective_ceiling = min(base_ceiling, request.delegated_risk_ceiling)
-        return effective_tools, effective_ceiling
+        return effective_tools, effective_prefixes, effective_ceiling
 
     #: Durable-workspace tools (ADR-013, GitHub-repo-scoped) that make no sense once this user's
     #: turn is running against a paired desktop session (ADR-011, a real local folder): the model
@@ -1499,7 +1504,7 @@ class AIKernel:
         if not (request.use_tools and deps.tools is not None):
             return ()
         agent = self._resolve_agent(request)
-        allowed_tools, max_sensitivity = self._delegation_grant(request, agent)
+        allowed_tools, allowed_prefixes, max_sensitivity = self._delegation_grant(request, agent)
         declarations = deps.tools.declarations(
             capabilities=request.capabilities,
             max_sensitivity=max_sensitivity if max_sensitivity is not None else ToolSensitivity.SYSTEM,
@@ -1515,7 +1520,10 @@ class AIKernel:
         # Not advertised, not requested: a tool outside the agent's grant should not appear in
         # the model's tool list, same reasoning as ToolRegistry.available()'s own capability
         # filter -- offering it only produces a call that policy.evaluate() then refuses.
-        return tuple(d for d in declarations if d.get("name") in allowed_tools)
+        return tuple(
+            d for d in declarations
+            if tool_grant_permits(str(d.get("name", "")), allowed_tools, allowed_prefixes)
+        )
 
     def _should_plan(self, request: TurnRequest, tools: Sequence[Mapping[str, Any]]) -> bool:
         deps = self._deps
@@ -1540,9 +1548,9 @@ class AIKernel:
 
     def _tool_context(self, request: TurnRequest, tainted: bool) -> ToolContext:
         agent = self._resolve_agent(request)
-        allowed_tools, max_sensitivity = self._delegation_grant(request, agent)
+        allowed_tools, allowed_prefixes, max_sensitivity = self._delegation_grant(request, agent)
         deadline_s = 60.0
-        if agent is not None and (agent.allowed_tools is None or "delegate_to_agent" in agent.allowed_tools):
+        if agent is not None and agent.permits_tool("delegate_to_agent"):
             # A turn whose persona can delegate may itself be dispatching a recursive kernel.run()
             # (aura_core/tools/delegation.py) rather than a simple API call -- the flat 60s every
             # other tool gets would truncate that sub-turn well before its own budgets do.
@@ -1556,6 +1564,7 @@ class AIKernel:
             tainted=tainted,
             agent_id=agent.id if agent is not None else None,
             allowed_tools=allowed_tools,
+            allowed_tool_prefixes=allowed_prefixes,
             max_sensitivity=max_sensitivity,
             memory_scope=agent.memory_scope if agent is not None else "shared",
             capabilities=request.capabilities,

@@ -360,7 +360,11 @@ class _Run:
         self._serial += 1
         return ToolContext(
             user_id=_GATE_USER, correlation_id=f"gate-{self.record.version}-{self._serial}", deadline_s=60.0,
-            agent_id=spec.id, allowed_tools=spec.allowed_tools, max_sensitivity=spec.risk_ceiling,
+            agent_id=spec.id, allowed_tools=spec.allowed_tools,
+            # Always empty for a generated agent (runtime._assert_generated refuses a prefix);
+            # passed so this context matches the kernel's shape exactly (audit T-03).
+            allowed_tool_prefixes=getattr(spec, "allowed_tool_prefixes", frozenset()),
+            max_sensitivity=spec.risk_ceiling,
             memory_scope=spec.memory_scope, capabilities=self.grants,
         )
 

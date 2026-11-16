@@ -171,6 +171,10 @@ def _assert_generated(spec: AgentSpec) -> None:
     # ADR-024: "everything" is not expressible for a generated agent.
     if spec.allowed_tools is None or not spec.allowed_tools:
         raise ValidationError("generated agents must name their tools", details={"agent": spec.id})
+    if spec.allowed_tool_prefixes:
+        # A prefix grant names a family, not tools (audit T-03 introduced it for the core
+        # engineer's MCP bridge only); a generated agent's grant stays an explicit list.
+        raise ValidationError("generated agents cannot hold a tool prefix grant", details={"agent": spec.id})
     if spec.id in ("orchestrator",) or not spec.id.startswith(GENERATED_AGENT_PREFIX):
         raise ValidationError("generated agent ids are namespaced", details={"agent": spec.id})
 
