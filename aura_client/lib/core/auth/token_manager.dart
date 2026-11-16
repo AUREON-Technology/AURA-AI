@@ -25,6 +25,25 @@ final authExchangeFailureProvider =
   return AuthExchangeFailureNotifier();
 });
 
+/// How [TokenManager.startSession] ended.
+enum SessionStart {
+  /// The backend issued a session for this account.
+  started,
+
+  /// The backend answered, but rejected this device's attestation. The sign-in goes ahead (the
+  /// app stays usable offline, and main.dart shows the "could not be verified" banner, C1), but
+  /// nothing that needs the backend will work.
+  deviceUnverified,
+
+  /// The backend said no to this account (400/401/403). Signing in must stop here: letting the
+  /// user in would leave them on a session nothing can renew (audit F-33).
+  refused,
+
+  /// Nothing conclusive came back (network, timeout, 5xx). The sign-in goes ahead and the
+  /// exchange is retried on the first API call, as it always was.
+  unreachable,
+}
+
 /// A device-scoped token issued by `POST /api/v3/auth/desktop/login` (ADR-011 Unit 7) --
 /// see [TokenManager.exchangeDesktopLogin].
 class DesktopDeviceToken {
@@ -224,9 +243,47 @@ class TokenManager {
     }
   }
 
-  Future<String?> _tryExchange() async {
+  /// Exchanges the Google ID token a sign-in just produced for a backend session, at sign-in
+  /// rather than on the first API call. Before this, a sign-in the backend would refuse still
+  /// "succeeded" and left the user on a session that could never work; a refusal now surfaces
+  /// on the login page, and an attestation failure shows its banner straight away.
+  ///
+  /// It also settles what happens to a refresh token left on this device by an earlier session
+  /// (signed out in the UI, but kept so it could be resumed). Left alone, a sign-in as a
+  /// *different* account would keep renewing the old account's session: the local data is
+  /// wiped for the new account while every API call still goes out as the old one. So once
+  /// this sign-in goes ahead, the old token is revoked (or, if the server cannot be reached,
+  /// forgotten locally). On [SessionStart.refused] the sign-in is abandoned and the old
+  /// session is left exactly as it was.
+  Future<SessionStart> startSession(String idToken) async {
+    await _loadCachedRefreshToken();
+    final cached = _refreshToken;
+    final previous = (cached != null && cached.isNotEmpty) ? cached : null;
+
+    final token = await _tryExchange(idToken: idToken);
+    if (token != null) {
+      if (previous != null && previous != _refreshToken) await _revoke(previous);
+      return SessionStart.started;
+    }
+
+    if (_renewalRefused) return SessionStart.refused;
+
+    final unverified = _ref.read(authExchangeFailureProvider) ==
+        AuthExchangeFailure.deviceAttestationRejected;
+    _accessToken = null;
+    _accessTokenExpiry = null;
+    if (previous != null) {
+      // The server just answered an attestation rejection, so it can take a revoke too. When
+      // it did not answer at all, a revoke would only wait out its own timeout.
+      if (unverified) await _revoke(previous);
+      await _clearRefreshToken();
+    }
+    return unverified ? SessionStart.deviceUnverified : SessionStart.unreachable;
+  }
+
+  Future<String?> _tryExchange({String? idToken}) async {
     try {
-      final idToken = await _ref.read(authProvider.notifier).getIdToken();
+      idToken ??= await _ref.read(authProvider.notifier).getIdToken();
       if (idToken == null) {
         debugPrint("[TokenManager] token exchange skipped: no Google ID token");
         // Nothing left to renew with: no refresh token got us here, and
@@ -395,21 +452,24 @@ class TokenManager {
     if (revoke) {
       await _loadCachedRefreshToken();
       final token = _refreshToken;
-      if (token != null && token.isNotEmpty) {
-        try {
-          await _post(
-            "$_authUrl/revoke",
-            headers: {"Content-Type": "application/json"},
-            body: jsonEncode({"refresh_token": token}),
-          );
-        } catch (e) {
-          debugPrint("[TokenManager] revoke on sign-out failed (continuing): $e");
-        }
-      }
+      if (token != null && token.isNotEmpty) await _revoke(token);
     }
     _accessToken = null;
     _accessTokenExpiry = null;
     await _clearRefreshToken();
+  }
+
+  /// Best effort: a failed or offline revoke never blocks the caller.
+  Future<void> _revoke(String refreshToken) async {
+    try {
+      await _post(
+        "$_authUrl/revoke",
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"refresh_token": refreshToken}),
+      );
+    } catch (e) {
+      debugPrint("[TokenManager] revoke failed (continuing): $e");
+    }
   }
 }
 

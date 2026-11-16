@@ -8,6 +8,35 @@ import 'package:aura_client/core/design_system/design_system.dart';
 import 'package:aura_client/core/network/aura_failure.dart';
 import 'package:aura_client/l10n/l10n.dart';
 
+/// The device's biometric API, behind a provider so tests can stand in for it.
+final localAuthenticationProvider = Provider<LocalAuthentication>((ref) => LocalAuthentication());
+
+/// What the login page does on open about a session this device already holds.
+enum CachedSessionUnlock {
+  /// Nothing: no saved session, or it was just ended by the server ([sessionExpiredProvider]),
+  /// in which case the user should read why before anything signs them back in.
+  none,
+
+  /// Ask for a fingerprint or face first, then resume it.
+  biometric,
+
+  /// Resume it straight away. With no biometric enrolled (or none on this platform: Linux,
+  /// Windows without Hello, web) there is nothing to prompt for, and until this existed such a
+  /// device had to go through Google on every launch although a valid refresh token was on disk.
+  /// The device's own lock screen is the gate here, as it is for any app that keeps you signed
+  /// in.
+  direct,
+}
+
+CachedSessionUnlock cachedSessionUnlock({
+  required bool hasCachedSession,
+  required bool sessionExpired,
+  required bool biometricsEnrolled,
+}) {
+  if (!hasCachedSession || sessionExpired) return CachedSessionUnlock.none;
+  return biometricsEnrolled ? CachedSessionUnlock.biometric : CachedSessionUnlock.direct;
+}
+
 /// V2 rebuild (Doc/V2_BLUEPRINT.md §4) — same auth flows as V1, restyled
 /// on the design system (light+dark-ready, contrast-checked palette,
 /// shared AuraCard/AuraButton components) instead of the page's own
@@ -24,29 +53,52 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _emailController = TextEditingController();
   bool _showDeveloperPanel = false;
 
-  final LocalAuthentication _localAuth = LocalAuthentication();
+  late final LocalAuthentication _localAuth = ref.read(localAuthenticationProvider);
   bool _canCheckBiometrics = false;
   bool _hasCachedCredentials = false;
 
   @override
   void initState() {
     super.initState();
-    _checkBiometricStatus();
+    _resumeCachedSession();
   }
 
-  void _checkBiometricStatus() async {
+  /// Whether a fingerprint or face is actually enrolled. `canCheckBiometrics` alone only says
+  /// the hardware exists, and `biometricOnly` then fails on a phone with nothing enrolled.
+  /// Each check is guarded on its own: local_auth has no Linux implementation, and a throw
+  /// there must not also hide the saved session.
+  Future<bool> _biometricsEnrolled() async {
     try {
-      final canCheck = await _localAuth.canCheckBiometrics;
-      final hasCache = await ref.read(authProvider.notifier).hasCachedCredentials();
-      if (!mounted) return;
-      setState(() {
-        _canCheckBiometrics = canCheck;
-        _hasCachedCredentials = hasCache;
-      });
-      if (canCheck && hasCache) {
-        _authenticateBiometrically();
-      }
+      if (!await _localAuth.canCheckBiometrics) return false;
+      return (await _localAuth.getAvailableBiometrics()).isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _resumeCachedSession() async {
+    final enrolled = await _biometricsEnrolled();
+    var hasCache = false;
+    try {
+      hasCache = await ref.read(authProvider.notifier).hasCachedCredentials();
     } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _canCheckBiometrics = enrolled;
+      _hasCachedCredentials = hasCache;
+    });
+    switch (cachedSessionUnlock(
+      hasCachedSession: hasCache,
+      sessionExpired: ref.read(sessionExpiredProvider),
+      biometricsEnrolled: enrolled,
+    )) {
+      case CachedSessionUnlock.biometric:
+        await _authenticateBiometrically();
+      case CachedSessionUnlock.direct:
+        await ref.read(authProvider.notifier).signInCached();
+      case CachedSessionUnlock.none:
+        break;
+    }
   }
 
   Future<void> _authenticateBiometrically() async {
