@@ -32,6 +32,9 @@ OWNER, ADMIN, MEMBER = WorkspaceRole.OWNER, WorkspaceRole.ADMIN, WorkspaceRole.M
 _PG_URL = os.environ.get("AURA_TEST_DATABASE_URL", "")
 
 
+_PG_DSN: list[str] = [""]
+
+
 class _PostgresTenancyStore:
     """A migrated throwaway database with the test's people in ``users`` (the FK target)."""
 
@@ -46,6 +49,7 @@ class _PostgresTenancyStore:
             pytest.skip("AURA_TEST_DATABASE_URL is not set")
         self._db = migrated_database(_PG_URL, "tenancy")
         url = await self._db.__aenter__()
+        _PG_DSN[:] = [url]
         conn = await asyncpg.connect(url)
         try:
             for subject in ("u1", "u2", "u3"):
@@ -191,3 +195,45 @@ async def test_delete_workspace_cascades(store) -> None:
     assert await store.get_workspace(ws.id) is None
     assert await store.memberships_of("u2") == []
     assert await store.get_invite(invite.invite_id) is None
+
+
+async def test_conditional_writes_refuse_a_changed_target(store) -> None:
+    """Review #1: a role change or removal decided against a stale read never lands on an Owner."""
+    ws = await _workspace(store, "u1")
+    await store.add_member(Membership(ws.id, "u2", MEMBER, T0))
+    await store.transfer_ownership(ws.id, "u1", "u2")  # races ahead of an admin's demotion of u2
+    with pytest.raises(ConflictError):
+        await store.set_role(ws.id, "u2", MEMBER, expected=MEMBER)
+    assert await store.remove_member(ws.id, "u2", expected=MEMBER) is False
+    assert (await store.get_membership(ws.id, "u2")).role is OWNER
+
+
+async def test_people_without_a_users_row_can_join(store) -> None:
+    """Review #3: a valid v3 subject that never synced has no ``users`` row yet."""
+    ws = await _workspace(store, "ghost-owner")
+    personal = Workspace(new_workspace_id(), WorkspaceKind.PERSONAL, "Personal", "ghost-2", T0)
+    await store.create_workspace(personal, Membership(personal.id, "ghost-2", OWNER, T0))
+    invite = await _invite(store, ws)
+    member = await store.accept_invite(invite.invite_id, user_id="ghost-3", at=T0, seat_limit=5)
+    assert member.user_id == "ghost-3"
+
+
+@pytest.mark.load
+async def test_erasing_the_creator_keeps_a_transferred_team() -> None:
+    """Review #2: deleting the creator's ``users`` row must not cascade into a team they gave away."""
+    import asyncpg
+
+    async with _PostgresTenancyStore() as pg:
+        ws = await _workspace(pg, "u1")
+        personal = await _workspace(pg, "u1", kind=WorkspaceKind.PERSONAL, name="Personal")
+        await pg.add_member(Membership(ws.id, "u2", MEMBER, T0))
+        await pg.transfer_ownership(ws.id, "u1", "u2")
+        conn = await asyncpg.connect(_PG_DSN[0])
+        try:
+            await conn.execute("DELETE FROM users WHERE auth_subject = 'u1'")
+        finally:
+            await conn.close()
+        assert await pg.get_workspace(ws.id) is not None
+        assert {m.user_id: m.role for m in await pg.list_members(ws.id)} == {"u2": OWNER}
+        assert await pg.personal_workspace("u1") is None
+        assert await pg.get_workspace(personal.id) is None

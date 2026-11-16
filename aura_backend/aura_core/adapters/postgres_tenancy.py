@@ -16,6 +16,7 @@ from typing import Any, Mapping
 
 from ..domain.errors import ConflictError, NotFoundError
 from ..domain.tenancy import Invite, Membership, Workspace, WorkspaceKind, WorkspaceRole
+from .postgres_app_users import ensure_user_id
 from .postgres_store import PostgresPool
 
 __all__ = ["PostgresTenancyStore"]
@@ -71,9 +72,12 @@ class PostgresTenancyStore:
         async with pool.acquire() as conn:
             try:
                 async with conn.transaction():
+                    # A valid v3 subject may never have synced, so it may have no users row yet.
+                    await ensure_user_id(conn, owner.user_id)
+                    personal_owner = ws.created_by if ws.kind is WorkspaceKind.PERSONAL else None
                     await conn.execute(
-                        f"INSERT INTO aura_workspaces ({_WS}) VALUES ($1, $2, $3, $4, $5)",
-                        ws.id, ws.kind.value, ws.name, ws.created_by, ws.created_at,
+                        f"INSERT INTO aura_workspaces ({_WS}, personal_owner) VALUES ($1, $2, $3, $4, $5, $6)",
+                        ws.id, ws.kind.value, ws.name, ws.created_by, ws.created_at, personal_owner,
                     )
                     await conn.execute(
                         f"INSERT INTO aura_workspace_members ({_MEMBER}) VALUES ($1, $2, $3, $4, $5)",
@@ -92,7 +96,7 @@ class PostgresTenancyStore:
         pool = await self._conn()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                f"SELECT {_WS} FROM aura_workspaces WHERE created_by = $1 AND kind = 'personal'", user_id
+                f"SELECT {_WS} FROM aura_workspaces WHERE personal_owner = $1", user_id
             )
         return _workspace(row) if row else None
 
@@ -136,6 +140,7 @@ class PostgresTenancyStore:
     async def add_member(self, m: Membership) -> None:
         pool = await self._conn()
         async with pool.acquire() as conn:
+            await ensure_user_id(conn, m.user_id)
             status = await conn.execute(
                 f"INSERT INTO aura_workspace_members ({_MEMBER}) VALUES ($1, $2, $3, $4, $5) "
                 "ON CONFLICT (workspace_id, user_id) DO NOTHING",
@@ -144,22 +149,32 @@ class PostgresTenancyStore:
         if status.rsplit(" ", 1)[-1] != "1":
             raise ConflictError("already a member of this workspace")
 
-    async def set_role(self, workspace_id: str, user_id: str, role: WorkspaceRole) -> None:
+    async def set_role(
+        self, workspace_id: str, user_id: str, role: WorkspaceRole, *, expected: WorkspaceRole | None = None
+    ) -> None:
         pool = await self._conn()
         async with pool.acquire() as conn:
+            # Conditional on the role the caller decided against, so a transfer that landed in
+            # between can never be overwritten into a team with no owner.
             status = await conn.execute(
-                "UPDATE aura_workspace_members SET role = $3 WHERE workspace_id = $1 AND user_id = $2",
-                workspace_id, user_id, role.value,
+                "UPDATE aura_workspace_members SET role = $3 WHERE workspace_id = $1 AND user_id = $2 "
+                "AND ($4::text IS NULL OR role = $4)",
+                workspace_id, user_id, role.value, expected.value if expected else None,
             )
         if status.rsplit(" ", 1)[-1] != "1":
+            if expected is not None:
+                raise ConflictError("this member's role changed; reload and try again")
             raise NotFoundError("no such member")
 
-    async def remove_member(self, workspace_id: str, user_id: str) -> bool:
+    async def remove_member(
+        self, workspace_id: str, user_id: str, *, expected: WorkspaceRole | None = None
+    ) -> bool:
         pool = await self._conn()
         async with pool.acquire() as conn:
             status = await conn.execute(
-                "DELETE FROM aura_workspace_members WHERE workspace_id = $1 AND user_id = $2",
-                workspace_id, user_id,
+                "DELETE FROM aura_workspace_members WHERE workspace_id = $1 AND user_id = $2 "
+                "AND ($3::text IS NULL OR role = $3)",
+                workspace_id, user_id, expected.value if expected else None,
             )
         return status.rsplit(" ", 1)[-1] == "1"
 
@@ -252,6 +267,7 @@ class PostgresTenancyStore:
                 if seats >= seat_limit:
                     raise ConflictError("this workspace has no free seats")
                 member = Membership(invite.workspace_id, user_id, invite.role, at, invited_by=invite.created_by)
+                await ensure_user_id(conn, user_id)
                 await conn.execute(
                     f"INSERT INTO aura_workspace_members ({_MEMBER}) VALUES ($1, $2, $3, $4, $5)",
                     member.workspace_id, member.user_id, member.role.value, member.invited_by, member.joined_at,

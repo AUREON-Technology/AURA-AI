@@ -166,14 +166,16 @@ class TenancyService:
             raise ConflictError("no such member")
         if not can(mine.role, "remove_member", target_role=target.role):
             raise AuthorizationError("your role cannot remove this member")
-        await self.store.remove_member(workspace_id, user_id)
+        if not await self.store.remove_member(workspace_id, user_id, expected=target.role):
+            raise ConflictError("this member's role changed; reload and try again")
         await self._audit("remove_member", actor, mine.role, workspace_id, {"member": user_id})
 
     async def leave(self, user_id: str, workspace_id: str) -> None:
         _ws, mine = await self._team(user_id, workspace_id)
         if mine.role is WorkspaceRole.OWNER:
             raise ConflictError("transfer ownership first")
-        await self.store.remove_member(workspace_id, user_id)
+        if not await self.store.remove_member(workspace_id, user_id, expected=mine.role):
+            raise ConflictError("your role changed; reload and try again")
         await self._audit("leave", user_id, mine.role, workspace_id)
 
     async def change_role(self, actor: str, workspace_id: str, user_id: str, role: WorkspaceRole) -> None:
@@ -186,7 +188,7 @@ class TenancyService:
             raise ValidationError("ownership changes only by transfer")
         if not can(mine.role, "change_role", target_role=target.role):
             raise AuthorizationError("your role cannot change this member's role")
-        await self.store.set_role(workspace_id, user_id, role)
+        await self.store.set_role(workspace_id, user_id, role, expected=target.role)
         await self._audit("change_role", actor, mine.role, workspace_id, {"member": user_id, "role": role.value})
 
     async def transfer(self, actor: str, workspace_id: str, to_user: str) -> None:

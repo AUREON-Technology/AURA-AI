@@ -74,16 +74,26 @@ class InMemoryTenancyStore:
                 raise ConflictError("already a member of this workspace")
             self._members[(m.workspace_id, m.user_id)] = m
 
-    async def set_role(self, workspace_id: str, user_id: str, role: WorkspaceRole) -> None:
+    async def set_role(
+        self, workspace_id: str, user_id: str, role: WorkspaceRole, *, expected: WorkspaceRole | None = None
+    ) -> None:
         async with self._lock:
             current = self._members.get((workspace_id, user_id))
             if current is None:
                 raise NotFoundError("no such member")
+            if expected is not None and current.role is not expected:
+                raise ConflictError("this member's role changed; reload and try again")
             self._members[(workspace_id, user_id)] = replace(current, role=role)
 
-    async def remove_member(self, workspace_id: str, user_id: str) -> bool:
+    async def remove_member(
+        self, workspace_id: str, user_id: str, *, expected: WorkspaceRole | None = None
+    ) -> bool:
         async with self._lock:
-            return self._members.pop((workspace_id, user_id), None) is not None
+            current = self._members.get((workspace_id, user_id))
+            if current is None or (expected is not None and current.role is not expected):
+                return False
+            del self._members[(workspace_id, user_id)]
+            return True
 
     async def transfer_ownership(self, workspace_id: str, from_user: str, to_user: str) -> None:
         async with self._lock:

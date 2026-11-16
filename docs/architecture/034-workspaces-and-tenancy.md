@@ -70,11 +70,31 @@ else's workspace exists.
 
 Ingest, upload, delete and pin/unpin require `manage_knowledge` (Owner or Admin).
 
+### 5. Everything keyed per person is also keyed per scope
+
+- **Personal memory in team turns.** A team chat turn does not recall the person's private memory
+  (spec §5.2), because teammates read the answer.
+- **The response cache.** It is namespaced by person *and* scope, so an answer built from team
+  documents is never served in the person's personal workspace, including after they leave the
+  team.
+- **`Idempotency-Key` claims.** They include the workspace, so the same key reused in a team does
+  not replay the personal write.
+- **Membership changes.** They are conditional on the role the decision was made against, so a
+  concurrent ownership transfer can never be overwritten into a team with no Owner.
+
 ## Consequences
 
 - Tables `aura_workspaces`, `aura_workspace_members` and `aura_workspace_invites` arrive with Alembic
-  `0020`. Partial unique indexes enforce one personal workspace per person and one owner per team,
-  even under a race the code missed.
+  `0020`. A unique `personal_owner` column enforces one personal workspace per person, and a
+  partial unique index enforces one owner per team, even under a race the code missed.
+- What erasing a person's `users` row cascades to:
+  - their memberships and their personal workspace;
+  - never a team they created: `created_by` is history, not ownership. A team survives its creator
+    once it has been handed over.
+- A subject with no `users` row yet gets one created on first use (`ensure_user_id`), so these
+  calls never return a 500 for a valid subject.
+- Still not covered: voice turns run in the personal scope (no workspace header on the WebSocket),
+  and deleting a team does not yet purge its corpus.
 - The seat limit is `AURA_TEAM_DEFAULT_SEATS` (default 5) until plan entitlements replace it.
 - Isolation is enforced in application code plus the scope string. **Postgres row-level security
   is the planned second lock** (spec §6.2), not built.

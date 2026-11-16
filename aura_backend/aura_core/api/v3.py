@@ -492,7 +492,9 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                 request.headers.get("x-correlation-id") or CorrelationId.new().value
             ),
             use_knowledge=payload.use_knowledge,
-            use_memory=payload.use_memory,
+            # Spec §5.2 / ADR-034: a team turn draws on the team's corpus, never on the person's
+            # private memory, which a teammate reading the answer must not see.
+            use_memory=payload.use_memory and caller.knowledge_owner == caller.user_id,
             use_tools=payload.use_tools,
             plan=payload.plan,
             strategy=_parse_enum(ReasoningStrategy, payload.strategy),

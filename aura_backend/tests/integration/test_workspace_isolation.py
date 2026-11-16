@@ -115,7 +115,7 @@ async def test_removed_member_loses_team_docs_immediately(client, container, tea
     assert after.status_code == 403
 
 
-def test_chat_turn_retrieves_team_scope_but_user_memory(client, container, teams) -> None:
+def test_chat_turn_retrieves_team_scope_and_no_personal_memory(client, container, teams) -> None:
     t1, _t2 = teams
     seen = {}
     original_retrieve = container.knowledge.retrieve
@@ -136,4 +136,51 @@ def test_chat_turn_retrieves_team_scope_but_user_memory(client, container, teams
     )
     assert response.status_code == 200, response.text
     assert str(seen["knowledge"]) == f"workspace:{t1}"
-    assert str(seen["memory"]) == "bob"
+    assert "memory" not in seen  # spec §5.2: personal memory is not mixed into a team turn
+
+
+def test_response_cache_is_partitioned_by_workspace(client, container, teams) -> None:
+    """Review #4: a team answer must never be served from (or into) the person's personal cache."""
+    t1, _t2 = teams
+    namespaces = []
+    original = container.llm_cache.lookup
+
+    async def lookup(request, *, namespace="global"):
+        namespaces.append(namespace)
+        return await original(request, namespace=namespace)
+
+    container.llm_cache.lookup = lookup
+    body = {"message": "Summarise the Zephyrine procurement policy.", "temperature": 0, "use_tools": False}
+    assert client.post("/api/v3/chat", headers=_as("bob", t1), json=body).status_code == 200
+    assert client.post("/api/v3/chat", headers=_as("bob"), json=body).status_code == 200
+    assert len(namespaces) == 2 and namespaces[0] != namespaces[1]
+    assert t1 in namespaces[0] and t1 not in namespaces[1]
+
+
+def test_idempotency_key_reused_across_workspaces_still_writes_to_the_team(client, teams) -> None:
+    """Review #5: the same key and body in the personal workspace, then in the team, must ingest
+    into the team rather than replay the personal response."""
+    t1, _t2 = teams
+    body = {"title": "Procurement", "content": TEAM_DOC}
+    key = {"idempotency-key": "same-key-0001"}
+    assert client.post("/api/v3/knowledge/documents", headers={**_as("alice"), **key}, json=body).status_code == 200
+    assert client.post("/api/v3/knowledge/documents", headers={**_as("alice", t1), **key}, json=body).status_code == 200
+    assert _found(client, _as("bob", t1), "Zephyrine procurement threshold")
+
+
+def test_team_turn_does_not_mix_in_personal_memory(client, container, teams) -> None:
+    """Spec §5.2: in a team workspace the person's private memory is not mixed into the turn."""
+    t1, _t2 = teams
+    recalled = []
+    original = container.memory.recall
+
+    async def recall(query):
+        recalled.append(query.owner_id)
+        return await original(query)
+
+    container.memory.recall = recall
+    message = {"message": "What do you remember about my allotment?"}
+    assert client.post("/api/v3/chat", headers=_as("bob", t1), json=message).status_code == 200
+    assert recalled == []
+    assert client.post("/api/v3/chat", headers=_as("bob"), json=message).status_code == 200
+    assert [str(o) for o in recalled] == ["bob"]

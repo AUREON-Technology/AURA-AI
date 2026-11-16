@@ -2184,7 +2184,12 @@ class AIKernel:
         budget: TurnBudget,
     ) -> tuple[str, str | None, str | None, Any, float, bool, str | None, int, Any, float | None]:
         deps = self._deps
+        # Per person *and* per data scope (ADR-034): a team turn's answer rests on the team's
+        # corpus, so it must never be served to (or from) the same person's personal turns -- or,
+        # after they leave the team, at all. Personal turns keep their pre-workspace key.
         namespace = request.user_id.value
+        if request.knowledge_owner is not None and request.knowledge_owner != request.user_id:
+            namespace = f"{namespace}|{request.knowledge_owner.value}"
         # An image turn's answer rests on pixels the cache key never sees: the semantic tier
         # matches on the user's text alone, so "what is in this picture?" would be answered from
         # a different picture (ADR-031). Such turns neither read nor write the cache.

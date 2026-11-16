@@ -6,9 +6,11 @@ Create Date: 2026-11-16
 
 Read and written by ``aura_core/adapters/postgres_tenancy.py``, which issues no DDL of its own.
 
-* People are the auth subject (``users.auth_subject``), like every other ``aura_*`` table, with
-  ``ON DELETE CASCADE``: erasing a user removes their memberships and the workspaces they created.
-* One personal workspace per person (partial unique index on ``created_by``).
+* People are the auth subject (``users.auth_subject``), like every other ``aura_*`` table.
+  Erasing a user cascades to their memberships and to their *personal* workspace (through
+  ``personal_owner``), never to a team they created: ``created_by`` is history, not ownership, and
+  a team they handed over must survive them.
+* One personal workspace per person (unique ``personal_owner``; NULL for every team).
 * Exactly one owner per workspace (partial unique index on ``workspace_id`` where
   ``role = 'owner'``); ownership transfer demotes before it promotes.
 * Invites store only the SHA-256 of their token.
@@ -28,13 +30,12 @@ UPGRADE_STATEMENTS = (
         id          TEXT        PRIMARY KEY CHECK (id ~ '^[0-9a-f]{32}$'),
         kind        TEXT        NOT NULL CHECK (kind IN ('personal', 'team')),
         name        TEXT        NOT NULL,
-        created_by  TEXT        NOT NULL REFERENCES users (auth_subject) ON DELETE CASCADE,
-        created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+        created_by  TEXT        NOT NULL,
+        personal_owner TEXT     UNIQUE REFERENCES users (auth_subject) ON DELETE CASCADE,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CHECK ((kind = 'personal') = (personal_owner IS NOT NULL)),
+        CHECK (personal_owner IS NULL OR personal_owner = created_by)
     )
-    """,
-    """
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_aura_workspaces_personal
-        ON aura_workspaces (created_by) WHERE kind = 'personal'
     """,
     """
     CREATE TABLE IF NOT EXISTS aura_workspace_members (

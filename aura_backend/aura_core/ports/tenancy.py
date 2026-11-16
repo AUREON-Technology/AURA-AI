@@ -35,9 +35,16 @@ class TenancyStore(Protocol):
     async def add_member(self, m: Membership) -> None:
         """``ConflictError`` if the person is already a member."""
 
-    async def set_role(self, workspace_id: str, user_id: str, role: WorkspaceRole) -> None: ...
+    async def set_role(
+        self, workspace_id: str, user_id: str, role: WorkspaceRole, *, expected: WorkspaceRole | None = None
+    ) -> None:
+        """With ``expected``, change the role only if it is still ``expected`` (``ConflictError``
+        otherwise), so a decision made on a stale read never demotes a new Owner."""
 
-    async def remove_member(self, workspace_id: str, user_id: str) -> bool: ...
+    async def remove_member(
+        self, workspace_id: str, user_id: str, *, expected: WorkspaceRole | None = None
+    ) -> bool:
+        """False if there was no such member, or (with ``expected``) their role had changed."""
 
     async def transfer_ownership(self, workspace_id: str, from_user: str, to_user: str) -> None:
         """Atomically: ``from_user`` becomes Admin, ``to_user`` becomes Owner."""
