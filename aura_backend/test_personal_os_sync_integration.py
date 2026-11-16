@@ -60,7 +60,7 @@ class TestPersonalOsSyncIntegration(unittest.TestCase):
 
         _alembic(cls.async_url, "upgrade", "head")
         cls.migration_log = [_alembic(cls.async_url, "current")]
-        _alembic(cls.async_url, "downgrade", "-1")
+        _alembic(cls.async_url, "downgrade", "0018")
         cls.migration_log.append(_alembic(cls.async_url, "current"))
         cls.table_after_downgrade = asyncio.run(cls._scalar(
             "SELECT to_regclass('aura_user_data_keys') IS NOT NULL"
@@ -158,10 +158,11 @@ class TestPersonalOsSyncIntegration(unittest.TestCase):
     # -- tests ------------------------------------------------------------------------
 
     def test_migration_0019_downgrades_and_upgrades(self):
-        self.assertIn("0019", self.migration_log[0])
+        # Pinned to 0018 rather than "-1" so later migrations (0020+) don't move the target.
+        self.assertIn("(head)", self.migration_log[0])
         self.assertIn("0018", self.migration_log[1])
         self.assertFalse(self.table_after_downgrade)
-        self.assertIn("0019", self.migration_log[2])
+        self.assertIn("(head)", self.migration_log[2])
         self.assertTrue(asyncio.run(self._scalar(
             "SELECT to_regclass('aura_user_data_keys') IS NOT NULL"
         )))

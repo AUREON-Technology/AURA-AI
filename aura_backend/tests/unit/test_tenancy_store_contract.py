@@ -6,6 +6,8 @@ The in-memory store runs by default; the Postgres one is added under the ``load`
 
 from __future__ import annotations
 
+import os
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -27,7 +29,44 @@ from aura_core.domain.tenancy import (
 T0 = datetime(2026, 11, 16, 12, tzinfo=timezone.utc)
 OWNER, ADMIN, MEMBER = WorkspaceRole.OWNER, WorkspaceRole.ADMIN, WorkspaceRole.MEMBER
 
-STORE_FACTORIES = [pytest.param(InMemoryTenancyStore, id="memory")]
+_PG_URL = os.environ.get("AURA_TEST_DATABASE_URL", "")
+
+
+class _PostgresTenancyStore:
+    """A migrated throwaway database with the test's people in ``users`` (the FK target)."""
+
+    async def __aenter__(self):
+        import asyncpg
+
+        from aura_core.adapters.postgres_store import PostgresPool
+        from aura_core.adapters.postgres_tenancy import PostgresTenancyStore
+        from tests.postgres_migrations import migrated_database
+
+        if not _PG_URL:
+            pytest.skip("AURA_TEST_DATABASE_URL is not set")
+        self._db = migrated_database(_PG_URL, "tenancy")
+        url = await self._db.__aenter__()
+        conn = await asyncpg.connect(url)
+        try:
+            for subject in ("u1", "u2", "u3"):
+                await conn.execute(
+                    "INSERT INTO users (id, auth_subject, email) VALUES ($1, $2, $3)",
+                    uuid.uuid4(), subject, f"{subject}@example.com",
+                )
+        finally:
+            await conn.close()
+        self._pool = PostgresPool(url, min_size=1, max_size=4)
+        return PostgresTenancyStore(url, pool=self._pool)
+
+    async def __aexit__(self, *exc):
+        await self._pool.close()
+        await self._db.__aexit__(*exc)
+
+
+STORE_FACTORIES = [
+    pytest.param(InMemoryTenancyStore, id="memory"),
+    pytest.param(_PostgresTenancyStore, id="postgres", marks=pytest.mark.load),
+]
 
 
 @pytest.fixture(params=STORE_FACTORIES)
