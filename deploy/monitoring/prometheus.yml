@@ -17,6 +17,10 @@ alerting:
 scrape_configs:
   - job_name: aura-gateway
     metrics_path: /metrics
+    # Since SaaS P1 plan A the gateway 404s /metrics in production unless the scrape carries
+    # AURA_METRICS_TOKEN (fail closed; aura_core/api/security_headers.py). On a production VPS
+    # set the token and add here:
+    #   authorization: {type: Bearer, credentials_file: /run/secrets/metrics_token}
     static_configs:
       - targets: [gateway:8000]
     # A turn can take tens of seconds; a scrape must never be the thing that times out.

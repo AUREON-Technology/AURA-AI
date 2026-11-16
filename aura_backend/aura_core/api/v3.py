@@ -1694,11 +1694,14 @@ def build_app(
     # anyone. See aura_core/api/security_headers.py for why CSP is not sent from here.
     from .security_headers import MetricsAuthMiddleware, SecurityHeadersMiddleware
 
-    if container.settings.observability.metrics_token:
+    # Fail closed where the app may be the edge: a production-like deployment without a token
+    # hides the endpoint (token=None answers 404 to everyone) instead of publishing it.
+    metrics_token = container.settings.observability.metrics_token
+    if metrics_token or container.settings.environment.is_production_like:
         app.add_middleware(
             MetricsAuthMiddleware,
             path=container.settings.observability.metrics_path,
-            token=container.settings.observability.metrics_token,
+            token=metrics_token or None,
         )
     if container.settings.security.security_headers_enabled:
         app.add_middleware(
