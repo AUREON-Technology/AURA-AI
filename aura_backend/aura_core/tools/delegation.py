@@ -24,7 +24,8 @@ other:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+import dataclasses
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 from uuid import uuid4
 
 from ..agents.registry import AgentRegistry
@@ -61,8 +62,6 @@ def build_delegation_tools(
     ``max_depth``/``deadline_s`` come from ``settings.reasoning.max_delegation_depth`` /
     ``delegation_deadline_s`` so a deployment can tune them without a code change.
     """
-    target_ids = tuple(sorted(spec.id for spec in agents if spec.id != "orchestrator"))
-
     @tool(
         "delegate_to_agent",
         "Hand off a self-contained sub-task to a specialist persona and return its answer. "
@@ -73,7 +72,8 @@ def build_delegation_tools(
         "pending confirmation, so prefer proposing that action directly instead of delegating it.",
         param(
             "target_agent_id", "string", "The persona to delegate to.",
-            enum=list(target_ids),
+            # Placeholder: _LiveTargetsTool.spec replaces it with the registry's current ids.
+            enum=["orchestrator"],
         ),
         param(
             "subtask", "string",
@@ -98,6 +98,15 @@ def build_delegation_tools(
         if context.delegation_depth >= max_depth:
             raise ToolExecutionError(
                 f"delegation depth exceeded (max {max_depth})",
+                tool="delegate_to_agent",
+            )
+
+        if target_agent_id not in _target_ids(agents):
+            # Checked before resolve(): its fallback would turn an unknown id into an
+            # orchestrator sub-turn, and the mismatch below would misreport it as a missing
+            # capability. The registry's schema check normally refuses this first.
+            raise ToolExecutionError(
+                f"cannot delegate to '{target_agent_id}': unknown agent",
                 tool="delegate_to_agent",
             )
 
@@ -162,4 +171,40 @@ def build_delegation_tools(
             )
         return result.text
 
-    return [delegate_to_agent]
+    return [_LiveTargetsTool(delegate_to_agent, agents)]
+
+
+def _target_ids(agents: AgentRegistry) -> tuple[str, ...]:
+    return tuple(sorted(spec.id for spec in agents if spec.id != "orchestrator"))
+
+
+class _LiveTargetsTool:
+    """``delegate_to_agent`` with a ``target_agent_id`` enum read from the registry on demand.
+
+    The registry is not fixed at boot: with Track AP on it is an ``ActiveBlueprint`` whose
+    snapshot a blueprint deploy swaps (``adaptation/runtime.py``). An enum computed once here
+    would offer the model, and validate against, the boot-time personas only, so a generated
+    ``bp_*`` agent could never be a target (audit 2026-11-16, F6). ``ToolRegistry`` reads
+    ``tool.spec`` on every listing and every call, so recomputing it here is enough; the spec is
+    cached per target set, so an unchanged registry yields the identical object.
+    """
+
+    def __init__(self, inner: Any, agents: AgentRegistry) -> None:
+        self._inner = inner
+        self._agents = agents
+        self._cached: tuple[tuple[str, ...], Any] | None = None
+
+    @property
+    def spec(self):
+        ids = _target_ids(self._agents)
+        if self._cached is None or self._cached[0] != ids:
+            base = self._inner.spec
+            parameters = tuple(
+                dataclasses.replace(p, enum=ids) if p.name == "target_agent_id" else p
+                for p in base.parameters
+            )
+            self._cached = (ids, dataclasses.replace(base, parameters=parameters))
+        return self._cached[1]
+
+    async def execute(self, arguments: Mapping[str, Any], context: ToolContext) -> str:
+        return await self._inner.execute(arguments, context)

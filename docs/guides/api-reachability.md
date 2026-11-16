@@ -72,7 +72,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/admin/twin/versions/{version}/compile` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | GET | `/api/v3/admin/twin/versions/{version}/plan` | — | — | — | none | to wire: Console twin browser and diff are Track AP phase AP9 |
 | POST | `/api/v3/admin/users/{subject}/forget` | — | `aura_admin/app/(console)/access/page.tsx:157` | — | called |  |
-| GET | `/api/v3/agents` | `aura_client/lib/features/chat/data/agents_repository.dart:9`, `aura_client/lib/features/chat/data/agents_repository.dart:94` | — | — | called |  |
+| GET | `/api/v3/agents` | `aura_client/lib/features/chat/data/agents_repository.dart:8`, `aura_client/lib/features/chat/data/agents_repository.dart:94` | — | — | called |  |
 | GET | `/api/v3/agents/runs` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
 | GET | `/api/v3/agents/runs/{run_id}` | — | — | — | none | to wire: agent-run history (wave 2) has no client or admin view yet |
 | GET | `/api/v3/auth/desktop/devices` | `aura_client/lib/core/auth/desktop_devices_client.dart:41` | — | — | called |  |
@@ -90,7 +90,7 @@ Every route the production gateway (`aura_service.app`) mounts, and where the Fl
 | POST | `/api/v3/automation/analyze-issue` | `aura_client/lib/features/automations/data/automation_repository.dart:256` | — | — | called |  |
 | GET | `/api/v3/capabilities` | `aura_client/lib/core/ai/vision/chat_images.dart:40`, `aura_client/lib/core/ai/vision/chat_images.dart:74` (+2) | — | — | called |  |
 | POST | `/api/v3/chat` | — | — | — | none | server-to-server: the non-streaming turn is for integrating systems (ADR-029 service keys, AR-6 structured output); the app streams via /chat/stream |
-| POST | `/api/v3/chat/stream` | `aura_client/lib/core/ai/online_agents/llm_timeouts.dart:10`, `aura_client/lib/core/ai/online_agents/sse_agent_client.dart:16` (+5) | — | — | called |  |
+| POST | `/api/v3/chat/stream` | `aura_client/lib/core/ai/online_agents/llm_timeouts.dart:10`, `aura_client/lib/core/ai/online_agents/sse_agent_client.dart:16` (+4) | — | — | called |  |
 | POST | `/api/v3/complete` | `aura_client/lib/core/ai/inline_completion_client.dart:9`, `aura_client/lib/core/ai/inline_completion_client.dart:25` | — | — | called |  |
 | GET | `/api/v3/engineering/runs` | `aura_client/lib/features/engineering/data/engineer_run_repository.dart:7`, `aura_client/lib/features/engineering/data/engineer_run_repository.dart:69` | — | — | called |  |
 | GET | `/api/v3/engineering/workspaces` | `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:54`, `aura_client/lib/core/ai/engineer/engineer_workspaces.dart:77` (+1) | — | — | called |  |

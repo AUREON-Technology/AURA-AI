@@ -33,23 +33,62 @@ class AgentPanel extends ConsumerStatefulWidget {
   ConsumerState<AgentPanel> createState() => _AgentPanelState();
 }
 
+/// Whether [agents] shows this account may use Engineer. Absent from the list means the backend
+/// does not offer it at all; an older backend without `usable` defaults to true (AgentInfo).
+bool engineerUsable(List<AgentInfo> agents) =>
+    agents.firstWhereOrNull((a) => a.id == _engineerAgentId)?.usable ?? false;
+
 class _AgentPanelState extends ConsumerState<AgentPanel> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
 
+  /// The app-wide persona before this panel switched it to Engineer, restored on close. Null
+  /// until the switch happens (and if it never does, because Engineer is locked).
+  String? _previousAgentId;
+  late final ActiveAgent _activeAgent;
+
   @override
   void initState() {
     super.initState();
-    // This panel only ever talks to Engineer — force the (app-global) active
-    // persona so a message sent from here routes correctly, same as picking
-    // "Engineer" from Copilot's own persona picker would.
+    _activeAgent = ref.read(activeAgentIdProvider.notifier);
+    // This panel only ever talks to Engineer, so it borrows the (app-global) active persona --
+    // the same thing picking "Engineer" in Copilot's picker does -- but only once the backend
+    // says this account may use it. Selecting a locked persona does not fail: the backend
+    // silently answers as the orchestrator (AgentRegistry.resolve), which the persona picker
+    // already refuses to do (audit 2026-11-16, F7). If the list cannot be fetched, the switch
+    // still happens, as before: the backend's own capability gate is the real enforcement.
+    ref.listenManual<AsyncValue<List<AgentInfo>>>(
+      agentsProvider,
+      (_, next) {
+        final claim = switch (next) {
+          AsyncData(:final value) => engineerUsable(value),
+          AsyncError() => true,
+          _ => false,
+        };
+        if (claim) _claimEngineer();
+      },
+      fireImmediately: true,
+    );
+  }
+
+  void _claimEngineer() {
+    if (_previousAgentId != null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) ref.read(activeAgentIdProvider.notifier).setAgent(_engineerAgentId);
+      if (!mounted || _previousAgentId != null) return;
+      _previousAgentId = ref.read(activeAgentIdProvider);
+      _activeAgent.setAgent(_engineerAgentId);
     });
   }
 
   @override
   void dispose() {
+    // Hand the app-wide persona back, so closing the panel does not leave ordinary chat sending
+    // as Engineer. Deferred: providers must not be modified while the tree is being finalized.
+    final previous = _previousAgentId;
+    if (previous != null && previous != _engineerAgentId) {
+      final activeAgent = _activeAgent;
+      Future.microtask(() => activeAgent.restoreIfStill(_engineerAgentId, previous));
+    }
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -90,6 +129,10 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
     final messagesAsync = ref.watch(chatMessagesStreamProvider(conversationId));
     final workspaceRoot = ref.watch(workspaceNotifierProvider).activeWorkspace?.rootPath;
     final (personaLabel, personaIcon) = personaDisplay(_engineerAgentId);
+    final locked = switch (ref.watch(agentsProvider)) {
+      AsyncData(:final value) => !engineerUsable(value),
+      _ => false,
+    };
 
     ref.listen<AsyncValue<List<Message>>>(
       chatMessagesStreamProvider(conversationId),
@@ -136,6 +179,21 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
+          if (locked)
+            const Expanded(
+              child: Center(
+                child: SingleChildScrollView(
+                  child: AuraEmptyState(
+                    icon: Icons.lock_outline,
+                    title: 'Engineer is not available on this account',
+                    message: 'Engineer needs the engineer_agent capability. Ask an operator to '
+                        'grant it; until then, messages from here would be answered by the '
+                        'general assistant instead.',
+                  ),
+                ),
+              ),
+            )
+          else ...[
           Expanded(
             child: messagesAsync.when(
               data: (messages) {
@@ -189,6 +247,7 @@ class _AgentPanelState extends ConsumerState<AgentPanel> {
           ),
           const PendingActionsCard(),
           ChatComposer(controller: _controller, isMobile: true, onSend: _send),
+          ],
         ],
       ),
     );
