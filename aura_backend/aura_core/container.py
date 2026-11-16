@@ -180,6 +180,7 @@ class Container:
         self.sources = self._build_source_registry()
         self.idempotency = self._build_idempotency_store()
         self.service_keys = self._build_service_keys()
+        self.tenancy = self._build_tenancy()
 
         self.providers = build_providers(
             settings.llm, model_allowlist=settings.security.model_allowlist
@@ -1309,6 +1310,23 @@ class Container:
 
             store = InMemoryServiceKeyStore()
         return ServiceKeyService(store=store, clock=self.clock, audit=self.audit)
+
+    def _build_tenancy(self) -> Any:
+        """Workspaces and team membership (SaaS P1, ADR-034). Postgres-backed with the other
+        stores, so removing a member reaches every gateway worker on its next request."""
+        from .tenancy import TenancyService
+
+        if self.settings.infrastructure.document_backend == "postgres":
+            from .adapters.postgres_tenancy import PostgresTenancyStore
+
+            store: Any = PostgresTenancyStore(
+                self.settings.infrastructure.database_url, pool=self._postgres_pool()
+            )
+        else:
+            from .adapters.tenancy import InMemoryTenancyStore
+
+            store = InMemoryTenancyStore()
+        return TenancyService(store=store, clock=self.clock, audit=self.audit, settings=self.settings.tenancy)
 
     def _build_idempotency_store(self) -> Any:
         """`Idempotency-Key` bookkeeping (roadmap P1.4). Gated like the outbox: replay only means
