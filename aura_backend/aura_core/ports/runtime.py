@@ -19,7 +19,7 @@ from typing import Any, Awaitable, Callable, Mapping, Protocol, Sequence, runtim
 from ..domain.events import DomainEvent
 from ..domain.identifiers import UserId
 from ..domain.telemetry import TurnTelemetry
-from ..domain.tools import ToolSensitivity, ToolSpec
+from ..domain.tools import ToolSensitivity, ToolSpec, tool_grant_permits
 
 __all__ = [
     "Tool",
@@ -49,12 +49,14 @@ class ToolContext:
     the executor into :meth:`ToolPolicy.evaluate` (Phase C1, ``aura_core/agents/registry.py``).
     ``allowed_tools=None``/``max_sensitivity=None`` mean "no agent-level restriction beyond the
     caller's own capability grants" -- the pre-Phase-C1 behaviour, so every existing caller that
-    builds a ``ToolContext`` without them is unaffected.
+    builds a ``ToolContext`` without them is unaffected. ``allowed_tool_prefixes`` extends a
+    non-``None`` ``allowed_tools`` by name prefix (audit T-03); ask :meth:`permits_tool`, never
+    ``name in allowed_tools``, so both halves of the grant are honoured.
     """
 
     __slots__ = (
         "user_id", "correlation_id", "deadline_s", "tainted", "credentials", "metadata",
-        "agent_id", "allowed_tools", "max_sensitivity", "memory_scope",
+        "agent_id", "allowed_tools", "allowed_tool_prefixes", "max_sensitivity", "memory_scope",
         "capabilities", "delegation_depth",
     )
 
@@ -69,6 +71,7 @@ class ToolContext:
         metadata: Mapping[str, Any] | None = None,
         agent_id: str | None = None,
         allowed_tools: frozenset[str] | None = None,
+        allowed_tool_prefixes: frozenset[str] = frozenset(),
         max_sensitivity: ToolSensitivity | None = None,
         memory_scope: str = "shared",
         capabilities: tuple[str, ...] = (),
@@ -84,6 +87,7 @@ class ToolContext:
         self.metadata = dict(metadata or {})
         self.agent_id = agent_id
         self.allowed_tools = allowed_tools
+        self.allowed_tool_prefixes = frozenset(allowed_tool_prefixes)
         self.max_sensitivity = max_sensitivity
         self.memory_scope = memory_scope
         # The caller's own capability grants and how many `delegate_to_agent` hops produced this
@@ -92,6 +96,10 @@ class ToolContext:
         # ToolContext is the one object that already flows from kernel to tool unchanged.
         self.capabilities = capabilities
         self.delegation_depth = delegation_depth
+
+    def permits_tool(self, name: str) -> bool:
+        """Whether this turn's agent-level grant (names and prefixes) permits ``name``."""
+        return tool_grant_permits(name, self.allowed_tools, self.allowed_tool_prefixes)
 
 
 @runtime_checkable

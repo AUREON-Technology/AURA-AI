@@ -1356,6 +1356,8 @@ def build_router(container: Any, *, authenticator: Any, rate_limiter: Any = None
                         "allowed_tools": (
                             sorted(spec.allowed_tools) if spec.allowed_tools is not None else None
                         ),
+                        # Name prefixes extending that grant (the engineer's `mcp_`, audit T-03).
+                        "allowed_tool_prefixes": sorted(spec.allowed_tool_prefixes),
                         "risk_ceiling": spec.risk_ceiling.name,
                         "required_capabilities": sorted(spec.required_capabilities),
                         # Whether *this* caller can actually select this persona -- a persona

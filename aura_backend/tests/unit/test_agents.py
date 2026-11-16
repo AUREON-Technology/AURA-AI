@@ -12,6 +12,7 @@ from aura_core.domain.tools import ToolSensitivity
 from aura_core.kernel import TurnRequest
 from aura_core.ports.runtime import ToolContext
 from aura_core.tools import ToolPolicy, ToolRegistry, param, tool
+from aura_core.tools.coding import build_github_tools, build_sandbox_tools
 
 
 def _request(message: str = "hello", **overrides):
@@ -304,18 +305,168 @@ class TestTheEngineerGrantCoversItsOwnTools:
     contexts. The grant must name every tool the sandbox and code-host builders register for that
     capability; a new Engineer tool that is not granted is a tool nobody can use."""
 
-    def test_every_engineer_capability_tool_is_in_the_engineer_grant(self) -> None:
+    async def test_every_engineer_capability_tool_is_in_the_engineer_grant(self) -> None:
+        """Audit T-03 extends this to the MCP bridge: `mcp_{server}_{tool}` names exist only once
+        a server is configured, so an exact-name grant could never cover them and the Engineer
+        could use no MCP tool at all, whatever its comment said."""
         from aura_core.adapters.coding_fakes import InMemorySandboxRunner
-        from aura_core.tools.coding import build_github_tools, build_sandbox_tools
 
         registry = build_default_agent_registry()
         engineer = registry.get("engineer")
         assert engineer is not None and engineer.allowed_tools is not None
 
-        tools = build_sandbox_tools(InMemorySandboxRunner()) + build_github_tools(lambda *_: None)
+        tools = (
+            build_sandbox_tools(InMemorySandboxRunner()) + build_github_tools(lambda *_: None)
+            + await _mcp_tools()
+        )
         engineer_tools = {
             t.spec.name for t in tools if t.spec.required_capability == "engineer_agent"
         }
         assert "write_files" in engineer_tools, "the regression this pins would be vacuous"
-        missing = sorted(engineer_tools - engineer.allowed_tools)
+        assert {"mcp_fs_list_dir", "mcp_fs_write"} <= engineer_tools, "MCP pin would be vacuous"
+        missing = sorted(n for n in engineer_tools if not engineer.permits_tool(n))
         assert missing == [], f"registered for engineer_agent but not granted to the persona: {missing}"
+
+    async def test_every_engineer_capability_tool_passes_the_policy_grant_check(
+        self, container, user
+    ) -> None:
+        """The same pin, through the context the kernel actually builds and the policy that
+        actually enforces it -- a grant the spec declares but the turn never carries is no grant."""
+        from aura_core.adapters.coding_fakes import InMemorySandboxRunner
+
+        await container.startup()
+        context = container.kernel._tool_context(
+            _request(agent="engineer", user_id=user, capabilities=("engineer_agent",)), tainted=False
+        )
+        assert context.agent_id == "engineer"
+        tools = (
+            build_sandbox_tools(InMemorySandboxRunner()) + build_github_tools(lambda *_: None)
+            + await _mcp_tools()
+        )
+        policy = ToolPolicy()
+        refused = sorted(
+            t.spec.name for t in tools
+            if t.spec.required_capability == "engineer_agent"
+            and policy.evaluate(t.spec, context=context, capabilities=("engineer_agent",)).reason
+            == "outside_agent_grant"
+        )
+        assert refused == [], f"engineer turn refused its own tools by grant: {refused}"
+
+
+async def _mcp_tools():
+    """Two MCP-bridged tools, one reviewed-safe and one default-deny, from the same fake client
+    `test_engineer_tools.py::TestMcpBridge` uses."""
+    from aura_core.adapters.coding_fakes import InMemoryMcpClient
+    from aura_core.ports.coding import McpToolDescriptor
+    from aura_core.tools.coding import build_mcp_bridge_tools
+
+    client = InMemoryMcpClient(
+        tools=[
+            McpToolDescriptor(server="fs", name="list_dir", description="List a directory."),
+            McpToolDescriptor(server="fs", name="write", description="Write a file."),
+        ],
+        handlers={("fs", "list_dir"): lambda args: "a.txt\nb.txt"},
+    )
+    return await build_mcp_bridge_tools(client, safe_tools=["mcp_fs_list_dir"])
+
+
+class TestMcpToolsReachOnlyTheEngineer:
+    """Audit T-03, end to end through the real container: the kernel's declarations and the
+    policy both honour the engineer's `mcp_` prefix grant, and no other persona gets it."""
+
+    async def _started(self, container):
+        await container.startup()
+        for t in await _mcp_tools():
+            container.tools.register(t, overwrite=True)
+        return container
+
+    async def _declared(self, container, user, agent: str, **extra) -> set[str]:
+        return {
+            d["name"] for d in await container.kernel._tool_declarations(
+                _request(agent=agent, user_id=user, capabilities=("engineer_agent",), **extra)
+            )
+        }
+
+    async def test_an_engineer_turn_is_offered_mcp_tools(self, container, user) -> None:
+        await self._started(container)
+        declared = await self._declared(container, user, "engineer")
+        assert {"mcp_fs_list_dir", "mcp_fs_write"} <= declared
+
+    async def test_a_task_planner_turn_is_not(self, container, user) -> None:
+        await self._started(container)
+        declared = await self._declared(container, user, "task_planner")
+        assert declared, "the task planner should still be offered its own tools"
+        assert not any(n.startswith("mcp_") for n in declared)
+
+    @pytest.mark.parametrize(
+        "agent_id",
+        ["task_planner", "finance_advisor", "health_companion", "research_agent",
+         "coding_agent", "decision_agent"],
+    )
+    def test_no_other_explicit_persona_holds_a_prefix_grant(self, agent_id: str) -> None:
+        spec = build_default_agent_registry().get(agent_id)
+        assert spec.allowed_tool_prefixes == frozenset()
+        assert not spec.permits_tool("mcp_fs_list_dir")
+
+    async def test_policy_refuses_an_mcp_call_from_a_non_engineer_context(
+        self, container, user
+    ) -> None:
+        await self._started(container)
+        context = container.kernel._tool_context(
+            _request(agent="task_planner", user_id=user, capabilities=("engineer_agent",)),
+            tainted=False,
+        )
+        result, report = await container.tools.execute(
+            ToolCall(id=ToolCallId("1"), name="mcp_fs_list_dir", arguments={}),
+            context, capabilities=("engineer_agent",),
+        )
+        assert not result.ok and report.policy_reason == "outside_agent_grant"
+
+    async def test_the_engineer_can_actually_run_a_safe_mcp_tool(self, container, user) -> None:
+        await self._started(container)
+        context = container.kernel._tool_context(
+            _request(agent="engineer", user_id=user, capabilities=("engineer_agent",)),
+            tainted=False,
+        )
+        result, report = await container.tools.execute(
+            ToolCall(id=ToolCallId("1"), name="mcp_fs_list_dir", arguments={}),
+            context, capabilities=("engineer_agent",),
+        )
+        assert report.allowed and result.ok, report.policy_reason
+
+    async def test_an_unreviewed_mcp_tool_still_needs_confirmation(self, container, user) -> None:
+        """The grant changes who may ask, not what asking costs: default-deny MCP tools stay
+        CONFIDENTIAL + side-effecting + confirmation-gated for the engineer too."""
+        await self._started(container)
+        context = container.kernel._tool_context(
+            _request(agent="engineer", user_id=user, capabilities=("engineer_agent",)),
+            tainted=False,
+        )
+        spec = container.tools.get("mcp_fs_write").spec
+        decision = container.tools._policy.evaluate(
+            spec, context=context, capabilities=("engineer_agent",)
+        )
+        assert decision.allowed and decision.requires_confirmation
+
+    async def test_a_delegated_grant_without_the_prefix_strips_mcp_from_an_engineer_turn(
+        self, container, user
+    ) -> None:
+        """Defense in depth: even if `delegate_to_agent` handed an engineer sub-turn a names-only
+        grant, the kernel's re-intersection must not restore the persona's own prefix."""
+        await self._started(container)
+        override = frozenset({"calculator", "write_file"})
+        declared = await self._declared(container, user, "engineer", delegated_tool_grant=override)
+        assert not any(n.startswith("mcp_") for n in declared)
+        context = container.kernel._tool_context(
+            _request(agent="engineer", user_id=user, capabilities=("engineer_agent",),
+                     delegated_tool_grant=override),
+            tainted=False,
+        )
+        assert not context.permits_tool("mcp_fs_list_dir")
+        assert context.permits_tool("write_file")
+
+    async def test_a_service_caller_gets_no_mcp_tools(self, container, user) -> None:
+        """v3's service-key turns carry `delegated_tool_grant=frozenset()`: no prefix rides along."""
+        await self._started(container)
+        declared = await self._declared(container, user, "engineer", delegated_tool_grant=frozenset())
+        assert declared == set()

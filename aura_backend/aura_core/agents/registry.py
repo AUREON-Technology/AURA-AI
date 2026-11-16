@@ -22,7 +22,7 @@ from typing import Iterable, Sequence
 
 from ..domain.agent_runs import AgentBudget
 from ..domain.memory import SHARED_MEMORY_SCOPE
-from ..domain.tools import ToolSensitivity
+from ..domain.tools import ToolSensitivity, tool_grant_permits
 from ..prompts.library import AGENT_PROMPT_IDS
 
 __all__ = ["AgentSpec", "AgentRegistry", "build_default_agent_registry"]
@@ -36,12 +36,19 @@ class AgentSpec:
     orchestrator's grant, and the correct default for a general-purpose persona that should not
     be narrower than what the user themselves is allowed to do. Every other persona names an
     explicit set: a tool absent from it is refused even if the caller could otherwise use it.
+
+    ``allowed_tool_prefixes`` widens an explicit set by name prefix, for a tool family whose
+    names only exist at runtime (today: ``mcp_``, the MCP bridge's ``mcp_{server}_{tool}``,
+    granted to ``engineer`` only; audit T-03). It is ignored when ``allowed_tools`` is ``None``,
+    and every checkpoint asks :meth:`permits_tool` (or the same
+    :func:`~aura_core.domain.tools.tool_grant_permits`) rather than testing set membership.
     """
 
     id: str
     name: str
     prompt_template_id: str
     allowed_tools: frozenset[str] | None = None
+    allowed_tool_prefixes: frozenset[str] = frozenset()
     required_capabilities: frozenset[str] = frozenset()
     risk_ceiling: ToolSensitivity = ToolSensitivity.SYSTEM
     #: Which memory partition this persona reads and writes (``domain/memory.py``). A persona
@@ -63,6 +70,16 @@ class AgentSpec:
     time_budget_s: float | None = None
     tool_budget: int | None = None
     risk_budget: int | None = None
+
+    def __post_init__(self) -> None:
+        # An empty prefix matches every name: "everything" spelled so that it reads like a
+        # narrow grant. The unrestricted grant is ``allowed_tools=None``, said out loud.
+        if any(not p for p in self.allowed_tool_prefixes):
+            raise ValueError(f"agent {self.id!r}: an empty tool prefix would grant every tool")
+
+    def permits_tool(self, name: str) -> bool:
+        """Whether this persona's own grant permits ``name`` (before any delegation narrowing)."""
+        return tool_grant_permits(name, self.allowed_tools, self.allowed_tool_prefixes)
 
     @property
     def loop_enabled(self) -> bool:
@@ -213,10 +230,11 @@ def build_default_agent_registry() -> AgentRegistry:
             AgentSpec(
                 id="engineer", name="Engineer",
                 prompt_template_id=AGENT_PROMPT_IDS["engineer"],
-                # Sandboxed filesystem/command/git tools and GitHub read+write (tools/coding.py)
-                # plus any MCP-bridged tool (registered dynamically at container startup, so a
-                # name here is only meaningful once that server is actually configured -- same
-                # "grant an id, not a guarantee it exists" rule _READ_TOOLS's own comment states).
+                # Sandboxed filesystem/command/git tools and GitHub read+write (tools/coding.py),
+                # by exact name. MCP-bridged tools are granted separately, by the `mcp_` prefix
+                # below: they are registered at container startup as `mcp_{server}_{tool}`, so no
+                # exact name can be written here, and the exact-name set alone left the Engineer
+                # unable to use any of them (audit T-03).
                 allowed_tools=_READ_TOOLS | _MEMORY_WRITE_TOOLS | {
                     "calculator",
                     # `write_files` is D6's atomic multi-file edit; it was registered under the
@@ -234,6 +252,14 @@ def build_default_agent_registry() -> AgentRegistry:
                     "github_create_branch", "github_commit_files",
                     "github_create_draft_pull_request",
                 },
+                # Every tool the MCP bridge registers (`build_mcp_bridge_tools`). The prefix only
+                # decides *who* may ask: each such tool still needs the `engineer_agent`
+                # capability, and an unreviewed one stays CONFIDENTIAL + side-effecting, hence
+                # confirmation-gated (`AURA_MCP_SAFE_TOOLS` is the only way out of that). No other
+                # persona holds a prefix grant, and delegation intersects it like any other grant
+                # (`domain/tools.py::intersect_tool_grants`), so a caller without it cannot obtain
+                # it by delegating here.
+                allowed_tool_prefixes=frozenset({"mcp_"}),
                 # required_capabilities gates the *persona* (AgentRegistry.resolve falls back to
                 # orchestrator without it); required_capability on each tool spec then gates the
                 # *tool* too, so a caller cannot reach these tools through some other persona

@@ -83,7 +83,9 @@ class ToolPolicy:
         # resolved agent, enforced here rather than only at declaration time so a call that
         # somehow reaches dispatch outside what was ever offered (a hallucinated tool name, a
         # future non-conforming caller) still fails closed and is audited like any other denial.
-        if context.allowed_tools is not None and spec.name not in context.allowed_tools:
+        # Asked through `permits_tool` so a prefix grant (the engineer's `mcp_`, audit T-03) is
+        # honoured here exactly as at declaration time.
+        if not context.permits_tool(spec.name):
             return ToolPolicyDecision.deny("outside_agent_grant", **audit)
 
         effective_max_sensitivity = (
