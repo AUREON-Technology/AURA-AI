@@ -207,7 +207,9 @@ That needs a check in the Firebase console.
 5. CI-run F-08 and F-09 (built and tested locally). For F-08, the GitHub callback now shows a
    confirmation page naming the AURA account, and a GitHub account already linked to another
    user is refused. For F-09, pairing tokens are scoped to the host-agent socket, and open
-   sockets re-check their credential every 60 s.
+   sockets re-check their credential every 60 s. Since 2026-11-16, `/desktop/login` is for
+   operators only, and `/auth/refresh` ends a non-operator's desktop session (owner decision;
+   ADR-011 amendment; TESTED locally).
 6. **ADR-030 Phase 6:** owner adds the `AURA_HOSTED1_API_KEY` secret, then runs Verify Hosted
    Inference with the `openrouter-free` preset and commits the report (GAP-064).
 7. Metrics are built (F-24). Next, confirm that a live `/metrics` scrape shows `aura_http_*`

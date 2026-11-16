@@ -201,11 +201,16 @@ class AuthNotifier extends AsyncNotifier<UserProfile?> {
         clientId: AppConfig.googleDesktopClientId,
         clientSecret: AppConfig.googleDesktopClientSecret,
       );
-      final deviceToken = await ref.read(tokenManagerProvider).exchangeDesktopLogin(
+      final tokens = ref.read(tokenManagerProvider);
+      final deviceToken = await tokens.exchangeDesktopLogin(
         oauthResult.idToken,
         deviceName: desktopDeviceName(),
       );
       if (deviceToken == null) {
+        // A refusal (desktop sign-in is for operators only, F-09) gets its own words and the
+        // server's reason; anything else did not get an answer at all.
+        final refusal = tokens.lastDesktopLoginRefusal;
+        if (refusal != null) throw SignInRefused(refusal);
         throw StateError('The backend did not accept this Google sign-in for desktop login.');
       }
 

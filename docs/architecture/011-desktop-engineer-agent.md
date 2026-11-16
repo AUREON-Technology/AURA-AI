@@ -472,4 +472,20 @@ exist. `HostdStatusSnapshot.backendConnected` is therefore `bool?`, with `null` 
 daemon did not say", rendered as "update aura_hostd" rather than as a reconnect, in all three
 surfaces (`status_bar.dart`, `host_panel.dart`, `host_daemon_page.dart`).
 
+**Amendment (2026-11-16): desktop sign-in is for operators only (audit F-09, owner decision).**
+Unit 7 above says desktop login "is not gated to console operators, since every AURA user should
+be able to log into the desktop app". That made `/desktop/login` a way round device attestation:
+any Google account got there the session a phone only gets after Play Integrity or App Attest,
+and no route tells a desktop session apart (FSA-004 made it short-lived and revocable, not
+narrower). It is now gated like `/web/token`: below `CONSOLE_MIN_ROLE` (Developer) the route
+answers 403, and `/auth/refresh` ends a desktop-app session (one carrying `device_id`) whose
+owner no longer holds that role, so sessions issued before the rule, or to someone since
+demoted, stop at their next refresh. Phone and web sessions carry no `device_id` and are
+unaffected; paired `aura_hostd` daemons have no refresh token and are unaffected too. The desktop
+client shows the server's reason (`SignInRefused`). Tested in `test_desktop_login.py`.
+
+Opening desktop to every user again is deliberately not a setting. It should come with a design
+that ties a new desktop device to an attested one, for instance a desktop device that stays
+inactive until its owner approves it from the phone app, not with a lower gate.
+
 See `docs/AURA_UPGRADE_ROADMAP.md` for the up-to-date status of what is and is not built.
