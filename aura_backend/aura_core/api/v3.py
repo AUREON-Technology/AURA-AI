@@ -37,6 +37,7 @@ from ..domain.llm import RoutingPolicy
 from ..domain.memory import MemoryKind, MemoryQuery
 from ..domain.output_schema import check_output_schema
 from ..domain.reasoning import ReasoningStrategy
+from ..domain.tenancy import WorkspaceContext, WorkspaceKind, workspace_scope
 from ..domain.untrusted import MAX_UNTRUSTED_CHARS
 from ..kernel.kernel import TurnRequest
 from ..observability.logging import get_logger
@@ -133,7 +134,7 @@ class Principal:
     touches only the authenticator.
     """
 
-    __slots__ = ("user_id", "email", "role", "capabilities", "service_key")
+    __slots__ = ("user_id", "email", "role", "capabilities", "service_key", "workspace")
 
     def __init__(
         self,
@@ -143,6 +144,7 @@ class Principal:
         role: str = "User",
         capabilities: tuple[str, ...] = (),
         service_key: Any = None,
+        workspace: WorkspaceContext | None = None,
     ) -> None:
         self.user_id = user_id
         self.email = email
@@ -151,6 +153,19 @@ class Principal:
         # AR-4: set only for a non-human caller authenticated by a service key. Its routes,
         # rate and the absence of memory, session and tools are enforced by this module.
         self.service_key = service_key
+        # ADR-034: the workspace this request acts in, membership already checked against the
+        # store by the authenticator. ``None`` is the caller's personal scope. It carries a
+        # *workspace* role only -- never a platform role or a capability.
+        self.workspace = workspace
+
+    @property
+    def knowledge_owner(self) -> UserId:
+        """The owner for shareable data (knowledge, graph): the team's scope inside a team
+        workspace, the person's own subject everywhere else. Personal-life data (memory,
+        Personal-OS, feedback, runs) always uses :attr:`user_id` instead."""
+        if self.workspace is not None and self.workspace.kind is WorkspaceKind.TEAM:
+            return UserId(workspace_scope(self.workspace.workspace_id))
+        return self.user_id
 
     @classmethod
     def for_service(cls, key: Any) -> "Principal":
