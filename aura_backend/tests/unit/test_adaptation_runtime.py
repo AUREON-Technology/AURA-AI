@@ -434,6 +434,102 @@ class TestStartupAndSync:
         assert not any(n.startswith("bp1_") for n in tools.names())
 
 
+class TestGracePeriod:
+    """T-05: a retired version keeps its tools for ``grace_s``; going live again must reuse them."""
+
+    GRACE = 0.2
+
+    def _graceful(self, world) -> None:
+        world.materializer._grace_s = self.GRACE
+
+    async def test_a_deploy_still_retires_the_old_version_after_the_grace(self, world) -> None:
+        self._graceful(world)
+        await _approved(world, 1)
+        await world.deployment.deploy(1, by="sa@example.com")
+        await _approved(world, 2)
+        await world.deployment.deploy(2, by="sa@example.com")
+        assert world.materializer.names_of(1) and world.materializer.names_of(2)  # inside the grace
+        await asyncio.sleep(self.GRACE * 2)
+        assert world.materializer.names_of(1) == [] and world.materializer.names_of(2)
+
+    async def test_rollback_inside_the_grace_reuses_the_tools_and_cancels_the_retirement(self, world) -> None:
+        self._graceful(world)
+        await _approved(world, 1)
+        await world.deployment.deploy(1, by="sa@example.com")
+        v1_tools = {n: world.tools.get(n) for n in world.materializer.names_of(1)}
+        await _approved(world, 2)
+        await world.deployment.deploy(2, by="sa@example.com")
+        pointer = await world.deployment.rollback(by="sa@example.com")
+        assert (pointer.version, pointer.previous_version) == (1, 2)
+        assert world.agents.version == 1
+        assert {n: world.tools.get(n) for n in world.materializer.names_of(1)} == v1_tools  # reused
+        await asyncio.sleep(self.GRACE * 2)
+        assert sorted(world.materializer.names_of(1)) == sorted(v1_tools)
+        assert world.materializer.names_of(2) == []
+        assert all(t in world.tools for t in world.agents.get("bp_project").allowed_tools)
+
+    async def test_a_partial_registration_is_replaced_cleanly(self, world) -> None:
+        self._graceful(world)
+        await _approved(world, 1)
+        await world.deployment.deploy(1, by="sa@example.com")
+        expected = sorted(world.materializer.names_of(1))
+        await _approved(world, 2)
+        await world.deployment.deploy(2, by="sa@example.com")
+        world.tools.unregister(expected[0])  # half of v1 is gone
+        await world.deployment.rollback(by="sa@example.com")
+        assert sorted(world.materializer.names_of(1)) == expected
+        await asyncio.sleep(self.GRACE * 2)
+        assert sorted(world.materializer.names_of(1)) == expected and world.materializer.names_of(2) == []
+
+    async def test_a_retirement_never_removes_the_live_version(self, world) -> None:
+        self._graceful(world)
+        await _approved(world, 1)
+        await world.deployment.deploy(1, by="sa@example.com")
+        world.materializer.retire(1)  # a stray retirement of what is live
+        await asyncio.sleep(self.GRACE * 2)
+        assert world.materializer.names_of(1)
+
+    async def test_a_failed_rollback_puts_the_retirement_back(self, world) -> None:
+        self._graceful(world)
+        await _approved(world, 1)
+        await world.deployment.deploy(1, by="sa@example.com")
+        await _approved(world, 2)
+        await world.deployment.deploy(2, by="sa@example.com")
+
+        async def broken(*args, **kwargs):
+            raise DependencyUnavailableError("db down", dependency="postgres")
+
+        world.store.activate = broken
+        with pytest.raises(DependencyUnavailableError):
+            await world.deployment.rollback(by="sa@example.com")
+        assert world.agents.version == 2 and world.materializer.pending_retirements() == (1,)
+        await asyncio.sleep(self.GRACE * 2)
+        assert world.materializer.names_of(1) == [] and world.materializer.names_of(2)
+
+    async def test_another_worker_rolls_back_by_sync_inside_the_grace(self, world, audit, clock) -> None:
+        self._graceful(world)
+        tools = ToolRegistry(policy=ToolPolicy(), audit=audit)
+        agents = ActiveBlueprint(build_default_agent_registry())
+        materializer = BlueprintToolMaterializer(tools=tools, open_connector=world.open, grace_s=self.GRACE)
+        worker2 = BlueprintDeployment(
+            project_id="p0", store=world.store, approvals=world.approvals, agents=agents,
+            materializer=materializer, clock=clock,
+        )
+        await worker2.startup()
+        await _approved(world, 1)
+        await world.deployment.deploy(1, by="sa@example.com")
+        assert await worker2.sync() is True and agents.version == 1
+        await _approved(world, 2)
+        await world.deployment.deploy(2, by="sa@example.com")
+        assert await worker2.sync() is True and agents.version == 2
+        await world.deployment.rollback(by="sa@example.com")
+        assert await worker2.sync() is True and agents.version == 1
+        assert (await worker2.readiness())["state"] == "active"
+        await asyncio.sleep(self.GRACE * 2)
+        assert materializer.names_of(1) and materializer.names_of(2) == []
+        assert all(t in tools for t in agents.get("bp_project").allowed_tools)
+
+
 # ------------------------------------------------------------------------------- HTTP
 
 

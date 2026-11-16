@@ -359,7 +359,10 @@ class BlueprintToolMaterializer:
         self._grace_s = grace_s
         self._metrics = metrics
         self._knowledge = knowledge
-        self._pending: set[asyncio.Task] = set()
+        #: version -> its scheduled retirement, so going live again can cancel it (T-05).
+        self._pending: dict[int, asyncio.Task] = {}
+        #: The version this process serves; a retirement never removes its tools.
+        self._live: int | None = None
 
     def registry_names(self, blueprint: Blueprint) -> dict[str, str]:
         """Blueprint tool name -> registered name, for every tool :meth:`build` builds."""
@@ -414,16 +417,65 @@ class BlueprintToolMaterializer:
         prefix = f"bp{version}_"
         return [name for name in self._tools.names() if name.startswith(prefix)]
 
+    def activate(self, blueprint: Blueprint) -> list[str]:
+        """Make ``blueprint``'s tools present for it to go live; returns the names newly registered.
+
+        Cancels a pending retirement of that version first (a rollback inside the grace period,
+        or another worker catching up), then reuses its tools if every one is still registered --
+        re-registering would hit the registry's duplicate-name refusal. A partial set (some of the
+        version's tools gone, or names it does not build) is cleared and registered afresh, so a
+        version never goes live on a mix. An empty return means nothing was added, so a failed
+        go-live has nothing of its own to undo.
+        """
+        version = blueprint.project.version
+        self.cancel_retirement(version)
+        expected = set(self.registry_names(blueprint).values())
+        present = set(self.names_of(version))
+        if present and present == expected:
+            return []
+        self.unregister(present)
+        return self.register(blueprint)
+
+    def mark_live(self, version: int | None) -> None:
+        """Record the version this process now serves (``None``: core-only)."""
+        self._live = version
+        if version is not None:
+            self.cancel_retirement(version)
+
+    def cancel_retirement(self, version: int) -> bool:
+        """Cancel ``version``'s pending retirement; True if one was pending."""
+        task = self._pending.pop(version, None)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
+
+    def pending_retirements(self) -> tuple[int, ...]:
+        return tuple(sorted(v for v, t in self._pending.items() if not t.done()))
+
     def retire(self, version: int) -> None:
-        """Unregister ``version``'s tools after the grace period (immediately if it is zero)."""
+        """Unregister ``version``'s tools after the grace period (immediately if it is zero).
+
+        Never the live version's: that is re-checked when the retirement fires, not only when it
+        is scheduled, so a version that went live again in between keeps its tools.
+        """
+        if version == self._live:
+            return
+        self.cancel_retirement(version)  # one pending retirement per version, restarted
         if self._grace_s <= 0:
             self.unregister(self.names_of(version))
             return
 
         async def later() -> None:
             await asyncio.sleep(self._grace_s)
-            self.unregister(self.names_of(version))
+            if version != self._live:
+                self.unregister(self.names_of(version))
 
         task = asyncio.get_running_loop().create_task(later())
-        self._pending.add(task)
-        task.add_done_callback(self._pending.discard)
+        self._pending[version] = task
+
+        def done(finished: asyncio.Task) -> None:
+            if self._pending.get(version) is finished:
+                del self._pending[version]
+
+        task.add_done_callback(done)
