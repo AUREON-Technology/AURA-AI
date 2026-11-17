@@ -277,6 +277,8 @@ RCLONE_CONFIG_FILE="$T/rclone.conf"; export RCLONE_CONFIG_FILE
 : > "$RCLONE_CONFIG_FILE"
 
 # offsite_case <min> <target>...  -- runs copy_offsite in a subshell; writes the verified count to $T/verified
+# The OFFSITE_* variables are read by the function sourced from $T below, which shellcheck cannot see.
+# shellcheck disable=SC2034,SC1091
 offsite_case() (
     OFFSITE_MIN_COPIES=$1; shift
     OFFSITE_TARGETS="$*"
