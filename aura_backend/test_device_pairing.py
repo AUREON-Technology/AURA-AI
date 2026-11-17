@@ -180,6 +180,14 @@ class TestDesktopPairingEndpoints(unittest.TestCase):
         self._pairing_redis_patch.start()
         self._jwt_redis_patch = patch("services.jwt_auth.get_redis_client", return_value=None)
         self._jwt_redis_patch.start()
+        # Approval requires the capability the host-agent socket requires (audit INT-003), and
+        # nobody has it by default; opt the approver's role in, as an operator would. The refusal
+        # itself is tests/unit/test_auth_session_integrity.py's job.
+        from aura_core.config.settings import load_settings
+
+        self._roles_patch = patch.dict("os.environ", {"AURA_ENGINEER_AGENT_ROLES": "User"})
+        self._roles_patch.start()
+        load_settings(refresh=True, validate=False)
         # A real, valid access token -- the same credential shape /token or /web/token would
         # have handed the approving client, obtained directly rather than via a mocked Google
         # identity exchange this test doesn't need.
@@ -188,6 +196,10 @@ class TestDesktopPairingEndpoints(unittest.TestCase):
         )["access_token"]
 
     def tearDown(self):
+        from aura_core.config.settings import load_settings
+
+        self._roles_patch.stop()
+        load_settings(refresh=True, validate=False)
         self._pairing_redis_patch.stop()
         self._jwt_redis_patch.stop()
         device_pairing._local_pairings.clear()
