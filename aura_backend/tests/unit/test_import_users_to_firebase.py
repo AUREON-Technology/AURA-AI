@@ -98,3 +98,15 @@ def test_batches_of_at_most_1000(script) -> None:
     plan = script.plan_import(rows, existing=lambda uid: False)
     batches = list(script.batches(script.firebase_records(plan)))
     assert [len(b) for b in batches] == [1000, 1000, 500]
+
+
+def test_email_already_in_firebase_is_never_duplicated(script) -> None:
+    """Review B#3: import_users skips Firebase's uniqueness checks, so an address someone already
+    registered (or signed in with through the new client) must be skipped, not imported again."""
+    plan = script.plan_import(
+        [_row("111111111111111111111", "taken@example.com"), _row("222222222222222222222", "free@example.com")],
+        existing=lambda uid: False,
+        email_taken=lambda email: email == "taken@example.com",
+    )
+    assert [u["auth_subject"] for u in plan.to_create] == ["222222222222222222222"]
+    assert ("111111111111111111111", "email-taken") in plan.skipped

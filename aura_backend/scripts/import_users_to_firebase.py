@@ -48,14 +48,21 @@ class ImportPlan:
     skipped: list[tuple[str, str]] = field(default_factory=list)
 
 
-def plan_import(users: Iterable[dict], existing: Callable[[str], bool]) -> ImportPlan:
+def plan_import(
+    users: Iterable[dict],
+    existing: Callable[[str], bool],
+    email_taken: Callable[[str], bool] = lambda email: False,
+) -> ImportPlan:
     """Decide what to create. ``existing(uid)`` says whether Firebase already has that uid.
 
     Skip reasons: ``not-a-person`` (a service, project or workspace principal, a mock or malformed
     subject), ``exists`` (already in Firebase; never touched). Two reasons still create the user
     but without an email: ``placeholder-email`` (the ``@unknown.local`` stand-in) and
     ``duplicate-email`` (a second subject with an address already planned -- reported, never merged,
-    because merging would join two people's data).
+    because merging would join two people's data). ``email-taken`` skips the person entirely:
+    Firebase already has *another* account with that address (someone registered it, or signed in
+    through the new client first), and ``import_users`` does not check email uniqueness, so
+    importing would create a second account for one address. Resolve those by hand.
     """
     plan = ImportPlan()
     claimed: set[str] = set()
@@ -68,6 +75,9 @@ def plan_import(users: Iterable[dict], existing: Callable[[str], bool]) -> Impor
             plan.skipped.append((subject, "exists"))
             continue
         email = (row.get("email") or "").strip().lower() or None
+        if email and not email.endswith(PLACEHOLDER_EMAIL_SUFFIX) and email_taken(email):
+            plan.skipped.append((subject, "email-taken"))
+            continue
         if email and email.endswith(PLACEHOLDER_EMAIL_SUFFIX):
             plan.skipped.append((subject, "placeholder-email"))
             email = None
@@ -124,6 +134,19 @@ def _firebase_app():
     return firebase_admin.initialize_app(cred, name="aura-user-import")
 
 
+def _email_taken_in(app) -> Callable[[str], bool]:
+    from firebase_admin import auth
+
+    def taken(email: str) -> bool:
+        try:
+            auth.get_user_by_email(email, app=app)
+            return True
+        except auth.UserNotFoundError:
+            return False
+
+    return taken
+
+
 def _exists_in(app) -> Callable[[str], bool]:
     from firebase_admin import auth
 
@@ -152,7 +175,10 @@ def main(argv: list[str] | None = None) -> int:
 
     users = asyncio.run(_load_users(url))
     app = None if args.no_firebase_lookup else _firebase_app()
-    plan = plan_import(users, existing=(lambda uid: False) if app is None else _exists_in(app))
+    if app is None:
+        plan = plan_import(users, existing=lambda uid: False)
+    else:
+        plan = plan_import(users, existing=_exists_in(app), email_taken=_email_taken_in(app))
 
     print(f"users in database: {len(users)}")
     print(f"to create in Firebase: {len(plan.to_create)}")

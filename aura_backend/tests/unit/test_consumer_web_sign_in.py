@@ -120,3 +120,32 @@ def test_consumer_route_rate_limited() -> None:
     with patch("api.v2.auth.verify_identity_token", new=_operator_identity):
         statuses = [_sign_in(client).status_code for _ in range(11)]
     assert statuses[:10] == [200] * 10 and statuses[10] == 429
+
+
+def test_rate_key_ignores_the_callers_own_forwarded_entries() -> None:
+    """Review B#2. Behind Railway, uvicorn's --forwarded-allow-ips * sets request.client.host to the
+    *leftmost* X-Forwarded-For entry, which the caller writes. The limiter must key on the entry
+    the trusted proxy appended (counted from the right), so rotating the left part changes nothing."""
+    from types import SimpleNamespace
+
+    from api.v2.auth import _consumer_client_key
+
+    keys = {
+        _consumer_client_key(SimpleNamespace(
+            client=SimpleNamespace(host=f"10.0.0.{i}"),
+            headers={"x-forwarded-for": f"10.0.0.{i}, 203.0.113.7"},
+        ))
+        for i in range(5)
+    }
+    assert keys == {"203.0.113.7"}
+
+
+def test_rate_table_does_not_grow_without_bound() -> None:
+    from api.v2 import auth as auth_module
+
+    for i in range(auth_module.CONSUMER_RATE_TABLE_MAX + 50):
+        auth_module._consumer_hits[f"198.51.{i // 256}.{i % 256}"] = [0.0]
+    client = _client()
+    with patch("api.v2.auth.verify_identity_token", new=_operator_identity):
+        _sign_in(client)
+    assert len(auth_module._consumer_hits) <= auth_module.CONSUMER_RATE_TABLE_MAX

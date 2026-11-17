@@ -189,6 +189,9 @@ async def exchange_web_token(
 #: Customer web sign-ins per client IP per minute. In-process and per worker, so the bound is
 #: this many per worker; it still caps how fast one address can mint sessions.
 CONSUMER_SIGN_INS_PER_MINUTE = 10
+#: Addresses tracked at once. Past this, entries with no hit in the last minute are dropped, and if
+#: none are stale the oldest go, so a flood of distinct addresses cannot grow worker memory.
+CONSUMER_RATE_TABLE_MAX = 10_000
 _consumer_hits: dict[str, list[float]] = {}
 
 
@@ -196,13 +199,37 @@ def _reset_consumer_rate_limit() -> None:
     _consumer_hits.clear()
 
 
+def _consumer_client_key(request) -> str:
+    """The caller's address as the trusted proxy saw it -- counted from the right of
+    X-Forwarded-For, never ``request.client.host`` alone, which on Railway is the leftmost,
+    caller-written entry (see the Dockerfile's note and ``v3.client_ip``)."""
+    from aura_core.config import load_settings
+    from aura_core.security.rate_limit import extract_client_ip
+
+    return extract_client_ip(
+        request.headers,
+        peer=request.client.host if request.client else None,
+        trusted_proxies=load_settings(validate=False).security.trusted_proxy_count,
+    )
+
+
+def _prune_consumer_hits(now: float) -> None:
+    if len(_consumer_hits) < CONSUMER_RATE_TABLE_MAX:
+        return
+    for ip in [ip for ip, hits in _consumer_hits.items() if not hits or now - hits[-1] >= 60.0]:
+        del _consumer_hits[ip]
+    while len(_consumer_hits) >= CONSUMER_RATE_TABLE_MAX:
+        del _consumer_hits[next(iter(_consumer_hits))]  # oldest inserted first
+
+
 def _consumer_rate_limit(request: Request) -> None:
     now = time.monotonic()
-    ip = request.client.host if request.client else "unknown"
-    recent = [t for t in _consumer_hits.get(ip, []) if now - t < 60.0]
+    ip = _consumer_client_key(request)
+    recent = [t for t in _consumer_hits.pop(ip, []) if now - t < 60.0]
     if len(recent) >= CONSUMER_SIGN_INS_PER_MINUTE:
         _consumer_hits[ip] = recent
         raise HTTPException(status_code=429, detail="Too many sign-in attempts; try again in a minute.")
+    _prune_consumer_hits(now)
     recent.append(now)
     _consumer_hits[ip] = recent
 
